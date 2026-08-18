@@ -1,0 +1,9 @@
+{
+  "extends": "../base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true,
+    "rootDir": "."
+  },
+  "include": ["./implicit-any.ts"]
+}

@@ -1,0 +1,86 @@
+# -----------------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------------
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+package-lock.json
+yarn.lock
+
+# Keep pnpm lockfile in version control.
+!pnpm-lock.yaml
+
+# -----------------------------------------------------------------------------
+# Environment / secrets
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# -----------------------------------------------------------------------------
+# Build outputs
+# -----------------------------------------------------------------------------
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+.turbo
+.turbo/*
+
+# -----------------------------------------------------------------------------
+# Runtime / logs
+# -----------------------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.lighthouseci/
+
+# -----------------------------------------------------------------------------
+# Testing
+# -----------------------------------------------------------------------------
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/blob-report/
+
+# -----------------------------------------------------------------------------
+# Prisma
+# -----------------------------------------------------------------------------
+# Generated Prisma Client output is rebuilt from schema; ignore default location.
+# If the project moves the output, update this rule accordingly.
+**/prisma/generated/
+
+# -----------------------------------------------------------------------------
+# Docker / local infra
+# -----------------------------------------------------------------------------
+docker-compose.override.yml
+docker-compose.*.yml
+!.github/
+
+# -----------------------------------------------------------------------------
+# Editor / OS noise
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# Obsidian vault — ignore local workspace noise, keep minimal shared config
+# -----------------------------------------------------------------------------
+.obsidian/*
+!.obsidian/app.json

@@ -1,0 +1,49 @@
+schema: spec-driven
+
+context: |
+  Project: NewSaaS Veterinary SaaS for Paraguay; documentation-only baseline.
+  Stack target: Next.js/React/TypeScript/Tailwind/shadcn/ui; NestJS/Fastify/Prisma/PostgreSQL; Redis/BullMQ.
+  Architecture: multi-tenant modular monolith with web, api, and worker deployables.
+  Source of truth: implemented code/tests first, then PRD, accepted ADRs, Stories, and module docs.
+  Governance: strict tenancy, authorization, auditability, ledger invariants, semantic branding tokens, and architecture freeze.
+  Workflow: one Epic/Story at a time; update documentation atomically; verify before completion.
+  Current roadmap: EPIC-00 Foundation is ready; no product code exists yet.
+
+strict_tdd: false
+
+testing:
+  runner:
+    available: true
+    command: "pnpm test"
+    framework: "vitest"
+  layers:
+    unit: { available: true, tool: "vitest" }
+    integration: { available: true, tool: "vitest + supertest" }
+    e2e: { available: false, tool: null }
+  coverage:
+    available: true
+    command: "pnpm test:ui"
+  quality:
+    linter: { available: true, command: "pnpm lint" }
+    typechecker: { available: true, command: "pnpm typecheck" }
+    formatter: { available: true, command: "pnpm format-check" }
+  reason: "EPIC-00 installed Vitest, ESLint, Prettier, TypeScript, and root quality scripts. E2E (Playwright) remains deferred until app surfaces exist."
+
+rules:
+  proposal:
+    - Respect the approved PRD scope; include rollback for risky changes.
+  specs:
+    - Use Given/When/Then scenarios and RFC 2119 keywords.
+  design:
+    - Preserve modular-monolith boundaries and document rationale for decisions.
+  tasks:
+    - Group tasks by phase and keep them completable in one session.
+  apply:
+    - Follow AGENTS.md and the two governance documents; do not implement outside approved Story scope.
+    - tdd: false
+  verify:
+    - Run root quality gates: pnpm lint && pnpm format-check && pnpm typecheck && pnpm test && pnpm build.
+    - Run focused slice tests: pnpm test --filter @newsaas/api, pnpm test --filter @newsaas/web, pnpm test --filter @newsaas/worker.
+    - Run local service preflight: pnpm services:up && pnpm preflight.
+  archive:
+    - Preserve archived changes as an audit trail.
