@@ -7,7 +7,9 @@
  * any changes.
  */
 
-function main(): void {
+import { pathToFileURL } from "node:url";
+
+export function main(): void {
   const enabled = process.env.ENABLE_DEMO_SEED === "true";
 
   if (!enabled) {
@@ -19,4 +21,6 @@ function main(): void {
   process.exit(0);
 }
 
-main();
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

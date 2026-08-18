@@ -10,7 +10,11 @@ vi.mock("ioredis", () => ({
     status: "ready",
     ping,
     quit,
-    once: vi.fn().mockImplementation(function (this: { emit: () => void }, event: string, handler: () => void) {
+    once: vi.fn().mockImplementation(function (
+      this: { emit: () => void },
+      event: string,
+      handler: () => void
+    ) {
       if (event === "ready") {
         handler();
       }

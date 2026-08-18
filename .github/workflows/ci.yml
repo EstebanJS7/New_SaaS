@@ -1,5 +1,11 @@
 name: CI
 
+# Repository policy: the `Lint, Typecheck, Test, Build` check below (job ID
+# `quality`) must be configured as a required status check in the default branch
+# protection rule so that CI failures block merge. The workflow itself defines
+# the gates; enforcement is a repository-admin setting documented in
+# docs/10-qa/CI-EVIDENCE.md.
+
 on:
   push:
     branches: [main, master]

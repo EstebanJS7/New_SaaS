@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "node --env-file=.env --import ./register-loader.js src/main.ts",
+    "dev": "node --env-file=../../.env --import ./register-loader.js src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.ts\"",

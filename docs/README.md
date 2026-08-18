@@ -48,8 +48,8 @@ Prerequisites: Node.js 22+, pnpm 11+, Docker Compose.
 # Install dependencies
 pnpm install
 
-# Copy the example environment file and adjust values if needed
-# The API, worker, and preflight scripts load .env via Node's built-in --env-file flag.
+# Copy the example environment file to the repository root and adjust values if needed.
+# The API and worker dev scripts load the root .env via Node's built-in --env-file flag.
 cp .env.example .env
 
 # Start local PostgreSQL and Redis
@@ -68,10 +68,11 @@ pnpm dev
 ### Environment loading strategy
 
 Local development uses a single strategy: copy `.env.example` to `.env` in the
-repository root. The `dev` scripts for `apps/api` and `apps/worker` load it with
-Node's built-in `--env-file=.env` flag, and the `preflight` scripts do the same
-before invoking the preflight CLI. Production `start` scripts do **not** load
-`.env`; operators must inject environment variables through the runtime
-platform. Do not commit `.env` or any `.env.*.local` file.
+repository root. The `dev` scripts for `apps/api` and `apps/worker` load the
+root `.env` with Node's built-in `--env-file=../../.env` flag (relative to each
+app package), and the `preflight` scripts do the same before invoking the
+preflight CLI. Production `start` scripts do **not** load `.env`; operators must
+inject environment variables through the runtime platform. Do not commit `.env`
+or any `.env.*.local` file.
 
 See `docs/09-releases/CHANGELOG.md` for the EPIC-00 baseline.
