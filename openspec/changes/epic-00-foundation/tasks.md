@@ -67,6 +67,6 @@ pending 400-line budget risk: High
 - [x] 4.1 **FOUND-005** Add `docs/05-modules/branding.md` documenting neutral
       `CoreDesignDefaults` and deferred `Clinical Precision` preset; verify no
       tenant resolution or arbitrary CSS/JS path exists.
-- [ ] 4.2 **FOUND-006** Run each completed slice’s focused command plus
+- [x] 4.2 **FOUND-006** Run each completed slice’s focused command plus
       `pnpm lint && pnpm format-check && pnpm typecheck && pnpm test && pnpm build`;
-      document results and rollback boundary in the matching work-unit commit.
+      document results and rollback boundary in work-unit commit `b63d29c`.
