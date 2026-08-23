@@ -17,6 +17,36 @@ export interface BootstrapOptions {
   redisHealth?: WorkerHealthProbe;
 }
 
+/**
+ * Registers SIGTERM/SIGINT handlers that run the worker shutdown sequence.
+ *
+ * The sequence runs at most once: both listeners are removed before shutting
+ * down, so repeated signals are inert. A clean shutdown exits with status 0;
+ * a rejected shutdown is logged and exits with a non-zero status (1).
+ */
+export function installSignalShutdown(
+  handle: WorkerHandle,
+  proc: Pick<NodeJS.Process, "once" | "off" | "exit"> = process
+): void {
+  const shutdown = (): void => {
+    proc.off("SIGTERM", shutdown);
+    proc.off("SIGINT", shutdown);
+
+    handle
+      .shutdown()
+      .then(() => {
+        proc.exit(0);
+      })
+      .catch((error: unknown) => {
+        console.error("Worker shutdown failed", error);
+        proc.exit(1);
+      });
+  };
+
+  proc.once("SIGTERM", shutdown);
+  proc.once("SIGINT", shutdown);
+}
+
 export async function bootstrap(options: BootstrapOptions = {}): Promise<WorkerHandle> {
   const envResult = workerEnv(process.env);
   if (!envResult.success) {
@@ -52,14 +82,7 @@ const isMainModule =
 if (isMainModule) {
   bootstrap()
     .then((handle) => {
-      const shutdown = (): void => {
-        process.off("SIGTERM", shutdown);
-        process.off("SIGINT", shutdown);
-        void handle.shutdown().then(() => process.exit(0));
-      };
-
-      process.once("SIGTERM", shutdown);
-      process.once("SIGINT", shutdown);
+      installSignalShutdown(handle);
     })
     .catch((error: unknown) => {
       console.error("Failed to start worker", error);
