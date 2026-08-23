@@ -88,14 +88,14 @@ Commit: `docs(EPIC-00): reconcile acceptance criteria with closeout evidence`
 
 ## Unit 5 — Final verification and archive (LAST)
 
-- [ ] 5.1 Run full root gates:
+- [x] 5.1 Run full root gates:
       `pnpm lint && pnpm format-check && pnpm typecheck && pnpm test && pnpm build`.
       Any red ⇒ NO archive; record remainder in change state. Depends: 4.1.
-- [ ] 5.2 Pre-archive checklist: Unit 1 green; TD-001 + TD-002 exist; DEC-001
+- [x] 5.2 Pre-archive checklist: Unit 1 green; TD-001 + TD-002 exist; DEC-001
       created; EPIC reconciled. Document the maintainer-authorized archive
       eligibility exception (deferred Slices 1–2, authorization dated
       2026-08-23) explicitly in the change state — never hidden. Depends: 5.1.
-- [ ] 5.3 Archive: move `openspec/changes/epic-00-closeout-and-archive/` →
+- [x] 5.3 Archive: move `openspec/changes/epic-00-closeout-and-archive/` →
       `openspec/archive/<YYYY-MM-DD>-epic-00-closeout-and-archive/`; audit trail
       preserved, nothing deleted. Depends: 5.2.
 

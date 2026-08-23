@@ -2,7 +2,7 @@
 id: EPIC-00
 type: epic
 title: Foundation
-status: review
+status: done
 priority: critical
 depends_on: []
 prd_sections:
@@ -104,6 +104,11 @@ Stories were tracked as SDD change folders rather than separate story files:
   with non-zero exit) is covered by automated tests in
   `apps/worker/src/main.test.ts` via the extracted `installSignalShutdown`
   helper (closeout change, 2026-08-23).
+- Closeout verification returned PASS-WITH-AUTHORIZED-DEFERRALS (11/11
+  requirements, 19/19 scenarios evidence-resolved); see
+  `openspec/archive/2026-08-23-epic-00-closeout-and-archive/verify-report.md`.
+  Epic closed `done` under maintainer closure authorization dated 2026-08-23,
+  with deferred slices preserved as Known limitations below.
 
 ### Known limitations (deferred closeout evidence)
 
