@@ -2,7 +2,7 @@
 id: DEC-001
 type: decision
 title: Documentation authority and OpenSpec trace policy
-status: proposed
+status: accepted
 date: 2026-08-23
 related_epics:
   - EPIC-00
@@ -85,8 +85,14 @@ Debt or Story records in `docs/`.
 
 ## Decision
 
-_Pending._ This decision is created with status `proposed`; acceptance is a
-maintainer gate and must not be assumed by agents.
+**Accepted by the maintainer on 2026-08-23.** Option A is adopted:
+
+1. `docs/` is the permanent source of truth for intent, architecture, and
+   behavior.
+2. OpenSpec change folders are temporary SDD working artifacts; once archived
+   they are immutable audit trail only.
+3. The archive trigger defined under Impact > Delivery governs when a change
+   folder may move to `openspec/archive/`.
 
 ## PRD Update
 
