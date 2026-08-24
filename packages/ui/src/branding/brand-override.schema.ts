@@ -76,8 +76,5 @@ export function validateBrandOverride(input: unknown): BrandOverride {
   }
   const issue = result.error.issues[0];
   const detail = issue ? `${issue.path.join(".") || "<root>"}: ${issue.message}` : "unknown issue";
-  throw new BrandOverrideValidationError(
-    errorCodeFor(issue),
-    `Invalid brand override (${detail})`,
-  );
+  throw new BrandOverrideValidationError(errorCodeFor(issue), `Invalid brand override (${detail})`);
 }

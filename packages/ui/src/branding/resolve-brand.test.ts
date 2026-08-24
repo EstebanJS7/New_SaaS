@@ -37,7 +37,9 @@ describe("resolveBrand", () => {
 
     expect(resolved.theme.radius).toBe("1rem");
     expect(resolved.theme.colors.status.success).toBe("hsl(100 50% 50%)");
-    expect(resolved.theme.colors.status.error).toBe(veterinaryDefaultPreset.theme.colors.status.error);
+    expect(resolved.theme.colors.status.error).toBe(
+      veterinaryDefaultPreset.theme.colors.status.error
+    );
     expect(resolved.theme.colors.primary).toBe(veterinaryDefaultPreset.theme.colors.primary);
   });
 
@@ -69,7 +71,7 @@ describe("resolveBrand", () => {
       resolveBrand(veterinaryDefaultPreset, undefined, {
         schemaVersion: 1,
         defaultAppearance: "dark",
-      }).defaultAppearance,
+      }).defaultAppearance
     ).toBe("dark");
   });
 
@@ -77,10 +79,14 @@ describe("resolveBrand", () => {
     const presetSnapshot = structuredClone(veterinaryDefaultPreset);
     const defaultsSnapshot = structuredClone(coreDesignDefaults);
 
-    resolveBrand(veterinaryDefaultPreset, { colors: { accent: "hsl(0 0% 0%)" } }, {
-      schemaVersion: 1,
-      primary: "hsl(0 0% 0%)",
-    });
+    resolveBrand(
+      veterinaryDefaultPreset,
+      { colors: { accent: "hsl(0 0% 0%)" } },
+      {
+        schemaVersion: 1,
+        primary: "hsl(0 0% 0%)",
+      }
+    );
 
     expect(veterinaryDefaultPreset).toEqual(presetSnapshot);
     expect(coreDesignDefaults).toEqual(defaultsSnapshot);

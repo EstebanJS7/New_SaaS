@@ -47,9 +47,7 @@ export interface BrandTheme {
 export type DefaultAppearance = "light" | "dark" | "system";
 
 /** Partial variant of `T`; nested objects stay partially overridable. */
-export type DeepPartial<T> = T extends object
-  ? { [K in keyof T]?: DeepPartial<T[K]> }
-  : T;
+export type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
 
 /**
  * Product-level brand identity shipped as data (ADR-002 layering).

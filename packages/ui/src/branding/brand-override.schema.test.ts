@@ -66,9 +66,21 @@ describe("validateBrandOverride", () => {
       { schemaVersion: 1, defaultAppearance: "purple" },
       BRAND_OVERRIDE_ERROR_CODES.INVALID_VALUE,
     ],
-    ["older version", { ...validFull, schemaVersion: 0 }, BRAND_OVERRIDE_ERROR_CODES.UNSUPPORTED_VERSION],
-    ["newer version", { ...validFull, schemaVersion: 2 }, BRAND_OVERRIDE_ERROR_CODES.UNSUPPORTED_VERSION],
-    ["missing version", { primary: "hsl(10 20% 30%)" }, BRAND_OVERRIDE_ERROR_CODES.UNSUPPORTED_VERSION],
+    [
+      "older version",
+      { ...validFull, schemaVersion: 0 },
+      BRAND_OVERRIDE_ERROR_CODES.UNSUPPORTED_VERSION,
+    ],
+    [
+      "newer version",
+      { ...validFull, schemaVersion: 2 },
+      BRAND_OVERRIDE_ERROR_CODES.UNSUPPORTED_VERSION,
+    ],
+    [
+      "missing version",
+      { primary: "hsl(10 20% 30%)" },
+      BRAND_OVERRIDE_ERROR_CODES.UNSUPPORTED_VERSION,
+    ],
   ])("rejects %s with a stable error code", (_label, input, expectedCode) => {
     expect.assertions(4);
     try {

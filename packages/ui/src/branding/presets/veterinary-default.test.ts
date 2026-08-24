@@ -24,9 +24,7 @@ describe("veterinaryDefaultPreset", () => {
     expect(veterinaryDefaultPreset.theme.colors.primary).not.toBe(
       coreDesignDefaults.colors.primary
     );
-    expect(veterinaryDefaultPreset.theme.colors.accent).not.toBe(
-      coreDesignDefaults.colors.accent
-    );
+    expect(veterinaryDefaultPreset.theme.colors.accent).not.toBe(coreDesignDefaults.colors.accent);
     expect(veterinaryDefaultPreset.theme.colors.background).not.toBe(
       coreDesignDefaults.colors.background
     );

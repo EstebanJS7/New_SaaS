@@ -21,8 +21,8 @@ export default function AppHomePage(): JSX.Element {
       <CardHeader>
         <CardTitle>Staff workspace</CardTitle>
         <CardDescription>
-          Sample card hosted by the shell content region, styled exclusively
-          through resolved brand tokens.
+          Sample card hosted by the shell content region, styled exclusively through resolved brand
+          tokens.
         </CardDescription>
       </CardHeader>
       <CardContent>

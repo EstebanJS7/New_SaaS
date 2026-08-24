@@ -58,7 +58,11 @@ function extractCustomPropertyNames(block: string): Set<string> {
   return names;
 }
 
-function extractCustomPropertyValue(css: string, selector: string, name: string): string | undefined {
+function extractCustomPropertyValue(
+  css: string,
+  selector: string,
+  name: string
+): string | undefined {
   const block = extractSelectorBlock(css, selector);
   return new RegExp(`--${name}\\s*:\\s*([^;]+);`).exec(block)?.[1]?.trim();
 }

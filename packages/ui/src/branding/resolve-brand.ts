@@ -84,7 +84,7 @@ function tenantToPatch(tenant: BrandOverride | null | undefined): BrandThemePatc
 export function resolveBrand(
   preset: ProductBrandPreset,
   patch?: BrandThemePatch,
-  tenant?: BrandOverride | null,
+  tenant?: BrandOverride | null
 ): ResolvedBrand {
   let theme = coreDesignDefaults as unknown;
   theme = mergeLayer(theme, preset.theme);

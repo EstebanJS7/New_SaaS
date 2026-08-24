@@ -71,9 +71,7 @@ describe("toCssVariables", () => {
   });
 
   it("normalizes schema-blessed hex into bare HSL triplets", () => {
-    const map = toCssVariables(
-      resolveBrand(alternativePreset, { colors: { accent: "#ff0000" } }),
-    );
+    const map = toCssVariables(resolveBrand(alternativePreset, { colors: { accent: "#ff0000" } }));
 
     // #101828 from the fixture: rgb(16 24 40) → 220° 43% 11%.
     expect(map["--foreground"]).toBe("220 43% 11%");
