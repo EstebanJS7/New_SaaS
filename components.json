@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "apps/web/tailwind.config.ts",
+    "css": "apps/web/src/app/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "lucide",
+  "aliases": {
+    "components": "@newsaas/ui/components",
+    "ui": "@newsaas/ui/components/ui",
+    "utils": "@newsaas/ui/lib/utils",
+    "lib": "@newsaas/ui/lib",
+    "hooks": "@newsaas/ui/hooks"
+  }
+}

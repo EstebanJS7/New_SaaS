@@ -15,22 +15,42 @@
     "./branding": {
       "types": "./dist/branding/index.d.ts",
       "default": "./dist/branding/index.js"
+    },
+    "./components/ui/*": {
+      "types": "./dist/components/ui/*.d.ts",
+      "default": "./dist/components/ui/*.js"
+    },
+    "./lib/*": {
+      "types": "./dist/lib/*.d.ts",
+      "default": "./dist/lib/*.js"
+    },
+    "./hooks/*": {
+      "types": "./dist/hooks/*.d.ts",
+      "default": "./dist/hooks/*.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "test": "vitest run --config ../../packages/vitest-config/vitest.node.ts"
   },
   "dependencies": {
+    "@radix-ui/react-slot": "^1.2.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.3.0",
     "zod": "^3.24.2"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
     "@newsaas/eslint-config": "workspace:*",
     "@newsaas/typescript-config": "workspace:*",
     "@newsaas/vitest-config": "workspace:*",
     "@types/node": "^22.14.1",
+    "@types/react": "^19.1.1",
     "eslint": "^9.24.0",
     "typescript": "^5.8.3",
     "vitest": "^3.1.1"

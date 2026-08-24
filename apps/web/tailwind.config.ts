@@ -7,6 +7,7 @@ const config: Config = {
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/providers/**/*.{js,ts,jsx,tsx,mdx}",
+    "../../packages/ui/src/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
@@ -15,6 +16,8 @@ const config: Config = {
         foreground: "hsl(var(--foreground))",
         card: "hsl(var(--card))",
         "card-foreground": "hsl(var(--card-foreground))",
+        popover: "hsl(var(--popover))",
+        "popover-foreground": "hsl(var(--popover-foreground))",
         primary: "hsl(var(--primary))",
         "primary-foreground": "hsl(var(--primary-foreground))",
         secondary: "hsl(var(--secondary))",
