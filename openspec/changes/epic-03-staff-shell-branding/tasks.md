@@ -52,12 +52,12 @@ Aggregate exceeds 400; each unit stays ≤400. Merging U2+U3 (~425) would breach
 
 ## Phase 4: S4 — Staff Shell Skeleton (PR 4)
 
-- [ ] 4.1 Modify `apps/web/src/app/layout.tsx`: server-resolve `activeProductPreset` → render `<style>` with `toCssVariables(ResolvedBrand)` under `:root:not(.dark)` selector (D2/D4); `<html suppressHydrationWarning>`. Deps: U3.
-- [ ] 4.2 Refactor `apps/web/src/providers/brand-provider.tsx` to typed `ResolvedBrand` context; delete div `--radius` hack. Deps: 4.1.
-- [ ] 4.3 Create `apps/web/src/app/(app)/layout.tsx`: `<aside>` sidebar + `<header>` topbar + `<main data-shell-content>` bounded region, composed from Button/Card + semantic tokens. Deps: 4.2, 1.4.
-- [ ] 4.4 Create `apps/web/src/components/shell/{nav-sidebar,topbar}.tsx`: inert labeled placeholder entries only (chrome-only gate). Deps: 4.3.
-- [ ] 4.5 Create `apps/web/src/app/(app)/app/page.tsx` (sample-card-ready Card home) + `(app)/app/placeholder/page.tsx` (deep-link proof). Deps: 4.3.
-- [ ] 4.6 jsdom tests (Testing Library): direct `/app` visit renders sidebar+topbar around content; nested route keeps shell; nav entries inert, no business domain; sample card hosted in region inheriting tokens. Files: colocated `*.test.tsx`. Verify: `pnpm --filter @newsaas/web test`. Deps: 4.4, 4.5.
+- [x] 4.1 Modify `apps/web/src/app/layout.tsx`: server-resolve `activeProductPreset` → render `<style>` with `toCssVariables(ResolvedBrand)` under `:root:not(.dark)` selector (D2/D4); `<html suppressHydrationWarning>`. Deps: U3.
+- [x] 4.2 Refactor `apps/web/src/providers/brand-provider.tsx` to typed `ResolvedBrand` context; delete div `--radius` hack. Deps: 4.1.
+- [x] 4.3 Create `apps/web/src/app/(app)/layout.tsx`: `<aside>` sidebar + `<header>` topbar + `<main data-shell-content>` bounded region, composed from Button/Card + semantic tokens. Deps: 4.2, 1.4.
+- [x] 4.4 Create `apps/web/src/components/shell/{nav-sidebar,topbar}.tsx`: inert labeled placeholder entries only (chrome-only gate). Deps: 4.3.
+- [x] 4.5 Create `apps/web/src/app/(app)/app/page.tsx` (sample-card-ready Card home) + `(app)/app/placeholder/page.tsx` (deep-link proof). Deps: 4.3.
+- [x] 4.6 jsdom tests (Testing Library): direct `/app` visit renders sidebar+topbar around content; nested route keeps shell; nav entries inert, no business domain; sample card hosted in region inheriting tokens. Files: colocated `*.test.tsx`. Verify: `pnpm --filter @newsaas/web test`. Deps: 4.4, 4.5.
 
 ## Phase 5: S5 — Appearance Toggle (PR 5)
 

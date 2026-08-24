@@ -1,23 +1,33 @@
 "use client";
 
-import type { JSX, ReactNode } from "react";
-import { coreDesignDefaults } from "@newsaas/ui/branding";
+import { createContext, useContext, type JSX, type ReactNode } from "react";
+import type { ResolvedBrand } from "@newsaas/ui/branding";
+
+const BrandContext = createContext<ResolvedBrand | null>(null);
 
 /**
- * BrandProvider resolves the active brand theme.
+ * BrandProvider exposes the server-resolved brand to client components.
  *
- * In EPIC-00 it only applies the neutral CoreDesignDefaults via CSS variables.
- * Product presets and tenant overrides are wired in EPIC-03.
+ * The resolved brand is produced in the root layout (`resolveBrand` +
+ * `<style>` bridge) and passed down as a prop; this context only distributes
+ * it (e.g. the shell topbar reading `productName`). Styling itself flows
+ * through CSS variables — never inline styles.
  */
-export function BrandProvider({ children }: { children: ReactNode }): JSX.Element {
-  return (
-    <div
-      style={{
-        // Forward-compatible: future versions will inject resolved CSS variables here.
-        ["--radius" as string]: coreDesignDefaults.radius,
-      }}
-    >
-      {children}
-    </div>
-  );
+export function BrandProvider({
+  brand,
+  children,
+}: {
+  brand: ResolvedBrand;
+  children: ReactNode;
+}): JSX.Element {
+  return <BrandContext.Provider value={brand}>{children}</BrandContext.Provider>;
+}
+
+/** Read the active resolved brand. Throws when used outside `BrandProvider`. */
+export function useBrand(): ResolvedBrand {
+  const brand = useContext(BrandContext);
+  if (brand === null) {
+    throw new Error("useBrand must be used within a BrandProvider");
+  }
+  return brand;
 }
