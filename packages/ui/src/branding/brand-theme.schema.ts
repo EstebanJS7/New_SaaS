@@ -8,14 +8,14 @@ import { z } from "zod";
  * - radius must be a positive rem value;
  * - fonts must use only approved font-family names.
  */
-const hslOrHex = z
+export const hslOrHex = z
   .string()
   .regex(
     /^(hsl\(\s*\d+\s+\d+(?:\.\d+)?%\s+\d+(?:\.\d+)?%\s*\)|#[0-9a-fA-F]{6})$/,
     "Color must be an hsl() or 6-digit hex value"
   );
 
-const remValue = z
+export const remValue = z
   .string()
   .regex(/^\d+(?:\.\d+)?rem$/, "Radius must be a positive rem value (e.g. 0.5rem)");
 

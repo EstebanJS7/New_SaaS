@@ -43,12 +43,12 @@ Aggregate exceeds 400; each unit stays ≤400. Merging U2+U3 (~425) would breach
 
 ## Phase 3: S3 — Resolver, Bridge, Override Schema (PR 3)
 
-- [ ] 3.1 Extend `types.ts`: `DefaultAppearance`, `ProductBrandPreset`, `BrandThemePatch`, `ResolvedBrand`, `BrandOverride`. Deps: none.
-- [ ] 3.2 Export `hslOrHex`/`remValue` consts from `brand-theme.schema.ts` (additive; EPIC-00 behavior frozen). Deps: none.
-- [ ] 3.3 Create `brand-override.schema.ts` + tests (RED first): `BRAND_OVERRIDE_SCHEMA_VERSION=1`; strict camelCase subset `primary/accent/radius/defaultAppearance`; accepts any valid subset with version, rejects unknown keys, unsafe values (`url(...)`), wrong version, stable error codes (D3/D5). Verify: `pnpm --filter @newsaas/ui test`. Deps: 3.1, 3.2.
-- [ ] 3.4 Create `resolve-brand.ts` + tests: deep merge core ← preset ← tenant(reserved), silent gap/layer fallback, returns `ResolvedBrand`. Cases: preset-over-core precedence; missing/empty tenant == preset-over-core. Verify: same command. Deps: 3.1.
-- [ ] 3.5 Create `to-css-variables.ts` + test: strips `hsl()` wrappers, radius/fonts verbatim; fixture preset vs veterinary CSS-var maps differ where values differ (swap scenario). Deps: 3.4, 2.1.
-- [ ] 3.6 Update `branding/index.ts`: export new symbols + `activeProductPreset`. Verify: `pnpm --filter @newsaas/ui test && pnpm --filter @newsaas/ui build`. Deps: 3.3–3.5.
+- [x] 3.1 Extend `types.ts`: `DefaultAppearance`, `ProductBrandPreset`, `BrandThemePatch`, `ResolvedBrand`, `BrandOverride`. Deps: none.
+- [x] 3.2 Export `hslOrHex`/`remValue` consts from `brand-theme.schema.ts` (additive; EPIC-00 behavior frozen). Deps: none.
+- [x] 3.3 Create `brand-override.schema.ts` + tests (RED first): `BRAND_OVERRIDE_SCHEMA_VERSION=1`; strict camelCase subset `primary/accent/radius/defaultAppearance`; accepts any valid subset with version, rejects unknown keys, unsafe values (`url(...)`), wrong version, stable error codes (D3/D5). Verify: `pnpm --filter @newsaas/ui test`. Deps: 3.1, 3.2.
+- [x] 3.4 Create `resolve-brand.ts` + tests: deep merge core ← preset ← tenant(reserved), silent gap/layer fallback, returns `ResolvedBrand`. Cases: preset-over-core precedence; missing/empty tenant == preset-over-core. Verify: same command. Deps: 3.1.
+- [x] 3.5 Create `to-css-variables.ts` + test: strips `hsl()` wrappers, radius/fonts verbatim; fixture preset vs veterinary CSS-var maps differ where values differ (swap scenario). Deps: 3.4, 2.1.
+- [x] 3.6 Update `branding/index.ts`: export new symbols + `activeProductPreset`. Verify: `pnpm --filter @newsaas/ui test && pnpm --filter @newsaas/ui build`. Deps: 3.3–3.5.
 
 ## Phase 4: S4 — Staff Shell Skeleton (PR 4)
 
