@@ -38,8 +38,8 @@ Aggregate exceeds 400; each unit stays ≤400. Merging U2+U3 (~425) would breach
 
 ## Phase 2: S2 — Veterinary Preset (PR 2)
 
-- [ ] 2.1 Create `packages/ui/src/branding/presets/veterinary-default.ts`: complete distinct `BrandTheme` passing `brandThemeSchema`; asset fields reserved. Verify: via 2.2. Deps: U1.
-- [ ] 2.2 Test `presets/veterinary-default.test.ts`: preset parses `brandThemeSchema` without edits elsewhere. Verify: `pnpm --filter @newsaas/ui test`. Deps: 2.1.
+- [x] 2.1 Create `packages/ui/src/branding/presets/veterinary-default.ts`: complete distinct `BrandTheme` passing `brandThemeSchema`; asset fields reserved. Verify: via 2.2. Deps: U1.
+- [x] 2.2 Test `presets/veterinary-default.test.ts`: preset parses `brandThemeSchema` without edits elsewhere. Verify: `pnpm --filter @newsaas/ui test`. Deps: 2.1.
 
 ## Phase 3: S3 — Resolver, Bridge, Override Schema (PR 3)
 
