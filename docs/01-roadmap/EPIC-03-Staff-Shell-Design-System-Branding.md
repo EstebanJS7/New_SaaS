@@ -2,14 +2,14 @@
 id: EPIC-03
 type: epic
 title: Staff Shell, Design System and Branding
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - EPIC-01
 prd_sections:
   - "10.1"
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-24
 ---
 
 # EPIC-03 — Staff Shell, Design System and Branding
@@ -47,21 +47,27 @@ present different product presets and tenant branding without component forks.
 
 ## Acceptance Criteria
 
-- [ ] Shared components use semantic design tokens.
-- [ ] Veterinary product preset can be changed without editing shared
+- [x] Shared components use semantic design tokens.
+- [x] Veterinary product preset can be changed without editing shared
       components.
 - [ ] Tenant can upload allowed light/dark logos and favicon when entitled.
 - [ ] Tenant can change approved theme properties.
 - [ ] Theme input is schema validated.
 - [ ] Arbitrary CSS/JS cannot be injected.
 - [ ] Staff and portal can consume the same ResolvedBrand contract.
-- [ ] Missing tenant overrides fall back to product preset.
+- [x] Missing tenant overrides fall back to product preset.
 - [ ] Reset restores product defaults.
 - [ ] Public branding endpoint exposes only safe fields.
 - [ ] Tenant A cannot edit Tenant B branding.
 - [ ] Branding changes are audited.
 - [ ] Live preview does not persist until Save.
 - [ ] Lint/typecheck/tests/build are green.
+
+Progress note (2026-08-24): Phase A shipped the token layer with dark parity,
+the schema-valid veterinary preset, the resolver/CSS bridge (preset swap without
+shared-component edits, fallback chain tested), a chrome-only staff shell and
+client-local appearance persistence. The unticked criteria depend on Phase B
+tenant persistence/API/assets/audit work.
 
 ## Suggested Stories
 

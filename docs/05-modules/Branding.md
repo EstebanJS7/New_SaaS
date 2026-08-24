@@ -1,8 +1,8 @@
 ---
 type: module
 module: branding
-status: planned
-updated: 2026-08-13
+status: active
+updated: 2026-08-24
 ---
 
 # Module — Branding
@@ -44,6 +44,8 @@ custom_branding
 
 ## API
 
+None shipped yet (Phase B target surface):
+
 ```text
 GET   /api/v1/branding/current
 GET   /api/v1/settings/branding
@@ -78,19 +80,49 @@ product presets or tenant overrides. The shipped foundation is:
 No tenant resolution, no asset upload, and no Veterinary-specific colors are
 present in EPIC-00.
 
-## Deferred Veterinary preset: Clinical Precision
+## Implemented public behavior (EPIC-03 Phase A)
 
-The future default Veterinary product preset is named **Clinical Precision**.
-When implemented in EPIC-03 it is expected to use:
+Shipped as of EPIC-03 Phase A (chrome-only staff shell + token layer):
 
-- Primary accent in the teal family and slate neutrals.
-- `Inter` as the primary sans-serif typeface.
-- Defined radii, elevation, and spacing scales.
-- A monospaced numeric face for clinical/lab data.
-- Desktop-first layouts for dense staff workflows.
+- **Token layer**: complete semantic set in `apps/web/src/app/globals.css`
+  including the `--popover` pair and a full `.dark` block with light/dark parity
+  enforced by scan tests. Shared components consume tokens only; source scans
+  reject literal hex/HSL colors and palette utilities.
+- **Veterinary preset**: `Clinical Precision`
+  (`packages/ui/src/branding/presets/veterinary-default.ts`) is a complete,
+  schema-valid `ProductBrandPreset`.
+- **Resolver chain**: `resolveBrand` deep-merges core defaults ← preset ← tenant
+  patch (reserved; absent layers fall back silently) into a `ResolvedBrand`.
+- **CSS bridge**: root layout renders resolved values as a `<style>` tag under
+  `:root:not(.dark)` (see [[Branding and Theming]] for the precedence contract).
+  Preset swap requires zero shared-component edits.
+- **Override schema v1**: `brandOverrideSchema`
+  (`BRAND_OVERRIDE_SCHEMA_VERSION = 1`) accepts strict camelCase subsets
+  (`primary`, `accent`, `radius`, `defaultAppearance`) with stable error codes.
+  Validated in isolation only — not yet wired to tenant storage.
+- **Appearance persistence (client-local)**:
+  `localStorage["newsaas.appearance"]` stores `"light" | "dark"`. A
+  parser-blocking bootstrap script applies a stored `dark` before first paint;
+  the shell toggle flips `<html>.dark` without reload. Absent/corrupted value
+  mounts light; `"system"` accepted by schema but inert.
+- **Staff shell skeleton**: chrome-only `/app` route group (sidebar, topbar,
+  bounded `<main data-shell-content>` region) composed from shadcn Button/Card
+  primitives; nav entries are inert placeholders.
 
-Only the name and intent are recorded here; the actual preset file is out of
-EPIC-00 scope.
+## Not yet implemented (Phase B)
+
+Tenant branding persistence and admin API, asset uploads (logo/favicon), public
+branding endpoint, tenant isolation and audit for branding changes, settings UI
+with live preview/reset, entitlement (`custom_branding`) gating, and
+preset-driven recoloring of dark mode.
+
+## Veterinary preset: Clinical Precision
+
+Implemented in EPIC-03 Phase A as
+`packages/ui/src/branding/presets/veterinary-default.ts`: teal primary and amber
+accent over teal-tinted neutrals (hue range ~173–183), `Noto Sans` sans stack,
+`0.75rem` radius scale. Asset fields remain reserved (no uploads yet). Live
+cross-tab appearance sync is deferred to Phase B.
 
 ## Related
 

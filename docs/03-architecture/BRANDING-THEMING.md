@@ -1,7 +1,7 @@
 ---
 type: architecture
 status: active
-updated: 2026-08-13
+updated: 2026-08-24
 ---
 
 # Branding and Theming
@@ -27,7 +27,46 @@ CSS semantic variables
 shadcn/Tailwind UI
 ```
 
-### CoreDesignDefaults
+## Shipped Phase A implementation (EPIC-03)
+
+Phase A ships the layering from preset to rendered UI without persistence:
+
+```text
+packages/ui/src/branding/presets/veterinary-default.ts   ProductBrandPreset
+packages/ui/src/branding/core-defaults.ts                CoreDesignDefaults
+packages/ui/src/branding/resolve-brand.ts                deep merge core ← preset ← tenant (reserved)
+apps/web/src/lib/brand-style.ts                          bridge: ResolvedBrand → <style> CSS text
+apps/web/src/app/layout.tsx                              server render of the style tag
+```
+
+Shipped behavior:
+
+- The root layout resolves `activeProductPreset` server-side (no I/O) and
+  renders the resolved values as a `<style>` tag under the selector
+  `:root:not(.dark)`. That selector outranks `.dark` rules in light mode by
+  specificity `(0,2,0)` and goes inert under `.dark`, so tag order never matters
+  and dark palette parity stays design-system-owned (`globals.css`).
+- Preset swap = editing files under `packages/ui/src/branding/presets/` only;
+  shared components and shell consume semantic tokens exclusively (enforced by
+  source-scan tests rejecting literal colors).
+- Appearance control (`apps/web/src/components/shell/appearance-toggle.tsx`)
+  toggles the `dark` class on `<html>` and persists `"light" | "dark"` to
+  `localStorage["newsaas.appearance"]`; storage failures are tolerated. With
+  no/corrupted stored value the app mounts light; `"system"` is schema-valid but
+  intentionally inert in Phase A.
+- FOUC avoidance: a parser-blocking inline bootstrap script (source owned by
+  `apps/web/src/lib/appearance.ts`) is rendered as the first body content of the
+  root layout and re-applies a stored `dark` preference before first paint.
+  Note: Next.js may emit its own invisible RSC markers before it in SSR HTML; no
+  paint-affecting node precedes the script. `<html>` carries
+  `suppressHydrationWarning` because of this pre-paint mutation.
+
+Not yet shipped (later phases): tenant branding persistence and admin API, asset
+uploads, public branding endpoint, entitlement gating, settings UI with live
+preview/reset, tenant isolation and audit, and preset-driven recoloring of dark
+mode (see design open questions in the EPIC-03 change folder).
+
+## CoreDesignDefaults
 
 Stable neutral defaults owned by the reusable design system.
 
@@ -140,10 +179,9 @@ packages/ui/src/branding/
 └── presets/
     └── veterinary-default.ts
 
-apps/web/src/branding/
-├── brand-provider.tsx
-├── brand-loader.ts
-└── brand-assets.ts
+apps/web/src/
+├── lib/appearance.ts (appearance persistence + pre-paint bootstrap)
+└── app/(app)/layout.tsx (shell; brand flows via server-layout props)
 ```
 
 Do not create a separate component library per vertical.
@@ -211,10 +249,9 @@ resolve product preset
 Frontend responsibility:
 
 ```text
-BrandDTO
-→ CSS variable mapping
-→ BrandProvider
-→ application UI
+resolveBrand(activeProductPreset) in the server layout
+→ toCssVariables → <style> under :root:not(.dark)
+→ application UI (token-consuming components; no client provider)
 ```
 
 ## Public context

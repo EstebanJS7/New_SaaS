@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { activeProductPreset, resolveBrand } from "@newsaas/ui/branding";
-import { BrandProvider } from "@/providers/brand-provider";
 import { QueryProvider } from "@/providers/query-provider";
+import { appearanceBootstrapScript } from "@/lib/appearance";
 import { brandStyleCss } from "@/lib/brand-style";
 import "./globals.css";
 
@@ -22,20 +22,24 @@ const brand = resolveBrand(activeProductPreset);
 /**
  * Root layout.
  *
- * The `<style>` bridge ships the resolved brand values in the first-paint
- * payload under `:root:not(.dark)` (D2), so there is no flash and no client
- * JS. `suppressHydrationWarning` on `<html>` is required because the
- * appearance bootstrap (EPIC-03 Unit 5) may add the `dark` class pre-paint.
+ * First body child is a parser-blocking inline bootstrap script (D6): it
+ * reads the stored appearance and adds the `dark` class to `<html>` before
+ * first paint, so there is no flash. The `<style>` bridge then ships the
+ * resolved brand values under `:root:not(.dark)` (D2) — its precedence comes
+ * from the selector, not tag order, so script-before-style is safe.
+ *
+ * `suppressHydrationWarning` on `<html>` is required because that pre-paint
+ * class mutation makes server HTML differ from the hydrated DOM.
  */
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="bg-background text-foreground antialiased">
+        {/* Pre-paint appearance bootstrap (D6); static string, see lib/appearance.ts. */}
+        <script dangerouslySetInnerHTML={{ __html: appearanceBootstrapScript }} />
         {/* Static, schema-validated CSS variable declarations (D1/D2/D4). */}
         <style dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
-        <QueryProvider>
-          <BrandProvider brand={brand}>{children}</BrandProvider>
-        </QueryProvider>
+        <QueryProvider>{children}</QueryProvider>
       </body>
     </html>
   );

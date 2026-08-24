@@ -1,17 +1,8 @@
-import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import { activeProductPreset, resolveBrand, type ResolvedBrand } from "@newsaas/ui/branding";
-import { BrandProvider } from "@/providers/brand-provider";
 import AppHomePage from "./app/page";
 import AppPlaceholderPage from "./app/placeholder/page";
 import AppShellLayout from "./layout";
-
-const brand: ResolvedBrand = resolveBrand(activeProductPreset);
-
-function ShellWrapper({ children }: { children: ReactNode }) {
-  return <BrandProvider brand={brand}>{children}</BrandProvider>;
-}
 
 /** The bounded content region is contracted by its `data-shell-content` attribute. */
 function getContentRegion(): HTMLElement {
@@ -27,8 +18,7 @@ describe("AppShellLayout", () => {
     render(
       <AppShellLayout>
         <AppHomePage />
-      </AppShellLayout>,
-      { wrapper: ShellWrapper }
+      </AppShellLayout>
     );
 
     expect(screen.getByTestId("nav-sidebar")).toBeInTheDocument();
@@ -44,8 +34,7 @@ describe("AppShellLayout", () => {
     render(
       <AppShellLayout>
         <AppPlaceholderPage />
-      </AppShellLayout>,
-      { wrapper: ShellWrapper }
+      </AppShellLayout>
     );
 
     // Same chrome as the direct visit: the group layout surrounds any child.
@@ -60,8 +49,7 @@ describe("AppShellLayout", () => {
     render(
       <AppShellLayout>
         <AppHomePage />
-      </AppShellLayout>,
-      { wrapper: ShellWrapper }
+      </AppShellLayout>
     );
 
     const card = screen.getByTestId("sample-card");
