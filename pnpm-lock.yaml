@@ -292,6 +292,9 @@ importers:
       '@types/node':
         specifier: ^22.14.1
         version: 22.20.1
+      argon2:
+        specifier: ^0.45.1
+        version: 0.45.1
       eslint:
         specifier: ^9.24.0
         version: 9.39.5(jiti@2.7.0)

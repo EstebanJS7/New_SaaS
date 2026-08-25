@@ -61,6 +61,30 @@ export interface TenantMembershipRow {
   createdAt: Date;
 }
 
+/** Append-only audit row shape written by AuditWriter (design D9). */
+export interface AuditLogRow {
+  id: string;
+  action: string;
+  actorType: "STAFF" | "SYSTEM";
+  metadata: Record<string, unknown>;
+  tenantId?: string;
+  actorUserProfileId?: string;
+  targetType?: string;
+  targetId?: string;
+  requestId?: string;
+}
+
+export interface FeatureCodeRow {
+  id: string;
+  code: string;
+}
+
+export interface TenantEntitlementRow {
+  id: string;
+  tenantId: string;
+  featureCodeId: string;
+}
+
 interface MembershipWhere {
   id?: string;
   tenantId?: string;
@@ -106,6 +130,20 @@ export interface IsolationDatabase {
       }) => TenantMembershipRow[];
       updateMany: (args: { where: MembershipWhere; data: { status: string } }) => { count: number };
     };
+    auditLog: {
+      create: (args: { data: Omit<AuditLogRow, "id"> & { id?: string } }) => AuditLogRow;
+      findFirst: (args: { where: { action?: string; requestId?: string } }) => AuditLogRow | null;
+    };
+    featureCode: {
+      create: (args: { data: { code: string } }) => FeatureCodeRow;
+      findUnique: (args: { where: { code: string } }) => FeatureCodeRow | null;
+    };
+    tenantEntitlement: {
+      create: (args: { data: { tenantId: string; featureCodeId: string } }) => TenantEntitlementRow;
+      findFirst: (args: {
+        where: { tenantId: string; featureCode: { code: string } };
+      }) => TenantEntitlementRow | null;
+    };
   };
   tables: {
     tenants: Map<string, TenantRow>;
@@ -113,6 +151,9 @@ export interface IsolationDatabase {
     profiles: Map<string, UserProfileRow>;
     sessions: Map<string, StaffSessionRow>;
     memberships: Map<string, TenantMembershipRow>;
+    audits: Map<string, AuditLogRow>;
+    featureCodes: Map<string, FeatureCodeRow>;
+    entitlements: Map<string, TenantEntitlementRow>;
   };
 }
 
@@ -158,6 +199,9 @@ export function createIsolationDatabase(): IsolationDatabase {
   const profiles = new Map<string, UserProfileRow>();
   const sessions = new Map<string, StaffSessionRow>();
   const memberships = new Map<string, TenantMembershipRow>();
+  const audits = new Map<string, AuditLogRow>();
+  const featureCodes = new Map<string, FeatureCodeRow>();
+  const entitlements = new Map<string, TenantEntitlementRow>();
 
   const prisma: IsolationDatabase["prisma"] = {
     tenant: {
@@ -242,7 +286,47 @@ export function createIsolationDatabase(): IsolationDatabase {
         return { count };
       },
     },
+    auditLog: {
+      create: ({ data }) => {
+        const created: AuditLogRow = { id: randomUUID(), ...data };
+        audits.set(created.id, created);
+        return created;
+      },
+      findFirst: ({ where }) =>
+        [...audits.values()].find(
+          (candidate) =>
+            (where.action === undefined || candidate.action === where.action) &&
+            (where.requestId === undefined || candidate.requestId === where.requestId)
+        ) ?? null,
+    },
+    featureCode: {
+      create: ({ data }) => {
+        const created: FeatureCodeRow = { id: randomUUID(), code: data.code };
+        featureCodes.set(created.id, created);
+        return created;
+      },
+      findUnique: ({ where }) =>
+        [...featureCodes.values()].find((candidate) => candidate.code === where.code) ?? null,
+    },
+    tenantEntitlement: {
+      create: ({ data }) => {
+        const created: TenantEntitlementRow = { id: randomUUID(), ...data };
+        entitlements.set(created.id, created);
+        return created;
+      },
+      // Reproduces the relation filter of the real delegate: the grant must
+      // reference a feature_code whose code matches.
+      findFirst: ({ where }) =>
+        [...entitlements.values()].find((candidate) => {
+          if (candidate.tenantId !== where.tenantId) return false;
+          const linkedCode = featureCodes.get(candidate.featureCodeId)?.code;
+          return linkedCode === where.featureCode.code;
+        }) ?? null,
+    },
   };
 
-  return { prisma, tables: { tenants, roles, profiles, sessions, memberships } };
+  return {
+    prisma,
+    tables: { tenants, roles, profiles, sessions, memberships, audits, featureCodes, entitlements },
+  };
 }

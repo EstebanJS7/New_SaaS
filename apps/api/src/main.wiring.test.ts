@@ -19,7 +19,12 @@ describe("API bootstrap contract wiring", () => {
   });
 
   it("passes the pino root logger into the adapter", () => {
-    expect(mainSource).toMatch(/createFastifyAdapter\(\{\s*loggerInstance:\s*logger\s*\}/);
+    expect(mainSource).toMatch(/createFastifyAdapter\(\{[\s\S]*?loggerInstance:\s*logger/);
+  });
+
+  it("feeds the CORS allowlist and HSTS posture from parsed env (transport baseline)", () => {
+    expect(mainSource).toContain("corsAllowedOrigins:");
+    expect(mainSource).toContain("hstsEnabled:");
   });
 
   it("contains no console.* calls in the bootstrap path", () => {

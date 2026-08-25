@@ -14,10 +14,17 @@ async function bootstrap(logger: ApiLogger): Promise<void> {
     process.exit(1);
   }
 
-  // Single adapter construction point: request-id generation/echo + pino.
+  // Single adapter construction point: request-id generation/echo, CORS
+  // allowlist and security-header baseline.
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    createFastifyAdapter({ loggerInstance: logger }),
+    createFastifyAdapter({
+      loggerInstance: logger,
+      corsAllowedOrigins: envResult.env.API_CORS_ALLOWED_ORIGINS,
+      // HSTS only when the transport is HTTPS-grade (same posture that makes
+      // session cookies Secure outside development).
+      hstsEnabled: envResult.env.NODE_ENV !== "development",
+    }),
     // Nest's console-based default logger is replaced by pino entirely.
     { logger: false }
   );

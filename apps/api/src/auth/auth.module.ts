@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
+import { AuditModule } from "../audit/audit.module.js";
 import { ContextModule } from "../context/context.module.js";
 import { AUTH_CONFIG, readAuthConfig, type AuthConfig } from "./auth.config.js";
 import { AuthController } from "./auth.controller.js";
@@ -19,7 +20,9 @@ import { SessionService } from "./session.service.js";
  * composes AuthModule.
  */
 @Module({
-  imports: [ContextModule],
+  // AuditModule supplies the append-only writer AuthService emits login
+  // events through (design D9); ContextModule carries the request context.
+  imports: [ContextModule, AuditModule],
   controllers: [AuthController],
   providers: [
     CredentialService,

@@ -33,6 +33,7 @@
     "@newsaas/eslint-config": "workspace:*",
     "@newsaas/typescript-config": "workspace:*",
     "@newsaas/vitest-config": "workspace:*",
+    "argon2": "^0.45.1",
     "@types/node": "^22.14.1",
     "eslint": "^9.24.0",
     "prisma": "^6.19.0",

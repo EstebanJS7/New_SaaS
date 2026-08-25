@@ -38,11 +38,31 @@ interface SessionRowShape {
   tokenHash: string;
 }
 
+interface AuditRowShape {
+  id: string;
+  action: string;
+  actorType: string;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * Deterministic UUID profile ids: the AuditWriter validates actor/target
+ * identifiers as UUIDs (real FKs are UUIDs), so fixtures use well-formed ones.
+ */
+const PROFILE_IDS = [
+  "00000000-0000-4000-8000-000000000001",
+  "00000000-0000-4000-8000-000000000002",
+  "00000000-0000-4000-8000-000000000003",
+] as const;
+
+const PROFILE_ID_1 = PROFILE_IDS[0];
+
 /** In-memory Prisma boundary fake (PrismaClient is a Proxy — no instanceof). */
 function makeFakeDatabase() {
   const profiles = new Map<string, { id: string; email: string; displayName: string }>();
   const credentials = new Map<string, string>(); // profileId -> password hash
   const sessions = new Map<string, SessionRowShape>(); // tokenHash -> row
+  const audits = new Map<string, AuditRowShape>(); // append-only audit trail
   let sequence = 0;
 
   const prisma = {
@@ -92,9 +112,24 @@ function makeFakeDatabase() {
         count: sessions.delete(where.tokenHash) ? 1 : 0,
       }),
     },
+    auditLog: {
+      // AuthService appends login events (design D9); the fake stores them so
+      // the auth suite proves no credential material lands in the trail.
+      create: ({ data }: { data: Record<string, unknown> }) => {
+        sequence += 1;
+        const row: AuditRowShape = {
+          id: `audit-${sequence}`,
+          action: data.action as string,
+          actorType: data.actorType as string,
+          metadata: (data.metadata ?? {}) as Record<string, unknown>,
+        };
+        audits.set(row.id, row);
+        return row;
+      },
+    },
   };
 
-  return { prisma, profiles, credentials, sessions };
+  return { prisma, profiles, credentials, sessions, audits };
 }
 
 type FakeDatabase = ReturnType<typeof makeFakeDatabase>;
@@ -105,7 +140,7 @@ async function seedStaff(
   password: string
 ): Promise<{ id: string; displayName: string }> {
   const profile = {
-    id: `profile-${db.profiles.size + 1}`,
+    id: PROFILE_IDS[db.profiles.size],
     email: email.toLowerCase(),
     displayName: `Staff ${db.profiles.size + 1}`,
   };
@@ -191,7 +226,7 @@ describe("Auth surface (real Fastify adapter)", () => {
 
     // Minimal identity body — no credential material anywhere.
     const body = response.body as { user: { id: string; displayName: string } };
-    expect(body.user).toEqual({ id: "profile-1", displayName: "Staff 1" });
+    expect(body.user).toEqual({ id: PROFILE_ID_1, displayName: "Staff 1" });
     expect(JSON.stringify(response.body)).not.toContain("correct-password");
 
     // Cookie flags (transport baseline): HttpOnly + SameSite=Lax + Path=/.
@@ -283,7 +318,7 @@ describe("Auth surface (real Fastify adapter)", () => {
       .expect(200);
 
     const body = probe.body as { user: { id: string }; requestId: string };
-    expect(body.user.id).toBe("profile-1");
+    expect(body.user.id).toBe(PROFILE_ID_1);
     // ALS wiring proof end to end: context carries the request-id seam's id.
     expect(probe.headers["x-request-id"]).toBe("context-probe-id");
     expect(body.requestId).toBe("context-probe-id");

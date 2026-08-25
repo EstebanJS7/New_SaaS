@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import { PrismaService } from "@newsaas/database";
+import { AuditWriter } from "../audit/audit-writer.service.js";
 import { CredentialService } from "./credential.service.js";
 import { LoginRateLimiterService } from "./login-rate-limiter.service.js";
 import { SessionService } from "./session.service.js";
@@ -38,7 +39,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly credentials: CredentialService,
     private readonly sessions: SessionService,
-    private readonly rateLimiter: LoginRateLimiterService
+    private readonly rateLimiter: LoginRateLimiterService,
+    private readonly audit: AuditWriter
   ) {}
 
   async login(
@@ -47,7 +49,9 @@ export class AuthService {
   ): Promise<LoginResult> {
     const limiterKey = this.rateLimiter.key(input.email, meta.ip);
 
-    // Blocked traffic is rejected before any DB or crypto work happens.
+    // Blocked traffic is rejected before any DB or crypto work happens — and
+    // BEFORE any audit append, so a flood of blocked attempts cannot be
+    // weaponized into an audit-table storage DoS (documented limitation).
     if (this.rateLimiter.isBlocked(limiterKey)) {
       throw new DomainError("RATE_LIMITED", "Too many failed login attempts. Try again later.");
     }
@@ -68,12 +72,31 @@ export class AuthService {
 
     if (!profile?.credential || !passwordMatches) {
       this.rateLimiter.recordFailure(limiterKey);
+      // Audit-or-nothing: the failure is recorded before the client sees it;
+      // if the append itself fails, the 401 is replaced by a 5xx rather than
+      // issuing untracked auth events. Attribution: STAFF when the attempted
+      // email exists, SYSTEM otherwise. metadata.email is INTERNAL-classified
+      // security-forensics data (identifier only — never credentials).
+      await this.audit.append({
+        action: "auth.login_failed",
+        ...(profile && { actorUserProfileId: profile.id }),
+        targetType: "user_profile",
+        ...(profile && { targetId: profile.id }),
+        metadata: { email },
+      });
       throw new DomainError("UNAUTHENTICATED", INVALID_CREDENTIALS_MESSAGE);
     }
 
     this.rateLimiter.reset(limiterKey);
 
     const { token } = await this.sessions.issue(profile.id);
+    await this.audit.append({
+      action: "auth.login_succeeded",
+      actorUserProfileId: profile.id,
+      targetType: "user_profile",
+      targetId: profile.id,
+      metadata: { email },
+    });
     return { token, user: { id: profile.id, displayName: profile.displayName } };
   }
 
