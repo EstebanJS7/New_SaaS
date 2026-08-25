@@ -38,6 +38,7 @@ model UserProfile {
   credential  UserCredential?
   sessions    StaffSession[]
   memberships TenantMembership[]
+  auditLogs   AuditLog[]
 
   @@map("user_profile")
 }
@@ -111,6 +112,8 @@ model Tenant {
   branches     Branch[]
   memberships  TenantMembership[]
   portalAccess CustomerPortalAccess[]
+  entitlements TenantEntitlement[]
+  auditLogs    AuditLog[]
 
   @@map("tenant")
 }
@@ -135,11 +138,6 @@ model Branch {
 
 /// Binds a global staff profile to one tenant with one role. Demonstrates the
 /// tenant-safe repository pattern (spec: tenancy-core / Repository pattern).
-///
-/// KNOWN DEVIATION (accepted, batch-mode apply): the `role_id` FOREIGN KEY to
-/// `role(id)` ON DELETE RESTRICT is added by an additive ALTER in migration 003
-/// (task 2.4 / U5), because sequential migrations cannot forward-reference a
-/// table created later. The column itself is final here — NOT NULL uuid.
 model TenantMembership {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
@@ -153,6 +151,7 @@ model TenantMembership {
 
   tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   userProfile UserProfile @relation(fields: [userProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  role        Role        @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   /// One membership per (tenant, profile).
   @@unique([tenantId, userProfileId])
@@ -181,4 +180,188 @@ model CustomerPortalAccess {
 
   @@index([tenantId])
   @@map("customer_portal_access")
+}
+
+// ---------------------------------------------------------------------------
+// RBAC reference data (design D2). Seeded inertly by the reference seed — no
+// role-management UI or CRUD API exists (spec: RBAC scope fence). Policy
+// evaluation belongs to EPIC-02.
+// ---------------------------------------------------------------------------
+
+/// Staff role catalog. `code` is the stable natural key used by the reference
+/// seed (OWNER, ADMIN, VETERINARIAN, RECEPTIONIST, CASHIER, INVENTORY_MANAGER).
+model Role {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  code String @unique
+  name String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  memberships     TenantMembership[]
+  rolePermissions RolePermission[]
+
+  @@map("role")
+}
+
+/// Permission catalog. `key` is the stable natural key with the PRD §9
+/// `domain.resource.action` shape; uniqueness is global.
+model Permission {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  key  String @unique
+  name String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  rolePermissions RolePermission[]
+
+  @@map("permission")
+}
+
+/// Role↔permission binding. Surrogate UUID PK plus a compound unique on the
+/// pair so the reference seed can upsert by the natural keys.
+model RolePermission {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permission")
+}
+
+// ---------------------------------------------------------------------------
+// Entitlements boundary (design D8): boolean capability grants per tenant over
+// seeded feature codes. No automatic grants exist — access requires an explicit
+// tenant_entitlement row. Callers consult EntitlementsService.has() (task 7.1),
+// never plan comparisons.
+// ---------------------------------------------------------------------------
+
+/// Feature capability catalog. `code` is the stable natural key; the twelve
+/// MVP codes are pinned by PRD §10.
+model FeatureCode {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  code String @unique
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  planCapabilities PlanCapability[]
+  entitlements     TenantEntitlement[]
+
+  @@map("feature_code")
+}
+
+/// Plan catalog. Plans never gate anything directly — they only pre-map
+/// feature codes via plan_capability; enforcement goes through grants.
+model Plan {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  code String @unique
+  name String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  planCapabilities PlanCapability[]
+
+  @@map("plan")
+}
+
+/// Plan↔feature-code mapping (the inert starter plan maps all twelve codes).
+model PlanCapability {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  planId        String @map("plan_id") @db.Uuid
+  featureCodeId String @map("feature_code_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  plan        Plan        @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  featureCode FeatureCode @relation(fields: [featureCodeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([planId, featureCodeId])
+  @@map("plan_capability")
+}
+
+/// Explicit per-tenant grant. UNIQUE(tenant_id, feature_code_id) doubles as
+/// the lookup index for `has(tenantId, featureCode)`.
+model TenantEntitlement {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String @map("tenant_id") @db.Uuid
+  featureCodeId String @map("feature_code_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  featureCode FeatureCode @relation(fields: [featureCodeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, featureCodeId])
+  @@map("tenant_entitlement")
+}
+
+// ---------------------------------------------------------------------------
+// Audit scaffolding (design D9).
+//
+// APPEND-ONLY BOUNDARY: audit_log rows are written exactly once through
+// AuditWriter.append() (task 7.1) and are never updated or deleted — no update/
+// delete affordance exists anywhere in application code, and this model has no
+// mutation surface beyond create. Database-level trigger enforcement is not
+// required while the writer boundary holds; immutability tests pin behavior at
+// the service layer (spec scenarios owned by task 7.1).
+// Data classification: metadata payloads must be sanitized before append;
+// CONFIDENTIAL/RESTRICTED material is never logged (engineering rules).
+// ---------------------------------------------------------------------------
+
+enum AuditActorType {
+  STAFF
+  SYSTEM
+
+  @@map("audit_actor_type")
+}
+
+model AuditLog {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  /// Owning tenant when the audited event is tenant-scoped; null for system-
+  /// wide events. FK RESTRICT keeps the trail joinable and indestructible.
+  tenantId String? @map("tenant_id") @db.Uuid
+
+  /// Acting staff profile; null for SYSTEM actor rows.
+  actorUserProfileId String?        @map("actor_user_profile_id") @db.Uuid
+  actorType          AuditActorType @map("actor_type")
+
+  /// Event name in "domain.event" form (e.g. "auth.login").
+  action String
+
+  /// Polymorphic target coordinates; kept TEXT because targets span domains.
+  targetType String? @map("target_type")
+  targetId   String? @map("target_id")
+
+  /// Sanitized event payload (jsonb). Never contains secret/credential material.
+  metadata Json @map("metadata")
+
+  requestId String? @map("request_id")
+
+  /// Append-only rows are written once — created_at only, by design D9.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant       Tenant?      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorProfile UserProfile? @relation(fields: [actorUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("audit_log")
 }
