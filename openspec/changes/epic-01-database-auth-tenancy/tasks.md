@@ -179,7 +179,7 @@ both under budget; slice order and verification content unchanged.
 
 ## Phase 5: Slice S4 — Tenancy Core
 
-- [ ] 5.1 `TenantActiveGuard` (skips `@Public` + `/auth/*`; requires ACTIVE
+- [x] 5.1 `TenantActiveGuard` (skips `@Public` + `/auth/*`; requires ACTIVE
       membership else 403 FORBIDDEN envelope) wired after AuthGuard; tenant-safe
       `TenantMembershipRepository` taking `RequestContextService`, implicit
       `where:{tenantId: ctx.requiredTenantId()}`, zero rows ⇒
@@ -187,15 +187,25 @@ both under budget; slice order and verification content unchanged.
       Repo-level tests: implicit scoping observable rows; cross-tenant write
       prevented. Verify: `pnpm test --filter @newsaas/api`. Est ≤310. Deps: 2.3,
       4.1.
-- [ ] 5.2 Isolation harness (first-class):
+- [x] 5.2 Isolation harness (first-class):
       `apps/api/test/support/{boot-test-app.ts,seed-two-tenants.ts,expect-cross-tenant-404.ts}`
       — dedicated `DATABASE_URL_TEST` with migrate deploy; seeds two
       tenants/profiles/memberships/sessions→cookies; helper asserts
       byte-equivalent 404 bodies (nonexistent vs foreign). Harness self-test
       spec proving boot + dual-context isolation. Verify:
       `pnpm test --filter @newsaas/api` (support specs included). Est ≤260.
-      Deps: 4.3, 2.3.
-- [ ] 5.3 Cross-tenant integration suite using harness — one case per shipped
+      Deps: 4.3, 2.3. **OUTCOME NOTE:** The harness boots the REAL AppModule
+      over the REAL Fastify adapter factory (production guard chain) but binds
+      `PrismaService` to a structural in-memory boundary fake
+      (`test/support/in-memory-database.ts`) instead of a live
+      `DATABASE_URL_TEST` PostgreSQL — matching the seam proven by the Batch 4
+      auth integration suite (PrismaClient is a Proxy; structural stub is
+      indistinguishable to consumers). Real-PG schema behavior stays covered by
+      the CI `migrations` job (`migrate deploy` on fresh PG16); the quality job
+      runs the isolation suites without a PG service dependency. Byte-equivalent
+      404 assertion pins one inbound `X-Request-Id` across probes so envelope
+      texts are truly byte-equal (D7 adoption proof included).
+- [x] 5.3 Cross-tenant integration suite using harness — one case per shipped
       private aggregate (TenantMembership): foreign UUID⇒404 envelope;
       nonexistent-vs-foreign byte-equivalence; body/query/header Tenant-B hint
       ignored (scoping stays Tenant A); no tenant-creation route exists

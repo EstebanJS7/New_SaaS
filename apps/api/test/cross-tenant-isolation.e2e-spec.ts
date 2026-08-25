@@ -1,0 +1,258 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import supertest from "supertest";
+import { bootTestApp, type BootedTestApp } from "./support/boot-test-app.js";
+import { expectCrossTenant404 } from "./support/expect-cross-tenant-404.js";
+import { seedTwoTenants, type TwoTenantFixture } from "./support/seed-two-tenants.js";
+
+interface ErrorEnvelopeBody {
+  error: { code: string; message: string; requestId: string };
+}
+
+interface MembershipListBody {
+  memberships: { id: string; tenantId: string; userProfileId: string; status: string }[];
+}
+
+/**
+ * Cross-tenant ISOLATION SUITE over the shipped private aggregate
+ * (`TenantMembership`) — real HTTP through the production adapter factory and
+ * the full AppModule guard chain (design D5, tasks 5.3).
+ *
+ * Fences proven here (spec traceability #30–#38, #45, #46):
+ * - unauthenticated ⇒ 401 envelope BEFORE any tenancy logic;
+ * - authenticated without ACTIVE membership ⇒ 403 envelope (never data);
+ * - foreign resource ⇒ 404 indistinguishable from nonexistent;
+ * - body/query/header tenant hints NEVER steer server-side scoping;
+ * - no self-service tenant/role/branch surface exists anywhere;
+ * - Branch/CustomerPortalAccess stay untouched by any route;
+ * - zero cross-tenant identifiers in every observed response body.
+ */
+describe("cross-tenant isolation (real HTTP, full guard chain)", () => {
+  let booted: BootedTestApp;
+  let fixture: TwoTenantFixture;
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    fixture = seedTwoTenants(booted.db);
+  });
+
+  afterAll(async () => {
+    fixture.cleanup();
+    await booted.close();
+  });
+
+  const foreignIdentifiers = (): string[] => [
+    fixture.tenants.b.id,
+    fixture.tenants.b.slug,
+    fixture.actors.b.profile.id,
+    fixture.actors.b.membership!.id,
+    fixture.actors.b.profile.email,
+  ];
+
+  /**
+   * Identifiers that must NEVER appear anywhere, including infra metadata.
+   * Restricted to values this suite NEVER puts on the wire: Fastify access
+   * logs serialize `req.url`, and the query-hint probe below legitimately
+   * carries tenant B's id/slug as caller-supplied claims (a request line is
+   * not a data leak — the caller already knows what it sent). Profile
+   * identity, by contrast, is never transmitted by us — seeing it anywhere
+   * would prove a real boundary breach.
+   */
+  const neverAcceptableAnywhere = (): string[] => [
+    fixture.actors.b.profile.id,
+    fixture.actors.b.profile.email,
+  ];
+
+  it("rejects UNAUTHENTICATED access with a 401 envelope before any tenancy logic", async () => {
+    for (const url of ["/memberships", `/memberships/${fixture.actors.a.membership!.id}`]) {
+      const response = await supertest(booted.app.getHttpServer()).get(url).expect(401);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("UNAUTHENTICATED");
+    }
+  });
+
+  it("scopes listing IMPLICITLY: tenant A observes only A rows even though B exists", async () => {
+    const asA = await supertest(booted.app.getHttpServer())
+      .get("/memberships")
+      .set("Cookie", fixture.actors.a.cookie)
+      .expect(200);
+    const listA = (asA.body as MembershipListBody).memberships;
+
+    // Tenant A's roster = its ACTIVE member + its SUSPENDED member (the
+    // repository scopes by TENANT only); zero B rows is the isolation proof.
+    expect(listA).toHaveLength(2);
+    expect(listA.map((entry) => entry.tenantId)).toEqual([
+      fixture.tenants.a.id,
+      fixture.tenants.a.id,
+    ]);
+    expect(listA.every((entry) => entry.status === "ACTIVE" || entry.status === "SUSPENDED")).toBe(
+      true
+    );
+    // The call site passed NO tenant filter — scoping is the repository's.
+    for (const identifier of foreignIdentifiers()) {
+      expect(asA.text).not.toContain(identifier);
+    }
+  });
+
+  it("masks a FOREIGN membership as 404 and stays byte-equivalent to nonexistent", async () => {
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.actors.a.cookie,
+      nonexistentUrl: `/memberships/${randomUUID()}`,
+      foreignUrl: `/memberships/${fixture.actors.b.membership!.id}`,
+      forbiddenIdentifiers: foreignIdentifiers(),
+    });
+  });
+
+  it("ignores query/header tenant hints: scoping still resolves to tenant A", async () => {
+    const plainList = await supertest(booted.app.getHttpServer())
+      .get("/memberships")
+      .set("Cookie", fixture.actors.a.cookie)
+      .expect(200);
+
+    // Client-supplied hints claiming Tenant B via EVERY transport channel.
+    // (There is deliberately no private route that reads a JSON body this
+    // epic — the body-vector fence lives in the creation-route cases below,
+    // where bodies are sent and provably never processed.)
+    const hintedList = await supertest(booted.app.getHttpServer())
+      .get("/memberships")
+      .set("Cookie", fixture.actors.a.cookie)
+      .query({ tenantId: fixture.tenants.b.id })
+      .query({ slug: fixture.tenants.b.slug })
+      .set("x-tenant-id", fixture.tenants.b.id)
+      .expect(200);
+
+    expect(hintedList.text).toBe(plainList.text);
+
+    const hintedDetail = await supertest(booted.app.getHttpServer())
+      .get(`/memberships/${fixture.actors.b.membership!.id}`)
+      .set("Cookie", fixture.actors.a.cookie)
+      .query({ tenantId: fixture.tenants.b.id })
+      .set("x-tenant-id", fixture.tenants.b.id)
+      .expect(404);
+    expect((hintedDetail.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+  });
+
+  it("gives an authenticated session WITHOUT memberships 403 — but /auth/me still works", async () => {
+    const cookie = fixture.actors.noMembership.cookie;
+
+    // Private tenant-scoped surface: FORBIDDEN envelope (spec: no membership,
+    // no tenant authority). This ALSO discriminates the guard chain order:
+    // TenantActiveGuard could only reject with 403 because AuthGuard had
+    // already enriched the context — running first it would fail 401 instead.
+    const denied = await supertest(booted.app.getHttpServer())
+      .get("/memberships")
+      .set("Cookie", cookie)
+      .expect(403);
+    expect((denied.body as ErrorEnvelopeBody).error.code).toBe("FORBIDDEN");
+
+    const foreignDetail = await supertest(booted.app.getHttpServer())
+      .get(`/memberships/${fixture.actors.b.membership!.id}`)
+      .set("Cookie", cookie)
+      .expect(403);
+    expect(foreignDetail.text).not.toContain(fixture.actors.b.membership!.id);
+
+    // Same session on /auth/*: reachable — proving the D3 skip rule.
+    const me = await supertest(booted.app.getHttpServer())
+      .get("/auth/me")
+      .set("Cookie", cookie)
+      .expect(200);
+    expect((me.body as { user: { id: string } }).user.id).toBe(
+      fixture.actors.noMembership.profile.id
+    );
+  });
+
+  it("treats SUSPENDED memberships as no authority at all (ACTIVE-only rule)", async () => {
+    const suspended = await supertest(booted.app.getHttpServer())
+      .get("/memberships")
+      .set("Cookie", fixture.actors.suspendedA.cookie)
+      .expect(403);
+    expect((suspended.body as ErrorEnvelopeBody).error.code).toBe("FORBIDDEN");
+  });
+
+  it("has NO self-service creation surface: signup attempts hit absent routes (404)", async () => {
+    const attempts: [string, Record<string, unknown>][] = [
+      ["/tenants", { slug: "evil-tenant", name: "Evil" }],
+      ["/auth/register", { email: "evil@isolation.test", password: "whatever123" }],
+      ["/tenants/register", { name: "Evil" }],
+      ["/roles", { code: "SUPERUSER" }],
+      ["/branches", { name: "Shadow Branch" }],
+    ];
+    for (const [url, payload] of attempts) {
+      // Every self-service creation vector would be a POST — probed explicitly,
+      // never through dynamic method dispatch.
+      const response = await supertest(booted.app.getHttpServer())
+        .post(url)
+        .set("Cookie", fixture.actors.a.cookie)
+        .send(payload)
+        .expect(404);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+    }
+
+    // Unauthenticated registration attempts are equally impossible: the route
+    // simply does not exist.
+    await supertest(booted.app.getHttpServer()).post("/auth/register").send({}).expect(404);
+  });
+
+  it("has NO role/permission ADMINISTRATION surface either (RBAC stays inert)", async () => {
+    for (const url of ["/roles", `/roles/${randomUUID()}`, "/permissions"]) {
+      const response = await supertest(booted.app.getHttpServer())
+        .get(url)
+        .set("Cookie", fixture.actors.a.cookie)
+        .expect(404);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+    }
+  });
+
+  it("keeps schema-only scaffolding inert: Branch/CustomerPortalAccess have no routes", async () => {
+    for (const url of [
+      "/branches",
+      `/branches/${randomUUID()}`,
+      "/portal-access",
+      `/portal-access/${randomUUID()}`,
+    ]) {
+      const response = await supertest(booted.app.getHttpServer())
+        .get(url)
+        .set("Cookie", fixture.actors.a.cookie)
+        .expect(404);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+    }
+
+    // Membership writes are repo-pattern demos only this epic — NO mutation
+    // route ships, so cross-tenant writes are structurally unreachable by API.
+    for (const method of ["patch", "put", "delete"] as const) {
+      const response = await supertest(booted.app.getHttpServer())
+        [method](`/memberships/${fixture.actors.b.membership!.id}`)
+        .set("Cookie", fixture.actors.a.cookie)
+        .send({ status: "SUSPENDED" })
+        .expect(404);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+    }
+  });
+
+  it("leaks ZERO tenant-B identifiers across every observed response body", async () => {
+    const responses = [
+      await supertest(booted.app.getHttpServer())
+        .get("/memberships")
+        .set("Cookie", fixture.actors.a.cookie),
+      await supertest(booted.app.getHttpServer())
+        .get(`/memberships/${fixture.actors.b.membership!.id}`)
+        .set("Cookie", fixture.actors.a.cookie),
+      await supertest(booted.app.getHttpServer())
+        .get("/memberships")
+        .set("Cookie", fixture.actors.noMembership.cookie),
+    ];
+
+    const serialized = responses.map((response) => response.text).join("\n");
+    for (const identifier of foreignIdentifiers()) {
+      expect(serialized).not.toContain(identifier);
+    }
+
+    // Structured logs carry no tenant-B material either. (The probed foreign
+    // MEMBERSHIP id legitimately appears inside request URLs — a 404 route
+    // path is not data — so the log fence covers identity-revealing values.)
+    const logs = booted.logLines().join("\n");
+    for (const identifier of neverAcceptableAnywhere()) {
+      expect(logs).not.toContain(identifier);
+    }
+  });
+});

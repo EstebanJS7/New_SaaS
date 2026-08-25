@@ -114,6 +114,9 @@ PostgreSQL; account-recovery deferral is tracked as Tech Debt, never silent.
   (EPIC-17).
 - [[TD-005]] — login rate limiter is single-replica by design; shared-store
   revision required before any horizontal scaling.
+- [[TD-006]] — tenant-isolation suites run over an in-memory Prisma boundary;
+  live-PostgreSQL execution lands in the CI migrations job before further
+  tenant-scoped aggregates.
 
 ## Related
 

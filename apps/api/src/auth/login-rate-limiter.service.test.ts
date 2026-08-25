@@ -32,11 +32,11 @@ describe("LoginRateLimiterService", () => {
 
     for (let attempt = 1; attempt <= LOGIN_FAILURE_THRESHOLD - 1; attempt += 1) {
       limiter.recordFailure(key, at(attempt * 1000));
-      expect(limiter.isBlocked(key)).toBe(false);
+      expect(limiter.isBlocked(key, at(attempt * 1000))).toBe(false);
     }
 
     limiter.recordFailure(key, at(LOGIN_FAILURE_THRESHOLD * 1000));
-    expect(limiter.isBlocked(key)).toBe(true);
+    expect(limiter.isBlocked(key, at(LOGIN_FAILURE_THRESHOLD * 1000))).toBe(true);
   });
 
   it("slides the window: entries older than 15 minutes stop counting", () => {
@@ -60,15 +60,18 @@ describe("LoginRateLimiterService", () => {
     for (let attempt = 0; attempt < LOGIN_FAILURE_THRESHOLD; attempt += 1) {
       limiter.recordFailure(key, at(attempt * 1000));
     }
-    expect(limiter.isBlocked(key)).toBe(true);
+    // Explicit `now` everywhere below: seeded failures live around T0, not
+    // around wall clock, so defaulting would prune them on touch.
+    const seededNow = at((LOGIN_FAILURE_THRESHOLD - 1) * 1000);
+    expect(limiter.isBlocked(key, seededNow)).toBe(true);
 
     limiter.reset(key);
-    expect(limiter.isBlocked(key)).toBe(false);
+    expect(limiter.isBlocked(key, seededNow)).toBe(false);
     // Post-reset failures start a fresh budget instead of inheriting history.
     for (let attempt = 0; attempt < LOGIN_FAILURE_THRESHOLD - 1; attempt += 1) {
       limiter.recordFailure(key, at(60_000 + attempt * 1000));
     }
-    expect(limiter.isBlocked(key)).toBe(false);
+    expect(limiter.isBlocked(key, at(60_000 + (LOGIN_FAILURE_THRESHOLD - 2) * 1000))).toBe(false);
   });
 
   it("blocked checks perform no recording: window never extends while blocked", () => {
@@ -80,8 +83,9 @@ describe("LoginRateLimiterService", () => {
     }
 
     // Hammering while blocked must not push the unlock moment further away.
+    const blockedAt = at((LOGIN_FAILURE_THRESHOLD - 1) * 1000);
     for (let hammer = 0; hammer < 50; hammer += 1) {
-      expect(limiter.isBlocked(key)).toBe(true); // no recordFailure here
+      expect(limiter.isBlocked(key, blockedAt)).toBe(true); // no recordFailure here
     }
     expect(limiter.isBlocked(key, at(LOGIN_FAILURE_WINDOW_MS + 1))).toBe(false);
   });
@@ -118,10 +122,11 @@ describe("LoginRateLimiterService", () => {
 
     // Oldest key: full budget => blocked BEFORE the flood.
     const evictedKey = limiter.key("oldest@clinic.test", "10.0.0.7");
+    const seededNow = at((LOGIN_FAILURE_THRESHOLD - 1) * 1000);
     for (let attempt = 0; attempt < LOGIN_FAILURE_THRESHOLD; attempt += 1) {
       limiter.recordFailure(evictedKey, at(attempt * 1000));
     }
-    expect(limiter.isBlocked(evictedKey)).toBe(true);
+    expect(limiter.isBlocked(evictedKey, seededNow)).toBe(true);
 
     // Flood with ceiling-1 throwaway keys (timestamps stay inside the window
     // so pruning cannot interfere with the eviction being proven).
@@ -138,9 +143,9 @@ describe("LoginRateLimiterService", () => {
     expect(limiter.trackedKeyCount).toBe(MAX_TRACKED_KEYS);
     // ...the OLDEST key was the one sacrificed (its exhausted budget is gone,
     // even though its failures are still inside the window)...
-    expect(limiter.isBlocked(evictedKey)).toBe(false);
+    expect(limiter.isBlocked(evictedKey, seededNow)).toBe(false);
     // ...and the newest budgeted key survived intact.
-    expect(limiter.isBlocked(survivorKey)).toBe(true);
+    expect(limiter.isBlocked(survivorKey, seededNow)).toBe(true);
   });
 
   it("keeps counters exact under hostile key churn", () => {
