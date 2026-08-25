@@ -28,7 +28,9 @@
     "@newsaas/prettier-config": "workspace:*",
     "@newsaas/typescript-config": "workspace:*",
     "@newsaas/vitest-config": "workspace:*",
+    "@swc/core": "^1.16.1",
     "prettier": "^3.5.3",
-    "turbo": "^2.5.3"
+    "turbo": "^2.5.3",
+    "unplugin-swc": "^1.5.11"
   }
 }

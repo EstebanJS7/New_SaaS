@@ -1,0 +1,44 @@
+{
+  "name": "@newsaas/database",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NewSaaS database package — Prisma schema, migrations, and client lifecycle",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.json && node ./scripts/copy-prisma-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\" --ignore-pattern src/generated",
+    "test": "vitest run",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.16",
+    "@prisma/client": "^6.19.0"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.0.16",
+    "@newsaas/eslint-config": "workspace:*",
+    "@newsaas/typescript-config": "workspace:*",
+    "@newsaas/vitest-config": "workspace:*",
+    "@types/node": "^22.14.1",
+    "eslint": "^9.24.0",
+    "prisma": "^6.19.0",
+    "reflect-metadata": "^0.2.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}

@@ -2,8 +2,12 @@ packages:
   - apps/*
   - packages/*
 allowBuilds:
+  "@prisma/client": true
+  "@prisma/engines": true
+  "@swc/core": true
   esbuild: true
   msgpackr-extract: true
   msw: true
+  prisma: true
   sharp: true
   unrs-resolver: true

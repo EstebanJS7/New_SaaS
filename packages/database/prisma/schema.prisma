@@ -1,0 +1,17 @@
+// NewSaaS persistence foundation.
+//
+// Conventions (design D2):
+// - snake_case tables/columns via @@map/@map; PascalCase singular models.
+// - Public IDs are UUID strings defaulted by Postgres gen_random_uuid().
+// - Timestamps are timestamptz stored in UTC; converted at boundaries.
+// - No floating point money columns.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

@@ -12,6 +12,10 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
 
+  // Without this, NestJS never fires onApplicationShutdown — PrismaService
+  // would keep its pool open on SIGTERM/SIGINT (spec: graceful disconnect).
+  app.enableShutdownHooks();
+
   const host = envResult.env.API_HOST;
   const port = envResult.env.API_PORT;
 

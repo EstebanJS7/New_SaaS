@@ -1,9 +1,10 @@
 name: CI
 
 # Repository policy: the `Lint, Typecheck, Test, Build` check below (job ID
-# `quality`) must be configured as a required status check in the default branch
-# protection rule so that CI failures block merge. The workflow itself defines
-# the gates; enforcement is a repository-admin setting documented in
+# `quality`) and the `Database migrations` check (job ID `migrations`) must be
+# configured as required status checks in the default branch protection rule so
+# that CI failures block merge. The workflow itself defines the gates;
+# enforcement is a repository-admin setting documented in
 # docs/10-qa/CI-EVIDENCE.md.
 
 on:
@@ -17,6 +18,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  migrations:
+    name: Database migrations
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: newsaas_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d newsaas_migrations"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply all migrations to a fresh database
+        working-directory: packages/database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
+        run: pnpm db:deploy
+
   quality:
     name: Lint, Typecheck, Test, Build
     runs-on: ubuntu-latest

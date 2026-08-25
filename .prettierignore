@@ -8,3 +8,6 @@ out/
 build/
 coverage/
 *.tsbuildinfo
+
+# Generated Prisma Client output (rebuilt from schema by `prisma generate`).
+packages/database/src/generated/

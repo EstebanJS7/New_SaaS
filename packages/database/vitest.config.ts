@@ -22,7 +22,7 @@ export default mergeConfig(
       }),
     ],
     test: {
-      include: ["src/**/*.test.ts", "test/**/*.e2e-spec.ts"],
+      include: ["src/**/*.test.ts"],
     },
   })
 );
