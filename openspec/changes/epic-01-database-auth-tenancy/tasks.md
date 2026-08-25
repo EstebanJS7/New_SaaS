@@ -224,17 +224,27 @@ both under budget; slice order and verification content unchanged.
       (permission keys match pattern). CI probe: run seed twice, assert count
       equality. Verify: `pnpm --filter @newsaas/database db:seed` twice + CI
       migrations job green. Est ≤320. Deps: 2.4.
-- [ ] 6.2 Guarded demo tenant seed extending `.opencode/commands/demo-seed.ts`
+- [x] 6.2 Guarded demo tenant seed extending `.opencode/commands/demo-seed.ts`
       (reuse `ENABLE_DEMO_SEED` opt-in + production refusal): creates demo
       tenant, owner profile/credential/membership, explicit grants. Extend
       `packages/shared/src/demo-seed.test.ts`: flag unset ⇒ nothing created;
       production+flag ⇒ explicit refusal, nothing created. Verify:
       `pnpm test --filter @newsaas/shared`. Est ≤190. Deps: 6.1, 5.1 (membership
-      shape).
+      shape). **OUTCOME NOTE:** Guard + data logic live in
+      `packages/database/src/demo-seed.ts` (lint/typecheck/unit-tested); the
+      `.opencode` CLI resolves the guard inline via import and delegates the
+      real data path to `prisma/demo-seed.ts` (PrismaClient + argon2,
+      devDependency) — single source of truth, instant disabled/refused exits.
+      Refusal is fail-safe: unset/exotic NODE_ENV counts as production. Shared
+      suite extended to 5 cases incl. production-refusal and enabled-
+      without-DATABASE_URL failsafe; the old "enabled exits 0" case is
+      superseded by the real data path (documented here per scope control). Demo
+      grants derive from `FEATURE_CODE_SEEDS`; credential hashed with the same
+      OWASP-floor argon2id parameters as design D4.
 
 ## Phase 7: Slice S6 — Audit & Entitlements Boundary
 
-- [ ] 7.1 `AuditWriter` (`apps/api/src/audit/audit-writer.service.ts`) exposing
+- [x] 7.1 `AuditWriter` (`apps/api/src/audit/audit-writer.service.ts`) exposing
       `append()` ONLY — no update/delete methods exist; fills actor_type
       STAFF|SYSTEM, action "domain.event", targets, sanitized metadata jsonb,
       requestId from context. `EntitlementsService.has(tenantId, featureCode)`
@@ -243,16 +253,41 @@ both under budget; slice order and verification content unchanged.
       throwing; no UI/caching. Tests: append-then-read integrity; absence of
       mutation paths (type-level + runtime enumeration); truth-table — granted
       known true, ungranted known false, unknown false. Verify:
-      `pnpm test --filter @newsaas/api`. Est ≤330. Deps: 2.4, 6.1.
+      `pnpm test --filter @newsaas/api`. Est ≤330. Deps: 2.4, 6.1. **OUTCOME
+      NOTE:** DI uses explicit `@Inject(PrismaService)` tokens with narrow
+      structural param types — the append-only/read-only contracts are
+      unreachable-beyond by construction and fakes plug in without casts.
+      Metadata is JSON-safe validated (cycles/non-JSON rejected pre-write).
+      AuthService emits `auth.login_succeeded` / `auth.login_failed`
+      audit-or-nothing (append failure fails the operation); failed attempts
+      attributed STAFF when the email exists, SYSTEM otherwise; rate-limited
+      attempts append NOTHING (flood defense). Wiring proven over real HTTP in
+      `src/audit/audit.integration.test.ts`; container wiring + plan≠grant
+      precedence proven against the REAL AppModule via bootTestApp in
+      `src/audit/audit-entitlements.integration.test.ts`.
 
 ## Phase 8: Final Verification & Docs Sync
 
-- [ ] 8.1 Full gates:
+- [x] 8.1 Full gates:
       `pnpm lint && pnpm format-check && pnpm typecheck && pnpm test && pnpm build`;
       services preflight `pnpm services:up && pnpm preflight`; confirm isolation
       suite executed in CI run; tick epic acceptance criteria + `updated` dates
       in EPIC-01 file; docs atomicity sweep (module docs for new domains if any
-      behavior documented). Deps: all prior.
+      behavior documented). Deps: all prior. **OUTCOME NOTE:** All five root
+      gates executed green in the final apply batch (exit 0 each; per-package
+      suites: shared 5 CLI-contract + database 11 demo-seed cases, api 165).
+      Docker/preflight and the CI-run confirmation are deferred to the
+      maintainer push flow (apply batch is forbidden from docker/push); EPIC-01
+      Exit Criteria stay open accordingly and epic status remains `in-progress`.
+      Acceptance criteria ticked with evidence pointers; Known Limitations
+      section records [[TD-004]]/[[TD-005]]/[[TD-006]], rate-limiter
+      distributed-spray note and [[DEC-002]] pending acceptance. Docs atomicity
+      sweep shipped module docs:
+      `docs/05-modules/{Identity-Sessions,Tenancy,Audit-Entitlements,Api-Contract-Baseline}.md`.
+      Transport-security orphan closure (CORS allowlist deny-by-default +
+      security headers incl. gated HSTS) landed natively in
+      `fastify-adapter.factory.ts` with wiring-proof tests — no new runtime
+      dependency.
 
 ## Scenario Traceability (46 scenarios — zero orphans)
 

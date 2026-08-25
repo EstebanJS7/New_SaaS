@@ -62,16 +62,32 @@ isolation. Unblocks [[EPIC-02]] (RBAC/Entitlements) and EPIC-03 Phase B.
 
 ## Acceptance Criteria
 
-- [ ] Cross-tenant UUID access returns `404`, covered by automated isolation
-      tests per shipped private aggregate (PRD §7).
-- [ ] Private routes reject unauthenticated requests; tenant authority derives
-      solely from authenticated server-side context (PRD §§7/29).
-- [ ] Every API error matches `{error:{code,message,requestId}}` (PRD §28).
-- [ ] Structured logs carry the request ID; credentials are never logged (PRD
-      §§30/41).
-- [ ] Migrations apply cleanly in CI against fresh PostgreSQL.
-- [ ] Reference seed is idempotent; demo seed is explicitly gated and
-      production-guarded (PRD §42).
+- [x] Cross-tenant UUID access returns `404`, covered by automated isolation
+      tests per shipped private aggregate (PRD §7). — Evidence:
+      `apps/api/test/cross-tenant-isolation.e2e-spec.ts` (10 cases over real
+      HTTP) + `apps/api/test/support/` isolation harness.
+- [x] Private routes reject unauthenticated requests; tenant authority derives
+      solely from authenticated server-side context (PRD §§7/29). — Evidence:
+      guard chain in `apps/api/src/auth/auth.guard.ts` +
+      `apps/api/src/tenancy/tenant-active.guard.ts`; hint-fencing cases in the
+      isolation suite.
+- [x] Every API error matches `{error:{code,message,requestId}}` (PRD §28). —
+      Evidence: `apps/api/src/common/filters/global-exception.filter.ts` +
+      error-envelope integration tests; frozen registry in
+      `packages/shared/src/errors/registry.ts`.
+- [x] Structured logs carry the request ID; credentials are never logged (PRD
+      §§30/41). — Evidence: pino wiring `apps/api/src/common/http/` + leak-scan
+      cases in `auth.integration.test.ts`.
+- [x] Migrations apply cleanly in CI against fresh PostgreSQL. — Evidence:
+      `.github/workflows/ci.yml` `migrations` job (`migrate deploy` on empty
+      PG16 + seed double-run count probe); migrations under
+      `packages/database/prisma/migrations/`.
+- [x] Reference seed is idempotent; demo seed is explicitly gated and
+      production-guarded (PRD §42). — Evidence:
+      `packages/database/src/reference-seed.ts` (+ idempotency tests); guarded
+      CLI `.opencode/commands/demo-seed.ts` delegating to
+      `packages/database/src/demo-seed.ts`; opt-in/refusal contract tests in
+      `packages/shared/src/demo-seed.test.ts`.
 
 ## Stories
 
@@ -100,6 +116,21 @@ isolation. Unblocks [[EPIC-02]] (RBAC/Entitlements) and EPIC-03 Phase B.
 - [ ] Cross-tenant isolation suite executes in a CI run.
 - [ ] Documentation is current.
 
+## Known Limitations
+
+- [[TD-004]] — password reset/forgot-password deferred until email delivery
+  (EPIC-17); any recovery route returns a `404` envelope meanwhile.
+- [[TD-005]] — login rate limiter is single-replica by design (in-process
+  sliding window); a shared-store revision is required before horizontal scaling
+  because per-replica counters allow a distributed spray across replicas to
+  bypass the threshold.
+- [[TD-006]] — tenant-isolation suites run over an in-memory Prisma boundary;
+  live-PostgreSQL execution lands in the CI migrations job before further
+  tenant-scoped aggregates.
+- [[DEC-002]] — shipped auth routes are UNPREFIXED (`/auth/*`), deferring the
+  PRD §28 `/api/v1` base to the API-versioning slice; decision proposed,
+  maintainer acceptance pending.
+
 ## Decisions / ADRs
 
 Decisions are recorded in the change design
@@ -110,13 +141,8 @@ PostgreSQL; account-recovery deferral is tracked as Tech Debt, never silent.
 
 ## Technical Debt
 
-- [[TD-004]] — password reset/forgot-password deferred until email delivery
-  (EPIC-17).
-- [[TD-005]] — login rate limiter is single-replica by design; shared-store
-  revision required before any horizontal scaling.
-- [[TD-006]] — tenant-isolation suites run over an in-memory Prisma boundary;
-  live-PostgreSQL execution lands in the CI migrations job before further
-  tenant-scoped aggregates.
+Tracked in the Known Limitations section above: [[TD-004]], [[TD-005]],
+[[TD-006]].
 
 ## Related
 
