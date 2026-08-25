@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe("strict TypeScript config", () => {
-  it("rejects implicit any", () => {
+  // Spawning `npx tsc` is wall-clock heavy (npx resolution + compile) and
+  // runs while every other workspace suite saturates the machine — the 5s
+  // default flakes under full-repo parallel runs.
+  it("rejects implicit any", { timeout: 60_000 }, () => {
     const project = path.resolve(__dirname, "../__fixtures__/tsconfig.fixture.json");
     const result = spawnSync("npx", ["tsc", "--project", project], {
       encoding: "utf8",
