@@ -2,7 +2,7 @@
 id: EPIC-01
 type: epic
 title: Database, Auth and Tenancy
-status: in-progress
+status: done
 priority: critical
 depends_on:
   - EPIC-00
@@ -19,7 +19,7 @@ prd_sections:
   - "41"
   - "42"
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-08-25
 ---
 
 # EPIC-01 — Database, Auth and Tenancy
