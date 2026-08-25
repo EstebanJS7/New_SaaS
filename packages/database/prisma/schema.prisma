@@ -15,3 +15,170 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// ---------------------------------------------------------------------------
+// Staff identity (global — not tenant-scoped). Design D2.
+// ---------------------------------------------------------------------------
+
+/// Global person record. Email uniqueness is GLOBAL: login resolves the
+/// profile, memberships bind profiles to tenants. Emails are lowercased by the
+/// application before persisting; the column itself stores the app-normalized
+/// value verbatim.
+/// Data classification: email/display_name CONFIDENTIAL; status INTERNAL.
+model UserProfile {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  email       String @unique
+  displayName String @map("display_name")
+  status      String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  credential  UserCredential?
+  sessions    StaffSession[]
+  memberships TenantMembership[]
+
+  @@map("user_profile")
+}
+
+/// RESTRICTED password material. The primary key SHARED with UserProfile means
+/// regular application reads never need to join this table — only the login
+/// verification path touches it (design decision; spec: identity / Argon2id
+/// storage).
+model UserCredential {
+  /// Same value as the owning UserProfile.id (1:1, shared primary key).
+  userProfileId String @id @map("user_profile_id") @db.Uuid
+
+  /// RESTRICTED — argon2id hash. Never logged, never returned by any API.
+  passwordHash String @map("password_hash")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  userProfile UserProfile @relation(fields: [userProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("user_credential")
+}
+
+/// First-party staff sessions (design D4). One row per login (rotation);
+/// logout hard-deletes the row, replay therefore fails lookups.
+model StaffSession {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  userProfileId String @map("user_profile_id") @db.Uuid
+
+  /// SHA-256 of the opaque session token — plaintext tokens never persist.
+  tokenHash String @unique @map("token_hash")
+
+  lastSeenAt        DateTime  @map("last_seen_at") @db.Timestamptz(3)
+  idleExpiresAt     DateTime  @map("idle_expires_at") @db.Timestamptz(3)
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  /// Sessions die with their profile (the only CASCADE in EPIC-01).
+  userProfile UserProfile @relation(fields: [userProfileId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userProfileId])
+  @@map("staff_session")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy core (design D2). Tenant creation is ops/seed-only — there is no
+// self-service registration surface anywhere in the API.
+// ---------------------------------------------------------------------------
+
+/// Membership lifecycle. Values pinned by design D2; evolve additively only.
+enum TenantMembershipStatus {
+  ACTIVE
+  SUSPENDED
+
+  @@map("tenant_membership_status")
+}
+
+model Tenant {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  slug String @unique
+  name String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branches     Branch[]
+  memberships  TenantMembership[]
+  portalAccess CustomerPortalAccess[]
+
+  @@map("tenant")
+}
+
+/// SCHEMA-ONLY SCAFFOLD (spec: persistence / Schema inventory): Branch is inert
+/// during EPIC-01 — no endpoint or service creates, reads, updates or deletes
+/// rows. Route-enumeration proof lands with task 5.3.
+model Branch {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  name     String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
+  @@map("branch")
+}
+
+/// Binds a global staff profile to one tenant with one role. Demonstrates the
+/// tenant-safe repository pattern (spec: tenancy-core / Repository pattern).
+///
+/// KNOWN DEVIATION (accepted, batch-mode apply): the `role_id` FOREIGN KEY to
+/// `role(id)` ON DELETE RESTRICT is added by an additive ALTER in migration 003
+/// (task 2.4 / U5), because sequential migrations cannot forward-reference a
+/// table created later. The column itself is final here — NOT NULL uuid.
+model TenantMembership {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String                 @map("tenant_id") @db.Uuid
+  userProfileId String                 @map("user_profile_id") @db.Uuid
+  roleId        String                 @map("role_id") @db.Uuid
+  status        TenantMembershipStatus
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  userProfile UserProfile @relation(fields: [userProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// One membership per (tenant, profile).
+  @@unique([tenantId, userProfileId])
+  /// Login resolves memberships by profile; the (tenant_id, profile) unique
+  /// index cannot serve that lookup (leading column is tenant_id).
+  @@index([userProfileId])
+  @@map("tenant_membership")
+}
+
+/// INERT SCAFFOLD (spec: persistence / Schema inventory): no endpoint or
+/// service touches customer portal access during EPIC-01; FKs toward the
+/// future customers domain land when that domain ships.
+/// Data classification: contact_email INTERNAL — never logged.
+model CustomerPortalAccess {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  contactEmail String @map("contact_email")
+  status       String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
+  @@map("customer_portal_access")
+}
