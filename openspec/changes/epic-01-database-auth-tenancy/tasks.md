@@ -104,14 +104,14 @@ both under budget; slice order and verification content unchanged.
 
 ## Phase 3: Slice S2 — API Contract Baseline
 
-- [ ] 3.1 Create `packages/shared/src/errors/{registry.ts,domain-error.ts}`:
+- [x] 3.1 Create `packages/shared/src/errors/{registry.ts,domain-error.ts}`:
       frozen `ERROR_CODES` map (VALIDATION_FAILED·400, UNAUTHENTICATED·401,
       FORBIDDEN·403, NOT_FOUND·404, CONFLICT·409, RATE_LIMITED·429,
       INTERNAL·500), framework-free `DomainError`; export via
       `packages/shared/src/index.ts`. Snapshot contract test pinning
       codes↔statuses. Verify: `pnpm test --filter @newsaas/shared`. Est ≤150.
       Deps: none (parallelizable with Phase 2).
-- [ ] 3.2 Global exception filter
+- [x] 3.2 Global exception filter
       `apps/api/src/common/filters/global-exception.filter.ts` emitting
       `{error:{code,message,requestId}}`; zod failures→VALIDATION_FAILED
       (flattened issue message); DomainError→registry status; unknown→INTERNAL,
@@ -121,12 +121,12 @@ both under budget; slice order and verification content unchanged.
       `apps/api/src/main.ts`. Tests: validation shape, unhandled-exception shape
       (prod mode), inbound-ID end-to-end, deterministic DomainError mapping.
       Verify: `pnpm test --filter @newsaas/api`. Est ≤290. Deps: 3.1.
-- [ ] 3.3 Pin `pino` direct dep; `FastifyAdapter({ loggerInstance })` in
+- [x] 3.3 Pin `pino` direct dep; `FastifyAdapter({ loggerInstance })` in
       main.ts; redact `req.headers.cookie`, `*.password`, `*.passwordHash`;
       child logger binds `req.id`; replace `console.*` in API bootstrap. Test:
       every log line for a sample request carries request ID. Verify:
       `pnpm lint && pnpm test --filter @newsaas/api`. Est ≤150. Deps: 3.2.
-- [ ] 3.4 Extend `apps/api/src/health/` with `/health/ready`: aggregate Prisma
+- [x] 3.4 Extend `apps/api/src/health/` with `/health/ready`: aggregate Prisma
       `$queryRaw` ping + Redis ping (add `ioredis` dep — approved stack client);
       503 while any dependency unreachable; `/health/live` stays 200. Tests:
       healthy 200; Redis-down ⇒ ready 503/live 200. Verify:

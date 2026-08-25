@@ -1,16 +1,26 @@
 import { NestFactory } from "@nestjs/core";
-import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify";
+import { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { AppModule } from "./app.module.js";
+import { createApiLogger, type ApiLogger } from "./common/http/api-logger.factory.js";
+import { createFastifyAdapter } from "./common/http/fastify-adapter.factory.js";
+import { toLoggableError } from "./common/errors/loggable-error.js";
 import { apiEnv } from "./config/api-env.js";
-
-async function bootstrap(): Promise<void> {
+async function bootstrap(logger: ApiLogger): Promise<void> {
   const envResult = apiEnv(process.env);
   if (!envResult.success) {
-    console.error(envResult.error);
+    // The parser's failure payload is a formatted string naming every
+    // offending variable — surfaced verbatim on stderr for operators.
+    logger.fatal({ missing: [...envResult.missing] }, envResult.error);
     process.exit(1);
   }
 
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
+  // Single adapter construction point: request-id generation/echo + pino.
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    createFastifyAdapter({ loggerInstance: logger }),
+    // Nest's console-based default logger is replaced by pino entirely.
+    { logger: false }
+  );
 
   // Without this, NestJS never fires onApplicationShutdown — PrismaService
   // would keep its pool open on SIGTERM/SIGINT (spec: graceful disconnect).
@@ -20,10 +30,12 @@ async function bootstrap(): Promise<void> {
   const port = envResult.env.API_PORT;
 
   await app.listen(port, host);
-  console.info(`API listening on http://${host}:${port}`);
+  logger.info({ host, port }, "API listening");
 }
 
-bootstrap().catch((error: unknown) => {
-  console.error("Failed to start API", error);
+const rootLogger = createApiLogger();
+
+bootstrap(rootLogger).catch((error: unknown) => {
+  rootLogger.fatal({ err: toLoggableError(error) }, "Failed to start API");
   process.exit(1);
 });
