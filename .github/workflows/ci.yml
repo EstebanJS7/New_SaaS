@@ -61,6 +61,19 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
         run: pnpm db:deploy
 
+      - name: Seed reference data twice with count-equality probe
+        working-directory: packages/database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
+        run: |
+          pnpm db:seed
+          FIRST_COUNTS=$(node scripts/ci-seed-counts.mjs)
+          echo "counts after first seed: $FIRST_COUNTS"
+          pnpm db:seed
+          SECOND_COUNTS=$(node scripts/ci-seed-counts.mjs)
+          echo "counts after second seed: $SECOND_COUNTS"
+          test "$FIRST_COUNTS" = "$SECOND_COUNTS"
+
   quality:
     name: Lint, Typecheck, Test, Build
     runs-on: ubuntu-latest

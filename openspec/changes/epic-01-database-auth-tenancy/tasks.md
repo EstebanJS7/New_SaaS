@@ -93,7 +93,7 @@ both under budget; slice order and verification content unchanged.
       `customer_portal_access` (inert scaffold). Tests: inventory presence, FK
       semantics, inert-surface note (route-enumeration proof lands in 5.3).
       Verify: migrate deploy + vitest. Est ≤300. Deps: 2.2.
-- [ ] 2.4 Migration 003 — `role`(code UNIQUE ×6), `permission`(key UNIQUE),
+- [x] 2.4 Migration 003 — `role`(code UNIQUE ×6), `permission`(key UNIQUE),
       `role_permission`, `feature_code`(code UNIQUE ×12), `plan`,
       `plan_capability`, `tenant_entitlement`
       (UNIQUE(tenant_id,feature_code_id)), `audit_log` (per D9 shape,
@@ -199,7 +199,7 @@ both under budget; slice order and verification content unchanged.
 
 ## Phase 6: Slice S5 — Seeds
 
-- [ ] 6.1 Reference seed `packages/database/prisma/seed.ts` + `db:seed`: upserts
+- [x] 6.1 Reference seed `packages/database/prisma/seed.ts` + `db:seed`: upserts
       by natural keys — 6 roles, PRD §9 `domain.resource.action` permission set,
       12 §10 feature codes, one inert `starter` plan mapped to all codes via
       plan_capability; no automatic grants. Key-format validation test
