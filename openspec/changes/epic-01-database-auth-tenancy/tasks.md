@@ -67,7 +67,7 @@ both under budget; slice order and verification content unchanged.
 
 ## Phase 2: Slice S1 — Persistence Foundation
 
-- [ ] 2.1 Create `packages/database` (`package.json` as `@newsaas/database`,
+- [x] 2.1 Create `packages/database` (`package.json` as `@newsaas/database`,
       `tsconfig.json`, `.gitignore` for `src/generated/`);
       `prisma/schema.prisma` (Prisma 6.x pinned, `prisma-client-js`, output
       `src/generated`); `src/prisma.service.ts` (`extends PrismaClient`,
@@ -79,7 +79,7 @@ both under budget; slice order and verification content unchanged.
       disconnect. Verify:
       `pnpm test --filter @newsaas/database && pnpm typecheck`. Est ≤340 lines.
       Deps: none.
-- [ ] 2.2 Migration 001 — identity tables `user_profile` (email UNIQUE
+- [x] 2.2 Migration 001 — identity tables `user_profile` (email UNIQUE
       app-lowercased, global), `user_credential` (PK=profile_id FK RESTRICT,
       password_hash RESTRICTED), `staff_session` (token_hash UNIQUE,
       idle/absolute expires, revoked_at, idx profile_id, FK CASCADE); snake_case
@@ -87,7 +87,7 @@ both under budget; slice order and verification content unchanged.
       conventions check test (UUID PKs, UTC timestamps, float-money rejection
       guard). Verify: `prisma migrate deploy` on fresh `DATABASE_URL_TEST` +
       conventions vitest. Est ≤260. Deps: 2.1.
-- [ ] 2.3 Migration 002 — `tenant` (slug UNIQUE), `branch` (tenant_id FK
+- [x] 2.3 Migration 002 — `tenant` (slug UNIQUE), `branch` (tenant_id FK
       RESTRICT, schema-only), `tenant_membership`
       (UNIQUE(tenant_id,user_profile_id), role FK, status ACTIVE|SUSPENDED),
       `customer_portal_access` (inert scaffold). Tests: inventory presence, FK
