@@ -1,6 +1,7 @@
 import { Controller, Get, Res } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
 import type { FastifyReply } from "fastify";
+import { Public } from "../auth/public.decorator.js";
 import { withTimeout } from "../common/utils/with-timeout.js";
 import { RedisHealthService } from "./redis-health.service.js";
 
@@ -36,6 +37,9 @@ interface ReadyHealthDto {
   };
 }
 
+// Probes are anonymous by contract (design D3: `@Public` opts `/health*` out
+// of the global AuthGuard).
+@Public()
 @Controller("health")
 export class HealthController {
   constructor(

@@ -1,4 +1,4 @@
-import { Injectable, OnApplicationShutdown } from "@nestjs/common";
+import { Injectable, OnApplicationShutdown, Optional } from "@nestjs/common";
 import { Redis } from "ioredis";
 import { withTimeout } from "../common/utils/with-timeout.js";
 
@@ -17,7 +17,10 @@ export class RedisHealthService implements OnApplicationShutdown {
   private connectionAttempt: Promise<void> | null = null;
   private readonly url: string;
 
-  constructor(url?: string) {
+  // @Optional() keeps Nest from treating the reflected primitive type
+  // (String) as a mandatory injection token: the URL comes either from an
+  // explicit override or from process.env below.
+  constructor(@Optional() url?: string) {
     this.url = url ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
   }
 
