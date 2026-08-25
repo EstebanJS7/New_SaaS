@@ -9,7 +9,7 @@
 | Chained PRs recommended             | Yes                                                          |
 | Suggested split                     | 18 work units U1–U18 → chained PRs PR1…PR18, each ≤400 lines |
 | Delivery strategy                   | ask-always (session)                                         |
-| Chain strategy                      | pending                                                      |
+| Chain strategy                      | resolved — direct-to-main batch commits                      |
 
 Decision needed before apply: Yes Chained PRs recommended: Yes Chain strategy:
 pending 400-line budget risk: High
@@ -17,7 +17,9 @@ pending 400-line budget risk: High
 Aggregate exceeds 400 lines. **Units are sized so EACH stays ≤400 estimated
 changed lines**; two units (2.4, 4.3) sit near the ceiling and carry an explicit
 mid-apply split contingency. Ask the user for chain strategy before `sdd-apply`
-starts.
+starts. RESOLVED at apply time (recorded 2026-08-24 at archive): delivery used
+direct-to-main sequential batch commits (`08a2ef8..27959d5`) instead of chained
+PRs; each batch stayed within its unit budget.
 
 ### Suggested Work Units
 
@@ -287,7 +289,12 @@ both under budget; slice order and verification content unchanged.
       Transport-security orphan closure (CORS allowlist deny-by-default +
       security headers incl. gated HSTS) landed natively in
       `fastify-adapter.factory.ts` with wiring-proof tests — no new runtime
-      dependency.
+      dependency. **Archive-time reconciliation (2026-08-24):** root gates
+      confirmed green at the docs-sync commit `961353b`; the strict config-test
+      timeout bump verify flagged as uncommitted landed as `27959d5` (closes
+      verify next-step 1). Docker/preflight execution and the CI-run
+      confirmation remain open maintainer push-flow gates; Exit Criteria
+      unchanged.
 
 ## Scenario Traceability (46 scenarios — zero orphans)
 
