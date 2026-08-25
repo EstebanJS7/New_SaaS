@@ -135,7 +135,7 @@ both under budget; slice order and verification content unchanged.
 
 ## Phase 4: Slice S3 — Staff Auth
 
-- [ ] 4.1 RequestContext plumbing: `RequestContext` type in
+- [x] 4.1 RequestContext plumbing: `RequestContext` type in
       `packages/shared/src/context.ts`; AsyncLocalStorage-backed
       `RequestContextService`
       (`apps/api/src/context/request-context.service.ts`) carrying
@@ -143,7 +143,7 @@ both under budget; slice order and verification content unchanged.
       middleware registered for all routes after genReqId. Unit tests incl.
       async-boundary propagation. Verify: `pnpm test --filter @newsaas/api`. Est
       ≤170. Deps: 3.2.
-- [ ] 4.2 Credential+session core (no HTTP): argon2id hashing service (m=19456
+- [x] 4.2 Credential+session core (no HTTP): argon2id hashing service (m=19456
       KiB,t=2,p=1, env-tunable; add `argon2` dep); credentials store never
       selected by app reads except login verification; session service —
       `randomBytes(32)` base64url token, SHA-256 at rest, insert-per-login
@@ -151,7 +151,7 @@ both under budget; slice order and verification content unchanged.
       TTLs, hard-delete revoke. Tests: hashed at rest (no plaintext), token
       stored hashed, rotation inserts fresh row, TTL computation. Verify:
       `pnpm test --filter @newsaas/api`. Est ≤330. Deps: 2.2.
-- [ ] 4.3 Auth surface + guards: `POST /api/v1/auth/login`,
+- [x] 4.3 Auth surface + guards: `POST /api/v1/auth/login`,
       `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`; cookie
       `ns_staff_session` HttpOnly, Path=/, Secure unless development,
       SameSite=Lax; logout hard-deletes row. Global `AuthGuard` validating
@@ -164,7 +164,15 @@ both under budget; slice order and verification content unchanged.
       Cookie-flag assertions on Set-Cookie. **Contingency:** if diff >400, split
       into 4.3a routes/cookie + 4.3b guards/probe. Verify:
       `pnpm test --filter @newsaas/api`. Est ~430 → Medium. Deps: 4.1, 4.2, 3.3.
-- [ ] 4.4 Login rate limiter: in-process sliding window ≥10 failed logins/15min
+      **OUTCOME NOTE:** Shipped routes are UNPREFIXED `/auth/login`,
+      `/auth/logout`, `/auth/me` — not the `/api/v1/auth/*` paths written above:
+      design D3 wire order (`@Public` opt-outs name `/health*`, `/auth/login`)
+      and both delta specs pin the unprefixed paths. The PRD §28 `/api/v1` base
+      is consciously deferred to the API-versioning slice; recorded in
+      `docs/07-decisions/DEC-002-api-route-prefix-convention.md` ([[DEC-002]],
+      proposed — maintainer gate pending). Checkbox stays ticked: acceptance
+      criteria were verified against the shipped paths.
+- [x] 4.4 Login rate limiter: in-process sliding window ≥10 failed logins/15min
       per (email, IP-hash) ⇒ 429 envelope RATE_LIMITED; success resets counter.
       Tests: threshold trip, reset-on-success, envelope shape. Verify:
       `pnpm test --filter @newsaas/api`. Est ≤150. Deps: 4.3.

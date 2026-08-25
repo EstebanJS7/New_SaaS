@@ -112,6 +112,8 @@ PostgreSQL; account-recovery deferral is tracked as Tech Debt, never silent.
 
 - [[TD-004]] — password reset/forgot-password deferred until email delivery
   (EPIC-17).
+- [[TD-005]] — login rate limiter is single-replica by design; shared-store
+  revision required before any horizontal scaling.
 
 ## Related
 
