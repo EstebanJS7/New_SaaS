@@ -17,6 +17,7 @@ export const ERROR_CODES = Object.freeze({
   CONFLICT: Object.freeze({ status: 409 }),
   RATE_LIMITED: Object.freeze({ status: 429 }),
   INTERNAL: Object.freeze({ status: 500 }),
+  FEATURE_NOT_ENTITLED: Object.freeze({ status: 403 }),
 });
 
 export type ErrorCode = keyof typeof ERROR_CODES;

@@ -115,6 +115,7 @@ model Tenant {
   entitlements            TenantEntitlement[]
   auditLogs               AuditLog[]
   rolePermissionOverrides TenantRolePermissionOverride[]
+  settingNamespaces        TenantSettingNamespace[]
 
   @@map("tenant")
 }
@@ -274,6 +275,25 @@ model TenantRolePermissionOverride {
   /// Tenant-scoped administration lookups resolve by (tenant, role).
   @@index([tenantId, roleId])
   @@map("tenant_role_permission_override")
+}
+
+/// Typed, versioned settings data scoped to exactly one tenant and namespace.
+/// The JSON payload is application-validated through the API registry before it
+/// reaches this persistence boundary.
+model TenantSettingNamespace {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  namespace     String
+  schemaVersion Int      @map("schema_version")
+  data          Json
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, namespace])
+  @@index([tenantId])
+  @@map("tenant_setting_namespace")
 }
 
 // ---------------------------------------------------------------------------

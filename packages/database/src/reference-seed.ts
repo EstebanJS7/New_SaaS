@@ -52,6 +52,7 @@ export const PERMISSION_SEEDS = [
   { key: "fiscal.invoice.issue", name: "Issue fiscal invoices" },
   { key: "users.membership.manage", name: "Manage staff memberships" },
   { key: "scheduling.appointment.manage", name: "Manage appointments" },
+  { key: "sales.settings.manage", name: "Manage sales settings" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -68,6 +69,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "fiscal.invoice.issue",
     "users.membership.manage",
     "scheduling.appointment.manage",
+    "sales.settings.manage",
   ],
   ADMIN: [
     "vet.clinical.create",
@@ -76,6 +78,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "fiscal.invoice.issue",
     "users.membership.manage",
     "scheduling.appointment.manage",
+    "sales.settings.manage",
   ],
   VETERINARIAN: ["vet.clinical.create"],
   RECEPTIONIST: ["scheduling.appointment.manage"],

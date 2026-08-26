@@ -10,6 +10,7 @@ describe("ERROR_CODES registry", () => {
       VALIDATION_FAILED: { status: 400 },
       UNAUTHENTICATED: { status: 401 },
       FORBIDDEN: { status: 403 },
+      FEATURE_NOT_ENTITLED: { status: 403 },
       NOT_FOUND: { status: 404 },
       CONFLICT: { status: 409 },
       RATE_LIMITED: { status: 429 },
@@ -34,9 +35,9 @@ describe("ERROR_CODES registry", () => {
     }).toThrow(TypeError);
   });
 
-  it("exposes exactly the seven baseline codes with SCREAMING_SNAKE keys", () => {
+  it("exposes exactly the eight baseline codes with SCREAMING_SNAKE keys", () => {
     const codes = Object.keys(ERROR_CODES);
-    expect(codes).toHaveLength(7);
+    expect(codes).toHaveLength(8);
     for (const code of codes) {
       expect(code).toMatch(/^[A-Z][A-Z0-9_]*$/);
     }

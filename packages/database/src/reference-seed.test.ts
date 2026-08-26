@@ -203,6 +203,19 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     expect([...assigned].sort()).toEqual(PERMISSION_SEEDS.map((p) => p.key).sort());
   });
 
+  it("grants sales.settings.manage to OWNER and ADMIN only", () => {
+    expect(ROLE_PERMISSION_MATRIX.OWNER).toContain("sales.settings.manage");
+    expect(ROLE_PERMISSION_MATRIX.ADMIN).toContain("sales.settings.manage");
+    for (const roleCode of [
+      "VETERINARIAN",
+      "RECEPTIONIST",
+      "CASHIER",
+      "INVENTORY_MANAGER",
+    ] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain("sales.settings.manage");
+    }
+  });
+
   it("ships the single inert starter plan", () => {
     expect(STARTER_PLAN_SEED.code).toBe("starter");
   });
@@ -217,7 +230,7 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const fake = await seededOnce();
     expect(fake.counts()).toEqual({
       roles: 6,
-      permissions: 6,
+      permissions: 7,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,
