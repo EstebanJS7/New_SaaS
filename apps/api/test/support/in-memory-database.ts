@@ -85,11 +85,36 @@ export interface TenantEntitlementRow {
   featureCodeId: string;
 }
 
+/** Permission catalog row (EPIC-02): key is the stable natural key. */
+export interface PermissionRow {
+  id: string;
+  key: string;
+  name: string;
+}
+
+/** Role↔permission mapping row (EPIC-02 enforcement data). */
+export interface RolePermissionRow {
+  id: string;
+  roleId: string;
+  permissionId: string;
+}
+
+/** Tenant-local override verdict over a global role's baseline key (DEC-003). */
+export interface TenantRolePermissionOverrideRow {
+  id: string;
+  tenantId: string;
+  roleId: string;
+  permissionKey: string;
+  granted: boolean;
+}
+
 interface MembershipWhere {
   id?: string;
   tenantId?: string;
   userProfileId?: string;
   status?: string;
+  /** Scalar or `{ in: [...] }` — mirrors the Prisma filter shapes we use. */
+  roleId?: string | { in?: string[] };
 }
 
 interface MembershipOrder {
@@ -99,11 +124,58 @@ interface MembershipOrder {
 
 export interface IsolationDatabase {
   prisma: {
+    $transaction: <T>(callback: (tx: IsolationDatabase["prisma"]) => Promise<T>) => Promise<T>;
+    /**
+     * Raw-SQL seam for SELECT ... FOR UPDATE row locks (review CRITICAL-2).
+     * The shipped surface issues exactly ONE raw query shape — the tenant-wide
+     * active-membership lock — matched here by its table name; anything else
+     * fails loudly instead of silently returning wrong rows.
+     *
+     * HONEST LIMITATION (documented in TD-006): a synchronous in-memory map
+     * CANNOT prove interleaving/serialization semantics of real READ
+     * COMMITTED PostgreSQL; this delegate only proves WHICH rows the decision
+     * reads. Live-PG proof remains TD-006's evidence gate.
+     */
+    $queryRaw: (
+      query: TemplateStringsArray | string,
+      ...values: unknown[]
+    ) => Promise<{ id: string; role_id: string }[]>;
     tenant: {
       create: (args: { data: { slug: string; name: string } }) => TenantRow;
     };
     role: {
       create: (args: { data: { code: string; name: string } }) => RoleRow;
+      findUnique: (args: { where: { code: string } }) => RoleRow | null;
+      findMany: (args: { where?: { code?: { in?: string[] } } }) => RoleRow[];
+    };
+    permission: {
+      create: (args: { data: { key: string; name?: string } }) => PermissionRow;
+      findUnique: (args: { where: { key: string } }) => PermissionRow | null;
+      findMany: (args: {
+        where?: { key?: { in?: string[] } };
+        orderBy?: { key?: "asc" | "desc" };
+      }) => PermissionRow[];
+    };
+    rolePermission: {
+      create: (args: { data: { roleId: string; permissionId: string } }) => RolePermissionRow;
+      findMany: (args: {
+        where: { roleId?: string; permissionId?: string };
+        select?: unknown;
+      }) => (RolePermissionRow & { permission?: { key: string } })[];
+      deleteMany: (args: { where: { roleId?: string; permissionId?: string } }) => {
+        count: number;
+      };
+    };
+    tenantRolePermissionOverride: {
+      create: (args: {
+        data: { tenantId: string; roleId: string; permissionKey: string; granted: boolean };
+      }) => TenantRolePermissionOverrideRow;
+      findMany: (args: {
+        where: { tenantId?: string; roleId?: string; permissionKey?: string };
+      }) => TenantRolePermissionOverrideRow[];
+      deleteMany: (args: {
+        where: { tenantId?: string; roleId?: string; permissionKey?: string };
+      }) => { count: number };
     };
     userProfile: {
       create: (args: {
@@ -122,17 +194,24 @@ export interface IsolationDatabase {
       }) => TenantMembershipRow;
       findFirst: (args: {
         where: MembershipWhere;
+        orderBy?: MembershipOrder[];
         include?: { role?: unknown };
       }) => (TenantMembershipRow & { role?: { code: string } }) | null;
       findMany: (args: {
         where: MembershipWhere;
         orderBy?: MembershipOrder[];
-      }) => TenantMembershipRow[];
+        include?: { role?: unknown };
+      }) => (TenantMembershipRow & { role?: { code: string } })[];
       updateMany: (args: { where: MembershipWhere; data: { status: string } }) => { count: number };
+      update: (args: {
+        where: { id: string };
+        data: { roleId?: string; status?: string };
+      }) => TenantMembershipRow;
     };
     auditLog: {
       create: (args: { data: Omit<AuditLogRow, "id"> & { id?: string } }) => AuditLogRow;
       findFirst: (args: { where: { action?: string; requestId?: string } }) => AuditLogRow | null;
+      findMany: (args?: { where?: { action?: string; requestId?: string } }) => AuditLogRow[];
     };
     featureCode: {
       create: (args: { data: { code: string } }) => FeatureCodeRow;
@@ -154,6 +233,9 @@ export interface IsolationDatabase {
     audits: Map<string, AuditLogRow>;
     featureCodes: Map<string, FeatureCodeRow>;
     entitlements: Map<string, TenantEntitlementRow>;
+    permissions: Map<string, PermissionRow>;
+    rolePermissions: Map<string, RolePermissionRow>;
+    rolePermissionOverrides: Map<string, TenantRolePermissionOverrideRow>;
   };
 }
 
@@ -164,6 +246,14 @@ function matches(where: MembershipWhere, candidate: TenantMembershipRow): boolea
     return false;
   }
   if (where.status !== undefined && where.status !== candidate.status) return false;
+  if (where.roleId !== undefined) {
+    const expected = where.roleId;
+    if (typeof expected === "string") {
+      if (expected !== candidate.roleId) return false;
+    } else if (expected.in && !expected.in.includes(candidate.roleId)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -202,8 +292,33 @@ export function createIsolationDatabase(): IsolationDatabase {
   const audits = new Map<string, AuditLogRow>();
   const featureCodes = new Map<string, FeatureCodeRow>();
   const entitlements = new Map<string, TenantEntitlementRow>();
+  const permissions = new Map<string, PermissionRow>();
+  const rolePermissions = new Map<string, RolePermissionRow>();
+  const rolePermissionOverrides = new Map<string, TenantRolePermissionOverrideRow>();
 
-  const prisma: IsolationDatabase["prisma"] = {
+  type PrismaLike = IsolationDatabase["prisma"];
+  // `$transaction` executes the callback against the SAME in-memory maps —
+  // there is nothing to roll back (documented fake limitation; real
+  // transactional semantics are proven by the CI `migrations` job).
+  const prisma: PrismaLike = {
+    $transaction: <T>(callback: (tx: PrismaLike) => Promise<T>): Promise<T> => callback(prisma),
+    $queryRaw: (query, ...values) => {
+      // Match THE one shipped raw query (all active membership rows for the
+      // tenant). The only bound value is the server-resolved tenant id.
+      const text = typeof query === "string" ? query : query.join("");
+      if (!text.includes("tenant_membership") || !text.includes("FOR UPDATE")) {
+        throw new Error(
+          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock (got: ${text.slice(0, 60)}...)`
+        );
+      }
+      const [tenantId] = values as string[];
+      return Promise.resolve(
+        [...memberships.values()]
+          .filter((candidate) => candidate.tenantId === tenantId && candidate.status === "ACTIVE")
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map((candidate) => ({ id: candidate.id, role_id: candidate.roleId }))
+      );
+    },
     tenant: {
       create: ({ data }) => {
         const created: TenantRow = { id: randomUUID(), slug: data.slug, name: data.name };
@@ -216,6 +331,95 @@ export function createIsolationDatabase(): IsolationDatabase {
         const created: RoleRow = { id: randomUUID(), code: data.code, name: data.name };
         roles.set(created.id, created);
         return created;
+      },
+      findUnique: ({ where }) =>
+        [...roles.values()].find((candidate) => candidate.code === where.code) ?? null,
+      findMany: ({ where } = {}) => {
+        const all = [...roles.values()];
+        const codes = where?.code?.in;
+        return codes ? all.filter((candidate) => codes.includes(candidate.code)) : all;
+      },
+    },
+    permission: {
+      create: ({ data }) => {
+        const created: PermissionRow = { id: randomUUID(), key: data.key, name: data.name ?? "" };
+        permissions.set(created.id, created);
+        return created;
+      },
+      findUnique: ({ where }) =>
+        [...permissions.values()].find((candidate) => candidate.key === where.key) ?? null,
+      findMany: ({ where, orderBy } = {}) => {
+        const all = [...permissions.values()];
+        const keys = where?.key?.in;
+        const filtered = keys ? all.filter((candidate) => keys.includes(candidate.key)) : all;
+        return orderBy?.key === "asc"
+          ? filtered.sort((left, right) => left.key.localeCompare(right.key))
+          : orderBy?.key === "desc"
+            ? filtered.sort((left, right) => right.key.localeCompare(left.key))
+            : filtered;
+      },
+    },
+    rolePermission: {
+      create: ({ data }) => {
+        const created: RolePermissionRow = { id: randomUUID(), ...data };
+        rolePermissions.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where }) =>
+        [...rolePermissions.values()]
+          .filter(
+            (candidate) =>
+              (where.roleId === undefined || candidate.roleId === where.roleId) &&
+              (where.permissionId === undefined || candidate.permissionId === where.permissionId)
+          )
+          .map((candidate) => ({
+            ...candidate,
+            permission: {
+              key:
+                [...permissions.values()].find((entry) => entry.id === candidate.permissionId)
+                  ?.key ?? "",
+            },
+          })),
+      deleteMany: ({ where }) => {
+        let count = 0;
+        for (const [id, candidate] of rolePermissions) {
+          if (
+            (where.roleId === undefined || candidate.roleId === where.roleId) &&
+            (where.permissionId === undefined || candidate.permissionId === where.permissionId)
+          ) {
+            rolePermissions.delete(id);
+            count += 1;
+          }
+        }
+        return { count };
+      },
+    },
+    tenantRolePermissionOverride: {
+      create: ({ data }) => {
+        const created: TenantRolePermissionOverrideRow = { id: randomUUID(), ...data };
+        rolePermissionOverrides.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where }) =>
+        [...rolePermissionOverrides.values()].filter(
+          (candidate) =>
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.roleId === undefined || candidate.roleId === where.roleId) &&
+            (where.permissionKey === undefined || candidate.permissionKey === where.permissionKey)
+        ),
+      deleteMany: ({ where }) => {
+        let count = 0;
+        for (const [id, candidate] of rolePermissionOverrides) {
+          if (
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.roleId === undefined || candidate.roleId === where.roleId) &&
+            (where.permissionKey === undefined || candidate.permissionKey === where.permissionKey)
+          ) {
+            rolePermissionOverrides.delete(id);
+            count += 1;
+          }
+        }
+        return { count };
       },
     },
     userProfile: {
@@ -259,23 +463,35 @@ export function createIsolationDatabase(): IsolationDatabase {
         memberships.set(created.id, created);
         return created;
       },
-      findFirst: ({ where, include }) => {
-        for (const candidate of memberships.values()) {
-          if (!matches(where, candidate)) continue;
-          if (include?.role) {
-            // Reproduce the relational join: role row looked up by FK.
-            const joinedRole = roles.get(candidate.roleId);
-            return { ...candidate, role: { code: joinedRole?.code ?? "" } };
-          }
-          return candidate;
-        }
-        return null;
-      },
-      findMany: ({ where, orderBy }) =>
-        orderMemberships(
+      findFirst: ({ where, orderBy, include }) => {
+        const matched = orderMemberships(
           [...memberships.values()].filter((candidate) => matches(where, candidate)),
           orderBy
-        ),
+        );
+        const candidate = matched[0];
+        if (!candidate) return null;
+        if (include?.role) {
+          // Reproduce the relational join: role row looked up by FK
+          // (`id` included since EPIC-02 forwards roleId through ALS).
+          const joinedRole = roles.get(candidate.roleId);
+          return {
+            ...candidate,
+            role: { code: joinedRole?.code ?? "", id: joinedRole?.id ?? candidate.roleId },
+          };
+        }
+        return candidate;
+      },
+      findMany: ({ where, orderBy, include }) => {
+        const rows = orderMemberships(
+          [...memberships.values()].filter((candidate) => matches(where, candidate)),
+          orderBy
+        );
+        if (!include?.role) return rows;
+        return rows.map((candidate) => ({
+          ...candidate,
+          role: { code: roles.get(candidate.roleId)?.code ?? "", id: candidate.roleId },
+        }));
+      },
       updateMany: ({ where, data }) => {
         let count = 0;
         for (const candidate of memberships.values()) {
@@ -284,6 +500,18 @@ export function createIsolationDatabase(): IsolationDatabase {
           count += 1;
         }
         return { count };
+      },
+      update: ({ where, data }) => {
+        const existing = memberships.get(where.id);
+        if (!existing) {
+          // Structural P2025 mirrors the real delegate's rejected shape.
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        if (data.roleId !== undefined) existing.roleId = data.roleId;
+        if (data.status !== undefined) {
+          existing.status = data.status as TenantMembershipRow["status"];
+        }
+        return existing;
       },
     },
     auditLog: {
@@ -298,6 +526,12 @@ export function createIsolationDatabase(): IsolationDatabase {
             (where.action === undefined || candidate.action === where.action) &&
             (where.requestId === undefined || candidate.requestId === where.requestId)
         ) ?? null,
+      findMany: ({ where } = {}) =>
+        [...audits.values()].filter(
+          (candidate) =>
+            (where?.action === undefined || candidate.action === where.action) &&
+            (where?.requestId === undefined || candidate.requestId === where.requestId)
+        ),
     },
     featureCode: {
       create: ({ data }) => {
@@ -327,6 +561,18 @@ export function createIsolationDatabase(): IsolationDatabase {
 
   return {
     prisma,
-    tables: { tenants, roles, profiles, sessions, memberships, audits, featureCodes, entitlements },
+    tables: {
+      tenants,
+      roles,
+      profiles,
+      sessions,
+      memberships,
+      audits,
+      featureCodes,
+      entitlements,
+      permissions,
+      rolePermissions,
+      rolePermissionOverrides,
+    },
   };
 }

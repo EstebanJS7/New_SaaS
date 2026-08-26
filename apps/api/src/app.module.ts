@@ -6,10 +6,13 @@ import { CommonModule } from "./common/common.module.js";
 import { ContextModule } from "./context/context.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
 import { HealthModule } from "./health/health.module.js";
+import { RbacModule } from "./rbac/rbac.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
 
-// Guard-chain wire order (design D3): AuthModule's AuthGuard must register
-// BEFORE TenancyModule's TenantActiveGuard — keep this import order stable.
+// Guard-chain wire order (design D3 + EPIC-02 design D1): AuthModule's
+// AuthGuard must register BEFORE TenancyModule's TenantActiveGuard, and
+// RbacModule's PermissionGuard strictly AFTER both — keep this import order
+// stable. tenancy.wiring.test.ts pins Auth < Tenancy < Rbac.
 // Audit/Entitlements expose no APP_GUARD, so their position carries no
 // ordering contract.
 @Module({
@@ -20,6 +23,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     HealthModule,
     AuthModule,
     TenancyModule,
+    RbacModule,
     AuditModule,
     EntitlementsModule,
   ],

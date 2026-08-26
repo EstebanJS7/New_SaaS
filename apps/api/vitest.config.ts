@@ -23,6 +23,16 @@ export default mergeConfig(
     ],
     test: {
       include: ["src/**/*.test.ts", "test/**/*.e2e-spec.ts"],
+      // Booting a real AppModule (DI graph + SWC transform + Fastify listen)
+      // inside beforeAll is wall-clock heavy and runs while every other
+      // workspace suite saturates the machine — the 10s hook default flakes
+      // under full-repo parallel runs (EPIC-01 strict-config precedent).
+      hookTimeout: 60_000,
+      // Full-app integration suites contend heavily on shared resources;
+      // parallel workers saturate IPC/IO until tinypool drops `onTaskUpdate`
+      // RPCs (vitest exits 1 despite all tests passing). Files run
+      // sequentially: same green result, deterministic exit code.
+      fileParallelism: false,
     },
   })
 );

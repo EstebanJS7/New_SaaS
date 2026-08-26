@@ -103,6 +103,93 @@ describe("cross-tenant isolation (real HTTP, full guard chain)", () => {
     });
   });
 
+  it("masks a FOREIGN membership from ROLE ASSIGNMENT as 404 too (EPIC-02 task 2.4)", async () => {
+    // The audited assignment command is tenant-scoped exactly like the reads:
+    // a foreign UUID must be indistinguishable from a nonexistent one — same
+    // status, same envelope code, byte-identical body text.
+    const sharedRequestId = randomUUID();
+    const payload = { roleCode: "VETERINARIAN" };
+    const server = booted.app.getHttpServer();
+
+    const [nonexistentResponse, foreignResponse] = [
+      await supertest(server)
+        .post(`/memberships/${randomUUID()}/role`)
+        .set("Cookie", fixture.actors.a.cookie)
+        .set("x-request-id", sharedRequestId)
+        .send(payload)
+        .expect(404),
+      await supertest(server)
+        .post(`/memberships/${fixture.actors.b.membership!.id}/role`)
+        .set("Cookie", fixture.actors.a.cookie)
+        .set("x-request-id", sharedRequestId)
+        .send(payload)
+        .expect(404),
+    ];
+
+    expect((nonexistentResponse.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+    expect((foreignResponse.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+    expect(nonexistentResponse.text).toBe(foreignResponse.text);
+
+    // Tenant B's membership id must not leak through either rejection.
+    for (const body of [nonexistentResponse.text, foreignResponse.text]) {
+      expect(body).not.toContain(fixture.actors.b.membership!.id);
+    }
+  });
+
+  it("scopes RBAC permission OVERRIDES to the caller's tenant only (DEC-003)", async () => {
+    // Seed a minimal slice of the reference catalog: one SEEDED role code
+    // (addressable) plus its candidate permission row. Baseline mapping is
+    // deliberately empty so the override verdict is the ONLY source of the
+    // granted key.
+    const CASHIER_ROLE = "CASHIER";
+    const GRANTED_KEY = "cash.session.close";
+    let cashier = booted.db.prisma.role.findUnique({ where: { code: CASHIER_ROLE } });
+    cashier =
+      cashier ?? booted.db.prisma.role.create({ data: { code: CASHIER_ROLE, name: "Cashier" } });
+    let grantPermission = booted.db.prisma.permission.findUnique({
+      where: { key: GRANTED_KEY },
+    });
+    grantPermission =
+      grantPermission ??
+      booted.db.prisma.permission.create({ data: { key: GRANTED_KEY, name: GRANTED_KEY } });
+    if (!grantPermission) throw new Error("fixture failure: permission row missing");
+
+    // Tenant A grants itself the key through the tenant override layer.
+    await supertest(booted.app.getHttpServer())
+      .put(`/rbac/roles/${CASHIER_ROLE}/permissions`)
+      .set("Cookie", fixture.actors.a.cookie)
+      .send({ keys: [GRANTED_KEY] })
+      .expect(200);
+
+    // Tenant A's effective view carries the override…
+    const seenByA = await supertest(booted.app.getHttpServer())
+      .get("/rbac/roles")
+      .set("Cookie", fixture.actors.a.cookie)
+      .expect(200);
+    const cashierForA = (
+      seenByA.body as { roles: { code: string; permissions: string[] }[] }
+    ).roles.find((role) => role.code === CASHIER_ROLE);
+    expect(cashierForA?.permissions).toEqual([GRANTED_KEY]);
+
+    // …while tenant B — same global role row, ZERO overrides of its own —
+    // still sees the untouched baseline. The shared catalog row gave A no
+    // power over B's reality.
+    const seenByB = await supertest(booted.app.getHttpServer())
+      .get("/rbac/roles")
+      .set("Cookie", fixture.actors.b.cookie)
+      .expect(200);
+    const cashierForB = (
+      seenByB.body as { roles: { code: string; permissions: string[] }[] }
+    ).roles.find((role) => role.code === CASHIER_ROLE);
+    expect(cashierForB?.permissions).toEqual([]);
+
+    // Physical fence: every stored verdict belongs to tenant A.
+    for (const override of booted.db.tables.rolePermissionOverrides.values()) {
+      expect(override.tenantId).toBe(fixture.tenants.a.id);
+      expect(override.roleId).toBe(cashier?.id);
+    }
+  });
+
   it("ignores query/header tenant hints: scoping still resolves to tenant A", async () => {
     const plainList = await supertest(booted.app.getHttpServer())
       .get("/memberships")
@@ -193,7 +280,9 @@ describe("cross-tenant isolation (real HTTP, full guard chain)", () => {
     await supertest(booted.app.getHttpServer()).post("/auth/register").send({}).expect(404);
   });
 
-  it("has NO role/permission ADMINISTRATION surface either (RBAC stays inert)", async () => {
+  it("keeps the UN-namespaced legacy administration paths absent (RBAC lives under /rbac)", async () => {
+    // EPIC-02 moved administration behind the guarded /rbac surface; the old
+    // top-level paths must NOT silently start resolving to anything.
     for (const url of ["/roles", `/roles/${randomUUID()}`, "/permissions"]) {
       const response = await supertest(booted.app.getHttpServer())
         .get(url)
@@ -217,11 +306,12 @@ describe("cross-tenant isolation (real HTTP, full guard chain)", () => {
       expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
     }
 
-    // Membership writes are repo-pattern demos only this epic — NO mutation
-    // route ships, so cross-tenant writes are structurally unreachable by API.
+    // EPIC-02: the ONLY membership mutation route is the audited role command
+    // (`POST /:id/role`, tenant-scoped + last-admin-guarded above). Generic
+    // status/field edits stay structurally unreachable.
     for (const method of ["patch", "put", "delete"] as const) {
       const response = await supertest(booted.app.getHttpServer())
-        [method](`/memberships/${fixture.actors.b.membership!.id}`)
+        [method](`/memberships/${fixture.actors.a.membership!.id}`)
         .set("Cookie", fixture.actors.a.cookie)
         .send({ status: "SUSPENDED" })
         .expect(404);

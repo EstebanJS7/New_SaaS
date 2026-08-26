@@ -1,6 +1,7 @@
 import { Test } from "@nestjs/testing";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { DestinationStream } from "pino";
+import type { Type } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
 import { AUTH_CONFIG, readAuthConfig, type AuthConfig } from "../../src/auth/auth.config.js";
 import { createApiLogger } from "../../src/common/http/api-logger.factory.js";
@@ -27,6 +28,12 @@ export interface BootTestAppOptions {
    * itself is proven in auth.config.test.ts / auth.integration.test.ts.
    */
   cookieSecure?: boolean;
+  /**
+   * Extra controllers composed INTO AppModule (EPIC-02 route-contract probe):
+   * lets a suite register a synthetic undeclared route against the REAL guard
+   * chain without a second module graph.
+   */
+  extraControllers?: Type<unknown>[];
 }
 
 /**
@@ -51,7 +58,10 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     cookieSecure: options.cookieSecure ?? false,
   };
 
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  const moduleRef = await Test.createTestingModule({
+    imports: [AppModule],
+    controllers: options.extraControllers ?? [],
+  })
     .overrideProvider(PrismaService)
     .useValue(db.prisma as unknown as PrismaService)
     .overrideProvider(AUTH_CONFIG)

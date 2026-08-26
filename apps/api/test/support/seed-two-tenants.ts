@@ -45,10 +45,15 @@ interface SeedOptions {
   now?: Date;
 }
 
-function insertLiveSession(
+/**
+ * Inserts a hashed live staff session and returns its Cookie header value.
+ * Exported for EPIC-02 suites that seed bespoke actors beyond the standard
+ * two-tenant matrix.
+ */
+export function insertLiveStaffSession(
   db: IsolationDatabase,
   userProfileId: string,
-  now: Date
+  now: Date = new Date()
 ): { session: StaffSessionRow; cookie: string } {
   const token = generateSessionToken();
   const session = db.prisma.staffSession.create({
@@ -85,6 +90,19 @@ export function seedTwoTenants(db: IsolationDatabase, options: SeedOptions = {})
 
   const role = db.prisma.role.create({
     data: { code: `OWNER-${suffix}`, name: "Owner (isolation fixture)" },
+  });
+
+  // EPIC-02: the third guard link enforces deny-by-default, so fixture actors
+  // hold exactly the ONE catalog key the shipped private routes declare
+  // (`users.membership.manage`) — least privilege keeps the isolation suites
+  // exercising real permission resolution, not an implicit superuser.
+  const MANAGE_KEY = "users.membership.manage";
+  const existingPermission = db.prisma.permission.findUnique({ where: { key: MANAGE_KEY } });
+  const managePermission =
+    existingPermission ?? db.prisma.permission.create({ data: { key: MANAGE_KEY } });
+  const permissionOwnedByFixture = existingPermission === null;
+  const managePair = db.prisma.rolePermission.create({
+    data: { roleId: role.id, permissionId: managePermission.id },
   });
 
   const tenantA = db.prisma.tenant.create({
@@ -135,10 +153,10 @@ export function seedTwoTenants(db: IsolationDatabase, options: SeedOptions = {})
   });
 
   const sessions = {
-    a: insertLiveSession(db, profileA.id, now),
-    b: insertLiveSession(db, profileB.id, now),
-    suspendedA: insertLiveSession(db, profileSuspended.id, now),
-    noMembership: insertLiveSession(db, profileNoMembership.id, now),
+    a: insertLiveStaffSession(db, profileA.id, now),
+    b: insertLiveStaffSession(db, profileB.id, now),
+    suspendedA: insertLiveStaffSession(db, profileSuspended.id, now),
+    noMembership: insertLiveStaffSession(db, profileNoMembership.id, now),
   };
 
   const createdSessionHashes = Object.values(sessions).map((entry) => entry.session.tokenHash);
@@ -170,6 +188,10 @@ export function seedTwoTenants(db: IsolationDatabase, options: SeedOptions = {})
       }
       for (const profile of [profileA, profileB, profileSuspended, profileNoMembership]) {
         db.tables.profiles.delete(profile.id);
+      }
+      db.tables.rolePermissions.delete(managePair.id);
+      if (permissionOwnedByFixture) {
+        db.tables.permissions.delete(managePermission.id);
       }
       db.tables.roles.delete(role.id);
       db.tables.tenants.delete(tenantA.id);
