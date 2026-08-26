@@ -84,6 +84,34 @@ export interface AuditLogDelegate {
 }
 
 /**
+ * Transactional append target — anything exposing an auditLog writer that can
+ * accept our row payload (the generated `Prisma.TransactionClient` and the
+ * in-memory test fake alike).
+ *
+ * `create` is declared with METHOD syntax deliberately: TypeScript compares
+ * method parameters BIVARIANTLY, so the generated client's overloaded generic
+ * create stays assignable here without casts, while property-syntax function
+ * types (strictFunctionTypes contravariance) would reject it over jsonb
+ * metadata input types.
+ */
+export interface AuditAppendTx {
+  auditLog: {
+    create(args: {
+      data: {
+        action: string;
+        actorType: AuditActorType;
+        metadata: unknown;
+        tenantId?: string;
+        actorUserProfileId?: string;
+        targetType?: string;
+        targetId?: string;
+        requestId?: string;
+      };
+    }): Promise<{ id: string }>;
+  };
+}
+
+/**
  * The ONLY sanctioned writer for `audit_log` (design D9).
  *
  * Append-only by construction: this class exposes `append()` and NOTHING
@@ -102,7 +130,7 @@ export class AuditWriter {
     // Explicit @Inject tokens keep DI resolution token-based while the PARAM
     // TYPE stays the narrow append-only contract the service actually needs
     // (update/delete surfaces are unreachable here by construction).
-    @Inject(PrismaService) private readonly prisma: { auditLog: AuditLogDelegate },
+    @Inject(PrismaService) private readonly prisma: { auditLog: AuditAppendTx["auditLog"] },
     @Inject(RequestContextService) private readonly requestContext: RequestContextService
   ) {}
 
@@ -110,8 +138,15 @@ export class AuditWriter {
    * Writes one immutable audit row. The request id is filled server-side from
    * RequestContextService — callers cannot spoof correlation, and outside a
    * request scope (bootstrap/jobs) a generated UUID keeps rows traceable.
+   *
+   * `tx` joins the append to the CALLER'S transaction (review WARNING-1):
+   * mutation flows pass their open `$transaction` handle so the audit row
+   * commits atomically with — or rolls back together with — the mutation it
+   * describes. A mutation without its trail becomes structurally impossible:
+   * an append failure aborts the whole transaction instead of leaving a
+   * committed write unaudited.
    */
-  async append(input: AuditAppendInput): Promise<AuditAppendedRow> {
+  async append(input: AuditAppendInput, tx?: AuditAppendTx): Promise<AuditAppendedRow> {
     const parsed = appendInputSchema.safeParse(input);
     if (!parsed.success) {
       const first = parsed.error.issues[0];
@@ -128,7 +163,8 @@ export class AuditWriter {
       // events mirror the schema's column comments (design D9).
       (parsed.data.actorUserProfileId !== undefined ? "STAFF" : "SYSTEM");
 
-    const row = await this.prisma.auditLog.create({
+    const writer = tx ?? this.prisma;
+    const row = await writer.auditLog.create({
       data: {
         action: parsed.data.action,
         actorType,

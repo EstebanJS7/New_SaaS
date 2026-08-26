@@ -109,11 +109,12 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branches     Branch[]
-  memberships  TenantMembership[]
-  portalAccess CustomerPortalAccess[]
-  entitlements TenantEntitlement[]
-  auditLogs    AuditLog[]
+  branches                Branch[]
+  memberships             TenantMembership[]
+  portalAccess            CustomerPortalAccess[]
+  entitlements            TenantEntitlement[]
+  auditLogs               AuditLog[]
+  rolePermissionOverrides TenantRolePermissionOverride[]
 
   @@map("tenant")
 }
@@ -199,8 +200,9 @@ model Role {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  memberships     TenantMembership[]
-  rolePermissions RolePermission[]
+  memberships              TenantMembership[]
+  rolePermissions          RolePermission[]
+  tenantPermissionOverrides TenantRolePermissionOverride[]
 
   @@map("role")
 }
@@ -237,6 +239,41 @@ model RolePermission {
 
   @@unique([roleId, permissionId])
   @@map("role_permission")
+}
+
+/// Tenant-LOCAL permission override over a GLOBAL catalog role (EPIC-02,
+/// DEC-003). Roles and the permission catalog stay platform baseline
+/// (seed-owned CODE); this table is the per-tenant SANDBOX that re-targets a
+/// role's effective key set without touching shared rows — the adversarial
+/// review (CRITICAL-1) showed globally mutable mappings would let any one
+/// tenant rewrite every other tenant's authority.
+///
+/// Effective set of (tenant T, role R) =
+///   (role_permission baseline for R  ∪  overrides(T,R) with granted=true)
+///   − overrides(T,R) with granted=false.
+///
+/// `permission_key` stores the catalog KEY (not an FK): catalog membership is
+/// validated at service level against PERMISSION_SEEDS, keeping the override
+/// row self-describing while the catalog itself stays immutable code.
+model TenantRolePermissionOverride {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String  @map("tenant_id") @db.Uuid
+  roleId        String  @map("role_id") @db.Uuid
+  permissionKey String  @map("permission_key")
+  granted       Boolean
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// One override verdict per (tenant, role, catalog key).
+  @@unique([tenantId, roleId, permissionKey])
+  /// Tenant-scoped administration lookups resolve by (tenant, role).
+  @@index([tenantId, roleId])
+  @@map("tenant_role_permission_override")
 }
 
 // ---------------------------------------------------------------------------

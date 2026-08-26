@@ -148,3 +148,37 @@ describe("migration 004 · append-only audit log (design D9)", () => {
     expect(SCHEMA).toContain("APPEND-ONLY BOUNDARY");
   });
 });
+
+describe("migration 005 · per-tenant role-permission overrides (DEC-003)", () => {
+  const OVERRIDES_SQL = findMigration(MIGRATIONS, "_rbac_tenant_role_permission_overrides").sql;
+
+  it("creates the tenant-local override table with verdict columns", () => {
+    expect(OVERRIDES_SQL).toMatch(/CREATE TABLE "tenant_role_permission_override"/);
+    expect(OVERRIDES_SQL).toMatch(/"permission_key" TEXT NOT NULL/);
+    expect(OVERRIDES_SQL).toMatch(/"granted" BOOLEAN NOT NULL/);
+  });
+
+  it("pins one verdict per (tenant, role, permission key) and the tenant index", () => {
+    expect(OVERRIDES_SQL).toMatch(
+      /CREATE UNIQUE INDEX "tenant_role_permission_override_tenant_id_role_id_permission_key_key" ON "tenant_role_permission_override"\("tenant_id", "role_id", "permission_key"\)/
+    );
+    expect(OVERRIDES_SQL).toMatch(
+      /CREATE INDEX "tenant_role_permission_override_tenant_id_role_id_idx" ON "tenant_role_permission_override"\("tenant_id", "role_id"\)/
+    );
+  });
+
+  it("restricts foreign keys toward tenant and GLOBAL role rows", () => {
+    expect(OVERRIDES_SQL).toMatch(
+      /ALTER TABLE "tenant_role_permission_override".*"tenant_id".*REFERENCES "tenant"\("id"\) ON DELETE RESTRICT/
+    );
+    expect(OVERRIDES_SQL).toMatch(
+      /ALTER TABLE "tenant_role_permission_override".*"role_id".*REFERENCES "role"\("id"\) ON DELETE RESTRICT/
+    );
+  });
+
+  it("keeps roles global: NO tenant column appears on the baseline mapping", () => {
+    expect(RBAC_SQL).not.toMatch(/role_permission[\s\S]*tenant_id/);
+    // The override model is mapped in the schema next to its baseline.
+    expect(SCHEMA).toContain('@@map("tenant_role_permission_override")');
+  });
+});
