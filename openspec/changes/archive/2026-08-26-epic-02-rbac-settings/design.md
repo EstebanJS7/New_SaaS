@@ -81,7 +81,7 @@ effective permissions require tenant context. Spec fixes this route; confirmed.
 
 Additive registry entry `FEATURE_NOT_ENTITLED: { status: 403 }` (append-only).
 Write-path order in `TenantSettingsService.update`: ① definition lookup
-(unregistered ⇒ `VALIDATION_FAILED`) → ② `has(tenantId, def.requiresFeature)`
+(unregistered ⇒ `NOT_FOUND`) → ② `has(tenantId, def.requiresFeature)`
 when declared (false ⇒ `FEATURE_NOT_ENTITLED`) → ③ patch schema validation → ④
 persist. Registration precedes gate because the feature code lives on the
 definition; each spec scenario stays single-variable. Reads never evaluate
@@ -92,11 +92,11 @@ preserved).
 
 | Aspect            | Decision                                                                                                                                                                                                                                                                                                                        |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Table             | `TenantSettingNamespace` per TENANT-SETTINGS.md model verbatim (`@@unique([tenantId,namespace])`, `@@index([tenantId])`, `schemaVersion Int`, `data Json`, map `tenant_setting_namespaces`); additive reversible migration                                                                                                      |
+| Table             | `TenantSettingNamespace` per TENANT-SETTINGS.md model verbatim (`@@unique([tenantId,namespace])`, `@@index([tenantId])`, `schemaVersion Int`, `data Json`, map `tenant_setting_namespace`); additive reversible migration                                                                                                       |
 | Registry location | **apps/api/src/settings/registry.ts**, not packages/shared — schemas/defaults/versioning are backend enforcement material evolving with API domains; shared stays a thin frozen contract surface                                                                                                                                |
 | Definition        | `{namespace, version, schema: z.object({...}).strict(), defaults, requiresFeature?, requiredPermissionKey}`; closed schemas make secrets unpersistable                                                                                                                                                                          |
 | v1 namespace      | `sales`: `defaultCurrency` `/^[A-Z]{3}$/` default `"PYG"`; `requireCustomerForInvoice` bool default false; `requiresFeature:"sales"`, key `sales.settings.manage`                                                                                                                                                               |
-| Service API       | `get(ns)` = defaults ⊕ stored (stored re-parsed through schema defensively); `update(ns, patch)` per D5 flow; partial patches preserve siblings                                                                                                                                                                                 |
+| Service API       | `get(ns)` = defaults ⊕ stored (stored re-parsed through schema defensively); `update(ns, patch)` per D5 flow; partial patches preserve siblings. Tenant context is resolved strictly from the authenticated request (`requireTenantId()`); there is no `tenantId` selector and no cross-tenant-addressable settings row. Schema validation failures (unknown field, wrong type) return 400 `VALIDATION_FAILED`. |
 | Routes            | `GET /settings/:namespace` empty-declared; `PUT /settings/:namespace` declares `sales.settings.manage`; service re-asserts `definition.requiredPermissionKey` via resolver — defense-in-depth so a forgotten decorator cannot fail open; expansion convention: new namespace ⇒ registry entry + decorator key + union-sync test |
 
 ### D7 — Seed interaction (spec: rbac-administration, documented behavior)
@@ -150,7 +150,7 @@ Request ─→ ALS{requestId}
 | Layer       | Coverage                                                                                                                               |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Unit        | resolver AND/subset; registry rejection; defaults merge; seed double-run                                                               |
-| Integration | 403 undeclared; probe enumeration; admin flows; last-admin 409; audit counts; settings get/set/isolation/entitlement; cross-tenant 404 |
+| Integration | 403 undeclared; probe enumeration; admin flows; last-admin 409; audit counts; settings get/set/isolation/entitlement; no cross-tenant-addressable settings resource |
 | CI          | migrations job (fresh PG16 deploy); lint/typecheck/test/build gates                                                                    |
 
 ## Threat Matrix
@@ -177,3 +177,21 @@ mutation). Guard wiring additive; slices roll back at module-import boundaries.
       `Reflector.getAllAndOverride` reads at request time. A
       minimum-expected-inventory assertion guards against silent
       under-enumeration.
+
+## Implementation Evidence
+
+| Decision                            | Evidence location                                                                                                                                                                                         |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1 guard chain / route contract     | `apps/api/src/rbac/permission.guard.ts`, `apps/api/src/rbac/route-contract.ts`, `apps/api/src/rbac/route-contract.probe.test.ts`                                                                          |
+| D2 permission resolution            | `apps/api/src/rbac/permission-resolver.service.ts`, `apps/api/src/rbac/me-permissions.integration.test.ts`                                                                                                |
+| D3 administration endpoints / audit | `apps/api/src/rbac/rbac-admin.controller.ts`, `apps/api/src/rbac/rbac-admin.service.ts`, `apps/api/src/tenancy/membership-role-assignment.service.ts`, `apps/api/src/rbac/rbac-admin.integration.test.ts` |
+| D4 `/me/permissions`                | `apps/api/src/tenancy/membership.controller.ts`, `apps/api/src/rbac/me-permissions.integration.test.ts`                                                                                                   |
+| D5 entitlements gate                | `apps/api/src/settings/tenant-settings.service.ts`, `apps/api/src/settings/settings.integration.test.ts`                                                                                                  |
+| D6 settings infrastructure          | `apps/api/src/settings/registry.ts`, `apps/api/src/settings/tenant-settings.service.ts`, `apps/api/src/settings/settings.controller.ts`                                                                   |
+| D7 seed interaction                 | `packages/database/src/reference-seed.ts`, `packages/database/src/reference-seed.test.ts`                                                                                                                 |
+| DEC-003 per-tenant overrides        | `docs/07-decisions/DEC-003-rbac-role-mapping-overrides.md`, `apps/api/src/rbac/manage-holdership.ts`                                                                                                      |
+| Module docs / EPIC file             | `docs/05-modules/RBAC.md`, `docs/03-architecture/TENANT-SETTINGS.md`, `docs/01-roadmap/EPIC-02-RBAC-Entitlements-Tenant-Settings.md`                                                                      |
+
+Apply-progress for this change was maintained externally in Engram
+(`sdd/epic-02-rbac-settings/apply-progress`). Verification was waived at archive
+time; see `archive-report.md` for the waiver state.

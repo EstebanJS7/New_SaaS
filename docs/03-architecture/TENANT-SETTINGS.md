@@ -1,7 +1,7 @@
 ---
 type: architecture
-status: active
-updated: 2026-08-13
+status: implemented
+updated: 2026-08-26
 ---
 
 # Tenant Settings
@@ -13,7 +13,7 @@ booleans, JSON reads and product-specific conditions throughout the codebase.
 
 ## Model
 
-Recommended persistence:
+Implemented persistence:
 
 ```prisma
 model TenantSettingNamespace {
@@ -27,60 +27,66 @@ model TenantSettingNamespace {
 
   @@unique([tenantId, namespace])
   @@index([tenantId])
-  @@map("tenant_setting_namespaces")
+  @@map("tenant_setting_namespace")
 }
 ```
 
 The JSON value is **not untyped application data**.
 
-All access goes through a code registry.
+All access goes through the code registry in
+`apps/api/src/settings/registry.ts`.
 
 ## Registry
 
-Conceptual API:
+Backend-owned definitions live in `apps/api/src/settings/registry.ts` (NOT
+`packages/shared`). Each definition carries:
 
 ```ts
-type SettingsNamespace =
-  | "scheduling"
-  | "inventory"
-  | "sales"
-  | "cash"
-  | "portal"
-  | "notifications"
-  | "fiscal-ui";
-
 interface SettingsDefinition<T> {
   namespace: SettingsNamespace;
   version: number;
-  schema: ZodSchema<T>;
+  schema: z.AnyZodObject; // closed .strict() object
   defaults: T;
+  requiresFeature?: string; // entitlement gate, optional
+  requiredPermissionKey: string; // RBAC key for writes
 }
 ```
 
-Example:
+Registry additions are validated at module load time against the seed-owned
+permission and feature-code catalogs.
+
+## Shipped v1 namespace
+
+### sales
 
 ```ts
-const schedulingSettings = {
-  namespace: "scheduling",
+{
+  namespace: "sales",
   version: 1,
   schema: z.object({
-    conflictPolicy: z.enum(["ALLOW", "WARN", "BLOCK"]).default("WARN"),
-    portalBookingPolicy: z
-      .enum(["AUTO_CONFIRM", "REQUIRE_APPROVAL"])
-      .default("REQUIRE_APPROVAL"),
-    defaultAppointmentMinutes: z.number().int().min(5).max(480).default(30),
-  }),
-};
+    defaultCurrency: z.string().regex(/^[A-Z]{3}$/),
+    requireCustomerForInvoice: z.boolean(),
+  }).strict(),
+  defaults: {
+    defaultCurrency: "PYG",
+    requireCustomerForInvoice: false,
+  },
+  requiresFeature: "sales",
+  requiredPermissionKey: "sales.settings.manage",
+}
 ```
 
-## Service
-
-All modules use:
+## Service API
 
 ```ts
-tenantSettings.get("scheduling", context);
-tenantSettings.update("scheduling", patch, context);
+await tenantSettings.get("sales");
+await tenantSettings.update("sales", { requireCustomerForInvoice: true });
 ```
+
+- `get` returns `defaults ⊕ stored`, with stored values defensively re-parsed
+  through the schema.
+- `update` validates the patch against the closed schema, merges it with the
+  current row, and writes one row per `(tenantId, namespace)`.
 
 Never:
 
@@ -88,52 +94,50 @@ Never:
 tenant.settings["whatever"];
 ```
 
-## Initial namespaces
+## HTTP Surface
 
-### scheduling
+- `GET /settings/:namespace` — authenticated-only (`@RequirePermissions()`);
+  tenant is resolved from the request context; there is no `tenantId` selector.
+  Reads never evaluate entitlements.
+- `PUT /settings/:namespace` — declares `sales.settings.manage` and re-asserts
+  `definition.requiredPermissionKey` inside the service as defense-in-depth.
+  The namespace is scoped to the caller's tenant; there is no cross-tenant-
+  addressable settings resource.
 
-```text
-conflictPolicy
-portalBookingPolicy
-defaultAppointmentMinutes
-reminder defaults
-```
+## Authorization and Entitlement Gate
 
-### inventory
+Update flow order (design D5):
 
-```text
-negativeStockPolicy
-defaultWarehouse behavior
-```
+1. Registry lookup — unknown namespace ⇒ `NOT_FOUND`.
+2. Entitlement check — when `requiresFeature` is set,
+   `EntitlementsService.has()` must be true; false ⇒ `FEATURE_NOT_ENTITLED`
+   before any persistence.
+3. Schema validation — unknown field, wrong type, or secret-shaped field ⇒
+   `VALIDATION_FAILED`, nothing persisted.
+4. Upsert merged values stamped with registry `schemaVersion`.
 
-### sales
+Reads skip step 2. No code path in this epic creates entitlement grants.
 
-```text
-defaultCurrency
-requireCustomerForInvoice
-```
+## Audit
 
-### cash
+Every successful `update` emits one audit row:
 
-```text
-requireOpenSessionForCashSale
-```
+| Action                       | Metadata                     |
+| ---------------------------- | ---------------------------- |
+| `settings.namespace_updated` | `{namespace, schemaVersion}` |
 
-### portal
+The row is appended inside the same `$transaction` as the upsert.
 
-```text
-bookingEnabled
-clinicalSummaryEnabled
-invoiceDocumentsEnabled
-```
+## Expansion Convention
 
-### notifications
+Adding a new namespace requires:
 
-```text
-email reminders enabled
-WhatsApp reminders enabled
-timing defaults
-```
+1. A registry entry in `apps/api/src/settings/registry.ts`.
+2. A seeded permission key (`PERMISSION_SEEDS`) named
+   `<domain>.settings.manage`.
+3. `@RequirePermissions("<domain>.settings.manage")` on the `PUT` controller.
+4. A union-sync test proving the permission key and optional feature code exist
+   in the seed catalogs.
 
 ## Not stored here
 
@@ -148,16 +152,6 @@ timing defaults
 
 Branding stays in the dedicated Branding capability.
 
-## Authorization
-
-Settings updates require explicit domain permissions such as:
-
-```text
-settings.manage
-schedule.settings.manage
-inventory.settings.manage
-```
-
 ## Versioning
 
 Every namespace has `schemaVersion`.
@@ -168,13 +162,33 @@ If a settings schema changes incompatibly:
 - preserve old data until conversion succeeds;
 - test upgrades.
 
+## Data Classification
+
+- `TenantSettingNamespace.data` is **INTERNAL** tenant configuration.
+- No secret fields are accepted by the closed schemas.
+- Rows are tenant-scoped; there is no cross-tenant-addressable settings
+  resource — a caller always reads or writes within their own tenant scope.
+
 ## Tests
 
-Required:
+Shipped coverage:
 
 - defaults when namespace row is absent;
-- rejection of unknown/invalid fields;
-- tenant isolation;
-- permission enforcement;
+- rejection of unknown/invalid fields and secret-shaped payloads;
+- tenant isolation (no cross-tenant-addressable resource);
+- permission enforcement (read allowed, write denied without key);
 - migration/version compatibility;
-- no secret fields accepted.
+- entitlement gate (write denied without grant, allowed with explicit grant,
+  starter plan grants nothing);
+- audit row per successful update.
+
+## Known Limitations
+
+- v1 ships exactly one namespace (`sales`). Additional namespaces follow the
+  expansion convention above.
+- Tenant-isolation suites for settings run over the in-memory Prisma boundary;
+  live-PostgreSQL evidence is tracked by [[TD-006]].
+
+## Related Stories
+
+- [[EPIC-02]] RBAC Enforcement / Entitlements / Tenant Settings (Batch B).

@@ -11,6 +11,12 @@ Tenancy.md
 Audit-Entitlements.md
 ```
 
+Implemented (EPIC-02):
+
+```text
+RBAC.md
+```
+
 Recommended files:
 
 ```text

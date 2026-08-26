@@ -10,9 +10,7 @@
 | Suggested split         | Batch A (A1 → A2) → Batch B (B1 → B2) → Batch C                                  |
 | Delivery strategy       | exception-ok — TURBO approved through archive                                    |
 | Chain strategy          | size-exception                                                                   |
-
-Decision needed before apply: No Chained PRs recommended: No Chain strategy:
-size-exception 400-line budget risk: High
+| Decision needed before apply | No                                                                            |
 
 Batch review policy (maintainer-approved): batches are the review-slicing unit.
 **Batch A is security-relevant → deep review MANDATORY** (global guard chain,
@@ -191,30 +189,30 @@ deny-by-default contract, admin authz + audit trail). Batch B gets full review
 
 ### Unit B1 — storage + typed service core
 
-- [ ] 3.1 **Migration + model**: add `TenantSettingNamespace` to
+- [x] 3.1 **Migration + model**: add `TenantSettingNamespace` to
       `packages/database/prisma/schema.prisma` VERBATIM per
       `docs/03-architecture/TENANT-SETTINGS.md`
       (`@@unique([tenantId,     namespace])`, `@@index([tenantId])`,
-      `schemaVersion Int`, `data Json`, `@@map("tenant_setting_namespaces")`);
+      `schemaVersion Int`, `data Json`, `@@map("tenant_setting_namespace")`);
       additive reversible migration (create-table only, no confirmed-data
       mutation). Verify: `prisma migrate     dev` locally; CI `migrations` job
       green on fresh PG16. Deps: —.
-- [ ] 3.2 **Typed registry**: create `apps/api/src/settings/registry.ts` (NOT
+- [x] 3.2 **Typed registry**: create `apps/api/src/settings/registry.ts` (NOT
       packages/shared — backend enforcement material per D6): definitions
       `{namespace, version, schema: z.object({...}).strict(), defaults,     requiresFeature?, requiredPermissionKey}`;
       register EXACTLY ONE v1 namespace `sales` (`defaultCurrency`
       `/^[A-Z]{3}$/` default `"PYG"`; `requireCustomerForInvoice` boolean
       default false; `requiresFeature:"sales"`;
       `requiredPermissionKey:"sales.settings.manage"`); unknown-namespace lookup
-      ⇒ `VALIDATION_FAILED`; closed schemas make secret-shaped fields
+      ⇒ `NOT_FOUND`; closed schemas make secret-shaped fields
       unpersistable. Union-sync test: every registry `requiredPermissionKey` ∈
       `PERMISSION_SEEDS`, every `requiresFeature` ∈ `FEATURE_CODE_SEEDS`.
       Verify: `vitest run src/settings` + database seed suite. Deps: —.
-- [ ] 3.3 **TenantSettingsService**:
+- [x] 3.3 **TenantSettingsService**:
       `apps/api/src/settings/tenant-settings.service.ts` + `settings.module.ts`:
       `get(ns)` = defaults ⊕ stored (stored values defensively re-parsed through
       schema); `update(ns, patch)` implements D5 order ① definition lookup
-      (unregistered ⇒ `VALIDATION_FAILED`) → ③ closed-schema validation (unknown
+      (unregistered ⇒ `NOT_FOUND`) → ③ closed-schema validation (unknown
       field / wrong type ⇒ `VALIDATION_FAILED`, NOTHING persisted) → ④ upsert
       merged values stamped with registry `schemaVersion` (one row per
       `(tenantId, namespace)`), partial patches preserve siblings; tenant scope
@@ -222,7 +220,7 @@ deny-by-default contract, admin authz + audit trail). Batch B gets full review
       defaults-when-absent / unknown-field / wrong-type /
       partial-sibling-preserved / one-row-invariant / version-equals-N. Deps:
       3.1, 3.2.
-- [ ] 3.4 **Isolation + secrets cases**: cross-tenant row access by id or
+- [x] 3.4 **Isolation + secrets cases**: cross-tenant row access by id or
       namespace behaves as nonexistent ⇒ 404 (extend
       `apps/api/test/cross-tenant-isolation.e2e-spec.ts`); secret-shaped patch
       (`{ "apiKey": "..." }`) ⇒ 400 `VALIDATION_FAILED`, nothing persisted.
@@ -230,18 +228,18 @@ deny-by-default contract, admin authz + audit trail). Batch B gets full review
 
 ### Unit B2 — HTTP surface + gate + seeds
 
-- [ ] 4.1 **Error registry append**: add
+- [x] 4.1 **Error registry append**: add
       `FEATURE_NOT_ENTITLED: Object.freeze({ status: 403 })` to
       `packages/shared/src/errors/registry.ts` — append-only evolution, all
       existing entries byte-identical. Verify:
       `pnpm --filter @newsaas/shared test` (new code maps 403; old codes
       untouched). Deps: —.
-- [ ] 4.2 **Seed additions**: `packages/database/src/reference-seed.ts`:
+- [x] 4.2 **Seed additions**: `packages/database/src/reference-seed.ts`:
       `PERMISSION_SEEDS += sales.settings.manage`; OWNER + ADMIN matrix rows
       gain it — purely ADDITIVE per D7 (rerun restores removed baseline pairs,
       preserves admin-added pairs; document in doc task 5.1). Verify: seed
       double-run probe / idempotency suite green. Deps: —.
-- [ ] 4.3 **Entitlements gate**: insert D5 step ② in
+- [x] 4.3 **Entitlements gate**: insert D5 step ② in
       `TenantSettingsService.update`: when definition declares
       `requiresFeature`, evaluate
       `EntitlementsService.has(tenantId,     featureCode)`; false ⇒
@@ -249,7 +247,7 @@ deny-by-default contract, admin authz + audit trail). Batch B gets full review
       evaluate entitlements; ZERO grant-creating code paths added. Verify:
       write-no-grant denied (row untouched) / write-with-explicit-grant
       applied + readable. Deps: 4.1, 3.3.
-- [ ] 4.4 **Settings HTTP routes**:
+- [x] 4.4 **Settings HTTP routes**:
       `apps/api/src/settings/settings.controller.ts`: `GET /settings/:namespace`
       EMPTY-declared (authenticated-only); `PUT /settings/:namespace` declares
       `sales.settings.manage`; service RE-ASSERTS
@@ -257,45 +255,52 @@ deny-by-default contract, admin authz + audit trail). Batch B gets full review
       forgotten decorator cannot fail open. Probe stays green (new routes
       declared). Verify: read-200-while-write-403-without-key / anonymous 401 /
       non-entitled tenant reads 200 defaults. Deps: 4.3, 4.2.
-- [ ] 4.5 **Gate integration consolidation**: booted-app flows with/without an
+- [x] 4.5 **Gate integration consolidation**: booted-app flows with/without an
       explicit `tenant_entitlement` row for `sales`; starter-plan-maps-all-
       grants-nothing case (`has()` false AND gated write 403). Verify:
       `vitest run src/settings src/entitlements`. Deps: 4.4.
 
 ## Batch C — Documentation + Decisions + Gates (S4)
 
-- [ ] 5.1 **RBAC module doc**: create `docs/05-modules/RBAC.md` (frontmatter
+- [x] 5.1 **RBAC module doc**: create `docs/05-modules/RBAC.md` (frontmatter
       `type: module`, `status: implemented`): three-state route contract,
       deny-by-default, AND semantics, no-code-bypass rule, admin API + audit
       actions, `/me/permissions`, `<domain>.settings.manage` key-expansion
       convention, D7 seed-interaction statement (self-healing baseline); index
       it in `docs/05-modules/README.md`; Obsidian links [[EPIC-02]], delta-spec
-      paths. Deps: Batch A.
-- [ ] 5.2 **Tenant-Settings flip**: `docs/05-modules/Tenant-Settings.md`
-      frontmatter `status: planned → implemented`, `updated: 2026-08-25`;
+      paths. Deps: Batch A. Evidence: `docs/05-modules/RBAC.md`.
+- [x] 5.2 **Tenant-Settings flip**: `docs/03-architecture/TENANT-SETTINGS.md`
+      frontmatter `status: planned → implemented`, `updated: 2026-08-26`;
       replace "Planned Capabilities" with shipped v1 reality (`sales` namespace,
       registry location, service API, entitlement gate order, expansion
       convention: new namespace ⇒ registry entry + decorator key + union-sync
-      test). Deps: Batch B.
-- [ ] 5.3 **Roadmap epic file**: create
+      test). Deps: Batch B. Evidence: `docs/03-architecture/TENANT-SETTINGS.md`.
+- [x] 5.3 **Roadmap epic file**: create
       `docs/01-roadmap/EPIC-02-RBAC-Entitlements-Tenant-Settings.md` mirroring
       the EPIC-01 file structure (frontmatter `prd_sections: ["9","10","38"]`,
       status, dependencies; Objective; Scope; Out of Scope: custom-role CRUD,
       plan/grant surfaces, UI screens, permission caching — escape-hatch note;
       acceptance criteria with evidence pointers; stories = work units; Known
-      Limitations incl. [[DEC-003]] proposed). Deps: 5.1, 5.2.
+      Limitations incl. [[DEC-003]] proposed). Deps: 5.1, 5.2. Evidence:
+      `docs/01-roadmap/EPIC-02-RBAC-Entitlements-Tenant-Settings.md`.
 - [x] 5.4 **DEC-003**: created early via Batch A corrections (C4) as
       `docs/07-decisions/DEC-003-rbac-role-mapping-overrides.md` — maintainer-
       authorized 2026-08-25, `status: accepted`, `prd_change_required: true`;
       documents the per-tenant override architecture replacing global mutable
       mappings. PRD text itself untouched. Deps: —.
-- [ ] 5.5 **FULL ROOT GATES (final)**: run
+- [x] 5.5 **FULL ROOT GATES (final)**: run
       `pnpm lint && pnpm format-check &&     pnpm typecheck && pnpm test && pnpm build`;
       focused filters `--filter @newsaas/{api,shared,database,web,worker}`;
       `pnpm services:up && pnpm preflight`; CI `migrations` job evidence; cite
       probe + seed-double-run + cross-tenant isolation suites; tick design.md
       Open Questions with the 1.1 probe-accessor outcome. All green ⇒ ready for
-      sdd-verify/archive. Deps: ALL.
+      sdd-verify/archive. Deps: ALL. Evidence: format-check exit 0; lint exit 0
+      (12 packages); typecheck exit 0 (12 packages); test exit 0 (API 36 files /
+      249 tests, database 6 files / 67 tests, shared 3 files / 16 tests, worker
+      2 files / 12 tests, web 10 files / 32 tests, ui 6 files / 36 tests);
+      build exit 0 (8 packages including web + api); `git diff --check` exit 0;
+      `pnpm services:up && pnpm preflight` exit 0 (PostgreSQL + Redis
+      reachable).
 
 ## Traceability Matrix — 35 scenarios (18 requirements), zero orphans
 
