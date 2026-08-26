@@ -61,6 +61,7 @@ describe("RequestContextService", () => {
       service.setTenantMembership({
         tenantId: "tenant-1",
         membershipId: "membership-1",
+        roleId: "role-1",
         roleCode: "OWNER",
       });
       expect(service.get()).toEqual({
@@ -68,6 +69,7 @@ describe("RequestContextService", () => {
         userProfileId: "profile-1",
         tenantId: "tenant-1",
         membershipId: "membership-1",
+        roleId: "role-1",
         roleCode: "OWNER",
       });
     });
@@ -78,7 +80,12 @@ describe("RequestContextService", () => {
     // Must not throw — background contexts may call setters defensively.
     expect(() => service.setUserProfileId("profile-x")).not.toThrow();
     expect(() =>
-      service.setTenantMembership({ tenantId: "t", membershipId: "m", roleCode: "OWNER" })
+      service.setTenantMembership({
+        tenantId: "t",
+        membershipId: "m",
+        roleId: "r",
+        roleCode: "OWNER",
+      })
     ).not.toThrow();
   });
 

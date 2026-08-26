@@ -69,6 +69,7 @@ export class TenantActiveGuard implements CanActivate {
     this.requestContext.setTenantMembership({
       tenantId: membership.tenantId,
       membershipId: membership.id,
+      roleId: membership.roleId,
       roleCode: membership.roleCode,
     });
     return true;

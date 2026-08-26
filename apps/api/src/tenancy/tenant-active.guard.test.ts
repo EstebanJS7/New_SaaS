@@ -15,6 +15,7 @@ function resolution(
     id: randomUUID(),
     tenantId: randomUUID(),
     userProfileId: PROFILE_ID,
+    roleId: randomUUID(),
     roleCode: "OWNER",
     ...overrides,
   };
@@ -154,6 +155,7 @@ describe("TenantActiveGuard", () => {
     expect(snapshot?.userProfileId).toBe(PROFILE_ID);
     expect(snapshot?.tenantId).toBe(expected.tenantId);
     expect(snapshot?.membershipId).toBe(expected.id);
+    expect(snapshot?.roleId).toBe(expected.roleId);
     expect(snapshot?.roleCode).toBe(expected.roleCode);
   });
 });

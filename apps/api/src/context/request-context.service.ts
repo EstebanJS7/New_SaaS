@@ -13,6 +13,7 @@ interface RequestContextStore {
   userProfileId?: string;
   tenantId?: string;
   membershipId?: string;
+  roleId?: string;
   roleCode?: string;
 }
 
@@ -48,6 +49,16 @@ export class RequestContextService {
     return { ...store };
   }
 
+  /**
+   * Identity of the ACTIVE ALS store, or undefined outside any request.
+   * Internal seam for per-request memoization (EPIC-02 design D2): consumers
+   * key caches on this object so entries are garbage-collected with the
+   * request instead of leaking in long-lived maps.
+   */
+  activeStoreIdentity(): object | undefined {
+    return this.als.getStore();
+  }
+
   /** Request ID with a safe generated fallback outside request scope. */
   getRequestId(): string {
     return this.als.getStore()?.requestId ?? randomUUID();
@@ -64,17 +75,20 @@ export class RequestContextService {
   /**
    * Enriches the context with membership-derived tenancy claims
    * (TenantActiveGuard, tenancy slice). Tenant identity comes exclusively
-   * from the session's membership — never from client input.
+   * from the session's membership — never from client input. `roleId` rides
+   * along as the EPIC-02 enforcement key consumed by PermissionResolver.
    */
   setTenantMembership(membership: {
     tenantId: string;
     membershipId: string;
+    roleId: string;
     roleCode: string;
   }): void {
     const store = this.als.getStore();
     if (store) {
       store.tenantId = membership.tenantId;
       store.membershipId = membership.membershipId;
+      store.roleId = membership.roleId;
       store.roleCode = membership.roleCode;
     }
   }
@@ -98,5 +112,19 @@ export class RequestContextService {
       throw new DomainError("FORBIDDEN", "Tenant context was not resolved.");
     }
     return tenantId;
+  }
+
+  /**
+   * Post-tenancy contract for permission resolution (EPIC-02 design D2):
+   * throws FORBIDDEN when the active membership's role id is absent — the
+   * PermissionGuard treats that as fail-closed, never as "zero permissions
+   * known, allow".
+   */
+  requireRoleId(): string {
+    const roleId = this.als.getStore()?.roleId;
+    if (!roleId) {
+      throw new DomainError("FORBIDDEN", "Tenant context was not resolved.");
+    }
+    return roleId;
   }
 }

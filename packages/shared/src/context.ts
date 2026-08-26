@@ -30,6 +30,13 @@ export interface RequestContext {
   /** Membership row backing the tenant claim (audit + repository scoping). */
   readonly membershipId?: string;
 
+  /**
+   * Role row bound to the membership — the EPIC-02 enforcement key: the
+   * PermissionGuard resolves the permission key set from this id
+   * (`role_permission` join). Never client-supplied.
+   */
+  readonly roleId?: string;
+
   /** Role code bound to the membership; policy evaluation lands in EPIC-02. */
   readonly roleCode?: string;
 }

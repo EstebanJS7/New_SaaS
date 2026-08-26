@@ -42,7 +42,9 @@ function row(
  */
 function makeFakePrisma(seedRows: MembershipRow[]) {
   const rows = new Map<string, MembershipRow>(seedRows.map((entry) => [entry.id, entry]));
-  const roles = new Map<string, { code: string }>([[ROLE_ID, { code: "OWNER" }]]);
+  const roles = new Map<string, { code: string; id: string }>([
+    [ROLE_ID, { code: "OWNER", id: ROLE_ID }],
+  ]);
   const calls = { reads: 0, writes: 0 };
 
   function matches(where: Record<string, unknown>, candidate: MembershipRow): boolean {
@@ -93,7 +95,7 @@ function makeFakePrisma(seedRows: MembershipRow[]) {
         where: Record<string, unknown>;
         orderBy?: OrderClause[];
         include?: { role?: unknown };
-      }): (MembershipRow & { role?: { code: string } }) | null => {
+      }): (MembershipRow & { role?: { code: string; id: string } }) | null => {
         calls.reads += 1;
         const matched = [...rows.values()]
           .filter((candidate) => matches(args.where, candidate))
@@ -101,9 +103,10 @@ function makeFakePrisma(seedRows: MembershipRow[]) {
         const candidate = matched[0];
         if (!candidate) return null;
         if (args.include?.role) {
+          const joinedRole = roles.get(candidate.roleId);
           return {
             ...candidate,
-            role: { code: roles.get(candidate.roleId)?.code ?? "" },
+            role: { code: joinedRole?.code ?? "", id: joinedRole?.id ?? candidate.roleId },
           };
         }
         return candidate;
@@ -139,7 +142,12 @@ async function withTenantContext<T>(
   const ctx = new RequestContextService();
   return ctx.run(`req-${randomUUID()}`, () => {
     if (tenantId) {
-      ctx.setTenantMembership({ tenantId, membershipId: randomUUID(), roleCode: "OWNER" });
+      ctx.setTenantMembership({
+        tenantId,
+        membershipId: randomUUID(),
+        roleId: ROLE_ID,
+        roleCode: "OWNER",
+      });
     }
     return fn(ctx);
   });
@@ -257,7 +265,7 @@ describe("TenantMembershipRepository — implicit tenant scoping", () => {
 });
 
 describe("TenantMembershipRepository.resolveActiveForProfile", () => {
-  it("resolves only ACTIVE memberships with role code and deterministic order", async () => {
+  it("resolves only ACTIVE memberships with role id/code and deterministic order", async () => {
     const suspended = row({ status: "SUSPENDED", createdAt: new Date("2026-01-01T00:00:00Z") });
     const oldestActive = row({
       status: "ACTIVE",
@@ -278,6 +286,7 @@ describe("TenantMembershipRepository.resolveActiveForProfile", () => {
     expect(resolution).toMatchObject({
       id: oldestActive.id,
       tenantId: oldestActive.tenantId,
+      roleId: ROLE_ID,
       roleCode: "OWNER",
     });
   });
