@@ -3,7 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import supertest from "supertest";
 import { bootTestApp, type BootedTestApp } from "./support/boot-test-app.js";
 import { expectCrossTenant404 } from "./support/expect-cross-tenant-404.js";
-import { seedTwoTenants, type TwoTenantFixture } from "./support/seed-two-tenants.js";
+import {
+  insertLiveStaffSession,
+  seedTwoTenants,
+  type TwoTenantFixture,
+} from "./support/seed-two-tenants.js";
 
 interface ErrorEnvelopeBody {
   error: { code: string; message: string; requestId: string };
@@ -317,6 +321,119 @@ describe("cross-tenant isolation (real HTTP, full guard chain)", () => {
         .expect(404);
       expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
     }
+  });
+
+  it("settings reads resolve to the caller's tenant only — no cross-tenant-addressable resource (EPIC-02 task 3.4)", async () => {
+    // Tenant B writes a sales setting through a dedicated actor holding the
+    // permission and an explicit sales entitlement.
+    const bAdminRole = booted.db.prisma.role.create({
+      data: { code: `ADMIN-SETTINGS-${fixture.suffix}`, name: "Settings Admin" },
+    });
+    const salesPermission =
+      booted.db.prisma.permission.findUnique({ where: { key: "sales.settings.manage" } }) ??
+      booted.db.prisma.permission.create({
+        data: { key: "sales.settings.manage", name: "Manage sales settings" },
+      });
+    if (!salesPermission) throw new Error("fixture failure: sales permission missing");
+    booted.db.prisma.rolePermission.create({
+      data: { roleId: bAdminRole.id, permissionId: salesPermission.id },
+    });
+    const bAdminProfile = booted.db.prisma.userProfile.create({
+      data: {
+        email: `settings-admin-b-${fixture.suffix}@isolation.test`,
+        displayName: "Settings Admin B",
+        status: "active",
+      },
+    });
+    const bAdminMembership = booted.db.prisma.tenantMembership.create({
+      data: {
+        tenantId: fixture.tenants.b.id,
+        userProfileId: bAdminProfile.id,
+        roleId: bAdminRole.id,
+        status: "ACTIVE",
+      },
+    });
+    const salesFeature =
+      booted.db.prisma.featureCode.findUnique({ where: { code: "sales" } }) ??
+      booted.db.prisma.featureCode.create({ data: { code: "sales" } });
+    if (!salesFeature) throw new Error("fixture failure: sales feature code missing");
+    booted.db.prisma.tenantEntitlement.create({
+      data: { tenantId: fixture.tenants.b.id, featureCodeId: salesFeature.id },
+    });
+
+    const { cookie: bAdminCookie } = insertLiveStaffSession(booted.db, bAdminProfile.id);
+
+    await supertest(booted.app.getHttpServer())
+      .put("/settings/sales")
+      .set("Cookie", bAdminCookie)
+      .send({ defaultCurrency: "USD" })
+      .expect(200);
+
+    // There is NO cross-tenant-addressable settings resource. Tenant A reading
+    // the same namespace resolves to A's own tenant scope; with no persisted row
+    // it receives A's validated defaults, indistinguishable from A never having
+    // written the namespace at all.
+    const aReadBefore = await supertest(booted.app.getHttpServer())
+      .get("/settings/sales")
+      .set("Cookie", fixture.actors.a.cookie)
+      .expect(200);
+    expect((aReadBefore.body as { settings: Record<string, unknown> }).settings).toEqual({
+      defaultCurrency: "PYG",
+      requireCustomerForInvoice: false,
+    });
+
+    const aReadAfter = await supertest(booted.app.getHttpServer())
+      .get("/settings/sales")
+      .set("Cookie", fixture.actors.a.cookie)
+      .expect(200);
+    expect(aReadAfter.text).toBe(aReadBefore.text);
+
+    // Tenant A's write attempt to the same namespace is denied by the
+    // permission matrix, but the tenant-scoped lookup itself returns defaults
+    // rather than touching B's row.
+    const aWrite = await supertest(booted.app.getHttpServer())
+      .put("/settings/sales")
+      .set("Cookie", fixture.actors.a.cookie)
+      .send({ defaultCurrency: "ARS" })
+      .expect(403);
+    expect((aWrite.body as ErrorEnvelopeBody).error.code).toBe("FORBIDDEN");
+
+    // Physical fence: exactly one settings row exists and it belongs to B.
+    const rows = booted.db.prisma.tenantSettingNamespace.findMany({
+      where: { namespace: "sales" },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tenantId).toBe(fixture.tenants.b.id);
+    expect(rows[0].data).toEqual({ defaultCurrency: "USD", requireCustomerForInvoice: false });
+
+    // Cleanup fixture-specific rows so the global leak scan below stays valid.
+    booted.db.tables.settingNamespaces.delete(rows[0].id);
+    booted.db.tables.rolePermissions.delete(
+      [...booted.db.tables.rolePermissions.values()].find(
+        (entry) => entry.roleId === bAdminRole.id && entry.permissionId === salesPermission.id
+      )!.id
+    );
+    booted.db.tables.roles.delete(bAdminRole.id);
+    if (
+      [...booted.db.tables.rolePermissions.values()].every(
+        (entry) => entry.permissionId !== salesPermission.id
+      )
+    ) {
+      booted.db.tables.permissions.delete(salesPermission.id);
+    }
+    if (
+      [...booted.db.tables.entitlements.values()].every(
+        (entry) => entry.featureCodeId !== salesFeature.id
+      )
+    ) {
+      booted.db.tables.featureCodes.delete(salesFeature.id);
+    }
+    const bAdminSession = [...booted.db.tables.sessions.values()].find(
+      (entry) => entry.userProfileId === bAdminProfile.id
+    );
+    if (bAdminSession) booted.db.tables.sessions.delete(bAdminSession.tokenHash);
+    booted.db.tables.memberships.delete(bAdminMembership.id);
+    booted.db.tables.profiles.delete(bAdminProfile.id);
   });
 
   it("leaks ZERO tenant-B identifiers across every observed response body", async () => {

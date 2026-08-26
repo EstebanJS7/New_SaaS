@@ -7,6 +7,7 @@ import { ContextModule } from "./context/context.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
+import { SettingsModule } from "./settings/settings.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
 
 // Guard-chain wire order (design D3 + EPIC-02 design D1): AuthModule's
@@ -26,6 +27,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     RbacModule,
     AuditModule,
     EntitlementsModule,
+    SettingsModule,
   ],
 })
 export class AppModule {}

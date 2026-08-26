@@ -15,6 +15,7 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   VALIDATION_FAILED: "Request validation failed.",
   UNAUTHENTICATED: "Authentication required.",
   FORBIDDEN: "Access denied.",
+  FEATURE_NOT_ENTITLED: "The requested feature is not enabled for this tenant.",
   NOT_FOUND: "Resource was not found.",
   CONFLICT: "Request conflicts with current state.",
   RATE_LIMITED: "Too many requests.",

@@ -60,6 +60,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /rbac/roles",
   "GET /rbac/permissions",
   "PUT /rbac/roles/:code/permissions",
+  "GET /settings/:namespace",
+  "PUT /settings/:namespace",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {

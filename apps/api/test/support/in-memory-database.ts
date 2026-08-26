@@ -108,6 +108,17 @@ export interface TenantRolePermissionOverrideRow {
   granted: boolean;
 }
 
+/** Settings namespace row (EPIC-02 TenantSettingNamespace). */
+export interface TenantSettingNamespaceRow {
+  id: string;
+  tenantId: string;
+  namespace: string;
+  schemaVersion: number;
+  data: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 interface MembershipWhere {
   id?: string;
   tenantId?: string;
@@ -177,6 +188,31 @@ export interface IsolationDatabase {
         where: { tenantId?: string; roleId?: string; permissionKey?: string };
       }) => { count: number };
     };
+    tenantSettingNamespace: {
+      findUnique: (args: {
+        where: { tenantId_namespace: { tenantId: string; namespace: string } };
+      }) => TenantSettingNamespaceRow | null;
+      findMany: (args: {
+        where?: { tenantId?: string; namespace?: string };
+      }) => TenantSettingNamespaceRow[];
+      create: (args: {
+        data: Omit<TenantSettingNamespaceRow, "id" | "createdAt" | "updatedAt">;
+      }) => TenantSettingNamespaceRow;
+      update: (args: {
+        where: { tenantId_namespace: { tenantId: string; namespace: string } };
+        data: Partial<
+          Omit<TenantSettingNamespaceRow, "id" | "tenantId" | "namespace" | "createdAt">
+        >;
+      }) => TenantSettingNamespaceRow;
+      upsert: (args: {
+        where: { tenantId_namespace: { tenantId: string; namespace: string } };
+        create: Omit<TenantSettingNamespaceRow, "id" | "createdAt" | "updatedAt">;
+        update: Partial<
+          Omit<TenantSettingNamespaceRow, "id" | "tenantId" | "namespace" | "createdAt">
+        >;
+      }) => TenantSettingNamespaceRow;
+      deleteMany: (args: { where: { tenantId?: string; namespace?: string } }) => { count: number };
+    };
     userProfile: {
       create: (args: {
         data: { email: string; displayName: string; status: string };
@@ -236,6 +272,7 @@ export interface IsolationDatabase {
     permissions: Map<string, PermissionRow>;
     rolePermissions: Map<string, RolePermissionRow>;
     rolePermissionOverrides: Map<string, TenantRolePermissionOverrideRow>;
+    settingNamespaces: Map<string, TenantSettingNamespaceRow>;
   };
 }
 
@@ -295,6 +332,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const permissions = new Map<string, PermissionRow>();
   const rolePermissions = new Map<string, RolePermissionRow>();
   const rolePermissionOverrides = new Map<string, TenantRolePermissionOverrideRow>();
+  const settingNamespaces = new Map<string, TenantSettingNamespaceRow>();
 
   type PrismaLike = IsolationDatabase["prisma"];
   // `$transaction` executes the callback against the SAME in-memory maps —
@@ -416,6 +454,80 @@ export function createIsolationDatabase(): IsolationDatabase {
             (where.permissionKey === undefined || candidate.permissionKey === where.permissionKey)
           ) {
             rolePermissionOverrides.delete(id);
+            count += 1;
+          }
+        }
+        return { count };
+      },
+    },
+    tenantSettingNamespace: {
+      findUnique: ({ where }) =>
+        [...settingNamespaces.values()].find(
+          (candidate) =>
+            candidate.tenantId === where.tenantId_namespace.tenantId &&
+            candidate.namespace === where.tenantId_namespace.namespace
+        ) ?? null,
+      findMany: ({ where } = {}) =>
+        [...settingNamespaces.values()].filter(
+          (candidate) =>
+            (where?.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where?.namespace === undefined || candidate.namespace === where.namespace)
+        ),
+      create: ({ data }) => {
+        const now = new Date();
+        const created: TenantSettingNamespaceRow = {
+          id: randomUUID(),
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        };
+        settingNamespaces.set(created.id, created);
+        return created;
+      },
+      update: ({ where, data }) => {
+        const existing = [...settingNamespaces.values()].find(
+          (candidate) =>
+            candidate.tenantId === where.tenantId_namespace.tenantId &&
+            candidate.namespace === where.tenantId_namespace.namespace
+        );
+        if (!existing) {
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        if (data.schemaVersion !== undefined) existing.schemaVersion = data.schemaVersion;
+        if (data.data !== undefined) existing.data = data.data;
+        existing.updatedAt = new Date();
+        return existing;
+      },
+      upsert: ({ where, create, update }) => {
+        const existing = [...settingNamespaces.values()].find(
+          (candidate) =>
+            candidate.tenantId === where.tenantId_namespace.tenantId &&
+            candidate.namespace === where.tenantId_namespace.namespace
+        );
+        if (existing) {
+          if (update.schemaVersion !== undefined) existing.schemaVersion = update.schemaVersion;
+          if (update.data !== undefined) existing.data = update.data;
+          existing.updatedAt = new Date();
+          return existing;
+        }
+        const now = new Date();
+        const created: TenantSettingNamespaceRow = {
+          id: randomUUID(),
+          ...create,
+          createdAt: now,
+          updatedAt: now,
+        };
+        settingNamespaces.set(created.id, created);
+        return created;
+      },
+      deleteMany: ({ where }) => {
+        let count = 0;
+        for (const [id, candidate] of settingNamespaces) {
+          if (
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.namespace === undefined || candidate.namespace === where.namespace)
+          ) {
+            settingNamespaces.delete(id);
             count += 1;
           }
         }
@@ -573,6 +685,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       permissions,
       rolePermissions,
       rolePermissionOverrides,
+      settingNamespaces,
     },
   };
 }
