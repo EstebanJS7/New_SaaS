@@ -216,6 +216,19 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     }
   });
 
+
+  it("grants branding.settings.manage to OWNER and ADMIN only", () => {
+    expect(ROLE_PERMISSION_MATRIX.OWNER).toContain("branding.settings.manage");
+    expect(ROLE_PERMISSION_MATRIX.ADMIN).toContain("branding.settings.manage");
+    for (const roleCode of [
+      "VETERINARIAN",
+      "RECEPTIONIST",
+      "CASHIER",
+      "INVENTORY_MANAGER",
+    ] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain("branding.settings.manage");
+    }
+  });
   it("ships the single inert starter plan", () => {
     expect(STARTER_PLAN_SEED.code).toBe("starter");
   });
@@ -230,7 +243,7 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const fake = await seededOnce();
     expect(fake.counts()).toEqual({
       roles: 6,
-      permissions: 7,
+      permissions: 8,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

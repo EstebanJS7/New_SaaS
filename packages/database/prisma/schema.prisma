@@ -39,6 +39,7 @@ model UserProfile {
   sessions    StaffSession[]
   memberships TenantMembership[]
   auditLogs   AuditLog[]
+  tenantBrandings TenantBranding[]
 
   @@map("user_profile")
 }
@@ -116,6 +117,7 @@ model Tenant {
   auditLogs               AuditLog[]
   rolePermissionOverrides TenantRolePermissionOverride[]
   settingNamespaces        TenantSettingNamespace[]
+  tenantBranding          TenantBranding[]
 
   @@map("tenant")
 }
@@ -294,6 +296,28 @@ model TenantSettingNamespace {
   @@unique([tenantId, namespace])
   @@index([tenantId])
   @@map("tenant_setting_namespace")
+}
+
+/// Tenant-specific brand overrides that layer on top of the product preset.
+/// One row per tenant; a missing row means the tenant falls back to the
+/// product brand preset. The JSON payload is validated against the versioned
+/// v1 `brandOverrideSchema` before it reaches this persistence boundary.
+model TenantBranding {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String @unique @map("tenant_id") @db.Uuid
+  schemaVersion Int    @map("schema_version")
+  overrides     Json   @map("overrides")
+
+  updatedByUserProfileId String? @map("updated_by_user_profile_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  updatedBy UserProfile? @relation(fields: [updatedByUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("tenant_branding")
 }
 
 // ---------------------------------------------------------------------------
