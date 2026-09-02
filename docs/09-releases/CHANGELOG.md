@@ -6,6 +6,15 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-03 Phase B — tenant branding overrides and admin surface:
+  - `tenant_branding` table with one row per tenant, versioned JSON overrides,
+    and additive migration.
+  - Private `GET /branding/current`, `PUT /branding/current`,
+    `POST /branding/reset` endpoints gated by `branding.settings.manage` and the
+    `custom_branding` entitlement, with audit co-commit.
+  - Public `GET /api/v1/public/tenants/:slug/branding` allowlisted DTO.
+  - Server-side brand resolution in the staff layout and bounded preview UI at
+    `/app/settings/branding`.
 - PRD v1.3 architecture freeze and Complexity Budget.
 - Typed Tenant Settings architecture.
 - Minimal internal post-commit application events.

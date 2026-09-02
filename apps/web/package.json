@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "next build",
+    "postbuild": "node scripts/verify-build-output.mjs",
     "dev": "next dev",
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit",

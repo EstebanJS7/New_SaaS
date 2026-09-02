@@ -13,6 +13,9 @@ export interface MappedError {
 /** Fixed client-facing copy per code; unknown failures never leak details. */
 const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   VALIDATION_FAILED: "Request validation failed.",
+  BRAND_OVERRIDE_UNKNOWN_KEY: "Unknown branding override key.",
+  BRAND_OVERRIDE_UNSUPPORTED_SCHEMA_VERSION: "Unsupported branding override schema version.",
+  BRAND_OVERRIDE_INVALID_VALUE: "Invalid branding override value.",
   UNAUTHENTICATED: "Authentication required.",
   FORBIDDEN: "Access denied.",
   FEATURE_NOT_ENTITLED: "The requested feature is not enabled for this tenant.",
@@ -23,12 +26,12 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
 };
 
 /** Reverse lookup status → code from the frozen registry (first wins). */
-const STATUS_TO_CODE = new Map<number, ErrorCode>(
-  (Object.entries(ERROR_CODES) as [ErrorCode, { status: number }][]).map(([code, entry]) => [
-    entry.status,
-    code,
-  ])
-);
+const STATUS_TO_CODE = new Map<number, ErrorCode>();
+for (const [code, entry] of Object.entries(ERROR_CODES) as [ErrorCode, { status: number }][]) {
+  if (!STATUS_TO_CODE.has(entry.status)) {
+    STATUS_TO_CODE.set(entry.status, code);
+  }
+}
 
 interface ZodIssueShape {
   readonly path?: readonly (string | number | symbol)[];

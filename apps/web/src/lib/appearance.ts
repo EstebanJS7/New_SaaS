@@ -1,3 +1,5 @@
+import type { DefaultAppearance } from "@newsaas/ui/branding";
+
 /**
  * Appearance persistence contract (design D6).
  *
@@ -17,6 +19,8 @@ export const DARK_CLASS = "dark";
 // module; the key is embedded from the constant to keep a single source.
 const STORAGE_KEY_JSON = JSON.stringify(APPEARANCE_STORAGE_KEY);
 const DARK_CLASS_JSON = JSON.stringify(DARK_CLASS);
+const DARK_VALUE_JSON = JSON.stringify("dark");
+const LIGHT_VALUE_JSON = JSON.stringify("light");
 
 /**
  * Self-contained IIFE source for the inline `<script>` rendered as the first
@@ -25,3 +29,19 @@ const DARK_CLASS_JSON = JSON.stringify(DARK_CLASS);
  * storage) or other value silently falls back to light.
  */
 export const appearanceBootstrapScript = `(function(){try{if(window.localStorage.getItem(${STORAGE_KEY_JSON})===${DARK_CLASS_JSON}){document.documentElement.classList.add(${DARK_CLASS_JSON});}}catch(e){}})();`;
+
+/**
+ * Tenant-aware parser-blocking bootstrap (design D5).
+ *
+ * A valid local `"light"` or `"dark"` choice always wins over the tenant
+ * `defaultAppearance`; the tenant value is used only when no valid local
+ * preference exists. `"system"` and unreadable values are treated as
+ * "no valid local preference" and fall back to the tenant default.
+ */
+export function appearanceBootstrapScriptWithDefault(defaultAppearance: DefaultAppearance): string {
+  if (defaultAppearance !== "dark") {
+    return appearanceBootstrapScript;
+  }
+
+  return `(function(){try{var s=window.localStorage.getItem(${STORAGE_KEY_JSON});if(s===${DARK_VALUE_JSON}||(s!==${LIGHT_VALUE_JSON}&&s!==${DARK_VALUE_JSON})){document.documentElement.classList.add(${DARK_CLASS_JSON});}}catch(e){}})();`;
+}

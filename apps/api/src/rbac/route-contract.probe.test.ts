@@ -62,6 +62,11 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /rbac/roles/:code/permissions",
   "GET /settings/:namespace",
   "PUT /settings/:namespace",
+  // EPIC-03 Phase B — tenant branding
+  "GET /branding/current",
+  "PUT /branding/current",
+  "POST /branding/reset",
+  "GET /api/v1/public/tenants/:slug/branding",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {

@@ -11,6 +11,9 @@
  */
 export const ERROR_CODES = Object.freeze({
   VALIDATION_FAILED: Object.freeze({ status: 400 }),
+  BRAND_OVERRIDE_UNKNOWN_KEY: Object.freeze({ status: 400 }),
+  BRAND_OVERRIDE_UNSUPPORTED_SCHEMA_VERSION: Object.freeze({ status: 400 }),
+  BRAND_OVERRIDE_INVALID_VALUE: Object.freeze({ status: 400 }),
   UNAUTHENTICATED: Object.freeze({ status: 401 }),
   FORBIDDEN: Object.freeze({ status: 403 }),
   NOT_FOUND: Object.freeze({ status: 404 }),

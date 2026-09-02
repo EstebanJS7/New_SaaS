@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { PrismaModule } from "@newsaas/database";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
+import { BrandingModule } from "./branding/branding.module.js";
 import { CommonModule } from "./common/common.module.js";
 import { ContextModule } from "./context/context.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
@@ -27,6 +28,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     RbacModule,
     AuditModule,
     EntitlementsModule,
+    BrandingModule,
     SettingsModule,
   ],
 })

@@ -2,7 +2,7 @@
 type: module
 module: branding
 status: active
-updated: 2026-08-24
+updated: 2026-08-31
 ---
 
 # Module — Branding
@@ -33,8 +33,10 @@ BrandingAsset
 ## Permissions
 
 ```text
-settings.branding.manage
+branding.settings.manage
 ```
+
+Granted to `OWNER` and `ADMIN` by the reference seed.
 
 ## Entitlement
 
@@ -44,15 +46,25 @@ custom_branding
 
 ## API
 
-None shipped yet (Phase B target surface):
+Private (staff, authenticated):
 
 ```text
-GET   /api/v1/branding/current
-GET   /api/v1/settings/branding
-PATCH /api/v1/settings/branding
-POST  /api/v1/settings/branding/assets
-POST  /api/v1/settings/branding/reset
+GET   /branding/current          — resolved brand for the active tenant
+PUT   /branding/current          — update tenant overrides (manage + entitlement)
+POST  /branding/reset            — remove tenant overrides (manage + entitlement)
+```
+
+Public (unauthenticated, allowlisted DTO only):
+
+```text
 GET   /api/v1/public/tenants/:slug/branding
+```
+
+Web proxy routes (staff session cookie forwarded):
+
+```text
+GET   /api/branding/current
+POST  /api/branding/reset
 ```
 
 ## Invariants
@@ -80,9 +92,9 @@ product presets or tenant overrides. The shipped foundation is:
 No tenant resolution, no asset upload, and no Veterinary-specific colors are
 present in EPIC-00.
 
-## Implemented public behavior (EPIC-03 Phase A)
+## Implemented public behavior
 
-Shipped as of EPIC-03 Phase A (chrome-only staff shell + token layer):
+### EPIC-03 Phase A — token layer and preset
 
 - **Token layer**: complete semantic set in `apps/web/src/app/globals.css`
   including the `--popover` pair and a full `.dark` block with light/dark parity
@@ -92,29 +104,49 @@ Shipped as of EPIC-03 Phase A (chrome-only staff shell + token layer):
   (`packages/ui/src/branding/presets/veterinary-default.ts`) is a complete,
   schema-valid `ProductBrandPreset`.
 - **Resolver chain**: `resolveBrand` deep-merges core defaults ← preset ← tenant
-  patch (reserved; absent layers fall back silently) into a `ResolvedBrand`.
-- **CSS bridge**: root layout renders resolved values as a `<style>` tag under
-  `:root:not(.dark)` (see [[Branding and Theming]] for the precedence contract).
-  Preset swap requires zero shared-component edits.
+  patch into a `ResolvedBrand`.
 - **Override schema v1**: `brandOverrideSchema`
   (`BRAND_OVERRIDE_SCHEMA_VERSION = 1`) accepts strict camelCase subsets
   (`primary`, `accent`, `radius`, `defaultAppearance`) with stable error codes.
-  Validated in isolation only — not yet wired to tenant storage.
 - **Appearance persistence (client-local)**:
   `localStorage["newsaas.appearance"]` stores `"light" | "dark"`. A
   parser-blocking bootstrap script applies a stored `dark` before first paint;
-  the shell toggle flips `<html>.dark` without reload. Absent/corrupted value
-  mounts light; `"system"` accepted by schema but inert.
+  the shell toggle flips `<html>.dark` without reload. Valid local appearance
+  always wins; tenant `defaultAppearance` is only the fallback bootstrap input.
 - **Staff shell skeleton**: chrome-only `/app` route group (sidebar, topbar,
   bounded `<main data-shell-content>` region) composed from shadcn Button/Card
-  primitives; nav entries are inert placeholders.
+  primitives.
 
-## Not yet implemented (Phase B)
+### EPIC-03 Phase B — tenant overrides and admin surface
 
-Tenant branding persistence and admin API, asset uploads (logo/favicon), public
-branding endpoint, tenant isolation and audit for branding changes, settings UI
-with live preview/reset, entitlement (`custom_branding`) gating, and
-preset-driven recoloring of dark mode.
+- **Persistence**: one `tenant_branding` row per tenant (`tenant_id` UNIQUE),
+  versioned JSON overrides, `updated_by` relation, additive migration.
+- **Private API**: `GET /branding/current`, `PUT /branding/current`,
+  `POST /branding/reset`. Reads require authentication + active membership;
+  writes require `branding.settings.manage` plus the `custom_branding`
+  entitlement.
+- **Audit**: every successful write/reset co-commits an `audit_log` row in the
+  same transaction (`branding.updated` / `branding.reset`).
+- **Public API**: `GET /api/v1/public/tenants/:slug/branding` returns only the
+  PUBLIC allowlist (`productDisplayName`, `primary`, `accent`, `radius`,
+  `defaultAppearance`); 404 on unknown slug.
+- **Server resolution**: staff layout resolves the full brand server-side and
+  injects `brandStyleCss` as a parser-blocking `<style>` tag.
+- **Settings UI**: `/app/settings/branding` with bounded sample-card preview,
+  Save, and Reset. Preview is form-state only and never reproduces the shell.
+
+## Not yet implemented
+
+Asset uploads (logo/favicon), preset-driven dark-mode recoloring, portal-side
+branding consumption, and Playwright E2E coverage for the settings page.
+
+## Known limitations / blockers
+
+- Playwright E2E coverage for branding settings is **explicitly blocked**:
+  Playwright is not installed or configured in the repository. The Vitest suite
+  covers unit, integration, SSR CSS bridge, and bounded preview locality; a
+  future change that adds Playwright should implement the settings-page E2E
+  scenario before removing this note.
 
 ## Veterinary preset: Clinical Precision
 

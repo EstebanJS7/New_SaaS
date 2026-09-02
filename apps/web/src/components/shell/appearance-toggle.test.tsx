@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { APPEARANCE_STORAGE_KEY, DARK_CLASS } from "@/lib/appearance";
 import AppShellLayout from "@/app/(app)/layout";
 import AppHomePage from "@/app/(app)/app/page";
+import { activeProductPreset, resolveBrand } from "@newsaas/ui/branding";
 import { AppearanceToggle } from "./appearance-toggle";
 
 function resetAppearanceState(): void {
@@ -12,6 +13,13 @@ function resetAppearanceState(): void {
 }
 
 describe("AppearanceToggle", () => {
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ source: "preset", brand: resolveBrand(activeProductPreset) }),
+    });
+  });
+
   afterEach(resetAppearanceState);
 
   it("flips the dark class on the document root without navigation or reload", () => {
@@ -65,12 +73,9 @@ describe("AppearanceToggle", () => {
     expect(document.documentElement.classList.contains(DARK_CLASS)).toBe(true);
   });
 
-  it("re-themes the bounded sample-card region through tokens only", () => {
-    render(
-      <AppShellLayout>
-        <AppHomePage />
-      </AppShellLayout>
-    );
+  it("re-themes the bounded sample-card region through tokens only", async () => {
+    const element = await AppShellLayout({ children: <AppHomePage /> });
+    render(element);
 
     const card = screen.getByTestId("sample-card");
     // Sample content inherits semantic tokens; no component-local colors.

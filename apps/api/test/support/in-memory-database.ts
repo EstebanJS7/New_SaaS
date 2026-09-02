@@ -119,6 +119,18 @@ export interface TenantSettingNamespaceRow {
   updatedAt: Date;
 }
 
+/** Tenant branding override row (EPIC-03 Phase B). */
+export interface TenantBrandingRow {
+  id: string;
+  tenantId: string;
+  schemaVersion: number;
+  overrides: unknown;
+  updatedByUserProfileId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+
 interface MembershipWhere {
   id?: string;
   tenantId?: string;
@@ -153,6 +165,16 @@ export interface IsolationDatabase {
     ) => Promise<{ id: string; role_id: string }[]>;
     tenant: {
       create: (args: { data: { slug: string; name: string } }) => TenantRow;
+      findUnique: (args: { where: { id?: string; slug?: string } }) => TenantRow | null;
+    };
+    tenantBranding: {
+      findUnique: (args: { where: { tenantId: string } }) => TenantBrandingRow | null;
+      upsert: (args: {
+        where: { tenantId: string };
+        create: Omit<TenantBrandingRow, "id" | "createdAt" | "updatedAt">;
+        update: Partial<Omit<TenantBrandingRow, "id" | "tenantId" | "createdAt">>;
+      }) => TenantBrandingRow;
+      delete: (args: { where: { tenantId: string } }) => TenantBrandingRow;
     };
     role: {
       create: (args: { data: { code: string; name: string } }) => RoleRow;
@@ -273,6 +295,7 @@ export interface IsolationDatabase {
     rolePermissions: Map<string, RolePermissionRow>;
     rolePermissionOverrides: Map<string, TenantRolePermissionOverrideRow>;
     settingNamespaces: Map<string, TenantSettingNamespaceRow>;
+    tenantBrandings: Map<string, TenantBrandingRow>;
   };
 }
 
@@ -333,13 +356,64 @@ export function createIsolationDatabase(): IsolationDatabase {
   const rolePermissions = new Map<string, RolePermissionRow>();
   const rolePermissionOverrides = new Map<string, TenantRolePermissionOverrideRow>();
   const settingNamespaces = new Map<string, TenantSettingNamespaceRow>();
+  const tenantBrandings = new Map<string, TenantBrandingRow>();
+
+  type TableSnapshot = Record<string, Map<string, unknown>>;
+
+  const allTables: Record<string, Map<string, unknown>> = {
+    tenants,
+    roles,
+    profiles,
+    sessions,
+    memberships,
+    audits,
+    featureCodes,
+    entitlements,
+    permissions,
+    rolePermissions,
+    rolePermissionOverrides,
+    settingNamespaces,
+    tenantBrandings,
+  };
+
+  function snapshotTables(): TableSnapshot {
+    const snapshot: TableSnapshot = {};
+    for (const [name, table] of Object.entries(allTables)) {
+      const cloned = new Map<string, unknown>();
+      for (const [id, row] of table) {
+        cloned.set(id, structuredClone(row));
+      }
+      snapshot[name] = cloned;
+    }
+    return snapshot;
+  }
+
+  function restoreTables(snapshot: TableSnapshot): void {
+    for (const [name, table] of Object.entries(allTables)) {
+      const snapshotTable = snapshot[name];
+      table.clear();
+      for (const [id, row] of snapshotTable) {
+        table.set(id, structuredClone(row));
+      }
+    }
+  }
 
   type PrismaLike = IsolationDatabase["prisma"];
-  // `$transaction` executes the callback against the SAME in-memory maps —
-  // there is nothing to roll back (documented fake limitation; real
-  // transactional semantics are proven by the CI `migrations` job).
+  // `$transaction` executes the callback against the SAME in-memory maps but
+  // snapshots them first so a thrown error rolls back every mutation — this
+  // makes audit-or-nothing tests honest on the in-memory boundary. Real
+  // transactional semantics are still proven by the live-PostgreSQL evidence
+  // gate (TD-006).
   const prisma: PrismaLike = {
-    $transaction: <T>(callback: (tx: PrismaLike) => Promise<T>): Promise<T> => callback(prisma),
+    $transaction: async <T>(callback: (tx: PrismaLike) => Promise<T>): Promise<T> => {
+      const snapshot = snapshotTables();
+      try {
+        return await callback(prisma);
+      } catch (error) {
+        restoreTables(snapshot);
+        throw error;
+      }
+    },
     $queryRaw: (query, ...values) => {
       // Match THE one shipped raw query (all active membership rows for the
       // tenant). The only bound value is the server-resolved tenant id.
@@ -362,6 +436,49 @@ export function createIsolationDatabase(): IsolationDatabase {
         const created: TenantRow = { id: randomUUID(), slug: data.slug, name: data.name };
         tenants.set(created.id, created);
         return created;
+      },
+      findUnique: ({ where }) =>
+        [...tenants.values()].find(
+          (candidate) =>
+            (where.id !== undefined && candidate.id === where.id) ||
+            (where.slug !== undefined && candidate.slug === where.slug)
+        ) ?? null,
+    },
+    tenantBranding: {
+      findUnique: ({ where }) =>
+        [...tenantBrandings.values()].find((candidate) => candidate.tenantId === where.tenantId) ??
+        null,
+      upsert: ({ where, create, update }) => {
+        const existing = [...tenantBrandings.values()].find(
+          (candidate) => candidate.tenantId === where.tenantId
+        );
+        const now = new Date();
+        if (existing) {
+          if (update.schemaVersion !== undefined) existing.schemaVersion = update.schemaVersion;
+          if (update.overrides !== undefined) existing.overrides = update.overrides;
+          if (update.updatedByUserProfileId !== undefined)
+            existing.updatedByUserProfileId = update.updatedByUserProfileId;
+          existing.updatedAt = now;
+          return existing;
+        }
+        const created: TenantBrandingRow = {
+          id: randomUUID(),
+          ...create,
+          createdAt: now,
+          updatedAt: now,
+        };
+        tenantBrandings.set(created.id, created);
+        return created;
+      },
+      delete: ({ where }) => {
+        const existing = [...tenantBrandings.values()].find(
+          (candidate) => candidate.tenantId === where.tenantId
+        );
+        if (!existing) {
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        tenantBrandings.delete(existing.id);
+        return existing;
       },
     },
     role: {
@@ -686,6 +803,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       rolePermissions,
       rolePermissionOverrides,
       settingNamespaces,
+      tenantBrandings,
     },
   };
 }

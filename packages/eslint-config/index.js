@@ -8,6 +8,8 @@ import globals from "globals";
  *
  * Apps and packages should extend this with package-specific overrides.
  */
+export const disableTypeChecked = tseslint.configs.disableTypeChecked;
+
 export const config = tseslint.config(
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,

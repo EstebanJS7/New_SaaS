@@ -8,6 +8,9 @@ describe("ERROR_CODES registry", () => {
     // is additive-only (spec: registry snapshot stability).
     expect(ERROR_CODES).toEqual({
       VALIDATION_FAILED: { status: 400 },
+      BRAND_OVERRIDE_UNKNOWN_KEY: { status: 400 },
+      BRAND_OVERRIDE_UNSUPPORTED_SCHEMA_VERSION: { status: 400 },
+      BRAND_OVERRIDE_INVALID_VALUE: { status: 400 },
       UNAUTHENTICATED: { status: 401 },
       FORBIDDEN: { status: 403 },
       FEATURE_NOT_ENTITLED: { status: 403 },
@@ -35,9 +38,9 @@ describe("ERROR_CODES registry", () => {
     }).toThrow(TypeError);
   });
 
-  it("exposes exactly the eight baseline codes with SCREAMING_SNAKE keys", () => {
+  it("exposes exactly the eleven baseline codes with SCREAMING_SNAKE keys", () => {
     const codes = Object.keys(ERROR_CODES);
-    expect(codes).toHaveLength(8);
+    expect(codes).toHaveLength(11);
     for (const code of codes) {
       expect(code).toMatch(/^[A-Z][A-Z0-9_]*$/);
     }

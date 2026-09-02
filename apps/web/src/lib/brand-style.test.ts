@@ -31,4 +31,19 @@ describe("brandStyleCss", () => {
       `--primary:${brand.theme.colors.primary.replace(/^hsl\(\s*|\s*\)$/g, "")};`
     );
   });
+
+  it("emits tenant override values through the SSR layout CSS bridge", () => {
+    const tenantBrand = resolveBrand(activeProductPreset, undefined, {
+      schemaVersion: 1,
+      primary: "#0ea5e9",
+      accent: "#f43f5e",
+      radius: "0.75rem",
+    });
+    const css = brandStyleCss(tenantBrand);
+
+    // toCssVariables normalizes colors to bare HSL triplets.
+    expect(css).toContain("--primary:199 89% 48%");
+    expect(css).toContain("--accent:350 89% 60%");
+    expect(css).toContain("--radius:0.75rem");
+  });
 });
