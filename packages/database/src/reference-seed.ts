@@ -16,8 +16,8 @@ import type { PrismaClient } from "./generated/index.js";
  * zero diffs.
  */
 
-/** PRD §9 permission naming: three lowercase segments `domain.resource.action`. */
-export const PERMISSION_KEY_PATTERN = /^[a-z]+\.[a-z_]+\.[a-z_]+$/;
+/** PRD §9 permission naming: two or three lowercase segments `domain.action` or `domain.resource.action`. */
+export const PERMISSION_KEY_PATTERN = /^[a-z]+(?:\.[a-z_]+){1,2}$/;
 
 /** PRD §10 feature codes are single lowercase tokens (underscores allowed). */
 export const FEATURE_CODE_PATTERN = /^[a-z][a-z_]*$/;
@@ -54,6 +54,12 @@ export const PERMISSION_SEEDS = [
   { key: "scheduling.appointment.manage", name: "Manage appointments" },
   { key: "sales.settings.manage", name: "Manage sales settings" },
   { key: "branding.settings.manage", name: "Manage tenant branding settings" },
+  { key: "customers.read", name: "Read customers" },
+  { key: "customers.create", name: "Create customers" },
+  { key: "customers.update", name: "Update customers" },
+  { key: "customers.deactivate", name: "Deactivate customers" },
+  { key: "customers.address.manage", name: "Manage customer addresses" },
+  { key: "customers.contact.manage", name: "Manage customer contacts" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -72,6 +78,12 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "scheduling.appointment.manage",
     "sales.settings.manage",
     "branding.settings.manage",
+    "customers.read",
+    "customers.create",
+    "customers.update",
+    "customers.deactivate",
+    "customers.address.manage",
+    "customers.contact.manage",
   ],
   ADMIN: [
     "vet.clinical.create",
@@ -82,9 +94,22 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "scheduling.appointment.manage",
     "sales.settings.manage",
     "branding.settings.manage",
+    "customers.read",
+    "customers.create",
+    "customers.update",
+    "customers.deactivate",
+    "customers.address.manage",
+    "customers.contact.manage",
   ],
-  VETERINARIAN: ["vet.clinical.create"],
-  RECEPTIONIST: ["scheduling.appointment.manage"],
+  VETERINARIAN: ["vet.clinical.create", "customers.read"],
+  RECEPTIONIST: [
+    "scheduling.appointment.manage",
+    "customers.read",
+    "customers.create",
+    "customers.update",
+    "customers.address.manage",
+    "customers.contact.manage",
+  ],
   CASHIER: ["cash.session.close", "fiscal.invoice.issue"],
   INVENTORY_MANAGER: ["inventory.stock.transfer"],
 };

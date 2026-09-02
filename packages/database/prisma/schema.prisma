@@ -118,6 +118,10 @@ model Tenant {
   rolePermissionOverrides TenantRolePermissionOverride[]
   settingNamespaces        TenantSettingNamespace[]
   tenantBranding          TenantBranding[]
+  customers               Customer[]
+  customerAddresses       CustomerAddress[]
+  customerContacts        CustomerContact[]
+  patientGuardians        PatientGuardian[]
 
   @@map("tenant")
 }
@@ -392,6 +396,136 @@ model TenantEntitlement {
 
   @@unique([tenantId, featureCodeId])
   @@map("tenant_entitlement")
+}
+
+// ---------------------------------------------------------------------------
+// Customer core (EPIC-04). Tenant-scoped Customer aggregate with child
+// Address/Contact entities and an inert PatientGuardian scaffold.
+// ---------------------------------------------------------------------------
+
+/// Customer legal form. Values are pinned by design D1; evolve additively only.
+enum CustomerKind {
+  INDIVIDUAL
+  COMPANY
+
+  @@map("customer_kind")
+}
+
+/// Contact channel kind. Values pinned by design; evolve additively only.
+enum CustomerContactKind {
+  EMAIL
+  PHONE
+
+  @@map("customer_contact_kind")
+}
+
+/// Tenant-scoped customer aggregate (individual or company). Data
+/// classification: display_name, legal_name, tax_id, first_name, last_name and
+/// document_number are CONFIDENTIAL; application logs must carry IDs only.
+model Customer {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  kind        CustomerKind
+  displayName String @map("display_name")
+
+  legalName String? @map("legal_name")
+  taxId     String? @map("tax_id")
+
+  firstName      String? @map("first_name")
+  lastName       String? @map("last_name")
+  documentNumber String? @map("document_number")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  addresses CustomerAddress[]
+  contacts  CustomerContact[]
+  guardians PatientGuardian[]
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@map("customer")
+}
+
+/// Tenant-scoped address belonging to exactly one Customer.
+model CustomerAddress {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId   String @map("tenant_id") @db.Uuid
+  customerId String @map("customer_id") @db.Uuid
+
+  label       String?
+  line1       String?
+  line2       String?
+  city        String?
+  state       String?
+  postalCode  String? @map("postal_code")
+  countryCode String? @map("country_code")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("customer_address")
+}
+
+/// Tenant-scoped contact channel belonging to exactly one Customer.
+model CustomerContact {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId   String @map("tenant_id") @db.Uuid
+  customerId String @map("customer_id") @db.Uuid
+
+  kind  CustomerContactKind
+  label String?
+  value String
+
+  isPrimary Boolean @default(false) @map("is_primary")
+  isActive  Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("customer_contact")
+}
+
+/// INERT SCAFFOLD (spec: persistence / Schema inventory): no endpoint or
+/// service creates, reads, updates or deletes rows until the Patient domain
+/// ships. The Patient FK is intentionally omitted; only customer_id exists.
+model PatientGuardian {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId   String @map("tenant_id") @db.Uuid
+  customerId String @map("customer_id") @db.Uuid
+
+  position Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([customerId, position])
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("patient_guardian")
 }
 
 // ---------------------------------------------------------------------------

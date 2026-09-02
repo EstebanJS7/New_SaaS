@@ -161,7 +161,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     ]);
   });
 
-  it("formats every permission key as domain.resource.action", () => {
+  it("formats every permission key as domain.action or domain.resource.action", () => {
     for (const permission of PERMISSION_SEEDS) {
       expect(permission.key).toMatch(PERMISSION_KEY_PATTERN);
     }
@@ -216,7 +216,6 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     }
   });
 
-
   it("grants branding.settings.manage to OWNER and ADMIN only", () => {
     expect(ROLE_PERMISSION_MATRIX.OWNER).toContain("branding.settings.manage");
     expect(ROLE_PERMISSION_MATRIX.ADMIN).toContain("branding.settings.manage");
@@ -229,6 +228,53 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain("branding.settings.manage");
     }
   });
+
+  it("grants the customer baseline matrix", () => {
+    expect(ROLE_PERMISSION_MATRIX.OWNER).toEqual(
+      expect.arrayContaining([
+        "customers.read",
+        "customers.create",
+        "customers.update",
+        "customers.deactivate",
+        "customers.address.manage",
+        "customers.contact.manage",
+      ])
+    );
+    expect(ROLE_PERMISSION_MATRIX.ADMIN).toEqual(
+      expect.arrayContaining([
+        "customers.read",
+        "customers.create",
+        "customers.update",
+        "customers.deactivate",
+        "customers.address.manage",
+        "customers.contact.manage",
+      ])
+    );
+    expect(ROLE_PERMISSION_MATRIX.RECEPTIONIST).toEqual(
+      expect.arrayContaining([
+        "customers.read",
+        "customers.create",
+        "customers.update",
+        "customers.address.manage",
+        "customers.contact.manage",
+      ])
+    );
+    expect(ROLE_PERMISSION_MATRIX.RECEPTIONIST).not.toContain("customers.deactivate");
+    expect(ROLE_PERMISSION_MATRIX.VETERINARIAN).toEqual(["vet.clinical.create", "customers.read"]);
+    for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
+      for (const key of [
+        "customers.read",
+        "customers.create",
+        "customers.update",
+        "customers.deactivate",
+        "customers.address.manage",
+        "customers.contact.manage",
+      ]) {
+        expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
+      }
+    }
+  });
+
   it("ships the single inert starter plan", () => {
     expect(STARTER_PLAN_SEED.code).toBe("starter");
   });
@@ -243,7 +289,7 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const fake = await seededOnce();
     expect(fake.counts()).toEqual({
       roles: 6,
-      permissions: 8,
+      permissions: 14,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,
