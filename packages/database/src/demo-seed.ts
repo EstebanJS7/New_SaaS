@@ -39,6 +39,187 @@ export const DEMO_TENANT_NAME = "Demo Veterinary Clinic";
  */
 export const DEMO_FEATURE_GRANTS: readonly string[] = FEATURE_CODE_SEEDS;
 
+/**
+ * Structural client contract consumed by {@link seedDemoCustomers}. Keeping the
+ * customer seed separate from {@link DemoSeedClient} lets the existing demo
+ * tenant/unit tests stay focused on tenant/user/entitlement setup while the
+ * customer fixture path is exercised in integration tests during H1.
+ */
+export interface DemoCustomersSeedClient {
+  customer: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        kind: "INDIVIDUAL" | "COMPANY";
+        displayName: string;
+        legalName?: string | null;
+        taxId?: string | null;
+        firstName?: string | null;
+        lastName?: string | null;
+        documentNumber?: string | null;
+        isActive?: boolean;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+  customerAddress: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        customerId: string;
+        label?: string | null;
+        line1?: string | null;
+        line2?: string | null;
+        city?: string | null;
+        state?: string | null;
+        postalCode?: string | null;
+        countryCode?: string | null;
+        isActive?: boolean;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+  customerContact: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        customerId: string;
+        kind: "EMAIL" | "PHONE";
+        label?: string | null;
+        value: string;
+        isPrimary?: boolean;
+        isActive?: boolean;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+}
+
+export interface DemoCustomersSeedResult {
+  customers: number;
+  addresses: number;
+  contacts: number;
+}
+
+/** Synthetic demo customers. UUIDs are fixed so re-runs stay idempotent. */
+function buildDemoCustomers(tenantId: string) {
+  return [
+    {
+      id: "11111111-1111-1111-1111-111111111111",
+      tenantId,
+      kind: "INDIVIDUAL" as const,
+      displayName: "Ana García",
+      firstName: "Ana",
+      lastName: "García",
+      documentNumber: "12345678",
+      isActive: true,
+    },
+    {
+      id: "22222222-2222-2222-2222-222222222222",
+      tenantId,
+      kind: "COMPANY" as const,
+      displayName: "Paws & Whiskers S.A.",
+      legalName: "Paws & Whiskers Sociedad Anónima",
+      taxId: "80012345-6",
+      isActive: true,
+    },
+  ];
+}
+
+function buildDemoAddresses(tenantId: string) {
+  return [
+    {
+      id: "33333333-3333-3333-3333-333333333333",
+      tenantId,
+      customerId: "11111111-1111-1111-1111-111111111111",
+      label: "Home",
+      line1: "Calle Falsa 123",
+      city: "Buenos Aires",
+      postalCode: "C1000",
+      countryCode: "AR",
+      isActive: true,
+    },
+    {
+      id: "44444444-4444-4444-4444-444444444444",
+      tenantId,
+      customerId: "22222222-2222-2222-2222-222222222222",
+      label: "Billing",
+      line1: "Av. del Libertador 4567",
+      city: "Buenos Aires",
+      postalCode: "C1425",
+      countryCode: "AR",
+      isActive: true,
+    },
+  ];
+}
+
+function buildDemoContacts(tenantId: string) {
+  return [
+    {
+      id: "55555555-5555-5555-5555-555555555555",
+      tenantId,
+      customerId: "11111111-1111-1111-1111-111111111111",
+      kind: "PHONE" as const,
+      label: "Mobile",
+      value: "+54 9 11 1234-5678",
+      isPrimary: true,
+      isActive: true,
+    },
+    {
+      id: "66666666-6666-6666-6666-666666666666",
+      tenantId,
+      customerId: "11111111-1111-1111-1111-111111111111",
+      kind: "EMAIL" as const,
+      label: "Personal",
+      value: "ana.garcia@demo.newsaas.test",
+      isPrimary: true,
+      isActive: true,
+    },
+    {
+      id: "77777777-7777-7777-7777-777777777777",
+      tenantId,
+      customerId: "22222222-2222-2222-2222-222222222222",
+      kind: "EMAIL" as const,
+      label: "Billing",
+      value: "facturacion@pawsandwhiskers.demo",
+      isPrimary: true,
+      isActive: true,
+    },
+  ];
+}
+
+/**
+ * Seeds synthetic Customers, Addresses and Contacts for the demo tenant.
+ * Fixed UUIDs and `skipDuplicates` make the path idempotent without relying on
+ * application-level unique constraints that do not exist yet.
+ */
+export async function seedDemoCustomers(
+  db: DemoCustomersSeedClient,
+  tenantId: string
+): Promise<DemoCustomersSeedResult> {
+  const customers = await db.customer.createMany({
+    data: buildDemoCustomers(tenantId),
+    skipDuplicates: true,
+  });
+  const addresses = await db.customerAddress.createMany({
+    data: buildDemoAddresses(tenantId),
+    skipDuplicates: true,
+  });
+  const contacts = await db.customerContact.createMany({
+    data: buildDemoContacts(tenantId),
+    skipDuplicates: true,
+  });
+
+  return {
+    customers: customers.count,
+    addresses: addresses.count,
+    contacts: contacts.count,
+  };
+}
+
 export type DemoSeedGuardDecision =
   | { mode: "disabled"; reason: string }
   | { mode: "refused"; reason: string }

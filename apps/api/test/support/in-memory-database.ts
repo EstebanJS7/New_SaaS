@@ -130,6 +130,52 @@ export interface TenantBrandingRow {
   updatedAt: Date;
 }
 
+/** Customer aggregate row (EPIC-04). */
+export interface CustomerRow {
+  id: string;
+  tenantId: string;
+  kind: "INDIVIDUAL" | "COMPANY";
+  displayName: string;
+  legalName: string | null;
+  taxId: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  documentNumber: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Customer address row (EPIC-04). */
+export interface CustomerAddressRow {
+  id: string;
+  tenantId: string;
+  customerId: string;
+  label: string | null;
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  countryCode: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Customer contact row (EPIC-04). */
+export interface CustomerContactRow {
+  id: string;
+  tenantId: string;
+  customerId: string;
+  kind: "EMAIL" | "PHONE";
+  label: string | null;
+  value: string;
+  isPrimary: boolean;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 interface MembershipWhere {
   id?: string;
@@ -175,6 +221,53 @@ export interface IsolationDatabase {
         update: Partial<Omit<TenantBrandingRow, "id" | "tenantId" | "createdAt">>;
       }) => TenantBrandingRow;
       delete: (args: { where: { tenantId: string } }) => TenantBrandingRow;
+    };
+    customer: {
+      findMany: (args: {
+        where: { tenantId: string; isActive?: boolean };
+        orderBy?: { displayName?: "asc" | "desc" };
+      }) => CustomerRow[];
+      findFirst: (args: { where: { id: string; tenantId: string } }) => CustomerRow | null;
+      findUnique: (args: { where: { id: string } }) => CustomerRow | null;
+      create: (args: { data: Omit<CustomerRow, "id" | "createdAt" | "updatedAt"> }) => CustomerRow;
+      updateMany: (args: {
+        where: { id: string; tenantId: string; isActive?: boolean };
+        data: Partial<Omit<CustomerRow, "id" | "tenantId" | "createdAt">>;
+      }) => { count: number };
+    };
+    customerAddress: {
+      findMany: (args: {
+        where: { tenantId: string; customerId: string; isActive?: boolean };
+        orderBy?: { createdAt?: "asc" | "desc" };
+      }) => CustomerAddressRow[];
+      findFirst: (args: {
+        where: { id: string; tenantId: string; customerId: string };
+      }) => CustomerAddressRow | null;
+      findUnique: (args: { where: { id: string } }) => CustomerAddressRow | null;
+      create: (args: {
+        data: Omit<CustomerAddressRow, "id" | "createdAt" | "updatedAt">;
+      }) => CustomerAddressRow;
+      updateMany: (args: {
+        where: { id: string; tenantId: string; customerId: string; isActive?: boolean };
+        data: Partial<Omit<CustomerAddressRow, "id" | "tenantId" | "customerId" | "createdAt">>;
+      }) => { count: number };
+    };
+    customerContact: {
+      findMany: (args: {
+        where: { tenantId: string; customerId: string; isActive?: boolean };
+        orderBy?: { createdAt?: "asc" | "desc" };
+      }) => CustomerContactRow[];
+      findFirst: (args: {
+        where: { id: string; tenantId: string; customerId: string };
+      }) => CustomerContactRow | null;
+      findUnique: (args: { where: { id: string } }) => CustomerContactRow | null;
+      create: (args: {
+        data: Omit<CustomerContactRow, "id" | "createdAt" | "updatedAt">;
+      }) => CustomerContactRow;
+      updateMany: (args: {
+        where: { id: string; tenantId: string; customerId: string; isActive?: boolean };
+        data: Partial<Omit<CustomerContactRow, "id" | "tenantId" | "customerId" | "createdAt">>;
+      }) => { count: number };
     };
     role: {
       create: (args: { data: { code: string; name: string } }) => RoleRow;
@@ -296,6 +389,9 @@ export interface IsolationDatabase {
     rolePermissionOverrides: Map<string, TenantRolePermissionOverrideRow>;
     settingNamespaces: Map<string, TenantSettingNamespaceRow>;
     tenantBrandings: Map<string, TenantBrandingRow>;
+    customers: Map<string, CustomerRow>;
+    customerAddresses: Map<string, CustomerAddressRow>;
+    customerContacts: Map<string, CustomerContactRow>;
   };
 }
 
@@ -357,6 +453,9 @@ export function createIsolationDatabase(): IsolationDatabase {
   const rolePermissionOverrides = new Map<string, TenantRolePermissionOverrideRow>();
   const settingNamespaces = new Map<string, TenantSettingNamespaceRow>();
   const tenantBrandings = new Map<string, TenantBrandingRow>();
+  const customers = new Map<string, CustomerRow>();
+  const customerAddresses = new Map<string, CustomerAddressRow>();
+  const customerContacts = new Map<string, CustomerContactRow>();
 
   type TableSnapshot = Record<string, Map<string, unknown>>;
 
@@ -374,6 +473,9 @@ export function createIsolationDatabase(): IsolationDatabase {
     rolePermissionOverrides,
     settingNamespaces,
     tenantBrandings,
+    customers,
+    customerAddresses,
+    customerContacts,
   };
 
   function snapshotTables(): TableSnapshot {
@@ -479,6 +581,165 @@ export function createIsolationDatabase(): IsolationDatabase {
         }
         tenantBrandings.delete(existing.id);
         return existing;
+      },
+    },
+    customer: {
+      findMany: ({ where, orderBy }) => {
+        let rows = [...customers.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            (where.isActive === undefined || candidate.isActive === where.isActive)
+        );
+        if (orderBy?.displayName) {
+          rows = rows.sort((left, right) => left.displayName.localeCompare(right.displayName));
+          if (orderBy.displayName === "desc") rows.reverse();
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...customers.values()].find(
+          (candidate) => candidate.id === where.id && candidate.tenantId === where.tenantId
+        ) ?? null,
+      findUnique: ({ where }) => customers.get(where.id) ?? null,
+      create: ({ data }) => {
+        const now = new Date();
+        const created: CustomerRow = {
+          id: randomUUID(),
+          ...data,
+          isActive: data.isActive ?? true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        customers.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        const existing = customers.get(where.id);
+        if (
+          existing?.tenantId !== where.tenantId ||
+          (where.isActive !== undefined && existing?.isActive !== where.isActive)
+        ) {
+          return { count: 0 };
+        }
+        const updated: CustomerRow = { ...existing, updatedAt: new Date() };
+        if (data.displayName !== undefined) updated.displayName = data.displayName;
+        if (data.legalName !== undefined) updated.legalName = data.legalName ?? null;
+        if (data.taxId !== undefined) updated.taxId = data.taxId ?? null;
+        if (data.firstName !== undefined) updated.firstName = data.firstName ?? null;
+        if (data.lastName !== undefined) updated.lastName = data.lastName ?? null;
+        if (data.documentNumber !== undefined) updated.documentNumber = data.documentNumber ?? null;
+        if (data.isActive !== undefined) updated.isActive = data.isActive;
+        customers.set(updated.id, updated);
+        return { count: 1 };
+      },
+    },
+    customerAddress: {
+      findMany: ({ where, orderBy }) => {
+        let rows = [...customerAddresses.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            candidate.customerId === where.customerId &&
+            (where.isActive === undefined || candidate.isActive === where.isActive)
+        );
+        if (orderBy?.createdAt) {
+          rows = rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+          if (orderBy.createdAt === "desc") rows.reverse();
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...customerAddresses.values()].find(
+          (candidate) =>
+            candidate.id === where.id &&
+            candidate.tenantId === where.tenantId &&
+            candidate.customerId === where.customerId
+        ) ?? null,
+      findUnique: ({ where }) => customerAddresses.get(where.id) ?? null,
+      create: ({ data }) => {
+        const now = new Date();
+        const created: CustomerAddressRow = {
+          id: randomUUID(),
+          ...data,
+          isActive: data.isActive ?? true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        customerAddresses.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        const existing = customerAddresses.get(where.id);
+        if (
+          existing?.tenantId !== where.tenantId ||
+          existing?.customerId !== where.customerId ||
+          (where.isActive !== undefined && existing?.isActive !== where.isActive)
+        ) {
+          return { count: 0 };
+        }
+        const updated: CustomerAddressRow = { ...existing, updatedAt: new Date() };
+        if (data.label !== undefined) updated.label = data.label ?? null;
+        if (data.line1 !== undefined) updated.line1 = data.line1 ?? null;
+        if (data.line2 !== undefined) updated.line2 = data.line2 ?? null;
+        if (data.city !== undefined) updated.city = data.city ?? null;
+        if (data.state !== undefined) updated.state = data.state ?? null;
+        if (data.postalCode !== undefined) updated.postalCode = data.postalCode ?? null;
+        if (data.countryCode !== undefined) updated.countryCode = data.countryCode ?? null;
+        if (data.isActive !== undefined) updated.isActive = data.isActive;
+        customerAddresses.set(updated.id, updated);
+        return { count: 1 };
+      },
+    },
+    customerContact: {
+      findMany: ({ where, orderBy }) => {
+        let rows = [...customerContacts.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            candidate.customerId === where.customerId &&
+            (where.isActive === undefined || candidate.isActive === where.isActive)
+        );
+        if (orderBy?.createdAt) {
+          rows = rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+          if (orderBy.createdAt === "desc") rows.reverse();
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...customerContacts.values()].find(
+          (candidate) =>
+            candidate.id === where.id &&
+            candidate.tenantId === where.tenantId &&
+            candidate.customerId === where.customerId
+        ) ?? null,
+      findUnique: ({ where }) => customerContacts.get(where.id) ?? null,
+      create: ({ data }) => {
+        const now = new Date();
+        const created: CustomerContactRow = {
+          id: randomUUID(),
+          ...data,
+          isActive: data.isActive ?? true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        customerContacts.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        const existing = customerContacts.get(where.id);
+        if (
+          existing?.tenantId !== where.tenantId ||
+          existing?.customerId !== where.customerId ||
+          (where.isActive !== undefined && existing?.isActive !== where.isActive)
+        ) {
+          return { count: 0 };
+        }
+        const updated: CustomerContactRow = { ...existing, updatedAt: new Date() };
+        if (data.kind !== undefined) updated.kind = data.kind;
+        if (data.label !== undefined) updated.label = data.label ?? null;
+        if (data.value !== undefined) updated.value = data.value;
+        if (data.isPrimary !== undefined) updated.isPrimary = data.isPrimary;
+        if (data.isActive !== undefined) updated.isActive = data.isActive;
+        customerContacts.set(updated.id, updated);
+        return { count: 1 };
       },
     },
     role: {
@@ -804,6 +1065,9 @@ export function createIsolationDatabase(): IsolationDatabase {
       rolePermissionOverrides,
       settingNamespaces,
       tenantBrandings,
+      customers,
+      customerAddresses,
+      customerContacts,
     },
   };
 }

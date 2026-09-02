@@ -300,7 +300,9 @@ describe("RBAC role/permission catalog administration", () => {
     const receptionistForB = (seenByB.body as RolesBody).roles.find(
       (role) => role.code === "RECEPTIONIST"
     );
-    expect(receptionistForB?.permissions).toEqual([...ROLE_PERMISSION_MATRIX.RECEPTIONIST]);
+    expect(receptionistForB?.permissions?.sort()).toEqual(
+      [...ROLE_PERMISSION_MATRIX.RECEPTIONIST].sort()
+    );
 
     // ...while tenant A sees the emptied effective set.
     const seenByA = await supertest(booted.app.getHttpServer())

@@ -4,7 +4,9 @@ import {
   DEMO_OWNER_EMAIL,
   DEMO_TENANT_SLUG,
   resolveDemoSeedGuard,
+  seedDemoCustomers,
   seedDemoData,
+  type DemoCustomersSeedClient,
   type DemoSeedClient,
 } from "./demo-seed.js";
 
@@ -264,5 +266,104 @@ describe("seedDemoData", () => {
 
     expect([...tables.tenants.values()][0].slug).toBe(DEMO_TENANT_SLUG);
     expect([...tables.profiles.values()][0].email).toBe(DEMO_OWNER_EMAIL);
+  });
+});
+
+/**
+ * Structural fake mirroring the customer seed delegates.
+ */
+function makeFakeCustomerDb(): {
+  db: DemoCustomersSeedClient;
+  tables: {
+    customers: Map<string, { id: string; tenantId: string; kind: string; displayName: string }>;
+    addresses: Map<string, { id: string; tenantId: string; customerId: string }>;
+    contacts: Map<
+      string,
+      { id: string; tenantId: string; customerId: string; kind: string; value: string }
+    >;
+  };
+} {
+  interface CustomerRow {
+    id: string;
+    tenantId: string;
+    kind: "INDIVIDUAL" | "COMPANY";
+    displayName: string;
+    [key: string]: unknown;
+  }
+  interface AddressRow {
+    id: string;
+    tenantId: string;
+    customerId: string;
+    [key: string]: unknown;
+  }
+  interface ContactRow {
+    id: string;
+    tenantId: string;
+    customerId: string;
+    kind: "EMAIL" | "PHONE";
+    value: string;
+    [key: string]: unknown;
+  }
+
+  const tables = {
+    customers: new Map<string, CustomerRow>(),
+    addresses: new Map<string, AddressRow>(),
+    contacts: new Map<string, ContactRow>(),
+  };
+
+  const db = {
+    customer: {
+      createMany: ({ data }: { data: CustomerRow[]; skipDuplicates?: boolean }) => {
+        for (const row of data) {
+          tables.customers.set(row.id, row);
+        }
+        return Promise.resolve({ count: data.length });
+      },
+    },
+    customerAddress: {
+      createMany: ({ data }: { data: AddressRow[]; skipDuplicates?: boolean }) => {
+        for (const row of data) {
+          tables.addresses.set(row.id, row);
+        }
+        return Promise.resolve({ count: data.length });
+      },
+    },
+    customerContact: {
+      createMany: ({ data }: { data: ContactRow[]; skipDuplicates?: boolean }) => {
+        for (const row of data) {
+          tables.contacts.set(row.id, row);
+        }
+        return Promise.resolve({ count: data.length });
+      },
+    },
+  };
+
+  return { db, tables };
+}
+
+describe("seedDemoCustomers", () => {
+  it("seeds an individual, a company, linked addresses and contacts", async () => {
+    const { db, tables } = makeFakeCustomerDb();
+
+    const result = await seedDemoCustomers(db, "tenant-demo");
+
+    expect(result.customers).toBe(2);
+    expect(result.addresses).toBe(2);
+    expect(result.contacts).toBe(3);
+
+    const customers = [...tables.customers.values()];
+    expect(customers.some((row) => row.kind === "INDIVIDUAL")).toBe(true);
+    expect(customers.some((row) => row.kind === "COMPANY")).toBe(true);
+    expect(customers.every((row) => row.tenantId === "tenant-demo")).toBe(true);
+
+    const addresses = [...tables.addresses.values()];
+    expect(addresses.every((row) => row.tenantId === "tenant-demo")).toBe(true);
+    expect(addresses.every((row) => customers.some((c) => c.id === row.customerId))).toBe(true);
+
+    const contacts = [...tables.contacts.values()];
+    expect(contacts.some((row) => row.kind === "PHONE")).toBe(true);
+    expect(contacts.some((row) => row.kind === "EMAIL")).toBe(true);
+    expect(contacts.every((row) => row.tenantId === "tenant-demo")).toBe(true);
+    expect(contacts.every((row) => customers.some((c) => c.id === row.customerId))).toBe(true);
   });
 });

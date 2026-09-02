@@ -67,6 +67,22 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /branding/current",
   "POST /branding/reset",
   "GET /api/v1/public/tenants/:slug/branding",
+  // EPIC-04 — customers
+  "GET /customers",
+  "POST /customers",
+  "GET /customers/:id",
+  "PUT /customers/:id",
+  "POST /customers/:id/deactivate",
+  "GET /customers/:customerId/addresses",
+  "POST /customers/:customerId/addresses",
+  "GET /customers/:customerId/addresses/:id",
+  "PUT /customers/:customerId/addresses/:id",
+  "POST /customers/:customerId/addresses/:id/deactivate",
+  "GET /customers/:customerId/contacts",
+  "POST /customers/:customerId/contacts",
+  "GET /customers/:customerId/contacts/:id",
+  "PUT /customers/:customerId/contacts/:id",
+  "POST /customers/:customerId/contacts/:id/deactivate",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {

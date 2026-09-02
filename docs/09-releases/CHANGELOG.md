@@ -15,6 +15,13 @@ All notable product changes will be documented here.
   - Public `GET /api/v1/public/tenants/:slug/branding` allowlisted DTO.
   - Server-side brand resolution in the staff layout and bounded preview UI at
     `/app/settings/branding`.
+- EPIC-04 — reusable Customer Core:
+  - Tenant-scoped `Customer`, `CustomerAddress`, `CustomerContact`, and inert
+    `PatientGuardian` scaffold.
+  - Six `customers.*` permissions and role matrix.
+  - REST surface for customer CRUD/deactivate and nested address/contact
+    management.
+  - Staff web UI at `/app/customers` with Next.js API proxy.
 - PRD v1.3 architecture freeze and Complexity Budget.
 - Typed Tenant Settings architecture.
 - Minimal internal post-commit application events.

@@ -33,8 +33,8 @@ export interface AuditAppendedRow {
 }
 
 const appendInputSchema = z.object({
-  // domain.event form: lowercase domain, lowercase underscored event.
-  action: z.string().regex(/^[a-z]+\.[a-z_]+$/, 'action must be "domain.event" shaped'),
+  // domain.event form: lowercase/underscored domain and event.
+  action: z.string().regex(/^[a-z_]+\.[a-z_]+$/, 'action must be "domain.event" shaped'),
   actorType: z.enum(["STAFF", "SYSTEM"]).optional(),
   tenantId: z.string().uuid().optional(),
   actorUserProfileId: z.string().uuid().optional(),

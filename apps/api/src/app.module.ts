@@ -5,6 +5,7 @@ import { AuthModule } from "./auth/auth.module.js";
 import { BrandingModule } from "./branding/branding.module.js";
 import { CommonModule } from "./common/common.module.js";
 import { ContextModule } from "./context/context.module.js";
+import { CustomersModule } from "./customers/customers.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
@@ -30,6 +31,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     EntitlementsModule,
     BrandingModule,
     SettingsModule,
+    CustomersModule,
   ],
 })
 export class AppModule {}
