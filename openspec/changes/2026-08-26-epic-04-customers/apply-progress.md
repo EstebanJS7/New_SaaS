@@ -10,6 +10,48 @@ A fresh review found five blockers in the C1-C3 evidence surface. Only the seven
 candidate artifacts were modified; no unrelated feature code or docs were
 changed. Live CI proof was explicitly not claimed.
 
+## Corrective batch: C2 live-PG Fastify listener lifecycle correction (2026-09-07)
+
+CI executed the live-PG suite and observed:
+
+- Test 1 (create tenant A customer/address/contact) passed.
+- Test 5 (tenant-relative branding isolation) passed.
+- Tests 2–4 (Customer, Address, Contact cross-tenant byte-equivalence) each
+  failed with `ECONNREFUSED` after their first Supertest request path returned
+  `404` successfully.
+
+Root cause: the NestJS Fastify adapter does **not** bind the underlying HTTP
+server to a port during `app.init()`. Supertest, when handed an unbound server
+object, starts and stops an ephemeral listener around each request. With the
+previous per-request `supertest(app.getHttpServer())` calls, the lifecycle of
+that ephemeral listener raced the next request: the listener could be torn down
+before the follow-up request connected, surfacing as `ECONNREFUSED`. Reusing a
+single Supertest agent masked the symptom by keeping one listener open, but it
+left the actual server lifecycle implicit and added unnecessary cookie-jar
+state.
+
+Fix: explicitly bind the Nest/Fastify application once in `beforeAll` with
+`await app.listen(0, "127.0.0.1")`, capture the stable URL from
+`await app.getUrl()`, and target that URL for every request. The shared
+Supertest agent was removed because it only added cookie-jar state; each
+request now carries its tenant cookie explicitly. Paired cross-tenant and
+missing-UUID requests are built lazily inside arrow functions so they are not
+created eagerly and cannot race the listener lifecycle. The server is closed in
+`afterAll` via the existing `app.close()`.
+
+| #   | File                                          | Change                                                                                                                                                                      |
+| --- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `apps/api/test/live-pg-isolation.e2e-spec.ts` | Replaced the shared `supertest.agent` with `let serverUrl: string`. In `beforeAll`: `await app.listen(0, "127.0.0.1"); serverUrl = await app.getUrl();`. Every request now uses `supertest(serverUrl)` with an explicit `.set("Cookie", …)`. Cross-tenant/missing-UUID pairs are deferred through arrow builders. |
+
+Focused verification performed (no local PostgreSQL available):
+
+| Command                                | Exit | Result                                                                                            |
+| -------------------------------------- | ---: | ------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @newsaas/api typecheck` |    0 | Live-PG isolation test compiles with the explicit listen/URL pattern and lazy request builders.   |
+
+C2 task 7.2 remains unchecked pending a CI live-PG run that exercises the actual
+HTTP assertions against PostgreSQL.
+
 | #   | Blocker                                                                                                                                                                           | Fix                                                                                                                                                                                          | Artifact(s)                                                                                                                         |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Live-PG suite resolved the database package from the wrong relative path (`../../packages/database` from `apps/api/test`).                                                        | Changed to `../../../packages/database` so `runDatabaseCommand` executes in `packages/database`.                                                                                             | `apps/api/test/live-pg-isolation.e2e-spec.ts`                                                                                       |

@@ -130,6 +130,23 @@ ended after the seed probe and has no
 exits 1 with HTTP 422 because `ci.yml` has no `workflow_dispatch` trigger. Task
 7.2 and C2 remain blocked: no current-code live HTTP evidence is claimed.
 
+**C2 evidence (2026-09-07):** CI executed the live-PG suite and reported
+`ECONNREFUSED` on tests 2–4 after each first cross-tenant request path
+succeeded. Root cause: the NestJS Fastify adapter does not bind the HTTP server
+to a port during `app.init()`; Supertest starts and stops an ephemeral listener
+per request when given an unbound server, so a follow-up request can connect to
+a torn-down listener. Reusing a single Supertest agent kept one listener open
+but masked the lifecycle race and introduced cookie-jar state. Fix: explicitly
+bind the application once in `beforeAll` with
+`await app.listen(0, "127.0.0.1")`, capture the stable URL with
+`await app.getUrl()`, and use `supertest(serverUrl)` for every request. The
+shared agent was removed; each request sets its tenant cookie explicitly.
+Cross-tenant/missing-UUID request pairs are built lazily through arrow functions
+to avoid eager lifecycle races. Local verification:
+`pnpm --filter @newsaas/api typecheck` passes. Task 7.2 remains unchecked until
+a CI live-PG run confirms the byte-equivalence assertions pass against
+PostgreSQL.
+
 ### Phase 8: C3 — Cold Build Evidence
 
 - [ ] 8.1 Add a reproducible isolated or removed `apps/web/.next` build path in

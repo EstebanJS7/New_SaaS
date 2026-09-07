@@ -100,6 +100,7 @@ const livePgDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_
 describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => {
   let app: NestFastifyApplication;
   let prisma: PrismaService;
+  let serverUrl: string;
   let baseDatabaseUrl: string;
   let testDatabaseName: string;
   let testDatabaseUrl: string;
@@ -152,6 +153,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     );
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
+    await app.listen(0, "127.0.0.1");
+    serverUrl = await app.getUrl();
 
     prisma = app.get(PrismaService);
 
@@ -225,7 +228,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
   }, 30_000);
 
   it("creates tenant A customer/address/contact over real HTTP", async () => {
-    const customerResponse = await supertest(app.getHttpServer())
+    const customerResponse = await supertest(serverUrl)
       .post("/customers")
       .set("Cookie", ownerACookie)
       .send({ kind: "INDIVIDUAL", displayName: "Live Customer A" })
@@ -234,7 +237,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     customerAId = customer.id;
     expect(customer.tenantId).toBe(tenantAId);
 
-    const addressResponse = await supertest(app.getHttpServer())
+    const addressResponse = await supertest(serverUrl)
       .post(`/customers/${customerAId}/addresses`)
       .set("Cookie", ownerACookie)
       .send({ line1: "Live Address 123" })
@@ -244,7 +247,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     expect(address.tenantId).toBe(tenantAId);
     expect(address.customerId).toBe(customerAId);
 
-    const contactResponse = await supertest(app.getHttpServer())
+    const contactResponse = await supertest(serverUrl)
       .post(`/customers/${customerAId}/contacts`)
       .set("Cookie", ownerACookie)
       .send({ kind: "EMAIL", value: "live@example.test" })
@@ -263,35 +266,39 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     const cases = [
       {
         label: "PUT /customers/:id",
-        request: supertest(app.getHttpServer())
-          .put(`/customers/${customerAId}`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({ displayName: "Tampered" }),
-        missingRequest: supertest(app.getHttpServer())
-          .put(`/customers/${randomUUID()}`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({ displayName: "Tampered" }),
+        request: () =>
+          supertest(serverUrl)
+            .put(`/customers/${customerAId}`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({ displayName: "Tampered" }),
+        missingRequest: () =>
+          supertest(serverUrl)
+            .put(`/customers/${randomUUID()}`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({ displayName: "Tampered" }),
       },
       {
         label: "POST /customers/:id/deactivate",
-        request: supertest(app.getHttpServer())
-          .post(`/customers/${customerAId}/deactivate`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({}),
-        missingRequest: supertest(app.getHttpServer())
-          .post(`/customers/${randomUUID()}/deactivate`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({}),
+        request: () =>
+          supertest(serverUrl)
+            .post(`/customers/${customerAId}/deactivate`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({}),
+        missingRequest: () =>
+          supertest(serverUrl)
+            .post(`/customers/${randomUUID()}/deactivate`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({}),
       },
     ];
 
     for (const scenario of cases) {
-      const response = await scenario.request.expect(404);
-      const missingResponse = await scenario.missingRequest.expect(404);
+      const response = await scenario.request().expect(404);
+      const missingResponse = await scenario.missingRequest().expect(404);
       const body = response.body as ErrorEnvelope;
       expect(body.error.code, scenario.label).toBe("NOT_FOUND");
       expect(response.text, scenario.label).toBe(missingResponse.text);
@@ -309,35 +316,39 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     const cases = [
       {
         label: "PUT address",
-        request: supertest(app.getHttpServer())
-          .put(`/customers/${customerAId}/addresses/${addressAId}`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({ line1: "Tampered" }),
-        missingRequest: supertest(app.getHttpServer())
-          .put(`/customers/${customerAId}/addresses/${randomUUID()}`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({ line1: "Tampered" }),
+        request: () =>
+          supertest(serverUrl)
+            .put(`/customers/${customerAId}/addresses/${addressAId}`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({ line1: "Tampered" }),
+        missingRequest: () =>
+          supertest(serverUrl)
+            .put(`/customers/${customerAId}/addresses/${randomUUID()}`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({ line1: "Tampered" }),
       },
       {
         label: "POST address/deactivate",
-        request: supertest(app.getHttpServer())
-          .post(`/customers/${customerAId}/addresses/${addressAId}/deactivate`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({}),
-        missingRequest: supertest(app.getHttpServer())
-          .post(`/customers/${customerAId}/addresses/${randomUUID()}/deactivate`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({}),
+        request: () =>
+          supertest(serverUrl)
+            .post(`/customers/${customerAId}/addresses/${addressAId}/deactivate`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({}),
+        missingRequest: () =>
+          supertest(serverUrl)
+            .post(`/customers/${customerAId}/addresses/${randomUUID()}/deactivate`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({}),
       },
     ];
 
     for (const scenario of cases) {
-      const response = await scenario.request.expect(404);
-      const missingResponse = await scenario.missingRequest.expect(404);
+      const response = await scenario.request().expect(404);
+      const missingResponse = await scenario.missingRequest().expect(404);
       expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
       expect(response.text, scenario.label).toBe(missingResponse.text);
     }
@@ -354,35 +365,39 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     const cases = [
       {
         label: "PUT contact",
-        request: supertest(app.getHttpServer())
-          .put(`/customers/${customerAId}/contacts/${contactAId}`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({ value: "tampered@example.test" }),
-        missingRequest: supertest(app.getHttpServer())
-          .put(`/customers/${customerAId}/contacts/${randomUUID()}`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({ value: "tampered@example.test" }),
+        request: () =>
+          supertest(serverUrl)
+            .put(`/customers/${customerAId}/contacts/${contactAId}`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({ value: "tampered@example.test" }),
+        missingRequest: () =>
+          supertest(serverUrl)
+            .put(`/customers/${customerAId}/contacts/${randomUUID()}`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({ value: "tampered@example.test" }),
       },
       {
         label: "POST contact/deactivate",
-        request: supertest(app.getHttpServer())
-          .post(`/customers/${customerAId}/contacts/${contactAId}/deactivate`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({}),
-        missingRequest: supertest(app.getHttpServer())
-          .post(`/customers/${customerAId}/contacts/${randomUUID()}/deactivate`)
-          .set("Cookie", ownerBCookie)
-          .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
-          .send({}),
+        request: () =>
+          supertest(serverUrl)
+            .post(`/customers/${customerAId}/contacts/${contactAId}/deactivate`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({}),
+        missingRequest: () =>
+          supertest(serverUrl)
+            .post(`/customers/${customerAId}/contacts/${randomUUID()}/deactivate`)
+            .set("Cookie", ownerBCookie)
+            .set("X-Request-Id", NOT_FOUND_REQUEST_ID)
+            .send({}),
       },
     ];
 
     for (const scenario of cases) {
-      const response = await scenario.request.expect(404);
-      const missingResponse = await scenario.missingRequest.expect(404);
+      const response = await scenario.request().expect(404);
+      const missingResponse = await scenario.missingRequest().expect(404);
       expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
       expect(response.text, scenario.label).toBe(missingResponse.text);
     }
@@ -393,7 +408,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
   });
 
   it("tenant-relative authorized branding mutation succeeds for each tenant without affecting the other", async () => {
-    const aResponse = await supertest(app.getHttpServer())
+    const aResponse = await supertest(serverUrl)
       .put("/branding/current")
       .set("Cookie", ownerACookie)
       .send({ overrides: { schemaVersion: 1, primary: "#0ea5e9" } })
@@ -405,7 +420,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     expect(aBrand.source).toBe("tenant");
     expect(aBrand.brand.theme.colors.primary).toBe("#0ea5e9");
 
-    const bResponse = await supertest(app.getHttpServer())
+    const bResponse = await supertest(serverUrl)
       .put("/branding/current")
       .set("Cookie", ownerBCookie)
       .send({ overrides: { schemaVersion: 1, primary: "#ef4444" } })

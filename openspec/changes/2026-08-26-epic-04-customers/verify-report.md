@@ -154,16 +154,24 @@ They do not constitute a new verification run and do not claim live CI proof.
 1. **Live-PG relative path fixed.**
    `apps/api/test/live-pg-isolation.e2e-spec.ts` now resolves the database
    package with `../../../packages/database`.
-2. **Branding assertion corrected.** The invalid cross-tenant `404` expectation
+2. **Live-PG Fastify listener lifecycle corrected.** The harness now explicitly
+   binds the Nest/Fastify application once in `beforeAll`
+   (`await app.listen(0, "127.0.0.1")`), captures a stable URL
+   (`await app.getUrl()`), and targets that URL with `supertest(serverUrl)` on
+   every request. The shared Supertest agent was removed because it only added
+   cookie-jar state; each request sets its tenant cookie explicitly. Paired
+   cross-tenant and missing-UUID requests are built lazily through arrow
+   functions so they cannot race the listener lifecycle.
+3. **Branding assertion corrected.** The invalid cross-tenant `404` expectation
    for Tenant B on `/branding/current` was replaced with a tenant-relative
    success assertion: Tenant B mutates its own branding, Tenant A's branding
    remains unchanged. `tenantBId` tracking was added.
-3. **Dead migration verifier wired.** `packages/database/package.json` gained
+4. **Dead migration verifier wired.** `packages/database/package.json` gained
    `db:live-verify: tsx scripts/live-migration-verify.ts`, and the
    `Database migrations` CI job now runs it after the seed-count probe.
-4. **Evidence documents updated.** This report and `apply-progress.md` now
+5. **Evidence documents updated.** This report and `apply-progress.md` now
    describe the corrected candidate.
-5. **Live-PG fixture made idempotent.** The `beforeAll` fixture no longer fails
+6. **Live-PG fixture made idempotent.** The `beforeAll` fixture no longer fails
    with `P2002` when `db:seed` has already created the `custom_branding`
    `FeatureCode`. Both `featureCode` and `tenantEntitlement` rows are upserted,
    preserving the explicit entitlement precondition for the branding live-PG
