@@ -195,12 +195,24 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ownerACookie = `${STAFF_SESSION_COOKIE}=${sessionA.token}`;
     ownerBCookie = `${STAFF_SESSION_COOKIE}=${sessionB.token}`;
 
-    const featureCode = await prisma.featureCode.create({ data: { code: "custom_branding" } });
-    await prisma.tenantEntitlement.create({
-      data: { tenantId: tenantA.id, featureCodeId: featureCode.id },
+    const featureCode = await prisma.featureCode.upsert({
+      where: { code: "custom_branding" },
+      create: { code: "custom_branding" },
+      update: {},
     });
-    await prisma.tenantEntitlement.create({
-      data: { tenantId: tenantB.id, featureCodeId: featureCode.id },
+    await prisma.tenantEntitlement.upsert({
+      where: {
+        tenantId_featureCodeId: { tenantId: tenantA.id, featureCodeId: featureCode.id },
+      },
+      create: { tenantId: tenantA.id, featureCodeId: featureCode.id },
+      update: {},
+    });
+    await prisma.tenantEntitlement.upsert({
+      where: {
+        tenantId_featureCodeId: { tenantId: tenantB.id, featureCodeId: featureCode.id },
+      },
+      create: { tenantId: tenantB.id, featureCodeId: featureCode.id },
+      update: {},
     });
   }, 120_000);
 

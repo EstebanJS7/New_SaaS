@@ -163,7 +163,12 @@ They do not constitute a new verification run and do not claim live CI proof.
    `Database migrations` CI job now runs it after the seed-count probe.
 4. **Evidence documents updated.** This report and `apply-progress.md` now
    describe the corrected candidate.
+5. **Live-PG fixture made idempotent.** The `beforeAll` fixture no longer fails
+   with `P2002` when `db:seed` has already created the `custom_branding`
+   `FeatureCode`. Both `featureCode` and `tenantEntitlement` rows are upserted,
+   preserving the explicit entitlement precondition for the branding live-PG
+   assertion.
 
 **Remaining unverified items:** C2 (live-PG HTTP byte-equivalence execution) and
-C3 (cold build evidence) remain unchecked until CI executes them. No live CI run
-was performed during this correction batch.
+C3 (cold build evidence) remain unchecked until a green CI run executes them. No
+live CI run was performed during this correction batch.

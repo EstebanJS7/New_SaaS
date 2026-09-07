@@ -6,41 +6,51 @@ applied; C2/C3 remain unchecked until CI executes
 
 ## Corrective batch: C1-C3 delivery-evidence fixes applied (2026-09-07)
 
-A fresh review found four blockers in the C1-C3 evidence surface. Only the
-seven candidate artifacts were modified; no unrelated feature code or docs were
+A fresh review found five blockers in the C1-C3 evidence surface. Only the seven
+candidate artifacts were modified; no unrelated feature code or docs were
 changed. Live CI proof was explicitly not claimed.
 
-| # | Blocker | Fix | Artifact(s) |
-| - | ------- | --- | ----------- |
-| 1 | Live-PG suite resolved the database package from the wrong relative path (`../../packages/database` from `apps/api/test`). | Changed to `../../../packages/database` so `runDatabaseCommand` executes in `packages/database`. | `apps/api/test/live-pg-isolation.e2e-spec.ts` |
-| 2 | Branding live-PG assertion was logically invalid: an authorized Tenant B user was expected to receive a cross-tenant `404` from the tenant-relative `/branding/current` endpoint. | Replaced with a tenant-relative success assertion: Tenant A sets its brand, Tenant B mutates its own brand successfully, and Tenant A's brand remains unchanged. Added `tenantBId` tracking. | `apps/api/test/live-pg-isolation.e2e-spec.ts` |
-| 3 | `packages/database/scripts/live-migration-verify.ts` was a dead script with no package or CI invocation. | Added `db:live-verify` to `packages/database/package.json` and wired it as a `Live PostgreSQL migration verification` step in the `Database migrations` CI job. | `packages/database/package.json`, `packages/database/scripts/live-migration-verify.ts` (call path only), `.github/workflows/ci.yml` |
-| 4 | EPIC-04 apply/verify evidence did not describe the current candidate and left C2/C3 in an ambiguous state. | Updated this file and `verify-report.md` with the correction summary; C2/C3 stay unchecked until CI executes. | `openspec/changes/2026-08-26-epic-04-customers/apply-progress.md`, `openspec/changes/2026-08-26-epic-04-customers/verify-report.md` |
+| #   | Blocker                                                                                                                                                                           | Fix                                                                                                                                                                                          | Artifact(s)                                                                                                                         |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Live-PG suite resolved the database package from the wrong relative path (`../../packages/database` from `apps/api/test`).                                                        | Changed to `../../../packages/database` so `runDatabaseCommand` executes in `packages/database`.                                                                                             | `apps/api/test/live-pg-isolation.e2e-spec.ts`                                                                                       |
+| 2   | Branding live-PG assertion was logically invalid: an authorized Tenant B user was expected to receive a cross-tenant `404` from the tenant-relative `/branding/current` endpoint. | Replaced with a tenant-relative success assertion: Tenant A sets its brand, Tenant B mutates its own brand successfully, and Tenant A's brand remains unchanged. Added `tenantBId` tracking. | `apps/api/test/live-pg-isolation.e2e-spec.ts`                                                                                       |
+| 3   | `packages/database/scripts/live-migration-verify.ts` was a dead script with no package or CI invocation.                                                                          | Added `db:live-verify` to `packages/database/package.json` and wired it as a `Live PostgreSQL migration verification` step in the `Database migrations` CI job.                              | `packages/database/package.json`, `packages/database/scripts/live-migration-verify.ts` (call path only), `.github/workflows/ci.yml` |
+| 4   | EPIC-04 apply/verify evidence did not describe the current candidate and left C2/C3 in an ambiguous state.                                                                        | Updated this file and `verify-report.md` with the correction summary; C2/C3 stay unchecked until CI executes.                                                                                | `openspec/changes/2026-08-26-epic-04-customers/apply-progress.md`, `openspec/changes/2026-08-26-epic-04-customers/verify-report.md` |
+| 5   | Live-PG setup failed with `P2002` because `prisma.featureCode.create({ code: "custom_branding" })` collided with the seeded `FeatureCode`.                                        | Replaced the fixture's `create` with `upsert` for `featureCode` and `tenantEntitlement`, preserving the explicit entitlement precondition without weakening it.                              | `apps/api/test/live-pg-isolation.e2e-spec.ts`                                                                                       |
 
 Static inspection performed after the edits (no broad test/build/lint run):
 
-| Command | Exit | Result |
-| ------- | ---: | ------ |
-| `pnpm --filter @newsaas/api typecheck` | 0 | API test and source changes compile. |
-| `pnpm --filter @newsaas/database exec tsc --noEmit ... scripts/live-migration-verify.ts` | 0 | Live-migration verifier script compiles standalone. |
+| Command                                                                                  | Exit | Result                                              |
+| ---------------------------------------------------------------------------------------- | ---: | --------------------------------------------------- |
+| `pnpm --filter @newsaas/api typecheck`                                                   |    0 | API test and source changes compile.                |
+| `pnpm --filter @newsaas/database exec tsc --noEmit ... scripts/live-migration-verify.ts` |    0 | Live-migration verifier script compiles standalone. |
+
+The idempotent fixture fix was verified with a focused static check (no live
+PostgreSQL available):
+
+| Command                                | Exit | Result                                                            |
+| -------------------------------------- | ---: | ----------------------------------------------------------------- |
+| `pnpm --filter @newsaas/api typecheck` |    0 | Live-PG isolation test compiles with `upsert` fixture changes.    |
+| `pnpm format-check`                    |    0 | All matched files pass Prettier, including the two OpenSpec docs. |
 
 ## Recovery: S1 Customer persistence artifacts restored (2026-09-01)
 
 After the S1 scope separation removed the untracked EPIC-04 persistence
 artifacts, the exact recovery sources from audit observation #1764 were applied:
 
-| Restored path | Source | SHA-256 | Lines |
-| ------------- | ------ | ------- | ----: |
-| `packages/database/prisma/migrations/20260826150100_customers/migration.sql` | OpenCode record `prt_05fea29b6001F4LdbNIN42yLRX` | `ca418ba457cf6bc8fbd276811748c2cbc42090c036c409be664e18ea0bb2a83b` | 109 |
-| `packages/database/src/schema-branding-customers.test.ts` | OpenCode record `prt_05fea25c1001xCO0DFb06d6YIb` | `9f097c5f660f1cb58f74b15e2693a015805058fbfbad33075163b99bac1bf171` | 107 |
-| `packages/database/prisma/schema.prisma` Customer models/enums/Tenant relations | `/tmp/opencode/epic03-branding-slice-candidate.diff` (S1 separation evidence) | n/a — applied as delta | +CustomerKind, +CustomerContactKind, +Customer, +CustomerAddress, +CustomerContact, +PatientGuardian, +4 Tenant relation fields |
-| `packages/database/src/reference-seed.ts` Customer permissions/role matrix | `/tmp/opencode/epic03-branding-slice-candidate.diff` (S1 separation evidence) | n/a — applied as delta | +6 `customers.*` permission seeds, +matrix entries |
-| `packages/database/src/reference-seed.test.ts` Customer role-matrix test delta | `/tmp/opencode/epic03-branding-slice-candidate.diff` (S1 separation evidence) | n/a — applied as delta | +customer baseline matrix assertion, permissions count 8→14 |
+| Restored path                                                                   | Source                                                                        | SHA-256                                                            |                                                                                                                           Lines |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------: |
+| `packages/database/prisma/migrations/20260826150100_customers/migration.sql`    | OpenCode record `prt_05fea29b6001F4LdbNIN42yLRX`                              | `ca418ba457cf6bc8fbd276811748c2cbc42090c036c409be664e18ea0bb2a83b` |                                                                                                                             109 |
+| `packages/database/src/schema-branding-customers.test.ts`                       | OpenCode record `prt_05fea25c1001xCO0DFb06d6YIb`                              | `9f097c5f660f1cb58f74b15e2693a015805058fbfbad33075163b99bac1bf171` |                                                                                                                             107 |
+| `packages/database/prisma/schema.prisma` Customer models/enums/Tenant relations | `/tmp/opencode/epic03-branding-slice-candidate.diff` (S1 separation evidence) | n/a — applied as delta                                             | +CustomerKind, +CustomerContactKind, +Customer, +CustomerAddress, +CustomerContact, +PatientGuardian, +4 Tenant relation fields |
+| `packages/database/src/reference-seed.ts` Customer permissions/role matrix      | `/tmp/opencode/epic03-branding-slice-candidate.diff` (S1 separation evidence) | n/a — applied as delta                                             |                                                                              +6 `customers.*` permission seeds, +matrix entries |
+| `packages/database/src/reference-seed.test.ts` Customer role-matrix test delta  | `/tmp/opencode/epic03-branding-slice-candidate.diff` (S1 separation evidence) | n/a — applied as delta                                             |                                                                     +customer baseline matrix assertion, permissions count 8→14 |
 
 Focused verification performed:
 
 - `sha256sum` confirmed the two OpenCode-restored files match the audit hashes.
-- `DATABASE_URL=postgresql://localhost:5432/postgres pnpm --filter @newsaas/database exec prisma validate --schema=prisma/schema.prisma` reported **The schema at prisma/schema.prisma is valid 🚀**.
+- `DATABASE_URL=postgresql://localhost:5432/postgres pnpm --filter @newsaas/database exec prisma validate --schema=prisma/schema.prisma`
+  reported **The schema at prisma/schema.prisma is valid 🚀**.
 
 No `prisma generate`, broad test run, root gates, or CI execution was performed.
 Existing EPIC-03 branding worktree changes were preserved.
@@ -58,19 +68,19 @@ Existing EPIC-03 branding worktree changes were preserved.
 
 ## Evidence
 
-| Command                                                                                    | Exit | Result                                                                               |
-| ------------------------------------------------------------------------------------------ | ---: | ------------------------------------------------------------------------------------ |
-| `docker version --format '{{.Server.Version}}'`                                            |  127 | Docker is not installed in this WSL distro; the chained live-PG command did not run. |
-| `command -v psql`                                                                          |    0 | `/usr/bin/psql` is installed.                                                        |
-| environment probe                                                                          |    0 | `DATABASE_URL_TEST` and `DATABASE_URL` are both unset.                               |
-| `pnpm --filter @newsaas/api typecheck`                                                     |    0 | Test and CI changes compile.                                                         |
-| `pnpm --filter @newsaas/api test:live-pg`                                                  |    0 | Suite collected; five tests skipped because no PostgreSQL URL is configured.         |
-| `git diff --check -- .github/workflows/ci.yml apps/api/test/live-pg-isolation.e2e-spec.ts` |    0 | No whitespace errors.                                                                |
-| `gh auth status`                                                                           |    0 | Authenticated GitHub CLI access for `EstebanJS7`.                                      |
-| `gh workflow list`                                                                         |    0 | `CI` is active (workflow ID `337182701`).                                               |
-| `gh run list --workflow ci.yml --limit 20 --json ...`                                     |    0 | Latest successful run is `32988995498` at pre-C2 SHA `d683e0af5b6affcd85f3ac1d96b800a540cd2156`. |
-| `gh run view 32988995498 --json url,conclusion,headSha,jobs`                              |    0 | [`Database migrations` job `98241831885`](https://github.com/EstebanJS7/New_SaaS/actions/runs/32988995498/job/98241831885) passed but has no live-PG build/test steps. |
-| `gh workflow run CI`                                                                       |    1 | HTTP 422: `CI` has no `workflow_dispatch` trigger; no run was created.                |
+| Command                                                                                    | Exit | Result                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------ | ---: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker version --format '{{.Server.Version}}'`                                            |  127 | Docker is not installed in this WSL distro; the chained live-PG command did not run.                                                                                   |
+| `command -v psql`                                                                          |    0 | `/usr/bin/psql` is installed.                                                                                                                                          |
+| environment probe                                                                          |    0 | `DATABASE_URL_TEST` and `DATABASE_URL` are both unset.                                                                                                                 |
+| `pnpm --filter @newsaas/api typecheck`                                                     |    0 | Test and CI changes compile.                                                                                                                                           |
+| `pnpm --filter @newsaas/api test:live-pg`                                                  |    0 | Suite collected; five tests skipped because no PostgreSQL URL is configured.                                                                                           |
+| `git diff --check -- .github/workflows/ci.yml apps/api/test/live-pg-isolation.e2e-spec.ts` |    0 | No whitespace errors.                                                                                                                                                  |
+| `gh auth status`                                                                           |    0 | Authenticated GitHub CLI access for `EstebanJS7`.                                                                                                                      |
+| `gh workflow list`                                                                         |    0 | `CI` is active (workflow ID `337182701`).                                                                                                                              |
+| `gh run list --workflow ci.yml --limit 20 --json ...`                                      |    0 | Latest successful run is `32988995498` at pre-C2 SHA `d683e0af5b6affcd85f3ac1d96b800a540cd2156`.                                                                       |
+| `gh run view 32988995498 --json url,conclusion,headSha,jobs`                               |    0 | [`Database migrations` job `98241831885`](https://github.com/EstebanJS7/New_SaaS/actions/runs/32988995498/job/98241831885) passed but has no live-PG build/test steps. |
+| `gh workflow run CI`                                                                       |    1 | HTTP 422: `CI` has no `workflow_dispatch` trigger; no run was created.                                                                                                 |
 
 ## Corrective Slice Evidence
 
