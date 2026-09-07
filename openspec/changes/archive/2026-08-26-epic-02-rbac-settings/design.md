@@ -81,8 +81,8 @@ effective permissions require tenant context. Spec fixes this route; confirmed.
 
 Additive registry entry `FEATURE_NOT_ENTITLED: { status: 403 }` (append-only).
 Write-path order in `TenantSettingsService.update`: ① definition lookup
-(unregistered ⇒ `NOT_FOUND`) → ② `has(tenantId, def.requiresFeature)`
-when declared (false ⇒ `FEATURE_NOT_ENTITLED`) → ③ patch schema validation → ④
+(unregistered ⇒ `NOT_FOUND`) → ② `has(tenantId, def.requiresFeature)` when
+declared (false ⇒ `FEATURE_NOT_ENTITLED`) → ③ patch schema validation → ④
 persist. Registration precedes gate because the feature code lives on the
 definition; each spec scenario stays single-variable. Reads never evaluate
 entitlements; no epic code path creates grants (zero automatic grants
@@ -90,14 +90,14 @@ preserved).
 
 ### D6 — Settings infrastructure (spec: tenant-settings)
 
-| Aspect            | Decision                                                                                                                                                                                                                                                                                                                        |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Table             | `TenantSettingNamespace` per TENANT-SETTINGS.md model verbatim (`@@unique([tenantId,namespace])`, `@@index([tenantId])`, `schemaVersion Int`, `data Json`, map `tenant_setting_namespace`); additive reversible migration                                                                                                       |
-| Registry location | **apps/api/src/settings/registry.ts**, not packages/shared — schemas/defaults/versioning are backend enforcement material evolving with API domains; shared stays a thin frozen contract surface                                                                                                                                |
-| Definition        | `{namespace, version, schema: z.object({...}).strict(), defaults, requiresFeature?, requiredPermissionKey}`; closed schemas make secrets unpersistable                                                                                                                                                                          |
-| v1 namespace      | `sales`: `defaultCurrency` `/^[A-Z]{3}$/` default `"PYG"`; `requireCustomerForInvoice` bool default false; `requiresFeature:"sales"`, key `sales.settings.manage`                                                                                                                                                               |
+| Aspect            | Decision                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Table             | `TenantSettingNamespace` per TENANT-SETTINGS.md model verbatim (`@@unique([tenantId,namespace])`, `@@index([tenantId])`, `schemaVersion Int`, `data Json`, map `tenant_setting_namespace`); additive reversible migration                                                                                                                                                                                       |
+| Registry location | **apps/api/src/settings/registry.ts**, not packages/shared — schemas/defaults/versioning are backend enforcement material evolving with API domains; shared stays a thin frozen contract surface                                                                                                                                                                                                                |
+| Definition        | `{namespace, version, schema: z.object({...}).strict(), defaults, requiresFeature?, requiredPermissionKey}`; closed schemas make secrets unpersistable                                                                                                                                                                                                                                                          |
+| v1 namespace      | `sales`: `defaultCurrency` `/^[A-Z]{3}$/` default `"PYG"`; `requireCustomerForInvoice` bool default false; `requiresFeature:"sales"`, key `sales.settings.manage`                                                                                                                                                                                                                                               |
 | Service API       | `get(ns)` = defaults ⊕ stored (stored re-parsed through schema defensively); `update(ns, patch)` per D5 flow; partial patches preserve siblings. Tenant context is resolved strictly from the authenticated request (`requireTenantId()`); there is no `tenantId` selector and no cross-tenant-addressable settings row. Schema validation failures (unknown field, wrong type) return 400 `VALIDATION_FAILED`. |
-| Routes            | `GET /settings/:namespace` empty-declared; `PUT /settings/:namespace` declares `sales.settings.manage`; service re-asserts `definition.requiredPermissionKey` via resolver — defense-in-depth so a forgotten decorator cannot fail open; expansion convention: new namespace ⇒ registry entry + decorator key + union-sync test |
+| Routes            | `GET /settings/:namespace` empty-declared; `PUT /settings/:namespace` declares `sales.settings.manage`; service re-asserts `definition.requiredPermissionKey` via resolver — defense-in-depth so a forgotten decorator cannot fail open; expansion convention: new namespace ⇒ registry entry + decorator key + union-sync test                                                                                 |
 
 ### D7 — Seed interaction (spec: rbac-administration, documented behavior)
 
@@ -147,11 +147,11 @@ Request ─→ ALS{requestId}
 
 ## Testing Strategy
 
-| Layer       | Coverage                                                                                                                               |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Unit        | resolver AND/subset; registry rejection; defaults merge; seed double-run                                                               |
+| Layer       | Coverage                                                                                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit        | resolver AND/subset; registry rejection; defaults merge; seed double-run                                                                                            |
 | Integration | 403 undeclared; probe enumeration; admin flows; last-admin 409; audit counts; settings get/set/isolation/entitlement; no cross-tenant-addressable settings resource |
-| CI          | migrations job (fresh PG16 deploy); lint/typecheck/test/build gates                                                                    |
+| CI          | migrations job (fresh PG16 deploy); lint/typecheck/test/build gates                                                                                                 |
 
 ## Threat Matrix
 

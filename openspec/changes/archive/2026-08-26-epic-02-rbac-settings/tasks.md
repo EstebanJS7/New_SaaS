@@ -2,15 +2,15 @@
 
 ## Review Workload Forecast
 
-| Field                   | Value                                                                            |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| Estimated changed lines | 2,400–3,000 total — Batch A ≈1,200–1,450 · Batch B ≈900–1,170 · Batch C ≈280–380 |
-| 400-line budget risk    | High (whole change); per batch: A High, B High, C Low                            |
-| Chained PRs recommended | No — TURBO review batches substitute (EPIC-01 precedent)                         |
-| Suggested split         | Batch A (A1 → A2) → Batch B (B1 → B2) → Batch C                                  |
-| Delivery strategy       | exception-ok — TURBO approved through archive                                    |
-| Chain strategy          | size-exception                                                                   |
-| Decision needed before apply | No                                                                            |
+| Field                        | Value                                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| Estimated changed lines      | 2,400–3,000 total — Batch A ≈1,200–1,450 · Batch B ≈900–1,170 · Batch C ≈280–380 |
+| 400-line budget risk         | High (whole change); per batch: A High, B High, C Low                            |
+| Chained PRs recommended      | No — TURBO review batches substitute (EPIC-01 precedent)                         |
+| Suggested split              | Batch A (A1 → A2) → Batch B (B1 → B2) → Batch C                                  |
+| Delivery strategy            | exception-ok — TURBO approved through archive                                    |
+| Chain strategy               | size-exception                                                                   |
+| Decision needed before apply | No                                                                               |
 
 Batch review policy (maintainer-approved): batches are the review-slicing unit.
 **Batch A is security-relevant → deep review MANDATORY** (global guard chain,
@@ -204,17 +204,17 @@ deny-by-default contract, admin authz + audit trail). Batch B gets full review
       `/^[A-Z]{3}$/` default `"PYG"`; `requireCustomerForInvoice` boolean
       default false; `requiresFeature:"sales"`;
       `requiredPermissionKey:"sales.settings.manage"`); unknown-namespace lookup
-      ⇒ `NOT_FOUND`; closed schemas make secret-shaped fields
-      unpersistable. Union-sync test: every registry `requiredPermissionKey` ∈
+      ⇒ `NOT_FOUND`; closed schemas make secret-shaped fields unpersistable.
+      Union-sync test: every registry `requiredPermissionKey` ∈
       `PERMISSION_SEEDS`, every `requiresFeature` ∈ `FEATURE_CODE_SEEDS`.
       Verify: `vitest run src/settings` + database seed suite. Deps: —.
 - [x] 3.3 **TenantSettingsService**:
       `apps/api/src/settings/tenant-settings.service.ts` + `settings.module.ts`:
       `get(ns)` = defaults ⊕ stored (stored values defensively re-parsed through
       schema); `update(ns, patch)` implements D5 order ① definition lookup
-      (unregistered ⇒ `NOT_FOUND`) → ③ closed-schema validation (unknown
-      field / wrong type ⇒ `VALIDATION_FAILED`, NOTHING persisted) → ④ upsert
-      merged values stamped with registry `schemaVersion` (one row per
+      (unregistered ⇒ `NOT_FOUND`) → ③ closed-schema validation (unknown field /
+      wrong type ⇒ `VALIDATION_FAILED`, NOTHING persisted) → ④ upsert merged
+      values stamped with registry `schemaVersion` (one row per
       `(tenantId, namespace)`), partial patches preserve siblings; tenant scope
       via `requireTenantId()`. Entitlement step ② arrives in 4.3. Verify:
       defaults-when-absent / unknown-field / wrong-type /
@@ -297,8 +297,8 @@ deny-by-default contract, admin authz + audit trail). Batch B gets full review
       sdd-verify/archive. Deps: ALL. Evidence: format-check exit 0; lint exit 0
       (12 packages); typecheck exit 0 (12 packages); test exit 0 (API 36 files /
       249 tests, database 6 files / 67 tests, shared 3 files / 16 tests, worker
-      2 files / 12 tests, web 10 files / 32 tests, ui 6 files / 36 tests);
-      build exit 0 (8 packages including web + api); `git diff --check` exit 0;
+      2 files / 12 tests, web 10 files / 32 tests, ui 6 files / 36 tests); build
+      exit 0 (8 packages including web + api); `git diff --check` exit 0;
       `pnpm services:up && pnpm preflight` exit 0 (PostgreSQL + Redis
       reachable).
 

@@ -77,16 +77,16 @@ configure role mappings through a tenant-local override layer.
 - [x] Settings reads return defaults when absent; unknown namespaces return
       `404 NOT_FOUND`; writes validate against a closed schema, reject unknown
       fields and secret-shaped payloads, preserve sibling values, and upsert one
-      row per `(tenantId, namespace)`. —
-      Evidence: `apps/api/src/settings/tenant-settings.service.test.ts` +
+      row per `(tenantId, namespace)`. — Evidence:
+      `apps/api/src/settings/tenant-settings.service.test.ts` +
       `apps/api/src/settings/settings.integration.test.ts`.
 - [x] Settings writes are gated by the `sales` entitlement AND the
       `sales.settings.manage` permission; reads skip entitlement evaluation. —
       Evidence: `apps/api/src/settings/settings.integration.test.ts`.
-- [x] Settings have no cross-tenant-addressable resource — reads resolve to
-      the caller's tenant defaults and writes are scoped to the caller's tenant.
-      Membership targets return `404` when foreign. —
-      Evidence: `apps/api/test/cross-tenant-isolation.e2e-spec.ts`.
+- [x] Settings have no cross-tenant-addressable resource — reads resolve to the
+      caller's tenant defaults and writes are scoped to the caller's tenant.
+      Membership targets return `404` when foreign. — Evidence:
+      `apps/api/test/cross-tenant-isolation.e2e-spec.ts`.
 - [x] Reference seed remains idempotent and additive; rerun restores removed
       baseline pairs without deleting admin-added pairs. — Evidence:
       `packages/database/src/reference-seed.test.ts`.

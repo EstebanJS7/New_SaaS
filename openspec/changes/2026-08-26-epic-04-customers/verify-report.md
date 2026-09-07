@@ -151,8 +151,9 @@ actually asserted, and documentation is contradictory.
 The following delivery-evidence corrections were applied in a focused batch.
 They do not constitute a new verification run and do not claim live CI proof.
 
-1. **Live-PG relative path fixed.** `apps/api/test/live-pg-isolation.e2e-spec.ts`
-   now resolves the database package with `../../../packages/database`.
+1. **Live-PG relative path fixed.**
+   `apps/api/test/live-pg-isolation.e2e-spec.ts` now resolves the database
+   package with `../../../packages/database`.
 2. **Branding assertion corrected.** The invalid cross-tenant `404` expectation
    for Tenant B on `/branding/current` was replaced with a tenant-relative
    success assertion: Tenant B mutates its own branding, Tenant A's branding
@@ -164,5 +165,5 @@ They do not constitute a new verification run and do not claim live CI proof.
    describe the corrected candidate.
 
 **Remaining unverified items:** C2 (live-PG HTTP byte-equivalence execution) and
-C3 (cold build evidence) remain unchecked until CI executes them. No live CI
-run was performed during this correction batch.
+C3 (cold build evidence) remain unchecked until CI executes them. No live CI run
+was performed during this correction batch.

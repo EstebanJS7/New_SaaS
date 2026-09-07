@@ -108,17 +108,20 @@ private branding API as `500 INTERNAL` instead of the specified stable
       `BRAND_OVERRIDE_UNSUPPORTED_SCHEMA_VERSION`, and
       `BRAND_OVERRIDE_INVALID_VALUE` in the shared `ERROR_CODES` registry
       (status 400 each) so `DomainError` can carry them.
-- [x] 6.2 Catch `BrandOverrideValidationError` in
-      `BrandingService.update()` and rethrow as a stable `DomainError`
-      preserving the original code and message.
-- [x] 6.3 Add focused HTTP-level integration test proving `PUT /branding/current`
-      with an unknown key returns `400` and code `BRAND_OVERRIDE_UNKNOWN_KEY`.
+- [x] 6.2 Catch `BrandOverrideValidationError` in `BrandingService.update()` and
+      rethrow as a stable `DomainError` preserving the original code and
+      message.
+- [x] 6.3 Add focused HTTP-level integration test proving
+      `PUT /branding/current` with an unknown key returns `400` and code
+      `BRAND_OVERRIDE_UNKNOWN_KEY`.
 - [x] 6.4 Update registry snapshot test and global-exception filter default
       messages; preserve first-wins status→code mapping so generic
       `BadRequestException` still resolves to `VALIDATION_FAILED`.
 
 **Focused verification:**
-- `pnpm vitest run --config vitest.config.ts src/branding/branding.integration.test.ts src/branding/branding.service.test.ts src/common/filters/global-exception.filter.test.ts` → 32/32 passed
+
+- `pnpm vitest run --config vitest.config.ts src/branding/branding.integration.test.ts src/branding/branding.service.test.ts src/common/filters/global-exception.filter.test.ts`
+  → 32/32 passed
 - `pnpm lint` (api) → clean
 - `pnpm typecheck` (api, shared) → clean
 - `pnpm --filter @newsaas/shared build` → regenerated dist

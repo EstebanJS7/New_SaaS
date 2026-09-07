@@ -81,7 +81,9 @@ jobs:
         run: pnpm db:live-verify
 
       - name: Build workspace packages for live-PG test
-        run: pnpm --filter @newsaas/api build
+        # Turbo respects the workspace dependency graph so @newsaas/config,
+        # @newsaas/shared and @newsaas/database are built before the API.
+        run: pnpm build --filter=@newsaas/api
 
       - name: Live PostgreSQL application-path isolation evidence
         working-directory: apps/api

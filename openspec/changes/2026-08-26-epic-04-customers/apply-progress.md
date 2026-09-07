@@ -103,7 +103,8 @@ Existing EPIC-03 branding worktree changes were preserved.
 ## Smallest Safe Next Action
 
 After a permitted publication or an explicitly approved minimal dispatch
-mechanism, run the `Database migrations` job containing `Live PostgreSQL
-application-path isolation evidence`, then retain the `pnpm test:live-pg` result
-and canonical run/job URL as the only live HTTP proof. If it fails, diagnose only
-the failing test/CI surface before rerunning that job.
+mechanism, run the `Database migrations` job containing
+`Live PostgreSQL application-path isolation evidence`, then retain the
+`pnpm test:live-pg` result and canonical run/job URL as the only live HTTP
+proof. If it fails, diagnose only the failing test/CI surface before rerunning
+that job.

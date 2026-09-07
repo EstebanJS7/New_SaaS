@@ -100,8 +100,8 @@ tenant.settings["whatever"];
   tenant is resolved from the request context; there is no `tenantId` selector.
   Reads never evaluate entitlements.
 - `PUT /settings/:namespace` — declares `sales.settings.manage` and re-asserts
-  `definition.requiredPermissionKey` inside the service as defense-in-depth.
-  The namespace is scoped to the caller's tenant; there is no cross-tenant-
+  `definition.requiredPermissionKey` inside the service as defense-in-depth. The
+  namespace is scoped to the caller's tenant; there is no cross-tenant-
   addressable settings resource.
 
 ## Authorization and Entitlement Gate
@@ -166,8 +166,8 @@ If a settings schema changes incompatibly:
 
 - `TenantSettingNamespace.data` is **INTERNAL** tenant configuration.
 - No secret fields are accepted by the closed schemas.
-- Rows are tenant-scoped; there is no cross-tenant-addressable settings
-  resource — a caller always reads or writes within their own tenant scope.
+- Rows are tenant-scoped; there is no cross-tenant-addressable settings resource
+  — a caller always reads or writes within their own tenant scope.
 
 ## Tests
 

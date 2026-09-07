@@ -124,10 +124,11 @@ passes for `EstebanJS7`. The latest successful CI run is
 [`32988995498`](https://github.com/EstebanJS7/New_SaaS/actions/runs/32988995498)
 at `d683e0af5b6affcd85f3ac1d96b800a540cd2156`; its successful
 [`Database migrations` job `98241831885`](https://github.com/EstebanJS7/New_SaaS/actions/runs/32988995498/job/98241831885)
-ended after the seed probe and has no `Build workspace packages for live-PG test`
-or `Live PostgreSQL application-path isolation evidence` step. `gh workflow run
-CI` exits 1 with HTTP 422 because `ci.yml` has no `workflow_dispatch` trigger.
-Task 7.2 and C2 remain blocked: no current-code live HTTP evidence is claimed.
+ended after the seed probe and has no
+`Build workspace packages for live-PG test` or
+`Live PostgreSQL application-path isolation evidence` step. `gh workflow run CI`
+exits 1 with HTTP 422 because `ci.yml` has no `workflow_dispatch` trigger. Task
+7.2 and C2 remain blocked: no current-code live HTTP evidence is claimed.
 
 ### Phase 8: C3 — Cold Build Evidence
 

@@ -13,21 +13,28 @@ slice 1 completed. Remaining blocker: Playwright E2E not installed/configured.
 
 ### Phase 1: S1 — Persistence and Authorization Seed
 
-- [x] 1.1 `TenantBranding` schema with tenant-unique row, version, JSON overrides, updater relation.
+- [x] 1.1 `TenantBranding` schema with tenant-unique row, version, JSON
+      overrides, updater relation.
 - [x] 1.2 Additive migration preserving no-row preset fallback.
 - [x] 1.3 Reference seed grants `branding.settings.manage` to OWNER and ADMIN.
 
 ### Phase 2: S2 — Private Management Boundary
 
-- [x] 2.1 `brand-override.zod.ts` and `dto.ts` reject unknown/invalid v1 overrides.
-- [x] 2.2 `branding.service.ts` for context-scoped get/update/reset, transactional audit.
-- [x] 2.3 `branding.controller.ts` and `branding.module.ts` with permission + entitlement gates.
-- [x] 2.4 `BrandingModule` registered in `app.module.ts`; tenant identity never from request input.
+- [x] 2.1 `brand-override.zod.ts` and `dto.ts` reject unknown/invalid v1
+      overrides.
+- [x] 2.2 `branding.service.ts` for context-scoped get/update/reset,
+      transactional audit.
+- [x] 2.3 `branding.controller.ts` and `branding.module.ts` with permission +
+      entitlement gates.
+- [x] 2.4 `BrandingModule` registered in `app.module.ts`; tenant identity never
+      from request input.
 
 ### Phase 3: S3 — Public and Server Resolution
 
-- [x] 3.1 `public-branding.controller.ts` with `@Public()` slug lookup and allowlisted DTO.
-- [x] 3.2 Server layout resolves `CoreDesignDefaults → ProductBrandPreset → TenantBranding`.
+- [x] 3.1 `public-branding.controller.ts` with `@Public()` slug lookup and
+      allowlisted DTO.
+- [x] 3.2 Server layout resolves
+      `CoreDesignDefaults → ProductBrandPreset → TenantBranding`.
 - [x] 3.3 `appearance.ts` local `light`/`dark` wins over tenant fallback.
 
 ### Phase 4: S4 — Settings UI
@@ -59,10 +66,12 @@ private branding API as `500 INTERNAL` instead of the specified stable
       `BRAND_OVERRIDE_UNSUPPORTED_SCHEMA_VERSION`, and
       `BRAND_OVERRIDE_INVALID_VALUE` in the shared `ERROR_CODES` registry
       (status 400 each) so `DomainError` can carry them.
-- [x] 6.2 Caught `BrandOverrideValidationError` in `BrandingService.update()` and
-      rethrew as a stable `DomainError` preserving the original code and message.
-- [x] 6.3 Added focused HTTP-level integration test proving `PUT /branding/current`
-      with an unknown key returns `400` and code `BRAND_OVERRIDE_UNKNOWN_KEY`.
+- [x] 6.2 Caught `BrandOverrideValidationError` in `BrandingService.update()`
+      and rethrew as a stable `DomainError` preserving the original code and
+      message.
+- [x] 6.3 Added focused HTTP-level integration test proving
+      `PUT /branding/current` with an unknown key returns `400` and code
+      `BRAND_OVERRIDE_UNKNOWN_KEY`.
 - [x] 6.4 Updated registry snapshot test and global-exception filter default
       messages; preserved first-wins status→code mapping so generic
       `BadRequestException` still resolves to `VALIDATION_FAILED`.
@@ -135,8 +144,8 @@ pnpm --filter @newsaas/shared build           → clean
   also throw `UNSUPPORTED_SCHEMA_VERSION` and `INVALID_VALUE`; registering all
   three keeps `DomainError(error.code, ...)` type-safe and consistent.
 - Preserved the generic `BadRequestException → VALIDATION_FAILED` mapping by
-  making the reverse status→code table first-wins, matching the existing
-  comment and tests.
+  making the reverse status→code table first-wins, matching the existing comment
+  and tests.
 - Stored (corrupt) overrides continue to map to `VALIDATION_FAILED` via
   `parseStoredOverrides`; the corrective slice is scoped to user input escaping
   as 500.
