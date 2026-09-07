@@ -74,6 +74,22 @@ jobs:
           echo "counts after second seed: $SECOND_COUNTS"
           test "$FIRST_COUNTS" = "$SECOND_COUNTS"
 
+      - name: Live PostgreSQL migration verification
+        working-directory: packages/database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
+        run: pnpm db:live-verify
+
+      - name: Build workspace packages for live-PG test
+        run: pnpm --filter @newsaas/api build
+
+      - name: Live PostgreSQL application-path isolation evidence
+        working-directory: apps/api
+        env:
+          DATABASE_URL_TEST: postgres://postgres:postgres@localhost:5432/newsaas_migrations
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
+        run: pnpm test:live-pg
+
   quality:
     name: Lint, Typecheck, Test, Build
     runs-on: ubuntu-latest

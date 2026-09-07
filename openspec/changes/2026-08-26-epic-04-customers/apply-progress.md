@@ -1,3 +1,29 @@
+# Apply Progress: EPIC-04 Customers C1-C3 corrections
+
+**Date:** 2026-09-07 **Mode:** Standard (`strict_tdd: false`) **Active slice:**
+C1-C3 corrections **Status:** In progress — C1-C3 static/dispatch corrections
+applied; C2/C3 remain unchecked until CI executes
+
+## Corrective batch: C1-C3 delivery-evidence fixes applied (2026-09-07)
+
+A fresh review found four blockers in the C1-C3 evidence surface. Only the
+seven candidate artifacts were modified; no unrelated feature code or docs were
+changed. Live CI proof was explicitly not claimed.
+
+| # | Blocker | Fix | Artifact(s) |
+| - | ------- | --- | ----------- |
+| 1 | Live-PG suite resolved the database package from the wrong relative path (`../../packages/database` from `apps/api/test`). | Changed to `../../../packages/database` so `runDatabaseCommand` executes in `packages/database`. | `apps/api/test/live-pg-isolation.e2e-spec.ts` |
+| 2 | Branding live-PG assertion was logically invalid: an authorized Tenant B user was expected to receive a cross-tenant `404` from the tenant-relative `/branding/current` endpoint. | Replaced with a tenant-relative success assertion: Tenant A sets its brand, Tenant B mutates its own brand successfully, and Tenant A's brand remains unchanged. Added `tenantBId` tracking. | `apps/api/test/live-pg-isolation.e2e-spec.ts` |
+| 3 | `packages/database/scripts/live-migration-verify.ts` was a dead script with no package or CI invocation. | Added `db:live-verify` to `packages/database/package.json` and wired it as a `Live PostgreSQL migration verification` step in the `Database migrations` CI job. | `packages/database/package.json`, `packages/database/scripts/live-migration-verify.ts` (call path only), `.github/workflows/ci.yml` |
+| 4 | EPIC-04 apply/verify evidence did not describe the current candidate and left C2/C3 in an ambiguous state. | Updated this file and `verify-report.md` with the correction summary; C2/C3 stay unchecked until CI executes. | `openspec/changes/2026-08-26-epic-04-customers/apply-progress.md`, `openspec/changes/2026-08-26-epic-04-customers/verify-report.md` |
+
+Static inspection performed after the edits (no broad test/build/lint run):
+
+| Command | Exit | Result |
+| ------- | ---: | ------ |
+| `pnpm --filter @newsaas/api typecheck` | 0 | API test and source changes compile. |
+| `pnpm --filter @newsaas/database exec tsc --noEmit ... scripts/live-migration-verify.ts` | 0 | Live-migration verifier script compiles standalone. |
+
 ## Recovery: S1 Customer persistence artifacts restored (2026-09-01)
 
 After the S1 scope separation removed the untracked EPIC-04 persistence
@@ -17,3 +43,67 @@ Focused verification performed:
 - `DATABASE_URL=postgresql://localhost:5432/postgres pnpm --filter @newsaas/database exec prisma validate --schema=prisma/schema.prisma` reported **The schema at prisma/schema.prisma is valid 🚀**.
 
 No `prisma generate`, broad test run, root gates, or CI execution was performed.
+Existing EPIC-03 branding worktree changes were preserved.
+
+## Completed
+
+- [x] 7.1 Set the disposable test database as `DATABASE_URL` before `AppModule`
+      compilation, restore the original value during teardown, and provide both
+      `DATABASE_URL_TEST` and `DATABASE_URL` to the CI live-PG job.
+
+## Pending Blocker
+
+- [ ] 7.2 Execute Customer, Address, and Contact cross-tenant versus nonexistent
+      UUID byte-equivalence assertions against live PostgreSQL in CI.
+
+## Evidence
+
+| Command                                                                                    | Exit | Result                                                                               |
+| ------------------------------------------------------------------------------------------ | ---: | ------------------------------------------------------------------------------------ |
+| `docker version --format '{{.Server.Version}}'`                                            |  127 | Docker is not installed in this WSL distro; the chained live-PG command did not run. |
+| `command -v psql`                                                                          |    0 | `/usr/bin/psql` is installed.                                                        |
+| environment probe                                                                          |    0 | `DATABASE_URL_TEST` and `DATABASE_URL` are both unset.                               |
+| `pnpm --filter @newsaas/api typecheck`                                                     |    0 | Test and CI changes compile.                                                         |
+| `pnpm --filter @newsaas/api test:live-pg`                                                  |    0 | Suite collected; five tests skipped because no PostgreSQL URL is configured.         |
+| `git diff --check -- .github/workflows/ci.yml apps/api/test/live-pg-isolation.e2e-spec.ts` |    0 | No whitespace errors.                                                                |
+| `gh auth status`                                                                           |    0 | Authenticated GitHub CLI access for `EstebanJS7`.                                      |
+| `gh workflow list`                                                                         |    0 | `CI` is active (workflow ID `337182701`).                                               |
+| `gh run list --workflow ci.yml --limit 20 --json ...`                                     |    0 | Latest successful run is `32988995498` at pre-C2 SHA `d683e0af5b6affcd85f3ac1d96b800a540cd2156`. |
+| `gh run view 32988995498 --json url,conclusion,headSha,jobs`                              |    0 | [`Database migrations` job `98241831885`](https://github.com/EstebanJS7/New_SaaS/actions/runs/32988995498/job/98241831885) passed but has no live-PG build/test steps. |
+| `gh workflow run CI`                                                                       |    1 | HTTP 422: `CI` has no `workflow_dispatch` trigger; no run was created.                |
+
+## Corrective Slice Evidence
+
+- Verify findings used: #1733 critical findings 5 and 6. The pre-existing
+  datasource mismatch and absent byte-equivalence proof were not rediscovered
+  beyond targeted test/CI inspection.
+- Files read: `proposal.md`, both delta specs, `design.md`, `tasks.md`,
+  `verify-report.md`, `openspec/config.yaml`,
+  `apps/api/test/live-pg-isolation.e2e-spec.ts`, `.github/workflows/ci.yml`,
+  `apps/api/package.json`, `apps/api/vitest.config.ts`, and the relevant
+  Prisma/error-filter source through CodeGraph.
+- Files changed: `apps/api/test/live-pg-isolation.e2e-spec.ts`,
+  `.github/workflows/ci.yml`, and this change's OpenSpec artifacts. This
+  continuation changed only `tasks.md` and `apply-progress.md`.
+- Failed experiments: Docker availability probe; Docker is absent. No temporary
+  configuration was retained. `gh workflow run CI` was rejected with HTTP 422
+  because the workflow lacks `workflow_dispatch`; no remote run was created.
+- Root gates: not run; C2 is blocked before live proof, and no final root-gate
+  execution is warranted.
+- Slice budget: below the 350-line C2 limit. The live-PG test was already
+  untracked before C2, so Git cannot compute an exact patch-only baseline;
+  implementation/test changes plus C2 evidence are bounded below the limit and
+  pre-existing dirtiness is excluded.
+- Scope expansions: None.
+- Stop point: C2 stops at the live PostgreSQL CI execution prerequisite. GitHub
+  CLI access is available, but the current-code workflow cannot be dispatched
+  because it has no `workflow_dispatch` trigger, and publishing the dirty C2
+  change through a commit, push, or PR is forbidden. C3 and C4 were not started.
+
+## Smallest Safe Next Action
+
+After a permitted publication or an explicitly approved minimal dispatch
+mechanism, run the `Database migrations` job containing `Live PostgreSQL
+application-path isolation evidence`, then retain the `pnpm test:live-pg` result
+and canonical run/job URL as the only live HTTP proof. If it fails, diagnose only
+the failing test/CI surface before rerunning that job.
