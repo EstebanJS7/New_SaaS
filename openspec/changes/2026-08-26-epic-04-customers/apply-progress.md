@@ -39,15 +39,15 @@ missing-UUID requests are built lazily inside arrow functions so they are not
 created eagerly and cannot race the listener lifecycle. The server is closed in
 `afterAll` via the existing `app.close()`.
 
-| #   | File                                          | Change                                                                                                                                                                      |
-| --- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #   | File                                          | Change                                                                                                                                                                                                                                                                                                            |
+| --- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | `apps/api/test/live-pg-isolation.e2e-spec.ts` | Replaced the shared `supertest.agent` with `let serverUrl: string`. In `beforeAll`: `await app.listen(0, "127.0.0.1"); serverUrl = await app.getUrl();`. Every request now uses `supertest(serverUrl)` with an explicit `.set("Cookie", …)`. Cross-tenant/missing-UUID pairs are deferred through arrow builders. |
 
 Focused verification performed (no local PostgreSQL available):
 
-| Command                                | Exit | Result                                                                                            |
-| -------------------------------------- | ---: | ------------------------------------------------------------------------------------------------- |
-| `pnpm --filter @newsaas/api typecheck` |    0 | Live-PG isolation test compiles with the explicit listen/URL pattern and lazy request builders.   |
+| Command                                | Exit | Result                                                                                          |
+| -------------------------------------- | ---: | ----------------------------------------------------------------------------------------------- |
+| `pnpm --filter @newsaas/api typecheck` |    0 | Live-PG isolation test compiles with the explicit listen/URL pattern and lazy request builders. |
 
 C2 task 7.2 remains unchecked pending a CI live-PG run that exercises the actual
 HTTP assertions against PostgreSQL.
