@@ -44,16 +44,23 @@ slice 1 completed. Remaining blocker: Playwright E2E not installed/configured.
 
 ### Phase 5: H1 — Combined Hardening (with EPIC-04)
 
-- [x] 5.1 RED/GREEN unit, Supertest two-tenant, audit co-commit, entitlement, reset, public-DTO/404, SSR precedence, preview-locality coverage.
-- [x] 5.2 Focused quality gates, live-PG isolation/security review, module docs and changelog updates.
-- [ ] 5.3 Playwright E2E coverage. **BLOCKED**: Playwright not installed/configured.
+- [x] 5.1 RED/GREEN unit, Supertest two-tenant, audit co-commit, entitlement,
+      reset, public-DTO/404, SSR precedence, preview-locality coverage.
+- [x] 5.2 Focused quality gates, live-PG isolation/security review, module docs
+      and changelog updates.
+- [ ] 5.3 Playwright E2E coverage. **BLOCKED**: Playwright not
+      installed/configured.
 
 ### Corrective H1 Round (2026-09-01)
 
-- [x] Audit rollback test proves mutation is rolled back (state unchanged and no successful audit row).
-- [x] Integrated SSR layout test proves tenant resolution CSS output and local appearance wins.
-- [x] Preview tests prove styles are bounded to preview card and tenant fallback radius used when override empty.
-- [x] Post-build output verification script fails loudly if required artifacts missing.
+- [x] Audit rollback test proves mutation is rolled back (state unchanged and no
+      successful audit row).
+- [x] Integrated SSR layout test proves tenant resolution CSS output and local
+      appearance wins.
+- [x] Preview tests prove styles are bounded to preview card and tenant fallback
+      radius used when override empty.
+- [x] Post-build output verification script fails loudly if required artifacts
+      missing.
 - [x] TD-006 updated with EPIC-specific evidence and remaining scope.
 
 ### Autonomous Corrective Slice 1 (2026-09-01)
@@ -135,7 +142,8 @@ pnpm --filter @newsaas/shared build           → clean
 
 ## Blockers
 
-- Playwright E2E is not installed/configured (unchanged; recorded as explicit blocker).
+- Playwright E2E is not installed/configured (unchanged; recorded as explicit
+  blocker).
 
 ## Decisions / Deviations
 

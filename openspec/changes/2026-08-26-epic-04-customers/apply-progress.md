@@ -33,11 +33,11 @@ state.
 Fix: explicitly bind the Nest/Fastify application once in `beforeAll` with
 `await app.listen(0, "127.0.0.1")`, capture the stable URL from
 `await app.getUrl()`, and target that URL for every request. The shared
-Supertest agent was removed because it only added cookie-jar state; each
-request now carries its tenant cookie explicitly. Paired cross-tenant and
-missing-UUID requests are built lazily inside arrow functions so they are not
-created eagerly and cannot race the listener lifecycle. The server is closed in
-`afterAll` via the existing `app.close()`.
+Supertest agent was removed because it only added cookie-jar state; each request
+now carries its tenant cookie explicitly. Paired cross-tenant and missing-UUID
+requests are built lazily inside arrow functions so they are not created eagerly
+and cannot race the listener lifecycle. The server is closed in `afterAll` via
+the existing `app.close()`.
 
 | #   | File                                          | Change                                                                                                                                                                                                                                                                                                            |
 | --- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
