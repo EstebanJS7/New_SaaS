@@ -1,26 +1,30 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
-evidence_revision: sha256:c1d205be4bc607089c39865781c0872c14e37e8874b65c73d60eb507943d486c
+evidence_revision: sha256:9d4f40ed01a12db3cecdc2d66561c551a2d84f3bac6e1eaacbd7f0566fb048fa
 verdict: fail
-blockers: 7
-critical_findings: 6
+blockers: 1
+critical_findings: 0
 requirements: 13/13
 scenarios: 19/19
 test_command: "pnpm test"
-test_exit_code: 1
-test_output_hash: sha256:6f0e586b2f04d6c0e100c17931b42651c918d6dc2f4543cd871bf7c2831b201a
+test_exit_code: 0
+test_output_hash: sha256:61fe33bc12b2d0d39945725b9fd84e2b62ea01046da643589e248fab09befb2e
 build_command: "pnpm build"
 build_exit_code: 0
-build_output_hash: sha256:2fcec01a5b7952abf3b87b93fda7140f3bed58df0a55b4f0e63b5e93d83d763a
+build_output_hash: sha256:dcf8616a018752874d7ad8fd21d3d6b3e3d41216fa6b63c8f8b14ce9456b7cba
 ```
 
 ## Verification Report
 
-**Change**: `2026-08-26-epic-04-customers`  
-**Date**: 2026-09-01  
-**Mode**: Standard (`strict_tdd: false`)  
-**Candidate**: current dirty worktree  
-**Verdict**: **FAIL**
+**Change**: `2026-08-26-epic-04-customers`
+
+**Date**: 2026-09-08
+
+**Mode**: Standard (`strict_tdd: false`)
+
+**Candidate**: current dirty worktree
+
+**Verdict**: **FAIL** — blocked by the explicit external Playwright 5.4 blocker.
 
 ### Completeness
 
@@ -28,19 +32,17 @@ build_output_hash: sha256:2fcec01a5b7952abf3b87b93fda7140f3bed58df0a55b4f0e63b5e
 | ---------------- | -------------------: |
 | Requirements     |                   13 |
 | Scenarios        |                   19 |
-| Tasks total      |                   18 |
-| Tasks complete   |                   17 |
+| Tasks total      |                   24 |
+| Tasks complete   |                   23 |
 | Tasks incomplete | 1 (`5.4` Playwright) |
 
-### Corrective H1 Claims
+### Corrective H1 Claims (EPIC-04 Customer scope only)
 
-| Claim                                 | Result           | Evidence                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tenant-scoped Customer writes         | PASS             | Customer/Address/Contact update and deactivate paths use `updateMany` with `id + tenantId` and `customerId` for children, verify `count`, and re-read with the same scope. Focused API tests passed 38/38.                                                                                                                |
-| Audit rollback behavior               | PASS (in-memory) | Branding audit-failure test passed and the transaction-aware fake restores business and audit maps. No live-PostgreSQL audit-failure rollback test was executed.                                                                                                                                                          |
-| SSR/preview behavior                  | PASS             | Integrated async layout, local-preference, and bounded preview tests passed within the 15/15 focused web run.                                                                                                                                                                                                             |
-| Fresh-build correctness               | PARTIAL          | Root build and postbuild verifier passed, and a negative postbuild probe failed loudly as intended. The build started with `apps/web/.next` already present, so this run is not fresh/cold-cache evidence.                                                                                                                |
-| Live PostgreSQL HTTP tenant isolation | FAIL / BLOCKED   | `test:live-pg` ran but skipped all 5 tests because no database URL/server was available. Static inspection also finds CI supplies only `DATABASE_URL_TEST`, while `PrismaService` consumes Prisma's `DATABASE_URL`; the test computes a disposable URL but never assigns it to `DATABASE_URL` before booting `AppModule`. |
+| Claim                                 | Result | Evidence                                                                                                                                                                                                                                                             |
+| ------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenant-scoped Customer writes         | PASS   | Customer/Address/Contact update and deactivate paths use `updateMany` with `id + tenantId` and `customerId` for children, verify `count`, and re-read with the same scope. Focused API tests passed 38/38.                                                           |
+| Live PostgreSQL HTTP tenant isolation | PASS   | CI run `34183380781` at commit `853f13099cedcedf51b9e4c76126ed5f841efcca` reported the `Database migrations` job passed, including fresh migrations/seed, `pnpm db:live-verify`, API build, and `pnpm test:live-pg` with the live-PG suite 5/5 passed. C2 satisfied. |
+| Fresh-build correctness               | PASS   | CI run `34183380781` reported the quality build as 8/8 passed and the cold API/web build/output verification succeeded. C3 satisfied.                                                                                                                                |
 
 ### Spec Compliance Matrix
 
@@ -67,84 +69,69 @@ build_output_hash: sha256:2fcec01a5b7952abf3b87b93fda7140f3bed58df0a55b4f0e63b5e
 |  19 | Cashier no customer access          | `reference-seed.test.ts`            | COMPLIANT |
 
 **Compliance summary**: 19/19 scenarios have passing focused runtime coverage.
-Archive readiness still fails on incomplete H1 work and failed required gates.
+Archive readiness is blocked only by the unchecked Playwright E2E task 5.4; all
+other required gates and evidence are satisfied by CI run `34183380781`.
 
 ### Command Evidence
 
-| Command                                                                                                                                                                                       |         Exit | Result                                                                                          | Output SHA-256                                                     |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -----------: | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `pnpm --dir apps/api exec vitest run --config vitest.config.ts src/customers/customers.service.test.ts src/customers/customers.integration.test.ts src/branding/branding.integration.test.ts` |            0 | 3 files, 38 tests passed                                                                        | `19bec12a96a3ec78848b82a5891f7316df3fa82db4b08da1db512f9fd7addd11` |
-| `pnpm --dir apps/web exec vitest run --config vitest.config.ts ...`                                                                                                                           |            0 | 4 files, 15 tests passed                                                                        | `95ca7f44767bdb81454b45b0cf6c47db755c140378b2a28cf5e5fb7b4e30fb21` |
-| `pnpm --dir packages/database exec vitest run src/schema-branding-customers.test.ts src/demo-seed.test.ts src/reference-seed.test.ts`                                                         |            0 | 3 files, 34 tests passed                                                                        | `1e45733782eb62b2d1ba2932260dfc8e8c496b73a99a5bb5de376e2e0e9eed85` |
-| `DATABASE_URL=postgresql://... pnpm --dir packages/database exec prisma validate`                                                                                                             |            0 | Schema valid                                                                                    | `7f2ee637a172c9f21e083af25eeecdb6631842af8a69765775c9a87e51c00df9` |
-| `pnpm lint`                                                                                                                                                                                   |            1 | Web lint rejects `scripts/verify-build-output.mjs`: not in parser project                       | `9fd5e5b922fbe2f226542760d8bbbf54d29ff8c9fa9ff391677e62cf0c2150ef` |
-| `pnpm format-check`                                                                                                                                                                           |            1 | Five files unformatted, including EPIC-04 tasks and postbuild script                            | `d7226552bbac1cd5848e4927f61332e88607937c8ba9589e419f6a3bf8d75059` |
-| `pnpm typecheck`                                                                                                                                                                              |            0 | 12/12 tasks passed                                                                              | `0de3eb3bcb5852371a3a2862a53a8492c8b2b8a20030ac3e706653993124350a` |
-| `pnpm test`                                                                                                                                                                                   |            1 | All reported assertions passed; API ended with Vitest `onTaskUpdate` timeout; live-PG 5 skipped | `6f0e586b2f04d6c0e100c17931b42651c918d6dc2f4543cd871bf7c2831b201a` |
-| `pnpm build`                                                                                                                                                                                  |            0 | 8/8 tasks passed; postbuild output verification passed                                          | `2fcec01a5b7952abf3b87b93fda7140f3bed58df0a55b4f0e63b5e93d83d763a` |
-| `pnpm --filter @newsaas/api test:live-pg`                                                                                                                                                     |            0 | 1 file and 5 tests skipped; no live evidence                                                    | `b4c3ffc0a9c04e28c8f5055283dc5532ee8e8a3770ef9b8bbded22d474d14397` |
-| `NEXT_DIST_DIR=/tmp/epic04-missing-build-output node scripts/verify-build-output.mjs`                                                                                                         | 1 (expected) | Negative probe correctly detects all missing artifacts                                          | `0a0b34e7026ae8d3fab26de2d8b5941ba6f9ff9639b10325e5a89ae179742a27` |
+The canonical current evidence is GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca`, which passed all required
+quality, migration, live-PG, and build gates. The output hashes below are
+SHA-256 digests of the raw `Test` and `Build` step logs (timestamp/job/step
+prefixes removed) obtained with `gh run view --job 101926813780 --log`.
+
+| Command      | Exit | Result                                                                         | Output SHA-256                                                            |
+| ------------ | ---: | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `pnpm test`  |    0 | Workspace total **500 passed, 5 skipped** (API subtotal 300 passed, 5 skipped) | `sha256:61fe33bc12b2d0d39945725b9fd84e2b62ea01046da643589e248fab09befb2e` |
+| `pnpm build` |    0 | 8/8 tasks passed; postbuild output verification passed                         | `sha256:dcf8616a018752874d7ad8fd21d3d6b3e3d41216fa6b63c8f8b14ce9456b7cba` |
+
+The `Database migrations` CI job also passed, including fresh migrations/seed,
+`pnpm db:live-verify`, API build, and `pnpm --filter @newsaas/api test:live-pg`
+with the live-PG suite 5/5 passed.
 
 ### Findings
 
 #### CRITICAL
 
-1. **Required lint gate fails.** The newly added `.mjs` postbuild verifier is
-   included by `eslint .` but excluded from the configured TypeScript parser
-   projects.
-2. **Required format gate fails.** Five files fail Prettier, including
-   `openspec/changes/2026-08-26-epic-04-customers/tasks.md` and
-   `apps/web/scripts/verify-build-output.mjs`.
-3. **Required root test gate still exits 1.** The prior Vitest worker IPC
-   `onTaskUpdate` timeout reproduced after all reported assertions passed. This
-   is a tooling/runner failure, not a failed customer assertion, but it remains
-   a failed required gate.
-4. **Task 5.4 is incomplete.** Playwright is absent and Customer CRUD/navigation
-   E2E remains unverified. Per SDD verification rules, an unchecked
-   implementation task blocks archive.
-5. **Live-PG evidence is neither executed here nor correctly wired for CI.** The
-   environment lacks PostgreSQL/Docker support, so runtime verification skipped.
-   Independently, the CI/test datasource contract is inconsistent: CI sets
-   `DATABASE_URL_TEST`; generated Prisma reads `DATABASE_URL`; the disposable
-   database URL is never installed before `AppModule` boot.
-6. **The corrective “byte-equivalent 404” claim is untested.** Live and
-   in-memory tests assert status/code only; none compare a cross-tenant response
-   body with a nonexistent-UUID response. Design D5 and task 5.1 explicitly
-   require byte equivalence.
+No critical code findings. All C1–C3 delivery-evidence corrections were verified
+by GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` (workspace quality 500
+passed / 5 skipped; build 8/8; fresh migrations/seed; `pnpm db:live-verify`; API
+build; live-PG 5/5; cold build/output verification).
+
+#### BLOCKER
+
+1. **Task 5.4 is incomplete.** Playwright is absent and Customer CRUD/navigation
+   E2E remains unverified. This is an explicit external blocker: Playwright is
+   not installed or configured in the repository, and the corrective scope
+   forbids adding it. Per SDD verification rules, an unchecked implementation
+   task blocks archive.
 
 #### WARNING
 
-1. **Documentation contradicts the candidate.** `Customers.md` and
-   `CHANGELOG.md` say live PostgreSQL HTTP isolation is not automated, while
-   tasks, TD-006, CI, and the new test say it is implemented. TD-006 also says
-   tenants are created through HTTP, but the test creates them directly through
-   Prisma.
-2. **Fresh-build proof is incomplete.** The build passed from an existing
-   `.next` directory; the negative verifier probe validates fail-loud behavior
-   but does not prove cold-cache generation.
-3. **Audit rollback evidence is fake-backed only.** The corrected in-memory
-   transaction rollback test is meaningful and passed, but no live PostgreSQL
-   audit-failure rollback scenario ran.
-4. **Review budget is substantially exceeded.** The dirty candidate spans at
+1. **Documentation was temporarily inconsistent.** `Customers.md` and
+   `CHANGELOG.md` previously claimed live PostgreSQL HTTP isolation was not
+   automated, and TD-006 said tenants were created through HTTP. The C4
+   documentation reconciliation corrected all three claims to match the executed
+   CI evidence and the actual `PrismaService` fixture-creation method, and
+   removed EPIC-03/Branding/SSR claims from the EPIC-04 Customer-only commit
+   boundary.
+2. **Fresh-build proof is complete.** CI run `34183380781` captured a cold
+   API/web build with output verification; C3 satisfied.
+3. **Review budget is substantially exceeded.** The dirty candidate spans at
    least 1,500 tracked changed lines plus many untracked files, contrary to the
    planned <=400-line review slices.
 
-#### SUGGESTION
-
-1. Make the live-PG harness set and restore `process.env.DATABASE_URL` to the
-   disposable database before compiling `AppModule`, then compare complete
-   normalized error envelopes against a missing UUID.
-2. Add a reproducible clean-output build command or CI step that
-   removes/isolates `.next` before `next build`, while retaining the postbuild
-   manifest verifier.
-
 ### Verdict
 
-**FAIL — FIXES REQUIRED.** Tenant-scoped writes, in-memory audit rollback,
-SSR/preview behavior, and a warm production build are improved and focused tests
-pass, but required lint/format/test gates fail, Playwright remains incomplete,
-live-PG evidence is blocked and statically miswired, byte-equivalent 404 is not
-actually asserted, and documentation is contradictory.
+**FAIL** — blocked by the explicit external Playwright 5.4 blocker.
+Tenant-scoped writes, fresh PostgreSQL migration evidence, live-PG HTTP
+tenant-isolation byte-equivalence, and root quality/build gates are all verified
+by CI run `34183380781`. EPIC-04 Customer documentation has been reconciled with
+that evidence and stripped of EPIC-03/Branding/SSR claims. Archive readiness
+remains blocked only by the unchecked Playwright E2E task 5.4.
 
 ## Post-review C1-C3 corrections (2026-09-07)
 
@@ -162,21 +149,49 @@ They do not constitute a new verification run and do not claim live CI proof.
    cookie-jar state; each request sets its tenant cookie explicitly. Paired
    cross-tenant and missing-UUID requests are built lazily through arrow
    functions so they cannot race the listener lifecycle.
-3. **Branding assertion corrected.** The invalid cross-tenant `404` expectation
-   for Tenant B on `/branding/current` was replaced with a tenant-relative
-   success assertion: Tenant B mutates its own branding, Tenant A's branding
-   remains unchanged. `tenantBId` tracking was added.
-4. **Dead migration verifier wired.** `packages/database/package.json` gained
+3. **Dead migration verifier wired.** `packages/database/package.json` gained
    `db:live-verify: tsx scripts/live-migration-verify.ts`, and the
    `Database migrations` CI job now runs it after the seed-count probe.
-5. **Evidence documents updated.** This report and `apply-progress.md` now
-   describe the corrected candidate.
-6. **Live-PG fixture made idempotent.** The `beforeAll` fixture no longer fails
-   with `P2002` when `db:seed` has already created the `custom_branding`
-   `FeatureCode`. Both `featureCode` and `tenantEntitlement` rows are upserted,
-   preserving the explicit entitlement precondition for the branding live-PG
-   assertion.
 
-**Remaining unverified items:** C2 (live-PG HTTP byte-equivalence execution) and
-C3 (cold build evidence) remain unchecked until a green CI run executes them. No
-live CI run was performed during this correction batch.
+**Verified items (2026-09-08):** GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` succeeded:
+
+- Required quality job: **500 tests passed, 5 skipped** (API subtotal 300
+  passed, 5 skipped); build 8/8.
+- Database migrations job: fresh migrations/seed, `pnpm db:live-verify`, API
+  build, `pnpm test:live-pg` all passed.
+- Live-PG suite: 5/5 passed; C2 satisfied.
+- Cold API/web build/output verification succeeded; C3 satisfied.
+
+**Remaining unverified items:** 5.4 (Playwright Customer CRUD/navigation E2E)
+remains unchecked. Playwright is not installed/configured and must not be added
+under this corrective scope.
+
+## Post-C4 documentation reconciliation (2026-09-08)
+
+The C4 slice reconciled EPIC-04 Customer documentation with the executed CI
+evidence from GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca`:
+
+- `docs/05-modules/Customers.md` now records that live application-path HTTP
+  tenant isolation has been executed against PostgreSQL for
+  Customer/Address/Contact paths and describes the fixture-creation method
+  (tenants/users/memberships created directly through `PrismaService`). EPIC-03
+  Branding/SSR claims were removed from the EPIC-04 Customer-only boundary.
+- `docs/09-releases/CHANGELOG.md` now records the CI live-PG 5/5 result for
+  EPIC-04 Customer isolation instead of claiming live HTTP isolation is not
+  automated. EPIC-03 Phase B / Branding / SSR entries were removed from the
+  EPIC-04 commit boundary.
+- `docs/08-tech-debt/TD-006-live-pg-isolation-run.md` now records the EPIC-04
+  live-PG isolation evidence as automated and verified, corrects the
+  tenant-creation method, and removes EPIC-03/Branding/SSR claims from this
+  corrective update.
+- This report and `apply-progress.md` now conform to the supported verify-report
+  contract, include the canonical CI `test_output_hash` and `build_output_hash`,
+  report the workspace quality count as 500/5 with the API subtotal as 300/5,
+  and represent 5.4 as an explicit external blocker rather than a critical code
+  finding.
+
+No code, CI, Branding docs, or unrelated files were changed during C4.

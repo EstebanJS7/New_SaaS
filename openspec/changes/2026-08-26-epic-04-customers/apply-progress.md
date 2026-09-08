@@ -1,21 +1,20 @@
-# Apply Progress: EPIC-04 Customers C1-C3 corrections
+# Apply Progress: EPIC-04 Customers C1-C4 corrections
 
-**Date:** 2026-09-07 **Mode:** Standard (`strict_tdd: false`) **Active slice:**
-C1-C3 corrections **Status:** In progress — C1-C3 static/dispatch corrections
-applied; C2/C3 remain unchecked until CI executes
+**Date:** 2026-09-08 **Mode:** Standard (`strict_tdd: false`) **Active slice:**
+C4 evidence documentation **Status:** C1/C2/C3/C4 verified against CI run
+`34183380781`; only the 5.4 Playwright blocker remains
 
 ## Corrective batch: C1-C3 delivery-evidence fixes applied (2026-09-07)
 
 A fresh review found five blockers in the C1-C3 evidence surface. Only the seven
 candidate artifacts were modified; no unrelated feature code or docs were
-changed. Live CI proof was explicitly not claimed.
+changed. Live CI proof was later obtained in run `34183380781`.
 
 ## Corrective batch: C2 live-PG Fastify listener lifecycle correction (2026-09-07)
 
 CI executed the live-PG suite and observed:
 
 - Test 1 (create tenant A customer/address/contact) passed.
-- Test 5 (tenant-relative branding isolation) passed.
 - Tests 2–4 (Customer, Address, Contact cross-tenant byte-equivalence) each
   failed with `ECONNREFUSED` after their first Supertest request path returned
   `404` successfully.
@@ -49,16 +48,27 @@ Focused verification performed (no local PostgreSQL available):
 | -------------------------------------- | ---: | ----------------------------------------------------------------------------------------------- |
 | `pnpm --filter @newsaas/api typecheck` |    0 | Live-PG isolation test compiles with the explicit listen/URL pattern and lazy request builders. |
 
-C2 task 7.2 remains unchecked pending a CI live-PG run that exercises the actual
-HTTP assertions against PostgreSQL.
+## Verified CI evidence (2026-09-07)
 
-| #   | Blocker                                                                                                                                                                           | Fix                                                                                                                                                                                          | Artifact(s)                                                                                                                         |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Live-PG suite resolved the database package from the wrong relative path (`../../packages/database` from `apps/api/test`).                                                        | Changed to `../../../packages/database` so `runDatabaseCommand` executes in `packages/database`.                                                                                             | `apps/api/test/live-pg-isolation.e2e-spec.ts`                                                                                       |
-| 2   | Branding live-PG assertion was logically invalid: an authorized Tenant B user was expected to receive a cross-tenant `404` from the tenant-relative `/branding/current` endpoint. | Replaced with a tenant-relative success assertion: Tenant A sets its brand, Tenant B mutates its own brand successfully, and Tenant A's brand remains unchanged. Added `tenantBId` tracking. | `apps/api/test/live-pg-isolation.e2e-spec.ts`                                                                                       |
-| 3   | `packages/database/scripts/live-migration-verify.ts` was a dead script with no package or CI invocation.                                                                          | Added `db:live-verify` to `packages/database/package.json` and wired it as a `Live PostgreSQL migration verification` step in the `Database migrations` CI job.                              | `packages/database/package.json`, `packages/database/scripts/live-migration-verify.ts` (call path only), `.github/workflows/ci.yml` |
-| 4   | EPIC-04 apply/verify evidence did not describe the current candidate and left C2/C3 in an ambiguous state.                                                                        | Updated this file and `verify-report.md` with the correction summary; C2/C3 stay unchecked until CI executes.                                                                                | `openspec/changes/2026-08-26-epic-04-customers/apply-progress.md`, `openspec/changes/2026-08-26-epic-04-customers/verify-report.md` |
-| 5   | Live-PG setup failed with `P2002` because `prisma.featureCode.create({ code: "custom_branding" })` collided with the seeded `FeatureCode`.                                        | Replaced the fixture's `create` with `upsert` for `featureCode` and `tenantEntitlement`, preserving the explicit entitlement precondition without weakening it.                              | `apps/api/test/live-pg-isolation.e2e-spec.ts`                                                                                       |
+GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` succeeded:
+
+| Job / Step                                 | Result | Notes                                                                                   |
+| ------------------------------------------ | ------ | --------------------------------------------------------------------------------------- |
+| Required quality job                       | PASS   | **500 tests passed, 5 skipped** (API subtotal 300 passed, 5 skipped); build 8/8         |
+| Database migrations job                    | PASS   | Fresh migrations/seed, `pnpm db:live-verify`, API build, `pnpm test:live-pg` all passed |
+| Live PostgreSQL application-path isolation | PASS   | 5/5 passed; C2 satisfied (EPIC-04 Customer/Address/Contact paths)                       |
+| Cold API/web build/output verification     | PASS   | C3 satisfied                                                                            |
+
+Task 7.2 (C2), task 8.1 (C3), and tasks 9.1/9.2 (C4) are now checked in
+`tasks.md`. Only the 5.4 Playwright blocker remains unchecked.
+
+| #   | Blocker                                                                                                                    | Fix                                                                                                                                                             | Artifact(s)                                                                                                                         |
+| --- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Live-PG suite resolved the database package from the wrong relative path (`../../packages/database` from `apps/api/test`). | Changed to `../../../packages/database` so `runDatabaseCommand` executes in `packages/database`.                                                                | `apps/api/test/live-pg-isolation.e2e-spec.ts`                                                                                       |
+| 2   | `packages/database/scripts/live-migration-verify.ts` was a dead script with no package or CI invocation.                   | Added `db:live-verify` to `packages/database/package.json` and wired it as a `Live PostgreSQL migration verification` step in the `Database migrations` CI job. | `packages/database/package.json`, `packages/database/scripts/live-migration-verify.ts` (call path only), `.github/workflows/ci.yml` |
+| 3   | EPIC-04 apply/verify evidence did not describe the current candidate and left C2/C3 in an ambiguous state.                 | Updated this file and `verify-report.md` with the correction summary; C2/C3 stay unchecked until CI executes.                                                   | `openspec/changes/2026-08-26-epic-04-customers/apply-progress.md`, `openspec/changes/2026-08-26-epic-04-customers/verify-report.md` |
 
 Static inspection performed after the edits (no broad test/build/lint run):
 
@@ -102,11 +112,33 @@ Existing EPIC-03 branding worktree changes were preserved.
 - [x] 7.1 Set the disposable test database as `DATABASE_URL` before `AppModule`
       compilation, restore the original value during teardown, and provide both
       `DATABASE_URL_TEST` and `DATABASE_URL` to the CI live-PG job.
+- [x] 9.1 Reconcile EPIC-04 documentation with executed C1–C3 evidence and
+      correct the tenant-creation method.
+- [x] 9.2 Update the task artifact after C1–C4 pass, keeping 5.4 explicitly
+      blocked.
 
-## Pending Blocker
+## Pending Blockers
 
-- [ ] 7.2 Execute Customer, Address, and Contact cross-tenant versus nonexistent
-      UUID byte-equivalence assertions against live PostgreSQL in CI.
+- [x] C4 — Reconcile EPIC-04 documentation with executed C1–C3 evidence.
+- [ ] 5.4 — Playwright E2E coverage for Customer CRUD/navigation. **BLOCKED**:
+      Playwright is not installed/configured in the repository; do not add
+      dependencies or pretend it exists.
+
+## C4 documentation reconciliation (2026-09-07)
+
+Updated documentation to match the executed CI evidence in GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca`:
+
+| #   | File                                                             | Change                                                                                                                                                                              |
+| --- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `docs/05-modules/Customers.md`                                   | Records that live-PG HTTP isolation is verified for EPIC-04 Customer/Address/Contact paths and describes fixture creation via `PrismaService`; removes EPIC-03/Branding/SSR claims. |
+| 2   | `docs/09-releases/CHANGELOG.md`                                  | Replaces the "not yet automated" claim with the CI live-PG 5/5 result for EPIC-04 Customer isolation; removes EPIC-03 Phase B / Branding / SSR entries from this boundary.          |
+| 3   | `docs/08-tech-debt/TD-006-live-pg-isolation-run.md`              | Marks EPIC-04 live-PG evidence automated/verified, corrects tenant-creation method, and removes EPIC-03/Branding/SSR claims from this C4 update.                                    |
+| 4   | `openspec/changes/2026-08-26-epic-04-customers/tasks.md`         | Marks 9.1/9.2 complete, removes stale C2 evidence paragraphs, and reports the corrected workspace/API test counts.                                                                  |
+| 5   | `openspec/changes/2026-08-26-epic-04-customers/verify-report.md` | Conforms to the supported verify-report contract, adds canonical CI output hashes, reports the corrected counts, and represents 5.4 as an explicit external blocker.                |
+
+No code, CI, Branding docs, or unrelated files were changed.
 
 ## Evidence
 

@@ -6,24 +6,36 @@ status: open
 severity: medium
 related_epics:
   - EPIC-01
+  - EPIC-04
 related_stories:
   - DAT-004
 created: 2026-08-24
-updated: 2026-08-26
+updated: 2026-09-07
 ---
 
 # TD-006 — Run tenant-isolation suites against live PostgreSQL
 
 ## Context
 
+The EPIC-04 portion of the tenant-isolation evidence is now executed in CI. The
+`Database migrations` job provisions a PG16 service container, applies
+migrations, seeds reference data, runs `pnpm db:live-verify`, builds the API,
+and runs `apps/api/test/live-pg-isolation.e2e-spec.ts` via
+`pnpm --filter @newsaas/api test:live-pg`. GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` reported that live-PG
+suite as 5/5 passed for the Customer/Address/Contact paths.
+
 The Batch 5 cross-tenant isolation suites
-(`apps/api/test/cross-tenant- isolation.e2e-spec.ts`) execute over an in-memory
-structural Prisma boundary (`apps/api/test/support/`) instead of a live
-`DATABASE_URL_TEST` PostgreSQL. The fake faithfully mirrors the predicate
+(`apps/api/test/cross-tenant-isolation.e2e-spec.ts`) still execute over an
+in-memory structural Prisma boundary (`apps/api/test/support/`) and are not run
+against the PG16 service container. The fake faithfully mirrors the predicate
 semantics the scoping depends on and TypeScript pins column names against the
-generated client, but **no machine currently executes the tenant-scoping SQL
+generated client, but **no machine currently executes that broader suite's SQL
 through a real PostgreSQL** inside any quality gate. The CI migrations job
-proves DDL applies; it does not prove query-path behavior.
+proves DDL applies and the EPIC-04 application-path suite proves the
+Customer/Address/Contact query paths; it does not prove the broader Batch 5
+cross-tenant query-path behavior.
 
 Disclosed in the change record at apply time; this record formalizes the
 deferral per DOCUMENTATION-RULES instead of leaving it as prose.
@@ -90,11 +102,36 @@ transactional properties proven live:
    composed stranding repro) leaves NEITHER the business write NOR its audit row
    behind, since the in-memory fake's `$transaction` never rolls anything back.
 
+**2026-09-01 corrective H1 round (EPIC-04 Customer):**
+
+- Customer/Address/Contact update and deactivate writes were corrected to use
+  tenant-scoped `updateMany` with affected-count verification; the prior
+  `findFirst` + bare `update({ where: { id } })` pattern was removed.
+- The fresh web build was stabilized with a post-build output verification
+  script that fails loudly if `pages-manifest.json` or other required artifacts
+  are missing.
+- Live PostgreSQL application-path isolation evidence is implemented in
+  `apps/api/test/live-pg-isolation.e2e-spec.ts`. It boots the real `AppModule`
+  with the real `PrismaService` against a disposable PostgreSQL database,
+  applies migrations, seeds reference data, sets `process.env.DATABASE_URL` to
+  the disposable database before `AppModule` compilation, creates the fixture
+  tenants, users, and memberships directly through `PrismaService`, and uses
+  Supertest over an explicitly bound NestJS/Fastify listener to prove that
+  cross-tenant Customer/Address/Contact mutations return byte-equivalent
+  `404 NOT_FOUND`. The CI migrations job now runs
+  `pnpm --filter @newsaas/api test:live-pg` after the seed-count probe.
+
+The EPIC-04 portion of this record is therefore addressed; the broader Batch 5
+RBAC concurrency and RBAC audit-rollback evidence gates remain open and are
+tracked under this same TD-006 until a future epic exercises those paths.
+
 ## Proposed Resolution
 
-Extend `.github/workflows/ci.yml` migrations job: after `migrate deploy` +
-seed-count probe, export `DATABASE_URL_TEST` and run
-`pnpm --filter @newsaas/api test -- cross-tenant`. No application code changes.
+For the remaining Batch 5 cross-tenant isolation suites, extend the
+`.github/workflows/ci.yml` migrations job: after `migrate deploy` + seed-count
+probe, export `DATABASE_URL_TEST` and run the broader suite against the PG16
+service container. The EPIC-04 application-path isolation evidence is already
+automated and verified.
 
 ## Trigger / Target
 
@@ -103,6 +140,13 @@ and mandatory before any production deployment.
 
 ## Verification After Resolution
 
-- [ ] CI runs the isolation suite against live PG16 and stays green.
+- [x] CI migrations job runs the EPIC-04 live-PG isolation evidence
+      (`pnpm --filter @newsaas/api test:live-pg`) against the PG16 service
+      container. **Verified:** GitHub Actions run `34183380781` at commit
+      `853f13099cedcedf51b9e4c76126ed5f841efcca` — 5/5 passed for
+      Customer/Address/Contact paths.
+- [ ] CI runs the broader cross-tenant isolation suite against live PG16 and
+      stays green.
 - [ ] A deliberately broken predicate fails that CI job (one-off proof).
+- [ ] RBAC concurrency and audit-rollback evidence gates proven live.
 - [ ] This record closed with a link to the enabling commit.

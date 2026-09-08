@@ -2,7 +2,7 @@
 type: module
 module: customers
 status: active
-updated: 2026-08-31
+updated: 2026-09-07
 ---
 
 # Module — Customers (Core)
@@ -129,16 +129,22 @@ field names only; values are never logged.
   Vitest suite covers unit, integration, proxy, and UI 403 UX paths; a future
   change that adds Playwright should implement the CRUD/navigation E2E scenario
   before removing this note.
-- Live application-path HTTP tenant isolation is proven only against the
-  in-memory Prisma boundary used by `bootTestApp`. Fresh PostgreSQL migration
-  and persistence-layer isolation are verified by
-  `packages/database/scripts/live-migration-verify.ts`; full HTTP cross-tenant
-  byte-equivalence against PostgreSQL is tracked under [[TD-006]].
+- Live application-path HTTP tenant isolation has been executed against a real
+  PostgreSQL database in CI. GitHub Actions run
+  [`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+  for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` reported the live-PG
+  suite `apps/api/test/live-pg-isolation.e2e-spec.ts` as 5/5 passed. The harness
+  boots the real `AppModule` with the real `PrismaService` against a disposable
+  PostgreSQL database, applies migrations and reference seeds, creates the
+  fixture tenants, users, and memberships directly through `PrismaService`, and
+  uses Supertest over an explicitly bound NestJS/Fastify listener to prove
+  byte-equivalent `404 NOT_FOUND` for cross-tenant Customer/Address/Contact
+  mutations. The suite is skipped automatically when
+  `DATABASE_URL_TEST`/`DATABASE_URL` are absent.
 
 ## Related
 
 - [[Data Classification and Retention]]
 - [[Reversals and Corrections]]
 - [[Audit and Entitlements]]
-- [[Branding and Theming]]
 - [[TD-006]]

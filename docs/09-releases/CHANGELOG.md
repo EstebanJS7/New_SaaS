@@ -22,6 +22,27 @@ All notable product changes will be documented here.
   - REST surface for customer CRUD/deactivate and nested address/contact
     management.
   - Staff web UI at `/app/customers` with Next.js API proxy.
+- Corrective H1 round for EPIC-04:
+  - Customer/Address/Contact lookups now filter by `id` + server-derived
+    `tenantId` in the database query itself (`findFirst`); byte-equivalent 404
+    behavior preserved.
+  - Removed free-text deactivation `reason` from Customer/Address/Contact audit
+    metadata; API, spec, and design aligned to ID/schema-version/field-name-only
+    audit payloads.
+  - Added Customer coverage for company validation, individual/taxId rejection,
+    exact DTO allowlist, update audit, all six permission gates, address/contact
+    tenant isolation, demo seed, proxy cookie/session forwarding, UI 403 UX, and
+    PatientGuardian application-level inertness.
+  - Playwright E2E remains blocked because Playwright is not installed or
+    configured; tasks updated to show explicit blocker instead of false ticks.
+  - Fresh PostgreSQL migration and live application-path HTTP tenant-isolation
+    evidence executed in CI run
+    [`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+    for commit `853f13099cedcedf51b9e4c76126ed5f841efcca`: migrations/seed
+    applied, `pnpm db:live-verify` passed, and
+    `apps/api/test/live-pg-isolation.e2e-spec.ts` reported 5/5 passed with
+    byte-equivalent `404 NOT_FOUND` for cross-tenant Customer/Address/Contact
+    mutations.
 - PRD v1.3 architecture freeze and Complexity Budget.
 - Typed Tenant Settings architecture.
 - Minimal internal post-commit application events.

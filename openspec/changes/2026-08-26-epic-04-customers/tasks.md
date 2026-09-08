@@ -113,56 +113,65 @@ prior section; they do not weaken the original requirements.
       disposable URL as `DATABASE_URL` before `AppModule` boot and restore the
       prior environment afterwards; align `.github/workflows/ci.yml`
       accordingly.
-- [ ] 7.2 In that live-PG HTTP test, compare complete normalized error bodies
+- [x] 7.2 In that live-PG HTTP test, compare complete normalized error bodies
       for Customer, Address, and Contact cross-tenant UUIDs versus nonexistent
       UUIDs; require byte-equivalence and execute against CI PostgreSQL.
+      **Verified:** CI run `34183380781` at `853f1309` — live-PG 5/5 passed.
 
-**C2 evidence (2026-09-01):** 7.1 is typechecked and the live-PG suite collects.
-The local WSL environment has neither Docker nor `DATABASE_URL_TEST`/
-`DATABASE_URL`, so all five live-PG tests are skipped. `gh auth status` now
-passes for `EstebanJS7`. The latest successful CI run is
-[`32988995498`](https://github.com/EstebanJS7/New_SaaS/actions/runs/32988995498)
-at `d683e0af5b6affcd85f3ac1d96b800a540cd2156`; its successful
-[`Database migrations` job `98241831885`](https://github.com/EstebanJS7/New_SaaS/actions/runs/32988995498/job/98241831885)
-ended after the seed probe and has no
-`Build workspace packages for live-PG test` or
-`Live PostgreSQL application-path isolation evidence` step. `gh workflow run CI`
-exits 1 with HTTP 422 because `ci.yml` has no `workflow_dispatch` trigger. Task
-7.2 and C2 remain blocked: no current-code live HTTP evidence is claimed.
-
-**C2 evidence (2026-09-07):** CI executed the live-PG suite and reported
-`ECONNREFUSED` on tests 2–4 after each first cross-tenant request path
-succeeded. Root cause: the NestJS Fastify adapter does not bind the HTTP server
-to a port during `app.init()`; Supertest starts and stops an ephemeral listener
-per request when given an unbound server, so a follow-up request can connect to
-a torn-down listener. Reusing a single Supertest agent kept one listener open
-but masked the lifecycle race and introduced cookie-jar state. Fix: explicitly
-bind the application once in `beforeAll` with
-`await app.listen(0, "127.0.0.1")`, capture the stable URL with
-`await app.getUrl()`, and use `supertest(serverUrl)` for every request. The
-shared agent was removed; each request sets its tenant cookie explicitly.
-Cross-tenant/missing-UUID request pairs are built lazily through arrow functions
-to avoid eager lifecycle races. Local verification:
-`pnpm --filter @newsaas/api typecheck` passes. Task 7.2 remains unchecked until
-a CI live-PG run confirms the byte-equivalence assertions pass against
-PostgreSQL.
+**C2 evidence verified (2026-09-08):** GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` succeeded. The required
+quality job reported **500 tests passed, 5 skipped** (API subtotal 300 passed, 5
+skipped). The `Database migrations` job executed fresh migrations/seed,
+`pnpm db:live-verify`, API build, and `pnpm test:live-pg`; the live-PG suite
+reported 5/5 passed. Task 7.2 and C2 are satisfied.
 
 ### Phase 8: C3 — Cold Build Evidence
 
-- [ ] 8.1 Add a reproducible isolated or removed `apps/web/.next` build path in
+- [x] 8.1 Add a reproducible isolated or removed `apps/web/.next` build path in
       the relevant package script/`.github/workflows/ci.yml`; retain the
       fail-loud output verifier and capture a successful cold `pnpm build` run.
+      **Verified:** CI run `34183380781` at `853f1309` — cold build/output
+      verification succeeded, build 8/8.
+
+**C3 evidence verified (2026-09-08):** The same CI run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+succeeded the required quality job with **500 tests passed, 5 skipped** (API
+subtotal 300 passed, 5 skipped), build 8/8, and cold API/web build/output
+verification. Task 8.1 and C3 are satisfied.
 
 ### Phase 9: C4 — Evidence Documentation
 
-- [ ] 9.1 Reconcile `docs/05-modules/Customers.md`,
+- [x] 9.1 Reconcile `docs/05-modules/Customers.md`,
       `docs/09-releases/CHANGELOG.md`, and
       `docs/08-tech-debt/TD-006-live-pg-isolation-run.md` only with executed
-      C1–C3 evidence; correct the tenant-creation method and remove
-      contradictory automation claims.
-- [ ] 9.2 Update this task artifact with command outcomes only after C1–C4 pass;
+      EPIC-04 Customer evidence; correct the tenant-creation method, remove
+      contradictory automation claims, and strip EPIC-03/Branding/SSR claims
+      from the EPIC-04 Customer-only commit boundary.
+- [x] 9.2 Update this task artifact with command outcomes only after C1–C4 pass;
       keep 5.4 unchecked and explicitly blocked until Playwright is separately
       installed/configured under approved scope.
+
+### C4 evidence (2026-09-08)
+
+Documentation reconciled with executed CI evidence from GitHub Actions run
+[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
+for commit `853f13099cedcedf51b9e4c76126ed5f841efcca`:
+
+- `docs/05-modules/Customers.md` updated to state that live application-path
+  HTTP tenant isolation has been executed against PostgreSQL for EPIC-04
+  Customer/Address/Contact paths and to describe the fixture-creation method
+  (tenants/users/memberships created directly through `PrismaService`).
+- `docs/09-releases/CHANGELOG.md` updated to record the executed CI live-PG
+  evidence for EPIC-04 Customer isolation instead of claiming live HTTP
+  isolation is not automated.
+- `docs/08-tech-debt/TD-006-live-pg-isolation-run.md` updated to reflect that
+  the EPIC-04 live-PG isolation evidence is now automated and verified, and to
+  correct the tenant-creation method.
+- `apply-progress.md` and `verify-report.md` updated to conform to the supported
+  verify-report contract, include canonical CI output hashes, report the
+  corrected workspace/API test counts, and show C4 complete with only the
+  Playwright 5.4 blocker remaining.
 
 **Persistent blocker:** 5.4 Playwright Customer CRUD/navigation E2E remains
 unchecked. Playwright is not installed/configured; these corrective slices MUST
