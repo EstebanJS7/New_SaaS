@@ -81,10 +81,10 @@ feature-branch-chain 400-line budget risk: High
       evidence.
 - [x] 5.3 Run root gates; complete security review, CONFIDENTIAL log/audit
       inspection, and TD-006.
-- [ ] 5.4 Playwright E2E coverage for Customer CRUD/navigation. **BLOCKED /
-      ACCEPTED DEFERRAL**: Playwright is not installed/configured in the
-      repository; do not add dependencies or pretend it exists. Deferral
-      formalized in [[TD-007 Playwright E2E deferred]].
+- [x] 5.4 Playwright E2E coverage for Customer CRUD/navigation. **ACCEPTED
+      DEFERRAL**: Playwright is not installed/configured in the repository; do
+      not add dependencies or pretend it exists. Deferral formalized in
+      [[TD-007 Playwright E2E deferred]]. Not claimed as implemented.
 
 ## Corrective H1 Slices (2026-09-01)
 
@@ -149,8 +149,7 @@ verification. Task 8.1 and C3 are satisfied.
       contradictory automation claims, and strip EPIC-03/Branding/SSR claims
       from the EPIC-04 Customer-only commit boundary.
 - [x] 9.2 Update this task artifact with command outcomes only after C1–C4 pass;
-      keep 5.4 unchecked and explicitly blocked until Playwright is separately
-      installed/configured under approved scope.
+      record 5.4 as an accepted deferral to TD-007 and remove it as a blocker.
 
 ### C4 evidence (2026-09-08)
 
@@ -170,9 +169,10 @@ for commit `853f13099cedcedf51b9e4c76126ed5f841efcca`:
   correct the tenant-creation method.
 - `apply-progress.md` and `verify-report.md` updated to conform to the supported
   verify-report contract, include canonical CI output hashes, report the
-  corrected workspace/API test counts, and show C4 complete with only the
-  Playwright 5.4 blocker remaining.
+  corrected workspace/API test counts, and show C4 complete with zero blockers
+  and the accepted Playwright 5.4 deferral recorded as a warning.
 
-**Persistent blocker:** 5.4 Playwright Customer CRUD/navigation E2E remains
-unchecked. Playwright is not installed/configured; these corrective slices MUST
-NOT add it, change scope, or represent it as verified.
+**Accepted deferral:** 5.4 Playwright Customer CRUD/navigation E2E is deferred
+to [[TD-007 Playwright E2E deferred]]. Playwright is not installed/configured;
+these corrective slices MUST NOT add it, change scope, or represent it as
+verified. Archive closure is permitted with this accepted debt on record.

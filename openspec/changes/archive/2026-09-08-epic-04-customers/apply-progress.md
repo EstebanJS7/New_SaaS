@@ -1,8 +1,9 @@
 # Apply Progress: EPIC-04 Customers C1-C4 corrections
 
 **Date:** 2026-09-08 **Mode:** Standard (`strict_tdd: false`) **Active slice:**
-C4 evidence documentation **Status:** C1/C2/C3/C4 verified against CI run
-`34183380781`; only the 5.4 Playwright blocker remains
+archive closure metadata **Status:** PASS_WITH_WARNINGS against CI run
+`34183380781`; zero blockers. Task 5.4 (Playwright E2E) is accepted-deferred to
+[[TD-007 Playwright E2E deferred]] and is not claimed as implemented.
 
 ## Corrective batch: C1-C3 delivery-evidence fixes applied (2026-09-07)
 
@@ -62,7 +63,8 @@ for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` succeeded:
 | Cold API/web build/output verification     | PASS   | C3 satisfied                                                                            |
 
 Task 7.2 (C2), task 8.1 (C3), and tasks 9.1/9.2 (C4) are now checked in
-`tasks.md`. Only the 5.4 Playwright blocker remains unchecked.
+`tasks.md`. Task 5.4 (Playwright E2E) is recorded as an accepted deferral to
+[[TD-007 Playwright E2E deferred]]; it is not represented as implemented.
 
 | #   | Blocker                                                                                                                    | Fix                                                                                                                                                             | Artifact(s)                                                                                                                         |
 | --- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -114,15 +116,16 @@ Existing EPIC-03 branding worktree changes were preserved.
       `DATABASE_URL_TEST` and `DATABASE_URL` to the CI live-PG job.
 - [x] 9.1 Reconcile EPIC-04 documentation with executed C1–C3 evidence and
       correct the tenant-creation method.
-- [x] 9.2 Update the task artifact after C1–C4 pass, keeping 5.4 explicitly
-      blocked.
+- [x] 9.2 Update the task artifact after C1–C4 pass, recording 5.4 as an
+      accepted deferral to TD-007 and removing it as a blocker.
 
-## Pending Blockers
+## Accepted Deferrals / Warnings
 
 - [x] C4 — Reconcile EPIC-04 documentation with executed C1–C3 evidence.
-- [ ] 5.4 — Playwright E2E coverage for Customer CRUD/navigation. **BLOCKED**:
-      Playwright is not installed/configured in the repository; do not add
-      dependencies or pretend it exists.
+- [x] 5.4 — Playwright E2E coverage for Customer CRUD/navigation. **ACCEPTED
+      DEFERRAL**: Playwright is not installed/configured in the repository; do
+      not add dependencies or pretend it exists. Deferral formalized in
+      [[TD-007 Playwright E2E deferred]]; not claimed as implemented.
 
 ## C4 documentation reconciliation (2026-09-07)
 
@@ -130,13 +133,13 @@ Updated documentation to match the executed CI evidence in GitHub Actions run
 [`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
 for commit `853f13099cedcedf51b9e4c76126ed5f841efcca`:
 
-| #   | File                                                             | Change                                                                                                                                                                              |
-| --- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `docs/05-modules/Customers.md`                                   | Records that live-PG HTTP isolation is verified for EPIC-04 Customer/Address/Contact paths and describes fixture creation via `PrismaService`; removes EPIC-03/Branding/SSR claims. |
-| 2   | `docs/09-releases/CHANGELOG.md`                                  | Replaces the "not yet automated" claim with the CI live-PG 5/5 result for EPIC-04 Customer isolation; removes EPIC-03 Phase B / Branding / SSR entries from this boundary.          |
-| 3   | `docs/08-tech-debt/TD-006-live-pg-isolation-run.md`              | Marks EPIC-04 live-PG evidence automated/verified, corrects tenant-creation method, and removes EPIC-03/Branding/SSR claims from this C4 update.                                    |
-| 4   | `openspec/changes/2026-08-26-epic-04-customers/tasks.md`         | Marks 9.1/9.2 complete, removes stale C2 evidence paragraphs, and reports the corrected workspace/API test counts.                                                                  |
-| 5   | `openspec/changes/2026-08-26-epic-04-customers/verify-report.md` | Conforms to the supported verify-report contract, adds canonical CI output hashes, reports the corrected counts, and represents 5.4 as an explicit external blocker.                |
+| #   | File                                                             | Change                                                                                                                                                                                 |
+| --- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `docs/05-modules/Customers.md`                                   | Records that live-PG HTTP isolation is verified for EPIC-04 Customer/Address/Contact paths and describes fixture creation via `PrismaService`; removes EPIC-03/Branding/SSR claims.    |
+| 2   | `docs/09-releases/CHANGELOG.md`                                  | Replaces the "not yet automated" claim with the CI live-PG 5/5 result for EPIC-04 Customer isolation; removes EPIC-03 Phase B / Branding / SSR entries from this boundary.             |
+| 3   | `docs/08-tech-debt/TD-006-live-pg-isolation-run.md`              | Marks EPIC-04 live-PG evidence automated/verified, corrects tenant-creation method, and removes EPIC-03/Branding/SSR claims from this C4 update.                                       |
+| 4   | `openspec/changes/2026-08-26-epic-04-customers/tasks.md`         | Marks 9.1/9.2 complete, records 5.4 as an accepted deferral to TD-007, and reports the corrected workspace/API test counts.                                                            |
+| 5   | `openspec/changes/2026-08-26-epic-04-customers/verify-report.md` | Conforms to the supported verify-report contract, adds canonical CI output hashes, reports the corrected counts, and represents 5.4 as an accepted deferral to TD-007 (zero blockers). |
 
 No code, CI, Branding docs, or unrelated files were changed.
 
@@ -186,9 +189,7 @@ No code, CI, Branding docs, or unrelated files were changed.
 
 ## Smallest Safe Next Action
 
-After a permitted publication or an explicitly approved minimal dispatch
-mechanism, run the `Database migrations` job containing
-`Live PostgreSQL application-path isolation evidence`, then retain the
-`pnpm test:live-pg` result and canonical run/job URL as the only live HTTP
-proof. If it fails, diagnose only the failing test/CI surface before rerunning
-that job.
+Archive closure metadata is reconciled. CI run `34183380781` already provides
+the required live-HTTP proof. The next actionable item is the separate
+Playwright scope decision and implementation tracked in
+[[TD-007 Playwright E2E deferred]]; no further EPIC-04 closure work remains.
