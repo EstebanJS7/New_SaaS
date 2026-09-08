@@ -81,10 +81,10 @@ feature-branch-chain 400-line budget risk: High
       evidence.
 - [x] 5.3 Run root gates; complete security review, CONFIDENTIAL log/audit
       inspection, and TD-006.
-- [ ] 5.4 Playwright E2E coverage for Customer CRUD/navigation. **BLOCKED**:
-      Playwright is not installed/configured in the repository; do not add
-      dependencies or pretend it exists. Recorded as explicit blocker in
-      apply-progress.
+- [ ] 5.4 Playwright E2E coverage for Customer CRUD/navigation. **BLOCKED /
+      ACCEPTED DEFERRAL**: Playwright is not installed/configured in the
+      repository; do not add dependencies or pretend it exists. Deferral
+      formalized in [[TD-007 Playwright E2E deferred]].
 
 ## Corrective H1 Slices (2026-09-01)
 

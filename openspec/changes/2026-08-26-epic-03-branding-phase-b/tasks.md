@@ -76,9 +76,10 @@ pending 400-line budget risk: High
 - [x] 5.2 Run required focused and root quality gates, live-PG
       isolation/security review; then update `docs/05-modules/Branding.md` and
       `docs/09-releases/CHANGELOG.md` without weakening Definition of Done.
-- [ ] 5.3 Playwright E2E coverage for branding settings. **BLOCKED**: Playwright
-      is not installed/configured in the repository; do not add dependencies or
-      pretend it exists. Recorded as explicit blocker in apply-progress.
+- [ ] 5.3 Playwright E2E coverage for branding settings. **BLOCKED / ACCEPTED
+      DEFERRAL**: Playwright is not installed/configured in the repository; do
+      not add dependencies or pretend it exists. Deferral formalized in
+      [[TD-007 Playwright E2E deferred]].
 
 ## Corrective H1 Round (2026-09-01)
 
