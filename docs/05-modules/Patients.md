@@ -60,16 +60,16 @@ seeded `feature_code`; demo grants include it.
 
 ## API
 
-WU3.2 ships the read surface; command and guardian routes land in WU3.3/WU3.4
-(PAT-002):
+WU3.2 ships the read surface and WU3.3 the Patient commands; guardian routes
+land in WU3.4 (PAT-002):
 
 ```text
-GET    /patients            patients.read  — active Patients of the caller tenant
-GET    /patients/catalog    patients.read  — GLOBAL Species/Breed taxonomy (not tenant-filtered)
-GET    /patients/:id        patients.read  — single Patient; cross-tenant UUID → 404
-POST   /patients                                — pending (WU3.3)
-PUT    /patients/:id                            — pending (WU3.3)
-POST   /patients/:id/deactivate                 — pending (WU3.3)
+GET    /patients            patients.read       — active Patients of the caller tenant
+GET    /patients/catalog    patients.read       — GLOBAL Species/Breed taxonomy (not tenant-filtered)
+GET    /patients/:id        patients.read       — single Patient; cross-tenant UUID → 404
+POST   /patients            patients.create     — create; active (default) requires a primary guardian
+PUT    /patients/:id        patients.update     — update; activating establishes a primary guardian (or 409)
+POST   /patients/:id/deactivate  patients.deactivate — idempotent deactivation; no hard delete
 GET    /patients/:patientId/guardians                        — pending (WU3.4)
 POST   /patients/:patientId/guardians                        — pending (WU3.4)
 PUT    /patients/:patientId/guardians/:id                    — pending (WU3.4)
@@ -78,11 +78,19 @@ POST   /patients/:patientId/guardians/:id/deactivate         — pending (WU3.4)
 ```
 
 `GET /patients/catalog` is declared before `GET /patients/:id` so the static
-segment is never captured as a Patient id. Every read route requires
-`patients.read`; the `PatientsService` / `PatientsCatalogService` layer
-re-applies the `veterinary` entitlement gate (no generic feature guard). The
-catalog DTO is allowlisted INTERNAL reference data and exposes no tenant
-identifier.
+segment is never captured as a Patient id. Every route declares its `patients.*`
+permission (frontend checks are UX-only); the `PatientsService` /
+`PatientsCatalogService` layer re-applies the `veterinary` entitlement gate (no
+generic feature guard). The catalog DTO is allowlisted INTERNAL reference data
+and exposes no tenant identifier.
+
+Commands are Zod-validated and return allowlisted DTOs only. `POST /patients`
+writes an active Patient and its primary guardian in one transaction, so an
+active create without `primaryGuardianCustomerId` is a 400 and a foreign
+Customer is a 404 that persists nothing. `PUT /patients/:id` false→true
+activation establishes exactly one active primary guardian in the same
+transaction or returns 409. `POST /patients/:id/deactivate` is idempotent. A
+foreign Patient UUID on any command is masked as a byte-equivalent 404.
 
 ## Data Classification
 
@@ -147,7 +155,8 @@ identifier.
 - `apps/api/src/patients/*` — `patients.service.ts` + Zod/DTO/permissions (WU2);
   `patients.catalog.service.ts` (global taxonomy reads) and
   `patients.controller.ts` (read routes) with `patients.module.ts` registered in
-  `app.module.ts` (WU3.2); command and guardian routes land in WU3.3/WU3.4.
+  `app.module.ts` (WU3.2); Patient create/update/deactivate command routes and
+  the independent command HTTP suite (WU3.3); guardian routes land in WU3.4.
 - `apps/web/src/app/(app)/app/patients/*` — staff workspace (WU4).
 
 ## Known limitations / blockers

@@ -24,6 +24,13 @@ export interface CrossTenant404ProbeOptions {
   method?: "GET" | "POST" | "PUT";
   /** Optional JSON/string body sent with both probes (commands). */
   body?: Record<string, unknown> | string;
+  /**
+   * Optional body used ONLY for the foreign probe. Some commands address the
+   * same URL for both references and differ solely by the referenced id (e.g.
+   * `POST /patients { primaryGuardianCustomerId }`); the nonexistent probe then
+   * sends a random id via `body` while this one sends the foreign id.
+   */
+  foreignBody?: Record<string, unknown> | string;
 }
 
 /**
@@ -53,6 +60,7 @@ export async function expectCrossTenant404(options: CrossTenant404ProbeOptions):
     forbiddenIdentifiers = [],
     method = "GET",
     body,
+    foreignBody,
   } = options;
 
   // Printable ASCII ≤128 chars: passes resolveRequestId validation, so the
@@ -60,17 +68,17 @@ export async function expectCrossTenant404(options: CrossTenant404ProbeOptions):
   const sharedRequestId = randomUUID();
   const server = app.getHttpServer();
 
-  const probe = (url: string) => {
+  const probe = (url: string, payload: Record<string, unknown> | string | undefined) => {
     const request = supertest(server)
       [method.toLowerCase() as "get" | "post" | "put"](url)
       .set("Cookie", cookie)
       .set(REQUEST_ID_HEADER, sharedRequestId);
-    return body === undefined ? request : request.send(body);
+    return payload === undefined ? request : request.send(payload);
   };
 
   const [nonexistentResponse, foreignResponse] = await Promise.all([
-    probe(nonexistentUrl),
-    probe(foreignUrl),
+    probe(nonexistentUrl, body),
+    probe(foreignUrl, foreignBody ?? body),
   ]);
 
   expect(nonexistentResponse.status, "nonexistent reference must be masked as 404").toBe(404);
@@ -82,9 +90,9 @@ export async function expectCrossTenant404(options: CrossTenant404ProbeOptions):
   const nonexistentBody = nonexistentResponse.body as {
     error?: { code?: string };
   };
-  const foreignBody = foreignResponse.body as { error?: { code?: string } };
+  const foreignErrorBody = foreignResponse.body as { error?: { code?: string } };
   expect(nonexistentBody.error?.code).toBe("NOT_FOUND");
-  expect(foreignBody.error?.code).toBe("NOT_FOUND");
+  expect(foreignErrorBody.error?.code).toBe("NOT_FOUND");
 
   // Byte-equivalence: same status line AND identical raw payload text.
   expect(nonexistentResponse.text).toBe(foreignResponse.text);

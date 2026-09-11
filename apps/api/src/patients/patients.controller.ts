@@ -1,19 +1,21 @@
-import { Controller, Get, Param } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Put } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
-import { patientIdParam } from "./patient.zod.js";
+import { createPatientBody, patientIdParam, updatePatientBody } from "./patient.zod.js";
 import { PATIENT_PERMISSIONS } from "./patients.permissions.js";
 import { PatientsCatalogService } from "./patients.catalog.service.js";
 import { PatientsService } from "./patients.service.js";
 import type { PatientResponse, SpeciesCatalogEntry } from "./patient.dto.js";
 
 /**
- * Private tenant-scoped Patient READ surface (WU3.2).
+ * Private tenant-scoped Patient surface.
  *
- * Every route resolves the tenant exclusively server-side from the active
- * request context and declares `patients.read`; the `veterinary` entitlement is
- * enforced by the services. Command routes land in WU3.3 and guardian routes in
- * WU3.4 without adding a second controller for reads.
+ * Reads shipped in WU3.2 and the Patient commands in WU3.3 share this one
+ * controller; guardian routes land in WU3.4. Every route resolves the tenant
+ * exclusively server-side from the active request context and declares the
+ * matching `patients.*` permission; the `veterinary` entitlement is enforced by
+ * the services. Inputs are Zod-validated before reaching the service and
+ * responses are allowlisted DTOs only.
  */
 @Controller("patients")
 export class PatientsController {
@@ -48,5 +50,51 @@ export class PatientsController {
       throw new DomainError("VALIDATION_FAILED", "Invalid patient id.");
     }
     return this.patients.get(parsed.data.id);
+  }
+
+  /**
+   * Creates a Patient. An active Patient (the default) REQUIRES
+   * `primaryGuardianCustomerId` and writes the Patient plus its active primary
+   * guardian in one transaction; a foreign Customer resolves to 404 and
+   * persists nothing.
+   */
+  @Post()
+  @RequirePermissions(PATIENT_PERMISSIONS.create)
+  async create(@Body() body: unknown): Promise<PatientResponse> {
+    const parsed = createPatientBody.safeParse(body);
+    if (!parsed.success) {
+      throw new DomainError("VALIDATION_FAILED", "Invalid patient create body.");
+    }
+    return this.patients.create(parsed.data);
+  }
+
+  /**
+   * Updates a Patient. Activating an inactive Patient establishes exactly one
+   * active primary guardian in the same transaction (or returns 409 when none
+   * is available); cross-tenant UUIDs return 404.
+   */
+  @Put(":id")
+  @RequirePermissions(PATIENT_PERMISSIONS.update)
+  async update(@Param() params: unknown, @Body() body: unknown): Promise<PatientResponse> {
+    const parsedParams = patientIdParam.safeParse(params);
+    if (!parsedParams.success) {
+      throw new DomainError("VALIDATION_FAILED", "Invalid patient id.");
+    }
+    const parsedBody = updatePatientBody.safeParse(body);
+    if (!parsedBody.success) {
+      throw new DomainError("VALIDATION_FAILED", "Invalid patient update body.");
+    }
+    return this.patients.update(parsedParams.data.id, parsedBody.data);
+  }
+
+  /** Idempotently deactivates a Patient; no hard delete exists. */
+  @Post(":id/deactivate")
+  @RequirePermissions(PATIENT_PERMISSIONS.deactivate)
+  async deactivate(@Param() params: unknown): Promise<PatientResponse> {
+    const parsedParams = patientIdParam.safeParse(params);
+    if (!parsedParams.success) {
+      throw new DomainError("VALIDATION_FAILED", "Invalid patient id.");
+    }
+    return this.patients.deactivate(parsedParams.data.id);
   }
 }

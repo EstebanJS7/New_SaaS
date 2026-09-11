@@ -58,12 +58,12 @@ stays `in-progress` until H1.
 
 ### WU3 delivery slices
 
-| Slice | Scope                                                                  | Status                |
-| ----- | ---------------------------------------------------------------------- | --------------------- |
-| WU3.1 | Patient HTTP test harness (test-only)                                  | applied (size:exception) |
-| WU3.2 | Patient reads + global catalog (`GET /patients`, `/patients/catalog`, `/patients/:id`) | applied |
-| WU3.3 | Patient commands (`POST` / `PUT` / `deactivate`)                       | pending               |
-| WU3.4 | Guardian routes and commands                                           | pending               |
+| Slice | Scope                                                                                  | Status                   |
+| ----- | -------------------------------------------------------------------------------------- | ------------------------ |
+| WU3.1 | Patient HTTP test harness (test-only)                                                  | applied (size:exception) |
+| WU3.2 | Patient reads + global catalog (`GET /patients`, `/patients/catalog`, `/patients/:id`) | applied                  |
+| WU3.3 | Patient commands (`POST` / `PUT` / `deactivate`)                                       | applied                  |
+| WU3.4 | Guardian routes and commands                                                           | pending                  |
 
 ### WU3.2 — Patient reads and global catalog
 
@@ -85,6 +85,28 @@ stays `in-progress` until H1.
   random-vs-foreign Patient 404, malformed-id 400, and `FEATURE_NOT_ENTITLED`.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — route inventory +3.
 
+### WU3.3 — Patient commands
+
+- `apps/api/src/patients/patients.controller.ts` — adds the three Patient
+  commands to the same controller: `POST /patients` (`patients.create`),
+  `PUT /patients/:id` (`patients.update`), and `POST /patients/:id/deactivate`
+  (`patients.deactivate`). Each Zod-validates its input and delegates to the
+  existing `PatientsService`, which re-applies the `veterinary` entitlement gate
+  and runs the transactional invariants.
+- `apps/api/src/patients/patients.commands.integration.test.ts` — independent
+  HTTP suite over the WU3.1 fixture: anonymous/per-key denial, allowlisted DTO,
+  atomic `patient.created`+`patient_guardian.created` audit pair sharing one
+  request id, active-create-without-guardian 400 with zero persistence,
+  guardian-less inactive create, update audit, activation-with/without-guardian
+  (200/409), idempotent deactivate, byte-equivalent foreign Patient PUT and
+  deactivate 404s, and a byte-equivalent foreign Customer create 404 that
+  persists nothing.
+- `apps/api/src/rbac/route-contract.probe.test.ts` — route inventory +3
+  (`POST /patients`, `PUT /patients/:id`, `POST /patients/:id/deactivate`).
+- `apps/api/test/support/expect-cross-tenant-404.ts` — adds an optional
+  `foreignBody` so the foreign-Customer create pair (same URL, differing
+  `primaryGuardianCustomerId`) stays byte-equivalent through one shared helper.
+
 ## Verification
 
 ```text
@@ -95,5 +117,5 @@ pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts \
   src/rbac/route-contract.probe.test.ts
 
 → typecheck clean · lint clean · 9 files / 84 tests passed (WU3.2)
+→ WU3.3: adds src/patients/patients.commands.integration.test.ts (10 tests)
 ```
-
