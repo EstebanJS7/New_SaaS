@@ -4,6 +4,7 @@ export type {
   BrandThemePatch,
   DefaultAppearance,
   ProductBrandPreset,
+  ResolvedAssets,
   ResolvedBrand,
 } from "./types.js";
 export { coreDesignDefaults } from "./core-defaults.js";

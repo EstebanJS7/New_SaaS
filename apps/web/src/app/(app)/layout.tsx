@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { activeProductPreset, resolveBrand, type ResolvedBrand } from "@newsaas/ui/branding";
 import { NavSidebar } from "@/components/shell/nav-sidebar";
 import { Topbar } from "@/components/shell/topbar";
-import { appearanceBootstrapScriptWithDefault } from "@/lib/appearance";
+import { appearanceBootstrapScriptWithTenantDefault } from "@/lib/appearance";
 import { brandStyleCss } from "@/lib/brand-style";
 
 const DEFAULT_API_URL = "http://localhost:3001";
@@ -56,14 +56,18 @@ export default async function AppShellLayout({
     <div className="flex min-h-screen bg-background text-foreground">
       <script
         dangerouslySetInnerHTML={{
-          __html: appearanceBootstrapScriptWithDefault(brand.defaultAppearance),
+          __html: appearanceBootstrapScriptWithTenantDefault(brand.defaultAppearance),
         }}
       />
       <style dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
       <NavSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Identity resolved here on the server; components stay preset-agnostic. */}
-        <Topbar productName={activeProductPreset.productName} />
+        <Topbar
+          productName={activeProductPreset.productName}
+          productLogoUrl={brand.assets?.logoLightUrl}
+          defaultAppearance={brand.defaultAppearance}
+        />
         <main data-shell-content className="min-w-0 flex-1 p-6">
           {children}
         </main>

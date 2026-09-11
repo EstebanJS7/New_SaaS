@@ -137,6 +137,21 @@ describe("AppShellLayout", () => {
     expect(script?.textContent).toContain("newsaas.appearance");
   });
 
+  it("emits the tenant-aware appearance bootstrap before paint-affecting shell content", async () => {
+    const element = await AppShellLayout({ children: <AppHomePage /> });
+    const { container } = render(element);
+
+    const script = container.querySelector("script");
+    expect(script).toBeTruthy();
+    const paintTarget = container.querySelector('[data-testid="nav-sidebar"]');
+    expect(paintTarget).toBeTruthy();
+
+    // The script must precede any visible shell node so the `dark` class is
+    // resolved before first paint of tenant content.
+    const position = script!.compareDocumentPosition(paintTarget!);
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("lets a valid local light preference win over a tenant dark default", async () => {
     window.localStorage.setItem("newsaas.appearance", "light");
 

@@ -58,4 +58,25 @@ describe("BrandingPreview", () => {
     expect(card).toBeTruthy();
     expect(card?.getAttribute("style")).toBeTruthy();
   });
+
+  it("renders only resolved signed asset URLs", () => {
+    global.fetch = vi.fn();
+
+    render(
+      <BrandingPreview
+        primary="#0ea5e9"
+        accent="#f43f5e"
+        radius="0.75rem"
+        logoLightUrl="/branding/assets/logoLight/content?token=a"
+        faviconUrl="/branding/assets/favicon/content?token=b"
+      />
+    );
+
+    const logo = screen.getByTestId("preview-logo");
+    const favicon = screen.getByTestId("preview-favicon");
+    expect(logo.getAttribute("src")).toBe("/branding/assets/logoLight/content?token=a");
+    expect(favicon.getAttribute("src")).toBe("/branding/assets/favicon/content?token=b");
+    expect(logo.getAttribute("src")).not.toContain("http");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });

@@ -9,10 +9,12 @@ import type {
 } from "./types.js";
 
 /**
- * Appearance used when no layer provides one.
+ * Core fallback appearance.
  *
- * The spec fixes the default to light: the pre-paint bootstrap only acts on a
- * stored `"dark"` preference, so absent configuration mounts light.
+ * The resolver does NOT apply this to `ResolvedBrand.defaultAppearance`: an
+ * absent tenant default stays `undefined` so the pre-paint bootstrap can defer
+ * to the OS preference first (local > tenant > OS > Core). Consumers use this
+ * constant only as the final light fallback.
  */
 export const DEFAULT_APPEARANCE: DefaultAppearance = "light";
 
@@ -93,6 +95,7 @@ export function resolveBrand(
   return {
     presetCode: preset.code,
     theme: theme as BrandTheme,
-    defaultAppearance: tenant?.defaultAppearance ?? DEFAULT_APPEARANCE,
+    // Tenant layer only: absence stays `undefined` so OS preference can win.
+    defaultAppearance: tenant?.defaultAppearance,
   };
 }

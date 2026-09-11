@@ -50,7 +50,9 @@ function brandToFormState(brand: ResolvedBrand): FormState {
     primary: brand.theme.colors.primary,
     accent: brand.theme.colors.accent,
     radius: brand.theme.radius,
-    defaultAppearance: brand.defaultAppearance,
+    // Resolved brand exposes the tenant layer only; the form shows Core light
+    // when the tenant has not chosen an appearance.
+    defaultAppearance: brand.defaultAppearance ?? "light",
   };
 }
 
@@ -104,6 +106,50 @@ async function resetBranding(): Promise<BrandingResponse> {
     throw new Error(body.error?.message ?? `Failed to reset branding (${response.status})`);
   }
   return response.json() as Promise<BrandingResponse>;
+}
+
+type AssetKind = "logoLight" | "logoDark" | "favicon";
+
+const ASSET_KIND_LABELS: Record<AssetKind, string> = {
+  logoLight: "Logo light",
+  logoDark: "Logo dark",
+  favicon: "Favicon",
+};
+
+const ASSET_KIND_ACCEPT = "image/png,image/webp,image/x-icon,image/vnd.microsoft.icon";
+
+interface AssetUploadResult {
+  readonly kind: AssetKind;
+  readonly contentType: string;
+  readonly byteSize: number;
+  readonly url: string;
+}
+
+async function uploadAsset(kind: AssetKind, file: File): Promise<AssetUploadResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`/api/branding/assets/${kind}`, {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
+    throw new Error(body.error?.message ?? `Failed to upload ${kind} (${response.status})`);
+  }
+  return response.json() as Promise<AssetUploadResult>;
+}
+
+async function removeAsset(kind: AssetKind): Promise<{ kind: AssetKind; removed: boolean }> {
+  const response = await fetch(`/api/branding/assets/${kind}`, {
+    method: "DELETE",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
+    throw new Error(body.error?.message ?? `Failed to remove ${kind} (${response.status})`);
+  }
+  return response.json() as Promise<{ kind: AssetKind; removed: boolean }>;
 }
 
 function userFacingErrorMessage(error: Error): string {
@@ -192,8 +238,39 @@ export function BrandingForm(): JSX.Element {
     },
   });
 
-  const isPending = query.isLoading || saveMutation.isPending || resetMutation.isPending;
-  const error = query.error ?? saveMutation.error ?? resetMutation.error;
+  const [selectedFiles, setSelectedFiles] = useState<Record<AssetKind, File | null>>({
+    logoLight: null,
+    logoDark: null,
+    favicon: null,
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: ({ kind, file }: { kind: AssetKind; file: File }) => uploadAsset(kind, file),
+    onSuccess: (_, variables) => {
+      setSelectedFiles((previous) => ({ ...previous, [variables.kind]: null }));
+      void queryClient.invalidateQueries({ queryKey: ["branding", "current"] });
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (kind: AssetKind) => removeAsset(kind),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["branding", "current"] });
+    },
+  });
+
+  const isPending =
+    query.isLoading ||
+    saveMutation.isPending ||
+    resetMutation.isPending ||
+    uploadMutation.isPending ||
+    removeMutation.isPending;
+  const error =
+    query.error ??
+    saveMutation.error ??
+    resetMutation.error ??
+    uploadMutation.error ??
+    removeMutation.error;
   const disabled = isPending || query.isLoading;
 
   return (
@@ -320,11 +397,122 @@ export function BrandingForm(): JSX.Element {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Identity assets</CardTitle>
+          <CardDescription>
+            Upload logos and a favicon. Files must be PNG, WebP, or ICO. Logos may be up to 2 MB;
+            favicons up to 512 KB.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {query.isLoading ? (
+            <div className="text-sm text-muted-foreground">Loading identity assets...</div>
+          ) : (
+            <>
+              {(["logoLight", "logoDark", "favicon"] as AssetKind[]).map((kind) => {
+                const currentUrl =
+                  kind === "logoLight"
+                    ? query.data?.brand.assets?.logoLightUrl
+                    : kind === "logoDark"
+                      ? query.data?.brand.assets?.logoDarkUrl
+                      : query.data?.brand.assets?.faviconUrl;
+                const selectedFile = selectedFiles[kind];
+                return (
+                  <div key={kind} className="space-y-2" data-testid={`asset-control-${kind}`}>
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium">{ASSET_KIND_LABELS[kind]}</label>
+                      {currentUrl ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeMutation.mutate(kind)}
+                          disabled={disabled}
+                          data-testid={`asset-remove-${kind}`}
+                        >
+                          {removeMutation.isPending && removeMutation.variables === kind
+                            ? "Removing..."
+                            : "Remove"}
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    {currentUrl ? (
+                      <img
+                        src={currentUrl}
+                        alt={`${ASSET_KIND_LABELS[kind]} preview`}
+                        width={kind === "favicon" ? 32 : 120}
+                        height={kind === "favicon" ? 32 : 40}
+                        className={
+                          kind === "favicon"
+                            ? "h-8 w-8 object-contain"
+                            : "h-10 w-auto object-contain"
+                        }
+                        data-testid={`asset-preview-${kind}`}
+                      />
+                    ) : null}
+
+                    <input
+                      id={`asset-${kind}`}
+                      type="file"
+                      accept={ASSET_KIND_ACCEPT}
+                      disabled={disabled}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        setSelectedFiles((previous) => ({ ...previous, [kind]: file }));
+                      }}
+                      className="block w-full text-sm text-foreground file:mr-4 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-medium file:text-secondary-foreground hover:file:bg-secondary/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+
+                    {selectedFile ? (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-sm text-muted-foreground">{selectedFile.name}</span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => uploadMutation.mutate({ kind, file: selectedFile })}
+                          disabled={disabled}
+                          data-testid={`asset-upload-${kind}`}
+                        >
+                          {uploadMutation.isPending && uploadMutation.variables?.kind === kind
+                            ? "Uploading..."
+                            : "Upload"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedFiles((previous) => ({ ...previous, [kind]: null }));
+                            const input = document.getElementById(
+                              `asset-${kind}`
+                            ) as HTMLInputElement | null;
+                            if (input) {
+                              input.value = "";
+                            }
+                          }}
+                          disabled={disabled}
+                        >
+                          Clear
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       {!query.isLoading && (
         <BrandingPreview
           primary={formState.primary}
           accent={formState.accent}
           radius={formState.radius}
+          logoLightUrl={query.data?.brand.assets?.logoLightUrl}
+          faviconUrl={query.data?.brand.assets?.faviconUrl}
         />
       )}
     </div>

@@ -21,4 +21,15 @@ describe("Topbar", () => {
     expect(container.querySelectorAll("a")).toHaveLength(0);
     expect(container.textContent).not.toMatch(/appointment|patient|invoice|schedule|billing/i);
   });
+
+  it("renders a resolved signed logo URL when provided", () => {
+    const signedUrl = "/branding/assets/logoLight/content?token=test";
+    render(<Topbar productName="Clinical Precision" productLogoUrl={signedUrl} />);
+
+    const logo = screen.getByTestId("topbar-logo");
+    expect(logo.tagName).toBe("IMG");
+    expect(logo.getAttribute("src")).toBe(signedUrl);
+    expect(logo.getAttribute("width")).toBe("96");
+    expect(logo.getAttribute("height")).toBe("32");
+  });
 });

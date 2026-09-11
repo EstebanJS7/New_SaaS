@@ -21,7 +21,6 @@ const required = [
   join(distDir, "server", "pages", "_app.js"),
   join(distDir, "server", "pages", "_error.js"),
   join(distDir, "server", "pages", "_document.js"),
-  join(distDir, "server", "pages", "404.html"),
   join(distDir, "app-build-manifest.json"),
   join(distDir, "build-manifest.json"),
   join(distDir, "routes-manifest.json"),
@@ -34,6 +33,19 @@ for (const file of required) {
     console.error(`MISSING REQUIRED BUILD OUTPUT: ${file}`);
     failed = true;
   }
+}
+
+// The 404 handler is emitted as the Pages Router fallback `404.html` when the
+// not-found route is statically generated, or as the App Router `_not-found`
+// route when the root layout is dynamic (e.g. it reads request data for
+// tenant-aware pre-paint appearance). Exactly one of the two must exist.
+const notFoundOutputs = [
+  join(distDir, "server", "pages", "404.html"),
+  join(distDir, "server", "app", "_not-found", "page.js"),
+];
+if (!notFoundOutputs.some((file) => existsSync(join(root, file)))) {
+  console.error(`MISSING REQUIRED BUILD OUTPUT: one of ${notFoundOutputs.join(" | ")}`);
+  failed = true;
 }
 
 if (failed) {

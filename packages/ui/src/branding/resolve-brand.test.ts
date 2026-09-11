@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { coreDesignDefaults } from "./core-defaults.js";
 import { veterinaryDefaultPreset } from "./presets/veterinary-default.js";
-import { DEFAULT_APPEARANCE, resolveBrand } from "./resolve-brand.js";
+import { resolveBrand } from "./resolve-brand.js";
 import type { ProductBrandPreset } from "./types.js";
 
 describe("resolveBrand", () => {
@@ -9,7 +9,8 @@ describe("resolveBrand", () => {
     const resolved = resolveBrand(veterinaryDefaultPreset);
     expect(resolved.presetCode).toBe(veterinaryDefaultPreset.code);
     expect(resolved.theme).toEqual(veterinaryDefaultPreset.theme);
-    expect(resolved.defaultAppearance).toBe(DEFAULT_APPEARANCE);
+    // No tenant layer: absence is preserved so the OS preference can win.
+    expect(resolved.defaultAppearance).toBeUndefined();
   });
 
   it("keeps the core default for properties the preset does not define", () => {
@@ -66,7 +67,7 @@ describe("resolveBrand", () => {
   });
 
   it("resolves defaultAppearance from the tenant override only", () => {
-    expect(resolveBrand(veterinaryDefaultPreset).defaultAppearance).toBe("light");
+    expect(resolveBrand(veterinaryDefaultPreset).defaultAppearance).toBeUndefined();
     expect(
       resolveBrand(veterinaryDefaultPreset, undefined, {
         schemaVersion: 1,

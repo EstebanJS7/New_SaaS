@@ -14,6 +14,8 @@ interface BrandingPreviewProps {
   readonly primary: string;
   readonly accent: string;
   readonly radius: string;
+  readonly logoLightUrl?: string;
+  readonly faviconUrl?: string;
 }
 
 /**
@@ -23,7 +25,13 @@ interface BrandingPreviewProps {
  * layout and never persists anything. Colors and radius are applied inline to
  * sample surfaces so the preview stays self-contained and bounded.
  */
-export function BrandingPreview({ primary, accent, radius }: BrandingPreviewProps): JSX.Element {
+export function BrandingPreview({
+  primary,
+  accent,
+  radius,
+  logoLightUrl,
+  faviconUrl,
+}: BrandingPreviewProps): JSX.Element {
   const brand = resolveBrand(
     activeProductPreset,
     undefined,
@@ -47,6 +55,30 @@ export function BrandingPreview({ primary, accent, radius }: BrandingPreviewProp
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {(logoLightUrl ?? faviconUrl) ? (
+          <div className="flex items-center gap-4">
+            {logoLightUrl ? (
+              <img
+                src={logoLightUrl}
+                alt="Logo preview"
+                width={120}
+                height={40}
+                className="h-10 w-auto object-contain"
+                data-testid="preview-logo"
+              />
+            ) : null}
+            {faviconUrl ? (
+              <img
+                src={faviconUrl}
+                alt="Favicon preview"
+                width={32}
+                height={32}
+                className="h-8 w-8 object-contain"
+                data-testid="preview-favicon"
+              />
+            ) : null}
+          </div>
+        ) : null}
         <div
           className="p-4 text-sm font-medium"
           style={{

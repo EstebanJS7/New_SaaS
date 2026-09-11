@@ -71,6 +71,13 @@ export interface ProductBrandPreset {
 /** Theme fragment layered between preset and tenant overrides; gaps fall back silently. */
 export type BrandThemePatch = DeepPartial<BrandTheme>;
 
+/** API-local signed asset URLs resolved for a tenant. */
+export interface ResolvedAssets {
+  readonly logoLightUrl?: string;
+  readonly logoDarkUrl?: string;
+  readonly faviconUrl?: string;
+}
+
 /**
  * Fully merged brand handed to rendering surfaces.
  *
@@ -82,8 +89,16 @@ export interface ResolvedBrand {
   presetCode: string;
   /** Core ← preset ← patch ← tenant merge result. */
   theme: BrandTheme;
-  /** Appearance applied when no stored preference exists. */
-  defaultAppearance: DefaultAppearance;
+  /**
+   * Tenant `defaultAppearance`, or `undefined` when the tenant did not set one.
+   *
+   * This is the tenant layer only: when absent the consumer defers to the OS
+   * preference and finally to the Core default (see `appearance.ts`), so the
+   * resolver must NOT collapse absence to `"light"`.
+   */
+  defaultAppearance?: DefaultAppearance;
+  /** API-local signed URLs for controlled tenant identity assets. */
+  assets?: ResolvedAssets;
 }
 
 /**
