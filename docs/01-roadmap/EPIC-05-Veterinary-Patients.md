@@ -2,7 +2,7 @@
 id: EPIC-05
 type: epic
 title: Veterinary Patients
-status: review
+status: done
 priority: high
 depends_on:
   - EPIC-04
@@ -60,11 +60,11 @@ and a minimal staff workspace.
 ## Stories
 
 - [[PAT-001 Patient foundations]] — persistence, catalogs, guardian invariant,
-  permissions, entitlement, audit contract, and demo seed. `review`.
+  permissions, entitlement, audit contract, and demo seed. `done`.
 - [[PAT-002 Patient API and tenant safety]] — application service, private API,
-  authorization, audit, and isolation coverage. `review`.
+  authorization, audit, and isolation coverage. `done`.
 - [[PAT-003 Patient staff workspace]] — staff UI, proxy, navigation, and UX
-  states. `review`.
+  states. `done`.
 
 ## Dependencies
 
@@ -100,9 +100,10 @@ blockers, 10/10 requirements, and 28/28 scenarios, with `pnpm lint`,
 Revision 1's four blockers were the canonical Engram spec wording, missing
 unknown-catalog and missing-`name` HTTP coverage, and missing guardian workflow
 plus loading/empty/error/success UI runtime coverage; the remediation resolved
-all four. The implementation behavior is unchanged. These documents stay at
-`review` only until the governed commit/archive settlement — technical
-verification has passed.
+all four. The implementation behavior is unchanged. The governed commit/archive
+settlement is complete: the change is archived at `c62b12c`
+(`openspec/changes/archive/2026-09-11-epic-05-veterinary-patients/`), so this
+Epic is `done`; technical verification had already passed.
 
 ## Related
 

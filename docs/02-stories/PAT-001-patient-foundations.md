@@ -3,7 +3,7 @@ id: PAT-001
 type: story
 title: Patient foundations
 epic: EPIC-05
-status: review
+status: done
 priority: high
 depends_on:
   - EPIC-04
@@ -181,7 +181,7 @@ mapping the losing race write from `500` to `409` remain open under [[TD-006]]
 and [[TD-011]], so this is not production-proven concurrency safety.
 ```
 
-### Verification status — `review`
+### Verification status — `done`
 
 Verify report #2257 revision 2 passed with warnings (`pass_with_warnings`, 0
 blockers, 10/10 requirements, 28/28 scenarios, all root gates green;
@@ -191,9 +191,10 @@ Revision 1's blockers were spec wording (the canonical Engram spec still
 described sequential promotion as a `409`) and missing HTTP/UI runtime coverage
 for that spec; the remediation synchronized the canonical Engram spec to the
 accepted database-boundary wording and added the missing coverage. The
-persistence work above is unchanged and still truthful. This Story stays at
-`review` only until the governed commit/archive settlement — no technical
-verification defect remains open.
+persistence work above is unchanged and still truthful. The governed
+commit/archive settlement is complete — the change is archived at `c62b12c`
+(`openspec/changes/archive/2026-09-11-epic-05-veterinary-patients/`) — so this
+Story is `done`; no technical verification defect remains open.
 
 ## Decisions / ADRs
 

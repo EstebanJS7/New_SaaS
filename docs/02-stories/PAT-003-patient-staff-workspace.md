@@ -3,7 +3,7 @@ id: PAT-003
 type: story
 title: Patient staff workspace
 epic: EPIC-05
-status: review
+status: done
 priority: high
 depends_on:
   - PAT-002
@@ -120,7 +120,7 @@ pnpm exec prettier --check <new/modified web files>
   → clean after formatting
 ```
 
-Story at `review`: the H1 root gates (`pnpm lint`, `pnpm format-check`,
+Story `done`: the H1 root gates (`pnpm lint`, `pnpm format-check`,
 `pnpm typecheck`, `pnpm test`, `pnpm build`) are green, and the EPIC-05
 live-PostgreSQL application-path evidence that H1 added covers the API the
 workspace consumes. Verify report #2257 revision 2 passed with warnings
@@ -128,7 +128,9 @@ workspace consumes. Verify report #2257 revision 2 passed with warnings
 revision 1's blockers were remediated: the staff workspace gained runtime tests
 executing the guardian link, primary promotion, and deactivation flows with
 loading/empty/error/success states in `patient-detail.test.tsx` (no production
-UI change). The Story stays `review` only until the governed commit/archive
-settlement. Residual non-UI limitations ([[TD-006]] live-PG breadth, [[TD-011]]
-concurrent primary-promotion error mapping) are tracked outside this UI Story
-and do not affect the workspace acceptance criteria.
+UI change). The governed commit/archive settlement is complete — the change is
+archived at `c62b12c`
+(`openspec/changes/archive/2026-09-11-epic-05-veterinary-patients/`). Residual
+non-UI limitations ([[TD-006]] live-PG breadth, [[TD-011]] concurrent
+primary-promotion error mapping) are tracked outside this UI Story and do not
+affect the workspace acceptance criteria.

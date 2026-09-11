@@ -1,7 +1,7 @@
 ---
 type: module
 module: patients
-status: review
+status: done
 updated: 2026-09-11
 ---
 
@@ -206,7 +206,7 @@ Customer by id only.
 - The `veterinary` entitlement must be granted explicitly; there is no automatic
   grant (mirrors all capabilities).
 
-## Verification status — `review`
+## Verification status — `done`
 
 Verify report #2257 revision 2 passed with warnings (`pass_with_warnings`, 0
 blockers, 10/10 requirements, 28/28 scenarios, every root gate green). The
@@ -215,8 +215,10 @@ blockers were spec wording and missing HTTP/UI runtime coverage, and the
 remediation synchronized the canonical Engram spec to the accepted
 database-boundary wording (sequential promotion is a demote-then-promote
 transactional swap; the `409`/partial-index rejection applies only to a
-bypassing write) and added the missing HTTP and UI runtime coverage. The module
-stays `review` only until the governed commit/archive settlement.
+bypassing write) and added the missing HTTP and UI runtime coverage. The
+governed commit/archive settlement is complete — the change is archived at
+`c62b12c` (`openspec/changes/archive/2026-09-11-epic-05-veterinary-patients/`) —
+so this module is `done`.
 
 ## Related
 
