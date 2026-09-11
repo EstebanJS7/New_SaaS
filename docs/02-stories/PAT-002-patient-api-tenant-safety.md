@@ -3,7 +3,7 @@ id: PAT-002
 type: story
 title: Patient API and tenant safety
 epic: EPIC-05
-status: in-progress
+status: done
 priority: high
 depends_on:
   - PAT-001
@@ -39,15 +39,15 @@ Patient data across tenants.
 
 ## Acceptance Criteria
 
-- [ ] All private routes declare and enforce the appropriate `patients.*`
+- [x] All private routes declare and enforce the appropriate `patients.*`
       permission; frontend checks are not treated as authorization.
-- [ ] Tenant identity is server-derived; foreign Patient, guardian, or Customer
+- [x] Tenant identity is server-derived; foreign Patient, guardian, or Customer
       UUIDs return byte-equivalent `404 NOT_FOUND` responses.
-- [ ] Mutations co-commit sanitized audit records and preserve the primary
+- [x] Mutations co-commit sanitized audit records and preserve the primary
       guardian invariant under concurrent-safe database constraints.
-- [ ] DTOs do not expose Prisma models or confidential values in logs/audit
+- [x] DTOs do not expose Prisma models or confidential values in logs/audit
       metadata.
-- [ ] Unit, integration, route-contract, and live-PostgreSQL isolation coverage
+- [x] Unit, integration, route-contract, and live-PostgreSQL isolation coverage
       pass.
 
 ## Implementation Summary
@@ -144,3 +144,39 @@ pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts \
 → WU3.4: adds src/patients/patient-guardians.integration.test.ts and probes
   the six guardian routes (12-route EPIC-05 inventory)
 ```
+
+### H1 (task 5.1) live-PostgreSQL application-path hardening
+
+`apps/api/test/live-pg-isolation.e2e-spec.ts` gained an EPIC-05 block (10 tests;
+suite now 16/16) that boots the real `AppModule` against a disposable PostgreSQL
+16 database and proves over real HTTP:
+
+- atomic active create with a primary guardian, allowlisted DTO, and the
+  co-committed `patient.created` + `patient_guardian.created` audit pair;
+- active-create-without-guardian `400` with zero persistence, and
+  activation-without-guardian `409` that keeps the Patient inactive;
+- byte-identical global `GET /patients/catalog` for two entitled tenants;
+- byte-equivalent cross-tenant `404` for foreign Patient commands, guardian
+  reads/promotion, and a foreign `primaryGuardianCustomerId`, with no
+  persistence and no identifier leak;
+- a deterministic-barrier concurrency probe: both promotions are forced to block
+  at the same demote boundary before either commits; exactly one returns `201`,
+  the loser fails the partial unique index, and exactly one active primary
+  remains.
+
+Root gates run for the H1 closeout: `pnpm lint` · `pnpm format-check` ·
+`pnpm typecheck` · `pnpm test` (api 429 passed / 16 live-PG skipped without a
+database) · `pnpm build` — all green.
+
+### Limitations
+
+- Live-PostgreSQL evidence was executed locally against a disposable PG16
+  cluster; CI has not observed the branch because H1 does not push. The CI
+  migrations job already runs this same `test:live-pg` target.
+- The broader cross-tenant isolation and RBAC concurrency/rollback gates remain
+  with [[TD-006]].
+- The losing concurrent primary-promotion write currently surfaces as an
+  unmapped `500 INTERNAL`; mapping that race to `409 CONFLICT` is the debt in
+  [[TD-011]]. Sequential promotion is a demote-then-promote `2xx` swap, and
+  `409` applies to sole-primary-removal/deactivation and
+  activation-without-primary cases. The database invariant still holds.

@@ -3,7 +3,7 @@ id: PAT-001
 type: story
 title: Patient foundations
 epic: EPIC-05
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-04
@@ -14,7 +14,7 @@ permissions:
   - patients.update
   - patients.deactivate
   - patients.guardian.manage
-branch:
+branch: feature/epic-05-veterinary-patients
 created: 2026-09-11
 updated: 2026-09-11
 ---
@@ -47,7 +47,7 @@ Veterinary Patient slice.
       relationship data is CONFIDENTIAL.
 - [x] Database constraints prevent zero or multiple active primary guardians for
       an active Patient.
-- [ ] Patient deactivation and guardian changes preserve auditability and do not
+- [x] Patient deactivation and guardian changes preserve auditability and do not
       introduce hard deletion.
 - [x] Reference and demo seeds are synthetic and include the new permissions and
       `veterinary` entitlement prerequisites.
@@ -55,7 +55,10 @@ Veterinary Patient slice.
 
 ## Implementation Summary
 
-WU1 (data foundation) is implemented. WU2–WU4 and H1 remain.
+WU1 (data foundation) is implemented and verified. WU2–WU4 (API, guardian
+routes, staff workspace) and H1 (live-PostgreSQL hardening) are delivered on
+`feature/epic-05-veterinary-patients`; this Story owns the persisted schema,
+catalog, invariants, and seeds.
 
 - **Schema** (`packages/database/prisma/schema.prisma`): added the global
   `Species` and `Breed` catalogs, the tenant-scoped `Patient` aggregate (`name`,
@@ -159,8 +162,23 @@ database, so no existing database was reset):
     unchanged patient_id update .... committed (validated once, no false fail)
     reparent non-primary guardian .. committed; both Patients keep exactly 1
 
-Concurrency safety remains unproven (open TD-006); only single-transaction
-behavior is demonstrated.
+H1 application-path live PostgreSQL (disposable PostgreSQL 16 cluster,
+`apps/api/test/live-pg-isolation.e2e-spec.ts`, 16/16 passed):
+    atomic active create + primary guardian + co-committed audit ... committed
+    active create without primary .................................. 400, zero rows
+    inactive create → activate with primary ........................ exactly 1
+    activation without primary ..................................... 409, stays inactive
+    global Species/Breed catalog ................................... byte-identical for 2 tenants
+    cross-tenant Patient/guardian/Customer ......................... byte-equivalent 404
+    concurrent primary promotion (deterministic barrier) ........... 1x201, 1x500, exactly 1 primary
+
+The at-most-one side is now proven live under a deterministic overlap: both
+promotions are forced to block at the same demote boundary before either
+commits, and the losing promotion fails the partial unique index. The
+at-least-one side remains guaranteed at commit by the deferred trigger for the
+single-transaction and swap cases exercised; a broader concurrency matrix and
+mapping the losing race write from `500` to `409` remain open under [[TD-006]]
+and [[TD-011]], so this is not production-proven concurrency safety.
 ```
 
 ## Decisions / ADRs

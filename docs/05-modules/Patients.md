@@ -1,7 +1,7 @@
 ---
 type: module
 module: patients
-status: in-progress
+status: done
 updated: 2026-09-11
 ---
 
@@ -168,6 +168,14 @@ Customer by id only.
   `app.module.ts` (WU3.2); Patient create/update/deactivate command routes and
   the independent command HTTP suite (WU3.3); `patient-guardians.controller.ts`
   (six guardian routes) plus the independent guardian HTTP suite (WU3.4).
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — EPIC-05 live-PostgreSQL
+  application-path block (H1): atomic active create with a primary guardian and
+  co-committed audit, activation with/without a primary (200/409),
+  byte-identical global catalog for two tenants, byte-equivalent cross-tenant
+  `404` for Patient commands / guardian reads+promotion / a foreign
+  `primaryGuardianCustomerId`, and a deterministic-barrier concurrency probe
+  proving exactly one active primary under two provably overlapping promotions
+  (16/16 locally on PG16).
 - `apps/web/src/app/(app)/app/patients/*` — staff workspace (WU4): the list
   (`patients-list.tsx`) with client-side name search and deactivate, the shared
   create/edit form (`patient-form.tsx`), and the detail view
@@ -181,10 +189,20 @@ Customer by id only.
 
 ## Known limitations / blockers
 
-- [[TD-006]] — live-PostgreSQL concurrency safety of the at-least-one primary
-  invariant is not proven. The `DEFERRABLE INITIALLY DEFERRED` trigger plus the
-  partial index are validated for single-transaction behavior only. Concurrency
-  proof lands with H1 and must not be reported as production-proven before then.
+- [[TD-006]] — broader cross-tenant isolation and RBAC live-PostgreSQL gates
+  remain open. For Patients specifically, H1 proved the **at-most-one** side
+  live under a deterministic barrier that forces two primary promotions to block
+  at the same demote boundary before either commits (one `201`, one
+  `P2002`-driven `500`, exactly one active primary), plus the
+  single-transaction/swap **at-least-one** cases; a wider concurrency matrix is
+  still not proven, so concurrency safety must not be reported as
+  production-proven.
+- [[TD-011]] — under a concurrent primary-promotion race the losing write
+  surfaces the partial-index violation as an unmapped `500 INTERNAL`; mapping
+  that race to `409 CONFLICT` is the debt. Sequential promotion is a
+  demote-then-promote `2xx` swap, and `409` applies to
+  sole-primary-removal/deactivation and activation-without-primary cases. The
+  invariant is preserved; only the concurrent error surface is wrong.
 - The `veterinary` entitlement must be granted explicitly; there is no automatic
   grant (mirrors all capabilities).
 
@@ -195,3 +213,4 @@ Customer by id only.
 - [[Data Classification and Retention]]
 - [[Reversals and Corrections]]
 - [[TD-006]]
+- [[TD-011]]

@@ -2,7 +2,7 @@
 id: EPIC-05
 type: epic
 title: Veterinary Patients
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-04
@@ -43,28 +43,28 @@ and a minimal staff workspace.
 
 ## Acceptance Criteria
 
-- [ ] Patients, guardian links, and catalogs are tenant-scoped and classified
+- [x] Patients, guardian links, and catalogs are tenant-scoped and classified
       CONFIDENTIAL where applicable.
-- [ ] Each active Patient has exactly one active primary guardian enforced by
+- [x] Each active Patient has exactly one active primary guardian enforced by
       the database; cross-tenant patient/customer links return `404` without
       leakage.
-- [ ] Every private backend route enforces `patients.*`; the service enforces
+- [x] Every private backend route enforces `patients.*`; the service enforces
       the `veterinary` entitlement.
-- [ ] Patient and guardian mutations are transactional and audited with
+- [x] Patient and guardian mutations are transactional and audited with
       sanitized metadata; no hard-delete route exists.
-- [ ] Staff can list, create, view, edit, deactivate Patients, and manage
+- [x] Staff can list, create, view, edit, deactivate Patients, and manage
       guardians using loading, empty, error, and success states.
-- [ ] Required schema, authorization, isolation, route-contract, demo-seed,
+- [x] Required schema, authorization, isolation, route-contract, demo-seed,
       service, API, UI, and live-PostgreSQL tests pass before closure.
 
 ## Stories
 
 - [[PAT-001 Patient foundations]] — persistence, catalogs, guardian invariant,
-  permissions, entitlement, audit contract, and demo seed.
+  permissions, entitlement, audit contract, and demo seed. `done`.
 - [[PAT-002 Patient API and tenant safety]] — application service, private API,
-  authorization, audit, and isolation coverage.
+  authorization, audit, and isolation coverage. `done`.
 - [[PAT-003 Patient staff workspace]] — staff UI, proxy, navigation, and UX
-  states.
+  states. `done`.
 
 ## Dependencies
 
@@ -76,8 +76,21 @@ and a minimal staff workspace.
 
 ## Lifecycle Note
 
-This Epic is in progress for approved planning and delivery. No implementation
-or verification has been performed by this proposal phase.
+Delivered on `feature/epic-05-veterinary-patients` across WU1–WU4 and closed by
+H1 (task 5.1–5.2). H1 added live-PostgreSQL application-path evidence in
+`apps/api/test/live-pg-isolation.e2e-spec.ts` (16/16, including atomic
+create/activate, global catalog parity, byte-equivalent cross-tenant masking,
+and a deterministic-barrier primary-promotion concurrency probe) and ran the
+root gates (`pnpm lint`, `pnpm format-check`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`) green.
+
+Live-PostgreSQL evidence was executed locally against a disposable PostgreSQL 16
+cluster; the branch was not pushed, so CI has not yet observed it — the CI
+migrations job already runs the same `pnpm --filter @newsaas/api test:live-pg`
+target. Residual limitations are tracked in [[TD-006]] (broader isolation/RBAC
+live-PG gates) and [[TD-011]] (mapping the losing concurrent primary-promotion
+write from `500` to `409`); neither violates the exactly-one invariant, and
+sequential promotion is a demote-then-promote swap, not a conflict.
 
 ## Related
 

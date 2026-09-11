@@ -3,7 +3,7 @@ id: PAT-003
 type: story
 title: Patient staff workspace
 epic: EPIC-05
-status: in-progress
+status: done
 priority: high
 depends_on:
   - PAT-002
@@ -117,5 +117,9 @@ pnpm exec prettier --check <new/modified web files>
   → clean after formatting
 ```
 
-Story stays `in-progress`: full-root gates (`pnpm test`/`pnpm build`) and the H1
-live-PostgreSQL parity remain before EPIC-05 closure.
+Story closed at H1: the H1 root gates (`pnpm lint`, `pnpm format-check`,
+`pnpm typecheck`, `pnpm test`, `pnpm build`) are green, and the EPIC-05
+live-PostgreSQL application-path evidence that H1 added covers the API the
+workspace consumes. Residual non-UI limitations ([[TD-006]] live-PG breadth,
+[[TD-011]] concurrent primary-promotion error mapping) are tracked outside this
+UI Story and do not affect the workspace acceptance criteria.
