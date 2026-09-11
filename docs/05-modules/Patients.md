@@ -60,21 +60,29 @@ seeded `feature_code`; demo grants include it.
 
 ## API
 
-Not implemented yet — the authorized API surface ships in WU3 (PAT-002):
+WU3.2 ships the read surface; command and guardian routes land in WU3.3/WU3.4
+(PAT-002):
 
 ```text
-GET    /patients
-GET    /patients/catalog
-POST   /patients
-GET    /patients/:id
-PUT    /patients/:id
-POST   /patients/:id/deactivate
-GET    /patients/:patientId/guardians
-POST   /patients/:patientId/guardians
-PUT    /patients/:patientId/guardians/:id
-POST   /patients/:patientId/guardians/:id/primary
-POST   /patients/:patientId/guardians/:id/deactivate
+GET    /patients            patients.read  — active Patients of the caller tenant
+GET    /patients/catalog    patients.read  — GLOBAL Species/Breed taxonomy (not tenant-filtered)
+GET    /patients/:id        patients.read  — single Patient; cross-tenant UUID → 404
+POST   /patients                                — pending (WU3.3)
+PUT    /patients/:id                            — pending (WU3.3)
+POST   /patients/:id/deactivate                 — pending (WU3.3)
+GET    /patients/:patientId/guardians                        — pending (WU3.4)
+POST   /patients/:patientId/guardians                        — pending (WU3.4)
+PUT    /patients/:patientId/guardians/:id                    — pending (WU3.4)
+POST   /patients/:patientId/guardians/:id/primary            — pending (WU3.4)
+POST   /patients/:patientId/guardians/:id/deactivate         — pending (WU3.4)
 ```
+
+`GET /patients/catalog` is declared before `GET /patients/:id` so the static
+segment is never captured as a Patient id. Every read route requires
+`patients.read`; the `PatientsService` / `PatientsCatalogService` layer
+re-applies the `veterinary` entitlement gate (no generic feature guard). The
+catalog DTO is allowlisted INTERNAL reference data and exposes no tenant
+identifier.
 
 ## Data Classification
 
@@ -136,7 +144,10 @@ POST   /patients/:patientId/guardians/:id/deactivate
 - `packages/database/scripts/live-migration-verify.ts` — live PostgreSQL proof
   of both triggers, the Patient lifecycle invariant matrix, and the guardian
   reparent regression.
-- `apps/api/src/patients/*` — service, controllers, Zod schemas, DTOs (WU2/WU3).
+- `apps/api/src/patients/*` — `patients.service.ts` + Zod/DTO/permissions (WU2);
+  `patients.catalog.service.ts` (global taxonomy reads) and
+  `patients.controller.ts` (read routes) with `patients.module.ts` registered in
+  `app.module.ts` (WU3.2); command and guardian routes land in WU3.3/WU3.4.
 - `apps/web/src/app/(app)/app/patients/*` — staff workspace (WU4).
 
 ## Known limitations / blockers

@@ -89,6 +89,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /customers/:customerId/contacts/:id",
   "PUT /customers/:customerId/contacts/:id",
   "POST /customers/:customerId/contacts/:id/deactivate",
+  // EPIC-05 — patients (WU3.2 reads + global catalog)
+  "GET /patients",
+  "GET /patients/catalog",
+  "GET /patients/:id",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {

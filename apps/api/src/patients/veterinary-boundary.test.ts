@@ -26,8 +26,12 @@ const PATIENTS_IMPORT = /(?:from|require\()\s*\(?["'][^"']*\/patients\//;
 describe("Veterinary Patients boundary", () => {
   it("is imported by no Core module (Veterinary is a leaf)", () => {
     const violations: string[] = [];
+    // The root AppModule is the composition root, not a Core domain: wiring the
+    // Veterinary module is its whole job. Every other non-patients module must
+    // stay free of `/patients/` imports (one-way Veterinary → Core).
+    const compositionRoot = join(API_SRC, "app.module.ts");
     for (const file of walkSourceFiles(API_SRC)) {
-      if (file.includes(`${join("src", "patients")}`)) continue;
+      if (file.includes(`${join("src", "patients")}`) || file === compositionRoot) continue;
       const content = readFileSync(file, "utf-8");
       if (PATIENTS_IMPORT.test(content)) {
         violations.push(file);

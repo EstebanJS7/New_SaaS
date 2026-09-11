@@ -34,3 +34,26 @@ export interface PatientGuardianResponse {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+/**
+ * Allowlisted GLOBAL Breed reference entry (Decision #2211). INTERNAL data:
+ * `code`/`name` are the stable taxonomy values shared by every tenant, so no
+ * tenant identifier is ever present.
+ */
+export interface BreedCatalogEntry {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+}
+
+/**
+ * Allowlisted GLOBAL Species reference entry with its nested Breeds. The
+ * catalog is not tenant-scoped, so the DTO carries no `tenantId`; exposing it
+ * to any entitled tenant is intentional and leaks no tenant-private data.
+ */
+export interface SpeciesCatalogEntry {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly breeds: readonly BreedCatalogEntry[];
+}
