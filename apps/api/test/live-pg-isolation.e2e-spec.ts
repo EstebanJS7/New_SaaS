@@ -11,6 +11,10 @@ import { SessionService } from "../src/auth/session.service.js";
 import { STAFF_SESSION_COOKIE } from "../src/auth/session-cookie.js";
 import { createApiLogger } from "../src/common/http/api-logger.factory.js";
 import { createFastifyAdapter } from "../src/common/http/fastify-adapter.factory.js";
+import {
+  BRANDING_RESET_CLEANUP_PRODUCER,
+  type CleanupProducer,
+} from "../src/branding/branding-reset-cleanup.producer.js";
 
 interface ErrorEnvelope {
   error: { code: string };
@@ -41,6 +45,16 @@ interface ContactDto {
   kind: "EMAIL" | "PHONE";
   value: string;
   isActive: boolean;
+}
+
+/**
+ * Test-only recording fake for the branding reset cleanup producer. It fulfills
+ * the production `CleanupProducer` port without constructing a BullMQ Queue or
+ * an ioredis connection, so this suite boots with `REDIS_URL` unset while the
+ * real Prisma/PostgreSQL setup and every other provider stay untouched.
+ */
+interface RecordingCleanupProducer extends CleanupProducer {
+  readonly enqueued: string[];
 }
 
 function adminDatabaseUrl(baseUrl: string): string {
@@ -114,6 +128,16 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
   let addressAId: string;
   let contactAId: string;
 
+  // Recording fake installed via overrideProvider below. Referenced by the
+  // token-identity regression pin, so it must be the exact injected instance.
+  const cleanupProducer: RecordingCleanupProducer = {
+    enqueued: [],
+    enqueue: (intentId: string) => {
+      cleanupProducer.enqueued.push(intentId);
+      return Promise.resolve();
+    },
+  };
+
   beforeAll(async () => {
     previousDatabaseUrl = process.env.DATABASE_URL;
     baseDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL ?? "";
@@ -144,6 +168,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         ...readAuthConfig(process.env),
         cookieSecure: false,
       })
+      .overrideProvider(BRANDING_RESET_CLEANUP_PRODUCER)
+      .useValue(cleanupProducer)
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -226,6 +252,12 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     restoreDatabaseUrl(previousDatabaseUrl);
     dropDatabase(baseDatabaseUrl, testDatabaseName);
   }, 30_000);
+
+  it("injects the test-only branding reset cleanup producer", () => {
+    // Token-identity pin: the suite must resolve the recording fake, proving the
+    // Redis-backed producer factory never ran during AppModule compilation.
+    expect(app.get(BRANDING_RESET_CLEANUP_PRODUCER)).toBe(cleanupProducer);
+  });
 
   it("creates tenant A customer/address/contact over real HTTP", async () => {
     const customerResponse = await supertest(serverUrl)
