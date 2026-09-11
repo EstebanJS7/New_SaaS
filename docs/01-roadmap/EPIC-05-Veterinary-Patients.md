@@ -76,8 +76,8 @@ and a minimal staff workspace.
 
 ## Lifecycle Note
 
-Delivered on `feat/epic-05-veterinary-patients` across WU1–WU4 and closed by
-H1 (task 5.1–5.2). H1 added live-PostgreSQL application-path evidence in
+Delivered on `feat/epic-05-veterinary-patients` across WU1–WU4 and closed by H1
+(task 5.1–5.2). H1 added live-PostgreSQL application-path evidence in
 `apps/api/test/live-pg-isolation.e2e-spec.ts` (16/16, including atomic
 create/activate, global catalog parity, byte-equivalent cross-tenant masking,
 and a deterministic-barrier primary-promotion concurrency probe) and ran the
