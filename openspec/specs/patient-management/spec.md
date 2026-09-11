@@ -147,11 +147,15 @@ primary violates the partial unique index immediately.
 - THEN the write is accepted, because the at-least-one side applies only to
   active Patients
 
-#### Scenario: Second active primary rejected
+#### Scenario: Second active primary rejected at the database boundary
 
 - GIVEN a Patient with an active primary
-- WHEN a second guardian is set primary
-- THEN the write fails with 409 `CONFLICT` and the prior primary is unchanged
+- WHEN a guardian write attempts to persist a second active primary without
+  demoting the current one
+- THEN the partial unique index rejects the write immediately and the prior
+  primary is unchanged. Sequential promotion through the API is not this case:
+  it demotes the current primary and then promotes the replacement (see [Primary
+  swap preserves exactly one]).
 
 #### Scenario: Primary swap preserves exactly one
 
