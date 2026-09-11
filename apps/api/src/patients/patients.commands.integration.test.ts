@@ -168,6 +168,56 @@ describe("Patients command HTTP boundary (WU3.3)", () => {
     expect(booted.db.tables.patientGuardians.size).toBe(guardiansBefore);
   });
 
+  it("rejects a valid-but-unknown global Species UUID with 400 and persists nothing", async () => {
+    const patientsBefore = booted.db.tables.patients.size;
+    const guardiansBefore = booted.db.tables.patientGuardians.size;
+
+    const response = await supertest(server())
+      .post("/patients")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ ...activeCreateBody(fixture.a.customer.id), speciesId: randomUUID() })
+      .expect(400);
+
+    expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    expect(booted.db.tables.patients.size).toBe(patientsBefore);
+    expect(booted.db.tables.patientGuardians.size).toBe(guardiansBefore);
+  });
+
+  it("rejects a valid-but-unknown global Breed UUID with 400 and persists nothing", async () => {
+    const patientsBefore = booted.db.tables.patients.size;
+    const guardiansBefore = booted.db.tables.patientGuardians.size;
+
+    const response = await supertest(server())
+      .post("/patients")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ ...activeCreateBody(fixture.a.customer.id), breedId: randomUUID() })
+      .expect(400);
+
+    expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    expect(booted.db.tables.patients.size).toBe(patientsBefore);
+    expect(booted.db.tables.patientGuardians.size).toBe(guardiansBefore);
+  });
+
+  it("rejects a create missing the required name with 400 and persists nothing", async () => {
+    const patientsBefore = booted.db.tables.patients.size;
+    const guardiansBefore = booted.db.tables.patientGuardians.size;
+
+    const response = await supertest(server())
+      .post("/patients")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({
+        speciesId: fixture.species.id,
+        breedId: fixture.breed.id,
+        sex: "MALE",
+        primaryGuardianCustomerId: fixture.a.customer.id,
+      })
+      .expect(400);
+
+    expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    expect(booted.db.tables.patients.size).toBe(patientsBefore);
+    expect(booted.db.tables.patientGuardians.size).toBe(guardiansBefore);
+  });
+
   it("creates an inactive Patient without a guardian", async () => {
     const response = await supertest(server())
       .post("/patients")
