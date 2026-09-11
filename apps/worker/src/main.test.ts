@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach, type Mock } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll, afterAll, type Mock } from "vitest";
 import { EventEmitter } from "node:events";
 import { bootstrap, installSignalShutdown } from "./main.js";
 import type { WorkerHandle } from "./main.js";
@@ -119,6 +119,21 @@ describe("installSignalShutdown", () => {
 });
 
 describe("Worker bootstrap", () => {
+  // The worker now requires DATABASE_URL (cleanup intents + audit rows). The
+  // bootstrap tests inject a fake Redis probe but still parse env, so pin a
+  // test-only value and restore the caller's environment afterwards.
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  beforeAll(() => {
+    process.env.DATABASE_URL ??= "postgresql://worker:worker@localhost:5432/newsaas_test";
+  });
+  afterAll(() => {
+    if (originalDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = originalDatabaseUrl;
+    }
+  });
+
   it("throws when a required environment variable is missing", async () => {
     const originalRedisUrl = process.env.REDIS_URL;
     delete process.env.REDIS_URL;
