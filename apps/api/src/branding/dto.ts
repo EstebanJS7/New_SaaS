@@ -52,11 +52,21 @@ export interface ProductBrandPreset {
   theme: BrandTheme;
 }
 
+/** API-local signed asset URLs resolved for a tenant. */
+export interface ResolvedAssets {
+  readonly logoLightUrl?: string;
+  readonly logoDarkUrl?: string;
+  readonly faviconUrl?: string;
+}
+
 /** Fully merged brand handed to rendering surfaces. */
 export interface ResolvedBrand {
   presetCode: string;
   theme: BrandTheme;
-  defaultAppearance: DefaultAppearance;
+  /** Tenant default appearance only; absent when the tenant did not set one. */
+  defaultAppearance?: DefaultAppearance;
+  /** API-local signed URLs for controlled tenant identity assets. */
+  assets?: ResolvedAssets;
 }
 
 /** Private branding endpoint response. */
@@ -68,13 +78,19 @@ export interface BrandingResponse {
 /**
  * Public safe branding DTO.
  *
- * INTERNAL fields (`tenantId`, `slug`, `updatedBy`, audit) are never exposed;
- * only the four v1 tokens plus the product display name are allowlisted.
+ * INTERNAL fields (`tenantId`, `slug`, `updatedBy`, assetKey, bucket, audit,
+ * membership, RUC, billing secrets) are never exposed; only the product
+ * display name, optional tenant display name, asset URLs, and safe v1 theme
+ * tokens are allowlisted.
  */
 export interface PublicBrandingDto {
   readonly productDisplayName: string;
+  readonly displayName?: string;
   readonly primary?: string;
   readonly accent?: string;
   readonly radius?: string;
   readonly defaultAppearance?: DefaultAppearance;
+  readonly logoLightUrl?: string;
+  readonly logoDarkUrl?: string;
+  readonly faviconUrl?: string;
 }

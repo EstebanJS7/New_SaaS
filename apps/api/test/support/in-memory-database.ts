@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { InMemoryStorageDriver } from "@newsaas/storage";
 
 /**
  * In-memory Prisma BOUNDARY FAKE for the tenancy isolation harness.
@@ -26,6 +27,7 @@ export interface TenantRow {
   id: string;
   slug: string;
   name: string;
+  status: "ACTIVE" | "SUSPENDED";
 }
 
 export interface RoleRow {
@@ -125,9 +127,42 @@ export interface TenantBrandingRow {
   tenantId: string;
   schemaVersion: number;
   overrides: unknown;
+  displayName: string | null;
+  logoLightAssetId: string | null;
+  logoDarkAssetId: string | null;
+  faviconAssetId: string | null;
   updatedByUserProfileId: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Tenant-owned branding asset row (DEC-004 PR 1). */
+export interface BrandingAssetRow {
+  id: string;
+  tenantId: string;
+  kind: "LOGO_LIGHT" | "LOGO_DARK" | "FAVICON";
+  assetKey: string;
+  contentType: string;
+  byteSize: number;
+  sha256: string;
+  uploadedByUserProfileId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Durable branding-reset storage cleanup intent row (U5). */
+export interface BrandingResetCleanupIntentRow {
+  id: string;
+  tenantId: string;
+  resetAuditId: string | null;
+  requestedByUserProfileId: string | null;
+  storageKeys: string[];
+  status: "PENDING" | "COMPLETED" | "DEAD_LETTER";
+  attempts: number;
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
 }
 
 /** Customer aggregate row (EPIC-04). */
@@ -210,8 +245,12 @@ export interface IsolationDatabase {
       ...values: unknown[]
     ) => Promise<{ id: string; role_id: string }[]>;
     tenant: {
-      create: (args: { data: { slug: string; name: string } }) => TenantRow;
-      findUnique: (args: { where: { id?: string; slug?: string } }) => TenantRow | null;
+      create: (args: {
+        data: { slug: string; name: string; status?: "ACTIVE" | "SUSPENDED" };
+      }) => TenantRow;
+      findUnique: (args: {
+        where: { id?: string; slug?: string; status?: "ACTIVE" | "SUSPENDED" };
+      }) => TenantRow | null;
     };
     tenantBranding: {
       findUnique: (args: { where: { tenantId: string } }) => TenantBrandingRow | null;
@@ -220,7 +259,35 @@ export interface IsolationDatabase {
         create: Omit<TenantBrandingRow, "id" | "createdAt" | "updatedAt">;
         update: Partial<Omit<TenantBrandingRow, "id" | "tenantId" | "createdAt">>;
       }) => TenantBrandingRow;
+      update: (args: {
+        where: { tenantId: string };
+        data: Partial<Omit<TenantBrandingRow, "id" | "tenantId" | "createdAt">>;
+      }) => TenantBrandingRow;
       delete: (args: { where: { tenantId: string } }) => TenantBrandingRow;
+    };
+    brandingAsset: {
+      create: (args: {
+        data: Omit<BrandingAssetRow, "id" | "createdAt" | "updatedAt">;
+      }) => BrandingAssetRow;
+      findUnique: (args: { where: { id: string } }) => BrandingAssetRow | null;
+      findFirst: (args: { where: { tenantId: string; kind: string } }) => BrandingAssetRow | null;
+      findMany: (args: { where: { tenantId: string } }) => BrandingAssetRow[];
+      delete: (args: { where: { id: string } }) => BrandingAssetRow;
+    };
+    brandingResetCleanupIntent: {
+      create: (args: {
+        data: {
+          tenantId: string;
+          resetAuditId?: string | null;
+          requestedByUserProfileId?: string | null;
+          storageKeys: string[];
+          status?: BrandingResetCleanupIntentRow["status"];
+          attempts?: number;
+        };
+      }) => BrandingResetCleanupIntentRow;
+      findMany: (args?: {
+        where?: { tenantId?: string; status?: BrandingResetCleanupIntentRow["status"] };
+      }) => BrandingResetCleanupIntentRow[];
     };
     customer: {
       findMany: (args: {
@@ -389,10 +456,14 @@ export interface IsolationDatabase {
     rolePermissionOverrides: Map<string, TenantRolePermissionOverrideRow>;
     settingNamespaces: Map<string, TenantSettingNamespaceRow>;
     tenantBrandings: Map<string, TenantBrandingRow>;
+    brandingAssets: Map<string, BrandingAssetRow>;
+    brandingResetCleanupIntents: Map<string, BrandingResetCleanupIntentRow>;
     customers: Map<string, CustomerRow>;
     customerAddresses: Map<string, CustomerAddressRow>;
     customerContacts: Map<string, CustomerContactRow>;
   };
+  /** In-memory object storage for tests to inspect signed URLs and key retirement. */
+  storage: InMemoryStorageDriver;
 }
 
 function matches(where: MembershipWhere, candidate: TenantMembershipRow): boolean {
@@ -453,6 +524,8 @@ export function createIsolationDatabase(): IsolationDatabase {
   const rolePermissionOverrides = new Map<string, TenantRolePermissionOverrideRow>();
   const settingNamespaces = new Map<string, TenantSettingNamespaceRow>();
   const tenantBrandings = new Map<string, TenantBrandingRow>();
+  const brandingAssets = new Map<string, BrandingAssetRow>();
+  const brandingResetCleanupIntents = new Map<string, BrandingResetCleanupIntentRow>();
   const customers = new Map<string, CustomerRow>();
   const customerAddresses = new Map<string, CustomerAddressRow>();
   const customerContacts = new Map<string, CustomerContactRow>();
@@ -473,6 +546,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     rolePermissionOverrides,
     settingNamespaces,
     tenantBrandings,
+    brandingAssets,
+    brandingResetCleanupIntents,
     customers,
     customerAddresses,
     customerContacts,
@@ -534,17 +609,30 @@ export function createIsolationDatabase(): IsolationDatabase {
       );
     },
     tenant: {
+      // Mirrors Prisma's `@default(ACTIVE)`: callers that omit status still
+      // receive an ACTIVE tenant.
       create: ({ data }) => {
-        const created: TenantRow = { id: randomUUID(), slug: data.slug, name: data.name };
+        const created: TenantRow = {
+          id: randomUUID(),
+          slug: data.slug,
+          name: data.name,
+          status: data.status ?? "ACTIVE",
+        };
         tenants.set(created.id, created);
         return created;
       },
-      findUnique: ({ where }) =>
-        [...tenants.values()].find(
-          (candidate) =>
-            (where.id !== undefined && candidate.id === where.id) ||
-            (where.slug !== undefined && candidate.slug === where.slug)
-        ) ?? null,
+      findUnique: ({ where }) => {
+        const candidate = [...tenants.values()].find(
+          (row) =>
+            (where.id !== undefined && row.id === where.id) ||
+            (where.slug !== undefined && row.slug === where.slug)
+        );
+        if (!candidate) return null;
+        // Compound extended-where-unique: the status predicate ANDs with the
+        // identity predicate, so a SUSPENDED row falls through to null.
+        if (where.status !== undefined && candidate.status !== where.status) return null;
+        return candidate;
+      },
     },
     tenantBranding: {
       findUnique: ({ where }) =>
@@ -558,19 +646,52 @@ export function createIsolationDatabase(): IsolationDatabase {
         if (existing) {
           if (update.schemaVersion !== undefined) existing.schemaVersion = update.schemaVersion;
           if (update.overrides !== undefined) existing.overrides = update.overrides;
+          if (update.displayName !== undefined) existing.displayName = update.displayName ?? null;
+          if (update.logoLightAssetId !== undefined)
+            existing.logoLightAssetId = update.logoLightAssetId ?? null;
+          if (update.logoDarkAssetId !== undefined)
+            existing.logoDarkAssetId = update.logoDarkAssetId ?? null;
+          if (update.faviconAssetId !== undefined)
+            existing.faviconAssetId = update.faviconAssetId ?? null;
           if (update.updatedByUserProfileId !== undefined)
-            existing.updatedByUserProfileId = update.updatedByUserProfileId;
+            existing.updatedByUserProfileId = update.updatedByUserProfileId ?? null;
           existing.updatedAt = now;
           return existing;
         }
         const created: TenantBrandingRow = {
           id: randomUUID(),
           ...create,
+          displayName: create.displayName ?? null,
+          logoLightAssetId: create.logoLightAssetId ?? null,
+          logoDarkAssetId: create.logoDarkAssetId ?? null,
+          faviconAssetId: create.faviconAssetId ?? null,
+          updatedByUserProfileId: create.updatedByUserProfileId ?? null,
           createdAt: now,
           updatedAt: now,
         };
         tenantBrandings.set(created.id, created);
         return created;
+      },
+      update: ({ where, data }) => {
+        const existing = [...tenantBrandings.values()].find(
+          (candidate) => candidate.tenantId === where.tenantId
+        );
+        if (!existing) {
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        if (data.schemaVersion !== undefined) existing.schemaVersion = data.schemaVersion;
+        if (data.overrides !== undefined) existing.overrides = data.overrides;
+        if (data.displayName !== undefined) existing.displayName = data.displayName ?? null;
+        if (data.logoLightAssetId !== undefined)
+          existing.logoLightAssetId = data.logoLightAssetId ?? null;
+        if (data.logoDarkAssetId !== undefined)
+          existing.logoDarkAssetId = data.logoDarkAssetId ?? null;
+        if (data.faviconAssetId !== undefined)
+          existing.faviconAssetId = data.faviconAssetId ?? null;
+        if (data.updatedByUserProfileId !== undefined)
+          existing.updatedByUserProfileId = data.updatedByUserProfileId ?? null;
+        existing.updatedAt = new Date();
+        return existing;
       },
       delete: ({ where }) => {
         const existing = [...tenantBrandings.values()].find(
@@ -582,6 +703,60 @@ export function createIsolationDatabase(): IsolationDatabase {
         tenantBrandings.delete(existing.id);
         return existing;
       },
+    },
+    brandingAsset: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: BrandingAssetRow = {
+          id: randomUUID(),
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        };
+        brandingAssets.set(created.id, created);
+        return created;
+      },
+      findUnique: ({ where }) => brandingAssets.get(where.id) ?? null,
+      findFirst: ({ where }) =>
+        [...brandingAssets.values()].find(
+          (candidate) => candidate.tenantId === where.tenantId && candidate.kind === where.kind
+        ) ?? null,
+      findMany: ({ where }) =>
+        [...brandingAssets.values()].filter((candidate) => candidate.tenantId === where.tenantId),
+      delete: ({ where }) => {
+        const existing = brandingAssets.get(where.id);
+        if (!existing) {
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        brandingAssets.delete(existing.id);
+        return existing;
+      },
+    },
+    brandingResetCleanupIntent: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: BrandingResetCleanupIntentRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          resetAuditId: data.resetAuditId ?? null,
+          requestedByUserProfileId: data.requestedByUserProfileId ?? null,
+          storageKeys: [...data.storageKeys],
+          status: data.status ?? "PENDING",
+          attempts: data.attempts ?? 0,
+          lastError: null,
+          createdAt: now,
+          updatedAt: now,
+          completedAt: null,
+        };
+        brandingResetCleanupIntents.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where } = {}) =>
+        [...brandingResetCleanupIntents.values()].filter(
+          (candidate) =>
+            (where?.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where?.status === undefined || candidate.status === where.status)
+        ),
     },
     customer: {
       findMany: ({ where, orderBy }) => {
@@ -1049,6 +1224,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     },
   };
 
+  const storage = new InMemoryStorageDriver();
+
   return {
     prisma,
     tables: {
@@ -1065,9 +1242,12 @@ export function createIsolationDatabase(): IsolationDatabase {
       rolePermissionOverrides,
       settingNamespaces,
       tenantBrandings,
+      brandingAssets,
+      brandingResetCleanupIntents,
       customers,
       customerAddresses,
       customerContacts,
     },
+    storage,
   };
 }

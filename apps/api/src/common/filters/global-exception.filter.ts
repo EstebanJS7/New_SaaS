@@ -23,6 +23,7 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   CONFLICT: "Request conflicts with current state.",
   RATE_LIMITED: "Too many requests.",
   INTERNAL: "Internal server error.",
+  PAYLOAD_TOO_LARGE: "Request payload is too large.",
 };
 
 /** Reverse lookup status → code from the frozen registry (first wins). */
@@ -129,12 +130,28 @@ function extractHttpExceptionMessage(response: unknown): string | null {
  * via the frozen status→code table, then a generic INTERNAL for anything
  * else. Unknown errors never expose their message or stack to clients.
  */
+function isFastifyMultipartSizeError(exception: unknown): boolean {
+  return (
+    typeof exception === "object" &&
+    exception !== null &&
+    (exception as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE"
+  );
+}
+
 export function mapExceptionToError(exception: unknown): MappedError {
   if (exception instanceof DomainError) {
     return {
       status: getStatusForCode(exception.code),
       code: exception.code,
       message: exception.message,
+    };
+  }
+
+  if (isFastifyMultipartSizeError(exception)) {
+    return {
+      status: getStatusForCode("PAYLOAD_TOO_LARGE"),
+      code: "PAYLOAD_TOO_LARGE",
+      message: "Request payload is too large.",
     };
   }
 

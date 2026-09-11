@@ -66,7 +66,13 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /branding/current",
   "PUT /branding/current",
   "POST /branding/reset",
+  // DEC-004 — tenant branding assets
+  "POST /branding/assets/:kind",
+  "GET /branding/assets/:kind",
+  "GET /branding/assets/:kind/content",
+  "DELETE /branding/assets/:kind",
   "GET /api/v1/public/tenants/:slug/branding",
+  "GET /api/v1/public/branding/assets/:kind/content",
   // EPIC-04 — customers
   "GET /customers",
   "POST /customers",

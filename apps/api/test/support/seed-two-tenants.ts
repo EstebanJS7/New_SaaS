@@ -106,10 +106,10 @@ export function seedTwoTenants(db: IsolationDatabase, options: SeedOptions = {})
   });
 
   const tenantA = db.prisma.tenant.create({
-    data: { slug: `tenant-a-${suffix}`, name: "Isolation Tenant A" },
+    data: { slug: `tenant-a-${suffix}`, name: "Isolation Tenant A", status: "ACTIVE" },
   });
   const tenantB = db.prisma.tenant.create({
-    data: { slug: `tenant-b-${suffix}`, name: "Isolation Tenant B" },
+    data: { slug: `tenant-b-${suffix}`, name: "Isolation Tenant B", status: "ACTIVE" },
   });
 
   function insertProfile(letter: string): UserProfileRow {

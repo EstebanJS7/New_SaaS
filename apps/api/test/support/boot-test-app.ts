@@ -6,15 +6,27 @@ import { PrismaService } from "@newsaas/database";
 import { AUTH_CONFIG, readAuthConfig, type AuthConfig } from "../../src/auth/auth.config.js";
 import { createApiLogger } from "../../src/common/http/api-logger.factory.js";
 import { createFastifyAdapter } from "../../src/common/http/fastify-adapter.factory.js";
+import { STORAGE_PORT } from "@newsaas/storage";
+import {
+  BRANDING_RESET_CLEANUP_PRODUCER,
+  type CleanupProducer,
+} from "../../src/branding/branding-reset-cleanup.producer.js";
 // PRODUCTION composition: booting AppModule (not a hand-picked module subset)
 // means the isolation suites exercise the exact guard chain that ships —
 // AuthGuard and TenantActiveGuard in their real registration order.
 import { AppModule } from "../../src/app.module.js";
 import { createIsolationDatabase, type IsolationDatabase } from "./in-memory-database.js";
 
+/** Test double that records enqueued intent ids instead of touching Redis. */
+export interface RecordingCleanupProducer extends CleanupProducer {
+  readonly enqueued: string[];
+}
+
 export interface BootedTestApp {
   app: NestFastifyApplication;
   db: IsolationDatabase;
+  /** Records reset-cleanup enqueues so tests can assert `jobId=intentId`. */
+  cleanupProducer: RecordingCleanupProducer;
   /** Serialized pino lines captured during the test (leak scans, debugging). */
   logLines: () => string[];
   close: () => Promise<void>;
@@ -45,6 +57,14 @@ export interface BootTestAppOptions {
 export async function bootTestApp(options: BootTestAppOptions = {}): Promise<BootedTestApp> {
   const db = options.db ?? createIsolationDatabase();
 
+  const cleanupProducer: RecordingCleanupProducer = {
+    enqueued: [],
+    enqueue: (intentId: string) => {
+      cleanupProducer.enqueued.push(intentId);
+      return Promise.resolve();
+    },
+  };
+
   const captured: string[] = [];
   const stream: DestinationStream = {
     write(message: string): void {
@@ -66,6 +86,10 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     .useValue(db.prisma as unknown as PrismaService)
     .overrideProvider(AUTH_CONFIG)
     .useValue(authConfig)
+    .overrideProvider(STORAGE_PORT)
+    .useValue(db.storage)
+    .overrideProvider(BRANDING_RESET_CLEANUP_PRODUCER)
+    .useValue(cleanupProducer)
     .compile();
 
   const app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -77,6 +101,7 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
   return {
     app,
     db,
+    cleanupProducer,
     logLines: (): string[] => captured,
     close: (): Promise<void> => app.close(),
   };

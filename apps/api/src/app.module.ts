@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { PrismaModule } from "@newsaas/database";
+import { StorageModule } from "@newsaas/storage";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { BrandingModule } from "./branding/branding.module.js";
@@ -29,6 +30,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     RbacModule,
     AuditModule,
     EntitlementsModule,
+    StorageModule.forRoot(),
     BrandingModule,
     SettingsModule,
     CustomersModule,

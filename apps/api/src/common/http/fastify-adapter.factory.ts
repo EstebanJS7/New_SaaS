@@ -1,8 +1,10 @@
 import { FastifyAdapter } from "@nestjs/platform-fastify";
 import cookie from "@fastify/cookie";
+import multipart from "@fastify/multipart";
 import type { FastifyBaseLogger, FastifyReply, FastifyRequest } from "fastify";
 import type { IncomingMessage } from "node:http";
 import { REQUEST_ID_HEADER, resolveRequestId } from "../errors/request-id.js";
+import { BRANDING_ASSET_LIMITS } from "../../branding/branding-asset-limits.js";
 
 export interface CreateFastifyAdapterOptions {
   /** Root pino instance; omitted lets Fastify use its embedded default. */
@@ -89,6 +91,13 @@ export function createFastifyAdapter(options: CreateFastifyAdapterOptions = {}):
 
   const instance = adapter.getInstance();
   void instance.register(cookie);
+  void instance.register(multipart, {
+    limits: {
+      // Global multipart file-size ceiling: the largest approved asset is a
+      // 2 MiB logo. Per-kind caps (logo vs favicon) are enforced in the pipe.
+      fileSize: BRANDING_ASSET_LIMITS.logo,
+    },
+  });
   instance.addHook("onRequest", (request: FastifyRequest, reply: FastifyReply, done) => {
     // Request-id echo FIRST (design D7): every response carries correlation,
     // success and error paths alike.
