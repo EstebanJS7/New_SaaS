@@ -168,7 +168,16 @@ Customer by id only.
   `app.module.ts` (WU3.2); Patient create/update/deactivate command routes and
   the independent command HTTP suite (WU3.3); `patient-guardians.controller.ts`
   (six guardian routes) plus the independent guardian HTTP suite (WU3.4).
-- `apps/web/src/app/(app)/app/patients/*` — staff workspace (WU4).
+- `apps/web/src/app/(app)/app/patients/*` — staff workspace (WU4): the list
+  (`patients-list.tsx`) with client-side name search and deactivate, the shared
+  create/edit form (`patient-form.tsx`), and the detail view
+  (`[id]/patient-detail.tsx`) with guardian management. The authenticated
+  `/api/patients/**` proxy
+  (`apps/web/src/app/api/patients/[[...path]]/route.ts`) forwards the session
+  cookie and `x-request-id` to the private API. A `Patients` entry was added to
+  `components/shell/nav-sidebar.tsx`. The UI is brand-agnostic, uses semantic
+  tokens only, and is mounted under the staff `(app)` route group — it never
+  renders in the Portal surface.
 
 ## Known limitations / blockers
 
