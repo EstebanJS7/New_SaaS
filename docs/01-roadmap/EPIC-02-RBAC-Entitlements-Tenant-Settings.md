@@ -2,7 +2,7 @@
 id: EPIC-02
 type: epic
 title: RBAC Enforcement / Entitlements / Tenant Settings
-status: review
+status: done
 priority: critical
 depends_on:
   - EPIC-01
@@ -11,7 +11,7 @@ prd_sections:
   - "10"
   - "38"
 created: 2026-08-25
-updated: 2026-08-26
+updated: 2026-09-11
 ---
 
 # EPIC-02 — RBAC Enforcement / Entitlements / Tenant Settings
@@ -111,9 +111,21 @@ configure role mappings through a tenant-local override layer.
 
 ## Exit Criteria
 
-- [ ] Lint/typecheck/tests/build required for the Epic are green.
-- [ ] Cross-tenant isolation suite executes in a CI run.
-- [ ] Documentation is current.
+- [x] Lint/typecheck/tests/build required for the Epic are green. — CI run
+      `34605178149` at `c9cff613`: lint 14/14, format-check, typecheck 14/14,
+      test 15/15 (640 passed / 6 skipped), build 9/9.
+- [x] Cross-tenant isolation suite executes in a CI run. — CI run `34605178149`,
+      `Database migrations` job: live-PG suite 6/6 passed; the broader Batch 5
+      and RBAC concurrency gates remain tracked under [[TD-006]].
+- [x] Documentation is current. — this Epic, `docs/01-roadmap/ROADMAP.md`, and
+      `docs/09-releases/CHANGELOG.md` reconciled 2026-09-11.
+
+Closure evidence (2026-09-11): all nine acceptance criteria map to implemented
+code and tests, and the archived verification waiver
+(`openspec/changes/archive/2026-08-26-epic-02-rbac-settings/archive-report.md`)
+is superseded by canonical CI run `34605178149` at `c9cff613`. Closure is
+evidence-based, not a production-readiness statement: [[EPIC-20]] Production
+Hardening and the open debt below remain.
 
 ## Known Limitations
 
@@ -122,6 +134,11 @@ configure role mappings through a tenant-local override layer.
   `SELECT ... FOR UPDATE` lock interleavings and transactional audit rollback is
   required before further tenant-scoped aggregates land or any production
   deployment.
+- [[TD-010]] — `TenantSettingsService.update` uses a read → in-memory merge →
+  upsert pattern; concurrent partial writes to the same `(tenantId, namespace)`
+  row can lose disjoint sibling fields. Closure preserves this formerly
+  untracked warning as debt instead of dissolving it; remediation (optimistic
+  locking or a server-side per-field merge) is deferred.
 - [[DEC-003]] — per-tenant role-mapping overrides are accepted architecture; the
   PRD itself is not edited yet (`prd_change_required: true`), so the next
   approved PRD revision should describe §9 mapping configurability as
@@ -135,7 +152,7 @@ configure role mappings through a tenant-local override layer.
 
 ## Technical Debt
 
-Tracked in the Known Limitations section: [[TD-006]].
+Tracked in the Known Limitations section: [[TD-006]], [[TD-010]].
 
 ## Related
 

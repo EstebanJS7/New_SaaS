@@ -1,13 +1,14 @@
 schema: spec-driven
 
 context: |
-  Project: NewSaaS Veterinary SaaS for Paraguay; documentation-only baseline.
+  Project: NewSaaS Veterinary SaaS for Paraguay.
   Stack target: Next.js/React/TypeScript/Tailwind/shadcn/ui; NestJS/Fastify/Prisma/PostgreSQL; Redis/BullMQ.
   Architecture: multi-tenant modular monolith with web, api, and worker deployables.
   Source of truth: implemented code/tests first, then PRD, accepted ADRs, Stories, and module docs.
   Governance: strict tenancy, authorization, auditability, ledger invariants, semantic branding tokens, and architecture freeze.
   Workflow: one Epic/Story at a time; update documentation atomically; verify before completion.
-  Current roadmap: EPIC-00 Foundation is ready; no product code exists yet.
+  Current roadmap: EPIC-00 through EPIC-04 are done by evidence-based closure (implementation closure only, not production readiness); EPIC-05 Veterinary Patients is next. EPIC-20 Production Hardening and the open Tech Debt items remain.
+  Canonical CI baseline for the EPIC-02–04 closure: run 34605178149 at c9cff613 (640 passed / 6 skipped, build 9/9); see docs/10-qa/CI-EVIDENCE.md.
 
 strict_tdd: false
 

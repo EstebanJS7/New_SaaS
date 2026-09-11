@@ -9,7 +9,7 @@ related_epics:
 related_stories:
   - FOUND-006
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-09-11
 ---
 
 # TD-001 — Verify and configure `main` branch protection
@@ -30,6 +30,20 @@ At apply time (2026-08-23) this could not be performed:
 
 This record was created under the maintainer authorization of 2026-08-23 that
 deferred closeout Slice 1 to Tech Debt instead of blocking archive.
+
+**Update (2026-09-11): definite finding.** The GitHub CLI is now available and
+an authenticated read-only probe was executed:
+
+```text
+gh api repos/EstebanJS7/New_SaaS/branches/main/protection
+→ HTTP 404 "Branch not protected"
+```
+
+The default branch has **no protection rule**, so the `quality` check is not a
+required status check today. The debt is therefore a confirmed governance gap,
+not an unverifiable item, and it remains **open** until protection is
+configured. See the canonical evidence baseline in `docs/10-qa/CI-EVIDENCE.md`
+(CI run `34605178149` at `c9cff613`).
 
 ## Debt
 
@@ -59,6 +73,11 @@ Resolution requires immutable evidence in `docs/10-qa/CI-EVIDENCE.md`, either:
 - an explicit blocker paragraph if verification remains impossible, naming the
   missing authority.
 
+**Status (2026-09-11):** the read-only probe returned HTTP 404 "Branch not
+protected", which is recorded in `docs/10-qa/CI-EVIDENCE.md`. The finding is now
+immutable, but the debt is **not resolved**: the branch still has no protection
+rule, so the required check is not enforced.
+
 ## Proposed Resolution
 
 1. Obtain repository-admin access or authenticated GitHub API/CLI credentials
@@ -78,6 +97,8 @@ repository. Must be resolved before EPIC-01 feature work starts landing on
 ## Verification After Resolution
 
 - [ ] Protection rule for `main` lists `Lint, Typecheck, Test, Build` as a
-      required status check.
-- [ ] Evidence quote recorded in `docs/10-qa/CI-EVIDENCE.md`.
+      required status check. _(2026-09-11: read-only probe returned HTTP 404
+      "Branch not protected" — absence confirmed, rule still missing.)_
+- [x] Evidence quote recorded in `docs/10-qa/CI-EVIDENCE.md` (HTTP 404 finding,
+      CI run `34605178149` at `c9cff613`).
 - [ ] This record closed with a link to the evidence commit.

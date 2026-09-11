@@ -1,7 +1,7 @@
 ---
 type: roadmap
 status: active
-updated: 2026-08-25
+updated: 2026-09-11
 ---
 
 # ROADMAP
@@ -10,9 +10,9 @@ updated: 2026-08-25
 | ------- | ---------------------------------- | ------: | ------------------------- |
 | EPIC-00 | Foundation                         |    done | —                         |
 | EPIC-01 | Database/Auth/Tenancy              |    done | EPIC-00                   |
-| EPIC-02 | RBAC/Entitlements/Tenant Settings  | planned | EPIC-01                   |
-| EPIC-03 | Staff Shell/Design System/Branding | planned | EPIC-01                   |
-| EPIC-04 | Customers                          | planned | EPIC-02, EPIC-03          |
+| EPIC-02 | RBAC/Entitlements/Tenant Settings  |    done | EPIC-01                   |
+| EPIC-03 | Staff Shell/Design System/Branding |    done | EPIC-01                   |
+| EPIC-04 | Customers                          |    done | EPIC-02, EPIC-03          |
 | EPIC-05 | Veterinary Patients                | planned | EPIC-04                   |
 | EPIC-06 | Clinical                           | planned | EPIC-05                   |
 | EPIC-07 | Scheduling                         | planned | EPIC-04, EPIC-05          |
@@ -31,6 +31,12 @@ updated: 2026-08-25
 | EPIC-20 | Production Hardening               | planned | MVP feature epics         |
 
 Update this table when Epic status changes.
+
+EPIC-02, EPIC-03, and EPIC-04 moved to `done` on 2026-09-11 by evidence-based
+closure against CI run `34605178149` at `c9cff613` (criterion-to-evidence maps
+plus preserved open/accepted debt). `done` means epic implementation closure
+only: it is **not** a production-readiness statement. [[EPIC-20]] Production
+Hardening and the open Tech Debt items remain.
 
 Individual Stories live in `../02-stories/`.
 

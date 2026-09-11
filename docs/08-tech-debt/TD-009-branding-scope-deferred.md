@@ -25,30 +25,30 @@ updated: 2026-09-11
 
 **Implemented on 2026-09-10; reconciliation updated 2026-09-11; not yet
 resolved** pending the deferred virus scanning and reset-cleanup dead-letter
-alerting/retention, and the pending commit. The 2026-09-11 fresh root
-verification (Engram verify-report #2144) passed all five root gates on
-candidate `2a637cfd…` (`evidence_revision sha256:9eb9ef6e…`; 0 blockers, 10/10
-requirements, 16/16 scenarios): `pnpm lint`, `pnpm format-check`,
-`pnpm typecheck`, `pnpm test` (API 359 passed / 5 skipped; web 91; worker 27;
-database 85; shared 16), and `pnpm build`. The pre-correction failing gate was
-`pnpm format-check` (six unformatted files), now formatted. This documentation
-correction's own root-gate verification also completed on 2026-09-11 (Engram
-verify-report #2170, verdict `pass`): all five root gates exited 0 on candidate
+alerting/retention. The DEC-004 branding expansion is committed on `main` in the
+range `b992053..c9cff61`. The 2026-09-11 fresh root verification (Engram
+verify-report #2144) passed all five root gates on candidate `2a637cfd…`
+(`evidence_revision sha256:9eb9ef6e…`; 0 blockers, 10/10 requirements, 16/16
+scenarios): `pnpm lint`, `pnpm format-check`, `pnpm typecheck`, `pnpm test` (API
+359 passed / 5 skipped; web 91; worker 27; database 85; shared 16), and
+`pnpm build`. The pre-correction failing gate was `pnpm format-check` (six
+unformatted files), now formatted. This documentation correction's own root-gate
+verification also completed on 2026-09-11 (Engram verify-report #2170, verdict
+`pass`): all five root gates exited 0 on candidate
 `sha256:d7aaf517b471b7ca527d35a00051bcc3bbcf43039ee9df1965524facdaad015e` (0
-blockers, 6/6 requirements, 8/8 scenarios). The DEC-004 implementation is
-present as uncommitted working-tree changes; correction passes changed the audit
-action to `branding.asset.created`, added anonymous public asset delivery,
-corrected the appearance precedence, added tenant-isolation and
-token-expiry/tamper coverage, and made reset storage retirement durable.
+blockers, 6/6 requirements, 8/8 scenarios). The committed tree then ran the
+canonical root gates green in CI run `34605178149` at `c9cff613`. Correction
+passes changed the audit action to `branding.asset.created`, added anonymous
+public asset delivery, corrected the appearance precedence, added
+tenant-isolation and token-expiry/tamper coverage, and made reset storage
+retirement durable.
 
 **Delivery reference:**
 `openspec/changes/2026-09-08-dec-004-branding-expansion/` (feature-branch-chain
 PR 1 → PR 2 → PR 3; tasks 1.1–4.2), with the durable-reset-cleanup remediation
 in the Engram change `2026-09-11-branding-commit-readiness-remediation` (units
-U1–U6). The resolving change is currently present as uncommitted working-tree
-changes on `main`; the commit/PR link is created by the orchestrator when the
-chain is committed, since this closure slice is not authorized to commit or
-push.
+U1–U6). The resolving change is committed on `main` in `b992053..c9cff61` (head
+`c9cff613`), whose CI run `34605178149` is the canonical closure baseline.
 
 **Inactive-slug criterion delivered (2026-09-11):** the previously unresolved
 half of the portal slug requirement is now representable and implemented.
@@ -99,8 +99,8 @@ This documentation correction's own root-gate verification also completed on
 2026-09-11 (Engram verify-report #2170, verdict `pass`): all five root gates
 exited 0 on candidate
 `sha256:d7aaf517b471b7ca527d35a00051bcc3bbcf43039ee9df1965524facdaad015e`. The
-record is not closed because the deferred sub-items below and the feature-branch
-chain commit remain pending.
+record is not closed because the deferred sub-items below remain pending; the
+committed tree is green in canonical CI run `34605178149` at `c9cff613`.
 
 ## Context
 
@@ -115,8 +115,7 @@ required acceptance criteria that do not depend on the three items below are
 evidence-passing and recorded in the EPIC-03 task and verify artifacts.
 
 Three scope items were originally deferred by this record. They are now
-**implemented** by DEC-004, present as uncommitted working-tree changes pending
-the feature-branch chain commit:
+**implemented** by DEC-004 (committed in `b992053..c9cff61`):
 
 1. **Controlled logo/favicon uploads — implemented.** `BrandingAsset`, the
    `StoragePort` boundary, strict MIME/size validation, signed-URL delivery, and
@@ -158,9 +157,9 @@ delivered. What remains is closure hygiene plus explicitly deferred sub-items:
   root-gate verification also completed all-green on 2026-09-11 (Engram
   verify-report #2170) against candidate
   `sha256:d7aaf517b471b7ca527d35a00051bcc3bbcf43039ee9df1965524facdaad015e`; the
-  record remains open only for the deferred sub-items and the pending commit.
-- The feature-branch chain is intentionally uncommitted in this slice, so no
-  commit/PR link exists yet.
+  record remains open only for the deferred sub-items.
+- The feature-branch chain is committed as `b992053..c9cff61` (head `c9cff613`);
+  canonical CI run `34605178149` is green.
 
 ## User Impact
 
@@ -181,8 +180,8 @@ delivered. What remains is closure hygiene plus explicitly deferred sub-items:
   correction's own root-gate re-verification also completed all-green on
   2026-09-11 (verify-report #2170, candidate
   `sha256:d7aaf517b471b7ca527d35a00051bcc3bbcf43039ee9df1965524facdaad015e`);
-  the record stays open for the deferred sub-items and the pending commit, not
-  for an unproven verification.
+  the record stays open for the deferred sub-items, not for an unproven
+  verification.
 - Virus scanning at the storage boundary remains undelivered and must not be
   read as delivered scope.
 - Reset-cleanup dead-letter alerting and intent retention policy remain
@@ -211,13 +210,13 @@ Open-but-implemented record, medium likelihood, moderate impact:
   This documentation correction's own root-gate re-verification also completed
   all-green on 2026-09-11 (verify-report #2170) against candidate
   `sha256:d7aaf517b471b7ca527d35a00051bcc3bbcf43039ee9df1965524facdaad015e`; the
-  record remains open for the deferred sub-items and the pending commit.
+  record remains open for the deferred sub-items.
 - Reset cleanup is asynchronous: a reset-orphaned object is retired only after
   the worker drains the committed `PENDING` intent (or the sweep re-enqueues
   it), and terminal `DEAD_LETTER` intents have no operator alert yet.
 - Virus scanning remains deferred and must not be reported as delivered.
-- The feature-branch chain is uncommitted, so the delivery reference is
-  incomplete.
+- The feature-branch chain is committed as `b992053..c9cff61`, so the delivery
+  reference is complete.
 
 No security, tenancy, or data-integrity invariant is weakened.
 
@@ -262,8 +261,9 @@ be read as delivered scope.
 
 Re-entry was triggered by DEC-004 on 2026-09-08; implementation is present, the
 inactive-slug criterion is delivered ([[DEC-005]] / [[ADR-004 Tenant Lifecycle
-Status]], 2026-09-11), and the record remains open pending the feature-branch
-chain commit and the deferred virus-scanning and reset-cleanup sub-items.
+Status]], 2026-09-11), and the feature-branch chain is committed on `main` in
+`b992053..c9cff61` (head `c9cff613`). The record remains open pending the
+deferred virus-scanning and reset-cleanup sub-items.
 
 Must be resolved (record closed) before broad production onboarding where brand
 identity matters.
@@ -315,6 +315,5 @@ identity matters.
       `sha256:d7aaf517b471b7ca527d35a00051bcc3bbcf43039ee9df1965524facdaad015e`
       (`pnpm lint`, `pnpm format-check`, `pnpm typecheck`, `pnpm test`, and
       `pnpm build`). The record stays open only for the deferred virus scanning
-      and reset-cleanup dead-letter alerting/retention, and because the
-      commit/PR link is pending: the feature-branch chain is intentionally
-      uncommitted in this slice.
+      and reset-cleanup dead-letter alerting/retention. The committed tree is
+      green in canonical CI run `34605178149` at `c9cff613`.

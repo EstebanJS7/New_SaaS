@@ -2,7 +2,7 @@
 type: module
 module: customers
 status: active
-updated: 2026-09-07
+updated: 2026-09-11
 ---
 
 # Module — Customers (Core)
@@ -128,19 +128,20 @@ field names only; values are never logged.
   blocked**: Playwright is not installed or configured in the repository. The
   Vitest suite covers unit, integration, proxy, and UI 403 UX paths; a future
   change that adds Playwright should implement the CRUD/navigation E2E scenario
-  before removing this note.
+  before removing this note. Tracked as [[TD-007]].
 - Live application-path HTTP tenant isolation has been executed against a real
   PostgreSQL database in CI. GitHub Actions run
-  [`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
-  for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` reported the live-PG
-  suite `apps/api/test/live-pg-isolation.e2e-spec.ts` as 5/5 passed. The harness
+  [`34605178149`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34605178149)
+  for commit `c9cff6131b6036849d0899a5735e6a2a6a3be5fd` reported the live-PG
+  suite `apps/api/test/live-pg-isolation.e2e-spec.ts` as 6/6 passed. The harness
   boots the real `AppModule` with the real `PrismaService` against a disposable
   PostgreSQL database, applies migrations and reference seeds, creates the
   fixture tenants, users, and memberships directly through `PrismaService`, and
   uses Supertest over an explicitly bound NestJS/Fastify listener to prove
   byte-equivalent `404 NOT_FOUND` for cross-tenant Customer/Address/Contact
   mutations. The suite is skipped automatically when
-  `DATABASE_URL_TEST`/`DATABASE_URL` are absent.
+  `DATABASE_URL_TEST`/`DATABASE_URL` are absent. The broader Batch 5 isolation
+  suite remains tracked under [[TD-006]].
 
 ## Related
 

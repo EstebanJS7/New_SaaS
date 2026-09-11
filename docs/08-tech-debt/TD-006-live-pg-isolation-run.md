@@ -10,21 +10,23 @@ related_epics:
 related_stories:
   - DAT-004
 created: 2026-08-24
-updated: 2026-09-07
+updated: 2026-09-11
 ---
 
 # TD-006 — Run tenant-isolation suites against live PostgreSQL
 
 ## Context
 
-The EPIC-04 portion of the tenant-isolation evidence is now executed in CI. The
+The EPIC-04 portion of the tenant-isolation evidence is executed in CI. The
 `Database migrations` job provisions a PG16 service container, applies
 migrations, seeds reference data, runs `pnpm db:live-verify`, builds the API,
 and runs `apps/api/test/live-pg-isolation.e2e-spec.ts` via
 `pnpm --filter @newsaas/api test:live-pg`. GitHub Actions run
-[`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
-for commit `853f13099cedcedf51b9e4c76126ed5f841efcca` reported that live-PG
-suite as 5/5 passed for the Customer/Address/Contact paths.
+[`34605178149`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34605178149)
+for commit `c9cff6131b6036849d0899a5735e6a2a6a3be5fd` reported that live-PG
+suite as **6/6 passed**. The suite now covers the Customer/Address/Contact
+mutation paths plus the tenant-relative authorized branding mutation and the
+test-only branding reset cleanup producer injection added by commit `c9cff61`.
 
 The Batch 5 cross-tenant isolation suites
 (`apps/api/test/cross-tenant-isolation.e2e-spec.ts`) still execute over an
@@ -142,9 +144,10 @@ and mandatory before any production deployment.
 
 - [x] CI migrations job runs the EPIC-04 live-PG isolation evidence
       (`pnpm --filter @newsaas/api test:live-pg`) against the PG16 service
-      container. **Verified:** GitHub Actions run `34183380781` at commit
-      `853f13099cedcedf51b9e4c76126ed5f841efcca` — 5/5 passed for
-      Customer/Address/Contact paths.
+      container. **Verified:** GitHub Actions run `34605178149` at commit
+      `c9cff6131b6036849d0899a5735e6a2a6a3be5fd` — live-PG suite 6/6 passed,
+      including the Customer/Address/Contact mutation paths and the
+      tenant-relative branding mutation.
 - [ ] CI runs the broader cross-tenant isolation suite against live PG16 and
       stays green.
 - [ ] A deliberately broken predicate fails that CI job (one-off proof).

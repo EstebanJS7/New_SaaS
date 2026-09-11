@@ -37,10 +37,10 @@ All notable product changes will be documented here.
     configured; tasks updated to show explicit blocker instead of false ticks.
   - Fresh PostgreSQL migration and live application-path HTTP tenant-isolation
     evidence executed in CI run
-    [`34183380781`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34183380781)
-    for commit `853f13099cedcedf51b9e4c76126ed5f841efcca`: migrations/seed
+    [`34605178149`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34605178149)
+    for commit `c9cff6131b6036849d0899a5735e6a2a6a3be5fd`: migrations/seed
     applied, `pnpm db:live-verify` passed, and
-    `apps/api/test/live-pg-isolation.e2e-spec.ts` reported 5/5 passed with
+    `apps/api/test/live-pg-isolation.e2e-spec.ts` reported 6/6 passed with
     byte-equivalent `404 NOT_FOUND` for cross-tenant Customer/Address/Contact
     mutations.
 - PRD v1.3 architecture freeze and Complexity Budget.
@@ -70,6 +70,16 @@ All notable product changes will be documented here.
     template folder.
 
 ### Changed
+
+- EPIC-02, EPIC-03, and EPIC-04 closure reconciliation (docs-only): epic records
+  moved to `done`, the missing `docs/01-roadmap/EPIC-04-Customers.md` record
+  created, and roadmap, changelog, module, and OpenSpec-context references
+  reconciled against canonical CI run
+  [`34605178149`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34605178149)
+  at `c9cff613`. `done` means epic implementation closure only — it is **not**
+  production readiness. [[EPIC-20]] Production Hardening and the open Tech Debt
+  items (TD-001, TD-006, TD-009, TD-010) remain; TD-007 and TD-008 stay
+  accepted.
 
 ### Fixed
 
