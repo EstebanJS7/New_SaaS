@@ -2,6 +2,20 @@ export { PrismaModule } from "./prisma.module.js";
 export { PrismaService } from "./prisma.service.js";
 
 /**
+ * Shared append-only audit primitive (design D9). The API's request-scoped
+ * `AuditWriter` delegates here, and the worker calls it as SYSTEM — one
+ * sanctioned writer path for `audit_log`, reachable from both deployables.
+ */
+export { appendAuditLog } from "./audit-log.js";
+export type {
+  AuditActorType,
+  AuditAppendInput,
+  AuditAppendedRow,
+  AuditAppendTx,
+  AuditLogDelegate,
+} from "./audit-log.js";
+
+/**
  * Prisma namespace utilities (sql/join/raw) re-exported for application code
  * that must build safe raw SQL (e.g. SELECT ... FOR UPDATE row locks). Keeps
  * `@prisma/client` a private implementation detail of THIS package so no other

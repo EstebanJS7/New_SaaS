@@ -40,6 +40,7 @@ model UserProfile {
   memberships TenantMembership[]
   auditLogs   AuditLog[]
   tenantBrandings TenantBranding[]
+  brandingAssets  BrandingAsset[]
 
   @@map("user_profile")
 }
@@ -101,11 +102,23 @@ enum TenantMembershipStatus {
   @@map("tenant_membership_status")
 }
 
+/// Tenant lifecycle (DEC-005 + ADR-004). Values pinned by ADR-004; evolve
+/// additively only. The public branding lookup treats SUSPENDED exactly like an
+/// unknown slug; suspension commands are out of scope.
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+
+  @@map("tenant_status")
+}
+
 model Tenant {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
   slug String @unique
   name String
+
+  status TenantStatus @default(ACTIVE) @map("status")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -118,6 +131,8 @@ model Tenant {
   rolePermissionOverrides TenantRolePermissionOverride[]
   settingNamespaces        TenantSettingNamespace[]
   tenantBranding          TenantBranding[]
+  brandingAssets          BrandingAsset[]
+  brandingResetCleanupIntents BrandingResetCleanupIntent[]
   customers               Customer[]
   customerAddresses       CustomerAddress[]
   customerContacts        CustomerContact[]
@@ -313,6 +328,16 @@ model TenantBranding {
   schemaVersion Int    @map("schema_version")
   overrides     Json   @map("overrides")
 
+  /// Human-readable display name for the branded product/tenant.
+  displayName String? @map("display_name")
+
+  /// Nullable asset FKs; ON DELETE SET NULL keeps the tenant branding row
+  /// valid when an asset is replaced or removed. Unique so each asset is
+  /// referenced by at most one tenant branding row.
+  logoLightAssetId String? @unique @map("logo_light_asset_id") @db.Uuid
+  logoDarkAssetId  String? @unique @map("logo_dark_asset_id") @db.Uuid
+  faviconAssetId   String? @unique @map("favicon_asset_id") @db.Uuid
+
   updatedByUserProfileId String? @map("updated_by_user_profile_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -321,7 +346,104 @@ model TenantBranding {
   tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   updatedBy UserProfile? @relation(fields: [updatedByUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  logoLightAsset BrandingAsset? @relation("TenantBrandingLogoLight", fields: [logoLightAssetId], references: [id], onDelete: SetNull, onUpdate: Restrict)
+  logoDarkAsset  BrandingAsset? @relation("TenantBrandingLogoDark", fields: [logoDarkAssetId], references: [id], onDelete: SetNull, onUpdate: Restrict)
+  faviconAsset   BrandingAsset? @relation("TenantBrandingFavicon", fields: [faviconAssetId], references: [id], onDelete: SetNull, onUpdate: Restrict)
+
   @@map("tenant_branding")
+}
+
+/// Kind discriminator for tenant-owned branding assets. Values are pinned;
+/// evolve additively only.
+enum BrandingAssetKind {
+  LOGO_LIGHT
+  LOGO_DARK
+  FAVICON
+
+  @@map("branding_asset_kind")
+}
+
+/// Tenant-owned logo/favicon asset metadata. Only opaque storage keys are
+/// persisted here; bytes live in the approved object-storage boundary.
+/// Data classification: assetKey is INTERNAL — never returned to clients.
+model BrandingAsset {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  kind     BrandingAssetKind
+
+  /// Opaque, random storage key. Bucket/path details live inside StoragePort.
+  assetKey String @map("asset_key")
+
+  /// Approved MIME type validated by magic-byte sniff.
+  contentType String @map("content_type")
+
+  /// Size in bytes, validated against per-kind caps before storage.
+  byteSize Int @map("byte_size")
+
+  /// Hex SHA-256 of the stored bytes; integrity + idempotency signal.
+  sha256 String
+
+  uploadedByUserProfileId String @map("uploaded_by_user_profile_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  uploadedBy UserProfile @relation(fields: [uploadedByUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  logoLightTenantBranding  TenantBranding? @relation("TenantBrandingLogoLight")
+  logoDarkTenantBranding   TenantBranding? @relation("TenantBrandingLogoDark")
+  faviconTenantBranding    TenantBranding? @relation("TenantBrandingFavicon")
+
+  @@unique([tenantId, kind])
+  @@index([tenantId])
+  @@map("branding_asset")
+}
+
+/// Durable, single-purpose cleanup status for reset-disconnected storage
+/// objects. Values are pinned; evolve additively only.
+enum BrandingResetCleanupStatus {
+  PENDING
+  COMPLETED
+  DEAD_LETTER
+
+  @@map("branding_reset_cleanup_status")
+}
+
+/// Durable intent to retire the storage objects captured during a branding
+/// reset. Inserted inside the reset transaction and enqueued after commit, so
+/// cleanup survives a crash between the two. Deliberately single-purpose — not
+/// a generic job/outbox model.
+/// Data classification: storageKeys INTERNAL (opaque object keys, never logged
+/// as a list); lastError INTERNAL (sanitized message, no sensitive payloads).
+model BrandingResetCleanupIntent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  /// Owning tenant; the worker only addresses intents by id AND tenantId.
+  tenantId String @map("tenant_id") @db.Uuid
+
+  /// Originating `branding.reset` audit row (reference by value).
+  resetAuditId String? @map("reset_audit_id") @db.Uuid
+
+  /// Staff profile that requested the reset (reference by value).
+  requestedByUserProfileId String? @map("requested_by_user_profile_id") @db.Uuid
+
+  /// Opaque storage keys captured by the reset transaction.
+  storageKeys String[] @map("storage_keys")
+
+  status    BrandingResetCleanupStatus @default(PENDING)
+  attempts  Int                        @default(0)
+  lastError String?                    @map("last_error")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, createdAt])
+  @@map("branding_reset_cleanup_intent")
 }
 
 // ---------------------------------------------------------------------------
