@@ -1,0 +1,36 @@
+{
+  "name": "@newsaas/storage",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NewSaaS shared object-storage boundary — port, drivers, keys, and NestJS module",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run --config ../../packages/vitest-config/vitest.node.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.758.0",
+    "@aws-sdk/s3-request-presigner": "^3.758.0",
+    "@nestjs/common": "^11.0.16"
+  },
+  "devDependencies": {
+    "@newsaas/eslint-config": "workspace:*",
+    "@newsaas/typescript-config": "workspace:*",
+    "@newsaas/vitest-config": "workspace:*",
+    "@types/node": "^22.14.1",
+    "eslint": "^9.24.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}
