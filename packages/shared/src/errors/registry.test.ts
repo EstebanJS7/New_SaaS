@@ -18,6 +18,7 @@ describe("ERROR_CODES registry", () => {
       CONFLICT: { status: 409 },
       RATE_LIMITED: { status: 429 },
       INTERNAL: { status: 500 },
+      PAYLOAD_TOO_LARGE: { status: 413 },
     });
   });
 
@@ -38,9 +39,9 @@ describe("ERROR_CODES registry", () => {
     }).toThrow(TypeError);
   });
 
-  it("exposes exactly the eleven baseline codes with SCREAMING_SNAKE keys", () => {
+  it("exposes exactly the twelve baseline codes with SCREAMING_SNAKE keys", () => {
     const codes = Object.keys(ERROR_CODES);
-    expect(codes).toHaveLength(11);
+    expect(codes).toHaveLength(12);
     for (const code of codes) {
       expect(code).toMatch(/^[A-Z][A-Z0-9_]*$/);
     }

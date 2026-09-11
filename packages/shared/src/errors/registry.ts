@@ -21,6 +21,7 @@ export const ERROR_CODES = Object.freeze({
   RATE_LIMITED: Object.freeze({ status: 429 }),
   INTERNAL: Object.freeze({ status: 500 }),
   FEATURE_NOT_ENTITLED: Object.freeze({ status: 403 }),
+  PAYLOAD_TOO_LARGE: Object.freeze({ status: 413 }),
 });
 
 export type ErrorCode = keyof typeof ERROR_CODES;

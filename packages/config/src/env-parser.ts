@@ -6,12 +6,18 @@ export type EnvParseResult<T> =
 /**
  * Parses process env with a Zod schema and returns a structured result.
  *
+ * Accepts any Zod schema, including an object refined with `superRefine`
+ * (a `ZodEffects`), so callers can add cross-field validation such as
+ * environment-dependent production gates.
+ *
  * On failure the error message names every missing or invalid variable so
  * operators can fix the environment quickly.
  */
-export function createEnvParser<T extends Record<string, ZodTypeAny>>(schema: z.ZodObject<T>) {
-  return (input: NodeJS.ProcessEnv): EnvParseResult<z.infer<typeof schema>> => {
-    const result = schema.safeParse(input);
+export function createEnvParser<S extends ZodTypeAny>(schema: S) {
+  return (input: NodeJS.ProcessEnv): EnvParseResult<z.infer<S>> => {
+    // `safeParse` on the `ZodTypeAny` constraint widens to `any`; the schema's
+    // own output type is recovered here so callers keep a strongly typed env.
+    const result = schema.safeParse(input) as z.SafeParseReturnType<NodeJS.ProcessEnv, z.infer<S>>;
     if (result.success) {
       return { success: true, env: result.data };
     }
