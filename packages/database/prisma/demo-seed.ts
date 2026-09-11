@@ -1,6 +1,11 @@
 import { hash } from "argon2";
 import { PrismaClient } from "../src/generated/index.js";
-import { resolveDemoSeedGuard, seedDemoCustomers, seedDemoData } from "../src/demo-seed.js";
+import {
+  resolveDemoSeedGuard,
+  seedDemoCustomers,
+  seedDemoData,
+  seedDemoPatients,
+} from "../src/demo-seed.js";
 
 /**
  * Guarded demo tenant seed entrypoint (design D8 / task 6.2).
@@ -51,11 +56,13 @@ async function main(): Promise<void> {
   try {
     const result = await seedDemoData(db, { passwordHash });
     const customers = await seedDemoCustomers(db, result.tenantId);
+    const patients = await seedDemoPatients(db, result.tenantId);
     console.info(
       `Demo seed enabled — created/verified tenant ${result.tenantId} with owner ` +
         `${result.ownerProfileId} (${result.grantedFeatureCodes} explicit grants), ` +
         `${customers.customers} customers, ${customers.addresses} addresses, ` +
-        `${customers.contacts} contacts.`
+        `${customers.contacts} contacts, ${patients.patients} patients, ` +
+        `${patients.guardians} guardian links.`
     );
   } finally {
     await db.$disconnect();

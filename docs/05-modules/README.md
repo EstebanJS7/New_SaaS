@@ -17,12 +17,22 @@ Implemented (EPIC-02):
 RBAC.md
 ```
 
-Recommended files:
+Implemented (EPIC-04):
 
 ```text
 Customers.md
+```
+
+In progress (EPIC-05, data foundation landed — API/UI slices pending):
+
+```text
+Patients.md
+```
+
+Recommended files:
+
+```text
 Scheduling.md
-Veterinary-Patients.md
 Clinical.md
 Inventory.md
 Purchases.md

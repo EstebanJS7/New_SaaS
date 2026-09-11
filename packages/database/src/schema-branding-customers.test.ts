@@ -78,23 +78,34 @@ describe("migration 008 · customers", () => {
     expect(CUSTOMERS_SQL).toMatch(/CREATE INDEX "customer_tenant_id_is_active_idx"/);
   });
 
-  it("keeps PatientGuardian inert (no patient FK)", () => {
+  it("creates PatientGuardian as a Customer-owned scaffold; Patient activation ships separately", () => {
+    // The EPIC-04 migration deliberately created the scaffold WITHOUT a patient
+    // FK; EPIC-05 activates it in its own additive migration.
     expect(CUSTOMERS_SQL).not.toMatch(/CREATE TABLE "patient"/);
-    expect(SCHEMA).not.toMatch(/patient\s+Patient/);
+    expect(CUSTOMERS_SQL).not.toMatch(/ADD COLUMN "patient_id"/);
     expect(SCHEMA).toMatch(/guardians\s+PatientGuardian\[\]/);
+
+    const patientsSql = findMigration(MIGRATIONS, "_patients").sql;
+    expect(patientsSql).toMatch(/ALTER TABLE "patient_guardian"[\s\S]*?"patient_id" UUID NOT NULL/);
   });
 
   it("marks confidential fields in the schema comments", () => {
     expect(SCHEMA).toMatch(/CONFIDENTIAL/);
   });
 
-  it("keeps PatientGuardian inert across the application — no service/controller/route/UI consumers", () => {
+  it("references PatientGuardian only from the Veterinary Patients module", () => {
+    // Veterinary → Core boundary: PatientGuardian is Veterinary-owned. The
+    // Patients module (`apps/api/src/patients/**`, `apps/web/**/patients/**`)
+    // may reference it; every other application module may not.
     const roots = ["../../apps/api/src", "../../apps/web/src"];
     const extensions = [".ts", ".tsx"];
     const violations: string[] = [];
 
     for (const root of roots) {
       for (const file of walkSourceFiles(root, extensions)) {
+        if (file.includes("/patients/")) {
+          continue;
+        }
         const content = readFileSync(file, "utf-8");
         if (content.includes("PatientGuardian")) {
           violations.push(file);

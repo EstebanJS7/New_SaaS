@@ -60,6 +60,11 @@ export const PERMISSION_SEEDS = [
   { key: "customers.deactivate", name: "Deactivate customers" },
   { key: "customers.address.manage", name: "Manage customer addresses" },
   { key: "customers.contact.manage", name: "Manage customer contacts" },
+  { key: "patients.read", name: "Read patients" },
+  { key: "patients.create", name: "Create patients" },
+  { key: "patients.update", name: "Update patients" },
+  { key: "patients.deactivate", name: "Deactivate patients" },
+  { key: "patients.guardian.manage", name: "Manage patient guardians" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -84,6 +89,11 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "customers.deactivate",
     "customers.address.manage",
     "customers.contact.manage",
+    "patients.read",
+    "patients.create",
+    "patients.update",
+    "patients.deactivate",
+    "patients.guardian.manage",
   ],
   ADMIN: [
     "vet.clinical.create",
@@ -100,8 +110,19 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "customers.deactivate",
     "customers.address.manage",
     "customers.contact.manage",
+    "patients.read",
+    "patients.create",
+    "patients.update",
+    "patients.deactivate",
+    "patients.guardian.manage",
   ],
-  VETERINARIAN: ["vet.clinical.create", "customers.read"],
+  VETERINARIAN: [
+    "vet.clinical.create",
+    "customers.read",
+    "patients.read",
+    "patients.create",
+    "patients.update",
+  ],
   RECEPTIONIST: [
     "scheduling.appointment.manage",
     "customers.read",
@@ -109,6 +130,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "customers.update",
     "customers.address.manage",
     "customers.contact.manage",
+    "patients.read",
+    "patients.create",
+    "patients.update",
+    "patients.guardian.manage",
   ],
   CASHIER: ["cash.session.close", "fiscal.invoice.issue"],
   INVENTORY_MANAGER: ["inventory.stock.transfer"],
@@ -136,14 +161,51 @@ export const FEATURE_CODE_SEEDS = [
  */
 export const STARTER_PLAN_SEED = { code: "starter", name: "Starter" } as const;
 
+/**
+ * GLOBAL veterinary taxonomy catalog (Decision #2211). Species and Breed are
+ * system-seeded reference data — never tenant-scoped and never tenant-filtered
+ * — mirroring `FeatureCode`/`Role`. `code` is the stable natural key for a
+ * Species; a Breed is keyed by `(speciesCode, code)`.
+ */
+export const SPECIES_SEEDS = [
+  { code: "dog", name: "Dog" },
+  { code: "cat", name: "Cat" },
+  { code: "bird", name: "Bird" },
+  { code: "rabbit", name: "Rabbit" },
+  { code: "reptile", name: "Reptile" },
+  { code: "other", name: "Other" },
+] as const;
+
+export type SpeciesCode = (typeof SPECIES_SEEDS)[number]["code"];
+
+export const BREED_SEEDS = [
+  { speciesCode: "dog", code: "mixed", name: "Mixed Breed" },
+  { speciesCode: "dog", code: "labrador_retriever", name: "Labrador Retriever" },
+  { speciesCode: "dog", code: "german_shepherd", name: "German Shepherd" },
+  { speciesCode: "cat", code: "mixed", name: "Mixed Breed" },
+  { speciesCode: "cat", code: "siamese", name: "Siamese" },
+  { speciesCode: "cat", code: "persian", name: "Persian" },
+  { speciesCode: "bird", code: "mixed", name: "Mixed Breed" },
+  { speciesCode: "rabbit", code: "mixed", name: "Mixed Breed" },
+  { speciesCode: "reptile", code: "mixed", name: "Mixed Breed" },
+] as const;
+
 export type ReferenceSeedClient = Pick<
   PrismaClient,
-  "role" | "permission" | "rolePermission" | "featureCode" | "plan" | "planCapability"
+  | "role"
+  | "permission"
+  | "rolePermission"
+  | "featureCode"
+  | "plan"
+  | "planCapability"
+  | "species"
+  | "breed"
 >;
 
 /**
  * Seeds all reference data idempotently. Write order is deterministic:
- * roles → permissions → feature codes → plan → id resolution → pairs.
+ * roles → permissions → feature codes → plan → id resolution → pairs →
+ * global Species/Breed taxonomy.
  */
 export async function seedReferenceData(db: ReferenceSeedClient): Promise<void> {
   for (const role of ROLE_SEEDS) {
@@ -239,6 +301,42 @@ export async function seedReferenceData(db: ReferenceSeedClient): Promise<void> 
     await db.planCapability.upsert({
       where: { planId_featureCodeId: { planId: plan.id, featureCodeId } },
       create: { planId: plan.id, featureCodeId },
+      update: {},
+    });
+  }
+
+  // GLOBAL taxonomy (Decision #2211): species first, then breeds keyed by the
+  // resolved species id so the compound natural key is never guessed.
+  for (const species of SPECIES_SEEDS) {
+    await db.species.upsert({
+      where: { code: species.code },
+      create: { code: species.code, name: species.name },
+      update: {}, // identity-stable rerun: never touch updated_at on unchanged rows
+    });
+  }
+
+  const speciesIdByCode = new Map<string, string>();
+  for (const species of SPECIES_SEEDS) {
+    const row = await db.species.findUnique({
+      where: { code: species.code },
+      select: { id: true },
+    });
+    if (!row) {
+      throw new Error(`reference seed: species ${species.code} missing after upsert`);
+    }
+    speciesIdByCode.set(species.code, row.id);
+  }
+
+  for (const breed of BREED_SEEDS) {
+    const speciesId = speciesIdByCode.get(breed.speciesCode);
+    if (!speciesId) {
+      throw new Error(
+        `reference seed: unresolved species id for breed ${breed.speciesCode}/${breed.code}`
+      );
+    }
+    await db.breed.upsert({
+      where: { speciesId_code: { speciesId, code: breed.code } },
+      create: { speciesId, code: breed.code, name: breed.name },
       update: {},
     });
   }
