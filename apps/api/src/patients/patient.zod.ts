@@ -68,3 +68,31 @@ export const updatePatientBody = updatePatientPayload;
 export type UpdatePatientInput = z.infer<typeof updatePatientPayload>;
 
 export const patientIdParam = z.object({ id: z.string().uuid() });
+export const patientGuardiansParam = z.object({ patientId: z.string().uuid() });
+export const patientGuardianParam = z.object({
+  patientId: z.string().uuid(),
+  id: z.string().uuid(),
+});
+
+/** Guardian create payload. A primary guardian triggers a demote-then-promote. */
+const createGuardianPayload = z
+  .object({
+    customerId: z.string().uuid(),
+    isPrimary: z.boolean().optional(),
+    position: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+export const createGuardianBody = createGuardianPayload;
+export type CreateGuardianInput = z.infer<typeof createGuardianPayload>;
+
+/** Guardian update payload. Only ordering and primary status are mutable here. */
+const updateGuardianPayload = z
+  .object({
+    isPrimary: z.boolean().optional(),
+    position: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+export const updateGuardianBody = updateGuardianPayload;
+export type UpdateGuardianInput = z.infer<typeof updateGuardianPayload>;

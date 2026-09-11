@@ -6,11 +6,13 @@ import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
 import { PATIENT_DTO_SCHEMA_VERSION, PATIENT_GUARDIAN_DTO_SCHEMA_VERSION } from "./patient.zod.js";
 import type {
+  CreateGuardianInput,
   CreatePatientInput,
   PatientSex,
+  UpdateGuardianInput,
   UpdatePatientInput,
 } from "./patient.zod.js";
-import type { PatientResponse } from "./patient.dto.js";
+import type { PatientGuardianResponse, PatientResponse } from "./patient.dto.js";
 
 /** Tenant-scoped Patient row as read from Prisma. */
 export interface PatientRow {
@@ -164,6 +166,20 @@ function toPatientResponse(row: PatientRow): PatientResponse {
     sex: row.sex,
     birthDate: row.birthDate ? row.birthDate.toISOString() : null,
     isActive: row.isActive,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function toGuardianResponse(row: PatientGuardianRow): PatientGuardianResponse {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    patientId: row.patientId,
+    customerId: row.customerId,
+    isPrimary: row.isPrimary,
+    isActive: row.isActive,
+    position: row.position,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -430,6 +446,270 @@ export class PatientsService {
   }
 
   // -------------------------------------------------------------------------
+  // Guardian boundary
+  // -------------------------------------------------------------------------
+
+  async listGuardians(patientId: string): Promise<PatientGuardianResponse[]> {
+    const tenantId = await this.requireTenantContext();
+    await this.findPatientOrThrow(patientId, tenantId);
+    const rows = await this.prisma.patientGuardian.findMany({
+      where: { tenantId, patientId, isActive: true },
+      orderBy: { position: "asc" },
+    });
+    return rows.map(toGuardianResponse);
+  }
+
+  async getGuardian(id: string, patientId: string): Promise<PatientGuardianResponse> {
+    const tenantId = await this.requireTenantContext();
+    const row = await this.findGuardianOrThrow(id, patientId, tenantId);
+    return toGuardianResponse(row);
+  }
+
+  async createGuardian(
+    patientId: string,
+    input: CreateGuardianInput
+  ): Promise<PatientGuardianResponse> {
+    const tenantId = await this.requireTenantContext();
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      await this.findPatientOrThrowTx(tx, patientId, tenantId);
+      await this.assertTenantCustomer(tx, input.customerId, tenantId);
+
+      const existing = await tx.patientGuardian.findFirst({
+        where: { tenantId, patientId, customerId: input.customerId },
+      });
+      if (existing) {
+        throw new DomainError("CONFLICT", "Customer is already a guardian of this patient.");
+      }
+
+      let created: PatientGuardianRow;
+      let guardianAudit: GuardianAudit;
+      if (input.isPrimary === true) {
+        await this.demoteActivePrimary(tx, tenantId, patientId);
+        created = await tx.patientGuardian.create({
+          data: {
+            tenantId,
+            patientId,
+            customerId: input.customerId,
+            isPrimary: true,
+            isActive: true,
+            position: input.position ?? 0,
+          },
+        });
+        guardianAudit = {
+          action: "patient_guardian.created",
+          targetId: created.id,
+          changedFields: ["customerId", "isPrimary"],
+        };
+      } else {
+        created = await tx.patientGuardian.create({
+          data: {
+            tenantId,
+            patientId,
+            customerId: input.customerId,
+            isPrimary: false,
+            isActive: true,
+            position: input.position ?? 0,
+          },
+        });
+        guardianAudit = {
+          action: "patient_guardian.created",
+          targetId: created.id,
+          changedFields: ["customerId"],
+        };
+      }
+
+      await this.appendGuardianAudit(tx, guardianAudit, patientId, tenantId, actorUserProfileId);
+      return created;
+    });
+
+    return toGuardianResponse(row);
+  }
+
+  async updateGuardian(
+    id: string,
+    patientId: string,
+    input: UpdateGuardianInput
+  ): Promise<PatientGuardianResponse> {
+    const tenantId = await this.requireTenantContext();
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      const guardian = await this.findGuardianOrThrowTx(tx, id, patientId, tenantId);
+      const patient = await this.findPatientOrThrowTx(tx, patientId, tenantId);
+
+      // Build exactly the field set this mutation writes so the audit row can
+      // never claim a change the update did not actually apply (a demotion that
+      // also supplies `position` must persist BOTH fields).
+      let action = "patient_guardian.updated";
+      const data: PatientGuardianUpdateData = {};
+
+      if (input.isPrimary === true) {
+        await this.demoteActivePrimary(tx, tenantId, patientId, id);
+        data.isPrimary = true;
+        data.isActive = true;
+        action = "patient_guardian.primary_changed";
+      } else if (input.isPrimary === false) {
+        if (guardian.isPrimary && guardian.isActive && patient.isActive) {
+          throw new DomainError(
+            "CONFLICT",
+            "Cannot remove the primary guardian while the patient is active."
+          );
+        }
+        data.isPrimary = false;
+        action = "patient_guardian.primary_changed";
+      }
+
+      if (input.position !== undefined) {
+        data.position = input.position;
+      }
+
+      if (Object.keys(data).length > 0) {
+        await tx.patientGuardian.updateMany({ where: { id, tenantId, patientId }, data });
+      }
+
+      const updated = await tx.patientGuardian.findFirst({ where: { id, tenantId, patientId } });
+      if (!updated) {
+        throw new DomainError("NOT_FOUND", "Patient guardian was not found.");
+      }
+
+      await this.audit.append(
+        {
+          action,
+          tenantId,
+          actorUserProfileId,
+          targetType: "patient_guardian",
+          targetId: updated.id,
+          metadata: {
+            schemaVersion: PATIENT_GUARDIAN_DTO_SCHEMA_VERSION,
+            changedFields: Object.keys(input).filter((field) => field in data),
+            patientId,
+          },
+        },
+        tx
+      );
+
+      return updated;
+    });
+
+    return toGuardianResponse(row);
+  }
+
+  async setPrimaryGuardian(id: string, patientId: string): Promise<PatientGuardianResponse> {
+    const tenantId = await this.requireTenantContext();
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      await this.findPatientOrThrowTx(tx, patientId, tenantId);
+      const guardian = await this.findGuardianOrThrowTx(tx, id, patientId, tenantId);
+
+      if (guardian.isPrimary && guardian.isActive) {
+        return guardian;
+      }
+
+      await this.demoteActivePrimary(tx, tenantId, patientId, id);
+      await tx.patientGuardian.updateMany({
+        where: { id, tenantId, patientId },
+        data: { isPrimary: true, isActive: true },
+      });
+
+      const updated = await tx.patientGuardian.findFirst({ where: { id, tenantId, patientId } });
+      if (!updated) {
+        throw new DomainError("NOT_FOUND", "Patient guardian was not found.");
+      }
+
+      await this.audit.append(
+        {
+          action: "patient_guardian.primary_changed",
+          tenantId,
+          actorUserProfileId,
+          targetType: "patient_guardian",
+          targetId: updated.id,
+          metadata: {
+            schemaVersion: PATIENT_GUARDIAN_DTO_SCHEMA_VERSION,
+            changedFields: ["isPrimary", "isActive"],
+            patientId,
+          },
+        },
+        tx
+      );
+
+      return updated;
+    });
+
+    return toGuardianResponse(row);
+  }
+
+  async deactivateGuardian(id: string, patientId: string): Promise<PatientGuardianResponse> {
+    const tenantId = await this.requireTenantContext();
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      const guardian = await this.findGuardianOrThrowTx(tx, id, patientId, tenantId);
+
+      if (!guardian.isActive) {
+        await this.audit.append(
+          {
+            action: "patient_guardian.deactivated",
+            tenantId,
+            actorUserProfileId,
+            targetType: "patient_guardian",
+            targetId: guardian.id,
+            metadata: {
+              schemaVersion: PATIENT_GUARDIAN_DTO_SCHEMA_VERSION,
+              changedFields: [],
+              patientId,
+            },
+          },
+          tx
+        );
+        return guardian;
+      }
+
+      if (guardian.isPrimary) {
+        const patient = await this.findPatientOrThrowTx(tx, patientId, tenantId);
+        if (patient.isActive) {
+          throw new DomainError(
+            "CONFLICT",
+            "Cannot deactivate the primary guardian of an active patient."
+          );
+        }
+      }
+
+      await tx.patientGuardian.updateMany({
+        where: { id, tenantId, patientId },
+        data: { isActive: false },
+      });
+
+      const updated = await tx.patientGuardian.findFirst({ where: { id, tenantId, patientId } });
+      if (!updated) {
+        throw new DomainError("NOT_FOUND", "Patient guardian was not found.");
+      }
+
+      await this.audit.append(
+        {
+          action: "patient_guardian.deactivated",
+          tenantId,
+          actorUserProfileId,
+          targetType: "patient_guardian",
+          targetId: updated.id,
+          metadata: {
+            schemaVersion: PATIENT_GUARDIAN_DTO_SCHEMA_VERSION,
+            changedFields: ["isActive"],
+            patientId,
+          },
+        },
+        tx
+      );
+
+      return updated;
+    });
+
+    return toGuardianResponse(row);
+  }
+
+  // -------------------------------------------------------------------------
   // Internal helpers
   // -------------------------------------------------------------------------
 
@@ -538,6 +818,25 @@ export class PatientsService {
     };
   }
 
+  /** Demotes the active primary guardian unless it is the `exceptId` link. */
+  private async demoteActivePrimary(
+    tx: PatientsTransaction,
+    tenantId: string,
+    patientId: string,
+    exceptId?: string
+  ): Promise<void> {
+    const current = await tx.patientGuardian.findFirst({
+      where: { tenantId, patientId, isPrimary: true, isActive: true },
+    });
+    if (!current || (exceptId !== undefined && current.id === exceptId)) {
+      return;
+    }
+    await tx.patientGuardian.updateMany({
+      where: { id: current.id, tenantId, patientId },
+      data: { isPrimary: false },
+    });
+  }
+
   private async appendGuardianAudit(
     tx: PatientsTransaction,
     descriptor: GuardianAudit | null,
@@ -571,4 +870,40 @@ export class PatientsService {
     return row;
   }
 
+  private async findPatientOrThrowTx(
+    tx: PatientsTransaction,
+    id: string,
+    tenantId: string
+  ): Promise<PatientRow> {
+    const row = await tx.patient.findFirst({ where: { id, tenantId } });
+    if (!row) {
+      throw new DomainError("NOT_FOUND", "Patient was not found.");
+    }
+    return row;
+  }
+
+  private async findGuardianOrThrow(
+    id: string,
+    patientId: string,
+    tenantId: string
+  ): Promise<PatientGuardianRow> {
+    const row = await this.prisma.patientGuardian.findFirst({ where: { id, tenantId, patientId } });
+    if (!row) {
+      throw new DomainError("NOT_FOUND", "Patient guardian was not found.");
+    }
+    return row;
+  }
+
+  private async findGuardianOrThrowTx(
+    tx: PatientsTransaction,
+    id: string,
+    patientId: string,
+    tenantId: string
+  ): Promise<PatientGuardianRow> {
+    const row = await tx.patientGuardian.findFirst({ where: { id, tenantId, patientId } });
+    if (!row) {
+      throw new DomainError("NOT_FOUND", "Patient guardian was not found.");
+    }
+    return row;
+  }
 }

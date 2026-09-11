@@ -369,6 +369,94 @@ describe("PatientsService", () => {
     expect(appendMock.mock.calls[0][0].metadata).toMatchObject({ changedFields: [] });
   });
 
+  it("links a non-primary guardian and lists it", async () => {
+    const created = await withContext(() =>
+      service.create(patientInput({ primaryGuardianCustomerId: CUSTOMER_A }))
+    );
+    const linked = await withContext(() =>
+      service.createGuardian(created.id, { customerId: CUSTOMER_B })
+    );
+
+    expect(linked.isPrimary).toBe(false);
+    const list = await withContext(() => service.listGuardians(created.id));
+    expect(list).toHaveLength(2);
+  });
+
+  it("swaps the primary guardian by demoting before promoting", async () => {
+    const created = await withContext(() =>
+      service.create(patientInput({ primaryGuardianCustomerId: CUSTOMER_A }))
+    );
+    const linked = await withContext(() =>
+      service.createGuardian(created.id, { customerId: CUSTOMER_B, isPrimary: true })
+    );
+
+    expect(linked.isPrimary).toBe(true);
+    const activePrimaries = [...guardians.values()].filter((row) => row.isPrimary && row.isActive);
+    expect(activePrimaries).toHaveLength(1);
+    expect(activePrimaries[0].customerId).toBe(CUSTOMER_B);
+  });
+
+  it("promotes an existing guardian and audits primary_changed", async () => {
+    const created = await withContext(() =>
+      service.create(patientInput({ primaryGuardianCustomerId: CUSTOMER_A }))
+    );
+    const linked = await withContext(() =>
+      service.createGuardian(created.id, { customerId: CUSTOMER_B })
+    );
+    appendMock.mockClear();
+
+    const promoted = await withContext(() => service.setPrimaryGuardian(linked.id, created.id));
+
+    expect(promoted.isPrimary).toBe(true);
+    const first = [...guardians.values()].find((row) => row.customerId === CUSTOMER_A);
+    expect(first?.isPrimary).toBe(false);
+    expect(appendMock.mock.calls[0][0].action).toBe("patient_guardian.primary_changed");
+  });
+
+  it("persists a supplied position when demoting and audits the fields actually written", async () => {
+    const created = await withContext(() =>
+      service.create(patientInput({ primaryGuardianCustomerId: CUSTOMER_A }))
+    );
+    const linked = await withContext(() =>
+      service.createGuardian(created.id, { customerId: CUSTOMER_B })
+    );
+    appendMock.mockClear();
+
+    const updated = await withContext(() =>
+      service.updateGuardian(linked.id, created.id, { isPrimary: false, position: 3 })
+    );
+
+    expect(updated.position).toBe(3);
+    expect(guardians.get(linked.id)?.position).toBe(3);
+    expect(appendMock.mock.calls[0][0].action).toBe("patient_guardian.primary_changed");
+    expect(appendMock.mock.calls[0][0].metadata).toMatchObject({
+      changedFields: ["isPrimary", "position"],
+    });
+  });
+
+  it("rejects deactivating the primary guardian of an active patient", async () => {
+    const created = await withContext(() =>
+      service.create(patientInput({ primaryGuardianCustomerId: CUSTOMER_A }))
+    );
+    const primary = [...guardians.values()][0];
+
+    await expect(
+      withContext(() => service.deactivateGuardian(primary.id, created.id))
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(guardians.get(primary.id)?.isActive).toBe(true);
+  });
+
+  it("returns 404 for a cross-tenant guardian", async () => {
+    const created = await withContext(() =>
+      service.create(patientInput({ primaryGuardianCustomerId: CUSTOMER_A }))
+    );
+    const primary = [...guardians.values()][0];
+
+    await expect(
+      withContext(() => service.getGuardian(primary.id, created.id), "tenant-2")
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
   it("returns an exact allowlisted patient DTO without guardian fields", async () => {
     const result = await withContext(() =>
       service.create(patientInput({ primaryGuardianCustomerId: CUSTOMER_A }))

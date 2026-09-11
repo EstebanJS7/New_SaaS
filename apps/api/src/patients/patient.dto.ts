@@ -18,3 +18,19 @@ export interface PatientResponse {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+/**
+ * Allowlisted PatientGuardian response. The Core Customer is referenced by id
+ * only; no Customer fields are joined or leaked here.
+ */
+export interface PatientGuardianResponse {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly patientId: string;
+  readonly customerId: string;
+  readonly isPrimary: boolean;
+  readonly isActive: boolean;
+  readonly position: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
