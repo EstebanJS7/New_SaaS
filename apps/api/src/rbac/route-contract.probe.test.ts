@@ -89,13 +89,19 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /customers/:customerId/contacts/:id",
   "PUT /customers/:customerId/contacts/:id",
   "POST /customers/:customerId/contacts/:id/deactivate",
-  // EPIC-05 — patients (WU3.2 reads + global catalog; WU3.3 commands)
+  // EPIC-05 — patients (WU3.2 reads + global catalog; WU3.3 commands; WU3.4 guardians)
   "GET /patients",
   "GET /patients/catalog",
   "GET /patients/:id",
   "POST /patients",
   "PUT /patients/:id",
   "POST /patients/:id/deactivate",
+  "GET /patients/:patientId/guardians",
+  "GET /patients/:patientId/guardians/:id",
+  "POST /patients/:patientId/guardians",
+  "PUT /patients/:patientId/guardians/:id",
+  "POST /patients/:patientId/guardians/:id/primary",
+  "POST /patients/:patientId/guardians/:id/deactivate",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {

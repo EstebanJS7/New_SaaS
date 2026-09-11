@@ -63,7 +63,7 @@ stays `in-progress` until H1.
 | WU3.1 | Patient HTTP test harness (test-only)                                                  | applied (size:exception) |
 | WU3.2 | Patient reads + global catalog (`GET /patients`, `/patients/catalog`, `/patients/:id`) | applied                  |
 | WU3.3 | Patient commands (`POST` / `PUT` / `deactivate`)                                       | applied                  |
-| WU3.4 | Guardian routes and commands                                                           | pending                  |
+| WU3.4 | Guardian routes and commands                                                           | applied (size:exception) |
 
 ### WU3.2 — Patient reads and global catalog
 
@@ -107,6 +107,29 @@ stays `in-progress` until H1.
   `foreignBody` so the foreign-Customer create pair (same URL, differing
   `primaryGuardianCustomerId`) stays byte-equivalent through one shared helper.
 
+### WU3.4 — Guardian routes and commands
+
+- `apps/api/src/patients/patient-guardians.controller.ts` — new
+  `PatientGuardiansController` under `patients/:patientId/guardians` with the
+  six guardian routes: `GET` list + `GET :id` (`patients.read`), and `POST`
+  create + `PUT :id` + `POST :id/primary` + `POST :id/deactivate`
+  (`patients.guardian.manage`). Each Zod-validates `patientGuardiansParam` /
+  `patientGuardianParam` and the create/update bodies, then delegates to the
+  existing `PatientsService`, which re-applies the `veterinary` entitlement gate
+  and the transactional invariants.
+- `apps/api/src/patients/patients.module.ts` — registers
+  `PatientGuardiansController` alongside the existing Patient controller.
+- `apps/api/src/patients/patient-guardians.integration.test.ts` — independent
+  HTTP suite over the WU3.1 fixture: anonymous/per-key denial, read-vs-manage
+  permission split, allowlisted DTO, active-only tenant-scoped listing,
+  transactionally audited link, primary swap preserving exactly one primary,
+  position-only update audit, 409 on demoting/deactivating the sole primary of
+  an active Patient, idempotent set-primary (no audit) and deactivate, byte-
+  equivalent random-vs-foreign Patient list, foreign Guardian GET/set-primary,
+  foreign Customer link 404 with zero persistence, and `FEATURE_NOT_ENTITLED`.
+- `apps/api/src/rbac/route-contract.probe.test.ts` — route inventory +6
+  (guardian routes; total EPIC-05 routes = 12).
+
 ## Verification
 
 ```text
@@ -118,4 +141,6 @@ pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts \
 
 → typecheck clean · lint clean · 9 files / 84 tests passed (WU3.2)
 → WU3.3: adds src/patients/patients.commands.integration.test.ts (10 tests)
+→ WU3.4: adds src/patients/patient-guardians.integration.test.ts and probes
+  the six guardian routes (12-route EPIC-05 inventory)
 ```

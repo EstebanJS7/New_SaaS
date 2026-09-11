@@ -60,8 +60,8 @@ seeded `feature_code`; demo grants include it.
 
 ## API
 
-WU3.2 ships the read surface and WU3.3 the Patient commands; guardian routes
-land in WU3.4 (PAT-002):
+WU3.2 ships the read surface, WU3.3 the Patient commands, and WU3.4 the guardian
+routes (PAT-002):
 
 ```text
 GET    /patients            patients.read       — active Patients of the caller tenant
@@ -70,11 +70,12 @@ GET    /patients/:id        patients.read       — single Patient; cross-tenant
 POST   /patients            patients.create     — create; active (default) requires a primary guardian
 PUT    /patients/:id        patients.update     — update; activating establishes a primary guardian (or 409)
 POST   /patients/:id/deactivate  patients.deactivate — idempotent deactivation; no hard delete
-GET    /patients/:patientId/guardians                        — pending (WU3.4)
-POST   /patients/:patientId/guardians                        — pending (WU3.4)
-PUT    /patients/:patientId/guardians/:id                    — pending (WU3.4)
-POST   /patients/:patientId/guardians/:id/primary            — pending (WU3.4)
-POST   /patients/:patientId/guardians/:id/deactivate         — pending (WU3.4)
+GET    /patients/:patientId/guardians                        patients.read           — active guardians of a Patient
+GET    /patients/:patientId/guardians/:id                    patients.read           — single guardian
+POST   /patients/:patientId/guardians                        patients.guardian.manage — link a Core Customer
+PUT    /patients/:patientId/guardians/:id                    patients.guardian.manage — reorder / change primary
+POST   /patients/:patientId/guardians/:id/primary            patients.guardian.manage — demote-then-promote primary
+POST   /patients/:patientId/guardians/:id/deactivate         patients.guardian.manage — idempotent deactivation
 ```
 
 `GET /patients/catalog` is declared before `GET /patients/:id` so the static
@@ -91,6 +92,15 @@ Customer is a 404 that persists nothing. `PUT /patients/:id` false→true
 activation establishes exactly one active primary guardian in the same
 transaction or returns 409. `POST /patients/:id/deactivate` is idempotent. A
 foreign Patient UUID on any command is masked as a byte-equivalent 404.
+
+Guardian reads require `patients.read` and mutations `patients.guardian.manage`.
+Linking a foreign Customer is a 404 that persists nothing; promoting a secondary
+guardian demotes the current primary first inside one transaction (the
+`set-primary` repeat is an idempotent no-op); demoting or deactivating the sole
+primary of an active Patient is a 409; deactivation is idempotent and no hard
+delete exists. A foreign Patient or guardian UUID is masked as a
+byte-equivalent 404. Guardian DTOs are allowlisted and reference the Core
+Customer by id only.
 
 ## Data Classification
 
@@ -156,7 +166,8 @@ foreign Patient UUID on any command is masked as a byte-equivalent 404.
   `patients.catalog.service.ts` (global taxonomy reads) and
   `patients.controller.ts` (read routes) with `patients.module.ts` registered in
   `app.module.ts` (WU3.2); Patient create/update/deactivate command routes and
-  the independent command HTTP suite (WU3.3); guardian routes land in WU3.4.
+  the independent command HTTP suite (WU3.3); `patient-guardians.controller.ts`
+  (six guardian routes) plus the independent guardian HTTP suite (WU3.4).
 - `apps/web/src/app/(app)/app/patients/*` — staff workspace (WU4).
 
 ## Known limitations / blockers
