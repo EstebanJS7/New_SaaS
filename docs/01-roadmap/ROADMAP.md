@@ -13,7 +13,7 @@ updated: 2026-09-11
 | EPIC-02 | RBAC/Entitlements/Tenant Settings  |        done | EPIC-01                   |
 | EPIC-03 | Staff Shell/Design System/Branding |        done | EPIC-01                   |
 | EPIC-04 | Customers                          |        done | EPIC-02, EPIC-03          |
-| EPIC-05 | Veterinary Patients                | in-progress | EPIC-04                   |
+| EPIC-05 | Veterinary Patients                |        done | EPIC-04                   |
 | EPIC-06 | Clinical                           |     planned | EPIC-05                   |
 | EPIC-07 | Scheduling                         |     planned | EPIC-04, EPIC-05          |
 | EPIC-08 | Portal                             |     planned | EPIC-04, EPIC-05, EPIC-07 |

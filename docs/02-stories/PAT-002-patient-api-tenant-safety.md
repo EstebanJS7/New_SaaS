@@ -13,7 +13,7 @@ permissions:
   - patients.update
   - patients.deactivate
   - patients.guardian.manage
-branch: feature/epic-05-veterinary-patients
+branch: feat/epic-05-veterinary-patients
 created: 2026-09-11
 updated: 2026-09-11
 ---
@@ -52,7 +52,7 @@ Patient data across tenants.
 
 ## Implementation Summary
 
-Status: `done` — delivered on branch `feature/epic-05-veterinary-patients` as a
+Status: `done` — delivered on branch `feat/epic-05-veterinary-patients` as a
 `feature-branch-chain`. H1 closed the implementation and verify report #2257
 revision 2 passed with warnings (`pass_with_warnings`, 0 blockers, 10/10
 requirements, 28/28 scenarios, all root gates green). The remediation added

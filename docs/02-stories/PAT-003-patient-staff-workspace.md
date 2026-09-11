@@ -13,7 +13,7 @@ permissions:
   - patients.update
   - patients.deactivate
   - patients.guardian.manage
-branch: feature/epic-05-veterinary-patients
+branch: feat/epic-05-veterinary-patients
 created: 2026-09-11
 updated: 2026-09-11
 ---
@@ -51,7 +51,7 @@ workflow inside the existing staff shell.
 ## Implementation Summary
 
 WU4.1 (PAT-003) staff workspace. Base: WU3.4 `a793fa2` on
-`feature/epic-05-veterinary-patients`. The slice is web-only and adds no API,
+`feat/epic-05-veterinary-patients`. The slice is web-only and adds no API,
 schema, or dependency changes.
 
 Web surface:

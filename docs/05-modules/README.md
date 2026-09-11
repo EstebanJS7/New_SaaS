@@ -23,7 +23,7 @@ Implemented (EPIC-04):
 Customers.md
 ```
 
-In progress (EPIC-05, data foundation landed — API/UI slices pending):
+Implemented (EPIC-05):
 
 ```text
 Patients.md

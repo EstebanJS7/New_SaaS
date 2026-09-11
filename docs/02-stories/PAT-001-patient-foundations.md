@@ -14,7 +14,7 @@ permissions:
   - patients.update
   - patients.deactivate
   - patients.guardian.manage
-branch: feature/epic-05-veterinary-patients
+branch: feat/epic-05-veterinary-patients
 created: 2026-09-11
 updated: 2026-09-11
 ---
@@ -57,7 +57,7 @@ Veterinary Patient slice.
 
 WU1 (data foundation) is implemented and verified. WU2–WU4 (API, guardian
 routes, staff workspace) and H1 (live-PostgreSQL hardening) are delivered on
-`feature/epic-05-veterinary-patients`; this Story owns the persisted schema,
+`feat/epic-05-veterinary-patients`; this Story owns the persisted schema,
 catalog, invariants, and seeds.
 
 - **Schema** (`packages/database/prisma/schema.prisma`): added the global
