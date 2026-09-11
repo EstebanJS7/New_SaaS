@@ -2,7 +2,7 @@
 type: module
 module: tenancy
 status: implemented
-updated: 2026-08-24
+updated: 2026-09-11
 ---
 
 # Module — Tenancy
@@ -16,7 +16,10 @@ resolution, tenant-scoped data access and cross-tenant isolation guarantees.
 
 - Authentication itself (see [[Identity-Sessions]]).
 - Role/permission policy checks (EPIC-02).
-- Tenant lifecycle (no self-service registration; ops/seed creation only).
+- Tenant creation workflow (no self-service registration; ops/seed creation
+  only).
+- Suspension/reactivation commands, authorization, audit and status-transition
+  UX (explicitly deferred — see DEC-005 / ADR-004 below).
 
 ## Public Capabilities
 
@@ -27,11 +30,26 @@ resolution, tenant-scoped data access and cross-tenant isolation guarantees.
 ## Main Entities
 
 ```text
-Tenant              (slug UNIQUE)
+Tenant              (slug UNIQUE; status ACTIVE|SUSPENDED default ACTIVE)
 TenantMembership    (UNIQUE(tenant_id, user_profile_id); ACTIVE|SUSPENDED)
 Branch              (schema-only, inert)
 CustomerPortalAccess (schema-only, inert scaffold)
 ```
+
+## Lifecycle (DEC-005 + ADR-004)
+
+`Tenant` carries an additive `TenantStatus` enum (`ACTIVE` default,
+`SUSPENDED`), delivered by migration `20260911000001_tenant_lifecycle`. It
+represents tenant lifecycle without coupling to memberships or entitlements.
+
+- The public branding lookup (`GET /api/v1/public/tenants/:slug/branding`)
+  resolves `status = ACTIVE` only, so a SUSPENDED slug returns the identical
+  `404 NOT_FOUND` envelope as an unknown slug. See [[Branding]].
+- No suspension/reactivation command, authorization, audit action or UI ships in
+  this scope: `SUSPENDED` is set only by an explicit operator SQL change until a
+  future Story owns those invariants.
+- `TenantActiveGuard` checks `TenantMembership.status`, not `Tenant.status`; the
+  two lifecycles are independent.
 
 ## Guard Chain
 

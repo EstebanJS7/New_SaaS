@@ -1,8 +1,10 @@
 ---
 id: TD-007
 type: tech-debt
-title: Defer Playwright E2E coverage for Branding settings and Customer CRUD/navigation
-status: open
+title:
+  Defer Playwright E2E coverage for Branding settings and Customer
+  CRUD/navigation
+status: accepted
 severity: medium
 related_epics:
   - EPIC-03
@@ -20,19 +22,21 @@ updated: 2026-09-08
 
 EPIC-03 Phase B (Tenant Branding) and EPIC-04 (Customers) have both completed
 their code-first implementation and hardening slices. All required unit,
-integration, live-PostgreSQL HTTP tenant-isolation, cold-build, lint, typecheck,
-and documentation-reconciliation gates are green and recorded in their
-respective task artifacts and verify reports.
+integration, cold-build, lint, typecheck, and documentation-reconciliation gates
+are green and recorded in their respective task artifacts and verify reports.
 
-Two H1 hardening tasks remain unchecked because Playwright is not installed or
-configured in the repository:
+The live-PostgreSQL tenant-isolation gate in CI proves cross-tenant
+`404 NOT_FOUND` for Customer/Address/Contact mutations and proves that
+authorized tenant-relative TenantBranding mutations succeed for each tenant
+without affecting the other. Branding cross-tenant and entitlement-denial paths
+remain covered only by the in-memory Prisma boundary used by `bootTestApp`; see
+[[TD-006 Live PG isolation run]].
 
-- EPIC-03 Phase B task **5.3** — Playwright E2E coverage for branding settings.
-- EPIC-04 task **5.4** — Playwright E2E coverage for Customer CRUD/navigation.
-
-The maintainer explicitly accepted deferring both items rather than silently
-marking them implemented or adding Playwright under the current scope. This
-record formalizes that accepted deferral.
+EPIC-03 Phase B task **5.3** and EPIC-04 task **5.4** are closed in their task
+checklists as accepted-deferral dispositions; the actual Playwright E2E coverage
+remains outstanding and tracked by this record. The maintainer explicitly
+accepted deferring both items rather than silently marking them implemented or
+adding Playwright under the current scope.
 
 ## Debt
 
@@ -44,10 +48,11 @@ No end-to-end browser coverage exists for:
    deactivate, address/contact child management, navigation from the sidebar,
    permission UX, and loading/empty/error states.
 
-Reliance on lower-level tests (unit, HTTP integration, live-PG isolation,
-permission-inventory probe) means regressions that only surface through real
-browser rendering, hydration, routing, or cross-page state are not automatically
-detected.
+Reliance on lower-level tests (unit, HTTP integration, the live-PG
+Customer/Address/Contact and authorized tenant-relative TenantBranding isolation
+paths, plus the permission-inventory probe) means regressions that only surface
+through real browser rendering, hydration, routing, or cross-page state are not
+automatically detected.
 
 ## Why It Is Safe to Defer
 
@@ -113,13 +118,13 @@ Resolution requires:
 4. Implement the Customer CRUD/navigation E2E spec, reusing auth/tenant
    fixtures.
 5. Wire the E2E command into `.github/workflows/ci.yml` as a required gate.
-6. Close this record and check off EPIC-03 5.3 and EPIC-04 5.4 in their task
-   artifacts.
+6. Close this record and update EPIC-03 5.3 and EPIC-04 5.4 in their task
+   artifacts from accepted-deferral disposition to implemented coverage.
 
 ## Trigger / Target
 
-Re-entry as soon as the next staff-facing UI epic begins, or when CI coverage for
-browser-critical paths is mandated — whichever comes first. Must be resolved
+Re-entry as soon as the next staff-facing UI epic begins, or when CI coverage
+for browser-critical paths is mandated — whichever comes first. Must be resolved
 before the first public/staff production onboarding.
 
 ## Verification After Resolution
@@ -128,8 +133,10 @@ before the first public/staff production onboarding.
 - [ ] Branding settings E2E spec green and covering the evidence-gate checklist.
 - [ ] Customer CRUD/navigation E2E spec green and covering the evidence-gate
       checklist.
-- [ ] EPIC-03 task 5.3 checked off in
-      `openspec/changes/2026-08-26-epic-03-branding-phase-b/tasks.md`.
-- [ ] EPIC-04 task 5.4 checked off in
-      `openspec/changes/2026-08-26-epic-04-customers/tasks.md`.
+- [ ] EPIC-03 task 5.3 in
+      `openspec/changes/2026-08-26-epic-03-branding-phase-b/tasks.md` is
+      represented as implemented E2E coverage rather than accepted deferral.
+- [ ] EPIC-04 task 5.4 in
+      `openspec/changes/2026-08-26-epic-04-customers/tasks.md` is represented as
+      implemented E2E coverage rather than accepted deferral.
 - [ ] This record closed with a link to the resolving commit.

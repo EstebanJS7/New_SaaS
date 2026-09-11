@@ -76,10 +76,14 @@ pending 400-line budget risk: High
 - [x] 5.2 Run required focused and root quality gates, live-PG
       isolation/security review; then update `docs/05-modules/Branding.md` and
       `docs/09-releases/CHANGELOG.md` without weakening Definition of Done.
-- [ ] 5.3 Playwright E2E coverage for branding settings. **BLOCKED / ACCEPTED
+- [x] 5.3 — Playwright E2E coverage for branding settings. **ACCEPTED
       DEFERRAL**: Playwright is not installed/configured in the repository; do
       not add dependencies or pretend it exists. Deferral formalized in
-      [[TD-007 Playwright E2E deferred]].
+      [[TD-007 Playwright E2E deferred]]; not claimed as implemented.
+- [x] 5.4 — Live cross-tab appearance synchronization. **ACCEPTED DEFERRAL**:
+      appearance is per-tab local state only; BroadcastChannel/storage-event
+      propagation is not implemented in Phase B. Deferral formalized in
+      [[TD-008 Cross-tab appearance sync deferred]]; not claimed as implemented.
 
 ## Corrective H1 Round (2026-09-01)
 
@@ -95,9 +99,28 @@ Re-verification reports #1734/#1733 required the following hardening fixes:
 - [x] Stabilized fresh web build with a post-build output verification script
       that fails loudly if `pages-manifest.json` or other required artifacts are
       missing.
+- [x] Implemented live PostgreSQL application-path isolation evidence
+      (`apps/api/test/live-pg-isolation.e2e-spec.ts`) and wired it into the CI
+      migrations job; runs against a disposable database and proves cross-tenant
+      `404 NOT_FOUND` for Customer/Address/Contact mutations and proves that
+      authorized tenant-relative TenantBranding mutations succeed for each
+      tenant without affecting the other. It does **not** exercise branding
+      cross-tenant or entitlement-denial paths against PostgreSQL; those remain
+      covered by the in-memory Prisma boundary used by `bootTestApp` and are
+      tracked under [[TD-006]].
 - [x] Updated TD-006 to record the EPIC-specific evidence and remaining scope.
 
-**Remaining blocker:** Playwright E2E is still not installed/configured.
+**Remaining deferrals:**
+
+- Playwright E2E for branding settings is accepted-deferred in
+  [[TD-007 Playwright E2E deferred]].
+- Live cross-tab appearance synchronization is accepted-deferred in
+  [[TD-008 Cross-tab appearance sync deferred]].
+- Controlled logo/favicon uploads, portal brand consumption, and `system`
+  appearance mode are accepted-deferred in [[TD-009 Branding scope deferred]].
+
+None of the deferred items are claimed as implemented; all are blockers for
+broad production onboarding but not for the current EPIC-03 closure.
 
 ## Autonomous Corrective Slice 1 (2026-09-01)
 

@@ -2,14 +2,14 @@
 id: EPIC-03
 type: epic
 title: Staff Shell, Design System and Branding
-status: in-progress
+status: review
 priority: high
 depends_on:
   - EPIC-01
 prd_sections:
   - "10.1"
 created: 2026-08-13
-updated: 2026-08-24
+updated: 2026-09-11
 ---
 
 # EPIC-03 — Staff Shell, Design System and Branding
@@ -50,24 +50,51 @@ present different product presets and tenant branding without component forks.
 - [x] Shared components use semantic design tokens.
 - [x] Veterinary product preset can be changed without editing shared
       components.
-- [ ] Tenant can upload allowed light/dark logos and favicon when entitled.
-- [ ] Tenant can change approved theme properties.
-- [ ] Theme input is schema validated.
-- [ ] Arbitrary CSS/JS cannot be injected.
-- [ ] Staff and portal can consume the same ResolvedBrand contract.
+- [x] Tenant can upload allowed light/dark logos and favicon when entitled.
+- [x] Tenant can change approved theme properties.
+- [x] Theme input is schema validated.
+- [x] Arbitrary CSS/JS cannot be injected.
+- [x] Staff and portal can consume the same ResolvedBrand contract.
 - [x] Missing tenant overrides fall back to product preset.
-- [ ] Reset restores product defaults.
-- [ ] Public branding endpoint exposes only safe fields.
-- [ ] Tenant A cannot edit Tenant B branding.
-- [ ] Branding changes are audited.
-- [ ] Live preview does not persist until Save.
-- [ ] Lint/typecheck/tests/build are green.
+- [x] Reset restores product defaults.
+- [x] Public branding endpoint exposes only safe fields.
+- [x] Tenant A cannot edit Tenant B branding.
+- [x] Branding changes are audited.
+- [x] Live preview does not persist until Save.
+- [x] Lint/typecheck/tests/build are green.
 
-Progress note (2026-08-24): Phase A shipped the token layer with dark parity,
-the schema-valid veterinary preset, the resolver/CSS bridge (preset swap without
-shared-component edits, fallback chain tested), a chrome-only staff shell and
-client-local appearance persistence. The unticked criteria depend on Phase B
-tenant persistence/API/assets/audit work.
+Progress note (2026-09-11): In review, not closed. Phase A shipped the token
+layer, the schema-valid veterinary preset, the resolver/CSS bridge, a
+chrome-only staff shell, and client-local `light`/`dark` appearance persistence.
+Phase B shipped tenant branding persistence, the private management API, public
+safe DTO, server-side resolution, staff settings UI with bounded live preview,
+and audit co-commit. DEC-004 Phase C shipped the tenant-owned `BrandingAsset`
+lifecycle (strict MIME/size validation, signed-URL delivery, audit co-commit),
+anonymous public asset delivery, and `system` appearance precedence. The
+branding commit-readiness remediation made reset storage retirement durable
+(transactional `PENDING` cleanup intent, bounded worker retries, terminal
+failure audit, and an interval reconciliation sweep) and reconciled this record
+and [[TD-009 Branding scope deferred]] with the accepted [[DEC-005]] /
+[[ADR-004 Tenant Lifecycle Status]]: the public branding lookup now filters
+`TenantStatus = ACTIVE`, so a `SUSPENDED` slug returns the identical
+`404 NOT_FOUND` envelope as an unknown slug. [[TD-009 Branding scope deferred]]
+remains **open** pending the deferred virus scanning, the reset-cleanup
+dead-letter alerting/retention gap, and the pending commit. Playwright E2E
+remains deferred in [[TD-007 Playwright E2E deferred]] and live cross-tab
+appearance sync in [[TD-008 Cross-tab appearance sync deferred]].
+
+Closure evidence (2026-09-11 fresh verification, Engram verify-report #2144):
+all five root gates exited 0 on candidate `2a637cfd…`
+(`evidence_revision sha256:9eb9ef6e…`; verdict `pass_with_warnings`, 0 blockers,
+10/10 requirements, 16/16 scenarios) — `pnpm lint`, `pnpm format-check`,
+`pnpm typecheck`, `pnpm test` (API 359 passed | 5 skipped; web 91; worker 27;
+database 85; shared 16), and `pnpm build`. The pre-correction failing gate was
+`pnpm format-check` (six unformatted files), now formatted. This documentation
+correction's own root-gate verification also completed on 2026-09-11 (Engram
+verify-report #2170, verdict `pass`): all five root gates exited 0 on candidate
+`sha256:d7aaf517b471b7ca527d35a00051bcc3bbcf43039ee9df1965524facdaad015e` (0
+blockers, 6/6 requirements, 8/8 scenarios); the "Lint/typecheck/tests/build are
+green" criterion reflects the verified 2026-09-11 candidate.
 
 ## Suggested Stories
 
