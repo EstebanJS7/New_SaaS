@@ -31,14 +31,17 @@ export { Prisma } from "./generated/index.js";
  * writes — never a drift-prone local copy.
  */
 export {
+  BREED_SEEDS,
   FEATURE_CODE_PATTERN,
   FEATURE_CODE_SEEDS,
   PERMISSION_KEY_PATTERN,
   PERMISSION_SEEDS,
   ROLE_PERMISSION_MATRIX,
   ROLE_SEEDS,
+  SPECIES_SEEDS,
   STARTER_PLAN_SEED,
   seedReferenceData,
   type PermissionKey,
   type RoleCode,
+  type SpeciesCode,
 } from "./reference-seed.js";

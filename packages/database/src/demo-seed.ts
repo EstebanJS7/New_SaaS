@@ -220,6 +220,173 @@ export async function seedDemoCustomers(
   };
 }
 
+/**
+ * Transactional delegate scope used inside {@link seedDemoPatients}'s
+ * `$transaction`. An active Patient and its active primary guardian MUST commit
+ * atomically: the deferred Patient-side constraint trigger
+ * (`patient_exactly_one_primary_guardian_trigger`) only observes the guardian
+ * when both writes land in the same transaction.
+ */
+export interface DemoPatientsSeedTxClient {
+  patient: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        name: string;
+        speciesId: string;
+        breedId?: string | null;
+        sex: "MALE" | "FEMALE" | "UNKNOWN";
+        isActive?: boolean;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+  patientGuardian: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        patientId: string;
+        customerId: string;
+        isPrimary?: boolean;
+        isActive?: boolean;
+        position?: number;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+}
+
+/**
+ * Structural client contract consumed by {@link seedDemoPatients}. The global
+ * Species/Breed taxonomy is REFERENCED (seeded by the reference seed), never
+ * created here. `$transaction` mirrors Prisma's interactive form: the callback
+ * receives the transactional delegate scope, so the Patient and guardian writes
+ * commit or roll back together.
+ */
+export interface DemoPatientsSeedClient extends DemoPatientsSeedTxClient {
+  species: {
+    findUnique: (args: { where: { code: string }; select: { id: true } }) => Promise<{
+      id: string;
+    } | null>;
+  };
+  breed: {
+    findUnique: (args: {
+      where: { speciesId_code: { speciesId: string; code: string } };
+      select: { id: true };
+    }) => Promise<{ id: string } | null>;
+  };
+  $transaction: <T>(fn: (tx: DemoPatientsSeedTxClient) => Promise<T>) => Promise<T>;
+}
+
+export interface DemoPatientsSeedResult {
+  patients: number;
+  guardians: number;
+}
+
+/** Demo patient natural keys (global Species/Breed codes, Decision #2211). */
+export const DEMO_PATIENT_SPECIES_CODE = "dog";
+export const DEMO_PATIENT_BREED_CODE = "mixed";
+
+/** Fixed UUIDs keep the demo path idempotent without app-level uniques. */
+const DEMO_PATIENT_DOG_ID = "88888888-8888-8888-8888-888888888888";
+const DEMO_PATIENT_CAT_ID = "99999999-9999-9999-9999-999999999999";
+const DEMO_GUARDIAN_DOG_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const DEMO_GUARDIAN_CAT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+/** Linked demo customer (see {@link buildDemoCustomers}). */
+const DEMO_GUARDIAN_CUSTOMER_ID = "11111111-1111-1111-1111-111111111111";
+
+function buildDemoPatients(tenantId: string, speciesId: string, breedId: string | null) {
+  return [
+    {
+      id: DEMO_PATIENT_DOG_ID,
+      tenantId,
+      name: "Bobby",
+      speciesId,
+      breedId,
+      sex: "MALE" as const,
+      isActive: true,
+    },
+    {
+      id: DEMO_PATIENT_CAT_ID,
+      tenantId,
+      name: "Michi",
+      speciesId,
+      breedId: null,
+      sex: "FEMALE" as const,
+      isActive: true,
+    },
+  ];
+}
+
+function buildDemoGuardians(tenantId: string) {
+  return [
+    {
+      id: DEMO_GUARDIAN_DOG_ID,
+      tenantId,
+      patientId: DEMO_PATIENT_DOG_ID,
+      customerId: DEMO_GUARDIAN_CUSTOMER_ID,
+      isPrimary: true,
+      isActive: true,
+      position: 0,
+    },
+    // Every active demo Patient needs its own active primary guardian; without
+    // Michi's link the deferred Patient trigger rejects the seed at COMMIT.
+    {
+      id: DEMO_GUARDIAN_CAT_ID,
+      tenantId,
+      patientId: DEMO_PATIENT_CAT_ID,
+      customerId: DEMO_GUARDIAN_CUSTOMER_ID,
+      isPrimary: true,
+      isActive: true,
+      position: 0,
+    },
+  ];
+}
+
+/**
+ * Seeds synthetic Patients and one active primary guardian per Patient for the
+ * demo tenant. Global Species/Breed references are resolved from the reference
+ * seed and never created here; fixed UUIDs plus `skipDuplicates` keep the path
+ * idempotent. Patient and guardian writes share one `$transaction` so the
+ * deferred exactly-one-primary constraint is satisfied at COMMIT.
+ */
+export async function seedDemoPatients(
+  db: DemoPatientsSeedClient,
+  tenantId: string
+): Promise<DemoPatientsSeedResult> {
+  const species = await db.species.findUnique({
+    where: { code: DEMO_PATIENT_SPECIES_CODE },
+    select: { id: true },
+  });
+  if (!species) {
+    throw new Error(
+      "demo seed: global species catalog missing — run the reference seed (`db:seed`) before the demo seed"
+    );
+  }
+  const breed = await db.breed.findUnique({
+    where: {
+      speciesId_code: { speciesId: species.id, code: DEMO_PATIENT_BREED_CODE },
+    },
+    select: { id: true },
+  });
+
+  return db.$transaction(async (tx) => {
+    const patients = await tx.patient.createMany({
+      data: buildDemoPatients(tenantId, species.id, breed?.id ?? null),
+      skipDuplicates: true,
+    });
+    const guardians = await tx.patientGuardian.createMany({
+      data: buildDemoGuardians(tenantId),
+      skipDuplicates: true,
+    });
+
+    return { patients: patients.count, guardians: guardians.count };
+  });
+}
+
 export type DemoSeedGuardDecision =
   | { mode: "disabled"; reason: string }
   | { mode: "refused"; reason: string }

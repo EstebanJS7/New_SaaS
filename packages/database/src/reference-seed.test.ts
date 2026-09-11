@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  BREED_SEEDS,
   FEATURE_CODE_PATTERN,
   FEATURE_CODE_SEEDS,
   PERMISSION_KEY_PATTERN,
   PERMISSION_SEEDS,
   ROLE_PERMISSION_MATRIX,
   ROLE_SEEDS,
+  SPECIES_SEEDS,
   STARTER_PLAN_SEED,
   seedReferenceData,
   type ReferenceSeedClient,
@@ -55,6 +57,8 @@ function createRecordingClient() {
   const plans = new Map<string, CodeNameRow>();
   const rolePermissions = new Map<string, PairRow>();
   const planCapabilities = new Map<string, PairRow>();
+  const species = new Map<string, CodeNameRow>();
+  const breeds = new Map<string, CodeRow & { speciesId: string }>();
 
   const client = {
     role: {
@@ -126,6 +130,35 @@ function createRecordingClient() {
         }
       },
     },
+    species: {
+      upsert: (args: { where: { code: string }; create: { code: string; name: string } }) => {
+        calls.push(`species.upsert:${args.where.code}`);
+        const existing = species.get(args.where.code);
+        if (existing) {
+          existing.name = args.create.name;
+        } else {
+          species.set(args.where.code, { id: nextId(), ...args.create });
+        }
+      },
+      findUnique: (args: { where: { code: string } }) => species.get(args.where.code) ?? null,
+    },
+    breed: {
+      upsert: (args: {
+        where: { speciesId_code: { speciesId: string; code: string } };
+        create: { speciesId: string; code: string; name: string };
+      }) => {
+        const { speciesId, code } = args.where.speciesId_code;
+        calls.push(`breed.upsert:${speciesId}:${code}`);
+        const pair = `${speciesId}:${code}`;
+        if (!breeds.has(pair)) {
+          breeds.set(pair, { id: nextId(), speciesId, code });
+        }
+      },
+      findUnique: (args: { where: { speciesId_code: { speciesId: string; code: string } } }) => {
+        const { speciesId, code } = args.where.speciesId_code;
+        return breeds.get(`${speciesId}:${code}`) ?? null;
+      },
+    },
   };
 
   const counts = () => ({
@@ -135,6 +168,8 @@ function createRecordingClient() {
     plans: plans.size,
     rolePermissions: rolePermissions.size,
     planCapabilities: planCapabilities.size,
+    species: species.size,
+    breeds: breeds.size,
   });
 
   return { calls, counts, client };
@@ -260,7 +295,13 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       ])
     );
     expect(ROLE_PERMISSION_MATRIX.RECEPTIONIST).not.toContain("customers.deactivate");
-    expect(ROLE_PERMISSION_MATRIX.VETERINARIAN).toEqual(["vet.clinical.create", "customers.read"]);
+    expect(ROLE_PERMISSION_MATRIX.VETERINARIAN).toEqual([
+      "vet.clinical.create",
+      "customers.read",
+      "patients.read",
+      "patients.create",
+      "patients.update",
+    ]);
     for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
       for (const key of [
         "customers.read",
@@ -273,6 +314,66 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
         expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
       }
     }
+  });
+
+  it("seeds the patient permission catalog and baseline matrix (EPIC-05 PAT-001)", () => {
+    const patientKeys = [
+      "patients.read",
+      "patients.create",
+      "patients.update",
+      "patients.deactivate",
+      "patients.guardian.manage",
+    ] as const;
+    const catalogKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of patientKeys) {
+      expect(catalogKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    expect(ROLE_PERMISSION_MATRIX.OWNER).toEqual(expect.arrayContaining([...patientKeys]));
+    expect(ROLE_PERMISSION_MATRIX.ADMIN).toEqual(expect.arrayContaining([...patientKeys]));
+    expect(ROLE_PERMISSION_MATRIX.RECEPTIONIST).toEqual(
+      expect.arrayContaining([
+        "patients.read",
+        "patients.create",
+        "patients.update",
+        "patients.guardian.manage",
+      ])
+    );
+    // Front-desk owns linking/deactivation; vets register/edit identity only.
+    expect(ROLE_PERMISSION_MATRIX.RECEPTIONIST).not.toContain("patients.deactivate");
+    expect(ROLE_PERMISSION_MATRIX.VETERINARIAN).toEqual(
+      expect.arrayContaining(["patients.read", "patients.create", "patients.update"])
+    );
+    expect(ROLE_PERMISSION_MATRIX.VETERINARIAN).not.toContain("patients.deactivate");
+    expect(ROLE_PERMISSION_MATRIX.VETERINARIAN).not.toContain("patients.guardian.manage");
+    for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
+      for (const key of patientKeys) {
+        expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
+      }
+    }
+  });
+
+  it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
+    expect(SPECIES_SEEDS.map((species) => species.code)).toEqual([
+      "dog",
+      "cat",
+      "bird",
+      "rabbit",
+      "reptile",
+      "other",
+    ]);
+    for (const species of SPECIES_SEEDS) {
+      expect(species.code).toMatch(/^[a-z][a-z_]*$/);
+    }
+    const speciesCodes = new Set<string>(SPECIES_SEEDS.map((species) => species.code));
+    for (const breed of BREED_SEEDS) {
+      expect(speciesCodes.has(breed.speciesCode)).toBe(true);
+      expect(breed.code).toMatch(/^[a-z][a-z_]*$/);
+    }
+    // Each breed belongs to exactly one species; the natural key is unique.
+    const pairKeys = BREED_SEEDS.map((breed) => `${breed.speciesCode}/${breed.code}`);
+    expect(new Set(pairKeys).size).toBe(BREED_SEEDS.length);
   });
 
   it("ships the single inert starter plan", () => {
@@ -289,11 +390,13 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const fake = await seededOnce();
     expect(fake.counts()).toEqual({
       roles: 6,
-      permissions: 14,
+      permissions: 19,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,
       planCapabilities: FEATURE_CODE_SEEDS.length,
+      species: SPECIES_SEEDS.length,
+      breeds: BREED_SEEDS.length,
     });
   });
 
@@ -314,10 +417,15 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
   it("upserts top-level records by natural keys, never generated ids", async () => {
     // Pair tables (role_permission / plan_capability) legitimately address rows
     // through their compound FK uniques after resolving ids by natural key;
-    // every top-level entity must target its stable code/key directly.
+    // Breed likewise resolves its parent species id from the species natural
+    // key. Every other top-level entity must target its stable code/key
+    // directly.
     const fake = await seededOnce();
     const topLevelCalls = fake.calls.filter(
-      (call) => !call.startsWith("rolePermission.") && !call.startsWith("planCapability.")
+      (call) =>
+        !call.startsWith("rolePermission.") &&
+        !call.startsWith("planCapability.") &&
+        !call.startsWith("breed.")
     );
     expect(topLevelCalls.length).toBeGreaterThan(0);
     for (const call of topLevelCalls) {

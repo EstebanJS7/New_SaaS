@@ -9,6 +9,7 @@ import { ContextModule } from "./context/context.module.js";
 import { CustomersModule } from "./customers/customers.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
 import { HealthModule } from "./health/health.module.js";
+import { PatientsModule } from "./patients/patients.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
@@ -34,6 +35,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     BrandingModule,
     SettingsModule,
     CustomersModule,
+    PatientsModule,
   ],
 })
 export class AppModule {}

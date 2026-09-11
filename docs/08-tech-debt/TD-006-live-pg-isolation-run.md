@@ -7,8 +7,10 @@ severity: medium
 related_epics:
   - EPIC-01
   - EPIC-04
+  - EPIC-05
 related_stories:
   - DAT-004
+  - PAT-002
 created: 2026-08-24
 updated: 2026-09-11
 ---
@@ -127,6 +129,47 @@ The EPIC-04 portion of this record is therefore addressed; the broader Batch 5
 RBAC concurrency and RBAC audit-rollback evidence gates remain open and are
 tracked under this same TD-006 until a future epic exercises those paths.
 
+**2026-09-11 EPIC-05 H1 extension (Patient/guardian application path):**
+
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` was extended with an "EPIC-05
+  patient application-path isolation" block (10 tests added; the suite now runs
+  16 tests) that boots the real `AppModule` against a disposable PostgreSQL 16
+  database and proves, over real HTTP:
+  - **atomic active create** — `POST /patients` active with
+    `primaryGuardianCustomerId` persists the Patient and its active primary
+    guardian in one transaction, returns the allowlisted DTO (no
+    `primaryGuardianCustomerId` leak), and co-commits the `patient.created` +
+    `patient_guardian.created` audit rows under one request id; an active create
+    without a primary is a `400 VALIDATION_FAILED` that persists nothing;
+  - **activation** — activating an inactive Patient with a primary guardian
+    reaches exactly one active primary; activating without one is `409 CONFLICT`
+    and leaves the Patient inactive;
+  - **global catalog parity** — `GET /patients/catalog` returns byte-identical
+    global Species/Breed data to two different entitled tenants and joins no
+    tenant-private identifier;
+  - **byte-equivalent cross-tenant masking** — foreign Patient `GET`/`PUT`/
+    `deactivate`, foreign guardian list/get/primary, and a foreign
+    `primaryGuardianCustomerId` all return `404 NOT_FOUND` byte-equal to a
+    random UUID, with no persistence and no identifier leak;
+  - **concurrency probe (deterministic barrier)** — a `SELECT … FOR UPDATE` row
+    lock held by a barrier transaction, plus `pg_stat_activity` polling, forces
+    both primary promotions to block at the same `demoteActivePrimary` UPDATE
+    before either commits. Exactly one returns `201`; the other fails the
+    partial unique index and **exactly one** active primary remains. This proves
+    the at-most-one side holds under a proven overlap, not merely under
+    concurrent-ish timing. The losing write currently surfaces as an unmapped
+    `500 INTERNAL`; mapping that race to `409 CONFLICT` is tracked separately in
+    [[TD-011]].
+- The EPIC-05 suite is included in the existing CI migrations job because that
+  job already runs `pnpm --filter @newsaas/api test:live-pg` (this file). No CI
+  workflow change was required.
+
+Local verification (disposable PostgreSQL 16 cluster, migrations + reference
+seed applied): `pnpm --filter @newsaas/api test:live-pg` → 16/16 passed, with
+the 10 EPIC-05 cases above; the deterministic-barrier concurrency case
+reproduced the one-`201`/one-`500` race on every local run. This is local
+evidence; CI has not yet observed the branch because H1 does not push.
+
 ## Proposed Resolution
 
 For the remaining Batch 5 cross-tenant isolation suites, extend the
@@ -148,6 +191,14 @@ and mandatory before any production deployment.
       `c9cff6131b6036849d0899a5735e6a2a6a3be5fd` — live-PG suite 6/6 passed,
       including the Customer/Address/Contact mutation paths and the
       tenant-relative branding mutation.
+- [x] CI migrations job runs the EPIC-05 Patient/guardian live-PG evidence (same
+      `pnpm --filter @newsaas/api test:live-pg` job) covering atomic
+      create/activate, global catalog parity, byte-equivalent cross-tenant
+      masking, and a deterministic-barrier primary-promotion concurrency probe.
+      **Verified locally:** the extended
+      `apps/api/test/live-pg-isolation.e2e-spec.ts` passed 16/16 against a
+      disposable PostgreSQL 16 cluster (migrations + reference seed). Residual
+      concurrent error-mapping gap recorded in [[TD-011]].
 - [ ] CI runs the broader cross-tenant isolation suite against live PG16 and
       stays green.
 - [ ] A deliberately broken predicate fails that CI job (one-off proof).

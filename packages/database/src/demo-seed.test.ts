@@ -2,11 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   DEMO_FEATURE_GRANTS,
   DEMO_OWNER_EMAIL,
+  DEMO_PATIENT_BREED_CODE,
+  DEMO_PATIENT_SPECIES_CODE,
   DEMO_TENANT_SLUG,
   resolveDemoSeedGuard,
   seedDemoCustomers,
   seedDemoData,
+  seedDemoPatients,
   type DemoCustomersSeedClient,
+  type DemoPatientsSeedClient,
+  type DemoPatientsSeedTxClient,
   type DemoSeedClient,
 } from "./demo-seed.js";
 
@@ -365,5 +370,192 @@ describe("seedDemoCustomers", () => {
     expect(contacts.some((row) => row.kind === "EMAIL")).toBe(true);
     expect(contacts.every((row) => row.tenantId === "tenant-demo")).toBe(true);
     expect(contacts.every((row) => customers.some((c) => c.id === row.customerId))).toBe(true);
+  });
+});
+
+/**
+ * Structural fake mirroring the patient seed delegates, including Prisma's
+ * interactive `$transaction`. Writes are recorded with their transaction scope
+ * so the test can prove Patient and guardian creation are co-transactional.
+ */
+function makeFakePatientDb(): {
+  db: DemoPatientsSeedClient;
+  tables: {
+    species: Map<string, { id: string; code: string }>;
+    breeds: Map<string, { id: string; speciesId: string; code: string }>;
+    patients: Map<
+      string,
+      { id: string; tenantId: string; speciesId: string; name: string; isActive: boolean }
+    >;
+    guardians: Map<
+      string,
+      {
+        id: string;
+        tenantId: string;
+        patientId: string;
+        customerId: string;
+        isPrimary: boolean;
+        isActive: boolean;
+      }
+    >;
+    transactionCount: number;
+    writesOutsideTransaction: number;
+  };
+} {
+  const species = new Map<string, { id: string; code: string }>([
+    ["species-dog", { id: "species-dog", code: "dog" }],
+  ]);
+  const breeds = new Map<string, { id: string; speciesId: string; code: string }>([
+    ["species-dog:mixed", { id: "breed-dog-mixed", speciesId: "species-dog", code: "mixed" }],
+  ]);
+  const patients = new Map<
+    string,
+    { id: string; tenantId: string; speciesId: string; name: string; isActive: boolean }
+  >();
+  const guardians = new Map<
+    string,
+    {
+      id: string;
+      tenantId: string;
+      patientId: string;
+      customerId: string;
+      isPrimary: boolean;
+      isActive: boolean;
+    }
+  >();
+  const tables = {
+    species,
+    breeds,
+    patients,
+    guardians,
+    transactionCount: 0,
+    writesOutsideTransaction: 0,
+  };
+  let inTransaction = false;
+
+  const txClient: DemoPatientsSeedTxClient = {
+    patient: {
+      createMany: ({ data }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        for (const row of data) {
+          patients.set(row.id, {
+            id: row.id,
+            tenantId: row.tenantId,
+            speciesId: row.speciesId,
+            name: row.name,
+            isActive: row.isActive ?? true,
+          });
+        }
+        return Promise.resolve({ count: data.length });
+      },
+    },
+    patientGuardian: {
+      createMany: ({ data }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        for (const row of data) {
+          guardians.set(row.id, {
+            id: row.id,
+            tenantId: row.tenantId,
+            patientId: row.patientId,
+            customerId: row.customerId,
+            isPrimary: row.isPrimary ?? false,
+            isActive: row.isActive ?? true,
+          });
+        }
+        return Promise.resolve({ count: data.length });
+      },
+    },
+  };
+
+  const db: DemoPatientsSeedClient = {
+    species: {
+      findUnique: ({ where }: { where: { code: string } }) =>
+        Promise.resolve([...species.values()].find((row) => row.code === where.code) ?? null),
+    },
+    breed: {
+      findUnique: ({ where }: { where: { speciesId_code: { speciesId: string; code: string } } }) =>
+        Promise.resolve(
+          breeds.get(`${where.speciesId_code.speciesId}:${where.speciesId_code.code}`) ?? null
+        ),
+    },
+    ...txClient,
+    $transaction: async <T>(fn: (tx: DemoPatientsSeedTxClient) => Promise<T>): Promise<T> => {
+      tables.transactionCount += 1;
+      inTransaction = true;
+      try {
+        return await fn(txClient);
+      } finally {
+        inTransaction = false;
+      }
+    },
+  };
+
+  return { db, tables };
+}
+
+describe("seedDemoPatients", () => {
+  it("seeds two active patients each with one active primary guardian using global taxonomy", async () => {
+    const { db, tables } = makeFakePatientDb();
+
+    const result = await seedDemoPatients(db, "tenant-demo");
+
+    expect(result.patients).toBe(2);
+    expect(result.guardians).toBe(2);
+
+    const patients = [...tables.patients.values()];
+    expect(patients.every((row) => row.tenantId === "tenant-demo")).toBe(true);
+    expect(patients.every((row) => row.speciesId === "species-dog")).toBe(true);
+    expect(patients.every((row) => row.isActive)).toBe(true);
+
+    const guardians = [...tables.guardians.values()];
+    expect(guardians.length).toBe(2);
+    expect(guardians.every((row) => row.tenantId === "tenant-demo")).toBe(true);
+    expect(guardians.every((row) => patients.some((p) => p.id === row.patientId))).toBe(true);
+
+    // The defect was Michi committing active with zero primaries: every active
+    // demo Patient must own exactly one active primary guardian.
+    for (const patient of patients) {
+      const primaries = guardians.filter(
+        (row) => row.patientId === patient.id && row.isPrimary && row.isActive
+      );
+      expect(primaries).toHaveLength(1);
+    }
+
+    // The global catalog was referenced, never created by the demo path.
+    expect(tables.species.size).toBe(1);
+    expect(tables.breeds.size).toBe(1);
+  });
+
+  it("writes patients and guardians inside one transaction", async () => {
+    const { db, tables } = makeFakePatientDb();
+
+    await seedDemoPatients(db, "tenant-demo");
+
+    expect(tables.transactionCount).toBe(1);
+    expect(tables.writesOutsideTransaction).toBe(0);
+  });
+
+  it("references the seeded global species/breed natural keys", () => {
+    expect(DEMO_PATIENT_SPECIES_CODE).toBe("dog");
+    expect(DEMO_PATIENT_BREED_CODE).toBe("mixed");
+  });
+
+  it("converges on rerun: fixed ids keep the collections stable", async () => {
+    const { db, tables } = makeFakePatientDb();
+
+    await seedDemoPatients(db, "tenant-demo");
+    await seedDemoPatients(db, "tenant-demo");
+
+    expect(tables.patients.size).toBe(2);
+    expect(tables.guardians.size).toBe(2);
+  });
+
+  it("fails instructively when the reference seed has not run (species missing)", async () => {
+    const { db, tables } = makeFakePatientDb();
+    tables.species.clear();
+
+    await expect(seedDemoPatients(db, "tenant-demo")).rejects.toThrow(/species catalog missing/);
+    expect(tables.patients.size).toBe(0);
+    expect(tables.guardians.size).toBe(0);
   });
 });

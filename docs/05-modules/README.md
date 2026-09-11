@@ -17,12 +17,22 @@ Implemented (EPIC-02):
 RBAC.md
 ```
 
-Recommended files:
+Implemented (EPIC-04):
 
 ```text
 Customers.md
+```
+
+Implemented (EPIC-05):
+
+```text
+Patients.md
+```
+
+Recommended files:
+
+```text
 Scheduling.md
-Veterinary-Patients.md
 Clinical.md
 Inventory.md
 Purchases.md

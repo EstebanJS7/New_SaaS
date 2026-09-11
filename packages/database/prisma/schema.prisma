@@ -136,6 +136,7 @@ model Tenant {
   customers               Customer[]
   customerAddresses       CustomerAddress[]
   customerContacts        CustomerContact[]
+  patients                Patient[]
   patientGuardians        PatientGuardian[]
 
   @@map("tenant")
@@ -627,27 +628,139 @@ model CustomerContact {
   @@map("customer_contact")
 }
 
-/// INERT SCAFFOLD (spec: persistence / Schema inventory): no endpoint or
-/// service creates, reads, updates or deletes rows until the Patient domain
-/// ships. The Patient FK is intentionally omitted; only customer_id exists.
+/// Tenant-scoped guardian bridge between a Veterinary Patient and a Core
+/// Customer (Veterinary → Core only). Activated by the EPIC-05 patients
+/// migration; the `patient_id` FK is RESTRICT and rows are never hard-deleted.
+///
+/// Exactly-one active primary guardian (Decision #2210):
+/// - "at most one" is enforced by the partial unique index
+///   `patient_guardian_primary_active_key` on `(patient_id) WHERE is_primary AND is_active`,
+///   declared as raw SQL in the patients migration because Prisma cannot
+///   express partial indexes;
+/// - "at least one" is enforced by a `DEFERRABLE INITIALLY DEFERRED` constraint
+///   trigger in the same migration. A primary swap MUST demote the current
+///   primary before promoting the replacement so the immediate partial index
+///   holds intra-transaction; the deferred trigger re-checks exactly one at
+///   commit.
+/// Data classification: the Patient↔Customer link is CONFIDENTIAL; logs/audit
+/// carry stable IDs only.
 model PatientGuardian {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
   tenantId   String @map("tenant_id") @db.Uuid
+  patientId  String @map("patient_id") @db.Uuid
   customerId String @map("customer_id") @db.Uuid
 
+  isPrimary Boolean @default(false) @map("is_primary")
+  isActive  Boolean @default(true) @map("is_active")
+
+  /// Display order within a Patient's guardian list. No longer part of the
+  /// unique key (the link unique is now `(patient_id, customer_id)`).
   position Int @default(0)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  patient  Patient  @relation(fields: [patientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
-  @@unique([customerId, position])
+  /// One guardian link per (patient, customer).
+  @@unique([patientId, customerId])
   @@index([tenantId])
   @@index([customerId])
   @@map("patient_guardian")
+}
+
+// ---------------------------------------------------------------------------
+// Veterinary Patients (EPIC-05, PAT-001 data foundation). Patient and
+// PatientGuardian are tenant-scoped; Species/Breed are GLOBAL seeded reference
+// catalogs (Decision #2211) mirroring FeatureCode/Role — never tenant-scoped.
+// Core domains never import this module; Patient → Customer is one-way.
+// ---------------------------------------------------------------------------
+
+/// Patient sex. Values are pinned; evolve additively only.
+enum PatientSex {
+  MALE
+  FEMALE
+  UNKNOWN
+
+  @@map("patient_sex")
+}
+
+/// GLOBAL system-seeded species catalog (Decision #2211). Not tenant-scoped;
+/// `code` is the stable natural key used by the reference seed.
+model Species {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  code String @unique
+  name String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  breeds   Breed[]
+  patients Patient[]
+
+  @@map("species")
+}
+
+/// GLOBAL system-seeded breed catalog (Decision #2211). Each Breed belongs to
+/// exactly one Species; `(species_id, code)` is the stable natural key. Not
+/// tenant-scoped and never tenant-filtered.
+model Breed {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  speciesId String @map("species_id") @db.Uuid
+
+  code String
+  name String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  species  Species   @relation(fields: [speciesId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  patients Patient[]
+
+  @@unique([speciesId, code])
+  @@map("breed")
+}
+
+/// Tenant-scoped Patient identity. Hard delete does not exist; deactivation is
+/// the only removal. Species/Breed are GLOBAL foreign keys and MUST NOT be
+/// tenant-filtered.
+/// Data classification: name and birthDate are CONFIDENTIAL; logs/audit carry
+/// stable IDs only.
+model Patient {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  name String
+
+  /// Global catalog references (Decision #2211) — RESTRICT keeps the taxonomy
+  /// immutable while Patients reference it.
+  speciesId String  @map("species_id") @db.Uuid
+  breedId   String? @map("breed_id") @db.Uuid
+
+  sex       PatientSex
+  birthDate DateTime?  @map("birth_date") @db.Timestamptz(3)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  species   Species           @relation(fields: [speciesId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  breed     Breed?            @relation(fields: [breedId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  guardians PatientGuardian[]
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@index([speciesId])
+  @@index([breedId])
+  @@map("patient")
 }
 
 // ---------------------------------------------------------------------------

@@ -212,6 +212,58 @@ export interface CustomerContactRow {
   updatedAt: Date;
 }
 
+/** GLOBAL Species reference row (EPIC-05, Decision #2211: never tenant-scoped). */
+export interface SpeciesRow {
+  id: string;
+  code: string;
+  name: string;
+}
+
+/** GLOBAL Breed reference row; `(speciesId, code)` is the stable natural key. */
+export interface BreedRow {
+  id: string;
+  speciesId: string;
+  code: string;
+  name: string;
+}
+
+/** Tenant-scoped Patient identity row (EPIC-05). */
+export interface PatientRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  speciesId: string;
+  breedId: string | null;
+  sex: "MALE" | "FEMALE" | "UNKNOWN";
+  birthDate: Date | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Tenant-scoped Patient↔Customer guardian link row (EPIC-05). */
+export interface PatientGuardianRow {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  customerId: string;
+  isPrimary: boolean;
+  isActive: boolean;
+  position: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Scalar/optional Prisma filter over PatientGuardian (mirrors the service). */
+export interface PatientGuardianWhere {
+  id?: string;
+  tenantId: string;
+  patientId: string;
+  customerId?: string;
+  isPrimary?: boolean;
+  isActive?: boolean;
+}
+
 interface MembershipWhere {
   id?: string;
   tenantId?: string;
@@ -334,6 +386,72 @@ export interface IsolationDatabase {
       updateMany: (args: {
         where: { id: string; tenantId: string; customerId: string; isActive?: boolean };
         data: Partial<Omit<CustomerContactRow, "id" | "tenantId" | "customerId" | "createdAt">>;
+      }) => { count: number };
+    };
+    species: {
+      create: (args: { data: { code: string; name: string } }) => SpeciesRow;
+      findFirst: (args: { where: { id: string }; select?: { id: true } }) => SpeciesRow | null;
+      /** Global, tenant-agnostic read; `include.breeds` reproduces the relation. */
+      findMany: (args?: {
+        orderBy?: { name?: "asc" | "desc" };
+        include?: { breeds?: unknown };
+      }) => (SpeciesRow & { breeds?: BreedRow[] })[];
+    };
+    breed: {
+      create: (args: { data: { speciesId: string; code: string; name: string } }) => BreedRow;
+      findFirst: (args: {
+        where: { id: string; speciesId: string };
+        select?: { id: true };
+      }) => BreedRow | null;
+    };
+    patient: {
+      findMany: (args: {
+        where: { tenantId: string; isActive?: boolean };
+        orderBy?: { name?: "asc" | "desc" };
+      }) => PatientRow[];
+      findFirst: (args: { where: { id: string; tenantId: string } }) => PatientRow | null;
+      create: (args: {
+        data: {
+          tenantId: string;
+          name: string;
+          speciesId: string;
+          breedId: string | null;
+          sex: "MALE" | "FEMALE" | "UNKNOWN";
+          birthDate: Date | null;
+          isActive: boolean;
+        };
+      }) => PatientRow;
+      updateMany: (args: {
+        where: { id: string; tenantId: string; isActive?: boolean };
+        data: {
+          name?: string;
+          speciesId?: string;
+          breedId?: string | null;
+          sex?: "MALE" | "FEMALE" | "UNKNOWN";
+          birthDate?: Date | null;
+          isActive?: boolean;
+        };
+      }) => { count: number };
+    };
+    patientGuardian: {
+      findMany: (args: {
+        where: { tenantId: string; patientId: string; isActive?: boolean };
+        orderBy?: { position?: "asc" | "desc" };
+      }) => PatientGuardianRow[];
+      findFirst: (args: { where: PatientGuardianWhere }) => PatientGuardianRow | null;
+      create: (args: {
+        data: {
+          tenantId: string;
+          patientId: string;
+          customerId: string;
+          isPrimary: boolean;
+          isActive: boolean;
+          position: number;
+        };
+      }) => PatientGuardianRow;
+      updateMany: (args: {
+        where: PatientGuardianWhere;
+        data: { isPrimary?: boolean; isActive?: boolean; position?: number };
       }) => { count: number };
     };
     role: {
@@ -461,6 +579,10 @@ export interface IsolationDatabase {
     customers: Map<string, CustomerRow>;
     customerAddresses: Map<string, CustomerAddressRow>;
     customerContacts: Map<string, CustomerContactRow>;
+    species: Map<string, SpeciesRow>;
+    breeds: Map<string, BreedRow>;
+    patients: Map<string, PatientRow>;
+    patientGuardians: Map<string, PatientGuardianRow>;
   };
   /** In-memory object storage for tests to inspect signed URLs and key retirement. */
   storage: InMemoryStorageDriver;
@@ -529,6 +651,10 @@ export function createIsolationDatabase(): IsolationDatabase {
   const customers = new Map<string, CustomerRow>();
   const customerAddresses = new Map<string, CustomerAddressRow>();
   const customerContacts = new Map<string, CustomerContactRow>();
+  const speciesTable = new Map<string, SpeciesRow>();
+  const breedTable = new Map<string, BreedRow>();
+  const patientTable = new Map<string, PatientRow>();
+  const patientGuardianTable = new Map<string, PatientGuardianRow>();
 
   type TableSnapshot = Record<string, Map<string, unknown>>;
 
@@ -551,6 +677,10 @@ export function createIsolationDatabase(): IsolationDatabase {
     customers,
     customerAddresses,
     customerContacts,
+    species: speciesTable,
+    breeds: breedTable,
+    patients: patientTable,
+    patientGuardians: patientGuardianTable,
   };
 
   function snapshotTables(): TableSnapshot {
@@ -917,6 +1047,145 @@ export function createIsolationDatabase(): IsolationDatabase {
         return { count: 1 };
       },
     },
+    species: {
+      create: ({ data }) => {
+        const created: SpeciesRow = { id: randomUUID(), code: data.code, name: data.name };
+        speciesTable.set(created.id, created);
+        return created;
+      },
+      findFirst: ({ where }) =>
+        [...speciesTable.values()].find((candidate) => candidate.id === where.id) ?? null,
+      // Global catalog: NO tenant predicate. `include.breeds` mirrors the
+      // relation the catalog read nests (Decision #2211).
+      findMany: ({ orderBy, include } = {}) => {
+        let rows = [...speciesTable.values()];
+        if (orderBy?.name) {
+          rows = rows.sort((left, right) => left.name.localeCompare(right.name));
+          if (orderBy.name === "desc") rows.reverse();
+        }
+        if (!include?.breeds) return rows;
+        return rows.map((row) => ({
+          ...row,
+          breeds: [...breedTable.values()]
+            .filter((breed) => breed.speciesId === row.id)
+            .sort((left, right) => left.name.localeCompare(right.name)),
+        }));
+      },
+    },
+    breed: {
+      create: ({ data }) => {
+        const created: BreedRow = {
+          id: randomUUID(),
+          speciesId: data.speciesId,
+          code: data.code,
+          name: data.name,
+        };
+        breedTable.set(created.id, created);
+        return created;
+      },
+      // Breed must belong to the referenced Species (speciesId predicate).
+      findFirst: ({ where }) =>
+        [...breedTable.values()].find(
+          (candidate) => candidate.id === where.id && candidate.speciesId === where.speciesId
+        ) ?? null,
+    },
+    patient: {
+      findMany: ({ where, orderBy }) => {
+        let rows = [...patientTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            (where.isActive === undefined || candidate.isActive === where.isActive)
+        );
+        if (orderBy?.name) {
+          rows = rows.sort((left, right) => left.name.localeCompare(right.name));
+          if (orderBy.name === "desc") rows.reverse();
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...patientTable.values()].find(
+          (candidate) => candidate.id === where.id && candidate.tenantId === where.tenantId
+        ) ?? null,
+      create: ({ data }) => {
+        const now = new Date();
+        const created: PatientRow = { id: randomUUID(), ...data, createdAt: now, updatedAt: now };
+        patientTable.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        const existing = patientTable.get(where.id);
+        if (
+          existing?.tenantId !== where.tenantId ||
+          (where.isActive !== undefined && existing?.isActive !== where.isActive)
+        ) {
+          return { count: 0 };
+        }
+        const updated: PatientRow = { ...existing, updatedAt: new Date() };
+        if (data.name !== undefined) updated.name = data.name;
+        if (data.speciesId !== undefined) updated.speciesId = data.speciesId;
+        if (data.breedId !== undefined) updated.breedId = data.breedId ?? null;
+        if (data.sex !== undefined) updated.sex = data.sex;
+        if (data.birthDate !== undefined) updated.birthDate = data.birthDate ?? null;
+        if (data.isActive !== undefined) updated.isActive = data.isActive;
+        patientTable.set(updated.id, updated);
+        return { count: 1 };
+      },
+    },
+    patientGuardian: {
+      findMany: ({ where, orderBy }) => {
+        let rows = [...patientGuardianTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            candidate.patientId === where.patientId &&
+            (where.isActive === undefined || candidate.isActive === where.isActive)
+        );
+        if (orderBy?.position) {
+          rows = rows.sort((left, right) => left.position - right.position);
+          if (orderBy.position === "desc") rows.reverse();
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...patientGuardianTable.values()].find(
+          (candidate) =>
+            (where.id === undefined || candidate.id === where.id) &&
+            candidate.tenantId === where.tenantId &&
+            candidate.patientId === where.patientId &&
+            (where.customerId === undefined || candidate.customerId === where.customerId) &&
+            (where.isPrimary === undefined || candidate.isPrimary === where.isPrimary) &&
+            (where.isActive === undefined || candidate.isActive === where.isActive)
+        ) ?? null,
+      create: ({ data }) => {
+        const now = new Date();
+        const created: PatientGuardianRow = {
+          id: randomUUID(),
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        };
+        patientGuardianTable.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const candidate of patientGuardianTable.values()) {
+          if (where.id !== undefined && candidate.id !== where.id) continue;
+          if (candidate.tenantId !== where.tenantId) continue;
+          if (candidate.patientId !== where.patientId) continue;
+          if (where.customerId !== undefined && candidate.customerId !== where.customerId) {
+            continue;
+          }
+          if (where.isPrimary !== undefined && candidate.isPrimary !== where.isPrimary) continue;
+          if (where.isActive !== undefined && candidate.isActive !== where.isActive) continue;
+          if (data.isPrimary !== undefined) candidate.isPrimary = data.isPrimary;
+          if (data.isActive !== undefined) candidate.isActive = data.isActive;
+          if (data.position !== undefined) candidate.position = data.position;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
     role: {
       create: ({ data }) => {
         const created: RoleRow = { id: randomUUID(), code: data.code, name: data.name };
@@ -1247,6 +1516,10 @@ export function createIsolationDatabase(): IsolationDatabase {
       customers,
       customerAddresses,
       customerContacts,
+      species: speciesTable,
+      breeds: breedTable,
+      patients: patientTable,
+      patientGuardians: patientGuardianTable,
     },
     storage,
   };

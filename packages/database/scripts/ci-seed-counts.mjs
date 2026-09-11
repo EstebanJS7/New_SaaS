@@ -13,6 +13,8 @@ try {
     plans: await db.plan.count(),
     rolePermissions: await db.rolePermission.count(),
     planCapabilities: await db.planCapability.count(),
+    species: await db.species.count(),
+    breeds: await db.breed.count(),
   };
   console.log(JSON.stringify(counts));
 } finally {
