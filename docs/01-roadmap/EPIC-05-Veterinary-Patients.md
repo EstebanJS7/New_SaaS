@@ -2,7 +2,7 @@
 id: EPIC-05
 type: epic
 title: Veterinary Patients
-status: done
+status: review
 priority: high
 depends_on:
   - EPIC-04
@@ -60,11 +60,11 @@ and a minimal staff workspace.
 ## Stories
 
 - [[PAT-001 Patient foundations]] — persistence, catalogs, guardian invariant,
-  permissions, entitlement, audit contract, and demo seed. `done`.
+  permissions, entitlement, audit contract, and demo seed. `review`.
 - [[PAT-002 Patient API and tenant safety]] — application service, private API,
-  authorization, audit, and isolation coverage. `done`.
+  authorization, audit, and isolation coverage. `review`.
 - [[PAT-003 Patient staff workspace]] — staff UI, proxy, navigation, and UX
-  states. `done`.
+  states. `review`.
 
 ## Dependencies
 
@@ -91,6 +91,18 @@ target. Residual limitations are tracked in [[TD-006]] (broader isolation/RBAC
 live-PG gates) and [[TD-011]] (mapping the losing concurrent primary-promotion
 write from `500` to `409`); neither violates the exactly-one invariant, and
 sequential promotion is a demote-then-promote swap, not a conflict.
+
+Verify report #2257 revision 2 passed with warnings (`pass_with_warnings`,
+`evidence_revision`
+`sha256:c64cbd4a7094b5f6b6f1c1d38d6124c3c72cbe118bd752c822e9b98e21261c29`): 0
+blockers, 10/10 requirements, and 28/28 scenarios, with `pnpm lint`,
+`pnpm format-check`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all green.
+Revision 1's four blockers were the canonical Engram spec wording, missing
+unknown-catalog and missing-`name` HTTP coverage, and missing guardian workflow
+plus loading/empty/error/success UI runtime coverage; the remediation resolved
+all four. The implementation behavior is unchanged. These documents stay at
+`review` only until the governed commit/archive settlement — technical
+verification has passed.
 
 ## Related
 

@@ -3,7 +3,7 @@ id: PAT-003
 type: story
 title: Patient staff workspace
 epic: EPIC-05
-status: done
+status: review
 priority: high
 depends_on:
   - PAT-002
@@ -101,8 +101,11 @@ Limitations:
 pnpm --filter @newsaas/web exec vitest run --config vitest.config.ts \
   src/app/api/patients src/components/shell/nav-sidebar.test.tsx \
   "src/app/(app)/app/patients"
-  → 6 files / 22 tests passed
-    (proxy 7, patients-api 2, nav 2, list 5, detail 3, form 3)
+  → 6 files / 28 tests passed
+    (proxy 7, patients-api 2, nav 2, list 5, detail 9, form 3)
+    detail 9 includes the verify #2257 remediation: guardian link,
+    promote-primary, and deactivate flows plus loading/empty/error/success
+    states
 
 pnpm --filter @newsaas/web test
   → 23 files / 111 tests passed (no regressions)
@@ -117,9 +120,15 @@ pnpm exec prettier --check <new/modified web files>
   → clean after formatting
 ```
 
-Story closed at H1: the H1 root gates (`pnpm lint`, `pnpm format-check`,
+Story at `review`: the H1 root gates (`pnpm lint`, `pnpm format-check`,
 `pnpm typecheck`, `pnpm test`, `pnpm build`) are green, and the EPIC-05
 live-PostgreSQL application-path evidence that H1 added covers the API the
-workspace consumes. Residual non-UI limitations ([[TD-006]] live-PG breadth,
-[[TD-011]] concurrent primary-promotion error mapping) are tracked outside this
-UI Story and do not affect the workspace acceptance criteria.
+workspace consumes. Verify report #2257 revision 2 passed with warnings
+(`pass_with_warnings`, 0 blockers, 10/10 requirements, 28/28 scenarios) after
+revision 1's blockers were remediated: the staff workspace gained runtime tests
+executing the guardian link, primary promotion, and deactivation flows with
+loading/empty/error/success states in `patient-detail.test.tsx` (no production
+UI change). The Story stays `review` only until the governed commit/archive
+settlement. Residual non-UI limitations ([[TD-006]] live-PG breadth, [[TD-011]]
+concurrent primary-promotion error mapping) are tracked outside this UI Story
+and do not affect the workspace acceptance criteria.

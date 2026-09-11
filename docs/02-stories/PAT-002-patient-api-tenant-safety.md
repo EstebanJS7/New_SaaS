@@ -3,7 +3,7 @@ id: PAT-002
 type: story
 title: Patient API and tenant safety
 epic: EPIC-05
-status: done
+status: review
 priority: high
 depends_on:
   - PAT-001
@@ -52,9 +52,16 @@ Patient data across tenants.
 
 ## Implementation Summary
 
-Status: `in-progress` — delivered on branch
-`feature/epic-05-veterinary-patients` as a `feature-branch-chain`; the story
-stays `in-progress` until H1.
+Status: `review` — delivered on branch `feature/epic-05-veterinary-patients` as
+a `feature-branch-chain`. H1 closed the implementation and verify report #2257
+revision 2 passed with warnings (`pass_with_warnings`, 0 blockers, 10/10
+requirements, 28/28 scenarios, all root gates green). The remediation added
+independent HTTP coverage for a valid-but-unknown global Species/Breed UUID
+(`400 VALIDATION_FAILED`, zero persistence) and for a create missing `name`
+(`400 VALIDATION_FAILED`, zero persistence); the canonical Engram spec was
+synchronized to the accepted database-boundary wording. No production behavior
+changed. The Story stays `review` only until the governed commit/archive
+settlement.
 
 ### WU3 delivery slices
 
