@@ -8,13 +8,13 @@ Tracker branch: `feat/epic-06-clinical` (from `origin/main` @ `b7529a2`)
 Work-unit branches: `feat/epic-06-clinical-wu1` (WU1, merged into the tracker
 via PR #5), `feat/epic-06-clinical-wu2a-encounter-core` (re-sliced from
 `feat/epic-06-clinical-wu2`, from tracker @ `d4e606f`). Batches: **WU1 — Data
-Foundation** (complete, corrected, merged), **WU2A — Encounter Core** (this
-batch; re-sliced 2026-09-12, corrected 2026-09-12 after fresh review, and
-corrected again 2026-09-12 to narrow amendment `P2002` recovery to the exact
-idempotency constraint), and **WU2B — Specialized Records** (**planned and
-uncommitted**, out of the WU2A commit boundary). Service-layer only: no
-controllers, no Zod, no routes, no web, no live-PG evidence. No
-commit/push/PR/merge performed.
+Foundation** (complete, corrected, merged), **WU2A — Encounter Core** (complete,
+merged into the tracker via PR #6), and **WU2B — Specialized Records**
+(**implemented, fresh-reviewed and committed on
+`feat/epic-06-clinical-wu2b-specialized-records`**, based on the latest tracker
+`@ 11d144c`; maintainer-approved `size:exception`). Service-layer only: no
+controllers, no Zod, no routes, no web, no live-PG evidence. No push, PR, or
+merge performed.
 
 ## Completed Tasks
 
@@ -41,8 +41,16 @@ commit/push/PR/merge performed.
       co-committed transaction), `clinical.dto.ts` (encounter allowlist),
       `clinical.module.ts` (provides/exports **only** `ClinicalService`), and
       `ClinicalModule` registered in `apps/api/src/app.module.ts`.
-- [ ] 2B.1 / 2B.2 (specialized records): **planned and uncommitted** — out of
-      the WU2A boundary. See Phase 2B in `tasks.md`.
+- [x] 2B.1 RED: `apps/api/src/clinical/clinical.records.service.test.ts` covers
+      the five subdomain record kinds (treatment, vaccination, deworming, study,
+      weight), tenant-scoped create/list/update, exactly-one co-committed audit,
+      invalid-weight rejection with nothing persisted, and cross-tenant 404 with
+      nothing persisted. **7 tests**, all green.
+- [x] 2B.2 GREEN: `apps/api/src/clinical/clinical.records.service.ts`
+      (`ClinicalRecordsService` extends `ClinicalServiceBase`) +
+      `clinical.records.dto.ts` (allowlisted responses); `clinical.module.ts`
+      now provides/exports `ClinicalRecordsService` on top of the unchanged
+      `ClinicalService` encounter core.
 
 ## Files Changed — WU1 (Data Foundation)
 
@@ -132,7 +140,7 @@ Refactor mechanics:
 | Slice | Implementation                                                                                | Tests | Total incl. tests |
 | ----- | --------------------------------------------------------------------------------------------- | ----- | ----------------- |
 | WU2A  | 827 (`permissions` 16 + `dto` 59 + `base` 113 + `service` 610 + `module` 27 + `app.module` 2) | 706   | 1,533             |
-| WU2B  | 844 (`records.dto` 61 + `records.service` 783)                                                | 301   | 1,145             |
+| WU2B  | 864 (`records.dto` 61 + `records.service` 783 + `module` 20)                                  | 371   | 1,235             |
 
 After Correction Pass 2 the WU2A implementation is **827** changed lines (+59
 from the exact-target `P2002` matcher and its comments), over the ≤800 budget;
@@ -376,9 +384,9 @@ untouched.
 
 ## Remaining Tasks (not started — out of WU2A scope)
 
-- [ ] 2B.1 / 2B.2 WU2B slice delivery: specialized records exist uncommitted in
-      the working tree and are out of the WU2A boundary; only its own chained
-      commit/PR remains.
+- [x] 2B WU2B commit: implementation is complete, verified, fresh-reviewed and
+      committed as its own chained commit on its branch; the maintainer approved
+      the 1,235-line `size:exception`. Push/PR/merge remain out of scope.
 - [ ] 3.1 / 3.2 Controllers, Zod/DTO allowlist, routes, route-contract probe
       (WU3).
 - [ ] 4.1 / 4.2 Web proxy + clinical workspace, RTL tests (WU4).
@@ -432,3 +440,95 @@ untouched.
 - Pre-existing unrelated dirtiness: `.atl/.skill-registry.cache.json`,
   `.atl/skill-registry.md`.
 - Tool artifact (not WU2A/WU2B): `.codegraph/` (CodeGraph index), untracked.
+
+---
+
+# Phase 2B — Specialized Records (WU2B) — continuation 2026-09-12
+
+Base/continuation note: WU2A was merged into the tracker
+(`feat/epic-06-clinical` @ `11d144cc120737e16d5e30890c9cdfc26e371105`, PR #6).
+WU2B was branched from that latest tracker as
+`feat/epic-06-clinical-wu2b-specialized-records`. The three pre-existing
+untracked WU2B files were preserved/reused; pre-existing `.atl/` modifications
+and the untracked `.codegraph/` index were preserved and never staged. Nothing
+was committed, pushed, or merged.
+
+## Files Changed — WU2B Specialized Records
+
+| File                                                     | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/src/clinical/clinical.records.service.ts`      | Created  | `ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsPrisma>`: treatment/vaccination/deworming/study/weight `list`/`create`/`update`, tenant + entitlement + granular permission gates, `assertPatient`, one co-committed audit row per mutation, allowlisted mapping, positive-decimal weight guard, no hard delete. (783 lines) |
+| `apps/api/src/clinical/clinical.records.dto.ts`          | Created  | Allowlisted CONFIDENTIAL response contracts for the five record kinds; Prisma models are never returned. (61 lines)                                                                                                                                                                                                                             |
+| `apps/api/src/clinical/clinical.records.service.test.ts` | Created  | 7 fake-Prisma tests: treatment update+audit, vaccination create/list+audit, deworming create/list+audit, study create/list/update+audit, exact-decimal weight create/update, invalid-weight rejection persisting nothing, cross-tenant 404 persisting nothing. (371 lines)                                                                      |
+| `apps/api/src/clinical/clinical.module.ts`               | Modified | Added `ClinicalRecordsService` to `providers` and `exports` and updated the module doc; the WU2A `ClinicalService` encounter core is otherwise unchanged. (+10/-10)                                                                                                                                                                             |
+
+## Evidence (WU2B verification)
+
+- Focused:
+  `pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts src/clinical/clinical.records.service.test.ts`
+  → **7 passed**.
+- Full API suite: `pnpm --filter @newsaas/api test` → **51 files passed / 1
+  skipped; 465 passed / 16 skipped** (baseline was 462 passed; +3 from the added
+  coverage).
+- `pnpm --filter @newsaas/api typecheck` → exit 0.
+- `pnpm --filter @newsaas/api lint` → exit 0.
+- `pnpm --filter @newsaas/api build` → exit 0.
+- `npx prettier --check` on the four changed files → all clean.
+- DI wiring: `PrismaModule` is `@Global` (provides/exports `PrismaService`) and
+  `RequestContextService`, `PermissionResolver`, `AuditWriter`,
+  `EntitlementsService` are all exported by the modules `ClinicalModule` imports
+  — the same resolution path WU2A already uses.
+
+## Nonblocking Review Limitations (accepted)
+
+Noted during fresh review and explicitly accepted as nonblocking; no code change
+was made for them:
+
+- No live database (no Docker/Postgres available): cross-tenant 404 and
+  concurrent behavior are proven at the service/fake-Prisma layer; live-PG
+  isolation/concurrency evidence remains WU5/H1-owned.
+- `updateRecord` with no changed fields is a no-op read that returns the
+  existing row and appends no audit row (intentional); it is not separately
+  pinned by a test.
+- `internalNotes` CONFIDENTIAL leakage prevention depends on WU3 using the
+  client-safe projection; WU2B provides only the allowlisted record DTOs.
+
+## Workload / PR Boundary — WU2B
+
+- Mode: **chained PR slice** (feature-branch-chain), WU2B only, with a
+  maintainer-approved **`size:exception`** for the 1,235-line honest measure
+  (comments and tests were not minified).
+- Boundary: base = tracker `feat/epic-06-clinical` @ `11d144c` (contains WU2A);
+  ends with the specialized-records service, DTO, tests and module wiring. No
+  controllers/Zod/routes (WU3), no web (WU4), no live-PG/docs (WU5).
+- Measured size: **1,225 additions / 10 deletions = 1,235 changed lines** (783
+  service + 61 DTO + 371 test + 10 module additions; module also deletes 10
+  lines). This exceeds the ≤800-line slice budget; the maintainer approved the
+  `size:exception` after fresh review, so WU2B is committed as its own chained
+  commit.
+- Slice staging guidance (WU2B, for a future committer): stage only
+  `apps/api/src/clinical/clinical.records.service.ts`,
+  `clinical.records.dto.ts`, `clinical.records.service.test.ts`,
+  `clinical.module.ts`, and the SDD doc updates; exclude pre-existing `.atl/`
+  dirtiness and `.codegraph/`.
+
+## Risks
+
+- **Size exception (approved)**: WU2B is 1,235 changed lines; the maintainer
+  approved the `size:exception` after fresh review, so no further split is
+  required for this slice.
+- Fresh-context review was performed and identified no blockers before commit.
+- No live database (no Docker/Postgres): cross-tenant isolation and concurrency
+  are proven at the service/fake-Prisma layer; live-PG proof remains WU5/H1.
+- `updateRecord` with no changed fields is a no-op read that returns the
+  existing row and appends no audit (intentional); not separately pinned.
+
+## Branch / Worktree State
+
+- Current branch: `feat/epic-06-clinical-wu2b-specialized-records`, created with
+  `--no-track` from `origin/feat/epic-06-clinical` @ `11d144c`. Committed as
+  exactly one chained commit `feat(EPIC-06): add specialized clinical records`;
+  no push, no PR, no merge.
+- Preserved and unstaged: `.atl/.skill-registry.cache.json`,
+  `.atl/skill-registry.md` (pre-existing dirtiness) and `.codegraph/` (tool
+  index). Only the WU2B boundary files plus the SDD docs are committed.
