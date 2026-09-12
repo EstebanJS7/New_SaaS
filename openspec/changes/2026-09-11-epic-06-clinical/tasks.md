@@ -7,12 +7,12 @@ define the implementation seams.
 
 ## Review Workload Forecast
 
-| Field                   | Value                                                                                                  |
-| ----------------------- | ------------------------------------------------------------------------------------------------------ |
-| Review budget           | 800 changed lines per slice                                                                            |
-| Estimated changed lines | WU2A 768 impl / 1,392 incl. tests; WU2B 844 impl / 1,145 incl. tests (re-sliced, corrected 2026-09-12) |
-| Delivery strategy       | force-chained (feature-branch-chain)                                                                   |
-| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4 → WU5                                                                    |
+| Field                   | Value                                                                                                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Review budget           | 800 changed lines per slice                                                                                                                                                 |
+| Estimated changed lines | WU2A 827 impl / 1,533 incl. tests (delivered); WU2B 844 impl + 20 module lines / 1,235 changed incl. 371 tests (delivered 2026-09-12; maintainer-approved `size:exception`) |
+| Delivery strategy       | force-chained (feature-branch-chain)                                                                                                                                        |
+| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4 → WU5                                                                                                                                         |
 
 Decision needed before apply: No Chained PRs recommended: Yes Chain strategy:
 feature-branch-chain 400-line budget risk: High
@@ -24,15 +24,21 @@ split for maintainability and CI diagnosis; WU2 is therefore re-sliced into
 **WU2A Encounter Core** and **WU2B Specialized Records** without changing
 approved product scope.
 
-Slice boundary (corrected 2026-09-12, review findings 1 and 4): **WU2A is the
-current reviewable slice and is complete.** WU2B is **planned and uncommitted**
-— its source/test files exist in the working tree but are OUT of the WU2A commit
-boundary. The WU2A `clinical.module.ts` wires only `ClinicalService` and MUST
-NOT reference WU2B's `ClinicalRecordsService`; WU2A typechecks, builds, and
-tests independently with the WU2B files absent. A strict ≤800 total including
-tests is infeasible without deleting tests or comments, which the workload guard
-forbids; the measure is reported per part and WU2A's `size:exception` is
-maintainer-approved.
+Slice boundary (corrected 2026-09-12, review findings 1 and 4): **WU2A is
+complete and merged into the tracker** (`feat/epic-06-clinical` @ `11d144c`, PR
+#6). **WU2B is now implemented on its own branch**
+(`feat/epic-06-clinical-wu2b-specialized-records`, based on the latest tracker)
+and is now **committed after a fresh review approved it**. Within the **WU2A
+commit**, `clinical.module.ts` wires only `ClinicalService` and does not
+reference WU2B's `ClinicalRecordsService`; WU2A typechecks, builds, and tests
+independently with the WU2B files absent (verified during WU2A finalization).
+WU2B's own branch adds the `ClinicalRecordsService` provider/export without
+changing the encounter core. A strict ≤800 total including tests is infeasible
+without deleting tests or comments, which the workload guard forbids; the
+measure is reported per part and WU2A's `size:exception` is maintainer-approved.
+WU2B's measured 1,235 changed lines also exceed the ≤800 slice budget; after
+fresh review the maintainer approved a **WU2B `size:exception`** for the honest,
+non-minified measure, so WU2B is committed as its own chained commit.
 
 ## Work Units
 
@@ -81,21 +87,26 @@ maintainer-approved.
 
 ## Phase 2B: Specialized Records (WU2B)
 
-> **Planned and uncommitted (out of the WU2A boundary).** The source/test files
-> below exist in the working tree but are NOT part of the WU2A commit; the WU2A
-> `clinical.module.ts` does not wire `ClinicalRecordsService`.
+> **Implemented on `feat/epic-06-clinical-wu2b-specialized-records`** (base:
+> tracker `feat/epic-06-clinical` @ `11d144c`, which already contains WU2A). The
+> WU2A commit contains none of these files; on the WU2B branch
+> `clinical.module.ts` provides/exports `ClinicalRecordsService` on top of the
+> unchanged encounter core. Fresh-context review approved the slice (no
+> blockers) and the maintainer approved the 1,235-line `size:exception`; WU2B is
+> committed as its own chained commit on that branch.
 
-- [ ] 2B.1 RED: create `apps/api/src/clinical/clinical.records.service.test.ts`
+- [x] 2B.1 RED: create `apps/api/src/clinical/clinical.records.service.test.ts`
       covering the five subdomain record kinds, tenant-scoped
       create/list/update, exactly-one co-committed audit, and invalid-weight
       rejection (spec Clinical subdomain records, Transactional audit, Tenant
-      isolation). Implemented in the working tree; pending the WU2B slice.
-- [ ] 2B.2 GREEN: create `apps/api/src/clinical/clinical.records.service.ts`
+      isolation). **7 tests**, all green (treatment, vaccination, deworming,
+      study, weight, invalid-weight persistence guard, cross-tenant 404).
+- [x] 2B.2 GREEN: create `apps/api/src/clinical/clinical.records.service.ts`
       (`ClinicalRecordsService` extending `ClinicalServiceBase`) and
       `clinical.records.dto.ts` for treatment/vaccination/deworming/study/weight
       create/list/update; add the `ClinicalRecordsService` provider/export to
-      `clinical.module.ts` without changing the WU2A encounter core. Implemented
-      in the working tree; pending the WU2B slice.
+      `clinical.module.ts` without changing the WU2A encounter core. Wired and
+      verified: typecheck, lint, build and the full API suite are green.
 
 ## Phase 3: API Contracts
 
