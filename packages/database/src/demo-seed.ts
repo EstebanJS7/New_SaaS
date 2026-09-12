@@ -290,7 +290,7 @@ export const DEMO_PATIENT_SPECIES_CODE = "dog";
 export const DEMO_PATIENT_BREED_CODE = "mixed";
 
 /** Fixed UUIDs keep the demo path idempotent without app-level uniques. */
-const DEMO_PATIENT_DOG_ID = "88888888-8888-8888-8888-888888888888";
+export const DEMO_PATIENT_DOG_ID = "88888888-8888-8888-8888-888888888888";
 const DEMO_PATIENT_CAT_ID = "99999999-9999-9999-9999-999999999999";
 const DEMO_GUARDIAN_DOG_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const DEMO_GUARDIAN_CAT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -384,6 +384,134 @@ export async function seedDemoPatients(
     });
 
     return { patients: patients.count, guardians: guardians.count };
+  });
+}
+
+/**
+ * Transactional delegate scope used inside {@link seedDemoClinical}'s
+ * `$transaction`.
+ */
+export interface DemoClinicalSeedTxClient {
+  clinicalEncounter: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        patientId: string;
+        status: "DRAFT" | "CLOSED";
+        version?: number;
+        reasonForVisit?: string | null;
+        anamnesis?: string | null;
+        diagnosis?: string | null;
+        treatmentPlan?: string | null;
+        internalNotes?: string | null;
+        clientSummary?: string | null;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+  clinicalWeight: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        patientId: string;
+        /** Positive decimal rendered as a string for exact persistence. */
+        quantity: string;
+        measuredAt: Date;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+}
+
+/**
+ * Structural client contract consumed by {@link seedDemoClinical}. The demo
+ * Patient is REFERENCED (created by the patient demo seed), never created here.
+ */
+export interface DemoClinicalSeedClient extends DemoClinicalSeedTxClient {
+  patient: {
+    findFirst: (args: {
+      where: { id: string; tenantId: string };
+      select: { id: true };
+    }) => Promise<{ id: string } | null>;
+  };
+  $transaction: <T>(fn: (tx: DemoClinicalSeedTxClient) => Promise<T>) => Promise<T>;
+}
+
+export interface DemoClinicalSeedResult {
+  encounters: number;
+  weights: number;
+}
+
+/** Fixed clinical fixture ids keep the demo path idempotent. */
+const DEMO_CLINICAL_ENCOUNTER_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+const DEMO_CLINICAL_WEIGHT_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+
+/** Fixed synthetic timestamp keeps the fixture byte-stable across reruns. */
+const DEMO_CLINICAL_MEASURED_AT = new Date("2026-01-15T10:00:00.000Z");
+
+function buildDemoEncounters(tenantId: string, patientId: string) {
+  return [
+    {
+      id: DEMO_CLINICAL_ENCOUNTER_ID,
+      tenantId,
+      patientId,
+      status: "DRAFT" as const,
+      version: 1,
+      reasonForVisit: "Synthetic annual wellness exam",
+      anamnesis: "Synthetic demo anamnesis; no real patient information.",
+      diagnosis: "Healthy (synthetic demo)",
+      treatmentPlan: "Routine follow-up in one year.",
+      internalNotes: "Synthetic demo internal note; staff-only.",
+      clientSummary: "Routine wellness visit completed.",
+    },
+  ];
+}
+
+function buildDemoWeights(tenantId: string, patientId: string) {
+  return [
+    {
+      id: DEMO_CLINICAL_WEIGHT_ID,
+      tenantId,
+      patientId,
+      quantity: "12.500",
+      measuredAt: DEMO_CLINICAL_MEASURED_AT,
+    },
+  ];
+}
+
+/**
+ * Seeds one synthetic clinical encounter and one weight record for the demo
+ * tenant, anchored to the fixed demo Patient. Content is clearly synthetic and
+ * carries no real PII; fixed UUIDs plus `skipDuplicates` keep the path
+ * idempotent, and both writes share one `$transaction`.
+ */
+export async function seedDemoClinical(
+  db: DemoClinicalSeedClient,
+  tenantId: string
+): Promise<DemoClinicalSeedResult> {
+  const patient = await db.patient.findFirst({
+    where: { id: DEMO_PATIENT_DOG_ID, tenantId },
+    select: { id: true },
+  });
+  if (!patient) {
+    throw new Error(
+      "demo seed: demo patient missing — run the patient demo seed before the clinical demo seed"
+    );
+  }
+
+  return db.$transaction(async (tx) => {
+    const encounters = await tx.clinicalEncounter.createMany({
+      data: buildDemoEncounters(tenantId, patient.id),
+      skipDuplicates: true,
+    });
+    const weights = await tx.clinicalWeight.createMany({
+      data: buildDemoWeights(tenantId, patient.id),
+      skipDuplicates: true,
+    });
+
+    return { encounters: encounters.count, weights: weights.count };
   });
 }
 
