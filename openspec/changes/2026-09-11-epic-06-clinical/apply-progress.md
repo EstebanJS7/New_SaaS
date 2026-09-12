@@ -730,15 +730,15 @@ Slice mapping: **WU4A** = `route.ts` + `route.test.ts` + `clinical-api.ts` +
 `patient-detail.tsx` mount (implemented but **uncommitted/untracked residual**;
 the WU4A commit must not stage these rows).
 
-| File                                                                              | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                                                                                    |
-| --------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/src/app/api/clinical/[[...path]]/route.ts`                              | Created  | Authenticated clinical proxy. Patient-anchored rewrite: `/api/clinical/:patientId/<rest>` → upstream `/patients/:patientId/clinical/<rest>` for GET/POST/PUT. Forwards only the server-read session cookie and `x-request-id`; pipes mutating bodies as the caller's raw stream (`duplex: "half"`); preserves upstream status, error envelope, `content-type` and `x-request-id`, and streams the response body. |
-| `apps/web/src/app/(app)/app/patients/[id]/clinical-api.ts`                        | Created  | Staff clinical API client (mirrors the allowlisted WU2A/WU3 DTOs). `listEncounters`, `createEncounter`, `updateDraft`, `closeEncounter`, `amendEncounter`, the `ApiRequestError` stable-code carrier, `isClinicalPermissionDenied`/`isClinicalConflict`, `userFacingClinicalError`, and `toClientSafeEncounter` (strips staff-only `internalNotes`, never mutates input).                                          |
-| `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.tsx`                 | Created  | Staff clinical workspace: loading/empty/error/permission-denied/success states, encounter list with DRAFT/CLOSED badges, draft editor with version-guarded save (409 CONFLICT shows a reload prompt and keeps local edits), close command, and the closed-encounter amendment form. Staff-only `internal notes` are separated from the client summary. Semantic tokens only; no Portal code.                        |
-| `apps/web/src/app/(app)/app/patients/[id]/patient-detail.tsx`                     | Modified | Mounted `<ClinicalWorkspace patientId={patientId} />` in the existing staff Patient detail surface (+2 lines).                                                                                                                                                                                                                                                                                                   |
-| `apps/web/src/app/api/clinical/[[...path]]/route.test.ts`                         | Created  | 15 proxy tests (7 initial + 8 security/path corrections): cookie/`x-request-id` forwarding and upstream path rewrite, header allowlist, nested command rewrite, raw-stream PUT body (`duplex`), streamed upstream response, absent `x-request-id`, 409 conflict passthrough, and rejection (no upstream call) of the empty anchor, malformed anchor, traversal anchor, traversal segment, encoded separator, unknown shape, sub-route-less anchor and non-contract method. |
-| `apps/web/src/app/(app)/app/patients/[id]/clinical-api.test.ts`                   | Created  | 19 client tests (8 initial + 11 identifier/error-normalization corrections): patient-anchored proxy paths for list/get/create/autosave/close/amend, body shapes, stable error code/status on 403, conflict classification, `toClientSafeEncounter` internal-notes stripping, malformed/empty-id rejection without a request, and normalization of null/invalid/non-envelope/array error JSON, a rejected fetch (`NETWORK_ERROR`) and an unreadable 200 body (`MALFORMED_RESPONSE`). |
-| `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx`            | Created  | 11 RTL tests: loading, empty, success list, generic error, 403 denied copy, create + editor open, autosave success (version + body), autosave conflict (reload action + local edits kept), close swaps to amendment form, amendment submit body, and staff internal-notes vs client-summary separation.                                                                                                             |
+| File                                                                   | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/app/api/clinical/[[...path]]/route.ts`                   | Created  | Authenticated clinical proxy. Patient-anchored rewrite: `/api/clinical/:patientId/<rest>` → upstream `/patients/:patientId/clinical/<rest>` for GET/POST/PUT. Forwards only the server-read session cookie and `x-request-id`; pipes mutating bodies as the caller's raw stream (`duplex: "half"`); preserves upstream status, error envelope, `content-type` and `x-request-id`, and streams the response body.                                                                    |
+| `apps/web/src/app/(app)/app/patients/[id]/clinical-api.ts`             | Created  | Staff clinical API client (mirrors the allowlisted WU2A/WU3 DTOs). `listEncounters`, `createEncounter`, `updateDraft`, `closeEncounter`, `amendEncounter`, the `ApiRequestError` stable-code carrier, `isClinicalPermissionDenied`/`isClinicalConflict`, `userFacingClinicalError`, and `toClientSafeEncounter` (strips staff-only `internalNotes`, never mutates input).                                                                                                           |
+| `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.tsx`      | Created  | Staff clinical workspace: loading/empty/error/permission-denied/success states, encounter list with DRAFT/CLOSED badges, draft editor with version-guarded save (409 CONFLICT shows a reload prompt and keeps local edits), close command, and the closed-encounter amendment form. Staff-only `internal notes` are separated from the client summary. Semantic tokens only; no Portal code.                                                                                        |
+| `apps/web/src/app/(app)/app/patients/[id]/patient-detail.tsx`          | Modified | Mounted `<ClinicalWorkspace patientId={patientId} />` in the existing staff Patient detail surface (+2 lines).                                                                                                                                                                                                                                                                                                                                                                      |
+| `apps/web/src/app/api/clinical/[[...path]]/route.test.ts`              | Created  | 15 proxy tests (7 initial + 8 security/path corrections): cookie/`x-request-id` forwarding and upstream path rewrite, header allowlist, nested command rewrite, raw-stream PUT body (`duplex`), streamed upstream response, absent `x-request-id`, 409 conflict passthrough, and rejection (no upstream call) of the empty anchor, malformed anchor, traversal anchor, traversal segment, encoded separator, unknown shape, sub-route-less anchor and non-contract method.          |
+| `apps/web/src/app/(app)/app/patients/[id]/clinical-api.test.ts`        | Created  | 19 client tests (8 initial + 11 identifier/error-normalization corrections): patient-anchored proxy paths for list/get/create/autosave/close/amend, body shapes, stable error code/status on 403, conflict classification, `toClientSafeEncounter` internal-notes stripping, malformed/empty-id rejection without a request, and normalization of null/invalid/non-envelope/array error JSON, a rejected fetch (`NETWORK_ERROR`) and an unreadable 200 body (`MALFORMED_RESPONSE`). |
+| `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx` | Created  | 11 RTL tests: loading, empty, success list, generic error, 403 denied copy, create + editor open, autosave success (version + body), autosave conflict (reload action + local edits kept), close swaps to amendment form, amendment submit body, and staff internal-notes vs client-summary separation.                                                                                                                                                                             |
 
 ## WU4A Independence Proof (WU4B files moved aside)
 
@@ -760,17 +760,14 @@ no code change was needed to make WU4A build/testable on its own.
 ## Evidence (WU4A verification, full WU4 tree)
 
 - Focused WU4A:
-  `pnpm --filter @newsaas/web exec vitest run --config vitest.config.ts
-  "src/app/api/clinical/[[...path]]/route.test.ts"
-  "src/app/(app)/app/patients/[id]/clinical-api.test.ts"`
+  `pnpm --filter @newsaas/web exec vitest run --config vitest.config.ts "src/app/api/clinical/[[...path]]/route.test.ts" "src/app/(app)/app/patients/[id]/clinical-api.test.ts"`
   → 2 files / **15 passed**.
 - Full web suite: `pnpm --filter @newsaas/web test` → **26 files / 143 passed**
   (baseline 23 files / 117 passed; +3 files / +26 tests; WU4A 2 files + WU4B 1
   file).
 - `pnpm --filter @newsaas/web typecheck` → exit 0.
 - `pnpm --filter @newsaas/web lint` → exit 0.
-- `pnpm --filter @newsaas/web build` → exit 0; `verify-build-output.mjs`
-  passed.
+- `pnpm --filter @newsaas/web build` → exit 0; `verify-build-output.mjs` passed.
 - `prettier --check` clean on all 7 changed web files (`--write` applied to 4).
 
 ## WU4A Security/Error Correction Pass (2026-09-12, maintainer-authorized)
@@ -782,32 +779,32 @@ pushed, opened as a PR, or merged; `.atl/` and `.codegraph/` untouched.
 Corrections:
 
 1. **Proxy path hardening** (`route.ts`): an allowlisted table of the clinical
-   route shapes (encounters list/item/close/amendments + the five record list/item
-   shapes, each with its contract methods) now gates every request. Empty or
-   malformed Patient anchors are rejected `400 VALIDATION_FAILED` (so
+   route shapes (encounters list/item/close/amendments + the five record
+   list/item shapes, each with its contract methods) now gates every request.
+   Empty or malformed Patient anchors are rejected `400 VALIDATION_FAILED` (so
    `/api/clinical` no longer maps to an unanchored upstream `/clinical`),
    traversal segments, percent-encoded bytes, unknown shapes and non-contract
-   methods are rejected (`400`/`404`) **before** `cookies()` or `fetch`, and every
-   emitted upstream segment is re-encoded. The reject decision is made before the
-   request body is touched.
+   methods are rejected (`400`/`404`) **before** `cookies()` or `fetch`, and
+   every emitted upstream segment is re-encoded. The reject decision is made
+   before the request body is touched.
 2. **Client identifier validation** (`clinical-api.ts`): `encodeIdentifier`
    rejects any non-UUID/empty patient or encounter id with
    `ApiRequestError("INVALID_IDENTIFIER", …, 0)` before path construction; valid
-   ids are `encodeURIComponent`-encoded. Public functions are `async`, so malformed
-   ids surface as rejections rather than synchronous throws.
+   ids are `encodeURIComponent`-encoded. Public functions are `async`, so
+   malformed ids surface as rejections rather than synchronous throws.
 3. **Error normalization** (`clinical-api.ts`): `parseError` reads the body as
    `unknown` and only extracts a code/message from an object envelope with an
-   object `error`, so invalid, `null` and non-envelope JSON become
-   `UNKNOWN` instead of a `TypeError`. A rejected `fetch` becomes
-   `NETWORK_ERROR` (status 0) and an unreadable success body becomes
-   `MALFORMED_RESPONSE`, both `ApiRequestError`.
+   object `error`, so invalid, `null` and non-envelope JSON become `UNKNOWN`
+   instead of a `TypeError`. A rejected `fetch` becomes `NETWORK_ERROR`
+   (status 0) and an unreadable success body becomes `MALFORMED_RESPONSE`, both
+   `ApiRequestError`.
 4. **Focused tests**: proxy tests for empty anchor, malformed anchor, traversal
    anchor, traversal segment after a valid anchor, encoded separator, unknown
    shape, sub-route-less anchor and non-contract method (all asserting the
-   upstream is never called) plus UUID fixtures; client tests for malformed/empty
-   patient and encounter ids (asserting no fetch), null JSON, invalid JSON,
-   non-envelope object JSON, array JSON, rejected fetch, and an unreadable 200
-   body.
+   upstream is never called) plus UUID fixtures; client tests for
+   malformed/empty patient and encounter ids (asserting no fetch), null JSON,
+   invalid JSON, non-envelope object JSON, array JSON, rejected fetch, and an
+   unreadable 200 body.
 
 ### Evidence (WU4A correction pass)
 
@@ -826,18 +823,18 @@ Corrections:
 
 ## Measured size (WU4, re-sliced)
 
-| Part                                            | Slice | Pre-correction | Post-correction |
-| ----------------------------------------------- | ----- | -------------- | --------------- |
-| `route.ts` proxy                                | WU4A  | 99             | 198             |
-| `clinical-api.ts` client                        | WU4A  | 215            | 276             |
-| `route.test.ts`                                 | WU4A  | 257            | 346             |
-| `clinical-api.test.ts`                          | WU4A  | 172            | 321             |
+| Part                                            | Slice | Pre-correction      | Post-correction       |
+| ----------------------------------------------- | ----- | ------------------- | --------------------- |
+| `route.ts` proxy                                | WU4A  | 99                  | 198                   |
+| `clinical-api.ts` client                        | WU4A  | 215                 | 276                   |
+| `route.test.ts`                                 | WU4A  | 257                 | 346                   |
+| `clinical-api.test.ts`                          | WU4A  | 172                 | 321                   |
 | **WU4A subtotal (impl + tests)**                | WU4A  | **743** (314 + 429) | **1,141** (474 + 667) |
-| `clinical-workspace.tsx`                        | WU4B  | 491            | 491             |
-| `patient-detail.tsx` mount (+2)                 | WU4B  | 2              | 2               |
-| `clinical-workspace.test.tsx`                   | WU4B  | 290            | 290             |
-| **WU4B subtotal (493 impl + 290 tests)**        | WU4B  | **783**        | **783**         |
-| **Original WU4 total incl. tests (superseded)** | WU4   | 1,526          | —               |
+| `clinical-workspace.tsx`                        | WU4B  | 491                 | 491                   |
+| `patient-detail.tsx` mount (+2)                 | WU4B  | 2                   | 2                     |
+| `clinical-workspace.test.tsx`                   | WU4B  | 290                 | 290                   |
+| **WU4B subtotal (493 impl + 290 tests)**        | WU4B  | **783**             | **783**               |
+| **Original WU4 total incl. tests (superseded)** | WU4   | 1,526               | —                     |
 
 Pre-correction, both re-sliced parts were under the ≤800 changed-lines budget
 and no `size:exception` was required. The maintainer-authorized security/error
@@ -845,17 +842,18 @@ correction pass added a **+398-line** evidence delta to WU4A (hardened proxy,
 identifier validation, error normalization and the mandated focused tests),
 lifting WU4A to **1,141 changed lines**, i.e. over the ≤800 slice budget. The
 maintainer approved the **WU4A `size:exception`** after the 2026-09-12 fresh
-re-review for the honest, non-minified measure; WU4B stays at 783, under budget. No comment, test, or state was
-minified to fit the budget.
+re-review for the honest, non-minified measure; WU4B stays at 783, under budget.
+No comment, test, or state was minified to fit the budget.
 
 ## WU4B status — implemented, uncommitted residual (out of the WU4A boundary)
 
-The WU4B staff workspace source and tests exist in the working tree, but they are
-**not part of the WU4A commit**. After the WU4A correction tightened the client to
-UUID identifiers, the WU4B RTL suite (`clinical-workspace.test.tsx`, 11 tests)
-**fails with `Invalid patient id.`** because its fixtures still use `patient-1` /
-`enc-1`. That fixture migration is a **WU4B-slice task** (the WU4B chained child),
-not a WU4A edit; no WU4B file was changed in this pass. WU4B owns:
+The WU4B staff workspace source and tests exist in the working tree, but they
+are **not part of the WU4A commit**. After the WU4A correction tightened the
+client to UUID identifiers, the WU4B RTL suite (`clinical-workspace.test.tsx`,
+11 tests) **fails with `Invalid patient id.`** because its fixtures still use
+`patient-1` / `enc-1`. That fixture migration is a **WU4B-slice task** (the WU4B
+chained child), not a WU4A edit; no WU4B file was changed in this pass. WU4B
+owns:
 
 - `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.tsx` (491)
 - `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx` (290)
@@ -879,8 +877,8 @@ its own chained commit/PR and fresh review remain.
   dependencies against the project dependency rule; the established controlled
   pattern is used instead.
 - **No client permission source**: there is no client-side permission/session
-  hook in the web app. Permission-aware UX is therefore error-code driven
-  (403 `FORBIDDEN` / `FEATURE_NOT_ENTITLED` render dedicated copy); the backend
+  hook in the web app. Permission-aware UX is therefore error-code driven (403
+  `FORBIDDEN` / `FEATURE_NOT_ENTITLED` render dedicated copy); the backend
   remains authoritative. No navigation/portal change.
 - **Autosave is an explicit version-guarded save** ("Save draft") rather than a
   debounced background write; the spec requires the version guard, not a timing
@@ -888,8 +886,8 @@ its own chained commit/PR and fresh review remain.
 - **WU4 UI scope is encounter lifecycle only** (list/create/autosave/close/
   amend). The five specialized record kinds remain API-only because the spec
   Staff-workspace requirement and tasks 4A.1/4A.2 and 4B.1/4B.2 enumerate only
-  encounter flows;
-  `clinical-api.ts` intentionally does not add unused record functions.
+  encounter flows; `clinical-api.ts` intentionally does not add unused record
+  functions.
 
 ## Known Limitations (WU4)
 
@@ -933,8 +931,8 @@ its own chained commit/PR and fresh review remain.
 - Fresh-context re-review APPROVED the corrected WU4A slice on 2026-09-12 (with
   the 1,141-line `size:exception`), so WU4A is committed as exactly one chained
   commit `feat(EPIC-06): add clinical proxy and client`.
-- The proxy rewrite is pinned by a test; a future change to the API route
-  prefix would require updating both the proxy and its test.
+- The proxy rewrite is pinned by a test; a future change to the API route prefix
+  would require updating both the proxy and its test.
 
 ## Branch / Worktree State — WU4A
 

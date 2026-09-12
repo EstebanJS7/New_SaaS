@@ -7,12 +7,12 @@ and WU5 (verification/docs); design §§3-10 define the implementation seams.
 
 ## Review Workload Forecast
 
-| Field                   | Value                                                                                                                                                                                                                                                                                                                      |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Review budget           | 800 changed lines per slice                                                                                                                                                                                                                                                                                                |
+| Field                   | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Review budget           | 800 changed lines per slice                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Estimated changed lines | WU2A 827 impl / 1,533 incl. tests (delivered); WU2B 844 impl + 20 module lines / 1,235 changed incl. 371 tests (delivered 2026-09-12; maintainer-approved `size:exception`); WU3 570 contract/source + 760 tests = 1,330 changed incl. tests (review corrections applied 2026-09-12; maintainer-approved `size:exception`); WU4A 743 changed incl. tests (proxy + client; re-sliced 2026-09-12) then **1,141 changed incl. tests after the 2026-09-12 security/error correction pass** (+398; now over the ≤800 budget — `size:exception` approved by the maintainer after the 2026-09-12 fresh re-review, no test/comment minified); WU4B 783 changed incl. tests (workspace UI + RTL; re-sliced 2026-09-12; under the 800 budget; uncommitted residual) |
-| Delivery strategy       | force-chained (feature-branch-chain)                                                                                                                                                                                                                                                                                       |
-| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4A → WU4B → WU5                                                                                                                                                                                                                                                                                |
+| Delivery strategy       | force-chained (feature-branch-chain)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4A → WU4B → WU5                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 Decision needed before apply: No Chained PRs recommended: Yes Chain strategy:
 feature-branch-chain 400-line budget risk: High
@@ -66,7 +66,7 @@ committed.
 | WU2B | Specialized records (`ClinicalRecordsService`): treatments, vaccinations, deworming, studies, weights CRUD + tests; base is the WU2A branch                                                                                   | `pnpm test --filter @newsaas/api`      | API fake-Prisma unit harness      | Remove subdomain service/export; keep encounter core |
 | WU3  | Controllers, Zod, DTOs, route contract; base is the WU2B branch                                                                                                                                                               | `pnpm test --filter @newsaas/api`      | API integration/probe harness     | Remove API exposure; keep immutable records          |
 | WU4A | Staff clinical proxy + API client (`/api/clinical` proxy + `clinical-api.ts`) and their node tests; base is the WU3/tracker branch                                                                                            | `pnpm test --filter @newsaas/web`      | Node/web unit harness             | Remove proxy + client; keep API                      |
-| WU4B | Staff clinical workspace UI (`clinical-workspace.tsx` + RTL tests) and the `patient-detail.tsx` mount; base is the WU4A branch                                                                                                 | `pnpm test --filter @newsaas/web`      | RTL web harness                   | Remove workspace component/mount                     |
+| WU4B | Staff clinical workspace UI (`clinical-workspace.tsx` + RTL tests) and the `patient-detail.tsx` mount; base is the WU4A branch                                                                                                | `pnpm test --filter @newsaas/web`      | RTL web harness                   | Remove workspace component/mount                     |
 | WU5  | Live-PG evidence and documentation; base is the WU4B branch                                                                                                                                                                   | `pnpm test --filter @newsaas/api`      | Live PostgreSQL isolation harness | Revert verification/docs only                        |
 
 ## Phase 1: Data Foundation
@@ -163,17 +163,17 @@ committed.
       the proxy now rejects empty/malformed Patient anchors, traversal and
       encoded-separator segments, unknown route shapes and non-contract methods
       via an allowlisted set of clinical route shapes with re-encoded upstream
-      construction (`/api/clinical` no longer maps to an unanchored `/clinical`);
-      the client validates and encodes UUID identifiers before path construction;
-      and error parsing normalizes invalid/`null`/non-envelope JSON and rejected
-      fetches into stable `ApiRequestError` codes (`UNKNOWN`, `NETWORK_ERROR`,
-      `MALFORMED_RESPONSE`, `INVALID_IDENTIFIER`) instead of a runtime
-      `TypeError`. Focused WU4A is now 2 files / **34 tests** (route 15, client
-      19). WU4A measured size is now **1,141 changed lines**, over the ≤800 slice
-      budget; the maintainer approved the `size:exception` after the 2026-09-12
-      fresh re-review (no test or comment minified). The
-      tightened client contract requires the WU4B fixtures to move to UUID ids in
-      its own chained slice.
+      construction (`/api/clinical` no longer maps to an unanchored
+      `/clinical`); the client validates and encodes UUID identifiers before
+      path construction; and error parsing normalizes
+      invalid/`null`/non-envelope JSON and rejected fetches into stable
+      `ApiRequestError` codes (`UNKNOWN`, `NETWORK_ERROR`, `MALFORMED_RESPONSE`,
+      `INVALID_IDENTIFIER`) instead of a runtime `TypeError`. Focused WU4A is
+      now 2 files / **34 tests** (route 15, client 19). WU4A measured size is
+      now **1,141 changed lines**, over the ≤800 slice budget; the maintainer
+      approved the `size:exception` after the 2026-09-12 fresh re-review (no
+      test or comment minified). The tightened client contract requires the WU4B
+      fixtures to move to UUID ids in its own chained slice.
 
 ## Phase 4B: Staff Workspace UI (WU4B)
 
@@ -189,8 +189,8 @@ committed.
 - [ ] 4B.1 RED: add RTL tests for loading, empty, error, success, denied,
       autosave conflict, close, amendment, and client-safe `internalNotes`
       separation (spec Staff workspace). The implementation exists as
-      `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx`
-      (11 tests); its own chained slice must verify and commit it.
+      `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx` (11
+      tests); its own chained slice must verify and commit it.
 - [ ] 4B.2 GREEN: commit `clinical-workspace.tsx` and the `patient-detail.tsx`
       mount using semantic tokens and the authenticated proxy only. The files
       exist uncommitted in the WU4A working tree and must stay out of the WU4A
@@ -210,12 +210,13 @@ untouched. WU4A measured size was **743 changed lines** (314 implementation +
 429 tests) before the security/error correction pass and is now **1,141 changed
 lines** (474 implementation + 667 tests) after it; that exceeds the ≤800 slice
 budget, so the maintainer approved a **WU4A `size:exception`** after the
-2026-09-12 fresh re-review (no test or comment was minified). WU4B measures **783 changed lines** (493 implementation incl. the
-2-line mount + 290 tests), under budget. Because the correction tightens the
-client to UUID identifiers, the WU4B RTL fixtures (which still use `patient-1` /
-`enc-1`) must move to UUID ids in the WU4B chained slice before its suite is
-green. Fresh re-review APPROVED WU4A and its 1,141-line `size:exception` on
-2026-09-12; WU4A is committed as exactly one chained commit
+2026-09-12 fresh re-review (no test or comment was minified). WU4B measures
+**783 changed lines** (493 implementation incl. the 2-line mount + 290 tests),
+under budget. Because the correction tightens the client to UUID identifiers,
+the WU4B RTL fixtures (which still use `patient-1` / `enc-1`) must move to UUID
+ids in the WU4B chained slice before its suite is green. Fresh re-review
+APPROVED WU4A and its 1,141-line `size:exception` on 2026-09-12; WU4A is
+committed as exactly one chained commit
 `feat(EPIC-06): add clinical proxy and client`.
 
 ## Phase 5: Evidence and Documentation
