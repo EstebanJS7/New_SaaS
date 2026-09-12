@@ -35,9 +35,7 @@ describe("migration · clinical (EPIC-06 CLI-001)", () => {
     expect(CLINICAL_SQL).toMatch(
       /CREATE TYPE "clinical_encounter_status" AS ENUM \('DRAFT', 'CLOSED'\)/
     );
-    expect(CLINICAL_SQL).toMatch(
-      /"status" "clinical_encounter_status" NOT NULL DEFAULT 'DRAFT'/
-    );
+    expect(CLINICAL_SQL).toMatch(/"status" "clinical_encounter_status" NOT NULL DEFAULT 'DRAFT'/);
   });
 
   it("requires the initial version on the encounter", () => {
@@ -120,9 +118,7 @@ describe("migration · clinical (EPIC-06 CLI-001)", () => {
   });
 
   it("rejects UPDATE of a CLOSED encounter and any encounter DELETE", () => {
-    expect(CLINICAL_SQL).toMatch(
-      /CREATE OR REPLACE FUNCTION "clinical_encounter_immutable"\(\)/
-    );
+    expect(CLINICAL_SQL).toMatch(/CREATE OR REPLACE FUNCTION "clinical_encounter_immutable"\(\)/);
     expect(CLINICAL_SQL).toMatch(/IF OLD\."status" = 'CLOSED' THEN/);
     expect(CLINICAL_SQL).toMatch(/TG_OP = 'DELETE'/);
     expect(CLINICAL_SQL).toMatch(
@@ -132,9 +128,7 @@ describe("migration · clinical (EPIC-06 CLI-001)", () => {
   });
 
   it("blocks hard delete of every subdomain record", () => {
-    expect(CLINICAL_SQL).toMatch(
-      /CREATE OR REPLACE FUNCTION "clinical_subdomain_no_delete"\(\)/
-    );
+    expect(CLINICAL_SQL).toMatch(/CREATE OR REPLACE FUNCTION "clinical_subdomain_no_delete"\(\)/);
     for (const table of SUBDOMAIN_TABLES) {
       expect(CLINICAL_SQL).toMatch(
         new RegExp(
