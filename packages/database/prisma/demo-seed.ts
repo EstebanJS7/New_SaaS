@@ -2,6 +2,7 @@ import { hash } from "argon2";
 import { PrismaClient } from "../src/generated/index.js";
 import {
   resolveDemoSeedGuard,
+  seedDemoClinical,
   seedDemoCustomers,
   seedDemoData,
   seedDemoPatients,
@@ -57,12 +58,14 @@ async function main(): Promise<void> {
     const result = await seedDemoData(db, { passwordHash });
     const customers = await seedDemoCustomers(db, result.tenantId);
     const patients = await seedDemoPatients(db, result.tenantId);
+    const clinical = await seedDemoClinical(db, result.tenantId);
     console.info(
       `Demo seed enabled — created/verified tenant ${result.tenantId} with owner ` +
         `${result.ownerProfileId} (${result.grantedFeatureCodes} explicit grants), ` +
         `${customers.customers} customers, ${customers.addresses} addresses, ` +
         `${customers.contacts} contacts, ${patients.patients} patients, ` +
-        `${patients.guardians} guardian links.`
+        `${patients.guardians} guardian links, ${clinical.encounters} clinical encounters, ` +
+        `${clinical.weights} weights.`
     );
   } finally {
     await db.$disconnect();
