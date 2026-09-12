@@ -600,7 +600,9 @@ command convention (`POST /patients/:id/deactivate` → 201).
 
 - Branch: `feat/epic-06-clinical-wu3-api-contracts`, created from
   `origin/feat/epic-06-clinical` @ `75cb822` (contains WU1 + WU2A + WU2B).
-- Not committed, not pushed, no PR, no merge — fresh review is required first.
+- Fresh review APPROVED; WU3 committed as exactly one chained commit
+  `feat(EPIC-06): add clinical API contracts`
+  (`8030c526b324db3baf021a7b839ffeb4caa14a45`). No push, no PR, no merge.
 - Preserved and unstaged: `.atl/.skill-registry.cache.json`,
   `.atl/skill-registry.md` (pre-existing dirtiness) and `.codegraph/` (tool
   index).
@@ -675,8 +677,9 @@ exactly. No production/controller change, no WU1/WU2 change, no
 
 - Branch: `feat/epic-06-clinical-wu3-api-contracts`, created from
   `origin/feat/epic-06-clinical` @ `75cb822` (contains WU1 + WU2A + WU2B).
-- Not committed, not pushed, no PR, no merge — a further fresh review is required
-  first.
+- Post-correction fresh review APPROVED; WU3 committed as exactly one chained
+  commit `feat(EPIC-06): add clinical API contracts`
+  (`8030c526b324db3baf021a7b839ffeb4caa14a45`). No push, no PR, no merge.
 - Preserved and unstaged: `.atl/.skill-registry.cache.json`,
   `.atl/skill-registry.md` (pre-existing dirtiness) and `.codegraph/` (tool
   index).
