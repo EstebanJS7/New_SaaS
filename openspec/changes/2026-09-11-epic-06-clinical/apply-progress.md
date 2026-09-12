@@ -537,15 +537,15 @@ was made for them:
 
 ## Files Changed — WU3 API Contracts
 
-| File                                                      | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/api/src/clinical/clinical.zod.ts`                   | Created  | Strict Zod input contracts for all params/bodies (encounter create/autosave/close/amend + five record kinds), positive-decimal weight guard matching `Decimal(10,3)`, and the shared `parseClinicalInput` 400 `VALIDATION_FAILED` helper.                                                                                                                                            |
-| `apps/api/src/clinical/clinical.encounters.controller.ts` | Created  | `ClinicalEncountersController` (`patients/:patientId/clinical/encounters`): list/create/get/autosave/close/amendments, each declaring its `vet.clinical.*` permission.                                                                                                                                                                                                               |
-| `apps/api/src/clinical/clinical.records.controller.ts`    | Created  | `ClinicalRecordsController` (`patients/:patientId/clinical`): list/create/update for treatments, vaccinations, deworming, studies, weights; read/create/update permission mapping; no delete route.                                                                                                                                                                                  |
-| `apps/api/src/clinical/clinical.module.ts`                | Modified | Registers both controllers; adds no new provider and does not change the services.                                                                                                                                                                                                                                                                                                   |
-| `apps/api/src/rbac/route-contract.probe.test.ts`          | Modified | Pins the 21 new clinical routes in `EXPECTED_ROUTE_INVENTORY`.                                                                                                                                                                                                                                                                                                                       |
+| File                                                      | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/src/clinical/clinical.zod.ts`                   | Created  | Strict Zod input contracts for all params/bodies (encounter create/autosave/close/amend + five record kinds), positive-decimal weight guard matching `Decimal(10,3)`, and the shared `parseClinicalInput` 400 `VALIDATION_FAILED` helper.                                                                                                                                             |
+| `apps/api/src/clinical/clinical.encounters.controller.ts` | Created  | `ClinicalEncountersController` (`patients/:patientId/clinical/encounters`): list/create/get/autosave/close/amendments, each declaring its `vet.clinical.*` permission.                                                                                                                                                                                                                |
+| `apps/api/src/clinical/clinical.records.controller.ts`    | Created  | `ClinicalRecordsController` (`patients/:patientId/clinical`): list/create/update for treatments, vaccinations, deworming, studies, weights; read/create/update permission mapping; no delete route.                                                                                                                                                                                   |
+| `apps/api/src/clinical/clinical.module.ts`                | Modified | Registers both controllers; adds no new provider and does not change the services.                                                                                                                                                                                                                                                                                                    |
+| `apps/api/src/rbac/route-contract.probe.test.ts`          | Modified | Pins the 21 new clinical routes in `EXPECTED_ROUTE_INVENTORY`.                                                                                                                                                                                                                                                                                                                        |
 | `apps/api/src/clinical/clinical.http.integration.test.ts` | Created  | HTTP boundary over the real guard chain: anonymous 401, per-route 403 FORBIDDEN, entitlement-negative 403 FEATURE_NOT_ENTITLED, invalid-weight 400 + no persistence, byte-equivalent cross-tenant 404 (read + create), allowlisted encounter DTO + `toClientSafeEncounter` internalNotes exclusion + IDs-only audit, five record create paths, and 409 lifecycle conflicts. 10 tests. |
-| `apps/api/test/support/clinical-http-fixture.ts`          | Created  | WU3 test fixture: reuses the EPIC-05 three-tenant boundary, grants `vet.clinical.*` to A/B/C and attaches minimal in-memory clinical delegates (`create/findFirst/findMany/updateMany`, no delete) so WU3 routes can be exercised end-to-end without live PostgreSQL.                                                                                                                |
+| `apps/api/test/support/clinical-http-fixture.ts`          | Created  | WU3 test fixture: reuses the EPIC-05 three-tenant boundary, grants `vet.clinical.*` to A/B/C and attaches minimal in-memory clinical delegates (`create/findFirst/findMany/updateMany`, no delete) so WU3 routes can be exercised end-to-end without live PostgreSQL.                                                                                                                 |
 
 No change to `clinical.service.ts`, `clinical.service.base.ts`,
 `clinical.records.service.ts`, `clinical.dto.ts`, `clinical.records.dto.ts` or
@@ -617,28 +617,28 @@ behavior, module boundary, or product scope changed; no `.atl/` or `.codegraph/`
 change; no commit/push/PR/merge.
 
 1. **Foreign clinical aggregate UUID isolation + no-write proof.**
-   `clinical.http.integration.test.ts` seeds tenant B with one aggregate of every
-   clinical kind and, as tenant A, references B's aggregate UUIDs through A's OWN
-   Patient anchor, so a foreign Patient anchor is ruled out:
+   `clinical.http.integration.test.ts` seeds tenant B with one aggregate of
+   every clinical kind and, as tenant A, references B's aggregate UUIDs through
+   A's OWN Patient anchor, so a foreign Patient anchor is ruled out:
    - `GET /patients/:patientId/clinical/encounters/:id` with B's encounter UUID;
    - `PUT /patients/:patientId/clinical/{treatments|vaccinations|deworming|studies|weights}/:id`
      with B's record UUID and a Zod-valid update body.
 
    Each probe asserts a byte-equivalent 404 `NOT_FOUND` versus a random
-   nonexistent id under the same Patient (same pinned `X-Request-Id`) and that no
-   identifier leaks. The test additionally asserts every foreign row is unchanged
-   (deep snapshot equality) and that no audit row was appended.
+   nonexistent id under the same Patient (same pinned `X-Request-Id`) and that
+   no identifier leaks. The test additionally asserts every foreign row is
+   unchanged (deep snapshot equality) and that no audit row was appended.
 
-2. **Permission-to-route mapping evidence.**
-   `route-contract.probe.test.ts` adds `CLINICAL_PERMISSION_BY_ROUTE`, pinning
-   the exact `vet.clinical.*` key for all 21 clinical routes against the real
-   enumerated `@RequirePermissions` metadata (a wrong key fails by name).
-   `clinical.http.integration.test.ts` adds a runtime single-key matrix: for each
-   of the five keys, a role holding exactly that key is probed against every
-   route — its matching routes must pass the guard and every other route must be
-   denied with 403 `FORBIDDEN`. The amend route's positive case is covered by the
-   metadata fence because its service reaches the `SELECT ... FOR UPDATE` lock the
-   in-memory boundary does not model.
+2. **Permission-to-route mapping evidence.** `route-contract.probe.test.ts` adds
+   `CLINICAL_PERMISSION_BY_ROUTE`, pinning the exact `vet.clinical.*` key for
+   all 21 clinical routes against the real enumerated `@RequirePermissions`
+   metadata (a wrong key fails by name). `clinical.http.integration.test.ts`
+   adds a runtime single-key matrix: for each of the five keys, a role holding
+   exactly that key is probed against every route — its matching routes must
+   pass the guard and every other route must be denied with 403 `FORBIDDEN`. The
+   amend route's positive case is covered by the metadata fence because its
+   service reaches the `SELECT ... FOR UPDATE` lock the in-memory boundary does
+   not model.
 
 3. **Truthful size exception.** `tasks.md` and this document now record the
    maintainer-approved WU3 `size:exception` and the post-correction measure
@@ -647,25 +647,25 @@ change; no commit/push/PR/merge.
 ### RED proof (one-variable experiments, both reverted)
 
 - Metadata fence: temporarily redecorated `PUT .../encounters/:id` with
-  `vet.clinical.read`; the probe failed naming `WRONG CLINICAL PERMISSION:
-  PUT /patients/:patientId/clinical/encounters/:id expected [vet.clinical.update]
-  got [vet.clinical.read]`. Controller restored.
+  `vet.clinical.read`; the probe failed naming
+  `WRONG CLINICAL PERMISSION: PUT /patients/:patientId/clinical/encounters/:id expected [vet.clinical.update] got [vet.clinical.read]`.
+  Controller restored.
 - Aggregate isolation: temporarily made the fixture's `matchesWhere` ignore
   `tenantId`/`patientId`; the aggregate test failed (foreign encounter GET
   returned 200, not 404). Fixture restored byte-for-byte.
 
 ### Verification after WU3 corrections
 
-| Command                                                                                                        | Result                                                                           |
-| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| focused `vitest run clinical.http.integration route-contract.probe clinical.service clinical.records.service`   | exit 0 — 4 files, **50 passed** (was 47; +3)                                     |
-| metadata RED experiment (wrong key, then reverted)                                                             | **RED: 1 failed** — named the wrong-permission route                             |
-| isolation RED experiment (unscoped match, then reverted)                                                       | **RED: 1 failed** — foreign GET returned 200                                     |
-| `pnpm --filter @newsaas/api test`                                                                              | exit 0 — 52 files passed / 1 skipped; **476 passed / 16 skipped** (was 473; +3) |
-| `pnpm --filter @newsaas/api typecheck`                                                                         | exit 0                                                                           |
-| `pnpm --filter @newsaas/api lint`                                                                              | exit 0                                                                           |
-| `pnpm --filter @newsaas/api build`                                                                             | exit 0                                                                           |
-| `prettier --check` on the changed clinical/probe/support files                                                 | exit 0 — clean                                                                   |
+| Command                                                                                                       | Result                                                                          |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| focused `vitest run clinical.http.integration route-contract.probe clinical.service clinical.records.service` | exit 0 — 4 files, **50 passed** (was 47; +3)                                    |
+| metadata RED experiment (wrong key, then reverted)                                                            | **RED: 1 failed** — named the wrong-permission route                            |
+| isolation RED experiment (unscoped match, then reverted)                                                      | **RED: 1 failed** — foreign GET returned 200                                    |
+| `pnpm --filter @newsaas/api test`                                                                             | exit 0 — 52 files passed / 1 skipped; **476 passed / 16 skipped** (was 473; +3) |
+| `pnpm --filter @newsaas/api typecheck`                                                                        | exit 0                                                                          |
+| `pnpm --filter @newsaas/api lint`                                                                             | exit 0                                                                          |
+| `pnpm --filter @newsaas/api build`                                                                            | exit 0                                                                          |
+| `prettier --check` on the changed clinical/probe/support files                                                | exit 0 — clean                                                                  |
 
 Scope: only `apps/api/src/clinical/clinical.http.integration.test.ts` and
 `apps/api/src/rbac/route-contract.probe.test.ts` changed in code, plus the two

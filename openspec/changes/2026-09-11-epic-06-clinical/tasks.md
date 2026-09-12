@@ -7,12 +7,12 @@ define the implementation seams.
 
 ## Review Workload Forecast
 
-| Field                   | Value                                                                                                                                                                       |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Review budget           | 800 changed lines per slice                                                                                                                                                 |
+| Field                   | Value                                                                                                                                                                                                                                                                                                                      |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Review budget           | 800 changed lines per slice                                                                                                                                                                                                                                                                                                |
 | Estimated changed lines | WU2A 827 impl / 1,533 incl. tests (delivered); WU2B 844 impl + 20 module lines / 1,235 changed incl. 371 tests (delivered 2026-09-12; maintainer-approved `size:exception`); WU3 570 contract/source + 760 tests = 1,330 changed incl. tests (review corrections applied 2026-09-12; maintainer-approved `size:exception`) |
-| Delivery strategy       | force-chained (feature-branch-chain)                                                                                                                                        |
-| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4 → WU5                                                                                                                                         |
+| Delivery strategy       | force-chained (feature-branch-chain)                                                                                                                                                                                                                                                                                       |
+| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4 → WU5                                                                                                                                                                                                                                                                                        |
 
 Decision needed before apply: No Chained PRs recommended: Yes Chain strategy:
 feature-branch-chain 400-line budget risk: High
@@ -45,16 +45,17 @@ WU3 progress note (2026-09-12): WU2B merged into the tracker (`75cb822`, PR #7).
 committed** — a fresh review rejected the first cut and required three
 corrections, now applied: (1) byte-equivalent cross-tenant 404 + no-write proof
 for foreign clinical **aggregate UUIDs** (encounter GET + the five record update
-routes) using foreign record ids rather than only a foreign Patient anchor;
-(2) a permission-to-route mapping fence (exact `vet.clinical.*` key per route via
-the route-contract probe) plus a single-key runtime enforcement matrix; and
-(3) truthful size-exception documentation. **The maintainer has approved the WU3
+routes) using foreign record ids rather than only a foreign Patient anchor; (2)
+a permission-to-route mapping fence (exact `vet.clinical.*` key per route via
+the route-contract probe) plus a single-key runtime enforcement matrix; and (3)
+truthful size-exception documentation. **The maintainer has approved the WU3
 `size:exception`** (recorded 2026-09-12). Post-correction measured size is 570
 changed lines of API contract/source support (147 zod + 103 encounters
-controller + 230 records controller + 82 route-probe + 8 module) plus 760 changed
-test lines (618 HTTP integration + 142 fixture) = **1,330 changed lines (1,328
-additions / 2 deletions) incl. tests**, over the ≤800 slice budget; no comment or
-test was minified. A further fresh review is required before WU3 is committed.
+controller + 230 records controller + 82 route-probe + 8 module) plus 760
+changed test lines (618 HTTP integration + 142 fixture) = **1,330 changed lines
+(1,328 additions / 2 deletions) incl. tests**, over the ≤800 slice budget; no
+comment or test was minified. A further fresh review is required before WU3 is
+committed.
 
 ## Work Units
 
@@ -139,8 +140,8 @@ test was minified. A further fresh review is required before WU3 is committed.
       inventory (design §4). **Implemented** as
       `clinical.encounters.controller.ts`, `clinical.records.controller.ts`,
       `clinical.zod.ts` and the `ClinicalModule` controller registration;
-       services/DTOs/permissions unchanged. Full API suite green (52 files / 476
-       passed, 16 live-PG skipped); typecheck, lint, build and prettier clean.
+      services/DTOs/permissions unchanged. Full API suite green (52 files / 476
+      passed, 16 live-PG skipped); typecheck, lint, build and prettier clean.
 
 ## Phase 4: Staff Workspace
 
