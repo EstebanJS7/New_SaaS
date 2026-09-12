@@ -1,30 +1,49 @@
 # Tasks: EPIC-06 Comprehensive Clinical Records
 
-Traceability: clinical-management spec requirements map to WU1 (data/seed), WU2
-(lifecycle, audit, tenancy), WU3 (authorization/API), WU4 (workspace), and WU5
-(verification/docs); design §§3-10 define the implementation seams.
+Traceability: clinical-management spec requirements map to WU1 (data/seed), WU2A
+(encounter lifecycle, audit, tenancy), WU2B (specialized records), WU3
+(authorization/API), WU4 (workspace), and WU5 (verification/docs); design §§3-10
+define the implementation seams.
 
 ## Review Workload Forecast
 
-| Field                   | Value                       |
-| ----------------------- | --------------------------- |
-| Review budget           | 800 changed lines           |
-| Estimated changed lines | 950-1,250 (likely >800)     |
-| Delivery strategy       | ask-always                  |
-| Suggested split         | WU1 → WU2 → WU3 → WU4 → WU5 |
+| Field                   | Value                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| Review budget           | 800 changed lines per slice                                                                            |
+| Estimated changed lines | WU2A 768 impl / 1,392 incl. tests; WU2B 844 impl / 1,145 incl. tests (re-sliced, corrected 2026-09-12) |
+| Delivery strategy       | force-chained (feature-branch-chain)                                                                   |
+| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4 → WU5                                                                    |
 
-Decision needed before apply: Yes Chained PRs recommended: Yes Chain strategy:
-pending 400-line budget risk: High
+Decision needed before apply: No Chained PRs recommended: Yes Chain strategy:
+feature-branch-chain 400-line budget risk: High
+
+Re-slice note (2026-09-12): the original WU2 ("Clinical Service Core") mixed the
+encounter lifecycle with the five specialized record kinds in one 2,104-line
+uncommitted slice. The maintainer rejected a `size:exception` and required a
+split for maintainability and CI diagnosis; WU2 is therefore re-sliced into
+**WU2A Encounter Core** and **WU2B Specialized Records** without changing
+approved product scope.
+
+Slice boundary (corrected 2026-09-12, review findings 1 and 4): **WU2A is the
+current reviewable slice and is complete.** WU2B is **planned and uncommitted**
+— its source/test files exist in the working tree but are OUT of the WU2A commit
+boundary. The WU2A `clinical.module.ts` wires only `ClinicalService` and MUST
+NOT reference WU2B's `ClinicalRecordsService`; WU2A typechecks, builds, and
+tests independently with the WU2B files absent. A strict ≤800 total including
+tests is infeasible without deleting tests or comments, which the workload guard
+forbids; the measure is reported per part and WU2A's `size:exception` is
+maintainer-approved.
 
 ## Work Units
 
-| Unit | Scope and PR base guidance                                                                         | Focused test command                   | Runtime harness                   | Rollback boundary                                |
-| ---- | -------------------------------------------------------------------------------------------------- | -------------------------------------- | --------------------------------- | ------------------------------------------------ |
-| WU1  | Schema, migration, permissions, seeds; PR #1 base is the later-selected tracker/main base          | `pnpm test --filter @newsaas/database` | DB migration/test harness         | Revert code; retain additive clinical data       |
-| WU2  | Clinical service lifecycle and audit; PR #2 base is WU1 branch if chained, otherwise selected base | `pnpm test --filter @newsaas/api`      | API fake-Prisma unit harness      | Remove module registration/routes only after WU3 |
-| WU3  | Controllers, Zod, DTOs, route contract; PR #3 base is WU2 branch if chained                        | `pnpm test --filter @newsaas/api`      | API integration/probe harness     | Remove API exposure; keep immutable records      |
-| WU4  | Staff proxy and patient workspace; PR #4 base is WU3 branch if chained                             | `pnpm test --filter @newsaas/web`      | RTL web harness                   | Remove clinical tab/proxy                        |
-| WU5  | Live-PG evidence and documentation; PR #5 base is WU4 branch if chained                            | `pnpm test --filter @newsaas/api`      | Live PostgreSQL isolation harness | Revert verification/docs only                    |
+| Unit | Scope and PR base guidance                                                                                                                                                                                                    | Focused test command                   | Runtime harness                   | Rollback boundary                                    |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | --------------------------------- | ---------------------------------------------------- |
+| WU1  | Schema, migration, permissions, seeds; base is the tracker/main base                                                                                                                                                          | `pnpm test --filter @newsaas/database` | DB migration/test harness         | Revert code; retain additive clinical data           |
+| WU2A | Encounter core (`ClinicalServiceBase` + `ClinicalService`): create/list/get, versioned autosave, close, linked amendments, tenancy, entitlement/permissions, client-safe DTO, module registration, tests; base is WU1/tracker | `pnpm test --filter @newsaas/api`      | API fake-Prisma unit harness      | Remove module registration only after WU3            |
+| WU2B | Specialized records (`ClinicalRecordsService`): treatments, vaccinations, deworming, studies, weights CRUD + tests; base is the WU2A branch                                                                                   | `pnpm test --filter @newsaas/api`      | API fake-Prisma unit harness      | Remove subdomain service/export; keep encounter core |
+| WU3  | Controllers, Zod, DTOs, route contract; base is the WU2B branch                                                                                                                                                               | `pnpm test --filter @newsaas/api`      | API integration/probe harness     | Remove API exposure; keep immutable records          |
+| WU4  | Staff proxy and patient workspace; base is the WU3 branch                                                                                                                                                                     | `pnpm test --filter @newsaas/web`      | RTL web harness                   | Remove clinical tab/proxy                            |
+| WU5  | Live-PG evidence and documentation; base is the WU4 branch                                                                                                                                                                    | `pnpm test --filter @newsaas/api`      | Live PostgreSQL isolation harness | Revert verification/docs only                        |
 
 ## Phase 1: Data Foundation
 
@@ -40,15 +59,43 @@ pending 400-line budget risk: High
       idempotent synthetic no-PII encounter and record (spec Synthetic demo
       data; design §3).
 
-## Phase 2: Clinical Domain
+## Phase 2A: Encounter Core (WU2A)
 
-- [ ] 2.1 RED: create `apps/api/src/clinical/**/*.spec.ts` for version/stale
-      409, CLOSED 409, one transactional audit, amendment
-      reason/permission/idempotency, entitlement, and cross-tenant 404 before
-      services (spec Lifecycle, Autosave, Amendments, Audit, Isolation).
-- [ ] 2.2 GREEN: create `apps/api/src/clinical/**` services/module using request
-      tenant context, conditional `updateMany`, AuditWriter transaction, and
-      allowlisted DTO mapping; register in `apps/api/src/app.module.ts`.
+- [x] 2A.1 RED: create `apps/api/src/clinical/clinical.service.test.ts` (repo
+      runner uses `*.test.ts`) for version/stale 409, CLOSED 409, one
+      transactional audit, amendment reason/permission/idempotency, entitlement,
+      cross-tenant 404, allowlisted projection and client-safe `internalNotes`
+      exclusion before the service (spec Lifecycle, Autosave, Amendments, Audit,
+      Isolation).
+- [x] 2A.2 GREEN: create `apps/api/src/clinical/clinical.service.base.ts`
+      (shared tenant/entitlement/permission/audit boundary),
+      `clinical.service.ts` (encounter lifecycle with conditional
+      `updateMany(status=DRAFT, version=N)`; concurrency-safe amendment:
+      `SELECT ... FOR UPDATE` on the original inside the transaction, in-tx
+      idempotency replay, and exact-target `P2002` unique-conflict recovery
+      scoped to `clinical_encounter_tenant_id_idempotency_key_key`),
+      `clinical.dto.ts` (encounter allowlist + `toClientSafeEncounter`) and
+      `clinical.module.ts`; register `ClinicalModule` in
+      `apps/api/src/app.module.ts`. `clinical.module.ts` provides/exports ONLY
+      `ClinicalService` — it does not reference WU2B's `ClinicalRecordsService`.
+
+## Phase 2B: Specialized Records (WU2B)
+
+> **Planned and uncommitted (out of the WU2A boundary).** The source/test files
+> below exist in the working tree but are NOT part of the WU2A commit; the WU2A
+> `clinical.module.ts` does not wire `ClinicalRecordsService`.
+
+- [ ] 2B.1 RED: create `apps/api/src/clinical/clinical.records.service.test.ts`
+      covering the five subdomain record kinds, tenant-scoped
+      create/list/update, exactly-one co-committed audit, and invalid-weight
+      rejection (spec Clinical subdomain records, Transactional audit, Tenant
+      isolation). Implemented in the working tree; pending the WU2B slice.
+- [ ] 2B.2 GREEN: create `apps/api/src/clinical/clinical.records.service.ts`
+      (`ClinicalRecordsService` extending `ClinicalServiceBase`) and
+      `clinical.records.dto.ts` for treatment/vaccination/deworming/study/weight
+      create/list/update; add the `ClinicalRecordsService` provider/export to
+      `clinical.module.ts` without changing the WU2A encounter core. Implemented
+      in the working tree; pending the WU2B slice.
 
 ## Phase 3: API Contracts
 

@@ -5,12 +5,16 @@ Change: `2026-09-11-epic-06-clinical` Artifact store: `openspec` (+ Engram
 (`openspec/config.yaml` `strict_tdd: false`; no strict-TDD module loaded)
 Delivery strategy: **force-chained** / chain strategy **feature-branch-chain**
 Tracker branch: `feat/epic-06-clinical` (from `origin/main` @ `b7529a2`)
-Work-unit branch: `feat/epic-06-clinical-wu1` (from the tracker branch) Batch:
-**WU1 — Data Foundation** (only) Correction pass: **WU1 data-foundation repair**
-(authorized by fresh review) — composite tenant-ownership FKs so PostgreSQL
-rejects a clinical row owned by tenant A that references a Patient of tenant B,
-and rejects cross-tenant amendment links. No WU2/WU3/WU4/WU5 work; no
-commit/push/PR/merge.
+Work-unit branches: `feat/epic-06-clinical-wu1` (WU1, merged into the tracker
+via PR #5), `feat/epic-06-clinical-wu2a-encounter-core` (re-sliced from
+`feat/epic-06-clinical-wu2`, from tracker @ `d4e606f`). Batches: **WU1 — Data
+Foundation** (complete, corrected, merged), **WU2A — Encounter Core** (this
+batch; re-sliced 2026-09-12, corrected 2026-09-12 after fresh review, and
+corrected again 2026-09-12 to narrow amendment `P2002` recovery to the exact
+idempotency constraint), and **WU2B — Specialized Records** (**planned and
+uncommitted**, out of the WU2A commit boundary). Service-layer only: no
+controllers, no Zod, no routes, no web, no live-PG evidence. No
+commit/push/PR/merge performed.
 
 ## Completed Tasks
 
@@ -23,8 +27,24 @@ commit/push/PR/merge.
 - [x] 1.3 RED then GREEN: `reference-seed`
       (`vet.clinical.read/update/close/amend` + role matrix) and `demo-seed`
       (`seedDemoClinical`, synthetic no-PII fixture).
+- [x] 2A.1 RED: `apps/api/src/clinical/clinical.service.test.ts` pins
+      version/stale 409, CLOSED 409, exactly-one transactional audit, amendment
+      reason/permission/idempotency/concurrency recovery, audit rollback,
+      veterinary entitlement, cross-tenant 404, allowlisted projection and
+      client-safe `internalNotes` exclusion (spec Lifecycle, Autosave,
+      Amendments, Audit, Isolation). **26 tests**, all green (exact-target
+      `P2002` recovery and an unrelated-target rethrow are pinned).
+- [x] 2A.2 GREEN: `apps/api/src/clinical/clinical.service.base.ts`,
+      `clinical.service.ts` (server tenant context, conditional
+      `updateMany(status=DRAFT, version=N)`, `SELECT ... FOR UPDATE` amendment
+      lock + in-tx idempotency replay + P2002 recovery, `AuditWriter`
+      co-committed transaction), `clinical.dto.ts` (encounter allowlist),
+      `clinical.module.ts` (provides/exports **only** `ClinicalService`), and
+      `ClinicalModule` registered in `apps/api/src/app.module.ts`.
+- [ ] 2B.1 / 2B.2 (specialized records): **planned and uncommitted** — out of
+      the WU2A boundary. See Phase 2B in `tasks.md`.
 
-## Files Changed
+## Files Changed — WU1 (Data Foundation)
 
 | File                                                                        | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -37,7 +57,138 @@ commit/push/PR/merge.
 | `packages/database/src/demo-seed.test.ts`                                   | Modified | 5 tests: anchoring/state, no-PII synthetic content, single transaction, rerun convergence, missing-patient failure.                                                                                                                                                                                                                                                                                                                                        |
 | `packages/database/prisma/demo-seed.ts`                                     | Modified | Wired `seedDemoClinical` into the guarded entrypoint and extended the run log.                                                                                                                                                                                                                                                                                                                                                                             |
 
-## Verification Evidence (focused, WU1)
+## Files Changed — WU2A Encounter Core (corrected boundary)
+
+WU2A impl = **827** changed lines (`permissions` 16 + `dto` 59 + `base` 113 +
+`service` 610 + `module` 27 + `app.module` 2); + 706 test = **1,533** including
+tests (updated by Correction Pass 2; the maintainer-approved WU2A
+`size:exception` remains in force).
+
+| File                                             | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/src/clinical/clinical.permissions.ts`  | Created  | Canonical `vet.clinical.read/create/update/close/amend` contract (mirrors `patients.permissions.ts`); keys already seeded by WU1. Shared with WU2B; owned by WU2A.                                                                                                                                                                                                                     |
+| `apps/api/src/clinical/clinical.dto.ts`          | Created  | Encounter allowlist, `CLINICAL_DTO_SCHEMA_VERSION`, exported `toIso`, and `toClientSafeEncounter()` which strips staff-only `internalNotes` without mutating the input.                                                                                                                                                                                                                |
+| `apps/api/src/clinical/clinical.service.base.ts` | Created  | `ClinicalServiceBase<TPrisma>`: tenant context, `veterinary` entitlement, granular permission, `assertPatient`, co-committed `appendAudit`. Shared with WU2B; owned by WU2A.                                                                                                                                                                                                           |
+| `apps/api/src/clinical/clinical.service.ts`      | Created  | `ClinicalService`: encounter create/list/get, version-guarded DRAFT autosave, version-guarded close, linked audited amendment, `findEncounterOrThrow`. Amendment is concurrency-safe: `SELECT ... FOR UPDATE` on the original inside the tx, in-tx idempotency replay, and P2002 unique-conflict recovery (review finding 2). Exactly one co-committed `AuditWriter` row per mutation. |
+| `apps/api/src/clinical/clinical.service.test.ts` | Created  | **26** focused encounter-core tests on a copy-on-write fake-Prisma transaction harness, including audit-failure rollback (review finding 3), concurrent idempotency recovery, and the exact-target `P2002` gate (unrelated target rethrown).                                                                                                                                           |
+| `apps/api/src/clinical/clinical.module.ts`       | Created  | `ClinicalModule` imports Context/RBAC/Audit/Entitlements (leaf consumer) and provides/exports **only** `ClinicalService`. WU2B's `ClinicalRecordsService` is intentionally NOT wired here (review finding 1). No controllers in WU2A.                                                                                                                                                  |
+| `apps/api/src/app.module.ts`                     | Modified | Registered `ClinicalModule` after `PatientsModule`; no guard-chain order change (Clinical exposes no `APP_GUARD`).                                                                                                                                                                                                                                                                     |
+
+## Re-slice Pass — WU2 → WU2A Encounter Core + WU2B Specialized Records (2026-09-12)
+
+Maintainer decision: do **not** apply the 2,104-line `size:exception`; split the
+uncommitted WU2 for maintainability and CI diagnosis. Delivery context is
+unchanged (force-chained / feature-branch-chain). This is a file-boundary
+refactor plus SDD bookkeeping only — **approved product scope is unchanged**.
+
+### Boundary
+
+- **WU2A Encounter Core**: `ClinicalEncounter` lifecycle only —
+  `ClinicalService` create/list/get, versioned DRAFT autosave, close, linked
+  audited amendments, the shared tenant/entitlement/permission/audit base,
+  client-safe DTO mapping, module registration, and tests.
+- **WU2B Specialized Records**: treatments, vaccinations, deworming, studies,
+  and weights create/list/update (`ClinicalRecordsService`) and their focused
+  tests.
+
+### File layout after re-slice
+
+WU2A (implementation + tests):
+
+| File                                             | Lines | Role                                                                                                                                                                                                                                 |
+| ------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/api/src/clinical/clinical.permissions.ts`  | 16    | Canonical `vet.clinical.*` keys (shared by both slices; owned by WU2A).                                                                                                                                                              |
+| `apps/api/src/clinical/clinical.dto.ts`          | 59    | Encounter allowlist, `CLINICAL_DTO_SCHEMA_VERSION`, `toClientSafeEncounter`, exported `toIso`.                                                                                                                                       |
+| `apps/api/src/clinical/clinical.service.base.ts` | 113   | `ClinicalServiceBase<TPrisma>`: tenant context, `veterinary` entitlement, granular permission, `assertPatient`, co-committed `appendAudit`.                                                                                          |
+| `apps/api/src/clinical/clinical.service.ts`      | 610   | `ClinicalService`: encounter types, create/list/get, version-guarded DRAFT autosave, close, linked audited amendments, `findEncounterOrThrow`; concurrency-safe amendment (FOR UPDATE + in-tx replay + exact-target P2002 recovery). |
+| `apps/api/src/clinical/clinical.service.test.ts` | 706   | 26 encounter-core tests on a copy-on-write fake-Prisma harness (incl. audit rollback + concurrent idempotency recovery + unrelated-P2002 rethrow).                                                                                   |
+| `apps/api/src/clinical/clinical.module.ts`       | 27    | Provides/exports **only** `ClinicalService` (WU2A). WU2B re-adds `ClinicalRecordsService` in its own slice.                                                                                                                          |
+| `apps/api/src/app.module.ts`                     | +2    | `ClinicalModule` registration (unchanged from the original WU2).                                                                                                                                                                     |
+
+WU2B:
+
+| File                                                     | Lines | Role                                                                                                                                                                         |
+| -------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/src/clinical/clinical.records.dto.ts`          | 61    | Allowlisted treatment/vaccination/deworming/study/weight response contracts.                                                                                                 |
+| `apps/api/src/clinical/clinical.records.service.ts`      | 783   | `ClinicalRecordsService extends ClinicalServiceBase`: five subdomain row/input/delegate types, create/list/update, generic `createRecord`/`updateRecord`, weight validation. |
+| `apps/api/src/clinical/clinical.records.service.test.ts` | 299   | 4 specialized-record tests on a records-only fake-Prisma harness.                                                                                                            |
+
+Refactor mechanics:
+
+- Extracted the shared boundary into `clinical.service.base.ts`
+  (`ClinicalServiceBase<TPrisma extends ClinicalBasePrisma>`); both services
+  declare explicit constructors so Nest DI metadata is emitted per concrete
+  class. WU2A never imports a WU2B file; WU2B depends on WU2A
+  (`clinical.service.base.ts`, `clinical.dto.ts`, `clinical.permissions.ts`).
+- `clinical.dto.ts` now holds only the encounter allowlist; subdomain response
+  types moved to `clinical.records.dto.ts`.
+- The single 658-line fake-Prisma test file was split into an encounter-only
+  test and a records-only test; each carries only the harness it needs.
+- Behavior is equivalent: no logic, invariant, comment, or test was removed. No
+  `.atl/` or `.codegraph/` change is part of the slice.
+
+### Measured size (changed lines)
+
+| Slice | Implementation                                                                                | Tests | Total incl. tests |
+| ----- | --------------------------------------------------------------------------------------------- | ----- | ----------------- |
+| WU2A  | 827 (`permissions` 16 + `dto` 59 + `base` 113 + `service` 610 + `module` 27 + `app.module` 2) | 706   | 1,533             |
+| WU2B  | 844 (`records.dto` 61 + `records.service` 783)                                                | 301   | 1,145             |
+
+After Correction Pass 2 the WU2A implementation is **827** changed lines (+59
+from the exact-target `P2002` matcher and its comments), over the ≤800 budget;
+the maintainer-approved WU2A `size:exception` covers it. A strict ≤800 total
+including the focused test file was and remains **not feasible** without
+deleting tests or minifying comments, which the workload guard forbids; the
+honest measure is reported rather than hidden. Both slices are roughly half of
+the original 2,104-line WU2, and each CI failure localizes to one boundary.
+
+### Verification after re-slice
+
+| Command                                                                                                              | Result                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts src/clinical/clinical.service.test.ts`         | exit 0 — 1 file, **24 passed** (corrected pass)                                                                               |
+| `pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts src/clinical/clinical.records.service.test.ts` | exit 0 — 1 file, **4 passed**                                                                                                 |
+| `pnpm --filter @newsaas/api test`                                                                                    | exit 0 — 51 files passed / 1 skipped (live-PG), **460 passed / 16 skipped** (pre-slice baseline 453 + 7 new correction tests) |
+| `pnpm --filter @newsaas/api typecheck`                                                                               | exit 0 — no errors                                                                                                            |
+| `pnpm --filter @newsaas/api lint`                                                                                    | exit 0 — no errors                                                                                                            |
+| `pnpm --filter @newsaas/api build`                                                                                   | exit 0 — `tsc` build clean                                                                                                    |
+| `pnpm exec prettier --check "apps/api/src/clinical/**/*.ts" "apps/api/src/app.module.ts"`                            | exit 0 — all files match Prettier style                                                                                       |
+
+### Branch rename
+
+Renamed the local branch `feat/epic-06-clinical-wu2` →
+`feat/epic-06-clinical-wu2a-encounter-core`. Safe: the branch had no commit
+beyond tracker `d4e606f`, no upstream configured, and nothing was pushed. The
+WU2B files remain in the same working tree pending their own chained slice.
+
+### WU2B status — planned and uncommitted (out of the WU2A boundary)
+
+The specialized-records source and tests exist in the working tree and pass, but
+they are **not part of the WU2A commit**. WU2A's `clinical.module.ts` wires only
+`ClinicalService`; the WU2B slice must re-add the `ClinicalRecordsService`
+provider/export itself. No subdomain feature code or test is outstanding — only
+its own chained commit/PR remains.
+
+## Verification Evidence — WU2 (pre-slice historical, superseded)
+
+> Superseded by the Re-slice Pass and Correction Pass evidence above; retained
+> only as an audit trail of the original 21-test WU2 service-only run.
+
+| Command                                                                                                      | Result                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts src/clinical/clinical.service.test.ts` | exit 0 — 1 file, **21 passed**                                                                                           |
+| `pnpm --filter @newsaas/api test`                                                                            | exit 0 — 50 files passed / 1 skipped (live-PG), **453 passed / 16 skipped** (incl. route-contract probe and main wiring) |
+| `pnpm --filter @newsaas/api typecheck`                                                                       | exit 0 — no errors                                                                                                       |
+| `pnpm --filter @newsaas/api lint`                                                                            | exit 0 — no errors                                                                                                       |
+| `pnpm --filter @newsaas/api build`                                                                           | exit 0 — `tsc` build clean                                                                                               |
+| `pnpm exec prettier --check apps/api/src/clinical/**/*.ts apps/api/src/app.module.ts`                        | exit 0 — all files match Prettier style                                                                                  |
+
+Focused test naming note: task 2.1 literally says `**/*.spec.ts`, but the API
+Vitest `include` is `src/**/*.test.ts` + `test/**/*.e2e-spec.ts`; a `src/**`
+`.spec.ts` would never run. The suite is therefore `clinical.service.test.ts`
+(repo convention), so the tests actually execute under the project runner.
+
+## Verification Evidence — WU1 (focused, unchanged)
 
 | Command                                                                       | Result                                                                                                                                                                                 |
 | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -47,12 +198,107 @@ commit/push/PR/merge.
 | `pnpm --filter @newsaas/database lint`                                        | exit 0 — no errors                                                                                                                                                                     |
 | `prisma migrate diff --from-empty --to-schema-datamodel` structural alignment | **9/9** composite tenant-ownership statements (2 unique keys + 6 composite patient FKs + 1 composite amendment FK) match Prisma's derived DDL verbatim (normalized whitespace), exit 0 |
 
-Live-PostgreSQL migration application was **not** run: this environment has no
-Docker daemon and no reachable Postgres (`pg_isready` reports "no response").
-The WU1 runtime harness is the migration/test harness; live-PG evidence is
-explicitly owned by WU5/H1.
+## Correction Pass — WU2A boundary + amendment concurrency (2026-09-12)
+
+Fresh review of the WU2A slice raised four findings; all are corrected here. No
+WU3 work, no commit/push/PR/merge, no `.atl/`/`.codegraph/` change.
+
+1. **WU2B leakage removed from the WU2A boundary.** `clinical.module.ts` no
+   longer imports, provides, or exports `ClinicalRecordsService`; it wires only
+   `ClinicalService`. The three WU2B files remain untracked in the working tree
+   for the later slice. Proof: with the WU2B files moved aside, WU2A `typecheck`
+   exits 0 and the focused suite is 24/24 — the slice stages and builds
+   independently.
+2. **Concurrency-safe amendment idempotency.** `amendEncounter` now runs the
+   design flow inside the transaction (`SELECT ... FOR UPDATE` on the original
+   encounter, then read + CLOSED check + idempotency replay), and catches a
+   Prisma `P2002` unique violation (structurally detected, no generated-client
+   coupling) to recover to the winner's committed row; it rethrows when no row
+   matches. Concurrent duplicate requests no longer surface a raw unique error.
+   Focused tests cover the lock query, the race recovery, and the rethrow.
+3. **Real audit-rollback proof.** The fake transaction harness is now
+   copy-on-write, so a rollback restores prior rows instead of leaking in-place
+   mutations. Four tests fail the co-committed audit append and assert that the
+   create / autosave (content + version) / close / amendment is fully rolled
+   back. The previous "a tx handle was passed" assertion was removed.
+4. **Artifact truth.** `tasks.md` and this document now mark WU2A complete and
+   WU2B planned/uncommitted, with the WU2-wide superseded claims replaced.
+
+### Verification after correction (Correction Pass 1, historical)
+
+| Command                                                                                                              | Result                                                            |
+| -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts src/clinical/clinical.service.test.ts`         | exit 0 — 1 file, **24 passed**                                    |
+| WU2A-only probe (WU2B files moved aside): `typecheck` + focused test                                                 | exit 0; **24 passed** — slice builds independently                |
+| `pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts src/clinical/clinical.records.service.test.ts` | exit 0 — 1 file, **4 passed**                                     |
+| `pnpm --filter @newsaas/api test`                                                                                    | exit 0 — 51 files passed / 1 skipped, **460 passed / 16 skipped** |
+| `pnpm --filter @newsaas/api typecheck`                                                                               | exit 0                                                            |
+| `pnpm --filter @newsaas/api lint`                                                                                    | exit 0                                                            |
+| `pnpm --filter @newsaas/api build`                                                                                   | exit 0                                                            |
+| `pnpm exec prettier --check "apps/api/src/clinical/**/*.ts" "apps/api/src/app.module.ts"`                            | exit 0                                                            |
+
+## Correction Pass 2 — exact P2002 target for amendment recovery (2026-09-12)
+
+Fresh review found that `amendEncounter`'s concurrency recovery accepted _any_
+Prisma `P2002` by code alone. That could mask an unrelated unique violation on
+the same table (e.g. the `(tenantId, id)` tenant-ownership key) whenever a row
+happened to exist for the supplied idempotency key. The recovery is now scoped
+to the exact idempotency constraint.
+
+1. **Exact-target match.** `isAmendmentIdempotencyConflict` (replacing
+   `isUniqueConstraintConflict`) requires `code === "P2002"` **and** a
+   `meta.target` that identifies
+   `clinical_encounter_tenant_id_idempotency_key_key` (the
+   `@@unique([tenantId, idempotencyKey])` index).
+   `matchesAmendmentIdempotencyTarget` accepts the shapes Prisma actually emits:
+   the index/constraint name as a string or single-element array, and the
+   column/field pair (`tenant_id`/`idempotency_key` or
+   `tenantId`/`idempotencyKey`, order-agnostic) — normalized for case and
+   separators. Every other target returns `false`, so the error propagates
+   untouched.
+2. **Negative regression test.** New test
+   `rethrows an unrelated P2002 even when an idempotency-key row exists` stubs a
+   `P2002` on `["tenant_id", "id"]` while a committed row for the supplied key
+   is present, and asserts the original error is rethrown (no silent recovery).
+   A matching positive test covers the index-name metadata shape.
+
+**RED proof (one-variable experiment):** with the matcher temporarily reverted
+to the pre-fix code-only check, the new negative test fails and the service
+wrongly returns `enc-winner`; restoring the target-aware matcher turns it green.
+The service file was backed up and restored byte-for-byte after the experiment.
+
+### Verification after Correction Pass 2
+
+| Command                                                                                                      | Result                                                            |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts src/clinical/clinical.service.test.ts` | exit 0 — 1 file, **26 passed** (was 24; +2)                       |
+| Negative test vs. pre-fix matcher (temporary revert, then restored)                                          | **RED: 1 failed** — wrongly recovered `enc-winner`                |
+| `pnpm --filter @newsaas/api test`                                                                            | exit 0 — 51 files passed / 1 skipped, **462 passed / 16 skipped** |
+| `pnpm --filter @newsaas/api typecheck`                                                                       | exit 0                                                            |
+| `pnpm --filter @newsaas/api lint`                                                                            | exit 0                                                            |
+| `pnpm --filter @newsaas/api build`                                                                           | exit 0                                                            |
+| `pnpm exec prettier --check "apps/api/src/clinical/**/*.ts" "apps/api/src/app.module.ts"`                    | exit 0 — all files match Prettier style                           |
+
+Scope: only `apps/api/src/clinical/clinical.service.ts` and
+`apps/api/src/clinical/clinical.service.test.ts` changed. No WU2B file, module
+boundary, product scope, `.atl/`, or `.codegraph/` change; no
+commit/push/PR/merge.
+
+## Final Fresh Re-review (2026-09-12)
+
+A fresh re-review of the corrected WU2A slice **APPROVED** it after all
+corrections (boundary isolation, concurrency-safe amendment, faithful
+audit-rollback harness, artifact truth, and the exact-target `P2002` matcher).
+The maintainer-approved **`size:exception`** (827 impl / 1,533 incl. tests)
+remains in force. WU2A is finalized as a single chained commit on
+`feat/epic-06-clinical-wu2a-encounter-core`
+(`feat(EPIC-06): add encounter service core`). No push, PR, merge, or WU2B/WU3
+work is performed by this finalization; the WU2B files remain uncommitted in the
+working tree for their own chained slice.
 
 ## Deviations from Design
+
+WU1 (unchanged from prior pass):
 
 - Added defense-in-depth `BEFORE DELETE` triggers for the five subdomain tables
   (design names only the encounter immutability trigger). Rationale: the spec
@@ -63,7 +309,28 @@ explicitly owned by WU5/H1.
   design's `Decimal(10,3) > 0` note; API validation remains the primary 400 path
   in WU3.
 
-## Correction Pass — WU1 data-foundation repair
+WU2A / WU2B:
+
+- **Service scope split**: the five subdomain create/list/update service methods
+  are **WU2B**, not WU2A. Rationale: task 3.2 scopes WU3 to "controllers, Zod
+  inputs, DTOs, permission declarations, and route-contract probe" — it does NOT
+  add services, so the subdomain persistence must exist for WU3 controllers to
+  stay thin. WU2A ships only the encounter core; WU2B is its follow-on slice.
+- Service-level granular permission checks (`requirePermission`) mirror
+  `TenantSettingsService`/`BrandingService` "defense in depth" precedent; WU3
+  routes will declare the same keys with `@RequirePermissions`. Entitlement
+  (`FEATURE_NOT_ENTITLED`) is enforced for every clinical operation.
+- Amendment content is copied from the original with optional per-field
+  override; the amendment row is CLOSED, links `amendsEncounterId`, and starts
+  at `version = 1`. Idempotent replay is an in-transaction lookup after a
+  `SELECT ... FOR UPDATE` row lock, with exact-target `P2002` unique-conflict
+  recovery as the cross-original fallback (review finding 2). True READ
+  COMMITTED interleaving/serialization evidence still requires live PG (WU5/H1).
+- `createWeight`/`updateWeight` reject non-positive/non-numeric quantity with
+  `VALIDATION_FAILED` as service defense in depth (Zod 400 remains WU3's primary
+  path, DB CHECK remains the backstop).
+
+## Correction Pass — WU1 data-foundation repair (unchanged)
 
 Fresh review found the WU1 foundation allowed a clinical row whose `tenant_id`
 was tenant A but whose `patient_id` referenced a Patient owned by tenant B, and
@@ -91,68 +358,77 @@ Fix (smallest correct DB-level enforcement, Prisma-native composite keys):
 
 Preserved WU1 guarantees: 6 tables, enum, weight CHECK, CLOSED-immutability and
 all no-delete triggers, idempotency unique, seed/permission behavior are
-untouched. The migration is still one additive migration (not yet committed or
-applied anywhere), so it was corrected in place with no new migration.
+untouched.
 
 ## Issues Found
 
-- None blocking. `prisma validate` passes and relations resolve on first
-  attempt.
-- The environment lacks a live database (no Docker daemon, no reachable
-  Postgres), so migration execution and a live negative cross-tenant INSERT are
-  unverified until WU5/H1. The correction is verified structurally
-  (`prisma validate`, migration-vs-schema DDL alignment, and focused DDL
-  assertions) rather than by executing the constraint.
-- Fresh-review correction applied: composite tenant-ownership FKs now make a
-  cross-tenant Patient reference and a cross-tenant amendment link impossible at
-  the DB level (see Correction Pass above).
+- None blocking. WU2A typecheck/lint/build/tests are green after the correction
+  pass; one Prettier pass and one ESLint `prefer-nullish-coalescing` rewrite
+  (`pickContent`) were applied earlier.
+- No live database (no Docker daemon, no reachable Postgres): migration
+  execution, a live negative cross-tenant INSERT, and the concurrent-autosave
+  409 proof remain WU5/H1-owned. WU2A's autosave guard is proven at the service
+  layer via the conditional-`updateMany` `count = 0 ⇒ 409` path, and the
+  amendment lock/recovery is proven at the harness level.
+- `internalNotes` is CONFIDENTIAL/staff-only; WU2A provides the client-safe
+  mapper and proves exclusion, while WU3 must ensure the HTTP client-safe
+  projection never leaks it.
 
-## Remaining Tasks (not started — out of WU1 scope)
+## Remaining Tasks (not started — out of WU2A scope)
 
-- [ ] 2.1 / 2.2 Clinical service lifecycle, version guard, entitlement, audit,
-      isolation (WU2).
+- [ ] 2B.1 / 2B.2 WU2B slice delivery: specialized records exist uncommitted in
+      the working tree and are out of the WU2A boundary; only its own chained
+      commit/PR remains.
 - [ ] 3.1 / 3.2 Controllers, Zod/DTO allowlist, routes, route-contract probe
       (WU3).
 - [ ] 4.1 / 4.2 Web proxy + clinical workspace, RTL tests (WU4).
 - [ ] 5.1 / 5.2 Live-PG isolation/concurrency evidence, root gates,
       documentation (WU5).
 
-## Workload / PR Boundary
+## Workload / PR Boundary — WU2A Encounter Core
 
-- Mode: **chained PR slice** (feature-branch-chain), WU1 only.
-- Boundary: starts at `feat/epic-06-clinical` (= `origin/main` @ `b7529a2`);
-  ends with the data foundation (schema + migration + permissions + seeds) and
-  its focused tests. WU2/WU3/WU4/WU5 are untouched.
-- Measured WU1 diff (excl. unrelated `.atl/` dirtiness and `.codegraph/` tool
-  index): **~1,012 changed lines** (536 insertions/deletions in modified files +
-  476 new-file lines: migration 253 + schema test 223). The fresh-review
-  correction added ~82 lines (composite keys/FKs + focused tests) over the prior
-  ~930. This **exceeds the 800-line review budget**.
-- Maintainer pre-approved `size:exception` for WU1 (~930 lines); the corrected
-  WU1 stays the same single work unit and remains `size:exception`. The diff was
-  not minified: comments, invariant documentation, and tests are retained in
-  full.
-- Alternative if the growth is unacceptable: planning-level re-split of WU1
-  (e.g. 1.1–1.2 schema/migration vs 1.3 seeds).
+- Mode: **chained PR slice** (feature-branch-chain), WU2A only;
+  maintainer-approved **`size:exception`** for the WU2A slice (827 impl / 1,533
+  incl. tests after Correction Pass 2, over the ≤800 total-including-tests
+  budget).
+- Boundary: starts at tracker `feat/epic-06-clinical` @ `d4e606f` (includes
+  WU1); ends with the encounter core and its focused tests. The WU2B
+  specialized-records files are explicitly OUT (uncommitted). No
+  controllers/routes/Zod (WU3), no web (WU4), no live-PG/docs (WU5).
+- Staged-boundary guidance (WU2A only):
+  `apps/api/src/clinical/clinical.permissions.ts`,
+  `apps/api/src/clinical/clinical.dto.ts`,
+  `apps/api/src/clinical/clinical.service.base.ts`,
+  `apps/api/src/clinical/clinical.service.ts`,
+  `apps/api/src/clinical/clinical.service.test.ts`,
+  `apps/api/src/clinical/clinical.module.ts`, and `apps/api/src/app.module.ts`.
+  Do **NOT** stage `clinical.records.dto.ts`, `clinical.records.service.ts`, or
+  `clinical.records.service.test.ts`. Exclude pre-existing `.atl/` dirtiness and
+  the `.codegraph/` tool index.
 
 ## Risks
 
-- WU1 exceeds the 800-line review budget → reviewer-load risk; the
-  maintainer-approved `size:exception` covers WU1 (now ~1,012 lines including
-  the correction).
-- Migration SQL is validated structurally and by `prisma validate` but not
-  applied to a live Postgres here; residual risk is limited to DDL runtime
-  behavior (composite FKs, triggers and CHECK) until the WU5/H1 live-PG negative
-  cross-tenant proof.
-- `internalNotes` is CONFIDENTIAL/staff-only; WU3 must enforce the client-safe
-  allowlist (not in WU1).
+- WU2A is 827 impl / 1,533 incl. tests after Correction Pass 2, over the ≤800
+  budget; covered by the maintainer-approved `size:exception` (comments/tests
+  were not minified).
+- The WU2B files are uncommitted in the working tree; a careless `git add -A`
+  would leak WU2B into the WU2A commit. Use the explicit path list above.
+- Autosave staleness is proven by `updateMany` `count = 0`, and amendment
+  concurrency is now covered by the `FOR UPDATE` lock + in-tx replay +
+  exact-target `P2002` recovery; true READ COMMITTED interleaving/serialization
+  still requires live PG (WU5/H1).
+- `internalNotes` leakage prevention depends on WU3 using
+  `toClientSafeEncounter` for any client-safe projection.
 
 ## Branch / Worktree State
 
-- Current branch: `feat/epic-06-clinical-wu1`.
-- No commit, no push, no PR, no merge performed (fresh-context review required
-  first).
+- Current branch: `feat/epic-06-clinical-wu2a-encounter-core` (renamed from
+  `feat/epic-06-clinical-wu2`; still based on `feat/epic-06-clinical` @
+  `d4e606f`). See "Branch rename" in the Re-slice Pass.
+- Finalized: WU2A committed as exactly one chained commit
+  `feat(EPIC-06): add encounter service core` after the fresh re-review approved
+  the corrected slice. No push, no PR, no merge performed. WU2B remains
+  uncommitted in the working tree for its own chained slice.
 - Pre-existing unrelated dirtiness: `.atl/.skill-registry.cache.json`,
   `.atl/skill-registry.md`.
-- Tool artifacts (not WU1): `.codegraph/` (CodeGraph index initialized for
-  exploration), untracked `openspec/changes/2026-09-11-epic-06-clinical/`.
+- Tool artifact (not WU2A/WU2B): `.codegraph/` (CodeGraph index), untracked.
