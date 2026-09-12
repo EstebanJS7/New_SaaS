@@ -532,3 +532,151 @@ was made for them:
 - Preserved and unstaged: `.atl/.skill-registry.cache.json`,
   `.atl/skill-registry.md` (pre-existing dirtiness) and `.codegraph/` (tool
   index). Only the WU2B boundary files plus the SDD docs are committed.
+
+# Phase 3 — API Contracts (WU3) — continuation 2026-09-12
+
+## Files Changed — WU3 API Contracts
+
+| File                                                      | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/api/src/clinical/clinical.zod.ts`                   | Created  | Strict Zod input contracts for all params/bodies (encounter create/autosave/close/amend + five record kinds), positive-decimal weight guard matching `Decimal(10,3)`, and the shared `parseClinicalInput` 400 `VALIDATION_FAILED` helper.                                                                                                                                            |
+| `apps/api/src/clinical/clinical.encounters.controller.ts` | Created  | `ClinicalEncountersController` (`patients/:patientId/clinical/encounters`): list/create/get/autosave/close/amendments, each declaring its `vet.clinical.*` permission.                                                                                                                                                                                                               |
+| `apps/api/src/clinical/clinical.records.controller.ts`    | Created  | `ClinicalRecordsController` (`patients/:patientId/clinical`): list/create/update for treatments, vaccinations, deworming, studies, weights; read/create/update permission mapping; no delete route.                                                                                                                                                                                  |
+| `apps/api/src/clinical/clinical.module.ts`                | Modified | Registers both controllers; adds no new provider and does not change the services.                                                                                                                                                                                                                                                                                                   |
+| `apps/api/src/rbac/route-contract.probe.test.ts`          | Modified | Pins the 21 new clinical routes in `EXPECTED_ROUTE_INVENTORY`.                                                                                                                                                                                                                                                                                                                       |
+| `apps/api/src/clinical/clinical.http.integration.test.ts` | Created  | HTTP boundary over the real guard chain: anonymous 401, per-route 403 FORBIDDEN, entitlement-negative 403 FEATURE_NOT_ENTITLED, invalid-weight 400 + no persistence, byte-equivalent cross-tenant 404 (read + create), allowlisted encounter DTO + `toClientSafeEncounter` internalNotes exclusion + IDs-only audit, five record create paths, and 409 lifecycle conflicts. 10 tests. |
+| `apps/api/test/support/clinical-http-fixture.ts`          | Created  | WU3 test fixture: reuses the EPIC-05 three-tenant boundary, grants `vet.clinical.*` to A/B/C and attaches minimal in-memory clinical delegates (`create/findFirst/findMany/updateMany`, no delete) so WU3 routes can be exercised end-to-end without live PostgreSQL.                                                                                                                |
+
+No change to `clinical.service.ts`, `clinical.service.base.ts`,
+`clinical.records.service.ts`, `clinical.dto.ts`, `clinical.records.dto.ts` or
+`clinical.permissions.ts` — WU3 sits on top of WU1/WU2 unchanged.
+
+## Evidence (WU3 verification)
+
+- Focused:
+  `vitest run src/clinical/clinical.http.integration.test.ts src/rbac/route-contract.probe.test.ts src/clinical/clinical.service.test.ts src/clinical/clinical.records.service.test.ts`
+  → 4 files / 50 tests passed.
+- Full API suite: `pnpm --filter @newsaas/api test` → 52 files passed / 1
+  skipped (live-PG); 476 passed / 16 skipped.
+- `pnpm --filter @newsaas/api typecheck` → exit 0.
+- `pnpm --filter @newsaas/api lint` → exit 0.
+- `pnpm --filter @newsaas/api build` → exit 0.
+- `prettier --check` clean on all 7 changed code/support files.
+
+## Measured size (WU3, post review corrections)
+
+- API contract/source support: **570 changed lines** (147 zod + 103 encounters
+  controller + 230 records controller + 82 route-probe + 8 module, of which 2
+  are deletions).
+- Test code: **760 changed lines** (618 HTTP integration + 142 fixture).
+- Total changed incl. tests: **1,330 changes (1,328 additions / 2 deletions)**.
+
+The total exceeds the ≤800 slice budget. **The maintainer approved the WU3
+`size:exception`** (decision recorded 2026-09-12) for the honest, non-minified
+measure. The initial cut measured 1,059 changed lines; the mandated review
+corrections added the 271-line delta (all cross-tenant isolation and
+permission-mapping evidence plus the SDD artifacts). No comment or test was
+minified.
+
+## Deviations from Design
+
+None. Controllers, routes, Zod inputs, DTO surface, permission mapping and probe
+inventory follow design §4 and the route list exactly. POST commands (`close`,
+`amendments`) keep Nest's default `201` response, matching the existing EPIC-05
+command convention (`POST /patients/:id/deactivate` → 201).
+
+## Known Limitations (WU3)
+
+- The in-memory clinical delegates model create/find/list/update only; clinical
+  transaction rollback and concurrency semantics are not modelled and remain
+  WU5/H1 live-PG evidence.
+- Cross-tenant 404 is proven over HTTP for the foreign Patient anchor
+  (`assertPatient`) and for foreign clinical **aggregate UUIDs** (encounter GET
+  and the five record update routes, anchored to the probing tenant's own
+  Patient), including a no-write / no-audit assertion; the live-PG
+  byte-equivalent probe is WU5-owned.
+
+## Branch / Worktree State — WU3
+
+- Branch: `feat/epic-06-clinical-wu3-api-contracts`, created from
+  `origin/feat/epic-06-clinical` @ `75cb822` (contains WU1 + WU2A + WU2B).
+- Not committed, not pushed, no PR, no merge — fresh review is required first.
+- Preserved and unstaged: `.atl/.skill-registry.cache.json`,
+  `.atl/skill-registry.md` (pre-existing dirtiness) and `.codegraph/` (tool
+  index).
+
+## WU3 Review Correction Pass (2026-09-12)
+
+A fresh review rejected the first WU3 cut: the cross-tenant evidence only used a
+foreign Patient anchor (never a foreign clinical aggregate UUID), the permission
+test only proved a generic denial, and the tracking artifacts wrongly said no
+`size:exception` was approved. All three are corrected here. No WU1/WU2 product
+behavior, module boundary, or product scope changed; no `.atl/` or `.codegraph/`
+change; no commit/push/PR/merge.
+
+1. **Foreign clinical aggregate UUID isolation + no-write proof.**
+   `clinical.http.integration.test.ts` seeds tenant B with one aggregate of every
+   clinical kind and, as tenant A, references B's aggregate UUIDs through A's OWN
+   Patient anchor, so a foreign Patient anchor is ruled out:
+   - `GET /patients/:patientId/clinical/encounters/:id` with B's encounter UUID;
+   - `PUT /patients/:patientId/clinical/{treatments|vaccinations|deworming|studies|weights}/:id`
+     with B's record UUID and a Zod-valid update body.
+
+   Each probe asserts a byte-equivalent 404 `NOT_FOUND` versus a random
+   nonexistent id under the same Patient (same pinned `X-Request-Id`) and that no
+   identifier leaks. The test additionally asserts every foreign row is unchanged
+   (deep snapshot equality) and that no audit row was appended.
+
+2. **Permission-to-route mapping evidence.**
+   `route-contract.probe.test.ts` adds `CLINICAL_PERMISSION_BY_ROUTE`, pinning
+   the exact `vet.clinical.*` key for all 21 clinical routes against the real
+   enumerated `@RequirePermissions` metadata (a wrong key fails by name).
+   `clinical.http.integration.test.ts` adds a runtime single-key matrix: for each
+   of the five keys, a role holding exactly that key is probed against every
+   route — its matching routes must pass the guard and every other route must be
+   denied with 403 `FORBIDDEN`. The amend route's positive case is covered by the
+   metadata fence because its service reaches the `SELECT ... FOR UPDATE` lock the
+   in-memory boundary does not model.
+
+3. **Truthful size exception.** `tasks.md` and this document now record the
+   maintainer-approved WU3 `size:exception` and the post-correction measure
+   (1,330 changed lines incl. tests; 570 contract/source + 760 tests).
+
+### RED proof (one-variable experiments, both reverted)
+
+- Metadata fence: temporarily redecorated `PUT .../encounters/:id` with
+  `vet.clinical.read`; the probe failed naming `WRONG CLINICAL PERMISSION:
+  PUT /patients/:patientId/clinical/encounters/:id expected [vet.clinical.update]
+  got [vet.clinical.read]`. Controller restored.
+- Aggregate isolation: temporarily made the fixture's `matchesWhere` ignore
+  `tenantId`/`patientId`; the aggregate test failed (foreign encounter GET
+  returned 200, not 404). Fixture restored byte-for-byte.
+
+### Verification after WU3 corrections
+
+| Command                                                                                                        | Result                                                                           |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| focused `vitest run clinical.http.integration route-contract.probe clinical.service clinical.records.service`   | exit 0 — 4 files, **50 passed** (was 47; +3)                                     |
+| metadata RED experiment (wrong key, then reverted)                                                             | **RED: 1 failed** — named the wrong-permission route                             |
+| isolation RED experiment (unscoped match, then reverted)                                                       | **RED: 1 failed** — foreign GET returned 200                                     |
+| `pnpm --filter @newsaas/api test`                                                                              | exit 0 — 52 files passed / 1 skipped; **476 passed / 16 skipped** (was 473; +3) |
+| `pnpm --filter @newsaas/api typecheck`                                                                         | exit 0                                                                           |
+| `pnpm --filter @newsaas/api lint`                                                                              | exit 0                                                                           |
+| `pnpm --filter @newsaas/api build`                                                                             | exit 0                                                                           |
+| `prettier --check` on the changed clinical/probe/support files                                                 | exit 0 — clean                                                                   |
+
+Scope: only `apps/api/src/clinical/clinical.http.integration.test.ts` and
+`apps/api/src/rbac/route-contract.probe.test.ts` changed in code, plus the two
+SDD artifacts; `clinical-http-fixture.ts` was probed temporarily and restored
+exactly. No production/controller change, no WU1/WU2 change, no
+`.atl/`/`.codegraph/`.
+
+### Branch / Worktree State — WU3 (after corrections)
+
+- Branch: `feat/epic-06-clinical-wu3-api-contracts`, created from
+  `origin/feat/epic-06-clinical` @ `75cb822` (contains WU1 + WU2A + WU2B).
+- Not committed, not pushed, no PR, no merge — a further fresh review is required
+  first.
+- Preserved and unstaged: `.atl/.skill-registry.cache.json`,
+  `.atl/skill-registry.md` (pre-existing dirtiness) and `.codegraph/` (tool
+  index).

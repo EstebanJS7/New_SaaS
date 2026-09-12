@@ -10,7 +10,7 @@ define the implementation seams.
 | Field                   | Value                                                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Review budget           | 800 changed lines per slice                                                                                                                                                 |
-| Estimated changed lines | WU2A 827 impl / 1,533 incl. tests (delivered); WU2B 844 impl + 20 module lines / 1,235 changed incl. 371 tests (delivered 2026-09-12; maintainer-approved `size:exception`) |
+| Estimated changed lines | WU2A 827 impl / 1,533 incl. tests (delivered); WU2B 844 impl + 20 module lines / 1,235 changed incl. 371 tests (delivered 2026-09-12; maintainer-approved `size:exception`); WU3 570 contract/source + 760 tests = 1,330 changed incl. tests (review corrections applied 2026-09-12; maintainer-approved `size:exception`) |
 | Delivery strategy       | force-chained (feature-branch-chain)                                                                                                                                        |
 | Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4 → WU5                                                                                                                                         |
 
@@ -39,6 +39,22 @@ measure is reported per part and WU2A's `size:exception` is maintainer-approved.
 WU2B's measured 1,235 changed lines also exceed the ≤800 slice budget; after
 fresh review the maintainer approved a **WU2B `size:exception`** for the honest,
 non-minified measure, so WU2B is committed as its own chained commit.
+
+WU3 progress note (2026-09-12): WU2B merged into the tracker (`75cb822`, PR #7).
+**WU3 is implemented on `feat/epic-06-clinical-wu3-api-contracts` but NOT
+committed** — a fresh review rejected the first cut and required three
+corrections, now applied: (1) byte-equivalent cross-tenant 404 + no-write proof
+for foreign clinical **aggregate UUIDs** (encounter GET + the five record update
+routes) using foreign record ids rather than only a foreign Patient anchor;
+(2) a permission-to-route mapping fence (exact `vet.clinical.*` key per route via
+the route-contract probe) plus a single-key runtime enforcement matrix; and
+(3) truthful size-exception documentation. **The maintainer has approved the WU3
+`size:exception`** (recorded 2026-09-12). Post-correction measured size is 570
+changed lines of API contract/source support (147 zod + 103 encounters
+controller + 230 records controller + 82 route-probe + 8 module) plus 760 changed
+test lines (618 HTTP integration + 142 fixture) = **1,330 changed lines (1,328
+additions / 2 deletions) incl. tests**, over the ≤800 slice budget; no comment or
+test was minified. A further fresh review is required before WU3 is committed.
 
 ## Work Units
 
@@ -110,13 +126,21 @@ non-minified measure, so WU2B is committed as its own chained commit.
 
 ## Phase 3: API Contracts
 
-- [ ] 3.1 RED: add route/probe tests for all nested encounter and five subdomain
+- [x] 3.1 RED: add route/probe tests for all nested encounter and five subdomain
       routes, 403 permissions/entitlement, 400 invalid weight, 404 tenant
       misses, and no leaked `internalNotes` client projection (spec
-      Authorization, Confidential API).
-- [ ] 3.2 GREEN: add clinical controllers, Zod inputs, DTOs, permission
+      Authorization, Confidential API). **Implemented** as
+      `apps/api/src/clinical/clinical.http.integration.test.ts` (10 tests) over
+      the real guard chain plus the `clinical-http-fixture.ts` boundary, and the
+      pinned route inventory in `route-contract.probe.test.ts`. Focused run: 4
+      files / 50 tests passed.
+- [x] 3.2 GREEN: add clinical controllers, Zod inputs, DTOs, permission
       declarations, and `apps/api/src/rbac/route-contract.probe.test.ts`
-      inventory (design §4).
+      inventory (design §4). **Implemented** as
+      `clinical.encounters.controller.ts`, `clinical.records.controller.ts`,
+      `clinical.zod.ts` and the `ClinicalModule` controller registration;
+       services/DTOs/permissions unchanged. Full API suite green (52 files / 476
+       passed, 16 live-PG skipped); typecheck, lint, build and prettier clean.
 
 ## Phase 4: Staff Workspace
 
