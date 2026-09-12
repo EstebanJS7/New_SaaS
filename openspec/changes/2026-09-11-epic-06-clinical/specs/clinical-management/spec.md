@@ -9,8 +9,8 @@ DRAFT encounters autosave under optimistic concurrency; CLOSED encounters are
 immutable and corrected only through linked, audited amendments. Excludes
 Scheduling/appointment linkage, Portal, files, reports, billing, fiscal,
 notifications, hard deletion, generic EAV, branch scoping, and Patient 360
-redesign. Forward dependencies MUST remain deferred and no unused internal events
-SHALL be emitted.
+redesign. Forward dependencies MUST remain deferred and no unused internal
+events SHALL be emitted.
 
 ## Requirements
 
@@ -43,13 +43,13 @@ Patient: treatments, vaccinations, deworming, studies, and weights. Each SHALL
 capture its minimum clinical facts, be created under `vet.clinical.create`,
 updated under `vet.clinical.update`, and MUST NOT be hard-deleted.
 
-| Kind | Minimum facts |
-|------|---------------|
-| Treatment | description, administration date/context |
-| Vaccination | vaccine reference, administered date |
-| Deworming | product, administered date |
-| Study | study type, performed date, result |
-| Weight | measured quantity (Decimal), measured date |
+| Kind        | Minimum facts                              |
+| ----------- | ------------------------------------------ |
+| Treatment   | description, administration date/context   |
+| Vaccination | vaccine reference, administered date       |
+| Deworming   | product, administered date                 |
+| Study       | study type, performed date, result         |
+| Weight      | measured quantity (Decimal), measured date |
 
 #### Scenario: Record a vaccination
 
@@ -66,8 +66,8 @@ updated under `vet.clinical.update`, and MUST NOT be hard-deleted.
 ### Requirement: Versioned draft autosave
 
 DRAFT autosave SHALL use an explicit version guard. A write whose submitted
-version is not the current stored version MUST persist nothing and SHALL return a
-clinical-scoped 409 `CONFLICT`; a successful write SHALL advance the version.
+version is not the current stored version MUST persist nothing and SHALL return
+a clinical-scoped 409 `CONFLICT`; a successful write SHALL advance the version.
 
 #### Scenario: Successful autosave
 
@@ -85,8 +85,8 @@ clinical-scoped 409 `CONFLICT`; a successful write SHALL advance the version.
 ### Requirement: Linked audited amendments
 
 A CLOSED encounter SHALL be correctable only through an explicit amendment that
-creates a new record linked to the original, preserves the prior state, records a
-reason, and requires `vet.clinical.amend`. An amendment SHALL be audited and
+creates a new record linked to the original, preserves the prior state, records
+a reason, and requires `vet.clinical.amend`. An amendment SHALL be audited and
 SHOULD be idempotent for a repeated request.
 
 #### Scenario: Amend a closed encounter
@@ -130,8 +130,8 @@ entitlement. Frontend checks are UX-only.
 ### Requirement: Tenant isolation
 
 All clinical reads and writes SHALL use the server-resolved tenant context. A
-clinical record or Patient UUID from another tenant SHALL return a byte-equivalent
-404 `NOT_FOUND` and persist nothing.
+clinical record or Patient UUID from another tenant SHALL return a
+byte-equivalent 404 `NOT_FOUND` and persist nothing.
 
 #### Scenario: Cross-tenant access
 
