@@ -1379,3 +1379,174 @@ minified.
   canonical UUID fixture now matches the WU4A identifier contract.
 - No live database: cross-tenant/concurrent-409 semantics remain WU5-owned; the
   UI only renders the stable error-code states.
+
+---
+
+# WU5 — Verification Evidence & Delivery Documentation (2026-09-13)
+
+> Additive to the cumulative record above (obs #2289 and the WU4B addenda); no
+> prior content was overwritten. Implemented on
+> `feat/epic-06-clinical-wu5-verification` from tracker `feat/epic-06-clinical`
+> @ `6230f837` (contains WU1–WU4B). **Not committed; fresh review is required.**
+> `.atl/` and `.codegraph/` are intentionally excluded from the slice.
+
+## Environment and live-PG provisioning (blocker + honest workaround)
+
+- Docker is unavailable in this WSL distro (`docker` not found, no daemon), so
+  the project `docker-compose.yml` PostgreSQL could not be used.
+- Workaround (real, not faked): a disposable PostgreSQL 16 cluster was created
+  from the system package binaries (`/usr/lib/postgresql/16/bin/initdb` +
+  `pg_ctl`) as the unprivileged user, listening on `127.0.0.1:55433`, data dir
+  under `/tmp/opencode`. The suite provisions an ephemeral database, applies
+  migrations (`pnpm db:deploy`), seeds reference data (`pnpm db:seed`), then
+  drops it — the same sequence the CI migrations job runs against its PG16
+  service container.
+- No Docker-specific evidence was claimed; every result below came from an
+  actual run against that live PostgreSQL.
+
+## Root gates (this pass)
+
+| Command                                   | Result                                                                                                     |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @newsaas/api test:live-pg` | exit 0 — 1 file, **24 passed** (16 EPIC-05 + 8 EPIC-06)                                                    |
+| `pnpm lint`                               | exit 0 — 14/14 tasks                                                                                       |
+| `pnpm typecheck`                          | exit 0 — 14/14 tasks                                                                                       |
+| `pnpm test`                               | exit 0 — API 52 files / **476 passed / 24 skipped** (live-PG skipped without its URL)                      |
+| `pnpm build`                              | exit 0 — 9/9 tasks; web `verify-build-output.mjs` passed                                                   |
+| `pnpm format-check`                       | **fails only on pre-existing `.atl/skill-registry.md`** (excluded dirtiness); all WU5 files Prettier-clean |
+
+## Clinical application-path tests added (8)
+
+`apps/api/test/live-pg-isolation.e2e-spec.ts` — "EPIC-06 clinical
+application-path isolation":
+
+1. allowlisted staff encounter DTO + version-advancing autosave with one
+   co-committed `clinical_encounter.updated` audit row;
+2. live migration **encounter** trigger enforcement: raw `UPDATE` of a CLOSED
+   encounter and raw `DELETE` both raise, and the row is unchanged. The five
+   subdomain no-delete triggers are pinned statically by the WU1 schema
+   migration test, not live-executed here.
+3. linked audited amendment (`amendsEncounterId`, reason, copied content) with
+   the original CLOSED row untouched and one `clinical_encounter.amended` row;
+4. byte-equivalent cross-tenant `404` for a foreign Patient anchor (list +
+   create), no persistence and no audit row;
+5. byte-equivalent cross-tenant `404` for a foreign encounter UUID reached
+   through the caller's own Patient (get + autosave), foreign row unchanged;
+6. **negative cross-tenant amendment** `404` via the caller's own Patient and
+   via a foreign Patient anchor, with exact before/after DB assertions: no
+   amendment row for the foreign original, no audit row for either tenant, the
+   own original (`clinicalClosedAId`) and the foreign original
+   (`clinicalClosedBId`) byte-equal before/after, and no other tenant B
+   encounter created;
+7. byte-equivalent cross-tenant `404` for a foreign vaccination UUID (update),
+   foreign row unchanged;
+8. deterministic-barrier **parallel-autosave** race: two version-1 autosaves
+   park on the same `updateMany(status=DRAFT, version=1)` row, then exactly one
+   succeeds and one returns `409 CONFLICT`; version advances exactly once and
+   exactly one audit row commits.
+
+## RED proofs (one-variable, both reverted byte-for-byte)
+
+1. Removed `await this.assertPatient(tenantId, patientId)` from
+   `ClinicalService.listEncounters` → the cross-tenant Patient-anchor test
+   failed (`expected 404 "Not Found", got 200 "OK"`). `clinical.service.ts`
+   restored (sha256
+   `a8406575b472dd66924348916763921ed24cf931e173e4d29f5ca76a90278725`).
+2. Removed `version: input.version` from the `updateDraft` `updateMany` guard →
+   the parallel-autosave test failed
+   (`expected [ …(2) ] to have a length of 1 but got 2`). Same file restored to
+   the identical sha256.
+
+## Migration / routes / tests recorded
+
+- Migration:
+  `packages/database/prisma/migrations/20260912000001_clinical/migration.sql` (6
+  tables, composite tenant-ownership FKs, indexes, CLOSED/no-delete triggers,
+  positive-weight CHECK), applied live by the suite. Live assertion scope: the
+  encounter CLOSED-immutability and encounter no-delete triggers are
+  live-executed; the five subdomain no-delete triggers are pinned statically by
+  the WU1 schema migration test.
+- Routes: the 21 `vet.clinical.*` routes under
+  `/patients/:patientId/clinical/**` plus the `/api/clinical/[...path]` web
+  proxy.
+- Tests: WU2A/WU2B service tests, WU3 HTTP integration + route-contract probe,
+  WU4A/WU4B web tests, and the WU5 live-PG block above.
+
+## Delivery documentation (task 5.2)
+
+- Added: `docs/01-roadmap/EPIC-06-Clinical.md`,
+  `docs/02-stories/VET-004-clinical-encounter.md`,
+  `docs/05-modules/Clinical.md`.
+- Updated: `docs/01-roadmap/ROADMAP.md` (EPIC-06 → `in-progress`),
+  `docs/05-modules/README.md`, `docs/09-releases/CHANGELOG.md`, and
+  `docs/08-tech-debt/TD-006-live-pg-isolation-run.md` (EPIC-06 extension +
+  verification checkbox).
+- Known-limitation reconciliation: TD-006 records the EPIC-06 live-PG extension
+  and that the broader Batch 5/RBAC gates remain open; the clinical amendment
+  race is natively `409 CONFLICT` (unlike the EPIC-05 promotion race in
+  [[TD-011]]); the WU5 size overage is recorded as a delivery risk.
+
+## Open questions (design §10) — unresolved
+
+Do **not** resolve without an accepted decision:
+
+- Confirm the minimal encounter field set (`reasonForVisit`, `anamnesis`,
+  `diagnosis`, `treatmentPlan`).
+- Should `close` require a non-empty `clientSummary`? (default: no.)
+
+## Size and residual risks
+
+- WU5 measured **1,208 changed lines** excluding `.atl/` and `.codegraph/`: 530
+  test (`live-pg-isolation.e2e-spec.ts`), 410 new delivery docs (`EPIC-06`,
+  `VET-004`, `Clinical`), 112 updated docs (roadmap/modules/CHANGELOG/TD-006),
+  and 156 SDD artifacts (`tasks.md`, `apply-progress.md`). This exceeds the
+  ≤800-line review budget by ~408 lines; **the maintainer approved the WU5
+  `size:exception`** for the honest, non-minified measure. No test or comment
+  was minified.
+- Updated measure after the authorized 2026-09-13 review-correction pass:
+  **~1,315 changed lines** excluding `.atl/`/`.codegraph/` (553 test + 421 new
+  docs + 122 updated docs + 219 SDD artifacts, additions + deletions vs tracker
+  `6230f837`), still covered by the same approved WU5 `size:exception`.
+- Residual risk: the live-PG evidence was produced **locally only** against a
+  disposable PG16 cluster (the WU5 branch is not pushed), so **CI has not yet
+  observed the WU5 clinical block**. The existing CI migrations job already runs
+  the same `pnpm --filter @newsaas/api test:live-pg` target once a pushed commit
+  triggers it; that CI observation remains pending.
+
+---
+
+# WU5 Review Correction Pass (2026-09-13, maintainer-authorized)
+
+Scope: `apps/api/test/live-pg-isolation.e2e-spec.ts` and the WU5
+evidence/delivery docs only. No product behavior, WU1–WU4, portal, `.atl/`, or
+`.codegraph/` change; no commit/push/PR/merge/archive. Corrects the fresh WU5
+review findings while keeping the cumulative record above intact.
+
+1. **WU5 `size:exception` recorded consistently.** The maintainer-approved
+   ~1,208-line WU5 exception is now recorded in `tasks.md` (forecast row, the
+   WU5 note, task 5.2), this addendum, `docs/01-roadmap/EPIC-06-Clinical.md` and
+   `docs/02-stories/VET-004-clinical-encounter.md`. The prior "no
+   `size:exception` is approved / delivery risk" statements are superseded. This
+   authorized correction pass raises the measured slice to **~1,315 changed
+   lines** (excluding `.atl/`/`.codegraph/`), still covered by the same approved
+   exception; no test or comment was minified.
+2. **Cross-tenant amendment test strengthened.** The live test now captures a
+   `clinicalClosedBId` snapshot before the negative cases and asserts after: the
+   foreign original is byte-equal (and non-null / `CLOSED`), the foreign
+   tenant-B encounter count is unchanged (no unintended foreign mutation), the
+   own original is byte-equal, and no audit row exists for either tenant. The
+   documentation claims are aligned to this evidence.
+3. **Truthful format-check evidence.** Root `pnpm format-check` fails only on
+   the excluded pre-existing `.atl/skill-registry.md`; every WU5 file is
+   Prettier-clean. `tasks.md` task 5.2 no longer lists `pnpm format-check` as
+   uniformly green.
+4. **Unsupported "encrypted" wording removed.** The live-suite doc comment now
+   states the tenant-scoped aggregate path (no encryption claim).
+5. **No-delete scope narrowed.** Docs now state that the live evidence asserts
+   the **encounter** CLOSED-immutability and encounter no-delete triggers; the
+   five subdomain no-delete triggers remain pinned statically by the WU1 schema
+   migration test, not live-executed.
+6. **TD-006 CI wording corrected.** The EPIC-06 verification entry distinguishes
+   the locally verified 24/24 result (WU5 not pushed) from CI, which has not yet
+   observed the WU5 clinical block, and a separate unchecked item now tracks
+   that pending CI observation.
