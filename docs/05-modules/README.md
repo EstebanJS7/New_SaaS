@@ -29,6 +29,12 @@ Implemented (EPIC-05):
 Patients.md
 ```
 
+Implemented (EPIC-06):
+
+```text
+Clinical.md
+```
+
 Recommended files:
 
 ```text
