@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
 import { listCustomers, type Customer } from "../../customers/customers-api";
+import { ClinicalWorkspace } from "./clinical-workspace";
 import {
   createGuardian,
   deactivateGuardian,
@@ -356,6 +357,7 @@ export function PatientDetail(): JSX.Element {
     <div className="mx-auto max-w-4xl space-y-6">
       <PatientHeader patientId={patientId} />
       <GuardianSection patientId={patientId} />
+      <ClinicalWorkspace patientId={patientId} />
     </div>
   );
 }

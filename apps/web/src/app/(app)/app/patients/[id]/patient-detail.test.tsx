@@ -3,9 +3,20 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PatientDetail } from "./patient-detail";
 
+/**
+ * The mounted clinical client (WU4A) validates every patient id as a canonical
+ * UUID before it builds a proxy path, so the fixture and the `useParams` id must
+ * be a UUID rather than the earlier `patient-1` placeholder. Without this, the
+ * mounted ClinicalWorkspace renders its INVALID_IDENTIFIER ("Invalid patient
+ * id.") state instead of issuing a request.
+ */
+const { PATIENT_ID } = vi.hoisted(() => ({
+  PATIENT_ID: "11111111-1111-4111-8111-111111111111",
+}));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-  useParams: () => ({ id: "patient-1" }),
+  useParams: () => ({ id: PATIENT_ID }),
 }));
 
 function TestWrapper({ children }: { readonly children: React.ReactNode }) {
@@ -27,7 +38,7 @@ function resolveRequestUrl(input: RequestInfo | URL): string {
 }
 
 const PATIENT = {
-  id: "patient-1",
+  id: PATIENT_ID,
   tenantId: "tenant-a",
   name: "Rex",
   speciesId: "species-1",
@@ -83,7 +94,7 @@ const GUARDIANS = [
   {
     id: "guardian-1",
     tenantId: "tenant-a",
-    patientId: "patient-1",
+    patientId: PATIENT_ID,
     customerId: "customer-1",
     isPrimary: true,
     isActive: true,
@@ -98,7 +109,7 @@ const GUARDIANS_TWO = [
   {
     id: "guardian-2",
     tenantId: "tenant-a",
-    patientId: "patient-1",
+    patientId: PATIENT_ID,
     customerId: "customer-2",
     isPrimary: false,
     isActive: true,
@@ -129,23 +140,23 @@ function mockWorkflow(overrides: WorkflowOverrides = {}): ReturnType<typeof vi.f
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = resolveRequestUrl(input);
     const method = init?.method ?? "GET";
-    if (url.endsWith("/api/patients/patient-1/guardians/guardian-2/primary")) {
+    if (url.endsWith(`/api/patients/${PATIENT_ID}/guardians/guardian-2/primary`)) {
       return Promise.resolve(
         overrides.setPrimary?.() ?? jsonResponse({ ...GUARDIANS_TWO[1], isPrimary: true })
       );
     }
-    if (url.endsWith("/api/patients/patient-1/guardians") && method === "POST") {
+    if (url.endsWith(`/api/patients/${PATIENT_ID}/guardians`) && method === "POST") {
       return Promise.resolve(overrides.createGuardian?.() ?? jsonResponse(GUARDIANS_TWO[1], 201));
     }
-    if (url.endsWith("/api/patients/patient-1/guardians")) {
+    if (url.endsWith(`/api/patients/${PATIENT_ID}/guardians`)) {
       return Promise.resolve(overrides.guardians?.() ?? jsonResponse(GUARDIANS));
     }
-    if (url.endsWith("/api/patients/patient-1/deactivate")) {
+    if (url.endsWith(`/api/patients/${PATIENT_ID}/deactivate`)) {
       return Promise.resolve(
         overrides.deactivatePatient?.() ?? jsonResponse({ ...PATIENT, isActive: false })
       );
     }
-    if (url.endsWith("/api/patients/patient-1")) {
+    if (url.endsWith(`/api/patients/${PATIENT_ID}`)) {
       return Promise.resolve(overrides.patient?.() ?? jsonResponse(PATIENT));
     }
     if (url.endsWith("/api/patients/catalog")) {
@@ -264,7 +275,7 @@ describe("PatientDetail", () => {
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) =>
         resolveRequestUrl(input as RequestInfo | URL).endsWith(
-          "/api/patients/patient-1/guardians"
+          `/api/patients/${PATIENT_ID}/guardians`
         ) && (init as RequestInit | undefined)?.method === "POST"
     );
     expect(createCall).toBeDefined();
@@ -314,7 +325,7 @@ describe("PatientDetail", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/patients/patient-1/guardians/guardian-2/primary",
+        `/api/patients/${PATIENT_ID}/guardians/guardian-2/primary`,
         expect.objectContaining({ method: "POST" })
       );
     });
@@ -360,7 +371,7 @@ describe("PatientDetail", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/patients/patient-1/deactivate",
+        `/api/patients/${PATIENT_ID}/deactivate`,
         expect.objectContaining({ method: "POST" })
       );
     });
@@ -402,5 +413,28 @@ describe("PatientDetail", () => {
         screen.getByText("The veterinary module is not enabled for this tenant.")
       ).toBeInTheDocument();
     });
+  });
+
+  it("mounts the clinical workspace with a canonical patient id instead of the invalid-identifier state", async () => {
+    const fetchMock = mockWorkflow();
+
+    render(
+      <TestWrapper>
+        <PatientDetail />
+      </TestWrapper>
+    );
+
+    // A canonical UUID satisfies the clinical client identifier guard, so the
+    // encounter list request reaches the proxy and settles on the stubbed API
+    // error instead of the INVALID_IDENTIFIER ("Invalid patient id.") UX.
+    expect(await screen.findByText("Clinical record not found.")).toBeInTheDocument();
+    expect(screen.queryByText("Invalid patient id.")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        resolveRequestUrl(input as RequestInfo | URL).endsWith(
+          `/api/clinical/${PATIENT_ID}/encounters`
+        )
+      )
+    ).toBe(true);
   });
 });

@@ -7,12 +7,12 @@ and WU5 (verification/docs); design §§3-10 define the implementation seams.
 
 ## Review Workload Forecast
 
-| Field                   | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Review budget           | 800 changed lines per slice                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Estimated changed lines | WU2A 827 impl / 1,533 incl. tests (delivered); WU2B 844 impl + 20 module lines / 1,235 changed incl. 371 tests (delivered 2026-09-12; maintainer-approved `size:exception`); WU3 570 contract/source + 760 tests = 1,330 changed incl. tests (review corrections applied 2026-09-12; maintainer-approved `size:exception`); WU4A 743 changed incl. tests (proxy + client; re-sliced 2026-09-12) then **1,141 changed incl. tests after the 2026-09-12 security/error correction pass** (+398; now over the ≤800 budget — `size:exception` approved by the maintainer after the 2026-09-12 fresh re-review, no test/comment minified); WU4B 783 changed incl. tests (workspace UI + RTL; re-sliced 2026-09-12; under the 800 budget; uncommitted residual) |
-| Delivery strategy       | force-chained (feature-branch-chain)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4A → WU4B → WU5                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Field                   | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Review budget           | 800 changed lines per slice                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Estimated changed lines | WU2A 827 impl / 1,533 incl. tests (delivered); WU2B 844 impl + 20 module lines / 1,235 changed incl. 371 tests (delivered 2026-09-12; maintainer-approved `size:exception`); WU3 570 contract/source + 760 tests = 1,330 changed incl. tests (review corrections applied 2026-09-12; maintainer-approved `size:exception`); WU4A 743 changed incl. tests (proxy + client; re-sliced 2026-09-12) then **1,141 changed incl. tests after the 2026-09-12 security/error correction pass** (+398; now over the ≤800 budget — `size:exception` approved by the maintainer after the 2026-09-12 fresh re-review, no test/comment minified); WU4B **1,384 changed code lines (668 workspace + 656 workspace RTL + 58 parent PatientDetail RTL + 2 mount) after the 2026-09-12 conflict-reload/evidence correction pass and the final parent PatientDetail UUID fixture correction** (debounced autosave, permission-aware mutations, conflict-reload autosave suspension, accessibility, delayed-refetch regression + unmount/in-flight tests, plus the parent `patient-detail.test.tsx` fixture migration to canonical UUIDs with an assertion that the mounted clinical workspace never renders the `INVALID_IDENTIFIER` state) plus SDD-artifact deltas; the reviewed measure including SDD docs was **~1,520 changed lines, over the ≤800 budget, and the maintainer approved the WU4B `size:exception`** (implemented and verified; no test/comment minified) |
+| Delivery strategy       | force-chained (feature-branch-chain)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Suggested split         | WU1 → WU2A → WU2B → WU3 → WU4A → WU4B → WU5                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 Decision needed before apply: No Chained PRs recommended: Yes Chain strategy:
 feature-branch-chain 400-line budget risk: High
@@ -181,20 +181,77 @@ committed.
 > workspace") was a single 1,526-line uncommitted slice. The maintainer rejected
 > a `size:exception` and required a split for maintainability and CI diagnosis;
 > WU4 is re-sliced into **WU4A Clinical Proxy & Client** (743 changed lines) and
-> **WU4B Staff Workspace UI** (783 changed lines) without changing approved
-> product scope. WU4A is the active, complete slice. The WU4B implementation
-> already exists in the working tree but is **uncommitted/untracked residual**
-> pending its own chained child slice, so its tasks remain pending.
+> **WU4B Staff Workspace UI** (783 planned, 795 measured before corrections,
+> 1,326 measured after the 2026-09-12 conflict-reload/evidence correction pass,
+> 1,384 after the final parent PatientDetail UUID fixture correction) without
+> changing approved product scope. WU4A is complete and merged into the tracker
+> (`7128cf7`). WU4B is implemented and verified on
+> `feat/epic-06-clinical-wu4b-workspace-ui`, including the UUID fixture
+> migration required by the WU4A client contract, the 2026-09-12
+> maintainer-authorized review-correction pass (task 4B.3), the
+> conflict-reload/evidence correction pass (task 4B.4) and the final parent
+> PatientDetail UUID fixture correction (task 4B.5). The maintainer approved the
+> WU4B **`size:exception`** for the honest, non-minified measure (~1,520 changed
+> lines including SDD docs at review; larger after the authorized corrections).
 
-- [ ] 4B.1 RED: add RTL tests for loading, empty, error, success, denied,
+- [x] 4B.1 RED: add RTL tests for loading, empty, error, success, denied,
       autosave conflict, close, amendment, and client-safe `internalNotes`
-      separation (spec Staff workspace). The implementation exists as
+      separation (spec Staff workspace). Implemented as
       `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx` (11
-      tests); its own chained slice must verify and commit it.
-- [ ] 4B.2 GREEN: commit `clinical-workspace.tsx` and the `patient-detail.tsx`
-      mount using semantic tokens and the authenticated proxy only. The files
-      exist uncommitted in the WU4A working tree and must stay out of the WU4A
-      commit.
+      tests). The WU4A client validates UUID identifiers, so the fixtures were
+      migrated from `patient-1`/`enc-1` to canonical UUIDs; the focused suite is
+      green (11 passed) and the full web suite is green (26 files / 162 passed).
+- [x] 4B.2 GREEN: implement `clinical-workspace.tsx` and the
+      `patient-detail.tsx` mount using semantic tokens and the authenticated
+      proxy only. The implementation and verification are complete; the commit
+      is intentionally deferred by maintainer instruction and remains gated on
+      the mandatory fresh review, so no commit/push/PR/merge was performed.
+- [x] 4B.3 Review-correction pass (2026-09-12, maintainer-authorized): (1) the
+      draft save is now a debounced on-change versioned autosave with
+      dirty-gating, timer cleanup on every change/unmount, an in-flight
+      no-clobber guard, and a state-aware mock exercising the real timer; (2)
+      mutation `403 FORBIDDEN` / `FEATURE_NOT_ENTITLED` render as neutral
+      permission-aware UX (`PermissionDeniedAlert`) and disable the unavailable
+      create/save/close/amend affordances with no retry loop; (3) "Reload
+      latest" clears the conflict together with the stale mutation error,
+      preserving the local draft; (4) success notices/autosave status use a
+      `role="status"` live region and the selected encounter exposes
+      `aria-current="true"`. Focused WU4B became **20 tests** (was 11) and WU4B
+      measured **1,150 changed code lines** (632 workspace + 516 RTL + 2 mount);
+      including the SDD docs this exceeded the ≤800 budget, which the maintainer
+      covered with the WU4B `size:exception`.
+- [x] 4B.4 Conflict-reload/evidence correction pass (2026-09-12,
+      maintainer-authorized): (1) autosave is suspended across the entire
+      conflict-reload lifecycle until the refetch resolves and the refreshed
+      authoritative encounter version is adopted, so no stale-version write can
+      fire before/during a delayed refetch; (2) editor fields stay editable
+      while a save is in flight so the in-flight no-clobber guard is reachable;
+      (3) focused tests added for a delayed conflict reload, unmount timer
+      cancellation, and an in-flight save that must not clobber a newer local
+      edit (focused WU4B is now **23 tests**, was 20); (4) WU4B size/accounting
+      corrected to **1,326 changed code lines** (668 workspace + 656 RTL + 2
+      mount) measured after this pass, with the maintainer-approved WU4B
+      `size:exception` in force. All gates green (focused 23/23, full web
+      174/174, typecheck/lint/build/prettier).
+- [x] 4B.5 Parent PatientDetail UUID fixture correction (2026-09-13,
+      maintainer-authorized final correction): migrate
+      `apps/web/src/app/(app)/app/patients/[id]/patient-detail.test.tsx` from
+      the invalid `patient-1` placeholders to the canonical UUID
+      `11111111-1111-4111-8111-111111111111` (one `vi.hoisted` constant consumed
+      by the `useParams` mock, the `PATIENT`/guardian fixtures, and every URL
+      matcher/assertion, so the fixture set cannot drift), and add a test
+      asserting that mounting `PatientDetail` lets the clinical client accept
+      the patient id (the encounter list request reaches the proxy and settles
+      on the stubbed API error) instead of rendering the clinical
+      `INVALID_IDENTIFIER` ("Invalid patient id.") state. Measured **58 changed
+      lines** (46 insertions / 12 deletions); the WU4B cumulative code measure
+      is now **1,384 changed code lines** (668 workspace + 656 workspace RTL +
+      58 parent RTL + 2 mount). All gates green (focused parent+WU4B 33/33; full
+      clinical slice 85/85; full web 175/175; typecheck/lint/build/prettier).
+      RED proof (one-variable, reverted): setting the constant value back to
+      `patient-1` made only the new test fail — the mount rendered "Invalid
+      patient id." — then the UUID value was restored byte-for-byte (sha256
+      `85f25859…`).
 
 WU4A/WU4B re-slice note (2026-09-12): **WU4A is implemented on
 `feat/epic-06-clinical-wu4a-proxy-client`** (renamed from
@@ -210,14 +267,22 @@ untouched. WU4A measured size was **743 changed lines** (314 implementation +
 429 tests) before the security/error correction pass and is now **1,141 changed
 lines** (474 implementation + 667 tests) after it; that exceeds the ≤800 slice
 budget, so the maintainer approved a **WU4A `size:exception`** after the
-2026-09-12 fresh re-review (no test or comment was minified). WU4B measures
-**783 changed lines** (493 implementation incl. the 2-line mount + 290 tests),
-under budget. Because the correction tightens the client to UUID identifiers,
-the WU4B RTL fixtures (which still use `patient-1` / `enc-1`) must move to UUID
-ids in the WU4B chained slice before its suite is green. Fresh re-review
-APPROVED WU4A and its 1,141-line `size:exception` on 2026-09-12; WU4A is
-committed as exactly one chained commit
-`feat(EPIC-06): add clinical proxy and client`.
+2026-09-12 fresh re-review (no test or comment was minified). WU4B measured
+**795 changed lines** (491 workspace + 302 RTL tests + 2-line mount) **before**
+the 2026-09-12 review-correction passes and now measures **1,384 changed code
+lines** (668 workspace + 656 workspace RTL tests + 58 parent PatientDetail RTL +
+2-line mount) after the conflict-reload/evidence correction pass and the final
+parent PatientDetail UUID fixture correction. Because the WU4A correction
+tightened the client to UUID identifiers, the WU4B RTL fixtures were migrated
+from `patient-1` / `enc-1` to canonical UUIDs (including the parent
+`patient-detail.test.tsx` fixtures, task 4B.5), and the suite is now green.
+Fresh re-review APPROVED WU4A and its 1,141-line `size:exception` on 2026-09-12;
+WU4A is committed as exactly one chained commit
+`feat(EPIC-06): add clinical proxy and client`. WU4B is implemented and verified
+on `feat/epic-06-clinical-wu4b-workspace-ui` (base: tracker
+`feat/epic-06-clinical` @ `7128cf7`); the maintainer approved the WU4B
+**`size:exception`** for the honest, non-minified measure (~1,520 changed lines
+including SDD docs at review; larger after the authorized corrections).
 
 ## Phase 5: Evidence and Documentation
 

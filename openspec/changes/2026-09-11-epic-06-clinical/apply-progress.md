@@ -830,10 +830,10 @@ Corrections:
 | `route.test.ts`                                 | WU4A  | 257                 | 346                   |
 | `clinical-api.test.ts`                          | WU4A  | 172                 | 321                   |
 | **WU4A subtotal (impl + tests)**                | WU4A  | **743** (314 + 429) | **1,141** (474 + 667) |
-| `clinical-workspace.tsx`                        | WU4B  | 491                 | 491                   |
+| `clinical-workspace.tsx`                        | WU4B  | 491                 | 668 (post-correction) |
 | `patient-detail.tsx` mount (+2)                 | WU4B  | 2                   | 2                     |
-| `clinical-workspace.test.tsx`                   | WU4B  | 290                 | 290                   |
-| **WU4B subtotal (493 impl + 290 tests)**        | WU4B  | **783**             | **783**               |
+| `clinical-workspace.test.tsx`                   | WU4B  | 290                 | 656 (post-correction) |
+| **WU4B subtotal (impl + tests)**                | WU4B  | **783**             | **1,326 code**        |
 | **Original WU4 total incl. tests (superseded)** | WU4   | 1,526               | —                     |
 
 Pre-correction, both re-sliced parts were under the ≤800 changed-lines budget
@@ -842,26 +842,31 @@ correction pass added a **+398-line** evidence delta to WU4A (hardened proxy,
 identifier validation, error normalization and the mandated focused tests),
 lifting WU4A to **1,141 changed lines**, i.e. over the ≤800 slice budget. The
 maintainer approved the **WU4A `size:exception`** after the 2026-09-12 fresh
-re-review for the honest, non-minified measure; WU4B stays at 783, under budget.
-No comment, test, or state was minified to fit the budget.
+re-review for the honest, non-minified measure. WU4B was 783 before the
+corrections and measured **1,150 changed code lines** after the first
+review-correction pass; including the SDD artifacts that exceeded the ≤800
+budget, and the maintainer approved the **WU4B `size:exception`** (~1,520
+changed lines including SDD docs at review). The subsequent
+conflict-reload/evidence correction pass (2026-09-12) brings the honest WU4B
+measure to **1,326 changed code lines**, covered by the approved exception. No
+comment, test, or state was minified to fit the budget.
 
 ## WU4B status — implemented, uncommitted residual (out of the WU4A boundary)
 
 The WU4B staff workspace source and tests exist in the working tree, but they
-are **not part of the WU4A commit**. After the WU4A correction tightened the
-client to UUID identifiers, the WU4B RTL suite (`clinical-workspace.test.tsx`,
-11 tests) **fails with `Invalid patient id.`** because its fixtures still use
-`patient-1` / `enc-1`. That fixture migration is a **WU4B-slice task** (the WU4B
-chained child), not a WU4A edit; no WU4B file was changed in this pass. WU4B
-owns:
+are **not part of the WU4A commit**. The UUID fixture migration required by the
+WU4A client contract, the 2026-09-12 review-correction pass and the
+conflict-reload/evidence correction pass are all complete on the WU4B branch;
+the focused suite is green. WU4B owns:
 
-- `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.tsx` (491)
-- `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx` (290)
+- `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.tsx` (668)
+- `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx` (656)
 - the `patient-detail.tsx` mount (+2, tracked but left uncommitted)
 
 They must stay untracked/unstaged (`git add` must not use `-A`) and are held for
-the next chained child slice. No WU4B feature code or test is outstanding — only
-its own chained commit/PR and fresh review remain.
+the next chained child slice. No WU4B feature code or test is outstanding — its
+own chained commit/PR remains, covered by the maintainer-approved WU4B
+`size:exception`.
 
 ## Deviations from Design (WU4)
 
@@ -880,9 +885,11 @@ its own chained commit/PR and fresh review remain.
   hook in the web app. Permission-aware UX is therefore error-code driven (403
   `FORBIDDEN` / `FEATURE_NOT_ENTITLED` render dedicated copy); the backend
   remains authoritative. No navigation/portal change.
-- **Autosave is an explicit version-guarded save** ("Save draft") rather than a
-  debounced background write; the spec requires the version guard, not a timing
-  model, and this keeps the write deterministic and reviewable.
+- **Autosave model (updated 2026-09-12)**: the draft is a **debounced on-change
+  versioned autosave** (initially shipped as an explicit "Save draft" button,
+  then corrected per review). The version guard remains the concurrency
+  contract; the debounce only coalesces keystrokes, and the timer is cleaned up
+  on every change and on unmount.
 - **WU4 UI scope is encounter lifecycle only** (list/create/autosave/close/
   amend). The five specialized record kinds remain API-only because the spec
   Staff-workspace requirement and tasks 4A.1/4A.2 and 4B.1/4B.2 enumerate only
@@ -903,8 +910,9 @@ its own chained commit/PR and fresh review remain.
 - Mode: **chained PR slice** (feature-branch-chain), WU4A only. The
   maintainer-authorized correction pass lifts WU4A to **1,141** changed lines,
   over the ≤800 budget, so the maintainer approved the **WU4A `size:exception`**
-  after the 2026-09-12 fresh re-review (no test or comment minified). WU4B stays
-  at 783.
+  after the 2026-09-12 fresh re-review (no test or comment minified). WU4B is
+  also over budget (1,326 changed code lines after the correction passes) and
+  its **`size:exception` is maintainer-approved**.
 - Boundary: base = tracker `feat/epic-06-clinical` @ `eb7b838` (contains WU1 +
   WU2A + WU2B + WU3); ends with the authenticated proxy, the `clinical-api.ts`
   client, and their node tests. The WU4B workspace files and the
@@ -919,13 +927,15 @@ its own chained commit/PR and fresh review remain.
   `patient-detail.tsx`). Do **NOT** run `git add -A` / `git add .`.
 - WU4B (next chained child) will stage `clinical-workspace.tsx`,
   `clinical-workspace.test.tsx`, `patient-detail.tsx` and the SDD doc updates on
-  its own branch based on WU4A (`783` changed lines, also under budget).
+  its own branch based on WU4A (`1,326` changed code lines including the
+  2026-09-12 corrections; maintainer-approved `size:exception`).
 
 ## Risks (WU4A / WU4B)
 
 - **Size**: the correction pass lifts WU4A to 1,141 changed lines, over the ≤800
   slice budget; the maintainer approved the `size:exception` after the
-  2026-09-12 fresh re-review. WU4B is 783, under budget.
+  2026-09-12 fresh re-review. WU4B is 1,326 changed code lines after its
+  correction passes; its `size:exception` is maintainer-approved.
 - The WU4B files are uncommitted in the working tree; a careless `git add -A`
   would leak WU4B into the WU4A commit. Use the explicit path list above.
 - Fresh-context re-review APPROVED the corrected WU4A slice on 2026-09-12 (with
@@ -949,3 +959,423 @@ its own chained commit/PR and fresh review remain.
 - Preserved and unstaged: `.atl/.skill-registry.cache.json`,
   `.atl/skill-registry.md` (pre-existing dirtiness) and `.codegraph/` (tool
   index).
+
+---
+
+# Phase 4B — Staff Workspace UI (WU4B) — continuation 2026-09-12
+
+Base/continuation note: WU4A was merged into the tracker and the tracker format
+fix landed at `7128cf7` (`style(EPIC-06): format WU4A delivery state`). WU4B is
+implemented on `feat/epic-06-clinical-wu4b-workspace-ui`, whose HEAD is exactly
+`7128cf7` (no commits beyond the tracker; upstream unset so an accidental
+`git push` cannot target the tracker). The three pre-existing WU4B residual
+files were preserved/reused; pre-existing `.atl/` modifications and the
+untracked `.codegraph/` index were preserved and never staged. Nothing was
+committed, pushed, opened as a PR, or merged. Prior WU1/WU2A/WU2B/WU3/WU4A
+content above is retained unchanged.
+
+## Completed Tasks — WU4B
+
+- [x] 4B.1 RED: RTL tests for loading, empty, error, success, permission-denied,
+      autosave conflict (with local edits preserved), close, amendment, and
+      client-safe `internalNotes` separation. Implemented as
+      `clinical-workspace.test.tsx` (11 tests). Because the WU4A correction
+      tightened `clinical-api.ts` to reject non-UUID identifiers, the fixtures
+      were migrated from `patient-1`/`enc-1` to canonical UUIDs.
+- [x] 4B.2 GREEN: `clinical-workspace.tsx` (loading/empty/error/success/denied,
+      version-guarded draft save with 409 reload prompt, close, amend,
+      staff-only `internalNotes` separation) and the `patient-detail.tsx` mount,
+      using semantic tokens only and the authenticated `/api/clinical` proxy
+      only. No Portal, Scheduling, files, reports, or WU5 change. Commit
+      intentionally deferred by maintainer instruction; gated on the mandatory
+      fresh review.
+- [x] 4B.3 Review-correction pass (2026-09-12, maintainer-authorized): replaced
+      the manual-only draft save with a debounced on-change versioned autosave
+      (dirty-gated, timer cleanup, in-flight no-clobber); rendered mutation 403
+      `FORBIDDEN` / `FEATURE_NOT_ENTITLED` as permission-aware UX with the
+      unavailable create/save/close/amend actions disabled; made "Reload latest"
+      clear the stale mutation error together with the conflict state; moved
+      success/autosave updates into a `role="status"` live region and exposed
+      the selected encounter with `aria-current`. Focused WU4B became **20
+      tests** (was 11). See the dedicated correction-pass section below for the
+      size accounting, RED proof and residual risks.
+- [x] 4B.4 Conflict-reload/evidence correction pass (2026-09-12,
+      maintainer-authorized): (1) autosave is suspended across the entire
+      conflict-reload lifecycle (a new `reloading` state) until the refetch
+      resolves and the refreshed authoritative encounter version is adopted, so
+      no stale-version write can fire before/during a delayed refetch; (2) the
+      editor fields stay editable while a save is in flight so the in-flight
+      no-clobber guard is actually reachable; (3) focused tests added for a
+      delayed conflict reload, unmount timer cancellation, and an in-flight save
+      that must not clobber a newer local edit (focused WU4B is now **23
+      tests**); (4) WU4B size/accounting corrected to **1,326 changed code
+      lines** (668 workspace + 656 RTL + 2 mount) measured after this pass, with
+      the maintainer-approved WU4B `size:exception` in force. All gates green.
+
+## Files Changed — WU4B
+
+| File                                                                   | Action   | What Was Done                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.tsx`      | Created  | Staff clinical workspace (**668 lines post-correction**): `ClinicalWorkspace` shell with loading/empty/error/permission-denied/success branches; encounter list with DRAFT/CLOSED badges and `aria-current` selection; `EncounterEditor` with a **debounced versioned autosave** (dirty-gated, timer cleanup, in-flight no-clobber, fields editable mid-flight, autosave suspended across the whole conflict-reload lifecycle until the refreshed authoritative version is adopted, 409 CONFLICT shows a reload prompt and keeps local edits); permission-aware mutation deny states that disable unavailable actions; close command; `AmendmentForm` for CLOSED encounters; `role="status"` live region. Semantic tokens only; internal notes isolated in a `staff-internal-notes` region; no Portal import.       |
+| `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx` | Created  | **23 RTL tests (656 lines post-correction)** on the WU4A UUID contract: loading, empty, success list, generic error, 403 denied copy, create + editor open, create 403/`FEATURE_NOT_ENTITLED`, debounced autosave (version + body, no write before the debounce), rapid-edit coalescing, reverted-draft no-write, autosave 409 conflict (edits kept) + reload clears conflict and stale error, delayed conflict reload (autosave stays suspended until the refetched version is adopted), unmount timer cancellation, in-flight save no-clobber of a newer local edit, denied save (fields disabled, no retry), denied close, denied amendment, close swaps to the amendment form, amendment submit body, `aria-current` selection, `role="status"` success, and staff internal-notes vs client-summary separation. |
+| `apps/web/src/app/(app)/app/patients/[id]/patient-detail.tsx`          | Modified | Mounted `<ClinicalWorkspace patientId={patientId} />` in the existing staff Patient detail surface (+2/-0).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+## UUID fixture migration (WU4A-dependent)
+
+The WU4A security/error correction tightened `clinical-api.ts`
+(`encodeIdentifier` rejects any non-UUID patient/encounter id with
+`ApiRequestError("INVALID_IDENTIFIER", …, 0)` before path construction). The
+WU4B RTL fixtures previously used the placeholders `patient-1` / `enc-1` and
+therefore failed with `Invalid patient id.` The fixtures now use canonical
+UUIDs:
+
+- `PATIENT_ID = 11111111-1111-4111-8111-111111111111`
+- `ENCOUNTER_ID = 22222222-2222-4222-8222-222222222222`
+- `AMENDMENT_ID = 33333333-3333-4333-8333-333333333333`
+- `TENANT_ID = 44444444-4444-4444-8444-444444444444`
+
+Encounter content, DTO shape and method/URL assertions are unchanged. The
+migration is fixture-only and does not alter WU4A behavior.
+
+## Verification Evidence — WU4B (pre-review-correction, historical)
+
+> Superseded by the post-correction evidence in "WU4B Review Correction Pass"
+> below (focused 20/20, full web 171/171). Retained as the pre-correction audit
+> trail.
+
+| Command                                                                                                                                                                                                                                                                                                | Result                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `pnpm test --filter @newsaas/web -- --run clinical-workspace` (focused WU4B)                                                                                                                                                                                                                           | exit 0 — 1 file, **11 passed**                                                                            |
+| `pnpm --filter @newsaas/web exec vitest run --config vitest.config.ts "src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx" "src/app/(app)/app/patients/[id]/clinical-api.test.ts" "src/app/api/clinical/[[...path]]/route.test.ts" "src/app/(app)/app/patients/[id]/patient-detail.test.tsx"` | exit 0 — 4 files / **54 passed** (WU4B 11 + WU4A 34 + patient-detail 9)                                   |
+| `pnpm --filter @newsaas/web test` (full web)                                                                                                                                                                                                                                                           | exit 0 — **26 files / 162 passed** (WU4A-only baseline was 25 files / 151; +1 file / +11 tests from WU4B) |
+| `pnpm --filter @newsaas/web typecheck`                                                                                                                                                                                                                                                                 | exit 0 — no errors                                                                                        |
+| `pnpm --filter @newsaas/web lint`                                                                                                                                                                                                                                                                      | exit 0 — no errors                                                                                        |
+| `pnpm --filter @newsaas/web build`                                                                                                                                                                                                                                                                     | exit 0 — build clean; `verify-build-output.mjs` passed                                                    |
+| `pnpm exec prettier --check` on the three WU4B files                                                                                                                                                                                                                                                   | all files match Prettier style                                                                            |
+
+Requirement coverage: loading, empty, generic error, success list, 403
+permission-denied copy, autosave success (version + body), autosave 409 conflict
+with edits preserved, close → amendment form, amendment submit, and staff
+`internalNotes` isolated from the client summary. All are exercised by the 11
+focused tests.
+
+## Fresh review — in-session adversarial pass (2026-09-12)
+
+> Superseded by the maintainer-authorized "WU4B Review Correction Pass" section
+> below, which resolves finding (a) (live/status region) and the autosave,
+> permission-UX, conflict-reload and accessibility findings. Finding (c)
+> (`patient-detail.test.tsx` non-UUID fixture) remains a recorded test-only
+> limitation.
+
+Per the explicit no-delegation instruction, the mandatory fresh review was
+performed in-session as an adversarial pass over the three WU4B files. Findings:
+
+- **No blocking defects.** The workspace consumes only `./clinical-api` (the
+  authenticated `/api/clinical` proxy) and `@newsaas/ui` components; it never
+  calls the API origin directly. All color styling uses semantic tokens
+  (`bg-card`, `border-input`, `text-primary-foreground`, `text-status-success`,
+  `text-destructive`, …); no brand literal or tenant CSS. `internalNotes`
+  renders only inside the staff `(app)` shell workspace and is not read by any
+  Portal or other surface (grep confirms the only mount is `patient-detail.tsx`
+  under `(app)`).
+- **Non-blocking (a)**: the success notice uses a plain `<span>` without
+  `role="status"`; the error/conflict notices do use `role="alert"`. Not
+  required by the spec.
+- **Non-blocking (b)**: `afterEach(vi.restoreAllMocks())` does not restore the
+  directly assigned `global.fetch`; each test reassigns it, and Vitest isolates
+  test files, so there is no cross-test leak.
+- **Non-blocking (c, recorded as a coupling risk)**: the pre-existing
+  `patient-detail.test.tsx` uses the non-UUID id `patient-1`, so the newly
+  mounted workspace renders its error state during that test. The test still
+  passes (it does not assert clinical content) and production route ids are
+  UUIDs. Migrating that fixture would change a tracked file outside the planned
+  WU4B boundary and would push the slice over the ≤800 budget, so it is left as
+  a recorded non-blocking limitation.
+- **Fresh-context review**: this in-session pass was superseded by the two
+  maintainer-authorized correction passes (review-correction and
+  conflict-reload/evidence), which applied the review findings. The corrected
+  slice is covered by the maintainer-approved WU4B `size:exception`.
+
+## Measured size — WU4B
+
+Honest measures (all lines count; nothing minified). **Pre-correction** is the
+slice after the UUID fixture migration; **post-correction (pass 1)** is after
+the first maintainer-authorized review-correction pass; **post-corrections
+(pass 2)** is after the conflict-reload/evidence correction pass.
+
+| File                                             | Pre-correction | Post (pass 1) | Post (pass 2) | Notes                                                                                 |
+| ------------------------------------------------ | -------------- | ------------- | ------------- | ------------------------------------------------------------------------------------- |
+| `clinical-workspace.tsx`                         | 491            | 632           | 668           | Debounced autosave, permission-aware mutations, conflict-reload suspension, a11y.     |
+| `clinical-workspace.test.tsx`                    | 302            | 516           | 656           | 23 RTL tests (11 originally, 20 after pass 1); +140 from the new regression coverage. |
+| `patient-detail.tsx` mount                       | 2              | 2             | 2             | +2 additions / 0 deletions.                                                           |
+| **WU4B code subtotal**                           | **795**        | **1,150**     | **1,326**     | 668 workspace + 656 RTL + 2 mount.                                                    |
+| SDD artifacts (`tasks.md` + `apply-progress.md`) | —              | ≥370          | ≈498          | `apply-progress` ≈382+/23− and `tasks` ≈68+/25− vs HEAD.                              |
+
+**Maintainer-approved `size:exception`.** The corrected WU4B slice is **1,326
+changed code lines**; including the SDD documentation deltas it is **≈1,824
+changed lines**, i.e. materially **over the ≤800 budget**. The maintainer
+approved the WU4B `size:exception` for the honest, non-minified **~1,520-line**
+measure at the 2026-09-12 review; the subsequent maintainer-authorized
+conflict-reload/evidence corrections add the remaining delta (the
+reload-lifecycle guard, three regression tests and their documentation). No
+test, comment, or state was minified to fit the budget and no further split is
+required.
+
+## Deviations from Design (WU4B)
+
+- None that change the design. The WU4-level deviations (no RHF/Zod, error-code
+  driven permission UX, explicit version-guarded save, and encounter-lifecycle-
+  only UI scope) are recorded in the WU4A section above and remain in force for
+  WU4B.
+
+## Known Limitations / Risks (WU4B)
+
+- **Size exception**: after the 2026-09-12 conflict-reload/evidence correction
+  pass WU4B is **1,326 changed code lines**; including SDD docs it is over the
+  ≤800 budget, covered by the maintainer-approved WU4B `size:exception`.
+- No live database in this environment: cross-tenant isolation and concurrent
+  409 semantics remain WU5/H1-owned; WU4B renders the UX states driven by the
+  stable error codes only.
+- `patient-detail.test.tsx` retains a non-UUID fixture (see review finding c);
+  it is a test-only coupling, not a production defect.
+- The commit is deferred; a careless `git add -A` would stage `.atl/` dirtiness,
+  the `.codegraph/` index, and/or SDD docs. A future committer must stage only
+  `clinical-workspace.tsx`, `clinical-workspace.test.tsx`, `patient-detail.tsx`,
+  and the SDD doc updates, and must not use `-A`/`.`.
+
+## Workload / PR Boundary — WU4B
+
+- Mode: **chained PR slice** (feature-branch-chain), WU4B only. The
+  conflict-reload/evidence correction pass brings the slice to **1,326 changed
+  code lines** (over the ≤800 budget including SDD docs), covered by the
+  maintainer-approved WU4B `size:exception`.
+- Boundary: base = tracker `feat/epic-06-clinical` @ `7128cf7` (contains WU1 +
+  WU2A + WU2B + WU3 + WU4A); ends with the workspace component, its RTL tests,
+  and the `patient-detail.tsx` mount. WU4A proxy/client, WU5, Portal,
+  Scheduling, files, and reports are explicitly OUT.
+- Staging guidance (for the deferred commit): stage only
+  `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.tsx`,
+  `apps/web/src/app/(app)/app/patients/[id]/clinical-workspace.test.tsx`,
+  `apps/web/src/app/(app)/app/patients/[id]/patient-detail.tsx`, and the SDD doc
+  updates; exclude the pre-existing `.atl/` dirtiness and the `.codegraph/` tool
+  index. Do **NOT** run `git add -A` / `git add .`.
+
+## Branch / Worktree State — WU4B
+
+- Current branch: `feat/epic-06-clinical-wu4b-workspace-ui`, HEAD =
+  `7128cf77e38f00457672cd4f262d0a919ea33ca6` = tracker `7128cf7` (no commits
+  beyond the tracker; local upstream unset so no accidental push to the
+  tracker).
+- Working tree: `clinical-workspace.tsx` (sha256
+  `02a8c322391babdeddee8a943af3936b9ce118dbc25d81f304325edea3aee5f7`, 668 lines)
+  and `clinical-workspace.test.tsx` (sha256
+  `20838dca20061e9b40c96b916ef242cb50b24d1715ba65819ee2dd3ae2f7fef9`, 656 lines)
+  untracked/new; `patient-detail.tsx` modified (+2). Pre-existing `.atl/`
+  dirtiness and `.codegraph/` preserved and never staged.
+- Phase result: WU4B implementation, both maintainer-authorized correction
+  passes and verification are complete (focused 23/23, full web 174/174,
+  typecheck/lint/build green). The corrected slice is 1,326 changed code lines
+  and over budget including SDD docs, covered by the maintainer-approved WU4B
+  `size:exception`. No push, PR, or merge.
+
+---
+
+# WU4B Review Correction Pass (2026-09-12, maintainer-authorized)
+
+Scope: `clinical-workspace.tsx`, `clinical-workspace.test.tsx` and the SDD
+artifacts only. No WU4A proxy/client, WU5, Portal, Scheduling, files, or reports
+change; `.atl/` and `.codegraph/` untouched; no commit/push/PR/merge.
+
+## Corrections applied
+
+1. **Debounced on-change versioned autosave replaces the manual-only save.**
+   `EncounterEditor` now debounces content changes and writes through
+   `updateDraft` with the `version` last read from the server. The write is
+   dirty-gated (`sameContent` against a baseline ref), suspended while a write
+   is in flight or while in conflict, and its pending timer is cleared on every
+   change and on unmount. An in-flight response adopts only the server echo when
+   the draft did not change mid-flight, so newer local edits are never
+   clobbered; the shared encounter-list cache is updated from the authoritative
+   response. The explicit **Close encounter** and **Record amendment** actions
+   are preserved.
+2. **Permission-aware mutation UX.** Mutation failures with `FORBIDDEN` /
+   `FEATURE_NOT_ENTITLED` (and `UNAUTHENTICATED`) render the neutral
+   `PermissionDeniedAlert` instead of a red error, and the unavailable action is
+   disabled: create disables **New encounter**, save disables the editor fields
+   and stops the autosave retry loop, close disables **Close encounter**, amend
+   disables the amendment submit. The list-level 403 state is unchanged.
+3. **Conflict reload clears the stale error.** `handleReload` calls
+   `saveMutation.reset()` and `closeMutation.reset()` in addition to clearing
+   the conflict flag and invalidating the list, so no stale mutation error
+   survives the reload; the local draft is preserved.
+4. **Accessibility.** Success notices and the autosave status render inside a
+   `role="status" aria-live="polite"` region; the selected encounter button
+   exposes `aria-current="true"`.
+5. **Honest size/accounting.** See `Measured size — WU4B`: 1,150 changed code
+   lines after this pass, over budget including SDD docs, covered by the
+   maintainer-approved WU4B `size:exception`.
+
+## Evidence — focused and web verification
+
+| Command                                                         | Result                                              |
+| --------------------------------------------------------------- | --------------------------------------------------- |
+| focused WU4B `vitest run …/clinical-workspace.test.tsx`         | exit 0 — 1 file, **20 passed** (was 11)             |
+| focused clinical set (workspace + api + proxy + patient-detail) | exit 0 — 4 files, **63 passed**                     |
+| `pnpm --filter @newsaas/web test` (full web)                    | exit 0 — **26 files / 171 passed** (was 26/162; +9) |
+| `pnpm --filter @newsaas/web typecheck`                          | exit 0                                              |
+| `pnpm --filter @newsaas/web lint`                               | exit 0                                              |
+| `pnpm --filter @newsaas/web build`                              | exit 0; `verify-build-output.mjs` passed            |
+| `prettier --check` on the two corrected files                   | clean                                               |
+
+RED proof (one-variable, reverted): the debounce/`setTimeout` was temporarily
+replaced with an immediate write; `does not autosave when the draft is reverted`
+then failed (`Expected 0, received 1`), proving the test observes the debounce.
+The file was restored byte-for-byte (sha256 verified against the pre-experiment
+hash). No other file was touched by the experiment.
+
+## Residual risks
+
+- **Size**: the corrected slice is over budget including SDD docs and is covered
+  by the maintainer-approved WU4B `size:exception`.
+- `patient-detail.test.tsx` still uses a non-UUID `patient-1` fixture, so the
+  mounted workspace renders its error state there; test-only coupling, not a
+  production defect. **RESOLVED by the 2026-09-13 final parent PatientDetail
+  UUID fixture correction (below).**
+- No live database: cross-tenant/concurrent-409 semantics remain WU5-owned; the
+  UI only renders the stable error-code states.
+
+---
+
+# WU4B Conflict-Reload/Evidence Correction Pass (2026-09-12, maintainer-authorized)
+
+Scope: `clinical-workspace.tsx`, `clinical-workspace.test.tsx` and the SDD
+artifacts only. No WU4A proxy/client, WU5, Portal, Scheduling, files, or reports
+change; `.atl/` and `.codegraph/` untouched; no commit/push/PR/merge.
+
+## Corrections applied
+
+1. **Autosave suspended across the whole conflict-reload lifecycle.**
+   `EncounterEditor` gained a `reloading` state set the moment "Reload latest"
+   is acknowledged. The debounced autosave effect returns early while
+   `reloading` is true, and `handleReload` only clears it after the list refetch
+   resolves and the refreshed authoritative encounter version is adopted into
+   the ref and the baseline. A stale-version write can therefore never fire
+   before or during a delayed refetch. The status region reports "Reloading
+   latest version...".
+2. **In-flight edits are reachable.** The editor fields are disabled only on a
+   permission denial, not while a save is in flight, so a user can keep typing
+   during an autosave. The existing in-flight no-clobber guard (adopt the server
+   echo only when the draft did not change mid-flight) is now covered by a test.
+3. **Focused regression tests.** Three tests added: a delayed conflict reload
+   (no write while the refetch gate is pending, then a write with the refreshed
+   version), unmount timer cancellation (no write after the debounce), and an
+   in-flight save resolving after a newer local edit (the stale echo must not
+   clobber it). Focused WU4B is now **23 tests** (was 20).
+4. **Size/accounting corrected.** WU4B is **1,326 changed code lines** (668
+   workspace + 656 RTL + 2 mount) measured after this pass; the
+   maintainer-approved WU4B `size:exception` (~1,520 changed lines including SDD
+   docs at review, now larger) is recorded and the contradictory
+   "no-exception/deferred" statements removed from `tasks.md` and this document.
+
+## Evidence — focused and web verification (this pass)
+
+| Command                                                         | Result                                          |
+| --------------------------------------------------------------- | ----------------------------------------------- |
+| focused WU4B `vitest run …/clinical-workspace.test.tsx`         | exit 0 — 1 file, **23 passed** (was 20)         |
+| focused clinical set (workspace + api + proxy + patient-detail) | exit 0 — 4 files, **66 passed**                 |
+| `pnpm --filter @newsaas/web test` (full web)                    | exit 0 — **26 files / 174 passed** (was 26/171) |
+| `pnpm --filter @newsaas/web typecheck`                          | exit 0                                          |
+| `pnpm --filter @newsaas/web lint`                               | exit 0                                          |
+| `pnpm --filter @newsaas/web build`                              | exit 0; `verify-build-output.mjs` passed        |
+| `prettier --check` on the two corrected files                   | clean                                           |
+
+RED proof (one-variable, reverted): removing the `reloading` guard from the
+autosave effect made the new delayed-refetch test fail at
+`expect(saveCalls(fetchMock)).toHaveLength(1)` with `expected length 1, got 2` —
+a stale-version write fired while the refetch gate was still pending, exactly
+the regression being prevented. The file was restored byte-for-byte (sha256
+`6773cd637b808565ebaf59c88fa40ff5fd4aa24a794e89b67defd77fbd6b1f9f` verified
+before/after); a later lint fix (`no-misused-promises` on the async reload
+handler) produced the final hash
+`02a8c322391babdeddee8a943af3936b9ce118dbc25d81f304325edea3aee5f7`. No other
+file was touched by the experiment.
+
+## Residual risks (this pass)
+
+- The conflict-reload suspension depends on the refetch promise resolving;
+  `handleReload` clears `reloading` in a `finally`, so a failed refetch resumes
+  the editor and any stale write would re-surface as a 409 rather than hang.
+- `patient-detail.test.tsx` still uses a non-UUID `patient-1` fixture (test-only
+  coupling, not a production defect). **RESOLVED by the 2026-09-13 final parent
+  PatientDetail UUID fixture correction (below).**
+- No live database: cross-tenant/concurrent-409 semantics remain WU5-owned; the
+  UI only renders the stable error-code states.
+
+---
+
+# WU4B Parent PatientDetail UUID Fixture Correction (2026-09-13, maintainer-authorized final correction)
+
+Scope: `apps/web/src/app/(app)/app/patients/[id]/patient-detail.test.tsx` and
+the SDD artifacts only. No WU4A proxy/client, WU4B component/mount, WU5, Portal,
+Scheduling, files, or reports change; `.atl/` and `.codegraph/` untouched; no
+commit/push/PR/merge.
+
+## Why
+
+The WU4A client (`clinical-api.ts`) rejects any non-UUID patient/encounter id
+before building a proxy path or issuing a request. `PatientDetail` mounts
+`ClinicalWorkspace`, which calls `listEncounters(patientId)`, so the parent
+`patient-detail.test.tsx` `useParams` id and guardian/patient fixtures had to
+become canonical UUIDs. Previously the file passed only because it never
+asserted the clinical state, while the mounted workspace silently rendered its
+`INVALID_IDENTIFIER` ("Invalid patient id.") error.
+
+## Correction applied
+
+- Added a single `vi.hoisted` constant holding
+  `11111111-1111-4111-8111-111111111111`, consumed by the `useParams` mock, the
+  `PATIENT` fixture, both guardian fixtures, and every `mockWorkflow` URL
+  matcher and assertion (one source of truth so the fixture set cannot drift).
+- Replaced every `patient-1` occurrence with `PATIENT_ID` (object fields keep
+  the constant; URL matchers/assertions use template literals).
+- Added a test: mounting with a canonical patient id awaits the settled clinical
+  error (proving the UUID passed the guard and the encounter list request
+  reached the proxy), asserts no `Invalid patient id.` text is rendered, and
+  asserts the fetch was issued to `/api/clinical/${PATIENT_ID}/encounters`.
+- Focused parent suite: **10 tests** (was 9). Focused parent+WU4B: **33/33**.
+
+## Evidence — focused and web verification (this pass)
+
+| Command                                                            | Result                                          |
+| ------------------------------------------------------------------ | ----------------------------------------------- |
+| focused parent+WU4B `vitest run patient-detail clinical-workspace` | exit 0 — 2 files, **33 passed** (10 + 23)       |
+| focused clinical slice (patient-detail + workspace + api + route)  | exit 0 — 8 files, **85 passed**                 |
+| `pnpm --filter @newsaas/web test` (full web)                       | exit 0 — **26 files / 175 passed** (was 26/174) |
+| `pnpm --filter @newsaas/web typecheck`                             | exit 0                                          |
+| `pnpm --filter @newsaas/web lint`                                  | exit 0                                          |
+| `pnpm --filter @newsaas/web build`                                 | exit 0; `verify-build-output.mjs` passed        |
+| `prettier --check` on `patient-detail.test.tsx`                    | clean                                           |
+
+RED proof (one-variable, reverted): with the migrated assertion in place,
+setting the `PATIENT_ID` constant **value** back to `patient-1` (keeping every
+fixture consistent) made only the new test fail — the mount rendered "Invalid
+patient id." — while the other 9 passed; the UUID value was then restored
+byte-for-byte (sha256
+`85f25859c3c710bc8cd090cad4e958ca7566fb04385480c01ceb37150a3f52f5`).
+`patient-detail.tsx` was not modified by this pass (sha256 unchanged
+`0076d6d35c4435d9760efe6d07e96521939eec3f0f12d80a90a53d7c8fafe5f3`).
+
+## Size
+
+`patient-detail.test.tsx`: **58 changed lines** (46 insertions / 12 deletions).
+WU4B cumulative code measure is now **1,384 changed code lines** (668
+workspace + 656 workspace RTL + 58 parent RTL + 2 mount); the
+maintainer-approved WU4B `size:exception` remains in force. No test or comment
+minified.
+
+## Residual risks (this pass)
+
+- None new. The previously recorded `patient-1` residual risk is resolved; the
+  canonical UUID fixture now matches the WU4A identifier contract.
+- No live database: cross-tenant/concurrent-409 semantics remain WU5-owned; the
+  UI only renders the stable error-code states.
