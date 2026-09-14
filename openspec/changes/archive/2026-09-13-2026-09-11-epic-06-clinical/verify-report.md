@@ -17,11 +17,15 @@ build_output_hash: sha256:2eb5334f588aff98d275b7c5d51c7ffc781aa179dfcf468aa94e81
 ## Verification Report
 
 **Change**: `2026-09-11-epic-06-clinical`  
-**Candidate**: tracker `feat/epic-06-clinical` at `4f05da1a0441da43e6728983fc53ef2ce911cb71`  
+**Candidate**: tracker `feat/epic-06-clinical` at
+`4f05da1a0441da43e6728983fc53ef2ce911cb71`  
 **Version**: N/A  
 **Mode**: Standard
 
-All 19 implementation tasks are checked. All 10 requirements and 16 scenarios have passing runtime coverage. The local HEAD and requested merge have the same tree (`f96d55a13d3376862ce9a43bdcd190753ab2d9be`); excluded local `.atl/`, `.codegraph/`, and prior untracked verify-report state are not candidate code.
+All 19 implementation tasks are checked. All 10 requirements and 16 scenarios
+have passing runtime coverage. The local HEAD and requested merge have the same
+tree (`f96d55a13d3376862ce9a43bdcd190753ab2d9be`); excluded local `.atl/`,
+`.codegraph/`, and prior untracked verify-report state are not candidate code.
 
 ### Command Evidence
 
@@ -38,7 +42,15 @@ All 19 implementation tasks are checked. All 10 requirements and 16 scenarios ha
 | `DATABASE_URL_TEST=<redacted> pnpm --filter @newsaas/api test:live-pg`  |    0 | 11,270 ms | Fresh local PostgreSQL 16 execution: 1 file, 24/24 passed, including 8 EPIC-06 direct application-path tests.                   | `002b9a75b5d3afdbd04bb1ed3b89cf4e19171ce79b4f739cf646faa3ca0168f8` | `/tmp/opencode/epic06-final-verify-20260913/live-pg-correct-role.log`                   |
 | `git ls-remote` + `gh run view 34766414847`                             |    0 |  2,496 ms | Remote tracker is the requested merge; exact-candidate CI succeeded for quality and PostgreSQL migration/live-isolation jobs.   | `95cc5302895d19024d219702169e02e67ccff6d7e62912357afdeb7e4de0e94f` | `/tmp/opencode/epic06-final-verify-20260913/remote-tracker-ci.log`                      |
 
-The tracked-file inclusive format isolation exits 123 because Prettier identifies only `.atl/skill-registry.md`; excluding `.atl/**` passes. The two initial live-PG attempts exited 1 because the verifier supplied, respectively, a `psql`-incompatible `schema` query parameter and a nonexistent local role. A role preflight identified `postgres`; the corrected command then passed 24/24. These were verifier setup errors, not candidate failures. Complete logs: `format-tracked-inclusive-corrected.log`, `live-pg.log`, `live-pg-corrected-url.log`, and `pg-role-preflight.log` in the evidence directory.
+The tracked-file inclusive format isolation exits 123 because Prettier
+identifies only `.atl/skill-registry.md`; excluding `.atl/**` passes. The two
+initial live-PG attempts exited 1 because the verifier supplied, respectively, a
+`psql`-incompatible `schema` query parameter and a nonexistent local role. A
+role preflight identified `postgres`; the corrected command then passed 24/24.
+These were verifier setup errors, not candidate failures. Complete logs:
+`format-tracked-inclusive-corrected.log`, `live-pg.log`,
+`live-pg-corrected-url.log`, and `pg-role-preflight.log` in the evidence
+directory.
 
 Failure excerpt (`pnpm format-check`, complete six-line output):
 
@@ -84,19 +96,32 @@ Checking formatting...
 
 ### Design and Task Traceability
 
-- Design decisions are implemented: leaf Clinical module; six typed tenant-scoped models; version-guarded conditional update; DB immutability; linked CLOSED amendments; shared entitlement/RBAC/audit boundaries; no new runtime, dependency, or unused event.
-- Routes, authenticated proxy, staff workspace, semantic tokens, and Portal exclusion align with design §§4-7.
-- Tasks are 19/19 checked. WU5 is merged, and exact tracker CI run `34766414847` passed both required jobs, including migration and live-PG steps.
+- Design decisions are implemented: leaf Clinical module; six typed
+  tenant-scoped models; version-guarded conditional update; DB immutability;
+  linked CLOSED amendments; shared entitlement/RBAC/audit boundaries; no new
+  runtime, dependency, or unused event.
+- Routes, authenticated proxy, staff workspace, semantic tokens, and Portal
+  exclusion align with design §§4-7.
+- Tasks are 19/19 checked. WU5 is merged, and exact tracker CI run `34766414847`
+  passed both required jobs, including migration and live-PG steps.
 
 ### Issues Found
 
 **CRITICAL**: None.  
 **WARNING**:
 
-1. Local root format-check is contaminated by excluded local state. Among tracked files, only user-owned `.atl/skill-registry.md` fails; the candidate diff and all tracked non-`.atl` files pass, as does the exact-candidate CI format step. The prior untracked verify report also appeared in the raw root check but is not candidate code.
-2. The five specialized-record no-delete triggers are statically covered by migration/schema tests and successful CI migration application; only the encounter no-delete/CLOSED-update trigger is directly exercised by the live-PG suite.
+1. Local root format-check is contaminated by excluded local state. Among
+   tracked files, only user-owned `.atl/skill-registry.md` fails; the candidate
+   diff and all tracked non-`.atl` files pass, as does the exact-candidate CI
+   format step. The prior untracked verify report also appeared in the raw root
+   check but is not candidate code.
+2. The five specialized-record no-delete triggers are statically covered by
+   migration/schema tests and successful CI migration application; only the
+   encounter no-delete/CLOSED-update trigger is directly exercised by the
+   live-PG suite.
 
-**SUGGESTION**: Keep design §10 questions unresolved until an accepted product decision; they do not contradict current acceptance criteria.
+**SUGGESTION**: Keep design §10 questions unresolved until an accepted product
+decision; they do not contradict current acceptance criteria.
 
 ### Execution Efficiency
 
@@ -104,4 +129,7 @@ Checking formatting...
 | ------------------------------------------------------------------ | -------------: | -----------: | ---------------------: | ------------: | -----------------: |
 | `f1d4516f1e553119bf330b8ca8c8d43dcae937403be00b670d2d204f83cba265` |              5 |            3 |                      3 |            19 |                  0 |
 
-The focused runs were the direct live-PG security/tenancy/audit/concurrency suite and two format-isolation checks required to separate candidate formatting from excluded `.atl` dirtiness. Separate API/web/database focused test reruns were avoided because root evidence and exact-candidate CI already cover them.
+The focused runs were the direct live-PG security/tenancy/audit/concurrency
+suite and two format-isolation checks required to separate candidate formatting
+from excluded `.atl` dirtiness. Separate API/web/database focused test reruns
+were avoided because root evidence and exact-candidate CI already cover them.
