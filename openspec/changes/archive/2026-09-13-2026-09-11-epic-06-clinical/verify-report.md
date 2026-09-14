@@ -16,11 +16,9 @@ build_output_hash: sha256:2eb5334f588aff98d275b7c5d51c7ffc781aa179dfcf468aa94e81
 
 ## Verification Report
 
-**Change**: `2026-09-11-epic-06-clinical`  
-**Candidate**: tracker `feat/epic-06-clinical` at
-`4f05da1a0441da43e6728983fc53ef2ce911cb71`  
-**Version**: N/A  
-**Mode**: Standard
+**Change**: `2026-09-11-epic-06-clinical` **Candidate**: tracker
+`feat/epic-06-clinical` at `4f05da1a0441da43e6728983fc53ef2ce911cb71`
+**Version**: N/A **Mode**: Standard
 
 All 19 implementation tasks are checked. All 10 requirements and 16 scenarios
 have passing runtime coverage. The local HEAD and requested merge have the same
@@ -107,8 +105,7 @@ Checking formatting...
 
 ### Issues Found
 
-**CRITICAL**: None.  
-**WARNING**:
+**CRITICAL**: None. **WARNING**:
 
 1. Local root format-check is contaminated by excluded local state. Among
    tracked files, only user-owned `.atl/skill-registry.md` fails; the candidate
