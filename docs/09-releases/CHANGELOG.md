@@ -85,6 +85,15 @@ All notable product changes will be documented here.
 
 ### Changed
 
+- EPIC-06 Clinical closure reconciliation (docs-only): the epic and story
+  records moved to `done`, and roadmap, module index, changelog, and
+  OpenSpec-context references were reconciled against canonical post-merge CI
+  run
+  [`34793644348`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34793644348)
+  at `ff786138`, paired with the archived EPIC-06 verification report. `done`
+  means epic implementation closure only — it is **not** production readiness.
+  [[EPIC-20]] Production Hardening and the open Tech Debt items remain;
+  [[TD-006]] stays open for its broader gates and [[TD-011]] stays separate.
 - EPIC-02, EPIC-03, and EPIC-04 closure reconciliation (docs-only): epic records
   moved to `done`, the missing `docs/01-roadmap/EPIC-04-Customers.md` record
   created, and roadmap, changelog, module, and OpenSpec-context references

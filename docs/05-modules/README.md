@@ -39,7 +39,6 @@ Recommended files:
 
 ```text
 Scheduling.md
-Clinical.md
 Inventory.md
 Purchases.md
 Sales.md

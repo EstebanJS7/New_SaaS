@@ -197,13 +197,13 @@ evidence; CI has not yet observed the branch because H1 does not push.
     clinical race is natively mapped to CONFLICT, unlike the EPIC-05 promotion
     race in [[TD-011]]); the version advances exactly once and exactly one audit
     row commits.
-- **Local evidence only** (disposable PG16 cluster, migrations + reference seed
+- **Local evidence** (disposable PG16 cluster, migrations + reference seed
   applied): `pnpm --filter @newsaas/api test:live-pg` → 24/24 passed. The WU5
-  branch is **not pushed**, so **CI has not yet observed the WU5 clinical
-  block**; the existing CI migrations job targets the same
-  `pnpm --filter @newsaas/api test:live-pg` command and will exercise it once a
-  pushed commit triggers the job. That CI observation is tracked as the separate
-  unchecked item below.
+  branch was not pushed at the time of writing; it later merged to `main` and
+  the existing CI migrations job — which targets the same
+  `pnpm --filter @newsaas/api test:live-pg` command — observed the block green
+  in run `34793644348` at `ff786138…` (24/24 passed), recorded as the checked
+  item below.
 - The EPIC-06 portion of this record is addressed; the broader Batch 5 RBAC
   concurrency and audit-rollback evidence gates below remain open.
 
@@ -245,12 +245,14 @@ and mandatory before any production deployment.
       Patient/encounter/record UUIDs, negative cross-tenant amendment
       before/after assertions, and a deterministic-barrier parallel-autosave
       race yielding exactly one success and one `409 CONFLICT`. **Verified
-      locally (not CI):** the extended
-      `apps/api/test/live-pg-isolation.e2e-spec.ts` passed 24/24 against a
-      disposable PostgreSQL 16 cluster (migrations + reference seed). The WU5
-      branch is not pushed, so this is local evidence only.
-- [ ] CI has observed the EPIC-06 clinical live-PG block green on a pushed
-      commit (CI has not yet run against WU5).
+      locally:** the extended `apps/api/test/live-pg-isolation.e2e-spec.ts`
+      passed 24/24 against a disposable PostgreSQL 16 cluster (migrations +
+      reference seed); the CI observation is recorded in the checked item below.
+- [x] CI has observed the EPIC-06 clinical live-PG block green on a pushed
+      commit. **Verified:** GitHub Actions run `34793644348` at
+      `ff786138b359317b1afb1c33c2350bd605ff84ef` (`push`/`main`) — the
+      migrations job ran `pnpm --filter @newsaas/api test:live-pg` green with
+      the 24-test suite (24/24 passed).
 - [ ] CI runs the broader cross-tenant isolation suite against live PG16 and
       stays green.
 - [ ] A deliberately broken predicate fails that CI job (one-off proof).
