@@ -22,6 +22,9 @@ interface ErrorEnvelope {
 
 const NOT_FOUND_REQUEST_ID = "live-pg-not-found-proof";
 
+/** Server-owned request id pinned on every clinical cross-tenant miss. */
+const CLINICAL_NOT_FOUND_REQUEST_ID = "live-pg-clinical-not-found-proof";
+
 interface CustomerDto {
   id: string;
   tenantId: string;
@@ -78,6 +81,48 @@ interface SpeciesCatalogEntryDto {
   name: string;
   breeds: { id: string; code: string; name: string }[];
 }
+
+/** Allowlisted staff ClinicalEncounter DTO (EPIC-06 WU2A/WU3 contract). */
+interface ClinicalEncounterDto {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  status: "DRAFT" | "CLOSED";
+  version: number;
+  reasonForVisit: string | null;
+  anamnesis: string | null;
+  diagnosis: string | null;
+  treatmentPlan: string | null;
+  internalNotes: string | null;
+  clientSummary: string | null;
+  amendsEncounterId: string | null;
+  amendmentReason: string | null;
+  closedAt: string | null;
+  closedByUserProfileId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Exact allowlisted key set of the staff encounter response DTO. */
+const CLINICAL_ENCOUNTER_DTO_KEYS = [
+  "amendmentReason",
+  "amendsEncounterId",
+  "anamnesis",
+  "clientSummary",
+  "closedAt",
+  "closedByUserProfileId",
+  "createdAt",
+  "diagnosis",
+  "id",
+  "internalNotes",
+  "patientId",
+  "reasonForVisit",
+  "status",
+  "tenantId",
+  "treatmentPlan",
+  "updatedAt",
+  "version",
+].sort();
 
 /** Exact allowlisted key set of the Patient response DTO (WU3 contract). */
 const PATIENT_DTO_KEYS = [
@@ -1059,6 +1104,514 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
       expect(primaries).toHaveLength(1);
       expect(primaries[0].id).toBe(winnerGuardianId);
+    }, 20_000);
+  });
+
+  /**
+   * EPIC-06 clinical application-path evidence (WU5, task 5.1).
+   *
+   * Closes the TD-006 gap the in-memory WU3 harness cannot: over real HTTP and
+   * real PostgreSQL this proves the clinical migration's DB-level invariants at
+   * the encounter level (CLOSED immutability, encounter no hard delete), the
+   * tenant-scoped aggregate path, byte-equivalent cross-tenant 404 for foreign
+   * Patient anchors and foreign encounter/record UUIDs, negative cross-tenant
+   * amendment behavior (no amendment row, no audit row, own and foreign
+   * originals untouched), and that two parallel autosaves of one DRAFT produce
+   * exactly one success and one 409 CONFLICT. The five subdomain no-delete
+   * triggers are pinned statically by the WU1 schema migration test, not
+   * live-executed here.
+   */
+  describe("EPIC-06 clinical application-path isolation", () => {
+    let clinicalPatientAId: string;
+    let clinicalPatientBId: string;
+    let clinicalDraftAId: string;
+    let clinicalClosedAId: string;
+    let clinicalClosedBId: string;
+    let clinicalVaccinationBId: string;
+
+    const createEncounter = async (
+      cookie: string,
+      patientId: string,
+      body: Record<string, unknown> = {}
+    ): Promise<ClinicalEncounterDto> => {
+      const response = await supertest(serverUrl)
+        .post(`/patients/${patientId}/clinical/encounters`)
+        .set("Cookie", cookie)
+        .send(body)
+        .expect(201);
+      return response.body as ClinicalEncounterDto;
+    };
+
+    const closeEncounter = async (
+      cookie: string,
+      patientId: string,
+      id: string,
+      version: number
+    ): Promise<ClinicalEncounterDto> => {
+      const response = await supertest(serverUrl)
+        .post(`/patients/${patientId}/clinical/encounters/${id}/close`)
+        .set("Cookie", cookie)
+        .send({ version })
+        .expect(201);
+      return response.body as ClinicalEncounterDto;
+    };
+
+    beforeAll(async () => {
+      const patientA = await supertest(serverUrl)
+        .post("/patients")
+        .set("Cookie", ownerACookie)
+        .send({
+          name: "Live Clinical Patient A",
+          speciesId: dogSpeciesId,
+          breedId: dogBreedId,
+          sex: "FEMALE",
+          primaryGuardianCustomerId: guardianCustomerAId,
+        })
+        .expect(201);
+      clinicalPatientAId = (patientA.body as PatientDto).id;
+
+      const patientB = await supertest(serverUrl)
+        .post("/patients")
+        .set("Cookie", ownerBCookie)
+        .send({
+          name: "Live Clinical Patient B",
+          speciesId: dogSpeciesId,
+          breedId: dogBreedId,
+          sex: "MALE",
+          primaryGuardianCustomerId: guardianCustomerBId,
+        })
+        .expect(201);
+      clinicalPatientBId = (patientB.body as PatientDto).id;
+
+      // Draft kept at version 1 for the autosave evidence.
+      clinicalDraftAId = (
+        await createEncounter(ownerACookie, clinicalPatientAId, {
+          reasonForVisit: "Live checkup",
+          internalNotes: "Staff-only note",
+          clientSummary: "Client-safe summary",
+        })
+      ).id;
+
+      // Closed tenant A encounter: immutability + positive/negative amendment.
+      const toCloseA = await createEncounter(ownerACookie, clinicalPatientAId, {
+        reasonForVisit: "Close me",
+      });
+      await closeEncounter(ownerACookie, clinicalPatientAId, toCloseA.id, toCloseA.version);
+      clinicalClosedAId = toCloseA.id;
+
+      // Closed tenant B encounter: foreign aggregate UUID target.
+      const toCloseB = await createEncounter(ownerBCookie, clinicalPatientBId, {
+        reasonForVisit: "Tenant B close",
+      });
+      await closeEncounter(ownerBCookie, clinicalPatientBId, toCloseB.id, toCloseB.version);
+      clinicalClosedBId = toCloseB.id;
+
+      // Tenant B specialized record: foreign record UUID target.
+      const vaccinationB = await supertest(serverUrl)
+        .post(`/patients/${clinicalPatientBId}/clinical/vaccinations`)
+        .set("Cookie", ownerBCookie)
+        .send({ vaccine: "Rabies", administeredAt: new Date().toISOString() })
+        .expect(201);
+      clinicalVaccinationBId = (vaccinationB.body as { id: string }).id;
+    }, 60_000);
+
+    it("returns the allowlisted staff encounter DTO and advances the version on autosave", async () => {
+      const list = await supertest(serverUrl)
+        .get(`/patients/${clinicalPatientAId}/clinical/encounters`)
+        .set("Cookie", ownerACookie)
+        .expect(200);
+      const draft = (list.body as ClinicalEncounterDto[]).find(
+        (encounter) => encounter.id === clinicalDraftAId
+      );
+      expect(draft).toBeTruthy();
+      expect(Object.keys(draft!).sort()).toEqual(CLINICAL_ENCOUNTER_DTO_KEYS);
+
+      const requestId = "live-pg-clinical-autosave";
+      const autosaved = await supertest(serverUrl)
+        .put(`/patients/${clinicalPatientAId}/clinical/encounters/${clinicalDraftAId}`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .send({ version: 1, diagnosis: "Live diagnosis" })
+        .expect(200);
+      const body = autosaved.body as ClinicalEncounterDto;
+      expect(body.version).toBe(2);
+      expect(body.diagnosis).toBe("Live diagnosis");
+      // The staff DTO carries the CONFIDENTIAL staff-only note (WU3 strips it
+      // only from client-safe projections, which the Portal does not consume).
+      expect(body.internalNotes).toBe("Staff-only note");
+
+      const audit = await prisma.auditLog.findMany({ where: { requestId, tenantId: tenantAId } });
+      expect(audit.map((row) => row.action)).toEqual(["clinical_encounter.updated"]);
+      expect(audit[0].targetId).toBe(clinicalDraftAId);
+    });
+
+    it("enforces CLOSED immutability and no hard delete at the live database trigger", async () => {
+      const before = await prisma.clinicalEncounter.findUnique({
+        where: { id: clinicalClosedAId },
+      });
+      expect(before?.status).toBe("CLOSED");
+
+      await expect(
+        prisma.$executeRaw`UPDATE "clinical_encounter" SET "diagnosis" = 'tampered' WHERE "id" = ${clinicalClosedAId}::uuid`
+      ).rejects.toThrow(/immutable/);
+
+      await expect(
+        prisma.$executeRaw`DELETE FROM "clinical_encounter" WHERE "id" = ${clinicalClosedAId}::uuid`
+      ).rejects.toThrow(/cannot be hard-deleted/);
+
+      const after = await prisma.clinicalEncounter.findUnique({ where: { id: clinicalClosedAId } });
+      expect(after).toEqual(before);
+    });
+
+    it("creates a linked audited amendment and leaves the original closed encounter unchanged", async () => {
+      const originalBefore = await prisma.clinicalEncounter.findUnique({
+        where: { id: clinicalClosedAId },
+      });
+      const requestId = "live-pg-clinical-amendment";
+      const amended = await supertest(serverUrl)
+        .post(`/patients/${clinicalPatientAId}/clinical/encounters/${clinicalClosedAId}/amendments`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .send({ reason: "Corrected dosage", content: { diagnosis: "Amended diagnosis" } })
+        .expect(201);
+      const amendment = amended.body as ClinicalEncounterDto;
+
+      expect(amendment.status).toBe("CLOSED");
+      expect(amendment.amendsEncounterId).toBe(clinicalClosedAId);
+      expect(amendment.amendmentReason).toBe("Corrected dosage");
+      expect(amendment.diagnosis).toBe("Amended diagnosis");
+      // Unspecified content is copied from the original, never dropped.
+      expect(amendment.reasonForVisit).toBe(originalBefore?.reasonForVisit);
+
+      const originalAfter = await prisma.clinicalEncounter.findUnique({
+        where: { id: clinicalClosedAId },
+      });
+      expect(originalAfter).toEqual(originalBefore);
+
+      const audit = await prisma.auditLog.findMany({ where: { requestId, tenantId: tenantAId } });
+      expect(audit.map((row) => row.action)).toEqual(["clinical_encounter.amended"]);
+      expect(audit[0].targetId).toBe(amendment.id);
+    });
+
+    it("masks a cross-tenant Patient anchor as byte-equivalent 404 and persists nothing", async () => {
+      const encountersBefore = await prisma.clinicalEncounter.count({
+        where: { tenantId: tenantAId },
+      });
+      const draftBefore = await prisma.clinicalEncounter.findUnique({
+        where: { id: clinicalDraftAId },
+      });
+
+      const cases = [
+        {
+          label: "GET encounters",
+          request: () =>
+            supertest(serverUrl)
+              .get(`/patients/${clinicalPatientAId}/clinical/encounters`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .get(`/patients/${randomUUID()}/clinical/encounters`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID),
+        },
+        {
+          label: "POST encounter",
+          request: () =>
+            supertest(serverUrl)
+              .post(`/patients/${clinicalPatientAId}/clinical/encounters`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+              .send({ reasonForVisit: "Tampered" }),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .post(`/patients/${randomUUID()}/clinical/encounters`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+              .send({ reasonForVisit: "Tampered" }),
+        },
+        {
+          label: "GET vaccinations",
+          request: () =>
+            supertest(serverUrl)
+              .get(`/patients/${clinicalPatientAId}/clinical/vaccinations`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .get(`/patients/${randomUUID()}/clinical/vaccinations`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID),
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await scenario.request().expect(404);
+        const missingResponse = await scenario.missingRequest().expect(404);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
+        expect(response.text, scenario.label).toBe(missingResponse.text);
+        expect(response.text, scenario.label).not.toContain(clinicalPatientAId);
+      }
+
+      // Nothing persisted for tenant A and no audit row was appended.
+      expect(await prisma.clinicalEncounter.count({ where: { tenantId: tenantAId } })).toBe(
+        encountersBefore
+      );
+      expect(
+        await prisma.clinicalEncounter.findUnique({ where: { id: clinicalDraftAId } })
+      ).toEqual(draftBefore);
+      expect(
+        await prisma.auditLog.findMany({
+          where: { requestId: CLINICAL_NOT_FOUND_REQUEST_ID, tenantId: tenantAId },
+        })
+      ).toHaveLength(0);
+    });
+
+    it("masks a cross-tenant encounter UUID as byte-equivalent 404 through the caller's own Patient", async () => {
+      const foreignBefore = await prisma.clinicalEncounter.findUnique({
+        where: { id: clinicalClosedBId },
+      });
+
+      const cases = [
+        {
+          label: "GET foreign encounter",
+          request: () =>
+            supertest(serverUrl)
+              .get(`/patients/${clinicalPatientAId}/clinical/encounters/${clinicalClosedBId}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .get(`/patients/${clinicalPatientAId}/clinical/encounters/${randomUUID()}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID),
+        },
+        {
+          label: "PUT foreign autosave",
+          request: () =>
+            supertest(serverUrl)
+              .put(`/patients/${clinicalPatientAId}/clinical/encounters/${clinicalClosedBId}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+              .send({ version: 1, diagnosis: "Tampered" }),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .put(`/patients/${clinicalPatientAId}/clinical/encounters/${randomUUID()}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+              .send({ version: 1, diagnosis: "Tampered" }),
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await scenario.request().expect(404);
+        const missingResponse = await scenario.missingRequest().expect(404);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
+        expect(response.text, scenario.label).toBe(missingResponse.text);
+        expect(response.text, scenario.label).not.toContain(clinicalClosedBId);
+      }
+
+      expect(
+        await prisma.clinicalEncounter.findUnique({ where: { id: clinicalClosedBId } })
+      ).toEqual(foreignBefore);
+      expect(
+        await prisma.auditLog.findMany({
+          where: { requestId: CLINICAL_NOT_FOUND_REQUEST_ID, tenantId: tenantAId },
+        })
+      ).toHaveLength(0);
+    });
+
+    it("rejects a cross-tenant amendment with 404 and appends no amendment or audit row", async () => {
+      const originalBefore = await prisma.clinicalEncounter.findUnique({
+        where: { id: clinicalClosedAId },
+      });
+      const foreignBefore = await prisma.clinicalEncounter.findUnique({
+        where: { id: clinicalClosedBId },
+      });
+      expect(foreignBefore).not.toBeNull();
+      expect(foreignBefore?.status).toBe("CLOSED");
+      const foreignEncounterCountBefore = await prisma.clinicalEncounter.count({
+        where: { tenantId: tenantBId },
+      });
+      const amendmentsBefore = await prisma.clinicalEncounter.count({
+        where: { tenantId: tenantBId, amendsEncounterId: clinicalClosedBId },
+      });
+
+      const cases = [
+        {
+          label: "amend foreign encounter via own Patient",
+          request: () =>
+            supertest(serverUrl)
+              .post(
+                `/patients/${clinicalPatientAId}/clinical/encounters/${clinicalClosedBId}/amendments`
+              )
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+              .send({ reason: "Tampered cross-tenant" }),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .post(
+                `/patients/${clinicalPatientAId}/clinical/encounters/${randomUUID()}/amendments`
+              )
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+              .send({ reason: "Tampered cross-tenant" }),
+        },
+        {
+          label: "amend through a foreign Patient anchor",
+          request: () =>
+            supertest(serverUrl)
+              .post(
+                `/patients/${clinicalPatientBId}/clinical/encounters/${clinicalClosedAId}/amendments`
+              )
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+              .send({ reason: "Tampered cross-tenant" }),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .post(`/patients/${randomUUID()}/clinical/encounters/${clinicalClosedAId}/amendments`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+              .send({ reason: "Tampered cross-tenant" }),
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await scenario.request().expect(404);
+        const missingResponse = await scenario.missingRequest().expect(404);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
+        expect(response.text, scenario.label).toBe(missingResponse.text);
+      }
+
+      // Exact before/after DB assertions: no amendment row was inserted for the
+      // foreign original (tenant B), neither the foreign original nor the own
+      // original (tenant A) was mutated, no other tenant B encounter was
+      // created, and no audit row was appended for either tenant.
+      expect(
+        await prisma.clinicalEncounter.count({
+          where: { tenantId: tenantBId, amendsEncounterId: clinicalClosedBId },
+        })
+      ).toBe(amendmentsBefore);
+      expect(
+        await prisma.clinicalEncounter.count({ where: { amendsEncounterId: clinicalClosedBId } })
+      ).toBe(0);
+      expect(
+        await prisma.clinicalEncounter.findUnique({ where: { id: clinicalClosedBId } })
+      ).toEqual(foreignBefore);
+      expect(await prisma.clinicalEncounter.count({ where: { tenantId: tenantBId } })).toBe(
+        foreignEncounterCountBefore
+      );
+      expect(
+        await prisma.clinicalEncounter.findUnique({ where: { id: clinicalClosedAId } })
+      ).toEqual(originalBefore);
+      expect(
+        await prisma.auditLog.findMany({
+          where: { requestId: CLINICAL_NOT_FOUND_REQUEST_ID, tenantId: tenantBId },
+        })
+      ).toHaveLength(0);
+      expect(
+        await prisma.auditLog.findMany({ where: { requestId: CLINICAL_NOT_FOUND_REQUEST_ID } })
+      ).toHaveLength(0);
+    });
+
+    it("masks a cross-tenant specialized-record update as byte-equivalent 404 and persists nothing", async () => {
+      const foreignBefore = await prisma.clinicalVaccination.findUnique({
+        where: { id: clinicalVaccinationBId },
+      });
+
+      const response = await supertest(serverUrl)
+        .put(`/patients/${clinicalPatientAId}/clinical/vaccinations/${clinicalVaccinationBId}`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+        .send({ vaccine: "Tampered" })
+        .expect(404);
+      const missingResponse = await supertest(serverUrl)
+        .put(`/patients/${clinicalPatientAId}/clinical/vaccinations/${randomUUID()}`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", CLINICAL_NOT_FOUND_REQUEST_ID)
+        .send({ vaccine: "Tampered" })
+        .expect(404);
+
+      expect((response.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect(response.text).toBe(missingResponse.text);
+      expect(response.text).not.toContain(clinicalVaccinationBId);
+      expect(
+        await prisma.clinicalVaccination.findUnique({ where: { id: clinicalVaccinationBId } })
+      ).toEqual(foreignBefore);
+    });
+
+    it("serializes parallel autosaves into one success and one 409 CONFLICT", async () => {
+      const created = await createEncounter(ownerACookie, clinicalPatientAId, {
+        reasonForVisit: "Concurrent autosave",
+      });
+      expect(created.version).toBe(1);
+      const requestId = "live-pg-clinical-concurrent-autosave";
+
+      // Deterministic overlap: hold a row lock on the DRAFT encounter, then
+      // start both autosaves. Each runs `updateMany(status=DRAFT, version=1)`,
+      // so both park on the same contended row; `waitForLockWaiters` proves
+      // both are actually blocked before either can commit.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT "id" FROM "clinical_encounter"
+            WHERE "id" = ${created.id}::uuid
+            FOR UPDATE
+          `;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+
+      await barrierReady;
+
+      const autosaves = [
+        supertest(serverUrl)
+          .put(`/patients/${clinicalPatientAId}/clinical/encounters/${created.id}`)
+          .set("Cookie", ownerACookie)
+          .set("X-Request-Id", requestId)
+          .send({ version: 1, diagnosis: "Writer one" }),
+        supertest(serverUrl)
+          .put(`/patients/${clinicalPatientAId}/clinical/encounters/${created.id}`)
+          .set("Cookie", ownerACookie)
+          .set("X-Request-Id", requestId)
+          .send({ version: 1, diagnosis: "Writer two" }),
+      ].map((request) => request.then((response) => response));
+
+      try {
+        await waitForLockWaiters(prisma, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const results = await Promise.all(autosaves);
+      const successes = results.filter((result) => result.status >= 200 && result.status < 300);
+      const conflicts = results.filter((result) => result.status === 409);
+      expect(successes).toHaveLength(1);
+      expect(conflicts).toHaveLength(1);
+      expect((conflicts[0].body as ErrorEnvelope).error.code).toBe("CONFLICT");
+
+      // The version advanced exactly once, the winner's content is the stored
+      // one, and exactly one co-committed audit row exists.
+      const stored = await prisma.clinicalEncounter.findUnique({ where: { id: created.id } });
+      expect(stored?.version).toBe(2);
+      expect(["Writer one", "Writer two"]).toContain(stored?.diagnosis);
+      const audit = await prisma.auditLog.findMany({
+        where: { requestId, tenantId: tenantAId, action: "clinical_encounter.updated" },
+      });
+      expect(audit).toHaveLength(1);
+      expect(audit[0].targetId).toBe(created.id);
     }, 20_000);
   });
 });

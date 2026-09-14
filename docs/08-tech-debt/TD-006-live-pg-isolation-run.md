@@ -8,11 +8,13 @@ related_epics:
   - EPIC-01
   - EPIC-04
   - EPIC-05
+  - EPIC-06
 related_stories:
   - DAT-004
   - PAT-002
+  - VET-004
 created: 2026-08-24
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # TD-006 — Run tenant-isolation suites against live PostgreSQL
@@ -170,6 +172,41 @@ the 10 EPIC-05 cases above; the deterministic-barrier concurrency case
 reproduced the one-`201`/one-`500` race on every local run. This is local
 evidence; CI has not yet observed the branch because H1 does not push.
 
+**2026-09-13 EPIC-06 WU5 extension (clinical application path):**
+
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` gained an "EPIC-06 clinical
+  application-path isolation" block (8 tests; the suite now runs 24) that boots
+  the real `AppModule` against a disposable PostgreSQL 16 database and proves,
+  over real HTTP:
+  - live enforcement of the clinical migration's DB invariants — a raw `UPDATE`
+    of a CLOSED encounter and a raw `DELETE` both raise from the migration's
+    triggers, and the row is byte-for-byte unchanged;
+  - a linked, audited amendment (`amendsEncounterId` set, original CLOSED row
+    untouched, exactly one `clinical_encounter.amended` audit row);
+  - byte-equivalent cross-tenant `404 NOT_FOUND` for a foreign Patient anchor
+    (list/create), a foreign encounter UUID reached through the caller's own
+    Patient (get/autosave), and a foreign record UUID (update), each byte-equal
+    to a random-UUID miss with no identifier leak;
+  - **negative cross-tenant amendment assertions** — no amendment row is
+    inserted for the foreign original, no audit row is appended for either
+    tenant, and the own and foreign originals stay byte-equal before/after with
+    no other foreign encounter created;
+  - a deterministic-barrier **parallel-autosave** probe: two version-1 autosaves
+    park on the same `updateMany(status=DRAFT, version=1)` row, and after
+    release exactly one succeeds while the other returns `409 CONFLICT` (the
+    clinical race is natively mapped to CONFLICT, unlike the EPIC-05 promotion
+    race in [[TD-011]]); the version advances exactly once and exactly one audit
+    row commits.
+- **Local evidence only** (disposable PG16 cluster, migrations + reference seed
+  applied): `pnpm --filter @newsaas/api test:live-pg` → 24/24 passed. The WU5
+  branch is **not pushed**, so **CI has not yet observed the WU5 clinical
+  block**; the existing CI migrations job targets the same
+  `pnpm --filter @newsaas/api test:live-pg` command and will exercise it once a
+  pushed commit triggers the job. That CI observation is tracked as the separate
+  unchecked item below.
+- The EPIC-06 portion of this record is addressed; the broader Batch 5 RBAC
+  concurrency and audit-rollback evidence gates below remain open.
+
 ## Proposed Resolution
 
 For the remaining Batch 5 cross-tenant isolation suites, extend the
@@ -199,6 +236,21 @@ and mandatory before any production deployment.
       `apps/api/test/live-pg-isolation.e2e-spec.ts` passed 16/16 against a
       disposable PostgreSQL 16 cluster (migrations + reference seed). Residual
       concurrent error-mapping gap recorded in [[TD-011]].
+- [x] The EPIC-06 clinical live-PG evidence is part of the same
+      `pnpm --filter @newsaas/api test:live-pg` command the CI migrations job
+      runs, covering live encounter CLOSED-immutability and encounter no-delete
+      trigger enforcement (the five subdomain no-delete triggers are pinned
+      statically by the WU1 schema migration test, not live-executed), linked
+      audited amendments, byte-equivalent cross-tenant 404 for foreign
+      Patient/encounter/record UUIDs, negative cross-tenant amendment
+      before/after assertions, and a deterministic-barrier parallel-autosave
+      race yielding exactly one success and one `409 CONFLICT`. **Verified
+      locally (not CI):** the extended
+      `apps/api/test/live-pg-isolation.e2e-spec.ts` passed 24/24 against a
+      disposable PostgreSQL 16 cluster (migrations + reference seed). The WU5
+      branch is not pushed, so this is local evidence only.
+- [ ] CI has observed the EPIC-06 clinical live-PG block green on a pushed
+      commit (CI has not yet run against WU5).
 - [ ] CI runs the broader cross-tenant isolation suite against live PG16 and
       stays green.
 - [ ] A deliberately broken predicate fails that CI job (one-off proof).

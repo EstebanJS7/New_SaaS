@@ -4,6 +4,7 @@ import { StorageModule } from "@newsaas/storage";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { BrandingModule } from "./branding/branding.module.js";
+import { ClinicalModule } from "./clinical/clinical.module.js";
 import { CommonModule } from "./common/common.module.js";
 import { ContextModule } from "./context/context.module.js";
 import { CustomersModule } from "./customers/customers.module.js";
@@ -36,6 +37,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     SettingsModule,
     CustomersModule,
     PatientsModule,
+    ClinicalModule,
   ],
 })
 export class AppModule {}

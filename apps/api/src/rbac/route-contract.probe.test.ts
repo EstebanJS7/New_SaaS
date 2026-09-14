@@ -102,11 +102,65 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /patients/:patientId/guardians/:id",
   "POST /patients/:patientId/guardians/:id/primary",
   "POST /patients/:patientId/guardians/:id/deactivate",
+  // EPIC-06 — clinical encounter lifecycle (WU3)
+  "GET /patients/:patientId/clinical/encounters",
+  "POST /patients/:patientId/clinical/encounters",
+  "GET /patients/:patientId/clinical/encounters/:id",
+  "PUT /patients/:patientId/clinical/encounters/:id",
+  "POST /patients/:patientId/clinical/encounters/:id/close",
+  "POST /patients/:patientId/clinical/encounters/:id/amendments",
+  // EPIC-06 — clinical specialized records (WU3)
+  "GET /patients/:patientId/clinical/treatments",
+  "POST /patients/:patientId/clinical/treatments",
+  "PUT /patients/:patientId/clinical/treatments/:id",
+  "GET /patients/:patientId/clinical/vaccinations",
+  "POST /patients/:patientId/clinical/vaccinations",
+  "PUT /patients/:patientId/clinical/vaccinations/:id",
+  "GET /patients/:patientId/clinical/deworming",
+  "POST /patients/:patientId/clinical/deworming",
+  "PUT /patients/:patientId/clinical/deworming/:id",
+  "GET /patients/:patientId/clinical/studies",
+  "POST /patients/:patientId/clinical/studies",
+  "PUT /patients/:patientId/clinical/studies/:id",
+  "GET /patients/:patientId/clinical/weights",
+  "POST /patients/:patientId/clinical/weights",
+  "PUT /patients/:patientId/clinical/weights/:id",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
   return entry.permissions !== undefined;
 }
+
+/**
+ * Exact granular permission every clinical route MUST declare (EPIC-06 WU3
+ * review correction). The permission-less 403 sweep only proves that SOME key
+ * is required; this map fails by name when a route is decorated with the wrong
+ * `vet.clinical.*` key (e.g. autosave mapped to `read`), which a generic denial
+ * can never catch.
+ */
+const CLINICAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /patients/:patientId/clinical/encounters": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/encounters": "vet.clinical.create",
+  "GET /patients/:patientId/clinical/encounters/:id": "vet.clinical.read",
+  "PUT /patients/:patientId/clinical/encounters/:id": "vet.clinical.update",
+  "POST /patients/:patientId/clinical/encounters/:id/close": "vet.clinical.close",
+  "POST /patients/:patientId/clinical/encounters/:id/amendments": "vet.clinical.amend",
+  "GET /patients/:patientId/clinical/treatments": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/treatments": "vet.clinical.create",
+  "PUT /patients/:patientId/clinical/treatments/:id": "vet.clinical.update",
+  "GET /patients/:patientId/clinical/vaccinations": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/vaccinations": "vet.clinical.create",
+  "PUT /patients/:patientId/clinical/vaccinations/:id": "vet.clinical.update",
+  "GET /patients/:patientId/clinical/deworming": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/deworming": "vet.clinical.create",
+  "PUT /patients/:patientId/clinical/deworming/:id": "vet.clinical.update",
+  "GET /patients/:patientId/clinical/studies": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/studies": "vet.clinical.create",
+  "PUT /patients/:patientId/clinical/studies/:id": "vet.clinical.update",
+  "GET /patients/:patientId/clinical/weights": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/weights": "vet.clinical.create",
+  "PUT /patients/:patientId/clinical/weights/:id": "vet.clinical.update",
+};
 
 describe("route-contract probe (deny-by-default)", () => {
   let booted: BootedTestApp;
@@ -131,6 +185,34 @@ describe("route-contract probe (deny-by-default)", () => {
       ...unexpected.map((route) => `UNDECLARED NEW ROUTE: ${route}`),
       ...missing.map((route) => `EXPECTED ROUTE MISSING: ${route}`),
     ];
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY clinical route to its intended granular vet.clinical.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/patients/:patientId/clinical"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(CLINICAL_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING CLINICAL ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG CLINICAL PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in CLINICAL_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED CLINICAL ROUTE: ${route}`);
+      }
+    }
     expect(report).toEqual([]);
   });
 

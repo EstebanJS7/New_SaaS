@@ -6,6 +6,20 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-06 — Clinical records:
+  - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,
+    vaccinations, deworming, studies, weights) with a RESTRICT-FK additive
+    migration and a DB-enforced CLOSED immutability/no-delete trigger.
+  - Version-guarded DRAFT autosave (`409 CONFLICT` on drift), explicit close,
+    and linked, audited, idempotent amendments.
+  - `vet.clinical.read|create|update|close|amend` permissions plus the
+    `veterinary` entitlement gate and allowlisted CONFIDENTIAL DTOs.
+  - Clinical HTTP surface and a Patient-detail staff workspace via the
+    authenticated `/api/clinical` proxy.
+  - Live-PostgreSQL application-path evidence for byte-equivalent cross-tenant
+    `404`, negative cross-tenant amendment assertions, and a deterministic
+    parallel-autosave race yielding one success + one `409 CONFLICT`.
+  - `EPIC-06`, `VET-004`, and `Clinical` module documentation.
 - EPIC-03 Phase B — tenant branding overrides and admin surface:
   - `tenant_branding` table with one row per tenant, versioned JSON overrides,
     and additive migration.

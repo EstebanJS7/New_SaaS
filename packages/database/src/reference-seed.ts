@@ -36,7 +36,8 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
 /**
  * Permission catalog (minimal, traceable derivation from PRD §9):
  * - `vet.clinical.create` and `inventory.stock.transfer` are verbatim §9
- *   examples;
+ *   examples; EPIC-06 expands the `vet.clinical` family with
+ *   `read`/`update`/`close`/`amend`;
  * - `cash.session.close`, `fiscal.invoice.issue` and `users.membership.manage`
  *   expand §9's short-form examples (`cash.close`, `fiscal.issue`,
  *   `users.manage`) into strict `domain.resource.action` shape using the
@@ -47,6 +48,10 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
+  { key: "vet.clinical.read", name: "Read clinical records" },
+  { key: "vet.clinical.update", name: "Update clinical records" },
+  { key: "vet.clinical.close", name: "Close clinical encounters" },
+  { key: "vet.clinical.amend", name: "Amend clinical encounters" },
   { key: "inventory.stock.transfer", name: "Transfer stock between branches" },
   { key: "cash.session.close", name: "Close cash sessions" },
   { key: "fiscal.invoice.issue", name: "Issue fiscal invoices" },
@@ -76,6 +81,10 @@ export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
 export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> = {
   OWNER: [
     "vet.clinical.create",
+    "vet.clinical.read",
+    "vet.clinical.update",
+    "vet.clinical.close",
+    "vet.clinical.amend",
     "inventory.stock.transfer",
     "cash.session.close",
     "fiscal.invoice.issue",
@@ -97,6 +106,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
   ],
   ADMIN: [
     "vet.clinical.create",
+    "vet.clinical.read",
+    "vet.clinical.update",
+    "vet.clinical.close",
+    "vet.clinical.amend",
     "inventory.stock.transfer",
     "cash.session.close",
     "fiscal.invoice.issue",
@@ -118,6 +131,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
   ],
   VETERINARIAN: [
     "vet.clinical.create",
+    "vet.clinical.read",
+    "vet.clinical.update",
+    "vet.clinical.close",
+    "vet.clinical.amend",
     "customers.read",
     "patients.read",
     "patients.create",

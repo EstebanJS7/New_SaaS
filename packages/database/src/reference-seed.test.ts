@@ -297,6 +297,10 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     expect(ROLE_PERMISSION_MATRIX.RECEPTIONIST).not.toContain("customers.deactivate");
     expect(ROLE_PERMISSION_MATRIX.VETERINARIAN).toEqual([
       "vet.clinical.create",
+      "vet.clinical.read",
+      "vet.clinical.update",
+      "vet.clinical.close",
+      "vet.clinical.amend",
       "customers.read",
       "patients.read",
       "patients.create",
@@ -354,6 +358,32 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     }
   });
 
+  it("seeds the clinical permission catalog and baseline matrix (EPIC-06 CLI)", () => {
+    const clinicalKeys = [
+      "vet.clinical.create",
+      "vet.clinical.read",
+      "vet.clinical.update",
+      "vet.clinical.close",
+      "vet.clinical.amend",
+    ] as const;
+    const catalogKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of clinicalKeys) {
+      expect(catalogKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    // Clinical authority is held by the owner, the admin and the veterinarian.
+    for (const roleCode of ["OWNER", "ADMIN", "VETERINARIAN"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toEqual(expect.arrayContaining([...clinicalKeys]));
+    }
+    // Front-desk, cash and inventory roles never hold clinical authority.
+    for (const roleCode of ["RECEPTIONIST", "CASHIER", "INVENTORY_MANAGER"] as const) {
+      for (const key of clinicalKeys) {
+        expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
+      }
+    }
+  });
+
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
     expect(SPECIES_SEEDS.map((species) => species.code)).toEqual([
       "dog",
@@ -390,7 +420,7 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const fake = await seededOnce();
     expect(fake.counts()).toEqual({
       roles: 6,
-      permissions: 19,
+      permissions: 23,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

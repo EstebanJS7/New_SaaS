@@ -3,12 +3,16 @@ import {
   DEMO_FEATURE_GRANTS,
   DEMO_OWNER_EMAIL,
   DEMO_PATIENT_BREED_CODE,
+  DEMO_PATIENT_DOG_ID,
   DEMO_PATIENT_SPECIES_CODE,
   DEMO_TENANT_SLUG,
   resolveDemoSeedGuard,
+  seedDemoClinical,
   seedDemoCustomers,
   seedDemoData,
   seedDemoPatients,
+  type DemoClinicalSeedClient,
+  type DemoClinicalSeedTxClient,
   type DemoCustomersSeedClient,
   type DemoPatientsSeedClient,
   type DemoPatientsSeedTxClient,
@@ -557,5 +561,148 @@ describe("seedDemoPatients", () => {
     await expect(seedDemoPatients(db, "tenant-demo")).rejects.toThrow(/species catalog missing/);
     expect(tables.patients.size).toBe(0);
     expect(tables.guardians.size).toBe(0);
+  });
+});
+
+type ClinicalEncounterRow = Parameters<
+  DemoClinicalSeedTxClient["clinicalEncounter"]["createMany"]
+>[0]["data"][number];
+type ClinicalWeightRow = Parameters<
+  DemoClinicalSeedTxClient["clinicalWeight"]["createMany"]
+>[0]["data"][number];
+
+/**
+ * Structural fake mirroring the clinical seed delegates, including Prisma's
+ * interactive `$transaction`. Writes are recorded with their transaction scope
+ * so the test can prove the encounter and weight are co-transactional.
+ */
+function makeFakeClinicalDb(): {
+  db: DemoClinicalSeedClient;
+  tables: {
+    patients: Map<string, { id: string; tenantId: string }>;
+    encounters: Map<string, ClinicalEncounterRow>;
+    weights: Map<string, ClinicalWeightRow>;
+    transactionCount: number;
+    writesOutsideTransaction: number;
+  };
+} {
+  const patients = new Map<string, { id: string; tenantId: string }>([
+    [DEMO_PATIENT_DOG_ID, { id: DEMO_PATIENT_DOG_ID, tenantId: "tenant-demo" }],
+  ]);
+  const encounters = new Map<string, ClinicalEncounterRow>();
+  const weights = new Map<string, ClinicalWeightRow>();
+  const tables = {
+    patients,
+    encounters,
+    weights,
+    transactionCount: 0,
+    writesOutsideTransaction: 0,
+  };
+  let inTransaction = false;
+
+  const txClient: DemoClinicalSeedTxClient = {
+    clinicalEncounter: {
+      createMany: ({ data }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        for (const row of data) encounters.set(row.id, row);
+        return Promise.resolve({ count: data.length });
+      },
+    },
+    clinicalWeight: {
+      createMany: ({ data }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        for (const row of data) weights.set(row.id, row);
+        return Promise.resolve({ count: data.length });
+      },
+    },
+  };
+
+  const db: DemoClinicalSeedClient = {
+    patient: {
+      findFirst: ({ where }: { where: { id: string; tenantId: string } }) => {
+        const row = patients.get(where.id);
+        return Promise.resolve(row?.tenantId === where.tenantId ? { id: row.id } : null);
+      },
+    },
+    ...txClient,
+    $transaction: async <T>(fn: (tx: DemoClinicalSeedTxClient) => Promise<T>): Promise<T> => {
+      tables.transactionCount += 1;
+      inTransaction = true;
+      try {
+        return await fn(txClient);
+      } finally {
+        inTransaction = false;
+      }
+    },
+  };
+
+  return { db, tables };
+}
+
+describe("seedDemoClinical", () => {
+  it("seeds one draft encounter and one weight anchored to the demo patient", async () => {
+    const { db, tables } = makeFakeClinicalDb();
+
+    const result = await seedDemoClinical(db, "tenant-demo");
+
+    expect(result.encounters).toBe(1);
+    expect(result.weights).toBe(1);
+
+    const encounter = [...tables.encounters.values()][0];
+    expect(encounter.tenantId).toBe("tenant-demo");
+    expect(encounter.patientId).toBe(DEMO_PATIENT_DOG_ID);
+    expect(encounter.status).toBe("DRAFT");
+    expect(encounter.version).toBe(1);
+
+    const weight = [...tables.weights.values()][0];
+    expect(weight.tenantId).toBe("tenant-demo");
+    expect(weight.patientId).toBe(DEMO_PATIENT_DOG_ID);
+    expect(Number(weight.quantity)).toBeGreaterThan(0);
+  });
+
+  it("uses clearly synthetic content with no real PII", async () => {
+    const { db, tables } = makeFakeClinicalDb();
+
+    await seedDemoClinical(db, "tenant-demo");
+
+    const encounter = [...tables.encounters.values()][0];
+    const freeText = [
+      encounter.reasonForVisit,
+      encounter.anamnesis,
+      encounter.diagnosis,
+      encounter.treatmentPlan,
+      encounter.internalNotes,
+      encounter.clientSummary,
+    ].join(" ");
+    expect(freeText).toMatch(/synthetic/i);
+    expect(freeText).not.toMatch(/@/);
+  });
+
+  it("writes the encounter and weight inside one transaction", async () => {
+    const { db, tables } = makeFakeClinicalDb();
+
+    await seedDemoClinical(db, "tenant-demo");
+
+    expect(tables.transactionCount).toBe(1);
+    expect(tables.writesOutsideTransaction).toBe(0);
+  });
+
+  it("converges on rerun: fixed ids keep the collections stable", async () => {
+    const { db, tables } = makeFakeClinicalDb();
+
+    await seedDemoClinical(db, "tenant-demo");
+    await seedDemoClinical(db, "tenant-demo");
+
+    expect(tables.encounters.size).toBe(1);
+    expect(tables.weights.size).toBe(1);
+  });
+
+  it("fails instructively when the demo patient has not been seeded", async () => {
+    const { db, tables } = makeFakeClinicalDb();
+    tables.patients.clear();
+
+    await expect(seedDemoClinical(db, "tenant-demo")).rejects.toThrow(/demo patient missing/);
+    expect(tables.encounters.size).toBe(0);
+    expect(tables.weights.size).toBe(0);
   });
 });
