@@ -2,7 +2,7 @@
 id: EPIC-06
 type: epic
 title: Clinical
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-05
@@ -73,7 +73,7 @@ and workspace, and live-PostgreSQL isolation/concurrency evidence.
 
 - [[VET-004 Clinical Encounter]] — data foundation, encounter lifecycle,
   specialized records, API contracts, staff workspace, and live-PG evidence.
-  `in-progress` (fresh review of WU5 verification/docs pending).
+  `done` (WU5 reviewed and merged; implementation closure only).
 
 ## Dependencies
 
@@ -89,8 +89,17 @@ and workspace, and live-PostgreSQL isolation/concurrency evidence.
 - [x] Lint/typecheck/tests/build required for the Epic are green.
 - [x] Documentation is current (this Epic, [[VET-004 Clinical Encounter]],
       [[Clinical]] module doc, roadmap index).
-- [ ] Fresh review of WU5 (verification evidence + delivery docs) is approved
+- [x] Fresh review of WU5 (verification evidence + delivery docs) is approved
       before the WU5 commit/PR.
+
+Closure is evidence-based: the archived EPIC-06 verification report
+(`openspec/changes/archive/2026-09-13-2026-09-11-epic-06-clinical/verify-report.md`)
+passed all acceptance criteria (`pass_with_warnings`, 0 blockers, 10/10
+requirements, 16/16 scenarios, 19/19 tasks), and the post-merge `main` CI run
+[`34793644348`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34793644348)
+at `ff786138` reported both jobs `success` (live-PG 24/24). `done` means epic
+implementation closure only — it is **not** production readiness; [[EPIC-20]]
+Production Hardening and the open Tech Debt items remain.
 
 ## Decisions / ADRs
 

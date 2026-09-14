@@ -7,8 +7,8 @@ context: |
   Source of truth: implemented code/tests first, then PRD, accepted ADRs, Stories, and module docs.
   Governance: strict tenancy, authorization, auditability, ledger invariants, semantic branding tokens, and architecture freeze.
   Workflow: one Epic/Story at a time; update documentation atomically; verify before completion.
-  Current roadmap: EPIC-00 through EPIC-04 are done by evidence-based closure (implementation closure only, not production readiness); EPIC-05 Veterinary Patients is next. EPIC-20 Production Hardening and the open Tech Debt items remain.
-  Canonical CI baseline for the EPIC-02–04 closure: run 34605178149 at c9cff613 (640 passed / 6 skipped, build 9/9); see docs/10-qa/CI-EVIDENCE.md.
+  Current roadmap: EPIC-00 through EPIC-06 are done by evidence-based closure (implementation closure only, not production readiness); EPIC-07 Scheduling is the next planned epic. EPIC-20 Production Hardening and the open Tech Debt items remain.
+  Canonical CI baselines: EPIC-02-04 closure run 34605178149 at c9cff613 (640 passed / 6 skipped, build 9/9); EPIC-06 closure run 34793644348 at ff786138 (both jobs success, live-PG 24/24), paired with the archived EPIC-06 verification report openspec/changes/archive/2026-09-13-2026-09-11-epic-06-clinical/verify-report.md (pass_with_warnings, 0 blockers, 10/10 requirements, 16/16 scenarios, 19/19 tasks). See docs/10-qa/CI-EVIDENCE.md.
 
 strict_tdd: false
 

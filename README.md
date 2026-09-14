@@ -1,156 +1,145 @@
-# Veterinary SaaS — OpenCode + Obsidian starter
+# NewSaaS
 
-Este paquete implementa el baseline **PRD v1.3 (MVP architecture frozen)** y
-prepara el repositorio para trabajar con:
+Plataforma SaaS multi-tenant, modular y reutilizable para gestión de negocios,
+con un Core de negocio compartido y una vertical veterinaria. El backend expone
+una API REST (NestJS + Fastify + Prisma + PostgreSQL) y el frontend es una
+aplicación Next.js + React + TypeScript + Tailwind + shadcn/ui; Redis + BullMQ
+se usan para trabajo asíncrono.
 
-- OpenCode como agente de desarrollo.
-- Git como fuente de verdad técnica.
-- `docs/` como Obsidian Vault.
-- Sistema de Branding/Theming reutilizable para cambiar look & feel entre
-  productos y tenants sin forkar componentes.
-- Markdown + YAML frontmatter para Epics, Stories, ADRs, decisiones, bugs y
-  deuda técnica.
-- Un PRD técnico versionado junto al código.
+Este README describe cómo poner en marcha el proyecto localmente. El alcance de
+producto aprobado vive en el PRD y en la documentación enlazada más abajo; este
+documento no lo repite ni lo modifica.
 
-## Instalación
+## Requisitos previos
 
-Copiar el contenido de este paquete a la raíz del repositorio.
+- Node.js 22 o superior (`engines.node` en `package.json`).
+- pnpm 11 o superior (`packageManager` en `package.json`).
+- Docker y Docker Compose para los servicios locales.
+- Git.
 
-Después:
+## Puesta en marcha rápida
+
+Secuencia para un clon limpio, ejecutada desde la raíz del repositorio:
 
 ```bash
-cd /ruta/al/repositorio
-opencode
+# 1. Copiar la plantilla de entorno versionada a .env (marcadores de posición)
+cp .env.example .env
+
+# 2. Instalar dependencias (el postinstall de @newsaas/database genera Prisma)
+pnpm install
+
+# 3. Levantar PostgreSQL y Redis locales
+pnpm services:up
+
+# 4. Compilar el workspace; preflight requiere packages/preflight/dist/cli.js
+pnpm build
+
+# 5. Comprobar que los servicios responden
+pnpm preflight
+
+# 6. Aplicar las migraciones a la base local
+pnpm --filter @newsaas/database db:migrate
+
+# 7. Iniciar API, worker y web en modo desarrollo
+pnpm dev
 ```
 
-No es necesario ejecutar `/init`: ya existe un `AGENTS.md` diseñado para el
-proyecto. Si se ejecuta `/init` en el futuro, revisar cuidadosamente cualquier
-modificación propuesta al archivo.
+La aplicación web queda disponible en `http://localhost:3000`. La base local no
+tiene tablas hasta aplicar las migraciones del paso 6, por lo que no conviene
+operar la aplicación antes de ese paso. Para detener los servicios locales:
 
-En Obsidian:
+```bash
+pnpm services:down
+```
 
-1. Elegir **Open folder as vault**.
-2. Seleccionar la carpeta `docs/`.
-3. No es necesario instalar plugins comunitarios para comenzar.
-4. Los enlaces `[[...]]` funcionan como wiki links normales.
+`pnpm services:reset` elimina además los volúmenes locales de datos.
 
-## Fuentes de verdad
+No se deben confirmar credenciales reales en el repositorio. `.env.example` es
+la plantilla de entorno versionada y segura que se copia a `.env`; no es la
+única fuente de valores de ejecución: los valores reales se resuelven desde
+`.env` (fuera del control de versiones) y pueden sobrescribirse con variables de
+entorno exportadas.
 
-Orden de autoridad:
+## Servicios y puertos
 
-1. Código + migraciones + tests para el comportamiento actualmente implementado.
-2. `docs/00-product/PRD.md` para alcance y requisitos aprobados.
-3. ADRs aceptados para decisiones arquitectónicas.
-4. Stories para el detalle de implementación de cada unidad de trabajo.
-5. Código existente cuando documenta comportamiento ya desplegado.
+| Servicio             | Puerto por defecto | Variable        |
+| -------------------- | ------------------ | --------------- |
+| Web (Next.js)        | `3000`             | —               |
+| API (NestJS/Fastify) | `3001`             | `API_PORT`      |
+| PostgreSQL 16        | `5432`             | `POSTGRES_PORT` |
+| Redis 7              | `6379`             | `REDIS_PORT`    |
+| Worker (BullMQ)      | sin puerto         | —               |
 
-Una Story no puede cambiar el alcance del PRD por sí sola.
+Los puertos se pueden ajustar en `.env`; `docker-compose.yml` los toma de las
+mismas variables.
 
-## Developer startup
+## Base de datos
 
-1. Copy the example environment and adjust ports if needed:
+Los comandos de esquema, migraciones y datos se ejecutan en el paquete
+`@newsaas/database`:
 
-   ```bash
-   cp .env.example .env
-   ```
+```bash
+# Crear/aplicar migraciones en desarrollo
+pnpm --filter @newsaas/database db:migrate
 
-2. Install dependencies:
+# Aplicar migraciones existentes (entornos desplegados)
+pnpm --filter @newsaas/database db:deploy
 
-   ```bash
-   pnpm install
-   ```
+# Cargar datos de referencia
+pnpm --filter @newsaas/database db:seed
 
-3. Start local PostgreSQL and Redis:
+# Verificar migraciones contra una base PostgreSQL real
+pnpm --filter @newsaas/database db:live-verify
+```
 
-   ```bash
-   pnpm services:up
-   ```
+El seed de datos de demostración está desactivado por defecto
+(`ENABLE_DEMO_SEED=false` en la plantilla `.env.example`). Para cargar el tenant
+de demostración, definir `ENABLE_DEMO_SEED=true` antes de ejecutar `db:seed`.
 
-4. Run the preflight check to verify services are reachable:
+## Comandos de calidad
 
-   ```bash
-   pnpm preflight
-   ```
+```bash
+pnpm lint          # ESLint en todo el workspace
+pnpm format-check  # Verificación de formato con Prettier
+pnpm typecheck     # Tipos en todos los paquetes
+pnpm test          # Pruebas unitarias y de integración
+pnpm build         # Build de todo el workspace
+```
 
-5. Start the API, worker, and web apps (each in its own terminal):
-
-   ```bash
-   pnpm --filter @newsaas/api dev
-   pnpm --filter @newsaas/worker dev
-   pnpm --filter @newsaas/web dev
-   ```
-
-6. Open the web app at `http://localhost:3000`. The home page health indicator
-   calls `/api/health/live`, which proxies to the API liveness endpoint.
-
-7. Stop local services when done:
-
-   ```bash
-   pnpm services:down
-   ```
-
-## Inicio recomendado
-
-La primera tarea de implementación es:
+## Estructura del repositorio
 
 ```text
-/story-start EPIC-00
+apps/                 Aplicaciones: api, web, worker
+packages/             Paquetes compartidos: database, shared, ui, config,
+                      storage, eslint-config, prettier-config,
+                      typescript-config, vitest-config, preflight
+docs/                 Vault de documentación (producto, roadmap, stories,
+                      arquitectura, ADRs, módulos, deuda, releases, QA,
+                      gobernanza, plantillas)
+openspec/             Propuestas SDD activas, specs y cambios archivados
+infra/scripts/        Scripts de preflight (bash y PowerShell)
+docker-compose.yml    Servicios locales (PostgreSQL y Redis)
+AGENTS.md             Reglas de trabajo para agentes y contribuyentes
 ```
 
-Para una story concreta:
+## Fuentes autoritativas
 
-```text
-/story-start VET-001
-```
+- Reglas de ingeniería:
+  [`docs/99-governance/ENGINEERING-RULES.md`](docs/99-governance/ENGINEERING-RULES.md)
+- Reglas de documentación:
+  [`docs/99-governance/DOCUMENTATION-RULES.md`](docs/99-governance/DOCUMENTATION-RULES.md)
+- PRD (alcance aprobado): [`docs/00-product/PRD.md`](docs/00-product/PRD.md)
+- Roadmap de épicas: [`docs/01-roadmap/ROADMAP.md`](docs/01-roadmap/ROADMAP.md)
+- Arquitectura:
+  [`docs/03-architecture/OVERVIEW.md`](docs/03-architecture/OVERVIEW.md)
+- ADRs: [`docs/04-adrs/README.md`](docs/04-adrs/README.md)
+- Módulos implementados:
+  [`docs/05-modules/README.md`](docs/05-modules/README.md)
+- Evidencia de CI: [`docs/10-qa/CI-EVIDENCE.md`](docs/10-qa/CI-EVIDENCE.md)
+- Índice del vault de documentación: [`docs/README.md`](docs/README.md)
+- Guía para agentes: [`AGENTS.md`](AGENTS.md)
 
-Al terminar:
+## Licencia
 
-```text
-/story-finish VET-001
-```
-
-Para verificar el repositorio:
-
-```text
-/verify
-```
-
-## Estructura
-
-```text
-AGENTS.md
-opencode.json
-.opencode/
-  agents/
-  commands/
-docs/
-  00-product/
-  01-roadmap/
-  02-stories/
-  03-architecture/
-    BRANDING-THEMING.md
-  04-adrs/
-  05-modules/
-  06-fiscal/
-  07-decisions/
-  08-tech-debt/
-  09-releases/
-  10-qa/
-  99-governance/
-  _templates/
-```
-
-## Architecture freeze v1.3
-
-The MVP architecture is considered ready to implement.
-
-The repository now also defines:
-
-- typed tenant settings;
-- minimal internal post-commit events;
-- reversal/correction semantics;
-- data classification/retention baseline;
-- deterministic demo tenant/seed;
-- Complexity Budget requiring ADRs for major structural additions.
-
-Start building instead of extending speculative architecture.
+Proyecto privado sin licencia de distribución (`UNLICENSED` en `package.json`).
+El uso externo requiere autorización explícita.

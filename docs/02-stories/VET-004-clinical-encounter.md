@@ -3,7 +3,7 @@ id: VET-004
 type: story
 title: Clinical Encounter
 epic: EPIC-06
-status: in-progress
+status: done
 priority: high
 depends_on:
   - PAT-003
@@ -166,7 +166,6 @@ byte-for-byte.
 
 ## Known Limitations
 
-- Fresh review of WU5 is required before commit/PR.
 - The WU5 verification + delivery-documentation slice measured **1,208 changed
   lines** (excluding `.atl/`/`.codegraph/`), over the ≤800-line review budget;
   the maintainer approved the **WU5 `size:exception`** for the honest,
@@ -195,5 +194,11 @@ byte-for-byte.
 
 ## Completion Notes
 
-_Status must remain non-done until WU5 passes a fresh review and all required
-gates are green._
+_Closed by evidence-based reconciliation on 2026-09-13. WU5 passed a fresh
+review and merged; the archived EPIC-06 verification report
+(`openspec/changes/archive/2026-09-13-2026-09-11-epic-06-clinical/verify-report.md`)
+passed all acceptance criteria, and the post-merge `main` CI run
+[`34793644348`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34793644348)
+at `ff786138` reported both jobs `success` (live-PG 24/24). `done` means
+implementation closure only — it is **not** production readiness. Design §10
+open questions and the [[TD-006]] gates above remain open._
