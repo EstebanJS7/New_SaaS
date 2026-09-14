@@ -102,6 +102,13 @@ lines).
 
 ## Open Questions
 
-- [ ] Dated maintainer authorization for `done` is required before WU1 status
-      reconciliation and WU2 verification (blocking).
+- [x] Dated maintainer authorization for `done` — **resolved 2026-09-13**;
+      recorded in `docs/10-qa/CI-EVIDENCE.md` under "Maintainer closure
+      authorization (2026-09-13)". It authorizes evidence-based closure of
+      EPIC-06 against run `34793644348` at `ff786138`, and it is not a
+      production-readiness approval, a security sign-off, or authorization to
+      remediate the remaining debt: [[EPIC-20]] and the preserved open/accepted
+      limitations remain (TD-006 stays `open` for its broader gates, TD-011
+      stays separate). No longer blocking WU1 status reconciliation or WU2
+      verification.
 - [ ] README depth vs `docs/README.md` overlap: keep README short and link.
