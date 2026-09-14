@@ -48,8 +48,8 @@ commands. It MUST NOT expose secrets or real credentials.
 ### Requirement: Source-of-truth links
 
 The README SHALL link to the governance, PRD, roadmap, module, and CI-evidence
-sources so readers can verify claims, and MUST NOT decide the
-`FILE-MANIFEST.md` disposition.
+sources so readers can verify claims, and MUST NOT decide the `FILE-MANIFEST.md`
+disposition.
 
 #### Scenario: Links resolve
 

@@ -53,7 +53,8 @@ remain open and separate, and no code fix is in scope.
 
 #### Scenario: Proven item checked
 
-- GIVEN TD-006's EPIC-06 clinical CI-observation item is green in the canonical run
+- GIVEN TD-006's EPIC-06 clinical CI-observation item is green in the canonical
+  run
 - WHEN debt records are reconciled
 - THEN only that item is checked and its remaining gates stay open
 
