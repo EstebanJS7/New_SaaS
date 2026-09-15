@@ -167,6 +167,31 @@ export async function appendAuditLog(
         ? "STAFF"
         : "SYSTEM");
 
+  // Cross-field attribution invariant (EPIC-08 design D5). Evaluated
+  // AFTER derivation so an explicit actorType cannot smuggle a mismatched
+  // attribution: PORTAL rows must be attributed to a portal holder and never
+  // to a staff/system actor, and only PORTAL rows may carry a portal access
+  // id. A violation is rejected loudly without writing.
+  if (actorType === "PORTAL") {
+    if (parsed.data.actorPortalAccessId === undefined) {
+      throw new DomainError(
+        "VALIDATION_FAILED",
+        "Audit append rejected: actorPortalAccessId: PORTAL attribution requires a portal access id."
+      );
+    }
+    if (parsed.data.actorUserProfileId !== undefined) {
+      throw new DomainError(
+        "VALIDATION_FAILED",
+        "Audit append rejected: actorUserProfileId: PORTAL attribution must not carry a staff actor."
+      );
+    }
+  } else if (parsed.data.actorPortalAccessId !== undefined) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      `Audit append rejected: actorPortalAccessId: ${actorType} attribution must not carry a portal access id.`
+    );
+  }
+
   const row = await prisma.auditLog.create({
     data: {
       action: parsed.data.action,
