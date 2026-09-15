@@ -13,7 +13,7 @@ on:
   pull_request:
     # `feat/epic-08-portal` is the EPIC-08 feature-branch-chain tracker target:
     # child PRs open against it, so PR quality checks must run there too.
-    branches: [main, master, feat/epic-08-portal]
+    branches: [main, master, feat/epic-08-portal*]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
