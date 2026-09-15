@@ -39,6 +39,39 @@ describe("appendAuditLog (shared append-only primitive)", () => {
     expect(byAction.get("a.c")?.actorType).toBe("STAFF");
   });
 
+  it("derives PORTAL from a portal access actor and records the actor id", async () => {
+    const auditLog = makeFakeAuditLog();
+
+    await appendAuditLog(
+      { auditLog },
+      {
+        action: "portal.profile.updated",
+        tenantId: "11111111-1111-4111-8111-111111111111",
+        actorPortalAccessId: "33333333-3333-4333-8333-333333333333",
+      }
+    );
+
+    const row = [...auditLog.rows.values()][0];
+    expect(row.actorType).toBe("PORTAL");
+    expect(row.actorPortalAccessId).toBe("33333333-3333-4333-8333-333333333333");
+    // Portal attribution never sets a staff profile.
+    expect(row.actorUserProfileId).toBeUndefined();
+  });
+
+  it("accepts an explicit PORTAL actor type and rejects a malformed portal id", async () => {
+    const auditLog = makeFakeAuditLog();
+
+    await appendAuditLog({ auditLog }, { action: "portal.booking.requested", actorType: "PORTAL" });
+    expect([...auditLog.rows.values()][0]?.actorType).toBe("PORTAL");
+
+    await expect(
+      appendAuditLog(
+        { auditLog },
+        { action: "portal.booking.requested", actorPortalAccessId: "not-a-uuid" }
+      )
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
   it("accepts a three-segment domain.event action (positive validation coverage)", async () => {
     const auditLog = makeFakeAuditLog();
 

@@ -69,9 +69,13 @@ describe("migration 002 · tenancy core surface", () => {
     expect(TENANCY_SQL).toMatch(/migration 003/);
   });
 
-  it("marks branch and customer portal access as inert scaffolding", () => {
+  it("keeps branch inert and promotes portal access to EPIC-08 live data", () => {
+    // Branch is still a schema-only scaffold.
     expect(SCHEMA).toMatch(/SCHEMA-ONLY SCAFFOLD/);
-    expect(SCHEMA).toMatch(/INERT SCAFFOLD/);
+    // customer_portal_access is no longer inert: EPIC-08 links it to Customer.
+    expect(SCHEMA).not.toMatch(/INERT SCAFFOLD/);
+    expect(SCHEMA).toMatch(/model CustomerPortalAccess\b/);
+    // The historical scaffolding note remains in the applied tenancy migration.
     expect(TENANCY_SQL).toMatch(/INERT SCAFFOLD/i);
   });
 

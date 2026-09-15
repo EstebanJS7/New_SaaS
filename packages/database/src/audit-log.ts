@@ -15,8 +15,13 @@ import { z } from "zod";
  * Reversals).
  */
 
-/** Actor taxonomy pinned by design D9 / schema enum audit_actor_type. */
-export type AuditActorType = "STAFF" | "SYSTEM";
+/**
+ * Actor taxonomy pinned by design D9 / schema enum audit_actor_type. EPIC-08
+ * adds PORTAL: a first-party portal holder actor, attributed through
+ * `actorPortalAccessId` so portal-originated rows are distinguishable from
+ * staff-originated ones.
+ */
+export type AuditActorType = "STAFF" | "SYSTEM" | "PORTAL";
 
 /**
  * Append payload. `action` MUST be "domain.event" shaped (e.g. "auth.login"
@@ -29,8 +34,10 @@ export interface AuditAppendInput {
   readonly actorType?: AuditActorType;
   /** Owning tenant for tenant-scoped events; null/omitted for system-wide. */
   readonly tenantId?: string;
-  /** Acting staff profile; omitted for SYSTEM rows. */
+  /** Acting staff profile; omitted for SYSTEM/PORTAL rows. */
   readonly actorUserProfileId?: string;
+  /** Acting portal holder; omitted for STAFF/SYSTEM rows (EPIC-08). */
+  readonly actorPortalAccessId?: string;
   readonly targetType?: string;
   readonly targetId?: string;
   /** Sanitized event payload; defaults to the empty object. */
@@ -47,9 +54,10 @@ const appendInputSchema = z.object({
   // domain.event form: lowercase/underscored segments separated by dots
   // (e.g. "auth.login", "branding.asset.created").
   action: z.string().regex(/^[a-z_]+(\.[a-z_]+)+$/, 'action must be "domain.event" shaped'),
-  actorType: z.enum(["STAFF", "SYSTEM"]).optional(),
+  actorType: z.enum(["STAFF", "SYSTEM", "PORTAL"]).optional(),
   tenantId: z.string().uuid().optional(),
   actorUserProfileId: z.string().uuid().optional(),
+  actorPortalAccessId: z.string().uuid().optional(),
   targetType: z.string().min(1).max(128).optional(),
   targetId: z.string().min(1).max(256).optional(),
   // JSON-safe object: jsonb storage rejects anything that cannot survive
@@ -88,6 +96,7 @@ export interface AuditLogDelegate {
       metadata: Record<string, unknown>;
       tenantId?: string;
       actorUserProfileId?: string;
+      actorPortalAccessId?: string;
       targetType?: string;
       targetId?: string;
       requestId?: string;
@@ -115,6 +124,7 @@ export interface AuditAppendTx {
         metadata: unknown;
         tenantId?: string;
         actorUserProfileId?: string;
+        actorPortalAccessId?: string;
         targetType?: string;
         targetId?: string;
         requestId?: string;
@@ -148,9 +158,14 @@ export async function appendAuditLog(
 
   const actorType: AuditActorType =
     parsed.data.actorType ??
-    // Default derivation: attributed staff events vs unattributed system
-    // events mirror the schema's column comments (design D9).
-    (parsed.data.actorUserProfileId !== undefined ? "STAFF" : "SYSTEM");
+    // Default derivation: attributed portal holder events, attributed staff
+    // events, then unattributed system events — mirroring the schema's column
+    // comments (design D9 / EPIC-08 D5).
+    (parsed.data.actorPortalAccessId !== undefined
+      ? "PORTAL"
+      : parsed.data.actorUserProfileId !== undefined
+        ? "STAFF"
+        : "SYSTEM");
 
   const row = await prisma.auditLog.create({
     data: {
@@ -160,6 +175,9 @@ export async function appendAuditLog(
       ...(parsed.data.tenantId !== undefined && { tenantId: parsed.data.tenantId }),
       ...(parsed.data.actorUserProfileId !== undefined && {
         actorUserProfileId: parsed.data.actorUserProfileId,
+      }),
+      ...(parsed.data.actorPortalAccessId !== undefined && {
+        actorPortalAccessId: parsed.data.actorPortalAccessId,
       }),
       ...(parsed.data.targetType !== undefined && { targetType: parsed.data.targetType }),
       ...(parsed.data.targetId !== undefined && { targetId: parsed.data.targetId }),

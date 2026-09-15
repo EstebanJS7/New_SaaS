@@ -15,6 +15,12 @@ const SCHEMA = loadPrismaSchema();
 const MIGRATIONS = loadMigrations();
 const IDENTITY_SQL = findMigration(MIGRATIONS, "_staff_identity").sql;
 
+/**
+ * Models whose primary key is SHARED with a parent row (1:1). The PK value is
+ * the parent's UUID, so no independent gen_random_uuid() default exists.
+ */
+const SHARED_PK_MODELS = new Set(["UserCredential", "PortalCredential"]);
+
 interface ModelBlock {
   readonly name: string;
   readonly body: string;
@@ -70,9 +76,9 @@ describe("schema conventions (design D2)", () => {
       expect(idLines.length, `${block.name} must declare exactly one @id field`).toBe(1);
       expect(idLines[0].line).toContain("@db.Uuid");
 
-      // UserCredential shares its PK with user_profile by design decision:
-      // the value is the parent's UUID, so no independent default exists.
-      if (block.name !== "UserCredential") {
+      // Shared-PK credentials (user/staff and portal) by design decision: the
+      // value is the parent's UUID, so no independent default exists.
+      if (!SHARED_PK_MODELS.has(block.name)) {
         expect(idLines[0].line, `${block.name}.id needs gen_random_uuid()`).toContain(
           '@default(dbgenerated("gen_random_uuid()"))'
         );
