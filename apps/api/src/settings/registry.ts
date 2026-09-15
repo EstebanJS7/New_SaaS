@@ -3,7 +3,7 @@ import { PERMISSION_SEEDS, FEATURE_CODE_SEEDS } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
 
 /** The settings namespaces currently supported by the API. */
-export type SettingsNamespace = "sales" | "scheduling";
+export type SettingsNamespace = "sales" | "scheduling" | "portal";
 
 export interface SalesSettings extends Record<string, unknown> {
   readonly defaultCurrency: string;
@@ -31,6 +31,11 @@ export interface SchedulingSettings extends Record<string, unknown> {
   readonly conflictPolicy: "REJECT" | "ALLOW";
   readonly availability: SchedulingAvailabilityWindow[];
   readonly blocks: SchedulingBlock[];
+}
+
+/** Portal booking policy. PRD §14 defaults a request to staff approval. */
+export interface PortalSettings extends Record<string, unknown> {
+  readonly bookingRequiresApproval: boolean;
 }
 
 /**
@@ -139,10 +144,35 @@ export const schedulingSettingsDefinition: SettingsDefinition<SchedulingSettings
   requiredPermissionKey: "scheduling.settings.manage",
 };
 
+/**
+ * The `portal` namespace consumed by the Portal booking-approval flow. It is a
+ * closed schema with a single boolean: `bookingRequiresApproval` defaults to
+ * `true` (PRD §14 default policy `REQUIRE_APPROVAL`). `requiresFeature: "portal"`
+ * gates writes on the `portal` entitlement in addition to
+ * `portal.settings.manage`.
+ */
+export const portalSettingsSchema = z
+  .object({
+    bookingRequiresApproval: z.boolean(),
+  })
+  .strict();
+
+export const portalSettingsDefinition: SettingsDefinition<PortalSettings> = {
+  namespace: "portal",
+  version: 1,
+  schema: portalSettingsSchema,
+  defaults: {
+    bookingRequiresApproval: true,
+  },
+  requiresFeature: "portal",
+  requiredPermissionKey: "portal.settings.manage",
+};
+
 /** The v1 namespaces; future namespaces must be added explicitly here. */
 export const SETTINGS_REGISTRY: Record<SettingsNamespace, SettingsDefinition> = Object.freeze({
   sales: salesSettingsDefinition,
   scheduling: schedulingSettingsDefinition,
+  portal: portalSettingsDefinition,
 });
 
 /** Alias named after the conceptual registry collection. */
