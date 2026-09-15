@@ -58,11 +58,12 @@ describe("appendAuditLog (shared append-only primitive)", () => {
     expect(row.actorUserProfileId).toBeUndefined();
   });
 
-  it("accepts an explicit PORTAL actor type and rejects a malformed portal id", async () => {
+  it("rejects an unattributed explicit PORTAL actor type and a malformed portal id", async () => {
     const auditLog = makeFakeAuditLog();
 
-    await appendAuditLog({ auditLog }, { action: "portal.booking.requested", actorType: "PORTAL" });
-    expect([...auditLog.rows.values()][0]?.actorType).toBe("PORTAL");
+    await expect(
+      appendAuditLog({ auditLog }, { action: "portal.booking.requested", actorType: "PORTAL" })
+    ).rejects.toBeInstanceOf(DomainError);
 
     await expect(
       appendAuditLog(
@@ -70,6 +71,93 @@ describe("appendAuditLog (shared append-only primitive)", () => {
         { action: "portal.booking.requested", actorPortalAccessId: "not-a-uuid" }
       )
     ).rejects.toBeInstanceOf(DomainError);
+    expect(auditLog.rows.size).toBe(0);
+  });
+
+  describe("portal attribution invariant", () => {
+    const PORTAL_ACCESS_ID = "33333333-3333-4333-8333-333333333333";
+    const STAFF_PROFILE_ID = "22222222-2222-4222-8222-222222222222";
+
+    it("accepts an explicit PORTAL actor type paired with a portal access id", async () => {
+      const auditLog = makeFakeAuditLog();
+
+      await appendAuditLog(
+        { auditLog },
+        {
+          action: "portal.booking.requested",
+          actorType: "PORTAL",
+          actorPortalAccessId: PORTAL_ACCESS_ID,
+        }
+      );
+
+      const row = [...auditLog.rows.values()][0];
+      expect(row.actorType).toBe("PORTAL");
+      expect(row.actorPortalAccessId).toBe(PORTAL_ACCESS_ID);
+      expect(row.actorUserProfileId).toBeUndefined();
+    });
+
+    it("rejects PORTAL without a portal access id and writes nothing", async () => {
+      const auditLog = makeFakeAuditLog();
+      const tx = { auditLog };
+
+      await expect(
+        appendAuditLog(tx, {
+          action: "portal.profile.updated",
+          tenantId: "11111111-1111-4111-8111-111111111111",
+          actorType: "PORTAL",
+        })
+      ).rejects.toBeInstanceOf(DomainError);
+      expect(auditLog.rows.size).toBe(0);
+    });
+
+    it("rejects PORTAL carrying a staff actor even with a portal access id", async () => {
+      const auditLog = makeFakeAuditLog();
+      const tx = { auditLog };
+
+      await expect(
+        appendAuditLog(tx, {
+          action: "portal.booking.approved",
+          tenantId: "11111111-1111-4111-8111-111111111111",
+          actorType: "PORTAL",
+          actorPortalAccessId: PORTAL_ACCESS_ID,
+          actorUserProfileId: STAFF_PROFILE_ID,
+        })
+      ).rejects.toBeInstanceOf(DomainError);
+      expect(auditLog.rows.size).toBe(0);
+    });
+
+    it("rejects an ambiguous portal id plus staff id without an explicit actor type", async () => {
+      const auditLog = makeFakeAuditLog();
+      const tx = { auditLog };
+
+      await expect(
+        appendAuditLog(tx, {
+          action: "portal.booking.requested",
+          tenantId: "11111111-1111-4111-8111-111111111111",
+          actorPortalAccessId: PORTAL_ACCESS_ID,
+          actorUserProfileId: STAFF_PROFILE_ID,
+        })
+      ).rejects.toBeInstanceOf(DomainError);
+      expect(auditLog.rows.size).toBe(0);
+    });
+
+    it("rejects non-PORTAL actors carrying a portal access id and writes nothing", async () => {
+      const auditLog = makeFakeAuditLog();
+      const tx = { auditLog };
+
+      for (const actorType of ["STAFF", "SYSTEM"] as const) {
+        await expect(
+          appendAuditLog(tx, {
+            action: "portal.booking.approved",
+            tenantId: "11111111-1111-4111-8111-111111111111",
+            actorType,
+            actorPortalAccessId: PORTAL_ACCESS_ID,
+            ...(actorType === "STAFF" && { actorUserProfileId: STAFF_PROFILE_ID }),
+          })
+        ).rejects.toBeInstanceOf(DomainError);
+      }
+      expect(auditLog.rows.size).toBe(0);
+    });
   });
 
   it("accepts a three-segment domain.event action (positive validation coverage)", async () => {
