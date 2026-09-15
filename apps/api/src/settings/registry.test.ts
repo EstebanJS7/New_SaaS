@@ -3,6 +3,7 @@ import { DomainError } from "@newsaas/shared";
 import { FEATURE_CODE_SEEDS, PERMISSION_SEEDS } from "@newsaas/database";
 import {
   getSettingsDefinition,
+  portalSettingsDefinition,
   salesSettingsDefinition,
   schedulingAvailabilityWindowSchema,
   schedulingBlockSchema,
@@ -14,12 +15,14 @@ const MEMBERSHIP_ID = "11111111-1111-1111-1111-111111111111";
 const BRANCH_ID = "22222222-2222-2222-2222-222222222222";
 
 describe("Settings registry", () => {
-  it("registers exactly the v1 sales and scheduling namespaces", () => {
-    expect(Object.keys(SETTINGS_REGISTRY)).toEqual(["sales", "scheduling"]);
+  it("registers exactly the v1 sales, scheduling and portal namespaces", () => {
+    expect(Object.keys(SETTINGS_REGISTRY)).toEqual(["sales", "scheduling", "portal"]);
     expect(salesSettingsDefinition.namespace).toBe("sales");
     expect(salesSettingsDefinition.version).toBe(1);
     expect(schedulingSettingsDefinition.namespace).toBe("scheduling");
     expect(schedulingSettingsDefinition.version).toBe(1);
+    expect(portalSettingsDefinition.namespace).toBe("portal");
+    expect(portalSettingsDefinition.version).toBe(1);
   });
 
   it("requires every registered permission key to exist in PERMISSION_SEEDS", () => {
@@ -68,6 +71,27 @@ describe("Settings registry", () => {
 
     const wrongType = { defaultCurrency: "PYG", requireCustomerForInvoice: "false" };
     expect(salesSettingsDefinition.schema.safeParse(wrongType).success).toBe(false);
+  });
+
+  it("portal defaults to requiring staff approval (PRD §14)", () => {
+    expect(portalSettingsDefinition.defaults).toEqual({ bookingRequiresApproval: true });
+  });
+
+  it("portal is gated by the portal feature and its own settings key", () => {
+    expect(portalSettingsDefinition.requiresFeature).toBe("portal");
+    expect(portalSettingsDefinition.requiredPermissionKey).toBe("portal.settings.manage");
+  });
+
+  it("portal schema is a closed boolean and rejects invalid / unknown values", () => {
+    expect(
+      portalSettingsDefinition.schema.safeParse({ bookingRequiresApproval: false }).success
+    ).toBe(true);
+
+    const wrongType = { bookingRequiresApproval: "true" };
+    expect(portalSettingsDefinition.schema.safeParse(wrongType).success).toBe(false);
+
+    const unknownField = { bookingRequiresApproval: true, apiKey: "x" };
+    expect(portalSettingsDefinition.schema.safeParse(unknownField).success).toBe(false);
   });
 
   it("scheduling defaults match the EPIC-07 spec", () => {

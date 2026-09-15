@@ -47,6 +47,9 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   Core scheduling domain. EPIC-07 expands the `scheduling.appointment` family
  *   with `read`/`transition` and adds the `scheduling.settings.manage` key
  *   consumed by the typed `scheduling` settings namespace.
+ * - EPIC-08 adds the `portal` family: `portal.access.manage` governs staff
+ *   provisioning/revocation of a Customer's portal holder, and
+ *   `portal.settings.manage` gates writes to the typed `portal` namespace.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -75,6 +78,8 @@ export const PERMISSION_SEEDS = [
   { key: "patients.update", name: "Update patients" },
   { key: "patients.deactivate", name: "Deactivate patients" },
   { key: "patients.guardian.manage", name: "Manage patient guardians" },
+  { key: "portal.access.manage", name: "Manage customer portal access" },
+  { key: "portal.settings.manage", name: "Manage portal settings" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -111,6 +116,8 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "patients.update",
     "patients.deactivate",
     "patients.guardian.manage",
+    "portal.access.manage",
+    "portal.settings.manage",
   ],
   ADMIN: [
     "vet.clinical.create",
@@ -139,6 +146,8 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "patients.update",
     "patients.deactivate",
     "patients.guardian.manage",
+    "portal.access.manage",
+    "portal.settings.manage",
   ],
   VETERINARIAN: [
     "vet.clinical.create",

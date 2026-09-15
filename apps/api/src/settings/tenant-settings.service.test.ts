@@ -330,6 +330,41 @@ describe("TenantSettingsService (unit)", () => {
     });
   });
 
+  it("allows a portal write with its own key and the portal entitlement", async () => {
+    const { db, ctx, service } = createBoundaries();
+    const tenantId = randomUUID();
+    const roleId = randomUUID();
+    const userProfileId = randomUUID();
+
+    const permission = db.prisma.permission.create({ data: { key: "portal.settings.manage" } });
+    db.prisma.rolePermission.create({ data: { roleId, permissionId: permission.id } });
+    const featureCode = db.prisma.featureCode.create({ data: { code: "portal" } });
+    db.prisma.tenantEntitlement.create({ data: { tenantId, featureCodeId: featureCode.id } });
+
+    await runAsManager(ctx, tenantId, roleId, userProfileId, async () => {
+      const updated = await service.update("portal", { bookingRequiresApproval: false });
+      expect(updated).toEqual({ bookingRequiresApproval: false });
+    });
+  });
+
+  it("rejects a portal write when the portal entitlement is absent", async () => {
+    const { db, ctx, service } = createBoundaries();
+    const tenantId = randomUUID();
+    const roleId = randomUUID();
+    const userProfileId = randomUUID();
+
+    const permission = db.prisma.permission.create({ data: { key: "portal.settings.manage" } });
+    db.prisma.rolePermission.create({ data: { roleId, permissionId: permission.id } });
+
+    await runAsManager(ctx, tenantId, roleId, userProfileId, async () => {
+      const outcome: unknown = await service
+        .update("portal", { bookingRequiresApproval: false })
+        .catch((error: unknown) => error);
+      expect(outcome).toBeInstanceOf(DomainError);
+      expect((outcome as DomainError).code).toBe("FEATURE_NOT_ENTITLED");
+    });
+  });
+
   it("rejects an inverted scheduling availability window through the write path", async () => {
     const { db, ctx, service } = createBoundaries();
     const tenantId = randomUUID();
