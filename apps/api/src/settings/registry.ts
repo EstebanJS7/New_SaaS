@@ -139,7 +139,6 @@ export const schedulingSettingsDefinition: SettingsDefinition<SchedulingSettings
   requiredPermissionKey: "scheduling.settings.manage",
 };
 
-
 /** The v1 namespaces; future namespaces must be added explicitly here. */
 export const SETTINGS_REGISTRY: Record<SettingsNamespace, SettingsDefinition> = Object.freeze({
   sales: salesSettingsDefinition,

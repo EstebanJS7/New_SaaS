@@ -98,9 +98,9 @@ API → WU4 staff agenda → WU5 live-PG evidence and docs.
       index).
 - [x] `sdd-verify` and archive complete; closure is evidence-based.
 
-`status: done` means the implementation slices WU1–WU5 are complete, the
-durable live-PostgreSQL race passed, and the full `sdd-verify` gate and archive
-are complete. It means epic implementation closure only, not production readiness —
+`status: done` means the implementation slices WU1–WU5 are complete, the durable
+live-PostgreSQL race passed, and the full `sdd-verify` gate and archive are
+complete. It means epic implementation closure only, not production readiness —
 [[EPIC-20]] Production Hardening and the open Tech Debt items remain.
 
 ## Decisions / ADRs
