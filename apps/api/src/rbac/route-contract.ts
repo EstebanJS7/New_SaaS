@@ -29,6 +29,28 @@ export function isAuthSurfacePath(path: string): boolean {
   return path === AUTH_ROUTE_SEGMENT || path.startsWith(`${AUTH_ROUTE_SEGMENT}/`);
 }
 
+/**
+ * Path prefix of the isolated first-party portal surface (EPIC-08 D2).
+ * Unprefixed by design (DEC-002 defers `/api/v1`); the staff admin commands
+ * that manage portal access live OFF this prefix under
+ * `/customers/:customerId/portal-access`.
+ */
+export const PORTAL_ROUTE_SEGMENT = "/portal";
+
+/**
+ * True when the route pattern is part of the `/portal/*` surface — the ONE
+ * predicate the three staff guards use to skip the portal boundary and the
+ * PortalAuthGuard uses to enforce it. Guard-side it runs on the matched
+ * Fastify route pattern; probe-side on the enumerated controller path.
+ *
+ * Exactness is the point: `/portal` and `/portal/...` only. A near-miss like
+ * `/portal-access` or `/customers/:id/portal-access` is NOT the portal
+ * surface and stays a DECLARED staff route.
+ */
+export function isPortalSurfacePath(path: string): boolean {
+  return path === PORTAL_ROUTE_SEGMENT || path.startsWith(`${PORTAL_ROUTE_SEGMENT}/`);
+}
+
 /** Minimal contract view both consumers already hold at their call sites. */
 export interface RouteContractShape {
   /** Normalized absolute route pattern, e.g. `/memberships/:id`. */

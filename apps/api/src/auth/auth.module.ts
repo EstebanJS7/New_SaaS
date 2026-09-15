@@ -34,5 +34,11 @@ import { SessionService } from "./session.service.js";
     // Registered AFTER the services it depends on; global for the whole app.
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
+  // EPIC-08 D2: the portal boundary reuses the SAME argon2id credential
+  // boundary, config posture, and failure-budget limiter as staff login while
+  // keeping its own session table, cookie, guard, and identity. Exporting
+  // these three tokens (not the staff session/guard) is the minimum shared
+  // surface; the portal session service is portal-owned.
+  exports: [CredentialService, LoginRateLimiterService, AUTH_CONFIG],
 })
 export class AuthModule {}
