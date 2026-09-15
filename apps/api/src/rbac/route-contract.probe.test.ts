@@ -5,6 +5,7 @@ import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-ap
 import { seedTwoTenants, type TwoTenantFixture } from "../../test/support/seed-two-tenants.js";
 import { enumerateRouteContracts, type RouteContractEntry } from "./route-enumeration.js";
 import { isPublicExemptRoute } from "./route-contract.js";
+import { SCHEDULING_PERMISSIONS } from "../scheduling/appointment.permissions.js";
 
 /**
  * ROUTE-CONTRACT PROBE (EPIC-02 design D1, tasks 1.1/1.6/2.5).
@@ -125,6 +126,18 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /patients/:patientId/clinical/weights",
   "POST /patients/:patientId/clinical/weights",
   "PUT /patients/:patientId/clinical/weights/:id",
+  // EPIC-07 — staff scheduling (WU3)
+  "GET /appointments",
+  "POST /appointments",
+  "GET /appointments/options",
+  "GET /appointments/:id",
+  "PUT /appointments/:id",
+  "POST /appointments/:id/confirm",
+  "POST /appointments/:id/arrive",
+  "POST /appointments/:id/start",
+  "POST /appointments/:id/complete",
+  "POST /appointments/:id/cancel",
+  "POST /appointments/:id/no-show",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -160,6 +173,26 @@ const CLINICAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /patients/:patientId/clinical/weights": "vet.clinical.read",
   "POST /patients/:patientId/clinical/weights": "vet.clinical.create",
   "PUT /patients/:patientId/clinical/weights/:id": "vet.clinical.update",
+};
+
+/**
+ * Exact granular permission every scheduling route MUST declare (EPIC-07 WU3).
+ * Pinned against the runtime `SCHEDULING_PERMISSIONS` constants so a route
+ * decorated with the wrong tier (e.g. a lifecycle command mapped to `manage`)
+ * fails by name, which a generic permission-less denial sweep cannot catch.
+ */
+const SCHEDULING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /appointments": SCHEDULING_PERMISSIONS.read,
+  "GET /appointments/options": SCHEDULING_PERMISSIONS.read,
+  "GET /appointments/:id": SCHEDULING_PERMISSIONS.read,
+  "POST /appointments": SCHEDULING_PERMISSIONS.manage,
+  "PUT /appointments/:id": SCHEDULING_PERMISSIONS.manage,
+  "POST /appointments/:id/confirm": SCHEDULING_PERMISSIONS.transition,
+  "POST /appointments/:id/arrive": SCHEDULING_PERMISSIONS.transition,
+  "POST /appointments/:id/start": SCHEDULING_PERMISSIONS.transition,
+  "POST /appointments/:id/complete": SCHEDULING_PERMISSIONS.transition,
+  "POST /appointments/:id/cancel": SCHEDULING_PERMISSIONS.transition,
+  "POST /appointments/:id/no-show": SCHEDULING_PERMISSIONS.transition,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -211,6 +244,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in CLINICAL_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED CLINICAL ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY scheduling route to its intended granular scheduling.appointment.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/appointments"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(SCHEDULING_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING SCHEDULING ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG SCHEDULING PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in SCHEDULING_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED SCHEDULING ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);

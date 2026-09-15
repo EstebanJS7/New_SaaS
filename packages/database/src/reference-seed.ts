@@ -44,7 +44,9 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   documented aggregates (`POST /cash/sessions/:id/close`, invoice issuing,
  *   tenant memberships);
  * - `scheduling.appointment.manage` covers the receptionist function over the
- *   Core scheduling domain.
+ *   Core scheduling domain. EPIC-07 expands the `scheduling.appointment` family
+ *   with `read`/`transition` and adds the `scheduling.settings.manage` key
+ *   consumed by the typed `scheduling` settings namespace.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -56,7 +58,10 @@ export const PERMISSION_SEEDS = [
   { key: "cash.session.close", name: "Close cash sessions" },
   { key: "fiscal.invoice.issue", name: "Issue fiscal invoices" },
   { key: "users.membership.manage", name: "Manage staff memberships" },
+  { key: "scheduling.appointment.read", name: "Read appointments" },
   { key: "scheduling.appointment.manage", name: "Manage appointments" },
+  { key: "scheduling.appointment.transition", name: "Transition appointment lifecycle" },
+  { key: "scheduling.settings.manage", name: "Manage scheduling settings" },
   { key: "sales.settings.manage", name: "Manage sales settings" },
   { key: "branding.settings.manage", name: "Manage tenant branding settings" },
   { key: "customers.read", name: "Read customers" },
@@ -89,7 +94,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.session.close",
     "fiscal.invoice.issue",
     "users.membership.manage",
+    "scheduling.appointment.read",
     "scheduling.appointment.manage",
+    "scheduling.appointment.transition",
+    "scheduling.settings.manage",
     "sales.settings.manage",
     "branding.settings.manage",
     "customers.read",
@@ -114,7 +122,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.session.close",
     "fiscal.invoice.issue",
     "users.membership.manage",
+    "scheduling.appointment.read",
     "scheduling.appointment.manage",
+    "scheduling.appointment.transition",
+    "scheduling.settings.manage",
     "sales.settings.manage",
     "branding.settings.manage",
     "customers.read",
@@ -135,13 +146,17 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "vet.clinical.update",
     "vet.clinical.close",
     "vet.clinical.amend",
+    "scheduling.appointment.read",
+    "scheduling.appointment.transition",
     "customers.read",
     "patients.read",
     "patients.create",
     "patients.update",
   ],
   RECEPTIONIST: [
+    "scheduling.appointment.read",
     "scheduling.appointment.manage",
+    "scheduling.appointment.transition",
     "customers.read",
     "customers.create",
     "customers.update",

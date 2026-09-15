@@ -264,6 +264,58 @@ export interface PatientGuardianWhere {
   isActive?: boolean;
 }
 
+/** Tenant-scoped Branch row (EPIC-07 scheduling anchor; branch admin stays out of scope). */
+export interface BranchRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Appointment lifecycle states pinned by the EPIC-07 spec. */
+export type AppointmentStatusRow =
+  "SCHEDULED" | "CONFIRMED" | "ARRIVED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+
+/** Tenant-scoped Appointment row as the scheduling boundary reads it. */
+export interface AppointmentRow {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  patientId: string;
+  professionalMembershipId: string;
+  status: AppointmentStatusRow;
+  version: number;
+  startAt: Date;
+  endAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Scalar/optional Prisma filter over Appointment (mirrors the service shapes). */
+export interface AppointmentWhere {
+  id?: string | { not: string };
+  tenantId?: string;
+  branchId?: string;
+  patientId?: string;
+  professionalMembershipId?: string;
+  /** Scalar or `{ in: [...] }` — mirrors the Prisma filter shapes we use. */
+  status?: AppointmentStatusRow | { in: AppointmentStatusRow[] };
+  version?: number;
+  /** Overlap predicate: existing.startAt < candidate.endAt. */
+  startAt?: { lt: Date };
+  /** Overlap predicate: existing.endAt > candidate.startAt. */
+  endAt?: { gt: Date };
+}
+
+/** Appointment write payload; `version` may be an increment (optimistic guard). */
+export interface AppointmentUpdateData {
+  status?: AppointmentStatusRow;
+  version?: number | { increment: number };
+  startAt?: Date;
+  endAt?: Date;
+}
+
 interface MembershipWhere {
   id?: string;
   tenantId?: string;
@@ -271,6 +323,8 @@ interface MembershipWhere {
   status?: string;
   /** Scalar or `{ in: [...] }` — mirrors the Prisma filter shapes we use. */
   roleId?: string | { in?: string[] };
+  /** Role-code predicate used by the scheduling professional options lookup. */
+  role?: { code: string };
 }
 
 interface MembershipOrder {
@@ -454,6 +508,27 @@ export interface IsolationDatabase {
         data: { isPrimary?: boolean; isActive?: boolean; position?: number };
       }) => { count: number };
     };
+    branch: {
+      create: (args: { data: { tenantId: string; name: string } }) => BranchRow;
+      findFirst: (args: { where: { id: string; tenantId: string } }) => BranchRow | null;
+      findMany: (args: {
+        where: { tenantId: string };
+        orderBy?: { name?: "asc" | "desc" };
+      }) => BranchRow[];
+    };
+    appointment: {
+      findMany: (args: {
+        where: AppointmentWhere;
+        orderBy?: { startAt?: "asc" | "desc" };
+      }) => AppointmentRow[];
+      findFirst: (args: { where: AppointmentWhere }) => AppointmentRow | null;
+      create: (args: {
+        data: Omit<AppointmentRow, "id" | "createdAt" | "updatedAt">;
+      }) => AppointmentRow;
+      updateMany: (args: { where: AppointmentWhere; data: AppointmentUpdateData }) => {
+        count: number;
+      };
+    };
     role: {
       create: (args: { data: { code: string; name: string } }) => RoleRow;
       findUnique: (args: { where: { code: string } }) => RoleRow | null;
@@ -532,12 +607,14 @@ export interface IsolationDatabase {
         where: MembershipWhere;
         orderBy?: MembershipOrder[];
         include?: { role?: unknown };
-      }) => (TenantMembershipRow & { role?: { code: string } }) | null;
+        select?: { role?: unknown };
+      }) => (TenantMembershipRow & { role?: { code: string; id: string } }) | null;
       findMany: (args: {
         where: MembershipWhere;
         orderBy?: MembershipOrder[];
         include?: { role?: unknown };
-      }) => (TenantMembershipRow & { role?: { code: string } })[];
+        select?: { role?: unknown };
+      }) => (TenantMembershipRow & { role?: { code: string; id: string } })[];
       updateMany: (args: { where: MembershipWhere; data: { status: string } }) => { count: number };
       update: (args: {
         where: { id: string };
@@ -583,6 +660,8 @@ export interface IsolationDatabase {
     breeds: Map<string, BreedRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
+    branches: Map<string, BranchRow>;
+    appointments: Map<string, AppointmentRow>;
   };
   /** In-memory object storage for tests to inspect signed URLs and key retirement. */
   storage: InMemoryStorageDriver;
@@ -631,6 +710,44 @@ function orderMemberships(
   });
 }
 
+/** Faithful-enough Appointment matcher for the shipped read/overlap predicates. */
+function matchesAppointment(where: AppointmentWhere, candidate: AppointmentRow): boolean {
+  if (where.id !== undefined) {
+    if (typeof where.id === "string") {
+      if (candidate.id !== where.id) return false;
+    } else if (where.id.not !== undefined && candidate.id === where.id.not) {
+      return false;
+    }
+  }
+  if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) return false;
+  if (where.branchId !== undefined && candidate.branchId !== where.branchId) return false;
+  if (where.patientId !== undefined && candidate.patientId !== where.patientId) return false;
+  if (
+    where.professionalMembershipId !== undefined &&
+    candidate.professionalMembershipId !== where.professionalMembershipId
+  ) {
+    return false;
+  }
+  if (where.status !== undefined) {
+    if (typeof where.status === "string") {
+      if (candidate.status !== where.status) return false;
+    } else if (!where.status.in.includes(candidate.status)) {
+      return false;
+    }
+  }
+  if (where.version !== undefined && candidate.version !== where.version) return false;
+  if (
+    where.startAt?.lt !== undefined &&
+    candidate.startAt.getTime() >= where.startAt.lt.getTime()
+  ) {
+    return false;
+  }
+  if (where.endAt?.gt !== undefined && candidate.endAt.getTime() <= where.endAt.gt.getTime()) {
+    return false;
+  }
+  return true;
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -655,6 +772,12 @@ export function createIsolationDatabase(): IsolationDatabase {
   const breedTable = new Map<string, BreedRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
+  const branchTable = new Map<string, BranchRow>();
+  const appointmentTable = new Map<string, AppointmentRow>();
+
+  /** Role-code predicate for membership options (EPIC-07 professional lookup). */
+  const roleCodeMatches = (where: MembershipWhere, candidate: TenantMembershipRow): boolean =>
+    where.role === undefined || roles.get(candidate.roleId)?.code === where.role.code;
 
   type TableSnapshot = Record<string, Map<string, unknown>>;
 
@@ -681,6 +804,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     breeds: breedTable,
     patients: patientTable,
     patientGuardians: patientGuardianTable,
+    branches: branchTable,
+    appointments: appointmentTable,
   };
 
   function snapshotTables(): TableSnapshot {
@@ -725,6 +850,12 @@ export function createIsolationDatabase(): IsolationDatabase {
       // Match THE one shipped raw query (all active membership rows for the
       // tenant). The only bound value is the server-resolved tenant id.
       const text = typeof query === "string" ? query : query.join("");
+      // EPIC-07 scheduling serializes overlap checks with a transaction-scoped
+      // advisory lock. This single-threaded boundary serializes nothing, so the
+      // call must simply succeed; the real interleaving proof is WU5-owned.
+      if (text.includes("pg_advisory_xact_lock")) {
+        return Promise.resolve([]);
+      }
       if (!text.includes("tenant_membership") || !text.includes("FOR UPDATE")) {
         throw new Error(
           `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock (got: ${text.slice(0, 60)}...)`
@@ -1186,6 +1317,78 @@ export function createIsolationDatabase(): IsolationDatabase {
         return { count };
       },
     },
+    branch: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: BranchRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          name: data.name,
+          createdAt: now,
+          updatedAt: now,
+        };
+        branchTable.set(created.id, created);
+        return created;
+      },
+      findFirst: ({ where }) =>
+        [...branchTable.values()].find(
+          (candidate) => candidate.id === where.id && candidate.tenantId === where.tenantId
+        ) ?? null,
+      findMany: ({ where, orderBy }) => {
+        const rows = [...branchTable.values()].filter(
+          (candidate) => candidate.tenantId === where.tenantId
+        );
+        if (orderBy?.name) {
+          rows.sort((left, right) => left.name.localeCompare(right.name));
+          if (orderBy.name === "desc") rows.reverse();
+        }
+        return rows;
+      },
+    },
+    appointment: {
+      findMany: ({ where, orderBy }) => {
+        const rows = [...appointmentTable.values()].filter((candidate) =>
+          matchesAppointment(where, candidate)
+        );
+        if (orderBy?.startAt) {
+          rows.sort((left, right) => left.startAt.getTime() - right.startAt.getTime());
+          if (orderBy.startAt === "desc") rows.reverse();
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...appointmentTable.values()].find((candidate) => matchesAppointment(where, candidate)) ??
+        null,
+      create: ({ data }) => {
+        const now = new Date();
+        const created: AppointmentRow = {
+          id: randomUUID(),
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        };
+        appointmentTable.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const candidate of appointmentTable.values()) {
+          if (!matchesAppointment(where, candidate)) continue;
+          if (data.status !== undefined) candidate.status = data.status;
+          if (data.startAt !== undefined) candidate.startAt = data.startAt;
+          if (data.endAt !== undefined) candidate.endAt = data.endAt;
+          if (data.version !== undefined) {
+            candidate.version =
+              typeof data.version === "number"
+                ? data.version
+                : candidate.version + data.version.increment;
+          }
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
     role: {
       create: ({ data }) => {
         const created: RoleRow = { id: randomUUID(), code: data.code, name: data.name };
@@ -1397,14 +1600,16 @@ export function createIsolationDatabase(): IsolationDatabase {
         memberships.set(created.id, created);
         return created;
       },
-      findFirst: ({ where, orderBy, include }) => {
+      findFirst: ({ where, orderBy, include, select }) => {
         const matched = orderMemberships(
-          [...memberships.values()].filter((candidate) => matches(where, candidate)),
+          [...memberships.values()].filter(
+            (candidate) => matches(where, candidate) && roleCodeMatches(where, candidate)
+          ),
           orderBy
         );
         const candidate = matched[0];
         if (!candidate) return null;
-        if (include?.role) {
+        if (include?.role || select?.role) {
           // Reproduce the relational join: role row looked up by FK
           // (`id` included since EPIC-02 forwards roleId through ALS).
           const joinedRole = roles.get(candidate.roleId);
@@ -1415,12 +1620,14 @@ export function createIsolationDatabase(): IsolationDatabase {
         }
         return candidate;
       },
-      findMany: ({ where, orderBy, include }) => {
+      findMany: ({ where, orderBy, include, select }) => {
         const rows = orderMemberships(
-          [...memberships.values()].filter((candidate) => matches(where, candidate)),
+          [...memberships.values()].filter(
+            (candidate) => matches(where, candidate) && roleCodeMatches(where, candidate)
+          ),
           orderBy
         );
-        if (!include?.role) return rows;
+        if (!include?.role && !select?.role) return rows;
         return rows.map((candidate) => ({
           ...candidate,
           role: { code: roles.get(candidate.roleId)?.code ?? "", id: candidate.roleId },
@@ -1520,6 +1727,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       breeds: breedTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
+      branches: branchTable,
+      appointments: appointmentTable,
     },
     storage,
   };

@@ -26,9 +26,14 @@ export class SettingsController {
     return { settings: await this.settings.get(parsedNamespace.data) };
   }
 
-  /** Writes require the v1 sales settings permission plus the feature grant. */
+  /**
+   * Writes are authenticated-only at the route layer; the namespace-specific
+   * catalog key (`<domain>.settings.manage`) is enforced by the registry inside
+   * TenantSettingsService, because a static decorator cannot express a
+   * per-namespace key.
+   */
   @Put(":namespace")
-  @RequirePermissions("sales.settings.manage")
+  @RequirePermissions()
   async update(
     @Param("namespace") namespace: string,
     @Body() body: unknown

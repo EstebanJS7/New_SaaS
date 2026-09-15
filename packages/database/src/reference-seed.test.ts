@@ -301,6 +301,8 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "vet.clinical.update",
       "vet.clinical.close",
       "vet.clinical.amend",
+      "scheduling.appointment.read",
+      "scheduling.appointment.transition",
       "customers.read",
       "patients.read",
       "patients.create",
@@ -420,7 +422,7 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const fake = await seededOnce();
     expect(fake.counts()).toEqual({
       roles: 6,
-      permissions: 23,
+      permissions: 26,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

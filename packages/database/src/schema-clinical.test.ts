@@ -182,9 +182,10 @@ describe("schema · clinical inventory (EPIC-06 CLI-001)", () => {
   });
 
   it("pins composite tenant-ownership relations on Patient and clinical FKs", () => {
-    // Patient exposes a (tenantId, id) key that every clinical composite FK targets.
+    // Patient, ClinicalEncounter, Branch, TenantMembership and Appointment each
+    // expose a (tenantId, id) key that composite FKs target.
     expect(SCHEMA).toMatch(/@@unique\(\[tenantId, id\]\)/);
-    expect(SCHEMA.match(/@@unique\(\[tenantId, id\]\)/g)).toHaveLength(2);
+    expect(SCHEMA.match(/@@unique\(\[tenantId, id\]\)/g)).toHaveLength(5);
 
     const clinicalModels = [
       "ClinicalEncounter",

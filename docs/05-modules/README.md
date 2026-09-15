@@ -35,10 +35,15 @@ Implemented (EPIC-06):
 Clinical.md
 ```
 
-Recommended files:
+Implemented (EPIC-07):
 
 ```text
 Scheduling.md
+```
+
+Recommended files:
+
+```text
 Inventory.md
 Purchases.md
 Sales.md

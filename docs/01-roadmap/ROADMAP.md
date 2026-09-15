@@ -1,7 +1,7 @@
 ---
 type: roadmap
 status: active
-updated: 2026-09-13
+updated: 2026-09-15
 ---
 
 # ROADMAP
@@ -15,7 +15,7 @@ updated: 2026-09-13
 | EPIC-04 | Customers                          |    done | EPIC-02, EPIC-03          |
 | EPIC-05 | Veterinary Patients                |    done | EPIC-04                   |
 | EPIC-06 | Clinical                           |    done | EPIC-05                   |
-| EPIC-07 | Scheduling                         | planned | EPIC-04, EPIC-05          |
+| EPIC-07 | Scheduling                         |    done | EPIC-04, EPIC-05          |
 | EPIC-08 | Portal                             | planned | EPIC-04, EPIC-05, EPIC-07 |
 | EPIC-09 | Catalog/Taxes                      | planned | EPIC-02                   |
 | EPIC-10 | Inventory                          | planned | EPIC-09                   |
@@ -40,7 +40,9 @@ plus preserved open/accepted debt). EPIC-06 Clinical moved to `done` on
 at `ff786138` (archived EPIC-06 verification report plus preserved open debt).
 `done` means epic implementation closure only: it is **not** a
 production-readiness statement. [[EPIC-20]] Production Hardening and the open
-Tech Debt items remain. [[EPIC-07]] Scheduling is the next planned epic.
+Tech Debt items remain. [[EPIC-07]] Scheduling moved to `done` on 2026-09-15
+after SDD verification and archive; its durable live-PostgreSQL overlap race
+passed.
 
 Individual Stories live in `../02-stories/`.
 

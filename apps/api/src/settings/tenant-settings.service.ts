@@ -122,6 +122,15 @@ export class TenantSettingsService {
         throw validationFailure("Settings failed namespace validation.");
       }
 
+      // Field diff for the audit trail: only fields whose effective value
+      // actually changed, so a no-op patch records an empty diff. Values are
+      // registry-validated JSON, so structural comparison is faithful.
+      const effectiveCurrent: SettingsData = { ...definition.defaults, ...current };
+      const changedFields = Object.keys(parsedSettings.data).filter(
+        (field) =>
+          JSON.stringify(effectiveCurrent[field]) !== JSON.stringify(parsedSettings.data[field])
+      );
+
       const savedRow = await tx.tenantSettingNamespace.upsert({
         where: { tenantId_namespace: { tenantId, namespace: definition.namespace } },
         create: {
@@ -143,7 +152,11 @@ export class TenantSettingsService {
           actorUserProfileId: this.requestContext.requireUserProfileId(),
           targetType: "tenant_setting_namespace",
           targetId: savedRow.id,
-          metadata: { namespace: definition.namespace, schemaVersion: definition.version },
+          metadata: {
+            namespace: definition.namespace,
+            schemaVersion: definition.version,
+            changedFields,
+          },
         },
         tx
       );

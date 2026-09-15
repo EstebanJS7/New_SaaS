@@ -148,6 +148,7 @@ model Tenant {
   clinicalDewormings      ClinicalDeworming[]
   clinicalStudies          ClinicalStudy[]
   clinicalWeights          ClinicalWeight[]
+  appointments             Appointment[]
 
   @@map("tenant")
 }
@@ -166,6 +167,11 @@ model Branch {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  appointments Appointment[]
+
+  /// Tenant-ownership key: target of the appointment composite branch FK so an
+  /// appointment can only reference a Branch of the SAME tenant (EPIC-07).
+  @@unique([tenantId, id])
   @@index([tenantId])
   @@map("branch")
 }
@@ -187,8 +193,13 @@ model TenantMembership {
   userProfile UserProfile @relation(fields: [userProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   role        Role        @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  /// Appointments where this membership is the assigned professional.
+  appointments Appointment[]
+
   /// One membership per (tenant, profile).
   @@unique([tenantId, userProfileId])
+  /// Tenant-ownership key: target of the appointment composite professional FK.
+  @@unique([tenantId, id])
   /// Login resolves memberships by profile; the (tenant_id, profile) unique
   /// index cannot serve that lookup (leading column is tenant_id).
   @@index([userProfileId])
@@ -773,6 +784,8 @@ model Patient {
   clinicalStudies      ClinicalStudy[]
   clinicalWeights      ClinicalWeight[]
 
+  appointments Appointment[]
+
   /// Tenant-ownership key: the target of every clinical composite FK so a
   /// clinical row can only reference a Patient of the SAME tenant.
   @@unique([tenantId, id])
@@ -965,6 +978,70 @@ model ClinicalWeight {
 
   @@index([tenantId, patientId])
   @@map("clinical_weight")
+}
+
+// ---------------------------------------------------------------------------
+// Veterinary Scheduling (EPIC-07 SCH data foundation). Tenant- and
+// branch-scoped appointments assigned to an in-tenant VETERINARIAN membership
+// and anchored to an in-tenant Patient. Availability windows, one-off blocks
+// and the overlap policy live in the typed `scheduling` settings namespace —
+// never here. No appointment row is hard-deletable: the migration rejects
+// DELETE. Data classification: appointment scheduling details are CONFIDENTIAL;
+// logs/audit carry stable IDs only.
+// ---------------------------------------------------------------------------
+
+/// Appointment lifecycle. Values are pinned by the EPIC-07 spec; evolve
+/// additively only. COMPLETED, CANCELLED and NO_SHOW are terminal states.
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+
+  @@map("appointment_status")
+}
+
+/// Tenant- and branch-scoped appointment assigned to one in-tenant
+/// `TenantMembership` (role VETERINARIAN, a service rule) and anchored to one
+/// in-tenant Patient via composite `(tenant_id, x_id)` FKs. Start/end persist in
+/// UTC. Reschedule is guarded by an explicit `version`. There is deliberately no
+/// service/Catalog field and no clinical-encounter linkage yet.
+model Appointment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId                 String @map("tenant_id") @db.Uuid
+  branchId                 String @map("branch_id") @db.Uuid
+  patientId                String @map("patient_id") @db.Uuid
+  professionalMembershipId String @map("professional_membership_id") @db.Uuid
+
+  status  AppointmentStatus @default(SCHEDULED)
+  /// Optimistic-concurrency guard for the reschedule command.
+  version Int               @default(1)
+
+  startAt DateTime @map("start_at") @db.Timestamptz(3)
+  endAt   DateTime @map("end_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant                 Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the Branch must belong to the same tenant.
+  branch                 Branch           @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK (see ClinicalTreatment).
+  patient                Patient          @relation(fields: [tenantId, patientId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the professional membership must be in the same tenant.
+  professionalMembership TenantMembership @relation(fields: [tenantId, professionalMembershipId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Tenant-ownership key: keeps a future clinical-encounter linkage additive.
+  @@unique([tenantId, id])
+  @@index([tenantId, branchId])
+  @@index([tenantId, professionalMembershipId])
+  @@index([tenantId, patientId])
+  @@index([tenantId, status])
+  @@map("appointment")
 }
 
 // ---------------------------------------------------------------------------

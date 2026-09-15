@@ -515,6 +515,180 @@ export async function seedDemoClinical(
   });
 }
 
+/**
+ * Transactional delegate scope used inside {@link seedDemoScheduling}'s
+ * `$transaction`.
+ */
+export interface DemoSchedulingSeedTxClient {
+  branch: {
+    createMany: (args: {
+      data: { id: string; tenantId: string; name: string }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+  userProfile: {
+    createMany: (args: {
+      data: { id: string; email: string; displayName: string; status: string }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+  tenantMembership: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        userProfileId: string;
+        roleId: string;
+        status: "ACTIVE" | "SUSPENDED";
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+  appointment: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        branchId: string;
+        patientId: string;
+        professionalMembershipId: string;
+        status: "SCHEDULED";
+        startAt: Date;
+        endAt: Date;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+}
+
+/**
+ * Structural client contract consumed by {@link seedDemoScheduling}. The
+ * VETERINARIAN role and the demo Patient are REFERENCED (seeded by the reference
+ * seed and the patient demo seed), never created here.
+ */
+export interface DemoSchedulingSeedClient extends DemoSchedulingSeedTxClient {
+  role: {
+    findUnique: (args: { where: { code: string }; select: { id: true } }) => Promise<{
+      id: string;
+    } | null>;
+  };
+  patient: {
+    findFirst: (args: {
+      where: { id: string; tenantId: string };
+      select: { id: true };
+    }) => Promise<{ id: string } | null>;
+  };
+  $transaction: <T>(fn: (tx: DemoSchedulingSeedTxClient) => Promise<T>) => Promise<T>;
+}
+
+export interface DemoSchedulingSeedResult {
+  branches: number;
+  memberships: number;
+  appointments: number;
+}
+
+/** Reference seed natural key for the assigning professional role. */
+export const DEMO_VETERINARIAN_ROLE_CODE = "VETERINARIAN";
+
+/** Demo branch natural key used by the synthetic agenda. */
+export const DEMO_SCHEDULING_BRANCH_ID = "e0000000-0000-0000-0000-000000000001";
+/** Synthetic VETERINARIAN staff identity owning the demo appointment. */
+export const DEMO_SCHEDULING_VET_PROFILE_ID = "e0000000-0000-0000-0000-000000000002";
+export const DEMO_SCHEDULING_VET_EMAIL = "vet@demo.newsaas.test";
+export const DEMO_SCHEDULING_VET_MEMBERSHIP_ID = "e0000000-0000-0000-0000-000000000003";
+/** Synthetic demo appointment anchored to the fixed demo Patient. */
+export const DEMO_SCHEDULING_APPOINTMENT_ID = "e0000000-0000-0000-0000-000000000004";
+
+export const DEMO_SCHEDULING_BRANCH_NAME = "Demo Main Branch";
+export const DEMO_SCHEDULING_VET_DISPLAY_NAME = "Demo Veterinarian";
+
+/** Fixed synthetic UTC range keeps the fixture byte-stable across reruns. */
+export const DEMO_SCHEDULING_START_AT = new Date("2026-01-16T13:00:00.000Z");
+export const DEMO_SCHEDULING_END_AT = new Date("2026-01-16T13:30:00.000Z");
+
+/**
+ * Seeds one synthetic Branch, one VETERINARIAN membership and one appointment
+ * for the demo tenant, anchored to the fixed demo Patient. Content is clearly
+ * synthetic and carries no real PII; fixed UUIDs plus `skipDuplicates` keep the
+ * path idempotent, and every write shares one `$transaction` so the appointment
+ * can never commit without its branch and professional.
+ */
+export async function seedDemoScheduling(
+  db: DemoSchedulingSeedClient,
+  tenantId: string
+): Promise<DemoSchedulingSeedResult> {
+  const vetRole = await db.role.findUnique({
+    where: { code: DEMO_VETERINARIAN_ROLE_CODE },
+    select: { id: true },
+  });
+  if (!vetRole) {
+    throw new Error(
+      "demo seed: role VETERINARIAN missing — run the reference seed (`db:seed`) before the demo seed"
+    );
+  }
+
+  const patient = await db.patient.findFirst({
+    where: { id: DEMO_PATIENT_DOG_ID, tenantId },
+    select: { id: true },
+  });
+  if (!patient) {
+    throw new Error(
+      "demo seed: demo patient missing — run the patient demo seed before the scheduling demo seed"
+    );
+  }
+
+  return db.$transaction(async (tx) => {
+    const branches = await tx.branch.createMany({
+      data: [{ id: DEMO_SCHEDULING_BRANCH_ID, tenantId, name: DEMO_SCHEDULING_BRANCH_NAME }],
+      skipDuplicates: true,
+    });
+    // The membership FK requires its profile to exist first.
+    await tx.userProfile.createMany({
+      data: [
+        {
+          id: DEMO_SCHEDULING_VET_PROFILE_ID,
+          email: DEMO_SCHEDULING_VET_EMAIL,
+          displayName: DEMO_SCHEDULING_VET_DISPLAY_NAME,
+          status: "active",
+        },
+      ],
+      skipDuplicates: true,
+    });
+    const memberships = await tx.tenantMembership.createMany({
+      data: [
+        {
+          id: DEMO_SCHEDULING_VET_MEMBERSHIP_ID,
+          tenantId,
+          userProfileId: DEMO_SCHEDULING_VET_PROFILE_ID,
+          roleId: vetRole.id,
+          status: "ACTIVE",
+        },
+      ],
+      skipDuplicates: true,
+    });
+    const appointments = await tx.appointment.createMany({
+      data: [
+        {
+          id: DEMO_SCHEDULING_APPOINTMENT_ID,
+          tenantId,
+          branchId: DEMO_SCHEDULING_BRANCH_ID,
+          patientId: patient.id,
+          professionalMembershipId: DEMO_SCHEDULING_VET_MEMBERSHIP_ID,
+          status: "SCHEDULED",
+          startAt: DEMO_SCHEDULING_START_AT,
+          endAt: DEMO_SCHEDULING_END_AT,
+        },
+      ],
+      skipDuplicates: true,
+    });
+
+    return {
+      branches: branches.count,
+      memberships: memberships.count,
+      appointments: appointments.count,
+    };
+  });
+}
 export type DemoSeedGuardDecision =
   | { mode: "disabled"; reason: string }
   | { mode: "refused"; reason: string }

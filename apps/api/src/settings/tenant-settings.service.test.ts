@@ -10,7 +10,7 @@ import { EntitlementsService } from "../entitlements/entitlements.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { AuditWriter } from "../audit/audit-writer.service.js";
 import { TenantSettingsService } from "./tenant-settings.service.js";
-import { salesSettingsDefinition } from "./registry.js";
+import { salesSettingsDefinition, SETTINGS_REGISTRY } from "./registry.js";
 
 interface Boundaries {
   db: IsolationDatabase;
@@ -259,7 +259,138 @@ describe("TenantSettingsService (unit)", () => {
     expect(audits[0].metadata).toEqual({
       namespace: "sales",
       schemaVersion: salesSettingsDefinition.version,
+      changedFields: ["defaultCurrency"],
     });
+  });
+
+  it("records an audit field diff for the namespace write", async () => {
+    const { db, ctx, service } = createBoundaries();
+    const tenantId = randomUUID();
+    const roleId = randomUUID();
+    const userProfileId = randomUUID();
+
+    // Seed a baseline row so a no-op sibling field does not appear in the diff.
+    db.prisma.tenantSettingNamespace.create({
+      data: {
+        tenantId,
+        namespace: "sales",
+        schemaVersion: 1,
+        data: { defaultCurrency: "PYG", requireCustomerForInvoice: true },
+      },
+    });
+    seedSalesPermissionAndEntitlement(db, tenantId, roleId);
+
+    await runAsManager(ctx, tenantId, roleId, userProfileId, async () => {
+      await service.update("sales", { requireCustomerForInvoice: true });
+    });
+
+    const audits = db.prisma.auditLog.findMany({ where: { action: "settings.namespace_updated" } });
+    expect(audits).toHaveLength(1);
+    expect(audits[0].metadata).toEqual({
+      namespace: "sales",
+      schemaVersion: salesSettingsDefinition.version,
+      changedFields: [],
+    });
+  });
+
+  it("requires each namespace's own registry key for writes (registry-driven auth)", async () => {
+    const { ctx, service } = createBoundaries();
+    const tenantId = randomUUID();
+    const roleId = randomUUID();
+    const userProfileId = randomUUID();
+
+    await runAsManager(ctx, tenantId, roleId, userProfileId, async () => {
+      for (const definition of Object.values(SETTINGS_REGISTRY)) {
+        const outcome: unknown = await service
+          .update(definition.namespace, {})
+          .catch((error: unknown) => error);
+        expect(
+          outcome,
+          `namespace ${definition.namespace} must deny without its key`
+        ).toBeInstanceOf(DomainError);
+        expect((outcome as DomainError).code).toBe("FORBIDDEN");
+      }
+    });
+  });
+
+  it("allows a scheduling write with its own key and no feature grant", async () => {
+    const { db, ctx, service } = createBoundaries();
+    const tenantId = randomUUID();
+    const roleId = randomUUID();
+    const userProfileId = randomUUID();
+
+    const permission = db.prisma.permission.create({
+      data: { key: "scheduling.settings.manage" },
+    });
+    db.prisma.rolePermission.create({ data: { roleId, permissionId: permission.id } });
+
+    await runAsManager(ctx, tenantId, roleId, userProfileId, async () => {
+      const updated = await service.update("scheduling", { conflictPolicy: "ALLOW" });
+      expect(updated).toEqual({ conflictPolicy: "ALLOW", availability: [], blocks: [] });
+    });
+  });
+
+  it("rejects an inverted scheduling availability window through the write path", async () => {
+    const { db, ctx, service } = createBoundaries();
+    const tenantId = randomUUID();
+    const roleId = randomUUID();
+    const userProfileId = randomUUID();
+
+    const permission = db.prisma.permission.create({
+      data: { key: "scheduling.settings.manage" },
+    });
+    db.prisma.rolePermission.create({ data: { roleId, permissionId: permission.id } });
+
+    await runAsManager(ctx, tenantId, roleId, userProfileId, async () => {
+      const outcome: unknown = await service
+        .update("scheduling", {
+          availability: [
+            {
+              membershipId: randomUUID(),
+              branchId: randomUUID(),
+              weekday: 2,
+              startMinute: 720,
+              endMinute: 540,
+            },
+          ],
+        })
+        .catch((error: unknown) => error);
+      expect(outcome).toBeInstanceOf(DomainError);
+      expect((outcome as DomainError).code).toBe("VALIDATION_FAILED");
+    });
+
+    expect(db.tables.settingNamespaces.size).toBe(0);
+  });
+
+  it("rejects an inverted one-off block through the write path", async () => {
+    const { db, ctx, service } = createBoundaries();
+    const tenantId = randomUUID();
+    const roleId = randomUUID();
+    const userProfileId = randomUUID();
+
+    const permission = db.prisma.permission.create({
+      data: { key: "scheduling.settings.manage" },
+    });
+    db.prisma.rolePermission.create({ data: { roleId, permissionId: permission.id } });
+
+    await runAsManager(ctx, tenantId, roleId, userProfileId, async () => {
+      const outcome: unknown = await service
+        .update("scheduling", {
+          blocks: [
+            {
+              membershipId: randomUUID(),
+              branchId: randomUUID(),
+              startsAt: "2026-01-16T14:00:00.000Z",
+              endsAt: "2026-01-16T13:00:00.000Z",
+            },
+          ],
+        })
+        .catch((error: unknown) => error);
+      expect(outcome).toBeInstanceOf(DomainError);
+      expect((outcome as DomainError).code).toBe("VALIDATION_FAILED");
+    });
+
+    expect(db.tables.settingNamespaces.size).toBe(0);
   });
 
   it("rejects updates when the active role lacks the required permission", async () => {

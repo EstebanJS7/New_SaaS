@@ -1,13 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { DomainError } from "@newsaas/shared";
 import { FEATURE_CODE_SEEDS, PERMISSION_SEEDS } from "@newsaas/database";
-import { getSettingsDefinition, salesSettingsDefinition, SETTINGS_REGISTRY } from "./registry.js";
+import {
+  getSettingsDefinition,
+  salesSettingsDefinition,
+  schedulingAvailabilityWindowSchema,
+  schedulingBlockSchema,
+  schedulingSettingsDefinition,
+  SETTINGS_REGISTRY,
+} from "./registry.js";
+
+const MEMBERSHIP_ID = "11111111-1111-1111-1111-111111111111";
+const BRANCH_ID = "22222222-2222-2222-2222-222222222222";
 
 describe("Settings registry", () => {
-  it("registers exactly the v1 sales namespace", () => {
-    expect(Object.keys(SETTINGS_REGISTRY)).toEqual(["sales"]);
+  it("registers exactly the v1 sales and scheduling namespaces", () => {
+    expect(Object.keys(SETTINGS_REGISTRY)).toEqual(["sales", "scheduling"]);
     expect(salesSettingsDefinition.namespace).toBe("sales");
     expect(salesSettingsDefinition.version).toBe(1);
+    expect(schedulingSettingsDefinition.namespace).toBe("scheduling");
+    expect(schedulingSettingsDefinition.version).toBe(1);
   });
 
   it("requires every registered permission key to exist in PERMISSION_SEEDS", () => {
@@ -56,5 +68,134 @@ describe("Settings registry", () => {
 
     const wrongType = { defaultCurrency: "PYG", requireCustomerForInvoice: "false" };
     expect(salesSettingsDefinition.schema.safeParse(wrongType).success).toBe(false);
+  });
+
+  it("scheduling defaults match the EPIC-07 spec", () => {
+    expect(schedulingSettingsDefinition.defaults).toEqual({
+      conflictPolicy: "REJECT",
+      availability: [],
+      blocks: [],
+    });
+  });
+
+  it("scheduling has no feature gate and is governed by its own settings key", () => {
+    expect(schedulingSettingsDefinition.requiresFeature).toBeUndefined();
+    expect(schedulingSettingsDefinition.requiredPermissionKey).toBe("scheduling.settings.manage");
+  });
+
+  it("scheduling schema accepts valid data and rejects invalid values / unknown fields", () => {
+    const valid = {
+      conflictPolicy: "ALLOW",
+      availability: [
+        {
+          membershipId: MEMBERSHIP_ID,
+          branchId: BRANCH_ID,
+          weekday: 1,
+          startMinute: 540,
+          endMinute: 720,
+        },
+      ],
+      blocks: [
+        {
+          membershipId: MEMBERSHIP_ID,
+          branchId: BRANCH_ID,
+          startsAt: "2026-01-16T13:00:00.000Z",
+          endsAt: "2026-01-16T14:00:00.000Z",
+        },
+      ],
+    };
+    expect(schedulingSettingsDefinition.schema.safeParse(valid).success).toBe(true);
+
+    const badPolicy = { conflictPolicy: "WARN", availability: [], blocks: [] };
+    expect(schedulingSettingsDefinition.schema.safeParse(badPolicy).success).toBe(false);
+
+    const unknownField = { conflictPolicy: "REJECT", availability: [], blocks: [], apiKey: "x" };
+    expect(schedulingSettingsDefinition.schema.safeParse(unknownField).success).toBe(false);
+
+    const badWindow = {
+      conflictPolicy: "REJECT",
+      availability: [
+        {
+          membershipId: "not-a-uuid",
+          branchId: BRANCH_ID,
+          weekday: 1,
+          startMinute: 0,
+          endMinute: 60,
+        },
+      ],
+      blocks: [],
+    };
+    expect(schedulingSettingsDefinition.schema.safeParse(badWindow).success).toBe(false);
+  });
+
+  it("rejects an availability window whose end is not strictly after its start", () => {
+    const base = { membershipId: MEMBERSHIP_ID, branchId: BRANCH_ID, weekday: 1 };
+
+    // Each bound is inside its own numeric range; only the cross-field ordering
+    // rule can reject these.
+    const equalEdges = { ...base, startMinute: 600, endMinute: 600 };
+    const inverted = { ...base, startMinute: 720, endMinute: 540 };
+    const valid = { ...base, startMinute: 540, endMinute: 720 };
+
+    expect(schedulingAvailabilityWindowSchema.safeParse(equalEdges).success).toBe(false);
+    expect(schedulingAvailabilityWindowSchema.safeParse(inverted).success).toBe(false);
+    expect(schedulingAvailabilityWindowSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it("rejects a one-off block whose end is not strictly after its start", () => {
+    const base = { membershipId: MEMBERSHIP_ID, branchId: BRANCH_ID };
+
+    // Both datetimes are individually valid ISO strings; only the cross-field
+    // ordering rule can reject these.
+    const equalEdges = {
+      ...base,
+      startsAt: "2026-01-16T13:00:00.000Z",
+      endsAt: "2026-01-16T13:00:00.000Z",
+    };
+    const inverted = {
+      ...base,
+      startsAt: "2026-01-16T14:00:00.000Z",
+      endsAt: "2026-01-16T13:00:00.000Z",
+    };
+    const valid = {
+      ...base,
+      startsAt: "2026-01-16T13:00:00.000Z",
+      endsAt: "2026-01-16T14:00:00.000Z",
+    };
+
+    expect(schedulingBlockSchema.safeParse(equalEdges).success).toBe(false);
+    expect(schedulingBlockSchema.safeParse(inverted).success).toBe(false);
+    expect(schedulingBlockSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it("rejects inverted ranges nested inside a full scheduling settings patch", () => {
+    const invertedAvailability = {
+      conflictPolicy: "REJECT",
+      availability: [
+        {
+          membershipId: MEMBERSHIP_ID,
+          branchId: BRANCH_ID,
+          weekday: 3,
+          startMinute: 720,
+          endMinute: 540,
+        },
+      ],
+      blocks: [],
+    };
+    expect(schedulingSettingsDefinition.schema.safeParse(invertedAvailability).success).toBe(false);
+
+    const invertedBlock = {
+      conflictPolicy: "REJECT",
+      availability: [],
+      blocks: [
+        {
+          membershipId: MEMBERSHIP_ID,
+          branchId: BRANCH_ID,
+          startsAt: "2026-01-16T14:00:00.000Z",
+          endsAt: "2026-01-16T13:00:00.000Z",
+        },
+      ],
+    };
+    expect(schedulingSettingsDefinition.schema.safeParse(invertedBlock).success).toBe(false);
   });
 });

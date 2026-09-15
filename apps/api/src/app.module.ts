@@ -12,6 +12,7 @@ import { EntitlementsModule } from "./entitlements/entitlements.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { PatientsModule } from "./patients/patients.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
+import { SchedulingModule } from "./scheduling/scheduling.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
 
@@ -38,6 +39,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     CustomersModule,
     PatientsModule,
     ClinicalModule,
+    SchedulingModule,
   ],
 })
 export class AppModule {}
