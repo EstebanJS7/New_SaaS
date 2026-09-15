@@ -6,7 +6,7 @@ import { RequestContextService } from "../context/request-context.service.js";
 import { IS_PUBLIC_ROUTE_KEY } from "../auth/public.decorator.js";
 import { REQUIRE_PERMISSIONS_KEY } from "./require-permissions.decorator.js";
 import { PermissionResolver } from "./permission-resolver.service.js";
-import { isAuthSurfacePath } from "./route-contract.js";
+import { isAuthSurfacePath, isPortalSurfacePath } from "./route-contract.js";
 
 /**
  * Deny-by-default permission gate — the THIRD link in the guard chain
@@ -17,10 +17,12 @@ import { isAuthSurfacePath } from "./route-contract.js";
  * Route contract (every route falls in exactly one bucket):
  * 1. public-exempt — `@Public` or the `/auth/*` surface: skipped with the SAME
  *    rules as the two upstream guards (auth stays reachable membership-less);
- * 2. declared — `@RequirePermissions` metadata present (empty array included:
+ * 2. portal-surface — `/portal/*` (EPIC-08 D2): skipped here; the isolated
+ *    PortalAuthGuard enforces it with the portal cookie and portal policy;
+ * 3. declared — `@RequirePermissions` metadata present (empty array included:
  *    authenticated-only); ALL declared keys must resolve from the active
  *    role's RolePermission rows (logical AND, design D1);
- * 3. VIOLATION — private route WITHOUT the decorator: rejected FORBIDDEN here,
+ * 4. VIOLATION — private route WITHOUT the decorator: rejected FORBIDDEN here,
  *    before any handler executes. This is what makes undeclared routes
  *    unreachable and keeps the route-contract probe meaningful.
  *
@@ -51,6 +53,13 @@ export class PermissionGuard implements CanActivate {
     // an absent pattern falls through to PRIVATE treatment (fail closed).
     // Shared predicate (route-contract.ts) — identical rules to the probe.
     if (isAuthSurfacePath(request.routeOptions.url ?? "")) {
+      return true;
+    }
+    // EPIC-08 D2: the portal surface enforces its own policy through
+    // PortalAuthGuard. Portal routes carry no `@RequirePermissions` (they are
+    // not staff authority), so this guard must skip them rather than treat
+    // them as undeclared VIOLATIONs.
+    if (isPortalSurfacePath(request.routeOptions.url ?? "")) {
       return true;
     }
 

@@ -3,6 +3,7 @@ import { Reflector } from "@nestjs/core";
 import { DomainError } from "@newsaas/shared";
 import type { FastifyRequest } from "fastify";
 import { RequestContextService } from "../context/request-context.service.js";
+import { isPortalSurfacePath } from "../rbac/route-contract.js";
 import { IS_PUBLIC_ROUTE_KEY } from "./public.decorator.js";
 import { STAFF_SESSION_COOKIE } from "./session-cookie.js";
 import { SessionService } from "./session.service.js";
@@ -16,6 +17,9 @@ import { SessionService } from "./session.service.js";
  * NEVER read identity from client-supplied fields. Failures throw the domain
  * UNAUTHENTICATED error before the handler runs, and the global filter renders
  * the 401 envelope.
+ *
+ * EPIC-08 D2: the `/portal/*` surface is skipped. Portal routes are guarded by
+ * the portal-only PortalAuthGuard; the staff cookie must never authorize them.
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -35,6 +39,14 @@ export class AuthGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<FastifyRequest>();
+    // EPIC-08 D2: the portal boundary has its own cookie and guard. Skipping
+    // here means a staff session can never authorize a portal route, and a
+    // portal-only request reaches PortalAuthGuard with the staff cookie
+    // untouched.
+    if (isPortalSurfacePath(request.routeOptions.url ?? "")) {
+      return true;
+    }
+
     const token = request.cookies?.[STAFF_SESSION_COOKIE];
     const session = await this.sessions.resolve(token);
     if (!session) {

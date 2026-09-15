@@ -4,6 +4,7 @@ import { DomainError } from "@newsaas/shared";
 import type { FastifyRequest } from "fastify";
 import { RequestContextService } from "../context/request-context.service.js";
 import { IS_PUBLIC_ROUTE_KEY } from "../auth/public.decorator.js";
+import { isPortalSurfacePath } from "../rbac/route-contract.js";
 import { TenantMembershipRepository } from "./tenant-membership.repository.js";
 
 const AUTH_ROUTE_SEGMENT = "/auth";
@@ -21,7 +22,9 @@ const AUTH_ROUTE_SEGMENT = "/auth";
  * authenticated session without membership gets 403 here, while the same
  * session still passes on `/auth/*` routes.
  *
- * Skip rules (design D3): `@Public` routes and the whole `/auth/*` surface.
+ * Skip rules (design D3 + EPIC-08 D2): `@Public` routes, the whole `/auth/*`
+ * surface, and the isolated `/portal/*` surface (portal identity resolves its
+ * own tenant through PortalAuthGuard).
  * Auth endpoints stay reachable for membership-less sessions (`/auth/me`,
  * `/auth/logout`), and login itself is anonymous. Everything else REQUIRES an
  * ACTIVE membership resolved server-side — the effective tenant derives
@@ -50,6 +53,13 @@ export class TenantActiveGuard implements CanActivate {
     // an absent pattern falls through to PRIVATE treatment (fail closed).
     const routePattern = request.routeOptions.url ?? "";
     if (routePattern === AUTH_ROUTE_SEGMENT || routePattern.startsWith(`${AUTH_ROUTE_SEGMENT}/`)) {
+      return true;
+    }
+    // EPIC-08 D2: the portal surface resolves its own tenant from the portal
+    // session's access row; it never requires (or consults) a staff
+    // membership. Skipping here is what makes a portal-only request reach
+    // PortalAuthGuard instead of failing FORBIDDEN.
+    if (isPortalSurfacePath(routePattern)) {
       return true;
     }
 
