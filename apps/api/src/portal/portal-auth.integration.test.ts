@@ -4,6 +4,8 @@ import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-ap
 import { seedTwoTenants, type TwoTenantFixture } from "../../test/support/seed-two-tenants.js";
 import { seedPortalAccess } from "../../test/support/seed-portal.js";
 import { CredentialService } from "../auth/credential.service.js";
+import { STAFF_SESSION_COOKIE } from "../auth/session-cookie.js";
+import { PORTAL_SESSION_COOKIE } from "./portal-session-cookie.js";
 
 interface ErrorEnvelopeBody {
   error: { code: string; message: string; requestId: string };
@@ -17,6 +19,16 @@ interface PortalMeBody {
 const HOLDER_PASSWORD = "portal-holder-password";
 const HOLDER_EMAIL = "holder-a@portal.test";
 const HOLDER_B_EMAIL = "holder-b@portal.test";
+
+/** Extracts the `name=value` pair of the first Set-Cookie with that name. */
+function readCookie(res: supertest.Response, name: string): string {
+  const cookies = res.headers["set-cookie"] as unknown as string[];
+  const match = cookies.find((cookie) => cookie.startsWith(`${name}=`));
+  if (!match) {
+    throw new Error(`Expected a ${name} cookie in: ${cookies.join(" | ")}`);
+  }
+  return match.split(";")[0] ?? match;
+}
 
 /**
  * EPIC-08 WU2 — portal identity boundary over real HTTP and the full guard
@@ -164,6 +176,140 @@ describe("portal identity boundary (real HTTP, full guard chain)", () => {
   });
 
   describe("portal login / logout", () => {
+    it("authenticates a holder, sets ONLY the portal cookie, and serves /portal/me", async () => {
+      const login = await supertest(server())
+        .post("/portal/login")
+        .send({
+          tenantSlug: fixture.tenants.a.slug,
+          email: HOLDER_EMAIL,
+          password: HOLDER_PASSWORD,
+        })
+        .expect(200);
+
+      const body = login.body as { portal: { portalAccessId: string; customerId: string } };
+      expect(body.portal.portalAccessId).toBe(holderAId);
+      expect(body.portal.customerId).toBe(customerAId);
+
+      const portalsessionCookie = readCookie(login, PORTAL_SESSION_COOKIE);
+      const setCookieHeader = login.headers["set-cookie"] as unknown as string[];
+      expect(setCookieHeader.some((entry) => entry.startsWith(`${STAFF_SESSION_COOKIE}=`))).toBe(
+        false
+      );
+
+      const me = await supertest(server())
+        .get("/portal/me")
+        .set("Cookie", portalsessionCookie)
+        .expect(200);
+      expect((me.body as PortalMeBody).portal.portalAccessId).toBe(holderAId);
+    });
+
+    it("rejects the holder email under the WRONG tenant slug with 401", async () => {
+      const response = await supertest(server())
+        .post("/portal/login")
+        .send({
+          tenantSlug: fixture.tenants.b.slug,
+          email: HOLDER_EMAIL,
+          password: HOLDER_PASSWORD,
+        })
+        .expect(401);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("UNAUTHENTICATED");
+    });
+
+    it("returns the byte-identical 401 envelope for a wrong password and an unknown holder", async () => {
+      const requestId = "portal-login-enumeration-proof";
+      const wrongPassword = await supertest(server())
+        .post("/portal/login")
+        .set("X-Request-Id", requestId)
+        .send({
+          tenantSlug: fixture.tenants.a.slug,
+          email: HOLDER_EMAIL,
+          password: "definitely-wrong-password",
+        })
+        .expect(401);
+      const unknownHolder = await supertest(server())
+        .post("/portal/login")
+        .set("X-Request-Id", requestId)
+        .send({
+          tenantSlug: fixture.tenants.a.slug,
+          email: "nobody@portal.test",
+          password: HOLDER_PASSWORD,
+        })
+        .expect(401);
+
+      expect(wrongPassword.text).toBe(unknownHolder.text);
+      expect((wrongPassword.body as ErrorEnvelopeBody).error.code).toBe("UNAUTHENTICATED");
+      // No cookie is issued on any failure path.
+      expect(wrongPassword.headers["set-cookie"]).toBeUndefined();
+    });
+
+    it("denies login for a valid holder in an unentitled tenant (403, no session issued)", async () => {
+      const response = await supertest(server())
+        .post("/portal/login")
+        .send({
+          tenantSlug: fixture.tenants.b.slug,
+          email: HOLDER_B_EMAIL,
+          password: HOLDER_PASSWORD,
+        })
+        .expect(403);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("FEATURE_NOT_ENTITLED");
+      expect(response.headers["set-cookie"]).toBeUndefined();
+    });
+
+    it("revokes the presented session on logout and rejects replays with 401", async () => {
+      const login = await supertest(server())
+        .post("/portal/login")
+        .send({
+          tenantSlug: fixture.tenants.a.slug,
+          email: HOLDER_EMAIL,
+          password: HOLDER_PASSWORD,
+        })
+        .expect(200);
+      const cookie = readCookie(login, PORTAL_SESSION_COOKIE);
+
+      await supertest(server()).get("/portal/me").set("Cookie", cookie).expect(200);
+      await supertest(server()).post("/portal/logout").set("Cookie", cookie).expect(204);
+      await supertest(server()).get("/portal/me").set("Cookie", cookie).expect(401);
+    });
+
+    it("records PORTAL-attributed audit rows for login success and failure", async () => {
+      const successRequestId = "portal-login-audit-success";
+      await supertest(server())
+        .post("/portal/login")
+        .set("X-Request-Id", successRequestId)
+        .send({
+          tenantSlug: fixture.tenants.a.slug,
+          email: HOLDER_EMAIL,
+          password: HOLDER_PASSWORD,
+        })
+        .expect(200);
+
+      const failedRequestId = "portal-login-audit-failure";
+      await supertest(server())
+        .post("/portal/login")
+        .set("X-Request-Id", failedRequestId)
+        .send({
+          tenantSlug: fixture.tenants.a.slug,
+          email: HOLDER_EMAIL,
+          password: "nope-not-the-password",
+        })
+        .expect(401);
+
+      const success = booted.db.prisma.auditLog.findFirst({
+        where: { requestId: successRequestId },
+      });
+      expect(success?.action).toBe("portal.login_succeeded");
+      expect(success?.actorType).toBe("PORTAL");
+      expect(success?.actorPortalAccessId).toBe(holderAId);
+      expect(success?.actorUserProfileId).toBeUndefined();
+
+      const failure = booted.db.prisma.auditLog.findFirst({
+        where: { requestId: failedRequestId },
+      });
+      expect(failure?.action).toBe("portal.login_failed");
+      expect(failure?.actorType).toBe("PORTAL");
+      expect(failure?.actorPortalAccessId).toBe(holderAId);
+    });
+
     it("fails closed when two ACTIVE holders share the login email instead of resolving an arbitrary holder", async () => {
       // The partial unique index (tenant_id, contact_email) WHERE ACTIVE forbids
       // this state; the in-memory boundary does not enforce indexes, so seed the
