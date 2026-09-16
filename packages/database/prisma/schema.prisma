@@ -211,9 +211,14 @@ model TenantMembership {
 /// holder per Customer is enforced by the partial unique index
 /// `customer_portal_access_active_customer_key` on (tenant_id, customer_id)
 /// WHERE status = 'ACTIVE', declared as raw SQL in the portal migration because
-/// Prisma cannot express partial indexes. `status` carries the lifecycle string
-/// 'ACTIVE' | 'REVOKED'; revocation invalidates sessions and the audited row is
-/// never deleted.
+/// Prisma cannot express partial indexes. The login id (`contactEmail`, D8) is
+/// canonicalized with lower() on both input handling and the DB key: the partial
+/// unique index `customer_portal_access_active_contact_email_key` on
+/// (tenant_id, lower(contact_email)) WHERE status = 'ACTIVE' pins one ACTIVE
+/// holder per tenant canonical email — case-variant rows included — so
+/// tenant-scoped portal login can never resolve an ambiguous holder.
+/// `status` carries the lifecycle string 'ACTIVE' | 'REVOKED'; revocation
+/// invalidates sessions and the audited row is never deleted.
 /// Data classification: contact_email INTERNAL — never logged.
 model CustomerPortalAccess {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

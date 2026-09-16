@@ -35,20 +35,37 @@ interface PortalAuthPrisma {
     }) => Promise<{ id: string } | null>;
   };
   customerPortalAccess: {
-    findFirst: (args: {
-      where: { tenantId: string; contactEmail: string; status: string };
+    /**
+     * Login resolves the holder by (tenant, CANONICAL contactEmail, ACTIVE). The
+     * submitted email is lowercased and matched case-insensitively so stored
+     * case-variants resolve to the same identity, mirroring the DB key
+     * `customer_portal_access_active_contact_email_key` on
+     * (tenant_id, lower(contact_email)) WHERE status = 'ACTIVE'. It reads at
+     * most two rows so an ambiguous login identity can be detected and failed
+     * closed instead of resolving an arbitrary holder.
+     */
+    findMany: (args: {
+      where: {
+        tenantId: string;
+        contactEmail: { equals: string; mode: "insensitive" };
+        status: string;
+      };
+      orderBy: { id: "asc" };
+      take: 2;
       select: {
         id: true;
         tenantId: true;
         customerId: true;
         credential: { select: { passwordHash: true } };
       };
-    }) => Promise<{
-      id: string;
-      tenantId: string;
-      customerId: string;
-      credential: { passwordHash: string } | null;
-    } | null>;
+    }) => Promise<
+      {
+        id: string;
+        tenantId: string;
+        customerId: string;
+        credential: { passwordHash: string } | null;
+      }[]
+    >;
   };
 }
 
@@ -97,9 +114,19 @@ export class PortalAuthService {
       where: { slug: input.tenantSlug },
       select: { id: true },
     });
-    const access = tenant
-      ? await this.prisma.customerPortalAccess.findFirst({
-          where: { tenantId: tenant.id, contactEmail: email, status: "ACTIVE" },
+    const candidates = tenant
+      ? await this.prisma.customerPortalAccess.findMany({
+          where: {
+            tenantId: tenant.id,
+            // Canonical, case-insensitive match: the DB key is lower(contact_email)
+            // and stored rows may be non-canonical, so a case-sensitive lookup
+            // would miss a valid holder while a raw-column key would let two
+            // case-variant ACTIVE rows through.
+            contactEmail: { equals: email, mode: "insensitive" },
+            status: "ACTIVE",
+          },
+          orderBy: { id: "asc" },
+          take: 2,
           select: {
             id: true,
             tenantId: true,
@@ -107,18 +134,27 @@ export class PortalAuthService {
             credential: { select: { passwordHash: true } },
           },
         })
-      : null;
+      : [];
+
+    // Fail closed on an ambiguous login identity. The canonical partial unique
+    // index (tenant_id, lower(contact_email)) WHERE status = 'ACTIVE' makes this
+    // unreachable in a migrated database, but if legacy or out-of-band rows ever
+    // collide we MUST NOT authenticate as an arbitrary holder: no real hash is
+    // verified and the failure is SYSTEM-attributed because no single holder is
+    // authoritative.
+    const ambiguous = candidates.length > 1;
+    const access = ambiguous ? null : candidates[0];
 
     // Constant-work pattern: verify against SOMETHING on every path.
     const storedHash = access?.credential?.passwordHash ?? (await this.dummyHash());
     const passwordMatches = await this.credentials.verify(input.password, storedHash);
 
-    if (!access?.credential || !passwordMatches) {
+    if (ambiguous || !access?.credential || !passwordMatches) {
       this.rateLimiter.recordFailure(limiterKey);
       // Audit-or-nothing, exactly like the staff login. A resolved holder is
-      // PORTAL-attributed; an unmatched attempt is SYSTEM (no holder identity
-      // exists to attribute). metadata.email is INTERNAL-classified identifier
-      // data — never a credential.
+      // PORTAL-attributed; an unmatched OR ambiguous attempt is SYSTEM (no
+      // single holder identity exists to attribute). metadata.email is
+      // INTERNAL-classified identifier data — never a credential.
       await this.audit.append({
         action: "portal.login_failed",
         ...(tenant && { tenantId: tenant.id }),

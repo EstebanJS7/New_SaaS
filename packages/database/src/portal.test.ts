@@ -27,6 +27,7 @@ import {
 const SCHEMA = loadPrismaSchema();
 const MIGRATIONS = loadMigrations();
 const PORTAL_SQL = findMigration(MIGRATIONS, "_portal").sql;
+const PORTAL_LOGIN_IDENTITY_SQL = findMigration(MIGRATIONS, "_portal_active_contact_email").sql;
 
 function modelBlock(model: string): string {
   const start = SCHEMA.indexOf(`model ${model} `);
@@ -157,6 +158,55 @@ describe("migration · portal foundation (EPIC-08 WU1)", () => {
     expect(PORTAL_SQL).toMatch(
       /ADD CONSTRAINT "audit_log_actor_portal_access_id_fkey"\s+FOREIGN KEY \("actor_portal_access_id"\) REFERENCES "customer_portal_access"\("id"\)\s+ON DELETE RESTRICT/
     );
+  });
+});
+
+describe("migration · portal active login identity (EPIC-08 WU2C security fix)", () => {
+  it("enforces at most one ACTIVE holder per tenant CANONICAL contact email", () => {
+    // The login id is the tenant-scoped contact email canonicalized with lower()
+    // (D8), so the key MUST be lower(contact_email), not the raw column:
+    // case-variant rows are the same identity and would otherwise slip past the
+    // uniqueness and leave login with two ACTIVE candidates.
+    expect(PORTAL_LOGIN_IDENTITY_SQL).toMatch(
+      /CREATE UNIQUE INDEX "customer_portal_access_active_contact_email_key"\s+ON "customer_portal_access"\("tenant_id", lower\("contact_email"\)\)\s+WHERE "status" = 'ACTIVE'/
+    );
+  });
+
+  it("keeps the index partial and tenant-scoped so revoked/reused emails stay legal", () => {
+    // WHERE 'ACTIVE' lets a REVOKED row keep the same email, and tenant_id
+    // leads the key so unrelated tenants can reuse an email.
+    expect(PORTAL_LOGIN_IDENTITY_SQL).toMatch(/WHERE "status" = 'ACTIVE'/);
+    expect(PORTAL_LOGIN_IDENTITY_SQL).toMatch(
+      /ON "customer_portal_access"\("tenant_id", lower\("contact_email"\)\)/
+    );
+    // Additive: the fix ships as its own migration and never rewrites the
+    // applied portal foundation migration.
+    expect(PORTAL_SQL).not.toMatch(/customer_portal_access_active_contact_email_key/);
+  });
+
+  it("preflights existing duplicates on the canonical email and fails with remediation", () => {
+    // A live database may already contain duplicate ACTIVE canonical identities
+    // from a pre-fix write path. Building the unique index would fail with an
+    // opaque error, so the migration must detect every duplicate GROUP (same
+    // tenant + lower(contact_email)) and abort with actionable guidance.
+    expect(PORTAL_LOGIN_IDENTITY_SQL).toMatch(/GROUP BY "tenant_id", lower\("contact_email"\)/);
+    expect(PORTAL_LOGIN_IDENTITY_SQL).toMatch(/HAVING count\(\*\) > 1/);
+    expect(PORTAL_LOGIN_IDENTITY_SQL).toMatch(/RAISE EXCEPTION/);
+    // Actionable: it names the state transition out of the ambiguous identity.
+    expect(PORTAL_LOGIN_IDENTITY_SQL).toMatch(/REVOKED/);
+  });
+
+  it("keeps the preflight read-only and runs it before the index build", () => {
+    // Non-destructive: the preflight must never merge or delete data — the
+    // operator resolves each duplicate group explicitly.
+    expect(PORTAL_LOGIN_IDENTITY_SQL).not.toMatch(/\b(UPDATE|DELETE|INSERT)\b/i);
+    // The preflight must execute BEFORE the index, otherwise a duplicate row
+    // turns the migration into a bare constraint error.
+    const preflight = PORTAL_LOGIN_IDENTITY_SQL.indexOf("RAISE EXCEPTION");
+    const index = PORTAL_LOGIN_IDENTITY_SQL.indexOf("CREATE UNIQUE INDEX");
+    expect(preflight).toBeGreaterThan(-1);
+    expect(index).toBeGreaterThan(-1);
+    expect(preflight).toBeLessThan(index);
   });
 });
 
