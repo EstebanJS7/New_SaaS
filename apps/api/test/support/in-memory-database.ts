@@ -306,6 +306,34 @@ export interface PatientGuardianWhere {
   isActive?: boolean;
 }
 
+/**
+ * Tenant-scoped ClinicalEncounter row (EPIC-06). `internalNotes` is staff-only:
+ * the portal read boundary must project it away, so the fake intentionally
+ * returns it to make an allowlist regression fail loudly.
+ */
+export interface ClinicalEncounterRow {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  status: "DRAFT" | "CLOSED";
+  clientSummary: string | null;
+  internalNotes: string | null;
+  closedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Tenant-scoped ClinicalVaccination row (EPIC-06). */
+export interface ClinicalVaccinationRow {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  vaccine: string;
+  administeredAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /** Tenant-scoped Branch row (EPIC-07 scheduling anchor; branch admin stays out of scope). */
 export interface BranchRow {
   id: string;
@@ -339,7 +367,8 @@ export interface AppointmentWhere {
   id?: string | { not: string };
   tenantId?: string;
   branchId?: string;
-  patientId?: string;
+  /** Scalar or `{ in: [...] }` — the portal read lists appointments per pet set. */
+  patientId?: string | { in: string[] };
   professionalMembershipId?: string;
   /** Scalar or `{ in: [...] }` — mirrors the Prisma filter shapes we use. */
   status?: AppointmentStatusRow | { in: AppointmentStatusRow[] };
@@ -571,7 +600,8 @@ export interface IsolationDatabase {
     };
     patient: {
       findMany: (args: {
-        where: { tenantId: string; isActive?: boolean };
+        // `id.in` mirrors the portal read's holder-owned pet id set.
+        where: { tenantId: string; isActive?: boolean; id?: { in: string[] } };
         orderBy?: { name?: "asc" | "desc" };
       }) => PatientRow[];
       findFirst: (args: { where: { id: string; tenantId: string } }) => PatientRow | null;
@@ -600,7 +630,8 @@ export interface IsolationDatabase {
     };
     patientGuardian: {
       findMany: (args: {
-        where: { tenantId: string; patientId: string; isActive?: boolean };
+        // `patientId` is optional: the portal read lists a Customer's links.
+        where: { tenantId: string; patientId?: string; customerId?: string; isActive?: boolean };
         orderBy?: { position?: "asc" | "desc" };
       }) => PatientGuardianRow[];
       findFirst: (args: { where: PatientGuardianWhere }) => PatientGuardianRow | null;
@@ -618,6 +649,37 @@ export interface IsolationDatabase {
         where: PatientGuardianWhere;
         data: { isPrimary?: boolean; isActive?: boolean; position?: number };
       }) => { count: number };
+    };
+    clinicalEncounter: {
+      create: (args: {
+        data: {
+          tenantId: string;
+          patientId: string;
+          status?: "DRAFT" | "CLOSED";
+          clientSummary?: string | null;
+          internalNotes?: string | null;
+          closedAt?: Date | null;
+        };
+      }) => ClinicalEncounterRow;
+      /** `select` is accepted but NOT enforced: the caller's projection is under test. */
+      findMany: (args: {
+        where: { tenantId: string; patientId: string };
+        select?: unknown;
+      }) => ClinicalEncounterRow[];
+    };
+    clinicalVaccination: {
+      create: (args: {
+        data: {
+          tenantId: string;
+          patientId: string;
+          vaccine: string;
+          administeredAt: Date;
+        };
+      }) => ClinicalVaccinationRow;
+      findMany: (args: {
+        where: { tenantId: string; patientId: string };
+        select?: unknown;
+      }) => ClinicalVaccinationRow[];
     };
     branch: {
       create: (args: { data: { tenantId: string; name: string } }) => BranchRow;
@@ -774,6 +836,8 @@ export interface IsolationDatabase {
     breeds: Map<string, BreedRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
+    clinicalEncounters: Map<string, ClinicalEncounterRow>;
+    clinicalVaccinations: Map<string, ClinicalVaccinationRow>;
     branches: Map<string, BranchRow>;
     appointments: Map<string, AppointmentRow>;
   };
@@ -872,7 +936,13 @@ function matchesAppointment(where: AppointmentWhere, candidate: AppointmentRow):
   }
   if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) return false;
   if (where.branchId !== undefined && candidate.branchId !== where.branchId) return false;
-  if (where.patientId !== undefined && candidate.patientId !== where.patientId) return false;
+  if (where.patientId !== undefined) {
+    if (typeof where.patientId === "string") {
+      if (candidate.patientId !== where.patientId) return false;
+    } else if (!where.patientId.in.includes(candidate.patientId)) {
+      return false;
+    }
+  }
   if (
     where.professionalMembershipId !== undefined &&
     candidate.professionalMembershipId !== where.professionalMembershipId
@@ -926,6 +996,8 @@ export function createIsolationDatabase(): IsolationDatabase {
   const breedTable = new Map<string, BreedRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
+  const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
+  const clinicalVaccinationTable = new Map<string, ClinicalVaccinationRow>();
   const branchTable = new Map<string, BranchRow>();
   const appointmentTable = new Map<string, AppointmentRow>();
 
@@ -961,6 +1033,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     breeds: breedTable,
     patients: patientTable,
     patientGuardians: patientGuardianTable,
+    clinicalEncounters: clinicalEncounterTable,
+    clinicalVaccinations: clinicalVaccinationTable,
     branches: branchTable,
     appointments: appointmentTable,
   };
@@ -1498,7 +1572,8 @@ export function createIsolationDatabase(): IsolationDatabase {
         let rows = [...patientTable.values()].filter(
           (candidate) =>
             candidate.tenantId === where.tenantId &&
-            (where.isActive === undefined || candidate.isActive === where.isActive)
+            (where.isActive === undefined || candidate.isActive === where.isActive) &&
+            (where.id === undefined || where.id.in.includes(candidate.id))
         );
         if (orderBy?.name) {
           rows = rows.sort((left, right) => left.name.localeCompare(right.name));
@@ -1540,7 +1615,8 @@ export function createIsolationDatabase(): IsolationDatabase {
         let rows = [...patientGuardianTable.values()].filter(
           (candidate) =>
             candidate.tenantId === where.tenantId &&
-            candidate.patientId === where.patientId &&
+            (where.patientId === undefined || candidate.patientId === where.patientId) &&
+            (where.customerId === undefined || candidate.customerId === where.customerId) &&
             (where.isActive === undefined || candidate.isActive === where.isActive)
         );
         if (orderBy?.position) {
@@ -1589,6 +1665,52 @@ export function createIsolationDatabase(): IsolationDatabase {
         }
         return { count };
       },
+    },
+    clinicalEncounter: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: ClinicalEncounterRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          patientId: data.patientId,
+          status: data.status ?? "DRAFT",
+          clientSummary: data.clientSummary ?? null,
+          internalNotes: data.internalNotes ?? null,
+          closedAt: data.closedAt ?? null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        clinicalEncounterTable.set(created.id, created);
+        return created;
+      },
+      // Returns the FULL row (including `internalNotes`): a portal regression
+      // that forgets the allowlist must fail against this boundary.
+      findMany: ({ where }) =>
+        [...clinicalEncounterTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId && candidate.patientId === where.patientId
+        ),
+    },
+    clinicalVaccination: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: ClinicalVaccinationRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          patientId: data.patientId,
+          vaccine: data.vaccine,
+          administeredAt: data.administeredAt,
+          createdAt: now,
+          updatedAt: now,
+        };
+        clinicalVaccinationTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where }) =>
+        [...clinicalVaccinationTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId && candidate.patientId === where.patientId
+        ),
     },
     branch: {
       create: ({ data }) => {
@@ -2003,6 +2125,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       breeds: breedTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
+      clinicalEncounters: clinicalEncounterTable,
+      clinicalVaccinations: clinicalVaccinationTable,
       branches: branchTable,
       appointments: appointmentTable,
     },
