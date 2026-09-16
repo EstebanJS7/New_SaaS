@@ -329,6 +329,5 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
         .send({ phone: "+595981000000" })
         .expect(404);
     });
-
   });
 });
