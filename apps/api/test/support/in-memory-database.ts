@@ -387,6 +387,32 @@ export interface AppointmentUpdateData {
   endAt?: Date;
 }
 
+/**
+ * Tenant-scoped PortalBookingRequest row (EPIC-08 WU4A): a holder-submitted
+ * request that staff must decide on. `status` defaults to PENDING, mirroring
+ * the schema default.
+ */
+export interface PortalBookingRequestRow {
+  id: string;
+  tenantId: string;
+  customerId: string;
+  patientId: string;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+  startAt: Date;
+  endAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Scalar/optional Prisma filter over PortalBookingRequest (mirrors the service). */
+export interface PortalBookingRequestWhere {
+  id?: string;
+  tenantId?: string;
+  customerId?: string;
+  patientId?: string;
+  status?: PortalBookingRequestRow["status"] | { in: PortalBookingRequestRow["status"][] };
+}
+
 interface MembershipWhere {
   id?: string;
   tenantId?: string;
@@ -702,6 +728,24 @@ export interface IsolationDatabase {
         count: number;
       };
     };
+    portalBookingRequest: {
+      create: (args: {
+        data: {
+          tenantId: string;
+          customerId: string;
+          patientId: string;
+          /** Optional: mirrors the schema default PENDING. */
+          status?: PortalBookingRequestRow["status"];
+          startAt: Date;
+          endAt: Date;
+        };
+      }) => PortalBookingRequestRow;
+      findMany: (args: {
+        where: PortalBookingRequestWhere;
+        orderBy?: { startAt?: "asc" | "desc" };
+      }) => PortalBookingRequestRow[];
+      findFirst: (args: { where: PortalBookingRequestWhere }) => PortalBookingRequestRow | null;
+    };
     role: {
       create: (args: { data: { code: string; name: string } }) => RoleRow;
       findUnique: (args: { where: { code: string } }) => RoleRow | null;
@@ -840,6 +884,7 @@ export interface IsolationDatabase {
     clinicalVaccinations: Map<string, ClinicalVaccinationRow>;
     branches: Map<string, BranchRow>;
     appointments: Map<string, AppointmentRow>;
+    portalBookingRequests: Map<string, PortalBookingRequestRow>;
   };
   /** In-memory object storage for tests to inspect signed URLs and key retirement. */
   storage: InMemoryStorageDriver;
@@ -969,6 +1014,25 @@ function matchesAppointment(where: AppointmentWhere, candidate: AppointmentRow):
   return true;
 }
 
+/** Faithful-enough PortalBookingRequest matcher for the shipped predicates. */
+function matchesPortalBookingRequest(
+  where: PortalBookingRequestWhere,
+  candidate: PortalBookingRequestRow
+): boolean {
+  if (where.id !== undefined && candidate.id !== where.id) return false;
+  if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) return false;
+  if (where.customerId !== undefined && candidate.customerId !== where.customerId) return false;
+  if (where.patientId !== undefined && candidate.patientId !== where.patientId) return false;
+  if (where.status !== undefined) {
+    if (typeof where.status === "string") {
+      if (candidate.status !== where.status) return false;
+    } else if (!where.status.in.includes(candidate.status)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -1000,6 +1064,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const clinicalVaccinationTable = new Map<string, ClinicalVaccinationRow>();
   const branchTable = new Map<string, BranchRow>();
   const appointmentTable = new Map<string, AppointmentRow>();
+  const portalBookingRequestTable = new Map<string, PortalBookingRequestRow>();
 
   /** Role-code predicate for membership options (EPIC-07 professional lookup). */
   const roleCodeMatches = (where: MembershipWhere, candidate: TenantMembershipRow): boolean =>
@@ -1037,6 +1102,7 @@ export function createIsolationDatabase(): IsolationDatabase {
     clinicalVaccinations: clinicalVaccinationTable,
     branches: branchTable,
     appointments: appointmentTable,
+    portalBookingRequests: portalBookingRequestTable,
   };
 
   function snapshotTables(): TableSnapshot {
@@ -1784,6 +1850,40 @@ export function createIsolationDatabase(): IsolationDatabase {
         return { count };
       },
     },
+    portalBookingRequest: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: PortalBookingRequestRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          customerId: data.customerId,
+          patientId: data.patientId,
+          // Mirrors the schema default so a caller that omits it still gets
+          // PENDING, exactly like Prisma.
+          status: data.status ?? "PENDING",
+          startAt: data.startAt,
+          endAt: data.endAt,
+          createdAt: now,
+          updatedAt: now,
+        };
+        portalBookingRequestTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where, orderBy }) => {
+        const rows = [...portalBookingRequestTable.values()].filter((candidate) =>
+          matchesPortalBookingRequest(where, candidate)
+        );
+        if (orderBy?.startAt) {
+          rows.sort((left, right) => left.startAt.getTime() - right.startAt.getTime());
+          if (orderBy.startAt === "desc") rows.reverse();
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...portalBookingRequestTable.values()].find((candidate) =>
+          matchesPortalBookingRequest(where, candidate)
+        ) ?? null,
+    },
     role: {
       create: ({ data }) => {
         const created: RoleRow = { id: randomUUID(), code: data.code, name: data.name };
@@ -2129,6 +2229,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       clinicalVaccinations: clinicalVaccinationTable,
       branches: branchTable,
       appointments: appointmentTable,
+      portalBookingRequests: portalBookingRequestTable,
     },
     storage,
   };
