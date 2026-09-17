@@ -67,10 +67,12 @@ export interface TenantMembershipRow {
 export interface AuditLogRow {
   id: string;
   action: string;
-  actorType: "STAFF" | "SYSTEM";
+  actorType: "STAFF" | "SYSTEM" | "PORTAL";
   metadata: Record<string, unknown>;
   tenantId?: string;
   actorUserProfileId?: string;
+  /** PORTAL-attributed rows carry the holder; staff/system rows never do. */
+  actorPortalAccessId?: string;
   targetType?: string;
   targetId?: string;
   requestId?: string;
@@ -208,6 +210,38 @@ export interface CustomerContactRow {
   value: string;
   isPrimary: boolean;
   isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** First-party Customer-linked portal holder row (EPIC-08 D1). */
+export interface CustomerPortalAccessRow {
+  id: string;
+  tenantId: string;
+  customerId: string;
+  contactEmail: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** 1:1 portal credential row (shared PK with the holder); RESTRICTED hash. */
+export interface PortalCredentialRow {
+  portalAccessId: string;
+  passwordHash: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Portal session row (EPIC-08 D1); mirrors PortalSessionService's shape. */
+export interface PortalSessionRow {
+  id: string;
+  portalAccessId: string;
+  tokenHash: string;
+  lastSeenAt: Date;
+  idleExpiresAt: Date;
+  absoluteExpiresAt: Date;
+  revokedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -442,6 +476,56 @@ export interface IsolationDatabase {
         data: Partial<Omit<CustomerContactRow, "id" | "tenantId" | "customerId" | "createdAt">>;
       }) => { count: number };
     };
+    customerPortalAccess: {
+      create: (args: {
+        data: { tenantId: string; customerId: string; contactEmail: string; status: string };
+      }) => CustomerPortalAccessRow;
+      findUnique: (args: {
+        where: { id: string };
+        select?: unknown;
+      }) => CustomerPortalAccessRow | null;
+      /** Reproduces the `credential` join the portal login read selects. */
+      findFirst: (args: {
+        where: {
+          id?: string;
+          tenantId: string;
+          customerId?: string;
+          contactEmail?: string;
+          status?: string;
+        };
+        select?: unknown;
+      }) => (CustomerPortalAccessRow & { credential?: { passwordHash: string } | null }) | null;
+      updateMany: (args: {
+        where: { id: string; tenantId: string; status?: string };
+        data: { status?: string };
+      }) => { count: number };
+    };
+    portalCredential: {
+      create: (args: {
+        data: { portalAccessId: string; passwordHash: string };
+      }) => PortalCredentialRow;
+      findUnique: (args: { where: { portalAccessId: string } }) => PortalCredentialRow | null;
+    };
+    portalSession: {
+      create: (args: {
+        data: {
+          portalAccessId: string;
+          tokenHash: string;
+          lastSeenAt: Date;
+          idleExpiresAt: Date;
+          absoluteExpiresAt: Date;
+        };
+      }) => PortalSessionRow;
+      findUnique: (args: { where: { tokenHash: string } }) => PortalSessionRow | null;
+      update: (args: {
+        where: { id: string };
+        data: Partial<PortalSessionRow>;
+      }) => PortalSessionRow;
+      updateMany: (args: {
+        where: { tokenHash?: string; portalAccessId?: string; revokedAt?: null };
+        data: { revokedAt: Date };
+      }) => { count: number };
+    };
     species: {
       create: (args: { data: { code: string; name: string } }) => SpeciesRow;
       findFirst: (args: { where: { id: string }; select?: { id: true } }) => SpeciesRow | null;
@@ -656,6 +740,9 @@ export interface IsolationDatabase {
     customers: Map<string, CustomerRow>;
     customerAddresses: Map<string, CustomerAddressRow>;
     customerContacts: Map<string, CustomerContactRow>;
+    portalAccess: Map<string, CustomerPortalAccessRow>;
+    portalCredentials: Map<string, PortalCredentialRow>;
+    portalSessions: Map<string, PortalSessionRow>;
     species: Map<string, SpeciesRow>;
     breeds: Map<string, BreedRow>;
     patients: Map<string, PatientRow>;
@@ -768,6 +855,9 @@ export function createIsolationDatabase(): IsolationDatabase {
   const customers = new Map<string, CustomerRow>();
   const customerAddresses = new Map<string, CustomerAddressRow>();
   const customerContacts = new Map<string, CustomerContactRow>();
+  const portalAccess = new Map<string, CustomerPortalAccessRow>();
+  const portalCredentials = new Map<string, PortalCredentialRow>();
+  const portalSessions = new Map<string, PortalSessionRow>();
   const speciesTable = new Map<string, SpeciesRow>();
   const breedTable = new Map<string, BreedRow>();
   const patientTable = new Map<string, PatientRow>();
@@ -800,6 +890,9 @@ export function createIsolationDatabase(): IsolationDatabase {
     customers,
     customerAddresses,
     customerContacts,
+    portalAccess,
+    portalCredentials,
+    portalSessions,
     species: speciesTable,
     breeds: breedTable,
     patients: patientTable,
@@ -1176,6 +1269,111 @@ export function createIsolationDatabase(): IsolationDatabase {
         if (data.isActive !== undefined) updated.isActive = data.isActive;
         customerContacts.set(updated.id, updated);
         return { count: 1 };
+      },
+    },
+    customerPortalAccess: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: CustomerPortalAccessRow = {
+          id: randomUUID(),
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        };
+        portalAccess.set(created.id, created);
+        return created;
+      },
+      findUnique: ({ where }) => portalAccess.get(where.id) ?? null,
+      findFirst: ({ where }) => {
+        const row =
+          [...portalAccess.values()].find(
+            (candidate) =>
+              (where.id === undefined || candidate.id === where.id) &&
+              candidate.tenantId === where.tenantId &&
+              (where.customerId === undefined || candidate.customerId === where.customerId) &&
+              (where.contactEmail === undefined || candidate.contactEmail === where.contactEmail) &&
+              (where.status === undefined || candidate.status === where.status)
+          ) ?? null;
+        if (!row) return null;
+        // Reproduce the `credential` join the portal login read selects. The
+        // password hash is RESTRICTED and only ever surfaces on this path.
+        const credential = portalCredentials.get(row.id);
+        return {
+          ...row,
+          credential: credential ? { passwordHash: credential.passwordHash } : null,
+        };
+      },
+      updateMany: ({ where, data }) => {
+        const existing = portalAccess.get(where.id);
+        if (!existing) {
+          return { count: 0 };
+        }
+        if (existing.tenantId !== where.tenantId) {
+          return { count: 0 };
+        }
+        if (where.status !== undefined && existing.status !== where.status) {
+          return { count: 0 };
+        }
+        if (data.status !== undefined) existing.status = data.status;
+        existing.updatedAt = new Date();
+        return { count: 1 };
+      },
+    },
+    portalCredential: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: PortalCredentialRow = {
+          portalAccessId: data.portalAccessId,
+          passwordHash: data.passwordHash,
+          createdAt: now,
+          updatedAt: now,
+        };
+        portalCredentials.set(created.portalAccessId, created);
+        return created;
+      },
+      findUnique: ({ where }) => portalCredentials.get(where.portalAccessId) ?? null,
+    },
+    portalSession: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: PortalSessionRow = {
+          id: randomUUID(),
+          ...data,
+          revokedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        portalSessions.set(created.tokenHash, created);
+        return created;
+      },
+      findUnique: ({ where }) => portalSessions.get(where.tokenHash) ?? null,
+      update: ({ where, data }) => {
+        const existing = [...portalSessions.values()].find((entry) => entry.id === where.id);
+        if (!existing) {
+          // Structural P2025 mirrors the real delegate's rejected shape
+          // (PortalSessionService detects lost races via err.code).
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        Object.assign(existing, data);
+        existing.updatedAt = new Date();
+        return existing;
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const candidate of portalSessions.values()) {
+          if (where.tokenHash !== undefined && candidate.tokenHash !== where.tokenHash) continue;
+          if (
+            where.portalAccessId !== undefined &&
+            candidate.portalAccessId !== where.portalAccessId
+          ) {
+            continue;
+          }
+          if (where.revokedAt === null && candidate.revokedAt !== null) continue;
+          candidate.revokedAt = data.revokedAt;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
       },
     },
     species: {
@@ -1723,6 +1921,9 @@ export function createIsolationDatabase(): IsolationDatabase {
       customers,
       customerAddresses,
       customerContacts,
+      portalAccess,
+      portalCredentials,
+      portalSessions,
       species: speciesTable,
       breeds: breedTable,
       patients: patientTable,
