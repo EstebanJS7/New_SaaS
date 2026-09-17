@@ -441,6 +441,21 @@ interface MembershipOrder {
   id?: "asc" | "desc";
 }
 
+/**
+ * Scalar/`{ not }` filter over Customer child rows (EPIC-08 WU4C). The portal
+ * profile boundary demotes the holder's sibling PHONE rows with ONE set-based
+ * `updateMany`, so the fake must reproduce a filter-shaped (not id-keyed)
+ * where clause the way the real delegate does.
+ */
+interface CustomerContactWhere {
+  id?: string | { not: string };
+  tenantId?: string;
+  customerId?: string;
+  isActive?: boolean;
+  kind?: "EMAIL" | "PHONE";
+  isPrimary?: boolean;
+}
+
 export interface IsolationDatabase {
   prisma: {
     $transaction: <T>(callback: (tx: IsolationDatabase["prisma"]) => Promise<T>) => Promise<T>;
@@ -520,14 +535,18 @@ export interface IsolationDatabase {
     customerAddress: {
       findMany: (args: {
         where: { tenantId: string; customerId: string; isActive?: boolean };
-        orderBy?: { createdAt?: "asc" | "desc" };
+        orderBy?: { createdAt?: "asc" | "desc"; updatedAt?: "asc" | "desc" };
+        take?: number;
       }) => CustomerAddressRow[];
       findFirst: (args: {
         where: { id: string; tenantId: string; customerId: string };
       }) => CustomerAddressRow | null;
       findUnique: (args: { where: { id: string } }) => CustomerAddressRow | null;
       create: (args: {
-        data: Omit<CustomerAddressRow, "id" | "createdAt" | "updatedAt">;
+        data: Omit<CustomerAddressRow, "id" | "createdAt" | "updatedAt"> & {
+          createdAt?: Date;
+          updatedAt?: Date;
+        };
       }) => CustomerAddressRow;
       updateMany: (args: {
         where: { id: string; tenantId: string; customerId: string; isActive?: boolean };
@@ -536,18 +555,28 @@ export interface IsolationDatabase {
     };
     customerContact: {
       findMany: (args: {
-        where: { tenantId: string; customerId: string; isActive?: boolean };
-        orderBy?: { createdAt?: "asc" | "desc" };
+        where: {
+          tenantId: string;
+          customerId: string;
+          isActive?: boolean;
+          kind?: "EMAIL" | "PHONE";
+          isPrimary?: boolean;
+        };
+        orderBy?: { createdAt?: "asc" | "desc"; updatedAt?: "asc" | "desc" };
+        take?: number;
       }) => CustomerContactRow[];
       findFirst: (args: {
         where: { id: string; tenantId: string; customerId: string };
       }) => CustomerContactRow | null;
       findUnique: (args: { where: { id: string } }) => CustomerContactRow | null;
       create: (args: {
-        data: Omit<CustomerContactRow, "id" | "createdAt" | "updatedAt">;
+        data: Omit<CustomerContactRow, "id" | "createdAt" | "updatedAt"> & {
+          createdAt?: Date;
+          updatedAt?: Date;
+        };
       }) => CustomerContactRow;
       updateMany: (args: {
-        where: { id: string; tenantId: string; customerId: string; isActive?: boolean };
+        where: CustomerContactWhere;
         data: Partial<Omit<CustomerContactRow, "id" | "tenantId" | "customerId" | "createdAt">>;
       }) => { count: number };
     };
@@ -1069,6 +1098,41 @@ function matchesPortalBookingRequest(
   return true;
 }
 
+/**
+ * Faithful-enough CustomerContact matcher (EPIC-08 WU4C): scalar equality for
+ * every shipped key plus the `{ not }` form the portal profile demotion uses.
+ */
+function matchesCustomerContact(
+  where: CustomerContactWhere,
+  candidate: CustomerContactRow
+): boolean {
+  if (typeof where.id === "string" && candidate.id !== where.id) return false;
+  if (typeof where.id === "object" && candidate.id === where.id.not) return false;
+  if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) return false;
+  if (where.customerId !== undefined && candidate.customerId !== where.customerId) return false;
+  if (where.isActive !== undefined && candidate.isActive !== where.isActive) return false;
+  if (where.kind !== undefined && candidate.kind !== where.kind) return false;
+  if (where.isPrimary !== undefined && candidate.isPrimary !== where.isPrimary) return false;
+  return true;
+}
+
+/**
+ * Single-clause `createdAt`/`updatedAt` ordering for the Customer child-table
+ * delegates. The shipped callers order by ONE date key; the portal profile
+ * boundary relies on `updatedAt: "desc"` for its "most recently updated"
+ * targeting rule, so the fake must order exactly as the real client would.
+ */
+function orderByDate<T extends { createdAt: Date; updatedAt: Date }>(
+  rows: T[],
+  orderBy: { createdAt?: "asc" | "desc"; updatedAt?: "asc" | "desc" } | undefined
+): T[] {
+  const key = orderBy?.updatedAt !== undefined ? "updatedAt" : "createdAt";
+  const direction = orderBy?.[key];
+  if (direction === undefined) return rows;
+  const sorted = [...rows].sort((left, right) => left[key].getTime() - right[key].getTime());
+  return direction === "desc" ? sorted.reverse() : sorted;
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -1414,18 +1478,15 @@ export function createIsolationDatabase(): IsolationDatabase {
       },
     },
     customerAddress: {
-      findMany: ({ where, orderBy }) => {
+      findMany: ({ where, orderBy, take }) => {
         let rows = [...customerAddresses.values()].filter(
           (candidate) =>
             candidate.tenantId === where.tenantId &&
             candidate.customerId === where.customerId &&
             (where.isActive === undefined || candidate.isActive === where.isActive)
         );
-        if (orderBy?.createdAt) {
-          rows = rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
-          if (orderBy.createdAt === "desc") rows.reverse();
-        }
-        return rows;
+        rows = orderByDate(rows, orderBy);
+        return take === undefined ? rows : rows.slice(0, take);
       },
       findFirst: ({ where }) =>
         [...customerAddresses.values()].find(
@@ -1441,8 +1502,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           id: randomUUID(),
           ...data,
           isActive: data.isActive ?? true,
-          createdAt: now,
-          updatedAt: now,
+          createdAt: data.createdAt ?? now,
+          updatedAt: data.updatedAt ?? data.createdAt ?? now,
         };
         customerAddresses.set(created.id, created);
         return created;
@@ -1470,18 +1531,12 @@ export function createIsolationDatabase(): IsolationDatabase {
       },
     },
     customerContact: {
-      findMany: ({ where, orderBy }) => {
-        let rows = [...customerContacts.values()].filter(
-          (candidate) =>
-            candidate.tenantId === where.tenantId &&
-            candidate.customerId === where.customerId &&
-            (where.isActive === undefined || candidate.isActive === where.isActive)
+      findMany: ({ where, orderBy, take }) => {
+        let rows = [...customerContacts.values()].filter((candidate) =>
+          matchesCustomerContact(where, candidate)
         );
-        if (orderBy?.createdAt) {
-          rows = rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
-          if (orderBy.createdAt === "desc") rows.reverse();
-        }
-        return rows;
+        rows = orderByDate(rows, orderBy);
+        return take === undefined ? rows : rows.slice(0, take);
       },
       findFirst: ({ where }) =>
         [...customerContacts.values()].find(
@@ -1497,29 +1552,26 @@ export function createIsolationDatabase(): IsolationDatabase {
           id: randomUUID(),
           ...data,
           isActive: data.isActive ?? true,
-          createdAt: now,
-          updatedAt: now,
+          createdAt: data.createdAt ?? now,
+          updatedAt: data.updatedAt ?? data.createdAt ?? now,
         };
         customerContacts.set(created.id, created);
         return created;
       },
       updateMany: ({ where, data }) => {
-        const existing = customerContacts.get(where.id);
-        if (
-          existing?.tenantId !== where.tenantId ||
-          existing?.customerId !== where.customerId ||
-          (where.isActive !== undefined && existing?.isActive !== where.isActive)
-        ) {
-          return { count: 0 };
+        const matched = [...customerContacts.values()].filter((candidate) =>
+          matchesCustomerContact(where, candidate)
+        );
+        for (const existing of matched) {
+          const updated: CustomerContactRow = { ...existing, updatedAt: new Date() };
+          if (data.kind !== undefined) updated.kind = data.kind;
+          if (data.label !== undefined) updated.label = data.label ?? null;
+          if (data.value !== undefined) updated.value = data.value;
+          if (data.isPrimary !== undefined) updated.isPrimary = data.isPrimary;
+          if (data.isActive !== undefined) updated.isActive = data.isActive;
+          customerContacts.set(updated.id, updated);
         }
-        const updated: CustomerContactRow = { ...existing, updatedAt: new Date() };
-        if (data.kind !== undefined) updated.kind = data.kind;
-        if (data.label !== undefined) updated.label = data.label ?? null;
-        if (data.value !== undefined) updated.value = data.value;
-        if (data.isPrimary !== undefined) updated.isPrimary = data.isPrimary;
-        if (data.isActive !== undefined) updated.isActive = data.isActive;
-        customerContacts.set(updated.id, updated);
-        return { count: 1 };
+        return { count: matched.length };
       },
     },
     customerPortalAccess: {

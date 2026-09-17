@@ -11,6 +11,8 @@ import { PortalAuthGuard } from "./portal-auth.guard.js";
 import { PortalAuthService } from "./portal-auth.service.js";
 import { PortalBookingController } from "./portal-booking.controller.js";
 import { PortalBookingService } from "./portal-booking.service.js";
+import { PortalProfileController } from "./portal-profile.controller.js";
+import { PortalProfileService } from "./portal-profile.service.js";
 import { PortalReadController } from "./portal-read.controller.js";
 import { PortalReadService } from "./portal-read.service.js";
 import { PortalSessionService } from "./portal-session.service.js";
@@ -36,6 +38,7 @@ import { PortalSessionService } from "./portal-session.service.js";
     PortalAccessController,
     PortalReadController,
     PortalBookingController,
+    PortalProfileController,
   ],
   providers: [
     PortalSessionService,
@@ -43,6 +46,7 @@ import { PortalSessionService } from "./portal-session.service.js";
     PortalAccessService,
     PortalReadService,
     PortalBookingService,
+    PortalProfileService,
     PortalAuthGuard,
     // Registered LAST in the chain; global for the whole app.
     { provide: APP_GUARD, useClass: PortalAuthGuard },
