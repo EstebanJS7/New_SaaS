@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { findMigration, loadMigrations, loadPrismaSchema } from "./schema-files.js";
+import {
+  PERMISSION_KEY_PATTERN,
+  PERMISSION_SEEDS,
+  ROLE_PERMISSION_MATRIX,
+} from "./reference-seed.js";
+import {
+  DEMO_PATIENT_DOG_ID,
+  DEMO_PORTAL_ACCESS_ID,
+  DEMO_PORTAL_BOOKING_REQUEST_ID,
+  DEMO_PORTAL_CUSTOMER_ID,
+  seedDemoPortal,
+  type DemoPortalSeedClient,
+  type DemoPortalSeedTxClient,
+} from "./demo-seed.js";
+
 /**
  * Portal data foundation (EPIC-08 WU1).
  *
@@ -221,5 +236,185 @@ describe("schema · portal inventory (EPIC-08 WU1)", () => {
     expect(block).toMatch(
       /actorPortalAccess\s+CustomerPortalAccess\?\s+@relation\(fields: \[actorPortalAccessId\], references: \[id\]/
     );
+  });
+});
+
+describe("reference seed · portal role matrix (EPIC-08 WU1)", () => {
+  const portalKeys = ["portal.access.manage", "portal.settings.manage"] as const;
+
+  it("seeds the portal permission catalog keys in canonical format", () => {
+    const catalogKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of portalKeys) {
+      expect(catalogKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+  });
+
+  it("grants both portal keys to OWNER and ADMIN only", () => {
+    for (const roleCode of ["OWNER", "ADMIN"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toEqual(expect.arrayContaining([...portalKeys]));
+    }
+    for (const roleCode of [
+      "VETERINARIAN",
+      "RECEPTIONIST",
+      "CASHIER",
+      "INVENTORY_MANAGER",
+    ] as const) {
+      for (const key of portalKeys) {
+        expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
+      }
+    }
+  });
+});
+
+/**
+ * Structural fake mirroring the portal seed delegates, including Prisma's
+ * interactive `$transaction`. Writes are recorded with their transaction scope
+ * so the test can prove access and its pending request are co-transactional.
+ */
+function makeFakePortalDb(): {
+  db: DemoPortalSeedClient;
+  tables: {
+    customers: Map<string, { id: string; tenantId: string }>;
+    access: Map<
+      string,
+      { id: string; tenantId: string; customerId: string; contactEmail: string; status: string }
+    >;
+    bookingRequests: Map<
+      string,
+      {
+        id: string;
+        tenantId: string;
+        customerId: string;
+        patientId: string;
+        status: string;
+        startAt: Date;
+        endAt: Date;
+      }
+    >;
+    transactionCount: number;
+    writesOutsideTransaction: number;
+  };
+} {
+  const customers = new Map<string, { id: string; tenantId: string }>([
+    [DEMO_PORTAL_CUSTOMER_ID, { id: DEMO_PORTAL_CUSTOMER_ID, tenantId: "tenant-demo" }],
+  ]);
+  const access = new Map<
+    string,
+    { id: string; tenantId: string; customerId: string; contactEmail: string; status: string }
+  >();
+  const bookingRequests = new Map<
+    string,
+    {
+      id: string;
+      tenantId: string;
+      customerId: string;
+      patientId: string;
+      status: string;
+      startAt: Date;
+      endAt: Date;
+    }
+  >();
+  const tables = {
+    customers,
+    access,
+    bookingRequests,
+    transactionCount: 0,
+    writesOutsideTransaction: 0,
+  };
+  let inTransaction = false;
+
+  const txClient: DemoPortalSeedTxClient = {
+    customerPortalAccess: {
+      createMany: ({ data }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        for (const row of data) access.set(row.id, row);
+        return Promise.resolve({ count: data.length });
+      },
+    },
+    portalBookingRequest: {
+      createMany: ({ data }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        for (const row of data) bookingRequests.set(row.id, row);
+        return Promise.resolve({ count: data.length });
+      },
+    },
+  };
+
+  const db: DemoPortalSeedClient = {
+    customer: {
+      findFirst: ({ where }: { where: { id: string; tenantId: string } }) => {
+        const row = customers.get(where.id);
+        return Promise.resolve(row?.tenantId === where.tenantId ? { id: row.id } : null);
+      },
+    },
+    ...txClient,
+    $transaction: async <T>(fn: (tx: DemoPortalSeedTxClient) => Promise<T>): Promise<T> => {
+      tables.transactionCount += 1;
+      inTransaction = true;
+      try {
+        return await fn(txClient);
+      } finally {
+        inTransaction = false;
+      }
+    },
+  };
+
+  return { db, tables };
+}
+
+describe("seedDemoPortal (EPIC-08 WU1)", () => {
+  it("seeds an ACTIVE holder and a PENDING request anchored to the demo fixtures", async () => {
+    const { db, tables } = makeFakePortalDb();
+
+    const result = await seedDemoPortal(db, "tenant-demo");
+
+    expect(result.access).toBe(1);
+    expect(result.bookingRequests).toBe(1);
+
+    const holder = [...tables.access.values()][0];
+    expect(holder.tenantId).toBe("tenant-demo");
+    expect(holder.customerId).toBe(DEMO_PORTAL_CUSTOMER_ID);
+    expect(holder.status).toBe("ACTIVE");
+
+    const request = [...tables.bookingRequests.values()][0];
+    expect(request.tenantId).toBe("tenant-demo");
+    expect(request.customerId).toBe(DEMO_PORTAL_CUSTOMER_ID);
+    expect(request.patientId).toBe(DEMO_PATIENT_DOG_ID);
+    expect(request.status).toBe("PENDING");
+    expect(request.endAt.getTime()).toBeGreaterThan(request.startAt.getTime());
+  });
+
+  it("writes the holder and request inside one transaction", async () => {
+    const { db, tables } = makeFakePortalDb();
+
+    await seedDemoPortal(db, "tenant-demo");
+
+    expect(tables.transactionCount).toBe(1);
+    expect(tables.writesOutsideTransaction).toBe(0);
+  });
+
+  it("converges on rerun: fixed ids keep the collections stable", async () => {
+    const { db, tables } = makeFakePortalDb();
+
+    await seedDemoPortal(db, "tenant-demo");
+    await seedDemoPortal(db, "tenant-demo");
+
+    expect(tables.access.size).toBe(1);
+    expect(tables.bookingRequests.size).toBe(1);
+  });
+
+  it("uses stable synthetic ids and clearly non-PII email", () => {
+    expect(DEMO_PORTAL_ACCESS_ID).toMatch(/^[0-9a-f-]{36}$/);
+    expect(DEMO_PORTAL_BOOKING_REQUEST_ID).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("fails instructively when the demo customer has not been seeded", async () => {
+    const { db, tables } = makeFakePortalDb();
+    tables.customers.clear();
+
+    await expect(seedDemoPortal(db, "tenant-demo")).rejects.toThrow(/demo customer missing/);
+    expect(tables.access.size).toBe(0);
+    expect(tables.bookingRequests.size).toBe(0);
   });
 });

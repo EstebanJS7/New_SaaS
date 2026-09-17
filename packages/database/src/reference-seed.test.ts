@@ -422,7 +422,8 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const fake = await seededOnce();
     expect(fake.counts()).toEqual({
       roles: 6,
-      permissions: 26,
+      // 24 pre-EPIC-08 keys + portal.access.manage + portal.settings.manage.
+      permissions: 28,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

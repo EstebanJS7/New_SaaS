@@ -6,6 +6,7 @@ import {
   seedDemoCustomers,
   seedDemoData,
   seedDemoPatients,
+  seedDemoPortal,
   seedDemoScheduling,
 } from "../src/demo-seed.js";
 
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
     const patients = await seedDemoPatients(db, result.tenantId);
     const clinical = await seedDemoClinical(db, result.tenantId);
     const scheduling = await seedDemoScheduling(db, result.tenantId);
+    const portal = await seedDemoPortal(db, result.tenantId);
     console.info(
       `Demo seed enabled — created/verified tenant ${result.tenantId} with owner ` +
         `${result.ownerProfileId} (${result.grantedFeatureCodes} explicit grants), ` +
@@ -69,7 +71,9 @@ async function main(): Promise<void> {
         `${patients.guardians} guardian links, ${clinical.encounters} clinical encounters, ` +
         `${clinical.weights} weights, ${scheduling.branches} branches, ` +
         `${scheduling.memberships} scheduling memberships, ` +
-        `${scheduling.appointments} appointments.`
+        `${scheduling.appointments} appointments, ` +
+        `${portal.access} portal holders, ` +
+        `${portal.bookingRequests} pending portal booking requests.`
     );
   } finally {
     await db.$disconnect();

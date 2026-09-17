@@ -689,6 +689,131 @@ export async function seedDemoScheduling(
     };
   });
 }
+
+/**
+ * Transactional delegate scope used inside {@link seedDemoPortal}'s
+ * `$transaction`.
+ */
+export interface DemoPortalSeedTxClient {
+  customerPortalAccess: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        customerId: string;
+        contactEmail: string;
+        status: string;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+  portalBookingRequest: {
+    createMany: (args: {
+      data: {
+        id: string;
+        tenantId: string;
+        customerId: string;
+        patientId: string;
+        status: "PENDING";
+        startAt: Date;
+        endAt: Date;
+      }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
+  };
+}
+
+/**
+ * Structural client contract consumed by {@link seedDemoPortal}. The demo
+ * Customer and Patient are REFERENCED (created by the customer/patient demo
+ * seeds), never created here.
+ */
+export interface DemoPortalSeedClient extends DemoPortalSeedTxClient {
+  customer: {
+    findFirst: (args: {
+      where: { id: string; tenantId: string };
+      select: { id: true };
+    }) => Promise<{ id: string } | null>;
+  };
+  $transaction: <T>(fn: (tx: DemoPortalSeedTxClient) => Promise<T>) => Promise<T>;
+}
+
+export interface DemoPortalSeedResult {
+  access: number;
+  bookingRequests: number;
+}
+
+/**
+ * Demo Customer that owns the synthetic portal holder — the individual customer
+ * created by {@link buildDemoCustomers} with its linked demo Patient.
+ */
+export const DEMO_PORTAL_CUSTOMER_ID = "11111111-1111-1111-1111-111111111111";
+/** Fixed synthetic portal access id keeps the demo path idempotent. */
+export const DEMO_PORTAL_ACCESS_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+/** Synthetic, clearly non-PII holder email (mirrors the demo Customer contact). */
+export const DEMO_PORTAL_HOLDER_EMAIL = "ana.garcia@demo.newsaas.test";
+/** Lifecycle string used by the schema scaffold for a usable holder. */
+export const DEMO_PORTAL_ACTIVE_STATUS = "ACTIVE";
+/** Fixed synthetic pending booking-request id keeps the demo path idempotent. */
+export const DEMO_PORTAL_BOOKING_REQUEST_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
+/** Fixed synthetic UTC range keeps the pending fixture byte-stable. */
+export const DEMO_PORTAL_BOOKING_START_AT = new Date("2026-01-20T14:00:00.000Z");
+export const DEMO_PORTAL_BOOKING_END_AT = new Date("2026-01-20T14:30:00.000Z");
+
+/**
+ * Seeds one synthetic ACTIVE portal holder linked to the fixed demo Customer
+ * and one PENDING booking request for the demo Patient. Content is clearly
+ * synthetic and carries no real PII; fixed UUIDs plus `skipDuplicates` keep the
+ * path idempotent, and both writes share one `$transaction` so a holder cannot
+ * commit without its pending request.
+ */
+export async function seedDemoPortal(
+  db: DemoPortalSeedClient,
+  tenantId: string
+): Promise<DemoPortalSeedResult> {
+  const customer = await db.customer.findFirst({
+    where: { id: DEMO_PORTAL_CUSTOMER_ID, tenantId },
+    select: { id: true },
+  });
+  if (!customer) {
+    throw new Error(
+      "demo seed: demo customer missing — run the customer demo seed before the portal demo seed"
+    );
+  }
+
+  return db.$transaction(async (tx) => {
+    const access = await tx.customerPortalAccess.createMany({
+      data: [
+        {
+          id: DEMO_PORTAL_ACCESS_ID,
+          tenantId,
+          customerId: customer.id,
+          contactEmail: DEMO_PORTAL_HOLDER_EMAIL,
+          status: DEMO_PORTAL_ACTIVE_STATUS,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    const bookingRequests = await tx.portalBookingRequest.createMany({
+      data: [
+        {
+          id: DEMO_PORTAL_BOOKING_REQUEST_ID,
+          tenantId,
+          customerId: customer.id,
+          patientId: DEMO_PATIENT_DOG_ID,
+          status: "PENDING",
+          startAt: DEMO_PORTAL_BOOKING_START_AT,
+          endAt: DEMO_PORTAL_BOOKING_END_AT,
+        },
+      ],
+      skipDuplicates: true,
+    });
+
+    return { access: access.count, bookingRequests: bookingRequests.count };
+  });
+}
+
 export type DemoSeedGuardDecision =
   | { mode: "disabled"; reason: string }
   | { mode: "refused"; reason: string }
