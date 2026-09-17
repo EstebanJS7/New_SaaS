@@ -162,4 +162,117 @@ describe("portal identity boundary (real HTTP, full guard chain)", () => {
       expect(response.text).not.toContain(holderBId);
     });
   });
+
+  describe("portal login / logout", () => {
+    it("fails closed when two ACTIVE holders share the login email instead of resolving an arbitrary holder", async () => {
+      // The partial unique index (tenant_id, contact_email) WHERE ACTIVE forbids
+      // this state; the in-memory boundary does not enforce indexes, so seed the
+      // legacy/out-of-band shape directly to prove the LOGIN path itself refuses
+      // to pick one holder.
+      const passwordHash = await booted.app.get(CredentialService).hash(HOLDER_PASSWORD);
+      const ambiguousEmail = "ambiguous-holder@portal.test";
+
+      const createCustomer = (displayName: string): string =>
+        booted.db.prisma.customer.create({
+          data: {
+            tenantId: fixture.tenants.a.id,
+            kind: "INDIVIDUAL",
+            displayName,
+            legalName: null,
+            taxId: null,
+            firstName: null,
+            lastName: null,
+            documentNumber: null,
+            isActive: true,
+          },
+        }).id;
+
+      for (const displayName of ["Ambiguous Holder One", "Ambiguous Holder Two"]) {
+        seedPortalAccess(booted.db, {
+          tenantId: fixture.tenants.a.id,
+          customerId: createCustomer(displayName),
+          contactEmail: ambiguousEmail,
+          passwordHash,
+        });
+      }
+
+      const requestId = "portal-login-ambiguous-identity";
+      const response = await supertest(server())
+        .post("/portal/login")
+        .set("X-Request-Id", requestId)
+        .send({
+          tenantSlug: fixture.tenants.a.slug,
+          email: ambiguousEmail,
+          password: HOLDER_PASSWORD,
+        })
+        .expect(401);
+
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("UNAUTHENTICATED");
+      // No session is issued on the ambiguous path.
+      expect(response.headers["set-cookie"]).toBeUndefined();
+
+      // No single holder is authoritative, so the failure must not be pinned to
+      // an arbitrary one: it stays SYSTEM-attributed.
+      const audit = booted.db.prisma.auditLog.findFirst({ where: { requestId } });
+      expect(audit?.action).toBe("portal.login_failed");
+      expect(audit?.actorType).toBe("SYSTEM");
+      expect(audit?.actorPortalAccessId).toBeUndefined();
+    });
+
+    it("fails closed on case-variant duplicates of the same canonical login email", async () => {
+      // The DB key is (tenant_id, lower(contact_email)) WHERE ACTIVE and login
+      // matches case-insensitively, so "Holder@…" and "holder@…" are ONE
+      // identity. The in-memory boundary does not enforce indexes, so seed the
+      // pre-fix shape directly: the canonical read must see BOTH rows and fail
+      // closed instead of authenticating as whichever one a case-sensitive
+      // lookup happened to hit.
+      const passwordHash = await booted.app.get(CredentialService).hash(HOLDER_PASSWORD);
+      const lowerEmail = "case-variant-holder@portal.test";
+
+      const createCustomer = (displayName: string): string =>
+        booted.db.prisma.customer.create({
+          data: {
+            tenantId: fixture.tenants.a.id,
+            kind: "INDIVIDUAL",
+            displayName,
+            legalName: null,
+            taxId: null,
+            firstName: null,
+            lastName: null,
+            documentNumber: null,
+            isActive: true,
+          },
+        }).id;
+
+      for (const contactEmail of [lowerEmail, lowerEmail.toUpperCase()]) {
+        seedPortalAccess(booted.db, {
+          tenantId: fixture.tenants.a.id,
+          customerId: createCustomer(`Case Variant ${contactEmail}`),
+          contactEmail,
+          passwordHash,
+        });
+      }
+
+      const requestId = "portal-login-case-variant-identity";
+      const response = await supertest(server())
+        .post("/portal/login")
+        .set("X-Request-Id", requestId)
+        .send({
+          tenantSlug: fixture.tenants.a.slug,
+          email: lowerEmail,
+          password: HOLDER_PASSWORD,
+        })
+        .expect(401);
+
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("UNAUTHENTICATED");
+      expect(response.headers["set-cookie"]).toBeUndefined();
+
+      // Both rows are the same canonical identity, so neither is authoritative:
+      // the failure must stay SYSTEM-attributed.
+      const audit = booted.db.prisma.auditLog.findFirst({ where: { requestId } });
+      expect(audit?.action).toBe("portal.login_failed");
+      expect(audit?.actorType).toBe("SYSTEM");
+      expect(audit?.actorPortalAccessId).toBeUndefined();
+    });
+  });
 });

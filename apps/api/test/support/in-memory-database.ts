@@ -225,6 +225,14 @@ export interface CustomerPortalAccessRow {
   updatedAt: Date;
 }
 
+/**
+ * Canonical-equality filter for portal `contactEmail`. Login reads with
+ * Prisma's `mode: 'insensitive'` so case-variant rows resolve to the same
+ * canonical identity; the fake must reproduce that or the ambiguity tests are a
+ * lie. A plain string stays exact-match, exactly like Prisma's default.
+ */
+export type PortalContactEmailFilter = string | { equals: string; mode: "insensitive" };
+
 /** 1:1 portal credential row (shared PK with the holder); RESTRICTED hash. */
 export interface PortalCredentialRow {
   portalAccessId: string;
@@ -490,11 +498,30 @@ export interface IsolationDatabase {
           id?: string;
           tenantId: string;
           customerId?: string;
-          contactEmail?: string;
+          contactEmail?: PortalContactEmailFilter;
           status?: string;
         };
         select?: unknown;
       }) => (CustomerPortalAccessRow & { credential?: { passwordHash: string } | null }) | null;
+      /**
+       * Multi-row login read used to fail closed on an ambiguous login identity.
+       * NOTE: this fake does NOT enforce the partial unique indexes (an in-memory
+       * Map cannot), so a test CAN seed two ACTIVE holders sharing a contactEmail
+       * and prove the service fails closed. Real index behavior is proven by the
+       * migration DDL checks and the live-PostgreSQL gate.
+       */
+      findMany: (args: {
+        where: {
+          id?: string;
+          tenantId: string;
+          customerId?: string;
+          contactEmail?: PortalContactEmailFilter;
+          status?: string;
+        };
+        orderBy?: { id?: "asc" | "desc" };
+        take?: number;
+        select?: unknown;
+      }) => (CustomerPortalAccessRow & { credential?: { passwordHash: string } | null })[];
       updateMany: (args: {
         where: { id: string; tenantId: string; status?: string };
         data: { status?: string };
@@ -797,6 +824,43 @@ function orderMemberships(
   });
 }
 
+/** Scalar/optional Prisma filter over CustomerPortalAccess (mirrors the service). */
+interface CustomerPortalAccessWhere {
+  id?: string;
+  tenantId: string;
+  customerId?: string;
+  contactEmail?: PortalContactEmailFilter;
+  status?: string;
+}
+
+/**
+ * Reproduces Prisma's string equality for `contactEmail`: a bare string is
+ * exact-match, while `{ equals, mode: 'insensitive' }` is case-insensitive —
+ * the shape the canonical portal login read uses.
+ */
+function matchesPortalContactEmail(
+  filter: PortalContactEmailFilter | undefined,
+  candidate: string
+): boolean {
+  if (filter === undefined) return true;
+  if (typeof filter === "string") return candidate === filter;
+  return candidate.toLowerCase() === filter.equals.toLowerCase();
+}
+
+/** Shared matcher for the portal-access findFirst/findMany reads. */
+function matchesPortalAccess(
+  where: CustomerPortalAccessWhere,
+  candidate: CustomerPortalAccessRow
+): boolean {
+  return (
+    (where.id === undefined || candidate.id === where.id) &&
+    candidate.tenantId === where.tenantId &&
+    (where.customerId === undefined || candidate.customerId === where.customerId) &&
+    matchesPortalContactEmail(where.contactEmail, candidate.contactEmail) &&
+    (where.status === undefined || candidate.status === where.status)
+  );
+}
+
 /** Faithful-enough Appointment matcher for the shipped read/overlap predicates. */
 function matchesAppointment(where: AppointmentWhere, candidate: AppointmentRow): boolean {
   if (where.id !== undefined) {
@@ -922,6 +986,17 @@ export function createIsolationDatabase(): IsolationDatabase {
       }
     }
   }
+
+  /**
+   * Reproduces the `credential` join the portal login read selects. The password
+   * hash is RESTRICTED and only ever surfaces on this verification path.
+   */
+  const joinPortalCredential = (
+    row: CustomerPortalAccessRow
+  ): CustomerPortalAccessRow & { credential: { passwordHash: string } | null } => {
+    const credential = portalCredentials.get(row.id);
+    return { ...row, credential: credential ? { passwordHash: credential.passwordHash } : null };
+  };
 
   type PrismaLike = IsolationDatabase["prisma"];
   // `$transaction` executes the callback against the SAME in-memory maps but
@@ -1285,23 +1360,23 @@ export function createIsolationDatabase(): IsolationDatabase {
       },
       findUnique: ({ where }) => portalAccess.get(where.id) ?? null,
       findFirst: ({ where }) => {
-        const row =
-          [...portalAccess.values()].find(
-            (candidate) =>
-              (where.id === undefined || candidate.id === where.id) &&
-              candidate.tenantId === where.tenantId &&
-              (where.customerId === undefined || candidate.customerId === where.customerId) &&
-              (where.contactEmail === undefined || candidate.contactEmail === where.contactEmail) &&
-              (where.status === undefined || candidate.status === where.status)
-          ) ?? null;
-        if (!row) return null;
-        // Reproduce the `credential` join the portal login read selects. The
-        // password hash is RESTRICTED and only ever surfaces on this path.
-        const credential = portalCredentials.get(row.id);
-        return {
-          ...row,
-          credential: credential ? { passwordHash: credential.passwordHash } : null,
-        };
+        const row = [...portalAccess.values()].find((candidate) =>
+          matchesPortalAccess(where, candidate)
+        );
+        return row ? joinPortalCredential(row) : null;
+      },
+      findMany: ({ where, orderBy, take }) => {
+        let rows = [...portalAccess.values()].filter((candidate) =>
+          matchesPortalAccess(where, candidate)
+        );
+        if (orderBy?.id) {
+          rows = rows.sort((left, right) => left.id.localeCompare(right.id));
+          if (orderBy.id === "desc") rows.reverse();
+        }
+        if (take !== undefined) {
+          rows = rows.slice(0, take);
+        }
+        return rows.map(joinPortalCredential);
       },
       updateMany: ({ where, data }) => {
         const existing = portalAccess.get(where.id);
