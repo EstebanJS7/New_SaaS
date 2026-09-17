@@ -6,12 +6,6 @@ import { RequestContextService } from "../context/request-context.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { TenantSettingsService } from "../settings/tenant-settings.service.js";
 import {
-  schedulingSettingsSchema,
-  type SchedulingAvailabilityWindow,
-  type SchedulingBlock,
-  type SchedulingSettings,
-} from "../settings/registry.js";
-import {
   APPOINTMENT_DTO_SCHEMA_VERSION,
   createAppointmentInputSchema,
   rescheduleAppointmentInputSchema,
@@ -22,7 +16,24 @@ import {
   type CreateAppointmentInput,
   type RescheduleAppointmentInput,
 } from "./appointment.dto.js";
+import {
+  assertAppointmentAnchors,
+  assertAppointmentAvailability,
+  assertNoConflictInTransaction,
+  loadSchedulingSettings,
+} from "./appointment-invariants.js";
 import { SCHEDULING_PERMISSIONS } from "./appointment.permissions.js";
+
+// The creation invariants (tenant anchors, availability/blocks, conflict
+// serialization) and the time math now live in `appointment-invariants.ts` so
+// the staff booking-request approval path runs the IDENTICAL sequence. These
+// re-exports keep the historical import path stable for existing callers/tests.
+export {
+  TENANT_TIMEZONE,
+  intersectsBlock,
+  isWithinAvailability,
+  toZonedParts,
+} from "./appointment-invariants.js";
 
 // ---------------------------------------------------------------------------
 // Rows, delegate contracts and transition table
@@ -163,19 +174,8 @@ export const APPOINTMENT_TRANSITIONS: Readonly<
   "no-show": { from: ["CONFIRMED", "ARRIVED"], to: "NO_SHOW", action: "appointment.no_show" },
 });
 
-/** Non-terminal states that participate in overlap detection. */
-const ACTIVE_APPOINTMENT_STATUSES: readonly AppointmentStatusDto[] = [
-  "SCHEDULED",
-  "CONFIRMED",
-  "ARRIVED",
-  "IN_PROGRESS",
-];
-
 /** Reschedule is allowed only before the appointment is underway (spec/design). */
 const RESCHEDULABLE_STATUSES: readonly AppointmentStatusDto[] = ["SCHEDULED", "CONFIRMED"];
-
-/** The single tenant timezone fixed by the PRD for v1. */
-export const TENANT_TIMEZONE = "America/Asuncion";
 
 /** Agenda filters supported by the staff views (branch, professional, status). */
 export interface AppointmentFilters {
@@ -183,129 +183,6 @@ export interface AppointmentFilters {
   readonly patientId?: string;
   readonly professionalMembershipId?: string;
   readonly status?: AppointmentStatusDto;
-}
-
-// ---------------------------------------------------------------------------
-// Timezone / availability math
-// ---------------------------------------------------------------------------
-
-interface ZonedParts {
-  /** Days since the Unix epoch in the tenant timezone (calendar-day identity). */
-  readonly daySerial: number;
-  readonly weekday: number;
-  readonly minuteOfDay: number;
-}
-
-const zonedFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: TENANT_TIMEZONE,
-  hourCycle: "h23",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-/**
- * Converts an absolute UTC instant to tenant-timezone wall-clock parts. Using
- * `Intl` (not a fixed offset) means the tenant offset, including any DST shift,
- * is resolved per instant instead of frozen into storage.
- */
-export function toZonedParts(date: Date): ZonedParts {
-  const parts = zonedFormatter.formatToParts(date);
-  const read = (type: string): number =>
-    Number(parts.find((entry) => entry.type === type)?.value ?? "0");
-  const year = read("year");
-  const month = read("month");
-  const day = read("day");
-  const hour = read("hour");
-  const minute = read("minute");
-  const startOfDayUtc = Date.UTC(year, month - 1, day);
-  return {
-    daySerial: Math.floor(startOfDayUtc / 86_400_000),
-    weekday: new Date(startOfDayUtc).getUTCDay(),
-    minuteOfDay: hour * 60 + minute,
-  };
-}
-
-/**
- * True when the appointment range fits inside one availability window for the
- * (professional, branch) pair. No windows means unrestricted (design decision);
- * a range spanning more than one local calendar day never fits.
- */
-export function isWithinAvailability(
-  startAt: Date,
-  endAt: Date,
-  windows: readonly SchedulingAvailabilityWindow[],
-  membershipId: string,
-  branchId: string
-): boolean {
-  const applicable = windows.filter(
-    (window) => window.membershipId === membershipId && window.branchId === branchId
-  );
-  if (applicable.length === 0) {
-    return true;
-  }
-
-  const start = toZonedParts(startAt);
-  const end = toZonedParts(endAt);
-
-  let endMinuteOnStartDay: number;
-  if (end.minuteOfDay === 0 && end.daySerial === start.daySerial + 1) {
-    // A range ending exactly at local midnight belongs to the start day's 24:00.
-    endMinuteOnStartDay = 1440;
-  } else if (end.daySerial === start.daySerial) {
-    endMinuteOnStartDay = end.minuteOfDay;
-  } else {
-    return false;
-  }
-
-  return applicable.some(
-    (window) =>
-      window.weekday === start.weekday &&
-      window.startMinute <= start.minuteOfDay &&
-      endMinuteOnStartDay <= window.endMinute
-  );
-}
-
-/** True when the appointment range intersects an active one-off block. */
-export function intersectsBlock(
-  startAt: Date,
-  endAt: Date,
-  blocks: readonly SchedulingBlock[],
-  membershipId: string,
-  branchId: string
-): boolean {
-  return blocks.some((block) => {
-    if (block.membershipId !== membershipId || block.branchId !== branchId) {
-      return false;
-    }
-    const blockStart = Date.parse(block.startsAt);
-    const blockEnd = Date.parse(block.endsAt);
-    if (Number.isNaN(blockStart) || Number.isNaN(blockEnd)) {
-      return false;
-    }
-    return startAt.getTime() < blockEnd && endAt.getTime() > blockStart;
-  });
-}
-
-/**
- * Acquires a transaction-scoped advisory lock on the professional so overlap
- * detection and insert serialize: the second concurrent create blocks until the
- * first commits, then observes the committed row and returns 409 CONFLICT. The
- * lock releases automatically at commit/rollback.
- */
-async function lockProfessional(
-  tx: AppointmentTransaction,
-  tenantId: string,
-  membershipId: string
-): Promise<void> {
-  const key = `${tenantId}:${membershipId}`;
-  // `pg_advisory_xact_lock` returns `void`; Prisma `$queryRaw` cannot
-  // deserialize that column type (P2010), so cast the result to `text` — the
-  // lock still blocks and the query returns one row.
-  await tx.$queryRaw`
-    SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text`;
 }
 
 interface AuditDescriptor {
@@ -407,20 +284,28 @@ export class AppointmentService {
     const startAt = new Date(data.startAt);
     const endAt = new Date(data.endAt);
 
-    await this.assertTenantAnchors(tenantId, {
+    await assertAppointmentAnchors(this.prisma, tenantId, {
       branchId: data.branchId,
       patientId: data.patientId,
       membershipId: data.professionalMembershipId,
     });
 
-    const settings = await this.loadSchedulingSettings();
-    this.assertAvailability(settings, data.professionalMembershipId, data.branchId, startAt, endAt);
+    const settings = await loadSchedulingSettings(this.settings);
+    assertAppointmentAvailability(settings, {
+      membershipId: data.professionalMembershipId,
+      branchId: data.branchId,
+      startAt,
+      endAt,
+    });
 
     const row = await this.prisma.$transaction(async (tx) => {
-      if (settings.conflictPolicy === "REJECT") {
-        await lockProfessional(tx, tenantId, data.professionalMembershipId);
-        await this.assertNoOverlap(tx, tenantId, data.professionalMembershipId, startAt, endAt);
-      }
+      await assertNoConflictInTransaction(tx, settings, {
+        tenantId,
+        membershipId: data.professionalMembershipId,
+        branchId: data.branchId,
+        startAt,
+        endAt,
+      });
 
       const created = await tx.appointment.create({
         data: {
@@ -482,27 +367,23 @@ export class AppointmentService {
       );
     }
 
-    const settings = await this.loadSchedulingSettings();
-    this.assertAvailability(
-      settings,
-      existing.professionalMembershipId,
-      existing.branchId,
+    const settings = await loadSchedulingSettings(this.settings);
+    assertAppointmentAvailability(settings, {
+      membershipId: existing.professionalMembershipId,
+      branchId: existing.branchId,
       startAt,
-      endAt
-    );
+      endAt,
+    });
 
     const row = await this.prisma.$transaction(async (tx) => {
-      if (settings.conflictPolicy === "REJECT") {
-        await lockProfessional(tx, tenantId, existing.professionalMembershipId);
-        await this.assertNoOverlap(
-          tx,
-          tenantId,
-          existing.professionalMembershipId,
-          startAt,
-          endAt,
-          id
-        );
-      }
+      await assertNoConflictInTransaction(tx, settings, {
+        tenantId,
+        membershipId: existing.professionalMembershipId,
+        branchId: existing.branchId,
+        startAt,
+        endAt,
+        excludeId: id,
+      });
 
       // Status predicate blocks terminal rows; the version predicate blocks a
       // stale caller. Either miss changes nothing and returns 409.
@@ -599,101 +480,6 @@ export class AppointmentService {
       throw new DomainError("NOT_FOUND", "Appointment was not found.");
     }
     return row;
-  }
-
-  /**
-   * Resolves the Branch, Patient and professional membership within the active
-   * tenant. A foreign (or unknown) UUID is always 404; an in-tenant membership
-   * without the VETERINARIAN role is a 400 rule violation.
-   */
-  private async assertTenantAnchors(
-    tenantId: string,
-    anchors: { branchId: string; patientId: string; membershipId: string }
-  ): Promise<void> {
-    const [branch, patient, membership] = await Promise.all([
-      this.prisma.branch.findFirst({
-        where: { id: anchors.branchId, tenantId },
-        select: { id: true },
-      }),
-      this.prisma.patient.findFirst({
-        where: { id: anchors.patientId, tenantId },
-        select: { id: true },
-      }),
-      this.prisma.tenantMembership.findFirst({
-        where: { id: anchors.membershipId, tenantId },
-        select: { id: true, role: { select: { code: true } } },
-      }),
-    ]);
-
-    if (!branch) {
-      throw new DomainError("NOT_FOUND", "Branch was not found.");
-    }
-    if (!patient) {
-      throw new DomainError("NOT_FOUND", "Patient was not found.");
-    }
-    if (!membership) {
-      throw new DomainError("NOT_FOUND", "Professional membership was not found.");
-    }
-    if (membership.role.code !== "VETERINARIAN") {
-      throw new DomainError(
-        "VALIDATION_FAILED",
-        "The assigned professional must have the VETERINARIAN role."
-      );
-    }
-  }
-
-  private async assertNoOverlap(
-    tx: AppointmentTransaction,
-    tenantId: string,
-    membershipId: string,
-    startAt: Date,
-    endAt: Date,
-    excludeId?: string
-  ): Promise<void> {
-    const overlap = await tx.appointment.findFirst({
-      where: {
-        tenantId,
-        professionalMembershipId: membershipId,
-        status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
-        startAt: { lt: endAt },
-        endAt: { gt: startAt },
-        ...(excludeId !== undefined && { id: { not: excludeId } }),
-      },
-    });
-    if (overlap) {
-      throw new DomainError("CONFLICT", "The professional already has an overlapping appointment.");
-    }
-  }
-
-  /** Availability and block violations are unconditional 409s (not policy-driven). */
-  private assertAvailability(
-    settings: SchedulingSettings,
-    membershipId: string,
-    branchId: string,
-    startAt: Date,
-    endAt: Date
-  ): void {
-    if (!isWithinAvailability(startAt, endAt, settings.availability, membershipId, branchId)) {
-      throw new DomainError(
-        "CONFLICT",
-        "The appointment is outside the professional's availability for this branch."
-      );
-    }
-    if (intersectsBlock(startAt, endAt, settings.blocks, membershipId, branchId)) {
-      throw new DomainError(
-        "CONFLICT",
-        "The appointment falls inside a one-off block for the professional."
-      );
-    }
-  }
-
-  private async loadSchedulingSettings(): Promise<SchedulingSettings> {
-    const raw = await this.settings.get("scheduling");
-    const parsed = schedulingSettingsSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new DomainError("INTERNAL", "Stored scheduling settings are invalid.");
-    }
-    return parsed.data;
   }
 
   /** One co-committed audit row per mutation; stable IDs and field names only. */

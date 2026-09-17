@@ -347,6 +347,9 @@ export interface BranchRow {
 export type AppointmentStatusRow =
   "SCHEDULED" | "CONFIRMED" | "ARRIVED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 
+/** Appointment provenance (EPIC-08 D4); staff rows default to STAFF. */
+export type AppointmentSourceRow = "STAFF" | "PORTAL";
+
 /** Tenant-scoped Appointment row as the scheduling boundary reads it. */
 export interface AppointmentRow {
   id: string;
@@ -355,6 +358,13 @@ export interface AppointmentRow {
   patientId: string;
   professionalMembershipId: string;
   status: AppointmentStatusRow;
+  /** Provenance; staff/fixture inserts that omit it land on the schema default. */
+  source: AppointmentSourceRow;
+  /**
+   * Provenance link to the Portal booking request this appointment fulfils.
+   * `null` for staff-created rows, exactly like the nullable schema column.
+   */
+  portalBookingRequestId: string | null;
   version: number;
   startAt: Date;
   endAt: Date;
@@ -372,6 +382,8 @@ export interface AppointmentWhere {
   professionalMembershipId?: string;
   /** Scalar or `{ in: [...] }` — mirrors the Prisma filter shapes we use. */
   status?: AppointmentStatusRow | { in: AppointmentStatusRow[] };
+  /** Provenance link: the approval idempotency pre-check filters on this. */
+  portalBookingRequestId?: string;
   version?: number;
   /** Overlap predicate: existing.startAt < candidate.endAt. */
   startAt?: { lt: Date };
@@ -722,7 +734,15 @@ export interface IsolationDatabase {
       }) => AppointmentRow[];
       findFirst: (args: { where: AppointmentWhere }) => AppointmentRow | null;
       create: (args: {
-        data: Omit<AppointmentRow, "id" | "createdAt" | "updatedAt">;
+        data: Omit<
+          AppointmentRow,
+          "id" | "createdAt" | "updatedAt" | "source" | "portalBookingRequestId"
+        > & {
+          /** Optional: mirrors the schema default STAFF. */
+          source?: AppointmentSourceRow;
+          /** Optional: mirrors the nullable provenance link. */
+          portalBookingRequestId?: string | null;
+        };
       }) => AppointmentRow;
       updateMany: (args: { where: AppointmentWhere; data: AppointmentUpdateData }) => {
         count: number;
@@ -745,6 +765,16 @@ export interface IsolationDatabase {
         orderBy?: { startAt?: "asc" | "desc" };
       }) => PortalBookingRequestRow[];
       findFirst: (args: { where: PortalBookingRequestWhere }) => PortalBookingRequestRow | null;
+      /**
+       * Compare-and-set used by the staff decision paths: flips a PENDING
+       * request to APPROVED/REJECTED, returning the matched row count so a
+       * second writer observes `{ count: 0 }`. Also applies the schema's
+       * automatic `updatedAt` write.
+       */
+      updateMany: (args: {
+        where: PortalBookingRequestWhere;
+        data: { status: PortalBookingRequestRow["status"] };
+      }) => { count: number };
     };
     role: {
       create: (args: { data: { code: string; name: string } }) => RoleRow;
@@ -991,6 +1021,12 @@ function matchesAppointment(where: AppointmentWhere, candidate: AppointmentRow):
   if (
     where.professionalMembershipId !== undefined &&
     candidate.professionalMembershipId !== where.professionalMembershipId
+  ) {
+    return false;
+  }
+  if (
+    where.portalBookingRequestId !== undefined &&
+    candidate.portalBookingRequestId !== where.portalBookingRequestId
   ) {
     return false;
   }
@@ -1825,6 +1861,10 @@ export function createIsolationDatabase(): IsolationDatabase {
         const created: AppointmentRow = {
           id: randomUUID(),
           ...data,
+          // Mirror the schema defaults the service relies on: provenance is
+          // STAFF unless explicitly PORTAL, and the request link is nullable.
+          source: data.source ?? "STAFF",
+          portalBookingRequestId: data.portalBookingRequestId ?? null,
           createdAt: now,
           updatedAt: now,
         };
@@ -1883,6 +1923,16 @@ export function createIsolationDatabase(): IsolationDatabase {
         [...portalBookingRequestTable.values()].find((candidate) =>
           matchesPortalBookingRequest(where, candidate)
         ) ?? null,
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const candidate of portalBookingRequestTable.values()) {
+          if (!matchesPortalBookingRequest(where, candidate)) continue;
+          candidate.status = data.status;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
     },
     role: {
       create: ({ data }) => {
