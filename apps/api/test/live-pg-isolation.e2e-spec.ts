@@ -10,6 +10,8 @@ import { AppModule } from "../src/app.module.js";
 import { AUTH_CONFIG, readAuthConfig } from "../src/auth/auth.config.js";
 import { SessionService } from "../src/auth/session.service.js";
 import { STAFF_SESSION_COOKIE } from "../src/auth/session-cookie.js";
+import { PORTAL_SESSION_COOKIE } from "../src/portal/portal-session-cookie.js";
+import { PortalSessionService } from "../src/portal/portal-session.service.js";
 import { AuditWriter } from "../src/audit/audit-writer.service.js";
 import { createApiLogger } from "../src/common/http/api-logger.factory.js";
 import { createFastifyAdapter } from "../src/common/http/fastify-adapter.factory.js";
@@ -291,6 +293,116 @@ async function waitForAdvisoryLockWaiters(
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+}
+
+/**
+ * Explicit, human-typed rendering of the COMPLETE predicate both ACTIVE portal
+ * partial unique indexes must store. Asserting exact normalized equality
+ * against this constant — instead of a permissive substring/regex match —
+ * proves the index ignores every non-ACTIVE status AND carries no additional
+ * boolean clause masking a wider index than the migration declares.
+ */
+const ACTIVE_PORTAL_INDEX_PREDICATE = "status='ACTIVE'";
+
+/**
+ * Strips only parenthesis pairs enclosing the WHOLE expression, so an extra
+ * top-level `(...) AND (...)` clause can never be flattened into the
+ * single-term canonical predicate. Quoted string literals are skipped so their
+ * content cannot affect nesting depth. Unbalanced input is left untouched.
+ */
+function stripEnclosingParentheses(value: string): string {
+  let result = value;
+  while (result.startsWith("(") && result.endsWith(")")) {
+    let depth = 0;
+    let enclosesWhole = true;
+    for (let index = 1; index < result.length - 1; index += 1) {
+      const char = result[index];
+      if (char === "'") {
+        // Skip the literal body, honouring doubled-quote escapes, so quoted
+        // parentheses can never affect the nesting depth.
+        let cursor = index + 1;
+        while (cursor <= result.length - 2) {
+          if (result[cursor] === "'") {
+            if (result[cursor + 1] === "'") {
+              cursor += 2;
+              continue;
+            }
+            break;
+          }
+          cursor += 1;
+        }
+        index = Math.min(cursor, result.length - 2);
+        continue;
+      }
+      if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth < 0) {
+          enclosesWhole = false;
+          break;
+        }
+      }
+    }
+    if (!enclosesWhole || depth !== 0) {
+      break;
+    }
+    result = result.slice(1, -1).trim();
+  }
+  return result;
+}
+
+/**
+ * Removes whitespace that sits OUTSIDE single-quoted string literals, so
+ * spacing-only differences are tolerated while every literal is preserved
+ * byte-for-byte. An extra boolean clause always contributes non-whitespace
+ * tokens, so this step can never hide one.
+ */
+function stripFormattingWhitespace(value: string): string {
+  let result = "";
+  let inLiteral = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === "'") {
+      if (inLiteral && value[index + 1] === "'") {
+        result += "''";
+        index += 1;
+        continue;
+      }
+      inLiteral = !inLiteral;
+      result += char;
+      continue;
+    }
+    if (!inLiteral && /\s/.test(char)) {
+      continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
+/**
+ * Normalizes a PostgreSQL index predicate (`pg_get_expr(indpred, indrelid)`)
+ * for exact-equality assertion against `ACTIVE_PORTAL_INDEX_PREDICATE`.
+ *
+ * PostgreSQL renders the stored `WHERE status = 'ACTIVE'` clause as
+ * `(status = 'ACTIVE'::text)`: it adds one redundant fully-enclosing
+ * parenthesis pair and an explicit, parser-added cast on the string literal.
+ * Those two artifacts, plus whitespace, are the ONLY tolerated differences.
+ * Any additional boolean term, column, literal or operator survives
+ * normalization as a non-whitespace token, so it can never compare equal.
+ *
+ * The cast matcher is deliberately anchored to a single-token type name and is
+ * applied BEFORE whitespace removal, so it stops at `text` and can never
+ * swallow a following `AND <column> ...` term.
+ */
+function normalizeIndexPredicate(predicate: string): string {
+  return stripFormattingWhitespace(
+    stripEnclosingParentheses(predicate.trim()).replace(
+      /(['](?:[^']|'')*['])\s*::\s*[a-z_][a-z0-9_]*(?:\s*\[\s*\])?/gi,
+      "$1"
+    )
+  );
 }
 
 const livePgDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL;
@@ -1918,5 +2030,385 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         await unrelatedWaiter;
       }
     }, 30_000);
+  });
+
+  /**
+   * EPIC-08 WU2 portal identity application-path evidence.
+   *
+   * Proves against real PostgreSQL what the in-memory harness cannot: the
+   * partial unique ACTIVE holder indexes rejecting a second holder (409) and a
+   * colliding canonical login email (409), the catalog-exact
+   * `customer_portal_access_active_contact_email_key` shape — UNIQUE on
+   * `(tenant_id, lower(contact_email))` WHERE `status = 'ACTIVE'` — plus a
+   * service-bypassing direct insert the database rejects, its partial predicate
+   * freeing the email after revocation, byte-equivalent cross-tenant 404 on
+   * provisioning AND revocation (the foreign holder/session left untouched), the
+   * `portal` entitlement gate (403) even for a directly-seeded holder,
+   * cross-cookie isolation (401 both directions), and revocation persisting
+   * `portal_session.revoked_at` while rejecting replays with 401.
+   */
+  describe("EPIC-08 portal identity application-path isolation", () => {
+    let portalCustomerAId: string;
+    let portalCustomerA2Id: string;
+    let portalAccessAId = "";
+    let livePortalCookie = "";
+    const LIVE_PORTAL_EMAIL = "live-portal-holder@portal.test";
+    const LIVE_PORTAL_PASSWORD = "live-portal-password";
+
+    beforeAll(async () => {
+      // Tenant A holds the explicit `portal` grant; tenant B intentionally does
+      // NOT, so the guard's entitlement gate can be proven for real.
+      const portalFeature = await prisma.featureCode.upsert({
+        where: { code: "portal" },
+        create: { code: "portal" },
+        update: {},
+      });
+      await prisma.tenantEntitlement.upsert({
+        where: {
+          tenantId_featureCodeId: { tenantId: tenantAId, featureCodeId: portalFeature.id },
+        },
+        create: { tenantId: tenantAId, featureCodeId: portalFeature.id },
+        update: {},
+      });
+
+      const customer = await prisma.customer.create({
+        data: { tenantId: tenantAId, kind: "INDIVIDUAL", displayName: "Live Portal Customer" },
+      });
+      portalCustomerAId = customer.id;
+      const secondCustomer = await prisma.customer.create({
+        data: { tenantId: tenantAId, kind: "INDIVIDUAL", displayName: "Live Portal Customer A2" },
+      });
+      portalCustomerA2Id = secondCustomer.id;
+    }, 60_000);
+
+    it("provisions a holder and rejects a second one with 409 at the partial unique index", async () => {
+      const requestId = "live-pg-portal-provision";
+      const created = await supertest(serverUrl)
+        .post(`/customers/${portalCustomerAId}/portal-access`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .send({ email: LIVE_PORTAL_EMAIL, password: LIVE_PORTAL_PASSWORD })
+        .expect(201);
+      const body = created.body as {
+        id: string;
+        tenantId: string;
+        customerId: string;
+        status: string;
+      };
+      expect(body.tenantId).toBe(tenantAId);
+      expect(body.customerId).toBe(portalCustomerAId);
+      expect(body.status).toBe("ACTIVE");
+      portalAccessAId = body.id;
+
+      const holderCount = (): Promise<number> =>
+        prisma.customerPortalAccess.count({
+          where: { tenantId: tenantAId, customerId: portalCustomerAId },
+        });
+      expect(await holderCount()).toBe(1);
+      const credential = await prisma.portalCredential.findUnique({
+        where: { portalAccessId: body.id },
+      });
+      expect(credential?.passwordHash).toBeDefined();
+
+      const audit = await prisma.auditLog.findMany({ where: { requestId } });
+      expect(audit.map((row) => row.action)).toEqual(["portal_access.provisioned"]);
+      expect(audit[0]?.actorType).toBe("STAFF");
+
+      const second = await supertest(serverUrl)
+        .post(`/customers/${portalCustomerAId}/portal-access`)
+        .set("Cookie", ownerACookie)
+        .send({ email: "second-live@portal.test", password: LIVE_PORTAL_PASSWORD })
+        .expect(409);
+      expect((second.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect(await holderCount()).toBe(1);
+    });
+
+    it("rejects a second same-Customer ACTIVE holder at the per-Customer partial unique index (service bypassed)", async () => {
+      // Pin the catalog-level shape exactly, mirroring the canonical-email key:
+      // UNIQUE validity, both raw key columns, and the ACTIVE predicate.
+      const indexRows = await prisma.$queryRaw<
+        { is_unique: boolean; key_1: string; key_2: string; predicate: string }[]
+      >`
+        SELECT
+          i.indisunique AS is_unique,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = 'customer_portal_access_active_customer_key'
+      `;
+      expect(indexRows).toHaveLength(1);
+      const index = indexRows[0];
+      expect(index.is_unique).toBe(true);
+      expect(index.key_1).toBe("tenant_id");
+      expect(index.key_2).toBe("customer_id");
+      expect(normalizeIndexPredicate(index.predicate)).toBe(ACTIVE_PORTAL_INDEX_PREDICATE);
+
+      // The API provisioned exactly one ACTIVE holder for this Customer (first
+      // test); the service pre-check is what returns that 409. Bypass the
+      // service entirely and let the DATABASE reject the same tenant/Customer
+      // duplicate on its own.
+      const activeHolderCount = (): Promise<number> =>
+        prisma.customerPortalAccess.count({
+          where: { tenantId: tenantAId, customerId: portalCustomerAId, status: "ACTIVE" },
+        });
+      expect(await activeHolderCount()).toBe(1);
+
+      // A DIFFERENT contactEmail removes the canonical-email key from play, so
+      // the per-Customer key is the only unique index left that can fire.
+      const rejection = await prisma.customerPortalAccess
+        .create({
+          data: {
+            tenantId: tenantAId,
+            customerId: portalCustomerAId,
+            contactEmail: "second-holder-live@portal.test",
+            status: "ACTIVE",
+          },
+        })
+        .then(
+          () => null,
+          (error: unknown) => error as { code?: string; meta?: { target?: unknown } }
+        );
+
+      // Prisma reports the violated partial index by its key columns, which
+      // names `customer_portal_access_active_customer_key` and not the
+      // canonical-email key.
+      expect(rejection?.code).toBe("P2002");
+      expect(rejection?.meta?.target).toEqual(["tenant_id", "customer_id"]);
+      expect(await activeHolderCount()).toBe(1);
+    });
+
+    it("rejects a second Customer claiming the same canonical login email at the ACTIVE partial unique index", async () => {
+      // Assert the catalog-level shape exactly — UNIQUE validity, both key
+      // entries including the lower() EXPRESSION, and the ACTIVE predicate —
+      // instead of loose substrings of the rendered indexdef. A raw-column key
+      // would let case-variants through, so the expression is load-bearing.
+      const indexRows = await prisma.$queryRaw<
+        { is_unique: boolean; key_1: string; key_2: string; predicate: string }[]
+      >`
+        SELECT
+          i.indisunique AS is_unique,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = 'customer_portal_access_active_contact_email_key'
+      `;
+      expect(indexRows).toHaveLength(1);
+      const index = indexRows[0];
+      expect(index.is_unique).toBe(true);
+      expect(index.key_1).toBe("tenant_id");
+      expect(index.key_2).toBe("lower(contact_email)");
+      expect(normalizeIndexPredicate(index.predicate)).toBe(ACTIVE_PORTAL_INDEX_PREDICATE);
+
+      const response = await supertest(serverUrl)
+        .post(`/customers/${portalCustomerA2Id}/portal-access`)
+        .set("Cookie", ownerACookie)
+        .send({ email: LIVE_PORTAL_EMAIL.toUpperCase(), password: LIVE_PORTAL_PASSWORD })
+        .expect(409);
+      expect((response.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      const holderCount = (): Promise<number> =>
+        prisma.customerPortalAccess.count({
+          where: { tenantId: tenantAId, customerId: portalCustomerA2Id },
+        });
+      expect(await holderCount()).toBe(0);
+
+      // Bypass the service pre-check entirely: insert through the data layer
+      // with a CASE-VARIANT of the ACTIVE canonical email on a DIFFERENT
+      // Customer. customerA2 holds zero ACTIVE rows (asserted just above), so
+      // the per-Customer key cannot be what fires; a raw-column key would admit
+      // the variant. The P2002 is therefore the database — not the service —
+      // enforcing lower(contact_email).
+      await expect(
+        prisma.customerPortalAccess.create({
+          data: {
+            tenantId: tenantAId,
+            customerId: portalCustomerA2Id,
+            contactEmail: LIVE_PORTAL_EMAIL.toUpperCase(),
+            status: "ACTIVE",
+          },
+        })
+      ).rejects.toMatchObject({ code: "P2002" });
+      expect(await holderCount()).toBe(0);
+    });
+
+    it("masks a cross-tenant provisioning Customer as a byte-equivalent 404 to an unknown Customer", async () => {
+      const requestId = "live-pg-portal-cross-tenant";
+      const before = await prisma.customerPortalAccess.count({ where: { tenantId: tenantBId } });
+      const crossTenant = await supertest(serverUrl)
+        .post(`/customers/${guardianCustomerBId}/portal-access`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .send({ email: "cross-live@portal.test", password: LIVE_PORTAL_PASSWORD })
+        .expect(404);
+      // Identical tenant context, body and server-pinned request id as a truly
+      // unknown Customer: the responses must be byte-identical, so a foreign
+      // tenant UUID is indistinguishable from a non-existent one.
+      const unknownCustomer = await supertest(serverUrl)
+        .post(`/customers/${randomUUID()}/portal-access`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .send({ email: "cross-live@portal.test", password: LIVE_PORTAL_PASSWORD })
+        .expect(404);
+
+      expect((crossTenant.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect(crossTenant.text).toBe(unknownCustomer.text);
+      expect(crossTenant.text).not.toContain(guardianCustomerBId);
+      expect(crossTenant.text).not.toContain(tenantBId);
+      expect(await prisma.customerPortalAccess.count({ where: { tenantId: tenantBId } })).toBe(
+        before
+      );
+    });
+
+    it("masks a cross-tenant revoke as a byte-equivalent 404 and leaves the foreign holder/session untouched", async () => {
+      // A foreign tenant's live holder + session. Tenant B is deliberately
+      // unentitled, so both rows are seeded directly: the point is that tenant
+      // A's revoke must never reach them.
+      const foreignCustomer = await prisma.customer.create({
+        data: {
+          tenantId: tenantBId,
+          kind: "INDIVIDUAL",
+          displayName: "Cross-tenant Revoke Customer",
+        },
+      });
+      const foreignHolder = await prisma.customerPortalAccess.create({
+        data: {
+          tenantId: tenantBId,
+          customerId: foreignCustomer.id,
+          contactEmail: "cross-revoke-foreign@portal.test",
+          status: "ACTIVE",
+        },
+      });
+      const { token } = await app.get(PortalSessionService).issue(foreignHolder.id);
+
+      const holderBefore = await prisma.customerPortalAccess.findUnique({
+        where: { id: foreignHolder.id },
+      });
+      const sessionsBefore = await prisma.portalSession.findMany({
+        where: { portalAccessId: foreignHolder.id },
+      });
+      expect(holderBefore?.status).toBe("ACTIVE");
+      expect(sessionsBefore).toHaveLength(1);
+      expect(sessionsBefore[0]?.revokedAt).toBeNull();
+
+      const requestId = "live-pg-portal-cross-tenant-revoke";
+      const crossTenant = await supertest(serverUrl)
+        .post(`/customers/${foreignCustomer.id}/portal-access/revoke`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .expect(404);
+      // Identical tenant context, body and server-pinned request id as a truly
+      // unknown Customer: the responses must be byte-identical, so a foreign
+      // tenant UUID is indistinguishable from a non-existent one.
+      const unknownCustomer = await supertest(serverUrl)
+        .post(`/customers/${randomUUID()}/portal-access/revoke`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .expect(404);
+
+      expect((crossTenant.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect(crossTenant.text).toBe(unknownCustomer.text);
+      expect(crossTenant.text).not.toContain(foreignCustomer.id);
+      expect(crossTenant.text).not.toContain(tenantBId);
+
+      // The foreign holder and its live session are byte-for-byte unchanged: no
+      // status flip, no revokedAt stamp, no bumped updatedAt.
+      expect(
+        await prisma.customerPortalAccess.findUnique({ where: { id: foreignHolder.id } })
+      ).toEqual(holderBefore);
+      expect(
+        await prisma.portalSession.findMany({ where: { portalAccessId: foreignHolder.id } })
+      ).toEqual(sessionsBefore);
+      // The token still resolves — the session sweep never crossed tenants.
+      expect(await app.get(PortalSessionService).resolve(token)).not.toBeNull();
+      // Nothing co-committed: no audit row under tenant A's request id.
+      expect(await prisma.auditLog.findMany({ where: { requestId } })).toHaveLength(0);
+    });
+
+    it("returns 403 FEATURE_NOT_ENTITLED for a holder in an unentitled tenant", async () => {
+      // Seeded directly (provisioning and login both require the entitlement),
+      // so this isolates the PortalAuthGuard's entitlement gate.
+      const holderB = await prisma.customerPortalAccess.create({
+        data: {
+          tenantId: tenantBId,
+          customerId: guardianCustomerBId,
+          contactEmail: "unentitled-live@portal.test",
+          status: "ACTIVE",
+        },
+      });
+      const { token } = await app.get(PortalSessionService).issue(holderB.id);
+
+      const response = await supertest(serverUrl)
+        .get("/portal/me")
+        .set("Cookie", `${PORTAL_SESSION_COOKIE}=${token}`)
+        .expect(403);
+      expect((response.body as ErrorEnvelope).error.code).toBe("FEATURE_NOT_ENTITLED");
+    });
+
+    it("separates the staff and portal cookies, then authenticates a holder", async () => {
+      const login = await supertest(serverUrl)
+        .post("/portal/login")
+        .send({
+          tenantSlug: "live-a",
+          email: LIVE_PORTAL_EMAIL,
+          password: LIVE_PORTAL_PASSWORD,
+        })
+        .expect(200);
+      const setCookie = login.headers["set-cookie"] as unknown as string[];
+      livePortalCookie = setCookie
+        .find((cookie) => cookie.startsWith(`${PORTAL_SESSION_COOKIE}=`))!
+        .split(";")[0]!;
+      // The portal login never sets a staff cookie.
+      expect(setCookie.some((cookie) => cookie.startsWith(`${STAFF_SESSION_COOKIE}=`))).toBe(false);
+
+      await supertest(serverUrl).get("/portal/me").set("Cookie", livePortalCookie).expect(200);
+      // Each chain rejects the other cookie, and anonymous is 401.
+      await supertest(serverUrl).get("/portal/me").set("Cookie", ownerACookie).expect(401);
+      await supertest(serverUrl).get("/memberships").set("Cookie", livePortalCookie).expect(401);
+      await supertest(serverUrl).get("/portal/me").expect(401);
+    });
+
+    it("persists portal_session.revoked_at on revocation and rejects replays with 401", async () => {
+      const requestId = "live-pg-portal-revoke";
+      // Snapshot the holder's live session row: the evidence must show the SAME
+      // row is retained and stamped, not merely that a later request 401s.
+      const sessionsBefore = await prisma.portalSession.findMany({
+        where: { portalAccessId: portalAccessAId },
+      });
+      expect(sessionsBefore).toHaveLength(1);
+      expect(sessionsBefore[0]?.revokedAt).toBeNull();
+
+      await supertest(serverUrl)
+        .post(`/customers/${portalCustomerAId}/portal-access/revoke`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .expect(201);
+
+      const sessionsAfter = await prisma.portalSession.findMany({
+        where: { portalAccessId: portalAccessAId },
+      });
+      expect(sessionsAfter).toHaveLength(1);
+      expect(sessionsAfter[0]?.id).toBe(sessionsBefore[0]?.id);
+      expect(sessionsAfter[0]?.revokedAt).toBeInstanceOf(Date);
+
+      await supertest(serverUrl).get("/portal/me").set("Cookie", livePortalCookie).expect(401);
+
+      const audit = await prisma.auditLog.findMany({ where: { requestId } });
+      expect(audit.map((row) => row.action)).toEqual(["portal_access.revoked"]);
+      expect(audit[0]?.actorType).toBe("STAFF");
+    });
+
+    it("frees the canonical login email after revocation (partial index ignores REVOKED)", async () => {
+      const created = await supertest(serverUrl)
+        .post(`/customers/${portalCustomerA2Id}/portal-access`)
+        .set("Cookie", ownerACookie)
+        .send({ email: LIVE_PORTAL_EMAIL, password: LIVE_PORTAL_PASSWORD })
+        .expect(201);
+      const body = created.body as { customerId: string; status: string };
+      expect(body.customerId).toBe(portalCustomerA2Id);
+      expect(body.status).toBe("ACTIVE");
+    });
   });
 });

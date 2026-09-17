@@ -6,6 +6,7 @@ import { seedTwoTenants, type TwoTenantFixture } from "../../test/support/seed-t
 import { enumerateRouteContracts, type RouteContractEntry } from "./route-enumeration.js";
 import { isPortalSurfacePath, isPublicExemptRoute } from "./route-contract.js";
 import { SCHEDULING_PERMISSIONS } from "../scheduling/appointment.permissions.js";
+import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
  * ROUTE-CONTRACT PROBE (EPIC-02 design D1, tasks 1.1/1.6/2.5).
@@ -139,14 +140,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /appointments/:id/complete",
   "POST /appointments/:id/cancel",
   "POST /appointments/:id/no-show",
-  // EPIC-08 WU2B — isolated portal identity surface
+  // EPIC-08 — isolated portal identity surface + staff portal-access commands
   "POST /portal/login",
   "POST /portal/logout",
   "GET /portal/me",
-  // EPIC-08 WU2C — staff portal-access commands (OFF the /portal surface; the
-  // DECLARED permission-level fence for these two routes is WU2D). The exact
-  // inventory pin must list every shipped route, so WU2C owns this mechanical
-  // update or the full-surface guard fails on its own new routes.
   "POST /customers/:customerId/portal-access",
   "POST /customers/:customerId/portal-access/revoke",
 ];
@@ -204,6 +201,17 @@ const SCHEDULING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /appointments/:id/complete": SCHEDULING_PERMISSIONS.transition,
   "POST /appointments/:id/cancel": SCHEDULING_PERMISSIONS.transition,
   "POST /appointments/:id/no-show": SCHEDULING_PERMISSIONS.transition,
+};
+
+/**
+ * Staff portal-access commands (EPIC-08 task 2.3). They live OFF the
+ * `/portal/*` surface and must stay DECLARED on the staff chain with the
+ * seeded `portal.access.manage` key — pinning the exact key fails by name if a
+ * future edit weakens the declaration or wrongly fences the route as portal.
+ */
+const PORTAL_ACCESS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "POST /customers/:customerId/portal-access": PORTAL_ACCESS_PERMISSION,
+  "POST /customers/:customerId/portal-access/revoke": PORTAL_ACCESS_PERMISSION,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -347,7 +355,7 @@ describe("surface fence — no catalog/role mutation routes (task 2.5)", () => {
   });
 });
 
-describe("portal surface fence (EPIC-08 WU2B)", () => {
+describe("portal surface fence (EPIC-08 task 2.3)", () => {
   let booted: BootedTestApp;
   let inventory: RouteContractEntry[];
 
@@ -364,28 +372,50 @@ describe("portal surface fence (EPIC-08 WU2B)", () => {
     const portalRoutes = inventory.filter((entry) => isPortalSurfacePath(entry.path));
     const actual = portalRoutes.map((entry) => `${entry.method} ${entry.path}`).sort();
     expect(actual).toEqual(["GET /portal/me", "POST /portal/login", "POST /portal/logout"]);
-    // The predicate is exact: `/portal` itself and every near-miss (staff
-    // portal-access commands) stay OUTSIDE the portal boundary.
+    // The predicate is never satisfied by a near-miss path.
     for (const nearMiss of ["/portal", "/portal-access", "/customers/x/portal-access"]) {
       expect(isPortalSurfacePath(nearMiss), nearMiss).toBe(nearMiss === "/portal");
     }
   });
 
   it("keeps portal-surface routes free of staff permission metadata", () => {
-    // Portal policy is enforced by PortalAuthGuard, not by @RequirePermissions:
-    // a staff key here would silently re-fence the route onto the staff chain.
+    // Portal policy is enforced by PortalAuthGuard, not by @RequirePermissions.
     const offenders = inventory
       .filter((entry) => isPortalSurfacePath(entry.path) && entry.permissions !== undefined)
       .map((entry) => `${entry.method} ${entry.path}`);
     expect(offenders).toEqual([]);
   });
 
-  it("keeps login the ONLY @Public portal route — logout/me stay guarded", () => {
+  it("keeps login the ONLY @Public portal route", () => {
     const publicPortal = inventory
       .filter((entry) => isPortalSurfacePath(entry.path) && entry.isPublic)
       .map((entry) => `${entry.method} ${entry.path}`)
       .sort();
     expect(publicPortal).toEqual(["POST /portal/login"]);
+  });
+
+  it("keeps the staff portal-access commands DECLARED and OFF the portal surface", () => {
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(PORTAL_ACCESS_PERMISSION_BY_ROUTE)) {
+      const entry = inventory.find((row) => `${row.method} ${row.path}` === route);
+      if (!entry) {
+        report.push(`MISSING STAFF PORTAL-ACCESS ROUTE: ${route}`);
+        continue;
+      }
+      const permissions = entry.permissions === undefined ? [] : [...entry.permissions];
+      if (permissions.length !== 1 || permissions[0] !== expected) {
+        report.push(
+          `WRONG PERMISSION: ${route} expected [${expected}] got [${permissions.join(", ")}]`
+        );
+      }
+      if (isPortalSurfacePath(entry.path)) {
+        report.push(`STAFF ROUTE WRONGLY FENCED AS PORTAL: ${route}`);
+      }
+      if (isPublicExemptRoute(entry)) {
+        report.push(`STAFF ROUTE WRONGLY PUBLIC-EXEMPT: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
   });
 });
 
