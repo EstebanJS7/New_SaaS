@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DomainError } from "@newsaas/shared";
 import type { AuditAppendInput, AuditWriter } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import type { PermissionResolver } from "../rbac/permission-resolver.service.js";
@@ -251,5 +252,26 @@ describe("BookingRequestService concurrent approval recovery (EPIC-08 WU4B)", ()
     // is linked. A P2002-only recovery would stop after the first read.
     expect(harness.rootFindFirst).toHaveBeenCalledTimes(2);
     expect(harness.appendMock).not.toHaveBeenCalled();
+  });
+
+  it("rethrows the original conflict object unchanged when nothing is linked", async () => {
+    // Identity, not just shape: an unresolvable conflict must reach the client
+    // as the same error it was raised as (stable code and message), never as a
+    // wrapper the recovery invented.
+    const original = new DomainError(
+      "CONFLICT",
+      "The professional already has an overlapping appointment."
+    );
+    const harness = buildHarness(original, requestContext, { recoveryFindsLinked: false });
+
+    const rejected = await withContext(() =>
+      harness.service.approveBookingRequest(REQUEST_ID, {
+        branchId: BRANCH_A,
+        professionalMembershipId: VET_A,
+      })
+    ).catch((error: unknown) => error);
+
+    expect(rejected).toBe(original);
+    expect(harness.rootFindFirst).toHaveBeenCalledTimes(2);
   });
 });
