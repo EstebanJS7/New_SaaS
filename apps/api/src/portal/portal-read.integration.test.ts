@@ -401,11 +401,7 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
       expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
     });
 
-    it("404 for deferred booking/profile mutations", async () => {
-      await supertest(server())
-        .post(`/portal/pets/${petA.id}/bookings`)
-        .set("Cookie", holderA.cookie)
-        .expect(404);
+    it("404 for the deferred profile mutation (booking shipped in WU4A)", async () => {
       await supertest(server())
         .post("/portal/profile")
         .set("Cookie", holderA.cookie)

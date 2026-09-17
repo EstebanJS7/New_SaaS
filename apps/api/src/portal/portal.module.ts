@@ -9,6 +9,8 @@ import { PortalAccessService } from "./portal-access.service.js";
 import { PortalAuthController } from "./portal-auth.controller.js";
 import { PortalAuthGuard } from "./portal-auth.guard.js";
 import { PortalAuthService } from "./portal-auth.service.js";
+import { PortalBookingController } from "./portal-booking.controller.js";
+import { PortalBookingService } from "./portal-booking.service.js";
 import { PortalReadController } from "./portal-read.controller.js";
 import { PortalReadService } from "./portal-read.service.js";
 import { PortalSessionService } from "./portal-session.service.js";
@@ -29,12 +31,18 @@ import { PortalSessionService } from "./portal-session.service.js";
  */
 @Module({
   imports: [ContextModule, AuthModule, AuditModule, EntitlementsModule],
-  controllers: [PortalAuthController, PortalAccessController, PortalReadController],
+  controllers: [
+    PortalAuthController,
+    PortalAccessController,
+    PortalReadController,
+    PortalBookingController,
+  ],
   providers: [
     PortalSessionService,
     PortalAuthService,
     PortalAccessService,
     PortalReadService,
+    PortalBookingService,
     PortalAuthGuard,
     // Registered LAST in the chain; global for the whole app.
     { provide: APP_GUARD, useClass: PortalAuthGuard },
