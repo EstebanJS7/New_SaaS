@@ -1,7 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
-import { DomainError } from "@newsaas/shared";
 import { RequestContextService } from "../context/request-context.service.js";
+import {
+  assertHolderOwnedPatient,
+  holderPatientIds,
+  portalResourceNotFound,
+} from "./portal-holder-scope.js";
 import type {
   PortalAppointment,
   PortalAppointmentStatusDto,
@@ -12,18 +16,6 @@ import type {
   PortalPetSummary,
   PortalVaccination,
 } from "./portal-read.dto.js";
-
-/**
- * Uniform NOT_FOUND message for every non-owned, cross-tenant or unknown
- * reference. One message means the three cases are byte-equivalent to a caller
- * (see `expectCrossTenant404`), so a holder cannot probe for the existence of
- * another Customer's (or another tenant's) resources.
- */
-const NOT_FOUND_MESSAGE = "Resource was not found.";
-
-function notFound(): DomainError {
-  return new DomainError("NOT_FOUND", NOT_FOUND_MESSAGE);
-}
 
 /** Tenant-scoped Patient row as the portal read boundary consumes it. */
 interface PortalPatientRow {
@@ -193,7 +185,7 @@ export class PortalReadService {
   /** Lists the holder's pets (active guardian link), name-ordered. */
   async listPets(): Promise<PortalPetSummary[]> {
     const { tenantId, customerId } = this.requirePortalScope();
-    const patientIds = await this.holderPatientIds(tenantId, customerId);
+    const patientIds = await holderPatientIds(this.prisma, tenantId, customerId);
     if (patientIds.length === 0) {
       return [];
     }
@@ -206,11 +198,11 @@ export class PortalReadService {
   /** Pet detail: allowlisted identity + clinical summary + vaccinations. */
   async getPet(id: string): Promise<PortalPetDetail> {
     const { tenantId, customerId } = this.requirePortalScope();
-    await this.assertHolderOwnedPatient(tenantId, customerId, id);
+    await assertHolderOwnedPatient(this.prisma, tenantId, customerId, id);
 
     const patient = await this.prisma.patient.findFirst({ where: { id, tenantId } });
     if (!patient) {
-      throw notFound();
+      throw portalResourceNotFound();
     }
 
     const [encounters, vaccinations] = await Promise.all([
@@ -248,7 +240,7 @@ export class PortalReadService {
   /** Lists appointments for holder-owned pets, earliest-start first. */
   async listAppointments(): Promise<PortalAppointment[]> {
     const { tenantId, customerId } = this.requirePortalScope();
-    const patientIds = await this.holderPatientIds(tenantId, customerId);
+    const patientIds = await holderPatientIds(this.prisma, tenantId, customerId);
     if (patientIds.length === 0) {
       return [];
     }
@@ -261,15 +253,15 @@ export class PortalReadService {
   /** One appointment, only when it belongs to a holder-owned pet. */
   async getAppointment(id: string): Promise<PortalAppointment> {
     const { tenantId, customerId } = this.requirePortalScope();
-    const patientIds = await this.holderPatientIds(tenantId, customerId);
+    const patientIds = await holderPatientIds(this.prisma, tenantId, customerId);
     if (patientIds.length === 0) {
-      throw notFound();
+      throw portalResourceNotFound();
     }
     const row = await this.prisma.appointment.findFirst({
       where: { id, tenantId, patientId: { in: patientIds } },
     });
     if (!row) {
-      throw notFound();
+      throw portalResourceNotFound();
     }
     return toAppointment(row);
   }
@@ -284,30 +276,6 @@ export class PortalReadService {
       tenantId: this.requestContext.requireTenantId(),
       customerId: this.requestContext.requirePortalCustomerId(),
     };
-  }
-
-  /** Active guardian links for the holder's Customer — the "own pets" chain. */
-  private async holderPatientIds(tenantId: string, customerId: string): Promise<string[]> {
-    const links = await this.prisma.patientGuardian.findMany({
-      where: { tenantId, customerId, isActive: true },
-      select: { patientId: true },
-    });
-    return links.map((link) => link.patientId);
-  }
-
-  /** Rejects any pet without an ACTIVE guardian link to this holder. */
-  private async assertHolderOwnedPatient(
-    tenantId: string,
-    customerId: string,
-    patientId: string
-  ): Promise<void> {
-    const link = await this.prisma.patientGuardian.findFirst({
-      where: { tenantId, patientId, customerId, isActive: true },
-      select: { patientId: true },
-    });
-    if (!link) {
-      throw notFound();
-    }
   }
 }
 

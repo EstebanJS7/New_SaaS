@@ -18,9 +18,10 @@ import { PortalReadService } from "./portal-read.service.js";
  * holder's tenant and Customer are resolved server-side from the session; a
  * path or query `tenantId`/`customerId` is never read.
  *
- * Booking commands, profile writes, invoices/documents/notifications and the
- * deferred clinical subdomains are NOT registered here, so a request to any of
- * them is an unauthenticated-surface 404 rather than a portal operation.
+ * Booking COMMANDS ship separately (WU4A, `PortalBookingController`); profile
+ * writes, invoices/documents/notifications and the deferred clinical subdomains
+ * are NOT registered at all, so a request to any of them is an
+ * unauthenticated-surface 404 rather than a portal operation.
  */
 @Controller("portal")
 export class PortalReadController {
