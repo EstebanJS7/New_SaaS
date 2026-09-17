@@ -3,6 +3,8 @@ import { PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
 import { RequestContextService } from "../context/request-context.service.js";
 import type {
+  PortalAppointment,
+  PortalAppointmentStatusDto,
   PortalClinicalSummary,
   PortalEncounterStatusDto,
   PortalPatientSexDto,
@@ -60,6 +62,15 @@ interface PortalVaccinationRow {
   readonly administeredAt: Date;
 }
 
+/** Appointment row; provenance/internal linkage is deliberately absent. */
+interface PortalAppointmentRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly status: PortalAppointmentStatusDto;
+  readonly startAt: Date;
+  readonly endAt: Date;
+}
+
 /**
  * Structural Prisma surface consumed by the portal read boundary. Declared
  * explicitly (design pattern shared with `PortalAccessService`) so the service
@@ -95,6 +106,14 @@ interface PortalReadPrisma {
     findMany: (args: {
       where: { tenantId: string; patientId: string };
     }) => Promise<PortalVaccinationRow[]>;
+  };
+  appointment: {
+    findMany: (args: {
+      where: { tenantId: string; patientId: { in: string[] } };
+    }) => Promise<PortalAppointmentRow[]>;
+    findFirst: (args: {
+      where: { id: string; tenantId: string; patientId: { in: string[] } };
+    }) => Promise<PortalAppointmentRow | null>;
   };
 }
 
@@ -135,6 +154,16 @@ function toVaccination(row: PortalVaccinationRow): PortalVaccination {
     id: row.id,
     vaccine: row.vaccine,
     administeredAt: toIso(row.administeredAt),
+  };
+}
+
+function toAppointment(row: PortalAppointmentRow): PortalAppointment {
+  return {
+    id: row.id,
+    patientId: row.patientId,
+    status: row.status,
+    startAt: toIso(row.startAt),
+    endAt: toIso(row.endAt),
   };
 }
 
@@ -214,6 +243,35 @@ export class PortalReadService {
           .map(toVaccination),
       },
     };
+  }
+
+  /** Lists appointments for holder-owned pets, earliest-start first. */
+  async listAppointments(): Promise<PortalAppointment[]> {
+    const { tenantId, customerId } = this.requirePortalScope();
+    const patientIds = await this.holderPatientIds(tenantId, customerId);
+    if (patientIds.length === 0) {
+      return [];
+    }
+    const rows = await this.prisma.appointment.findMany({
+      where: { tenantId, patientId: { in: patientIds } },
+    });
+    return rows.map(toAppointment).sort((left, right) => left.startAt.localeCompare(right.startAt));
+  }
+
+  /** One appointment, only when it belongs to a holder-owned pet. */
+  async getAppointment(id: string): Promise<PortalAppointment> {
+    const { tenantId, customerId } = this.requirePortalScope();
+    const patientIds = await this.holderPatientIds(tenantId, customerId);
+    if (patientIds.length === 0) {
+      throw notFound();
+    }
+    const row = await this.prisma.appointment.findFirst({
+      where: { id, tenantId, patientId: { in: patientIds } },
+    });
+    if (!row) {
+      throw notFound();
+    }
+    return toAppointment(row);
   }
 
   /**

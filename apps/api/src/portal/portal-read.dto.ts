@@ -6,12 +6,12 @@ import { z } from "zod";
  * Every field that crosses the portal boundary is listed here explicitly; a
  * Prisma model is NEVER returned. The projection is deliberately stricter than
  * the staff DTOs: no `tenantId` echo, no `internalNotes`, no reason/anamnesis/
- * diagnosis/treatmentPlan, and no subdomains the epic defers (treatments,
- * deworming, studies, weights, invoices, documents).
+ * diagnosis/treatmentPlan, no appointment provenance, and no subdomains the
+ * epic defers (treatments, deworming, studies, weights, invoices, documents).
  *
- * Data classification: pet and clinical content is CONFIDENTIAL. Responses are
- * built by explicit mappers; logs carry stable IDs only and never a
- * CONFIDENTIAL payload.
+ * Data classification: pet, clinical and appointment content is CONFIDENTIAL.
+ * Responses are built by explicit mappers; logs carry stable IDs only and never
+ * a CONFIDENTIAL payload.
  */
 
 /** Current contract version of the portal read DTOs. */
@@ -29,6 +29,9 @@ export type PortalResourceIdParam = z.infer<typeof portalResourceIdParamSchema>;
 export type PortalPatientSexDto = "MALE" | "FEMALE" | "UNKNOWN";
 
 export type PortalEncounterStatusDto = "DRAFT" | "CLOSED";
+
+export type PortalAppointmentStatusDto =
+  "SCHEDULED" | "CONFIRMED" | "ARRIVED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 
 /** Holder-owned pet identity — species/breed as stable ids, no tenant echo. */
 export interface PortalPetSummary {
@@ -66,4 +69,13 @@ export interface PortalPetDetail extends PortalPetSummary {
     readonly encounters: readonly PortalClinicalSummary[];
     readonly vaccinations: readonly PortalVaccination[];
   };
+}
+
+/** Holder-owned appointment; no tenant, provenance or internal linkage. */
+export interface PortalAppointment {
+  readonly id: string;
+  readonly patientId: string;
+  readonly status: PortalAppointmentStatusDto;
+  readonly startAt: string;
+  readonly endAt: string;
 }

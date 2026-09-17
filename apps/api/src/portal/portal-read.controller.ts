@@ -2,14 +2,15 @@ import { Controller, Get, Param } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import {
   portalResourceIdParamSchema,
+  type PortalAppointment,
   type PortalPetDetail,
   type PortalPetSummary,
 } from "./portal-read.dto.js";
 import { PortalReadService } from "./portal-read.service.js";
 
 /**
- * Holder-owned portal READ surface (EPIC-08 WU3): own pets and pet detail with
- * an allowlisted clinical summary + vaccination history.
+ * Holder-owned portal READ surface (EPIC-08 WU3): own pets, pet detail with an
+ * allowlisted clinical summary + vaccination history, and own appointments.
  *
  * These routes live on the `/portal/*` surface ONLY: they carry no staff
  * `@RequirePermissions` annotation (the staff guard chain skips the surface) and
@@ -17,10 +18,9 @@ import { PortalReadService } from "./portal-read.service.js";
  * holder's tenant and Customer are resolved server-side from the session; a
  * path or query `tenantId`/`customerId` is never read.
  *
- * Appointment reads, booking commands, profile writes, invoices/documents/
- * notifications and the deferred clinical subdomains are NOT registered here,
- * so a request to any of them is an unauthenticated-surface 404 rather than a
- * portal operation.
+ * Booking commands, profile writes, invoices/documents/notifications and the
+ * deferred clinical subdomains are NOT registered here, so a request to any of
+ * them is an unauthenticated-surface 404 rather than a portal operation.
  */
 @Controller("portal")
 export class PortalReadController {
@@ -36,6 +36,18 @@ export class PortalReadController {
   @Get("pets/:id")
   getPet(@Param() params: unknown): Promise<PortalPetDetail> {
     return this.reads.getPet(parseResourceId(params));
+  }
+
+  /** Lists appointments for the authenticated holder's pets. */
+  @Get("appointments")
+  listAppointments(): Promise<PortalAppointment[]> {
+    return this.reads.listAppointments();
+  }
+
+  /** One appointment, only when it belongs to a holder-owned pet. */
+  @Get("appointments/:id")
+  getAppointment(@Param() params: unknown): Promise<PortalAppointment> {
+    return this.reads.getAppointment(parseResourceId(params));
   }
 }
 

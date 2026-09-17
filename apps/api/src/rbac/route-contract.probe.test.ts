@@ -147,6 +147,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // EPIC-08 WU3 — holder-owned portal READ surface
   "GET /portal/pets",
   "GET /portal/pets/:id",
+  "GET /portal/appointments",
+  "GET /portal/appointments/:id",
   "POST /customers/:customerId/portal-access",
   "POST /customers/:customerId/portal-access/revoke",
 ];
@@ -375,6 +377,8 @@ describe("portal surface fence (EPIC-08 task 2.3)", () => {
     const portalRoutes = inventory.filter((entry) => isPortalSurfacePath(entry.path));
     const actual = portalRoutes.map((entry) => `${entry.method} ${entry.path}`).sort();
     expect(actual).toEqual([
+      "GET /portal/appointments",
+      "GET /portal/appointments/:id",
       "GET /portal/me",
       "GET /portal/pets",
       "GET /portal/pets/:id",

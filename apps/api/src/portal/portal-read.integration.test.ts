@@ -25,6 +25,14 @@ interface PetBody {
   };
 }
 
+interface AppointmentBody {
+  id: string;
+  patientId: string;
+  status: string;
+  startAt: string;
+  endAt: string;
+}
+
 /**
  * Distinctive, searchable CONFIDENTIAL markers. The whole point of WU3 is that
  * neither can reach a response or a log line.
@@ -44,6 +52,8 @@ const PET_DETAIL_KEYS = [
   "speciesId",
 ];
 
+const APPOINTMENT_KEYS = ["endAt", "id", "patientId", "startAt", "status"];
+
 /**
  * EPIC-08 WU3 — holder-owned portal READ surface over real HTTP and the full
  * guard chain (AppModule + AppGuards + in-memory Prisma boundary).
@@ -62,6 +72,9 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
   let petA2: PatientRow;
   let petB: PatientRow;
   let encounterWithNotesId: string;
+  let appointmentAId: string;
+  let appointmentA2Id: string;
+  let appointmentBId: string;
 
   beforeAll(async () => {
     booted = await bootTestApp();
@@ -159,6 +172,23 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
         closedAt: new Date("2026-03-02T10:00:00.000Z"),
       },
     });
+
+    const createAppointment = (tenantId: string, patientId: string, startAt: Date): string =>
+      prisma.appointment.create({
+        data: {
+          tenantId,
+          branchId: randomUUID(),
+          patientId,
+          professionalMembershipId: randomUUID(),
+          status: "SCHEDULED",
+          version: 1,
+          startAt,
+          endAt: new Date(startAt.getTime() + 60 * 60 * 1000),
+        },
+      }).id;
+    appointmentAId = createAppointment(tenantA, petA.id, new Date("2026-04-01T09:00:00.000Z"));
+    appointmentA2Id = createAppointment(tenantA, petA2.id, new Date("2026-04-02T09:00:00.000Z"));
+    appointmentBId = createAppointment(tenantB, petB.id, new Date("2026-04-03T09:00:00.000Z"));
 
     holderA = seedPortalAccess(booted.db, { tenantId: tenantA, customerId: customerA1 });
     holderB = seedPortalAccess(booted.db, { tenantId: tenantB, customerId: customerB });
@@ -296,6 +326,59 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
     });
   });
 
+  describe("holder-owned appointment reads", () => {
+    it("lists only appointments for holder-owned pets", async () => {
+      const response = await supertest(server())
+        .get("/portal/appointments")
+        .set("Cookie", holderA.cookie)
+        .expect(200);
+
+      const body = response.body as AppointmentBody[];
+      expect(body.map((appointment) => appointment.id)).toEqual([appointmentAId]);
+      expect(body[0]).toMatchObject({ patientId: petA.id, status: "SCHEDULED" });
+      expect(Object.keys(body[0]).sort()).toEqual(APPOINTMENT_KEYS);
+      // No provenance/internal linkage leaks.
+      expect(response.text).not.toContain("portalBookingRequestId");
+      expect(response.text).not.toContain(appointmentA2Id);
+      expect(response.text).not.toContain(appointmentBId);
+    });
+
+    it("serves one holder-owned appointment with the allowlisted projection", async () => {
+      const response = await supertest(server())
+        .get(`/portal/appointments/${appointmentAId}`)
+        .set("Cookie", holderA.cookie)
+        .expect(200);
+
+      const body = response.body as AppointmentBody;
+      expect(Object.keys(body).sort()).toEqual(APPOINTMENT_KEYS);
+      expect(body.id).toBe(appointmentAId);
+      expect(body).not.toHaveProperty("tenantId");
+    });
+
+    it("masks a cross-tenant appointment and a same-tenant non-owned one as 404", async () => {
+      await expectCrossTenant404({
+        app: booted.app,
+        cookie: holderA.cookie,
+        nonexistentUrl: `/portal/appointments/${randomUUID()}`,
+        foreignUrl: `/portal/appointments/${appointmentBId}`,
+      });
+      await expectCrossTenant404({
+        app: booted.app,
+        cookie: holderA.cookie,
+        nonexistentUrl: `/portal/appointments/${randomUUID()}`,
+        foreignUrl: `/portal/appointments/${appointmentA2Id}`,
+      });
+    });
+
+    it("rejects a malformed appointment id with 400 VALIDATION_FAILED", async () => {
+      const response = await supertest(server())
+        .get("/portal/appointments/not-a-uuid")
+        .set("Cookie", holderA.cookie)
+        .expect(400);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("VALIDATION_FAILED");
+    });
+  });
+
   describe("deferred surfaces stay absent", () => {
     const deferredGets = [
       "/portal/profile",
@@ -328,6 +411,14 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
         .set("Cookie", holderA.cookie)
         .send({ phone: "+595981000000" })
         .expect(404);
+    });
+
+    it("401 when a portal identity attempts a staff appointment transition", async () => {
+      const response = await supertest(server())
+        .post(`/appointments/${appointmentAId}/confirm`)
+        .set("Cookie", holderA.cookie)
+        .expect(401);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("UNAUTHENTICATED");
     });
   });
 });
