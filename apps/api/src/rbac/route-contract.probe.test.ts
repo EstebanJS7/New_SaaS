@@ -143,6 +143,12 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /portal/login",
   "POST /portal/logout",
   "GET /portal/me",
+  // EPIC-08 WU2C — staff portal-access commands (OFF the /portal surface; the
+  // DECLARED permission-level fence for these two routes is WU2D). The exact
+  // inventory pin must list every shipped route, so WU2C owns this mechanical
+  // update or the full-surface guard fails on its own new routes.
+  "POST /customers/:customerId/portal-access",
+  "POST /customers/:customerId/portal-access/revoke",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
