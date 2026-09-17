@@ -140,6 +140,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /appointments/:id/complete",
   "POST /appointments/:id/cancel",
   "POST /appointments/:id/no-show",
+  // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
+  "GET /booking-requests",
+  "POST /booking-requests/:id/approve",
+  "POST /booking-requests/:id/reject",
   // EPIC-08 — isolated portal identity surface + staff portal-access commands
   "POST /portal/login",
   "POST /portal/logout",
@@ -208,6 +212,10 @@ const SCHEDULING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /appointments/:id/complete": SCHEDULING_PERMISSIONS.transition,
   "POST /appointments/:id/cancel": SCHEDULING_PERMISSIONS.transition,
   "POST /appointments/:id/no-show": SCHEDULING_PERMISSIONS.transition,
+  // EPIC-08 WU4B — staff booking-request decisions all require `manage`.
+  "GET /booking-requests": SCHEDULING_PERMISSIONS.manage,
+  "POST /booking-requests/:id/approve": SCHEDULING_PERMISSIONS.manage,
+  "POST /booking-requests/:id/reject": SCHEDULING_PERMISSIONS.manage,
 };
 
 /**
@@ -278,7 +286,10 @@ describe("route-contract probe (deny-by-default)", () => {
   it("maps EVERY scheduling route to its intended granular scheduling.appointment.* permission", () => {
     const actualByRoute = new Map(
       inventory
-        .filter((entry) => entry.path.startsWith("/appointments"))
+        .filter(
+          (entry) =>
+            entry.path.startsWith("/appointments") || entry.path.startsWith("/booking-requests")
+        )
         .map((entry) => [
           `${entry.method} ${entry.path}`,
           entry.permissions === undefined ? [] : [...entry.permissions],
@@ -408,6 +419,31 @@ describe("portal surface fence (EPIC-08 task 2.3)", () => {
       .map((entry) => `${entry.method} ${entry.path}`)
       .sort();
     expect(publicPortal).toEqual(["POST /portal/login"]);
+  });
+
+  it("keeps the staff booking-request routes DECLARED and OFF the portal surface", () => {
+    const report: string[] = [];
+    for (const route of [
+      "GET /booking-requests",
+      "POST /booking-requests/:id/approve",
+      "POST /booking-requests/:id/reject",
+    ]) {
+      const entry = inventory.find((row) => `${row.method} ${row.path}` === route);
+      if (!entry) {
+        report.push(`MISSING STAFF BOOKING-REQUEST ROUTE: ${route}`);
+        continue;
+      }
+      if (isPortalSurfacePath(entry.path)) {
+        report.push(`STAFF ROUTE WRONGLY FENCED AS PORTAL: ${route}`);
+      }
+      if (isPublicExemptRoute(entry)) {
+        report.push(`STAFF ROUTE WRONGLY PUBLIC-EXEMPT: ${route}`);
+      }
+      if (entry.permissions?.length !== 1) {
+        report.push(`UNDECLARED STAFF BOOKING-REQUEST ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
   });
 
   it("keeps the staff portal-access commands DECLARED and OFF the portal surface", () => {
