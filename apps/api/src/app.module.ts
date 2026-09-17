@@ -11,6 +11,7 @@ import { CustomersModule } from "./customers/customers.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { PatientsModule } from "./patients/patients.module.js";
+import { PortalModule } from "./portal/portal.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
 import { SchedulingModule } from "./scheduling/scheduling.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
@@ -40,6 +41,10 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     PatientsModule,
     ClinicalModule,
     SchedulingModule,
+    // Portal boundary LAST: its global PortalAuthGuard must run after the staff
+    // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
+    // staff guards have already skipped for the /portal/* surface.
+    PortalModule,
   ],
 })
 export class AppModule {}

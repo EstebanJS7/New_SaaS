@@ -4,7 +4,7 @@ import supertest from "supertest";
 import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-app.js";
 import { seedTwoTenants, type TwoTenantFixture } from "../../test/support/seed-two-tenants.js";
 import { enumerateRouteContracts, type RouteContractEntry } from "./route-enumeration.js";
-import { isPublicExemptRoute } from "./route-contract.js";
+import { isPortalSurfacePath, isPublicExemptRoute } from "./route-contract.js";
 import { SCHEDULING_PERMISSIONS } from "../scheduling/appointment.permissions.js";
 
 /**
@@ -25,9 +25,10 @@ import { SCHEDULING_PERMISSIONS } from "../scheduling/appointment.permissions.js
  *   enumeration blind spot).
  * 2. STATIC CONTRACT BUCKETING: every registered route must be public-exempt
  *    (`@Public` or `/auth/*` via the SHARED predicate in route-contract.ts —
- *    the exact rules PermissionGuard applies at runtime) or DECLARED
- *    (permission metadata present, empty array included). Any violation fails
- *    naming the route.
+ *    the exact rules PermissionGuard applies at runtime), PORTAL-SURFACE
+ *    (`/portal/*`, enforced by PortalAuthGuard instead of staff metadata) or
+ *    DECLARED (permission metadata present, empty array included). Any
+ *    violation fails naming the route.
  * 3. RUNTIME TWIN: a synthetic UNdeclared private route composed into the real
  *    AppModule returns a 403 FORBIDDEN envelope and its handler never runs —
  *    proving the guard actually sits in front of handlers (not merely that
@@ -138,6 +139,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /appointments/:id/complete",
   "POST /appointments/:id/cancel",
   "POST /appointments/:id/no-show",
+  // EPIC-08 WU2B — isolated portal identity surface
+  "POST /portal/login",
+  "POST /portal/logout",
+  "GET /portal/me",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -277,9 +282,10 @@ describe("route-contract probe (deny-by-default)", () => {
     expect(report).toEqual([]);
   });
 
-  it("buckets EVERY route as public-exempt or declared — violations are named", () => {
+  it("buckets EVERY route as public-exempt, portal-surface, or declared — violations are named", () => {
     const violations = inventory.filter(
-      (entry) => !isPublicExemptRoute(entry) && !isDeclared(entry)
+      (entry) =>
+        !isPublicExemptRoute(entry) && !isPortalSurfacePath(entry.path) && !isDeclared(entry)
     );
     const named = violations.map(
       (entry) => `${entry.method} ${entry.path} (no @RequirePermissions/@Public)`
@@ -332,6 +338,48 @@ describe("surface fence — no catalog/role mutation routes (task 2.5)", () => {
       (entry) => /roles|permissions/.test(entry.path) && !mappingReplace.includes(entry)
     );
     expect(rbacMutators.map((entry) => `${entry.method} ${entry.path}`)).toEqual([]);
+  });
+});
+
+describe("portal surface fence (EPIC-08 WU2B)", () => {
+  let booted: BootedTestApp;
+  let inventory: RouteContractEntry[];
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    inventory = enumerateRouteContracts(booted.app);
+  });
+
+  afterAll(async () => {
+    await booted.close();
+  });
+
+  it("fences EXACTLY the /portal/* surface — the pinned portal inventory", () => {
+    const portalRoutes = inventory.filter((entry) => isPortalSurfacePath(entry.path));
+    const actual = portalRoutes.map((entry) => `${entry.method} ${entry.path}`).sort();
+    expect(actual).toEqual(["GET /portal/me", "POST /portal/login", "POST /portal/logout"]);
+    // The predicate is exact: `/portal` itself and every near-miss (staff
+    // portal-access commands) stay OUTSIDE the portal boundary.
+    for (const nearMiss of ["/portal", "/portal-access", "/customers/x/portal-access"]) {
+      expect(isPortalSurfacePath(nearMiss), nearMiss).toBe(nearMiss === "/portal");
+    }
+  });
+
+  it("keeps portal-surface routes free of staff permission metadata", () => {
+    // Portal policy is enforced by PortalAuthGuard, not by @RequirePermissions:
+    // a staff key here would silently re-fence the route onto the staff chain.
+    const offenders = inventory
+      .filter((entry) => isPortalSurfacePath(entry.path) && entry.permissions !== undefined)
+      .map((entry) => `${entry.method} ${entry.path}`);
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps login the ONLY @Public portal route — logout/me stay guarded", () => {
+    const publicPortal = inventory
+      .filter((entry) => isPortalSurfacePath(entry.path) && entry.isPublic)
+      .map((entry) => `${entry.method} ${entry.path}`)
+      .sort();
+    expect(publicPortal).toEqual(["POST /portal/login"]);
   });
 });
 

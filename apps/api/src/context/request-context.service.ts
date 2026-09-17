@@ -15,6 +15,14 @@ interface RequestContextStore {
   membershipId?: string;
   roleId?: string;
   roleCode?: string;
+  /**
+   * Portal holder identity (EPIC-08 D2/D3), populated ONLY by the
+   * PortalAuthGuard from a live portal session. Portal and staff identity are
+   * separate boundaries: a portal request never carries `userProfileId` and a
+   * staff request never carries these fields.
+   */
+  portalAccessId?: string;
+  portalCustomerId?: string;
 }
 
 /**
@@ -100,6 +108,51 @@ export class RequestContextService {
       throw new DomainError("UNAUTHENTICATED", "Authentication required.");
     }
     return userProfileId;
+  }
+
+  /**
+   * Enriches the context with the authenticated PORTAL holder (EPIC-08 D2).
+   * Set exclusively by the PortalAuthGuard after resolving a live portal
+   * session; `tenantId` and the holder's Customer therefore derive from the
+   * session's own access row — never from client input. Staff membership
+   * fields are deliberately left untouched.
+   */
+  setPortalIdentity(identity: {
+    tenantId: string;
+    customerId: string;
+    portalAccessId: string;
+  }): void {
+    const store = this.als.getStore();
+    if (store) {
+      store.tenantId = identity.tenantId;
+      store.portalCustomerId = identity.customerId;
+      store.portalAccessId = identity.portalAccessId;
+    }
+  }
+
+  /**
+   * Post-portal-authentication contract (EPIC-08): the holder's Customer id.
+   * Throws UNAUTHENTICATED when no portal identity was resolved — a portal
+   * service reaching this accessor without the guard is a wiring breach.
+   */
+  requirePortalCustomerId(): string {
+    const customerId = this.als.getStore()?.portalCustomerId;
+    if (!customerId) {
+      throw new DomainError("UNAUTHENTICATED", "Portal authentication required.");
+    }
+    return customerId;
+  }
+
+  /**
+   * Post-portal-authentication contract (EPIC-08): the portal access row id.
+   * Used for PORTAL-attributed audit rows.
+   */
+  requirePortalAccessId(): string {
+    const portalAccessId = this.als.getStore()?.portalAccessId;
+    if (!portalAccessId) {
+      throw new DomainError("UNAUTHENTICATED", "Portal authentication required.");
+    }
+    return portalAccessId;
   }
 
   /**
