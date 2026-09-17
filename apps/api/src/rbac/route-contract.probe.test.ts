@@ -144,6 +144,9 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /portal/login",
   "POST /portal/logout",
   "GET /portal/me",
+  // EPIC-08 WU3 — holder-owned portal READ surface
+  "GET /portal/pets",
+  "GET /portal/pets/:id",
   "POST /customers/:customerId/portal-access",
   "POST /customers/:customerId/portal-access/revoke",
 ];
@@ -371,7 +374,13 @@ describe("portal surface fence (EPIC-08 task 2.3)", () => {
   it("fences EXACTLY the /portal/* surface — the pinned portal inventory", () => {
     const portalRoutes = inventory.filter((entry) => isPortalSurfacePath(entry.path));
     const actual = portalRoutes.map((entry) => `${entry.method} ${entry.path}`).sort();
-    expect(actual).toEqual(["GET /portal/me", "POST /portal/login", "POST /portal/logout"]);
+    expect(actual).toEqual([
+      "GET /portal/me",
+      "GET /portal/pets",
+      "GET /portal/pets/:id",
+      "POST /portal/login",
+      "POST /portal/logout",
+    ]);
     // The predicate is never satisfied by a near-miss path.
     for (const nearMiss of ["/portal", "/portal-access", "/customers/x/portal-access"]) {
       expect(isPortalSurfacePath(nearMiss), nearMiss).toBe(nearMiss === "/portal");
