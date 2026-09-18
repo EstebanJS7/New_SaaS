@@ -1,4 +1,4 @@
-import { Controller, Get, Param } from "@nestjs/common";
+import { Controller, Get, Param, Query } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import {
   portalResourceIdParamSchema,
@@ -6,11 +6,17 @@ import {
   type PortalPetDetail,
   type PortalPetSummary,
 } from "./portal-read.dto.js";
+import {
+  portalAvailabilityQuerySchema,
+  type PortalAvailabilityResponse,
+} from "./portal-availability.dto.js";
+import { PortalAvailabilityService } from "./portal-availability.service.js";
 import { PortalReadService } from "./portal-read.service.js";
 
 /**
  * Holder-owned portal READ surface (EPIC-08 WU3): own pets, pet detail with an
- * allowlisted clinical summary + vaccination history, and own appointments.
+ * allowlisted clinical summary + vaccination history, own appointments, and the
+ * DEC-007 A2a union availability read.
  *
  * These routes live on the `/portal/*` surface ONLY: they carry no staff
  * `@RequirePermissions` annotation (the staff guard chain skips the surface) and
@@ -25,7 +31,25 @@ import { PortalReadService } from "./portal-read.service.js";
  */
 @Controller("portal")
 export class PortalReadController {
-  constructor(private readonly reads: PortalReadService) {}
+  constructor(
+    private readonly reads: PortalReadService,
+    private readonly availability: PortalAvailabilityService
+  ) {}
+
+  /**
+   * Free-slot offer across every VETERINARIAN for a date (DEC-007 A2a). The
+   * holder does not pick a professional, so this is a UNION, not a schedule:
+   * a slot is offered when at least one in-tenant professional can take it.
+   * Times only — no professional identity and no staffing count ever leaves.
+   */
+  @Get("availability")
+  listAvailability(@Query() query: unknown): Promise<PortalAvailabilityResponse> {
+    const parsed = portalAvailabilityQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      throw new DomainError("VALIDATION_FAILED", "Invalid availability query.");
+    }
+    return this.availability.listAvailability(parsed.data);
+  }
 
   /** Lists the authenticated holder's pets. */
   @Get("pets")

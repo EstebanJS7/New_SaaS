@@ -299,6 +299,99 @@ describe("/api/portal proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("forwards the scoped availability query to the private API", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ date: "2026-06-15", slots: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const request = mockNextRequest({
+      pathname: "/api/portal/availability",
+      search: "?date=2026-06-15&durationMinutes=30&stepMinutes=15",
+    });
+
+    const response = await callGet(request);
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchUrl()).toBe(
+      "http://localhost:3001/portal/availability?date=2026-06-15&durationMinutes=30&stepMinutes=15"
+    );
+    // A read still carries no body.
+    expect(fetchInit().body).toBeUndefined();
+    expect(fetchInit().duplex).toBeUndefined();
+  });
+
+  it("rebuilds the availability query from the allowlist, dropping duplicate values", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ date: "2026-06-15", slots: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    await callGet(
+      mockNextRequest({
+        pathname: "/api/portal/availability",
+        search: "?date=2026-06-15&date=2026-06-16&durationMinutes=30",
+      })
+    );
+
+    expect(fetchUrl()).toBe(
+      "http://localhost:3001/portal/availability?date=2026-06-15&durationMinutes=30"
+    );
+  });
+
+  it("refuses an unknown availability query key instead of dropping it", async () => {
+    const response = await callGet(
+      mockNextRequest({
+        pathname: "/api/portal/availability",
+        search: "?date=2026-06-15&durationMinutes=30&tenantId=other",
+      })
+    );
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a query on a query-free shape (availability is the only exception)", async () => {
+    for (const pathname of [
+      "/api/portal/me",
+      "/api/portal/profile",
+      `/api/portal/pets/${PET_ID}`,
+      "/api/portal/appointments",
+    ]) {
+      const response = await callGet(
+        mockNextRequest({ pathname, search: "?date=2026-06-15&durationMinutes=30" })
+      );
+      expect(response.status, pathname).toBe(404);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses POST and PUT on the read-only availability shape with 405", async () => {
+    const postResponse = await callPost(
+      mockNextRequest({
+        pathname: "/api/portal/availability",
+        search: "?date=2026-06-15&durationMinutes=30",
+      })
+    );
+    expect(postResponse.status).toBe(405);
+
+    const putResponse = await callPut(
+      mockNextRequest({
+        pathname: "/api/portal/availability",
+        search: "?date=2026-06-15&durationMinutes=30",
+      })
+    );
+    expect(putResponse.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("refuses a known path reached with a disallowed method with a 405 envelope", async () => {
     const response = await callPut(mockNextRequest({ pathname: "/api/portal/me" }));
 

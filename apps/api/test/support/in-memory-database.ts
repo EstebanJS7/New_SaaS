@@ -379,7 +379,8 @@ export interface AppointmentWhere {
   branchId?: string;
   /** Scalar or `{ in: [...] }` — the portal read lists appointments per pet set. */
   patientId?: string | { in: string[] };
-  professionalMembershipId?: string;
+  /** Scalar or `{ in: [...] }` — the portal availability read fetches every candidate professional at once. */
+  professionalMembershipId?: string | { in: string[] };
   /** Scalar or `{ in: [...] }` — mirrors the Prisma filter shapes we use. */
   status?: AppointmentStatusRow | { in: AppointmentStatusRow[] };
   /** Provenance link: the approval idempotency pre-check filters on this. */
@@ -1047,11 +1048,12 @@ function matchesAppointment(where: AppointmentWhere, candidate: AppointmentRow):
       return false;
     }
   }
-  if (
-    where.professionalMembershipId !== undefined &&
-    candidate.professionalMembershipId !== where.professionalMembershipId
-  ) {
-    return false;
+  if (where.professionalMembershipId !== undefined) {
+    if (typeof where.professionalMembershipId === "string") {
+      if (candidate.professionalMembershipId !== where.professionalMembershipId) return false;
+    } else if (!where.professionalMembershipId.in.includes(candidate.professionalMembershipId)) {
+      return false;
+    }
   }
   if (
     where.portalBookingRequestId !== undefined &&
