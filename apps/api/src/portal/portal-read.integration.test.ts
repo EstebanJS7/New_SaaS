@@ -381,7 +381,6 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
 
   describe("deferred surfaces stay absent", () => {
     const deferredGets = [
-      "/portal/profile",
       "/portal/email",
       "/portal/notifications",
       "/portal/invoices",
@@ -401,12 +400,13 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
       expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
     });
 
-    it("404 for the deferred profile mutation (booking shipped in WU4A)", async () => {
-      await supertest(server())
+    it("404 for a POST to the profile write path — the write shipped as PUT in WU4C", async () => {
+      const response = await supertest(server())
         .post("/portal/profile")
         .set("Cookie", holderA.cookie)
         .send({ phone: "+595981000000" })
         .expect(404);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
     });
 
     it("401 when a portal identity attempts a staff appointment transition", async () => {
