@@ -8,17 +8,23 @@ import { Card, CardContent } from "@newsaas/ui/components/ui/card";
 import {
   APPOINTMENT_STATUSES,
   allowedTransitions,
+  approveBookingRequest,
   createAppointment,
   getAppointment,
   isAgendaConflict,
   isAgendaPermissionDenied,
   listAppointmentOptions,
   listAppointments,
+  listBookingRequests,
+  rejectBookingRequest,
   rescheduleAppointment,
   transitionAppointment,
   userFacingAgendaError,
+  userFacingBookingRequestError,
   type Appointment,
   type AppointmentStatus,
+  type ApproveBookingRequestInput,
+  type BookingRequest,
   type TransitionCommand,
 } from "./agenda-api";
 import { AgendaViews, type AgendaView } from "./agenda-views";
@@ -48,6 +54,7 @@ const fieldClassName =
 type EditorState =
   | { readonly kind: "create"; readonly startAt?: string; readonly endAt?: string }
   | { readonly kind: "manage"; readonly appointment: Appointment }
+  | { readonly kind: "request"; readonly request: BookingRequest }
   | null;
 
 /** Create form: anchors plus a tenant wall-clock start/end range. */
@@ -314,6 +321,164 @@ function ManageAppointmentForm({
 }
 
 /**
+ * Decision panel for one PENDING booking request. Approve and reject are both
+ * reachable here, so the request can be decided from the agenda where it is
+ * visible. Approve needs a branch and a professional that the request does not
+ * carry, so the selects reuse the agenda's appointment options; the slot
+ * override is optional and all-or-nothing (both overrides or neither). Reject
+ * needs nothing. A failed decision leaves the panel open — the request stays
+ * pending rather than reading as decided.
+ */
+function BookingRequestDecisionForm({
+  request,
+  branches,
+  professionals,
+  isPending,
+  error,
+  onApprove,
+  onReject,
+  onClose,
+}: {
+  readonly request: BookingRequest;
+  readonly branches: readonly { readonly id: string; readonly name: string }[];
+  readonly professionals: readonly { readonly membershipId: string }[];
+  readonly isPending: boolean;
+  readonly error: Error | null;
+  readonly onApprove: (input: ApproveBookingRequestInput) => void;
+  readonly onReject: () => void;
+  readonly onClose: () => void;
+}): JSX.Element {
+  const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
+  const [professionalMembershipId, setProfessionalMembershipId] = useState(
+    professionals[0]?.membershipId ?? ""
+  );
+  const [startAt, setStartAt] = useState("");
+  const [endAt, setEndAt] = useState("");
+  const [validation, setValidation] = useState<string | null>(null);
+
+  function handleApprove(): void {
+    if (branchId === "" || professionalMembershipId === "") {
+      setValidation("Select a branch and professional to approve this request.");
+      return;
+    }
+    const hasStart = startAt !== "";
+    const hasEnd = endAt !== "";
+    if (hasStart !== hasEnd) {
+      setValidation("Enter both override times or leave them empty.");
+      return;
+    }
+    if (hasStart && hasEnd) {
+      const startIso = tryLocalInputToIso(startAt);
+      const endIso = tryLocalInputToIso(endAt);
+      if (startIso === null || endIso === null || Date.parse(endIso) <= Date.parse(startIso)) {
+        setValidation("Enter a valid override where the end is after the start.");
+        return;
+      }
+      setValidation(null);
+      onApprove({ branchId, professionalMembershipId, startAt: startIso, endAt: endIso });
+      return;
+    }
+    setValidation(null);
+    onApprove({ branchId, professionalMembershipId });
+  }
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold">Pending booking request</h2>
+            <p className="text-xs text-muted-foreground">
+              {formatDayHeading(dateKeyOf(request.startAt))} ·{" "}
+              {formatTimeRange(request.startAt, request.endAt)} · Patient {request.patientId}
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          The request does not reserve the slot. Approval creates the appointment; a pending request
+          stays visible until it is approved or rejected.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">Branch</span>
+            <select
+              aria-label="Request branch"
+              className={fieldClassName}
+              value={branchId}
+              onChange={(event) => setBranchId(event.target.value)}
+            >
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">Professional</span>
+            <select
+              aria-label="Request professional"
+              className={fieldClassName}
+              value={professionalMembershipId}
+              onChange={(event) => setProfessionalMembershipId(event.target.value)}
+            >
+              {professionals.map((professional) => (
+                <option key={professional.membershipId} value={professional.membershipId}>
+                  {professional.membershipId.slice(0, 8)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">Override start (optional)</span>
+            <input
+              type="datetime-local"
+              aria-label="Override start"
+              className={fieldClassName}
+              value={startAt}
+              onChange={(event) => setStartAt(event.target.value)}
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">Override end (optional)</span>
+            <input
+              type="datetime-local"
+              aria-label="Override end"
+              className={fieldClassName}
+              value={endAt}
+              onChange={(event) => setEndAt(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="space-y-2">
+          {validation !== null && (
+            <p role="alert" className="text-sm text-destructive">
+              {validation}
+            </p>
+          )}
+          {error !== null && (
+            <p role="alert" className="text-sm text-destructive">
+              {userFacingBookingRequestError(error)}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" disabled={isPending} onClick={handleApprove}>
+              {isPending ? "Working..." : "Approve request"}
+            </Button>
+            <Button type="button" variant="outline" disabled={isPending} onClick={onReject}>
+              Reject request
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
  * Staff agenda: day/week/month/list views over the tenant's branch-scoped
  * appointments, with filters, time-range creation, drag/resize rescheduling and
  * explicit lifecycle commands.
@@ -354,9 +519,48 @@ export function Agenda(): JSX.Element {
     queryKey: ["scheduling", "appointments", filters],
     queryFn: () => listAppointments(filters),
   });
+  const requestsQuery = useQuery({
+    queryKey: ["scheduling", "booking-requests"],
+    queryFn: listBookingRequests,
+  });
 
   function invalidateAppointments(): void {
     void queryClient.invalidateQueries({ queryKey: ["scheduling", "appointments"] });
+  }
+
+  function invalidateRequests(): void {
+    void queryClient.invalidateQueries({ queryKey: ["scheduling", "booking-requests"] });
+  }
+
+  /**
+   * Self-correction for an overloaded 409 on a booking-request decision.
+   *
+   * A decision 409 carries no reliable cause — the slot may have become
+   * unavailable OR the request may have been decided by someone else since the
+   * panel opened. The envelope's `code` is the contract and the message text is
+   * not, so instead of guessing from the message we refresh BOTH layers and let
+   * the data decide. When the request is no longer PENDING after the refresh it
+   * was decided concurrently, so the now-stale panel is closed; when it is still
+   * PENDING the panel stays open for a different slot or a rejection.
+   */
+  async function refreshAfterDecisionConflict(requestId: string): Promise<void> {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["scheduling", "booking-requests"] }),
+      queryClient.invalidateQueries({ queryKey: ["scheduling", "appointments"] }),
+    ]);
+    const refreshed = queryClient.getQueryData<BookingRequest[]>([
+      "scheduling",
+      "booking-requests",
+    ]);
+    const stillPending =
+      refreshed?.some((request) => request.id === requestId && request.status === "PENDING") ??
+      false;
+    if (!stillPending) {
+      setEditor((current) =>
+        current?.kind === "request" && current.request.id === requestId ? null : current
+      );
+      setNotice("This booking request was already decided. The pending layer was refreshed.");
+    }
   }
 
   /** Clears any stale-version notice when the staff member opens or closes an editor. */
@@ -413,6 +617,46 @@ export function Agenda(): JSX.Element {
       invalidateAppointments();
     },
   });
+  const approveRequestMutation = useMutation({
+    mutationFn: (input: { id: string; body: ApproveBookingRequestInput }) =>
+      approveBookingRequest(input.id, input.body),
+    onSuccess: () => {
+      // Approval creates an appointment AND decides the request, so refresh
+      // both layers: the request leaves the pending layer and the new
+      // appointment appears. Closing the panel is what marks the request decided.
+      setStaleConflict(null);
+      setEditor(null);
+      setNotice("Booking request approved.");
+      invalidateRequests();
+      invalidateAppointments();
+    },
+    onError: (error, input) => {
+      // A failed decision is never shown as a decided one. A 409 is
+      // self-corrected by refreshing both layers and reporting the fresh state;
+      // any other failure just re-reads the pending layer.
+      if (isAgendaConflict(error)) {
+        void refreshAfterDecisionConflict(input.id);
+        return;
+      }
+      invalidateRequests();
+    },
+  });
+  const rejectRequestMutation = useMutation({
+    mutationFn: (id: string) => rejectBookingRequest(id),
+    onSuccess: () => {
+      setStaleConflict(null);
+      setEditor(null);
+      setNotice("Booking request rejected.");
+      invalidateRequests();
+    },
+    onError: (error, id) => {
+      if (isAgendaConflict(error)) {
+        void refreshAfterDecisionConflict(id);
+        return;
+      }
+      invalidateRequests();
+    },
+  });
 
   /**
    * Confirms whether a 409 was a stale optimistic version by re-reading the
@@ -444,6 +688,17 @@ export function Agenda(): JSX.Element {
     createMutation.isPending || rescheduleMutation.isPending || transitionMutation.isPending;
   const mutationError =
     createMutation.error ?? rescheduleMutation.error ?? transitionMutation.error;
+
+  // The agenda shows only actionable demand; a decided request is history the
+  // decide path no longer needs.
+  const pendingRequests = (requestsQuery.data ?? []).filter(
+    (request) => request.status === "PENDING"
+  );
+  const requestsDenied =
+    requestsQuery.error !== null && isAgendaPermissionDenied(requestsQuery.error);
+  const requestMutationPending =
+    approveRequestMutation.isPending || rejectRequestMutation.isPending;
+  const requestMutationError = approveRequestMutation.error ?? rejectRequestMutation.error;
 
   function step(direction: 1 | -1): void {
     if (view === "month") {
@@ -567,6 +822,35 @@ export function Agenda(): JSX.Element {
         </p>
       )}
 
+      {/**
+       * Pending-request state layer. The requests themselves render as distinct
+       * events on the calendar and as rows in the accessible list view; this
+       * region only surfaces the loading/empty/error/denied states so "no pending
+       * requests" reads as the normal state, never as an error.
+       */}
+      <section aria-label="Pending booking requests" className="space-y-2">
+        {requestsQuery.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading pending requests...</p>
+        ) : requestsQuery.error ? (
+          <div
+            role="alert"
+            data-testid="pending-requests-alert"
+            data-state={requestsDenied ? "denied" : "error"}
+            className="rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            {userFacingBookingRequestError(requestsQuery.error)}
+          </div>
+        ) : pendingRequests.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No pending booking requests.</p>
+        ) : (
+          <p role="status" className="text-sm text-muted-foreground">
+            {pendingRequests.length === 1
+              ? "1 pending booking request is shown on the calendar and in the list."
+              : `${pendingRequests.length} pending booking requests are shown on the calendar and in the list.`}
+          </p>
+        )}
+      </section>
+
       {editor?.kind === "create" && (
         <CreateAppointmentForm
           branches={branches}
@@ -605,6 +889,22 @@ export function Agenda(): JSX.Element {
         />
       )}
 
+      {editor?.kind === "request" && (
+        <BookingRequestDecisionForm
+          key={editor.request.id}
+          request={editor.request}
+          branches={branches}
+          professionals={professionals}
+          isPending={requestMutationPending}
+          error={requestMutationError}
+          onApprove={(input) =>
+            approveRequestMutation.mutate({ id: editor.request.id, body: input })
+          }
+          onReject={() => rejectRequestMutation.mutate(editor.request.id)}
+          onClose={() => setEditorClearingConflict(null)}
+        />
+      )}
+
       {appointmentsQuery.isLoading ? (
         <Card>
           <CardContent className="p-6">
@@ -625,7 +925,7 @@ export function Agenda(): JSX.Element {
         >
           {userFacingAgendaError(appointmentsQuery.error)}
         </div>
-      ) : appointmentsQuery.data?.length === 0 ? (
+      ) : appointmentsQuery.data?.length === 0 && pendingRequests.length === 0 ? (
         <Card>
           <CardContent className="p-6">
             <h2 className="text-sm font-semibold">No appointments</h2>
@@ -639,8 +939,10 @@ export function Agenda(): JSX.Element {
           view={view}
           anchor={anchor}
           appointments={appointmentsQuery.data ?? []}
+          requests={pendingRequests}
           branchLabel={branchLabel}
           onOpen={(appointment) => setEditorClearingConflict({ kind: "manage", appointment })}
+          onOpenRequest={(request) => setEditorClearingConflict({ kind: "request", request })}
           onCreateRange={(startIso, endIso) =>
             setEditorClearingConflict({ kind: "create", startAt: startIso, endAt: endIso })
           }

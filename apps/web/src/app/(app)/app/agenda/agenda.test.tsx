@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Agenda } from "./agenda";
-import type { Appointment } from "./agenda-api";
+import type { Appointment, AppointmentStatus, BookingRequest } from "./agenda-api";
 
 const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_ID = "22222222-2222-4222-8222-222222222222";
@@ -10,6 +10,7 @@ const PATIENT_ID = "33333333-3333-4333-8333-333333333333";
 const MEMBERSHIP_ID = "44444444-4444-4444-8444-444444444444";
 const OTHER_MEMBERSHIP_ID = "55555555-5555-4555-8555-555555555555";
 const OTHER_BRANCH_ID = "66666666-6666-4666-8666-666666666666";
+const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 
 const APPOINTMENT: Appointment = {
   id: APPOINTMENT_ID,
@@ -23,6 +24,14 @@ const APPOINTMENT: Appointment = {
   version: 1,
   createdAt: "2026-09-14T00:00:00.000Z",
   updatedAt: "2026-09-14T00:00:00.000Z",
+};
+
+const BOOKING_REQUEST: BookingRequest = {
+  id: REQUEST_ID,
+  patientId: PATIENT_ID,
+  status: "PENDING",
+  startAt: "2026-09-14T15:00:00.000Z",
+  endAt: "2026-09-14T15:30:00.000Z",
 };
 
 interface CalendarStubEvent {
@@ -91,6 +100,9 @@ interface FetchHandlers {
   readonly appointment?: () => Response | Promise<Response>;
   readonly reschedule?: () => Response | Promise<Response>;
   readonly transition?: () => Response | Promise<Response>;
+  readonly bookingRequests?: () => Response | Promise<Response>;
+  readonly approve?: () => Response | Promise<Response>;
+  readonly reject?: () => Response | Promise<Response>;
 }
 
 const APPOINTMENT_DETAIL = /\/appointments\/[0-9a-f-]{36}$/;
@@ -103,6 +115,17 @@ function mockAgendaFetch(handlers: FetchHandlers): ReturnType<typeof vi.fn> {
       return Promise.resolve(
         handlers.options?.() ?? jsonResponse({ branches: [], professionals: [] })
       );
+    }
+    if (url.includes("/booking-requests")) {
+      if (method === "POST" && url.endsWith("/approve")) {
+        return Promise.resolve(handlers.approve?.() ?? jsonResponse(APPOINTMENT));
+      }
+      if (method === "POST" && url.endsWith("/reject")) {
+        return Promise.resolve(
+          handlers.reject?.() ?? jsonResponse({ ...BOOKING_REQUEST, status: "REJECTED" })
+        );
+      }
+      return Promise.resolve(handlers.bookingRequests?.() ?? jsonResponse([]));
     }
     if (method === "PUT" && APPOINTMENT_DETAIL.test(url)) {
       return Promise.resolve(
@@ -142,6 +165,11 @@ function renderAgenda(): void {
 async function openManagePanel(): Promise<void> {
   fireEvent.click(await screen.findByRole("button", { name: "List" }));
   fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
+}
+
+async function openRequestPanel(): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: "List" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Review" }));
 }
 
 describe("Agenda", () => {
@@ -508,5 +536,326 @@ describe("Agenda", () => {
       )
     ).toBeInTheDocument();
     expect(screen.queryByTestId("stale-version-alert")).not.toBeInTheDocument();
+  });
+
+  it("renders a pending request as a distinct, non-editable calendar layer", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    expect(latestCalendarProps?.events).toEqual([
+      {
+        id: APPOINTMENT_ID,
+        title: "SCHEDULED",
+        start: APPOINTMENT.startAt,
+        end: APPOINTMENT.endAt,
+        allDay: false,
+      },
+      {
+        id: `booking-request:${REQUEST_ID}`,
+        title: "REQUEST",
+        start: BOOKING_REQUEST.startAt,
+        end: BOOKING_REQUEST.endAt,
+        allDay: false,
+        editable: false,
+        extendedProps: { kind: "booking-request" },
+      },
+    ]);
+  });
+
+  it("keeps the calendar visible when there are pending requests but no appointments", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    expect(latestCalendarProps?.events).toEqual([
+      {
+        id: `booking-request:${REQUEST_ID}`,
+        title: "REQUEST",
+        start: BOOKING_REQUEST.startAt,
+        end: BOOKING_REQUEST.endAt,
+        allDay: false,
+        editable: false,
+        extendedProps: { kind: "booking-request" },
+      },
+    ]);
+    expect(screen.queryByText("No appointments")).not.toBeInTheDocument();
+  });
+
+  it("opens approve and reject from a pending request calendar event", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    act(() => {
+      latestCalendarProps?.eventClick?.({ event: { id: `booking-request:${REQUEST_ID}` } });
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "Pending booking request" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve request" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject request" })).toBeInTheDocument();
+  });
+
+  it("shows the pending request distinctly from every appointment status in the list view", async () => {
+    const statuses: readonly AppointmentStatus[] = [
+      "SCHEDULED",
+      "CONFIRMED",
+      "ARRIVED",
+      "IN_PROGRESS",
+      "COMPLETED",
+      "CANCELLED",
+      "NO_SHOW",
+    ];
+    const everyStatus = statuses.map((status, index) => ({
+      ...APPOINTMENT,
+      id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa${String(index).padStart(2, "0")}`,
+      status,
+    }));
+    mockAgendaFetch({
+      appointments: () => jsonResponse(everyStatus),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderAgenda();
+
+    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+
+    const row = await screen.findByTestId("pending-request-row");
+    expect(within(row).getByTestId("request-badge")).toHaveTextContent("Request");
+    expect(row.className).toContain("border-dashed");
+    // Exactly one request badge, and no appointment row shares the dashed layer.
+    expect(screen.getAllByTestId("request-badge")).toHaveLength(1);
+    for (const manage of screen.getAllByRole("button", { name: "Manage" })) {
+      expect(manage.closest("li")?.className).not.toContain("border-dashed");
+    }
+  });
+
+  it("renders the empty pending-request state without an error", async () => {
+    mockAgendaFetch({ appointments: () => jsonResponse([APPOINTMENT]), options: optionsResponse });
+    renderAgenda();
+
+    expect(await screen.findByText("No pending booking requests.")).toBeInTheDocument();
+    expect(screen.queryByTestId("pending-requests-alert")).not.toBeInTheDocument();
+  });
+
+  it("renders a permission-denied state for the pending layer", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse({ error: { code: "FORBIDDEN", message: "Denied" } }, 403),
+    });
+    renderAgenda();
+
+    const alert = await screen.findByTestId("pending-requests-alert");
+    expect(alert).toHaveAttribute("data-state", "denied");
+    expect(alert).toHaveTextContent("You do not have permission to decide booking requests.");
+  });
+
+  it("approves a pending request from the agenda and refreshes the pending layer", async () => {
+    let decided = false;
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse(decided ? [] : [BOOKING_REQUEST]),
+      approve: () => {
+        decided = true;
+        return jsonResponse(APPOINTMENT);
+      },
+    });
+    renderAgenda();
+
+    await openRequestPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Approve request" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          (call) =>
+            resolveRequestUrl(call[0] as RequestInfo) ===
+              `/api/scheduling/booking-requests/${REQUEST_ID}/approve` &&
+            requestMethod(call) === "POST"
+        )
+      ).toBe(true);
+    });
+    const approveCall = fetchMock.mock.calls.find((call) =>
+      resolveRequestUrl(call[0] as RequestInfo).endsWith("/approve")
+    );
+    expect(JSON.parse((approveCall?.[1] as unknown as { body: string }).body)).toEqual({
+      branchId: BRANCH_ID,
+      professionalMembershipId: MEMBERSHIP_ID,
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId("pending-request-row")).not.toBeInTheDocument()
+    );
+    expect(await screen.findByText("Booking request approved.")).toBeInTheDocument();
+  });
+
+  it("rejects a pending request from the agenda and refreshes the pending layer", async () => {
+    let decided = false;
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse(decided ? [] : [BOOKING_REQUEST]),
+      reject: () => {
+        decided = true;
+        return jsonResponse({ ...BOOKING_REQUEST, status: "REJECTED" });
+      },
+    });
+    renderAgenda();
+
+    await openRequestPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Reject request" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          (call) =>
+            resolveRequestUrl(call[0] as RequestInfo) ===
+              `/api/scheduling/booking-requests/${REQUEST_ID}/reject` &&
+            requestMethod(call) === "POST"
+        )
+      ).toBe(true);
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId("pending-request-row")).not.toBeInTheDocument()
+    );
+    expect(await screen.findByText("Booking request rejected.")).toBeInTheDocument();
+  });
+
+  it("keeps a request visible with non-committal copy and refreshes both layers on a 409", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+      approve: () =>
+        jsonResponse(
+          { error: { code: "CONFLICT", message: "Overlaps another appointment." } },
+          409
+        ),
+    });
+    renderAgenda();
+
+    await openRequestPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Approve request" }));
+
+    expect(
+      await screen.findByText(
+        "The request could not be decided as it stands: the slot may no longer be free, or the request may already have been decided. The latest state is being refreshed."
+      )
+    ).toBeInTheDocument();
+    // Still pending: the request stays in the layer and the panel stays open.
+    expect(screen.getByTestId("pending-request-row")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve request" })).toBeInTheDocument();
+
+    // The 409 re-reads reality instead of guessing a cause: both layers refetch.
+    await waitFor(() => {
+      const requestsGets = fetchMock.mock.calls.filter(
+        (call) =>
+          resolveRequestUrl(call[0] as RequestInfo).endsWith("/booking-requests") &&
+          requestMethod(call) === "GET"
+      );
+      const appointmentsGets = fetchMock.mock.calls.filter(
+        (call) =>
+          resolveRequestUrl(call[0] as RequestInfo).endsWith("/appointments") &&
+          requestMethod(call) === "GET"
+      );
+      expect(requestsGets.length).toBeGreaterThanOrEqual(2);
+      expect(appointmentsGets.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("removes a request from the pending layer when a 409 refresh shows it already decided", async () => {
+    let decided = false;
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse(decided ? [] : [BOOKING_REQUEST]),
+      approve: () => {
+        // The concurrent decision already landed before the refresh read the data.
+        decided = true;
+        return jsonResponse(
+          {
+            error: {
+              code: "CONFLICT",
+              message: "Only a pending booking request can be approved or rejected.",
+            },
+          },
+          409
+        );
+      },
+    });
+    renderAgenda();
+
+    await openRequestPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Approve request" }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("pending-request-row")).not.toBeInTheDocument()
+    );
+    // The stale panel is closed, not left open contradicting the refreshed data.
+    expect(
+      screen.queryByRole("heading", { name: "Pending booking request" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("blocks a half-supplied slot override and sends both times when supplied", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderAgenda();
+
+    await openRequestPanel();
+    fireEvent.change(screen.getByLabelText("Override start"), {
+      target: { value: "2026-09-14T18:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Approve request" }));
+
+    expect(
+      await screen.findByText("Enter both override times or leave them empty.")
+    ).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        resolveRequestUrl(call[0] as RequestInfo).endsWith("/approve")
+      )
+    ).toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Override end"), {
+      target: { value: "2026-09-14T18:30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Approve request" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some((call) =>
+          resolveRequestUrl(call[0] as RequestInfo).endsWith("/approve")
+        )
+      ).toBe(true);
+    });
+    const approveCall = fetchMock.mock.calls.find((call) =>
+      resolveRequestUrl(call[0] as RequestInfo).endsWith("/approve")
+    );
+    const body = JSON.parse((approveCall?.[1] as unknown as { body: string }).body) as {
+      startAt: string;
+      endAt: string;
+    };
+    // America/Asuncion is UTC-3 in September, so 18:00 local is 21:00Z.
+    expect(body.startAt).toBe("2026-09-14T21:00:00.000Z");
+    expect(body.endAt).toBe("2026-09-14T21:30:00.000Z");
   });
 });
