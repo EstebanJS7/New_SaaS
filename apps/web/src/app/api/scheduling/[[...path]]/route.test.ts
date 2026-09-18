@@ -210,6 +210,73 @@ describe("/api/scheduling proxy", () => {
     );
   });
 
+  it("forwards the availability query to the upstream availability route", async () => {
+    fetchMock.mockResolvedValue(upstreamOk({ slots: [] }));
+
+    // Query keys are emitted in the allowlist order, so the expected URL below
+    // is the contract of that list, not of the caller's ordering.
+    const request = mockNextRequest({
+      pathname: "/api/scheduling/appointments/availability",
+      search: `?date=2026-06-26&durationMinutes=30&stepMinutes=15&branchId=${BRANCH_ID}&professionalMembershipId=${APPOINTMENT_ID}`,
+    });
+
+    await GET(request as unknown as Parameters<typeof GET>[0]);
+
+    const call = fetchMock.mock.calls[0] as unknown as [string, FetchInit];
+    expect(call[0]).toBe(
+      `http://localhost:3001/appointments/availability?branchId=${BRANCH_ID}&professionalMembershipId=${APPOINTMENT_ID}&date=2026-06-26&durationMinutes=30&stepMinutes=15`
+    );
+  });
+
+  it("rejects availability near misses: method and path depth", async () => {
+    // The shape is read-only: neither write verb can reach it.
+    const postAvailability = (await POST(
+      mockNextRequest({
+        pathname: "/api/scheduling/appointments/availability",
+        body: byteStream([JSON.stringify({})]),
+      }) as unknown as Parameters<typeof POST>[0]
+    )) as Response;
+    expect(postAvailability.status).toBe(404);
+
+    const putAvailability = (await PUT(
+      mockNextRequest({
+        pathname: "/api/scheduling/appointments/availability",
+        body: byteStream([JSON.stringify({})]),
+      }) as unknown as Parameters<typeof PUT>[0]
+    )) as Response;
+    expect(putAvailability.status).toBe(404);
+
+    // A deeper path is not a shape at all, even with an otherwise valid prefix.
+    const deeper = (await GET(
+      mockNextRequest({
+        pathname: "/api/scheduling/appointments/availability/anything",
+      }) as unknown as Parameters<typeof GET>[0]
+    )) as Response;
+    expect(deeper.status).toBe(404);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an empty path segment instead of normalizing it away", async () => {
+    // `//` would otherwise collapse onto the allowlisted shape, so the matched
+    // route would not be the path that was actually requested.
+    const doubled = (await GET(
+      mockNextRequest({
+        pathname: "/api/scheduling/appointments//availability",
+      }) as unknown as Parameters<typeof GET>[0]
+    )) as Response;
+    expect(doubled.status).toBe(400);
+
+    const trailing = (await GET(
+      mockNextRequest({
+        pathname: "/api/scheduling/appointments/availability/",
+      }) as unknown as Parameters<typeof GET>[0]
+    )) as Response;
+    expect(trailing.status).toBe(400);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects booking-request near misses: method, action, id shape and encoding", async () => {
     // GET is not exposed on the approve/reject shape.
     const getApprove = (await GET(

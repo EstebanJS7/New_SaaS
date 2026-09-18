@@ -12,11 +12,24 @@ const SCHEDULING_PATH_PREFIX = "/api/scheduling";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Query parameters the upstream appointment list route accepts. The API rejects
- * unknown query keys (`.strict()`), so the proxy forwards only these and drops
+ * Query parameters the upstream scheduling routes accept. The API rejects unknown
+ * query keys (`.strict()`), so the proxy forwards only these and drops
  * everything else — including any parameter an attacker appends.
+ *
+ * The list is shared by every route rather than scoped per route. A key that does
+ * not apply to the route reached (for example `date` on `GET /appointments`) is
+ * forwarded and then refused by the API's own validation, so that is a 400 rather
+ * than a widening of this boundary.
  */
-const ALLOWED_QUERY_KEYS = ["branchId", "patientId", "professionalMembershipId", "status"] as const;
+const ALLOWED_QUERY_KEYS = [
+  "branchId",
+  "patientId",
+  "professionalMembershipId",
+  "status",
+  "date",
+  "durationMinutes",
+  "stepMinutes",
+] as const;
 
 type SchedulingMethod = "GET" | "POST" | "PUT";
 
@@ -41,6 +54,9 @@ interface SchedulingRouteShape {
 const SCHEDULING_ROUTE_SHAPES: readonly SchedulingRouteShape[] = [
   { segments: ["appointments"], methods: ["GET", "POST"] },
   { segments: ["appointments", "options"], methods: ["GET"] },
+  // Literal segments stay ahead of the `:id` shape for readability only: the
+  // placeholder requires a UUID, so a literal can never match it by accident.
+  { segments: ["appointments", "availability"], methods: ["GET"] },
   { segments: ["appointments", ID_SLOT], methods: ["GET", "PUT"] },
   { segments: ["appointments", ID_SLOT, "confirm"], methods: ["POST"] },
   { segments: ["appointments", ID_SLOT, "arrive"], methods: ["POST"] },
@@ -101,10 +117,15 @@ function resolveUpstreamPath(
     return { ok: false, status: 400 };
   }
 
-  const segments = remainder.split("/").filter((segment) => segment.length > 0);
-  if (segments.length === 0) {
+  const rawSegments = remainder.split("/").slice(1);
+  // A legitimate route never contains an empty segment. Normalizing `//` or a
+  // trailing slash away would mean the matched shape is not the requested path,
+  // so an empty segment is refused instead. (The portal proxy already rejects
+  // them; this boundary used to drop them silently.)
+  if (rawSegments.length === 0 || rawSegments.some((segment) => segment.length === 0)) {
     return { ok: false, status: 400 };
   }
+  const segments = rawSegments;
 
   const matched = SCHEDULING_ROUTE_SHAPES.find(
     (shape) =>
