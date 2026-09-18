@@ -2,7 +2,7 @@
 type: module
 module: scheduling
 status: implemented
-updated: 2026-09-15
+updated: 2026-09-18
 ---
 
 # Module — Scheduling
@@ -59,7 +59,7 @@ additionally uses the `version` predicate.
 
 ## Permissions
 
-- `scheduling.appointment.read` — list/get/options.
+- `scheduling.appointment.read` — list/get/options/availability.
 - `scheduling.appointment.manage` — create and reschedule.
 - `scheduling.appointment.transition` — the six lifecycle commands.
 - `scheduling.settings.manage` — availability/block/policy writes (owned by the
@@ -72,6 +72,13 @@ additionally uses the `version` predicate.
 
 - `GET|POST /appointments`
 - `GET /appointments/options`
+- `GET /appointments/availability?branchId&professionalMembershipId&date&durationMinutes[&stepMinutes]`
+  — the free-slot read added by DEC-007. `durationMinutes` and `stepMinutes` are
+  integers in `5..480`; `stepMinutes` defaults to `durationMinutes` and must be
+  `>=` it, so the returned slots are ordered and non-overlapping. The response
+  is
+  `{ date, branchId, professionalMembershipId, durationMinutes, stepMinutes, timeZone, basis, slots: [{ startAt, endAt }] }`
+  with UTC instants.
 - `GET|PUT /appointments/:id` (reschedule body `{startAt, endAt, version}`)
 - `POST /appointments/:id/{confirm|arrive|start|complete|cancel|no-show}`
 - `GET|PUT /settings/scheduling` — typed namespace (availability, blocks,
@@ -79,6 +86,30 @@ additionally uses the `version` predicate.
 - `GET /api/scheduling/[...path]` and `GET|PUT /api/settings/[...path]` —
   authenticated staff web proxies with strict route/query allowlists and only
   the staff session cookie forwarded.
+
+## Availability read (DEC-007)
+
+The free-slot endpoint is a hint, never a reservation, and its contract is
+**one-way**: every slot it offers is a slot `POST /appointments` accepts, and
+the converse deliberately does not hold. It hides bookable slots in four cases,
+each documented in `appointment-availability.ts`:
+
+1. an active overlap when `conflictPolicy` is `ALLOW`, where the write path
+   would permit the double booking;
+2. starts off the requested step grid;
+3. times outside the `07:00–21:00` fallback range used when the professional has
+   no availability windows configured for the branch (the write path treats that
+   case as unrestricted, so the read offers the practical subset);
+4. the second occurrence of an ambiguous wall time during a fall-back fold.
+
+`basis` reports `CONFIGURED_WINDOWS` or `DEFAULT_DAY_RANGE` so a caller can tell
+which day extent was used. Windows configured for the pair but absent on the
+requested weekday yield zero slots, matching the write path's rejection. The
+read calls the same `isWithinAvailability`, `intersectsBlock`, anchor assertions
+and active-status overlap predicate as the write path instead of re-deriving
+them, uses one appointment query for the whole day, writes nothing (no
+appointment, no booking request, no audit row) and takes the tenant only from
+the request context.
 
 ## Events / Jobs
 
@@ -121,6 +152,15 @@ additionally uses the `version` predicate.
   — transition/version predicates, tenant 404, non-VETERINARIAN 400,
   REJECT/ALLOW, availability/block, audit co-commit rollback, timezone/DST and
   the allowlisted CONFIDENTIAL DTO.
+- `apps/api/src/scheduling/appointments-availability.integration.test.ts` —
+  read-versus-write agreement in both directions, active statuses, `ALLOW`
+  strict-subset, window and block boundaries, local-midnight and the real
+  America/Asuncion 2024 spring-forward and fall-back transitions, tenant
+  isolation and the no-write proof.
+- `apps/api/src/scheduling/appointment-availability.test.ts` — the wall-clock
+  conversion in isolation: a nonexistent local minute is refused (the assertion
+  that fails if the gap guard is removed, which the HTTP suite cannot see) and
+  an ambiguous minute resolves to its first occurrence.
 - `apps/api/test/live-pg-isolation.e2e-spec.ts` → "EPIC-07 scheduling
   application-path concurrency" — two concurrent overlapping creates for one
   professional against a disposable PostgreSQL 16 database, behind a

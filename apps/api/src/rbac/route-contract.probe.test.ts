@@ -132,6 +132,7 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /appointments",
   "POST /appointments",
   "GET /appointments/options",
+  "GET /appointments/availability",
   "GET /appointments/:id",
   "PUT /appointments/:id",
   "POST /appointments/:id/confirm",
@@ -206,6 +207,8 @@ const CLINICAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 const SCHEDULING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /appointments": SCHEDULING_PERMISSIONS.read,
   "GET /appointments/options": SCHEDULING_PERMISSIONS.read,
+  // DEC-007 A1 — availability is a read, NOT a manage, route.
+  "GET /appointments/availability": SCHEDULING_PERMISSIONS.read,
   "GET /appointments/:id": SCHEDULING_PERMISSIONS.read,
   "POST /appointments": SCHEDULING_PERMISSIONS.manage,
   "PUT /appointments/:id": SCHEDULING_PERMISSIONS.manage,

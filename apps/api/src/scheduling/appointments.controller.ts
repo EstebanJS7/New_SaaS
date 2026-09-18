@@ -9,6 +9,7 @@ import {
   type AppointmentResponse,
   type AppointmentStatusDto,
 } from "./appointment.dto.js";
+import { availabilityQuerySchema, type AvailabilityResponse } from "./appointment-availability.js";
 import { SCHEDULING_PERMISSIONS } from "./appointment.permissions.js";
 import { AppointmentService, type AppointmentFilters } from "./appointment.service.js";
 
@@ -53,6 +54,18 @@ export class AppointmentsController {
   @RequirePermissions(SCHEDULING_PERMISSIONS.read)
   async options(): Promise<AppointmentOptionsResponse> {
     return this.appointments.listAppointmentOptions();
+  }
+
+  /** Read-only free-slot offer for one professional/branch/date (DEC-007 A1). */
+  @Get("availability")
+  @RequirePermissions(SCHEDULING_PERMISSIONS.read)
+  async availability(@Query() query: unknown): Promise<AvailabilityResponse> {
+    const input = parseInput(
+      availabilityQuerySchema,
+      query,
+      "Invalid appointment availability query."
+    );
+    return this.appointments.listAvailability(input);
   }
 
   /** Reads one appointment; a foreign UUID is indistinguishable from absent. */
