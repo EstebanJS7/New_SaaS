@@ -18,7 +18,7 @@ vi.mock("next/server", async () => {
   return await vi.importActual("next/server");
 });
 
-import { GET } from "./route";
+import { GET, POST, PUT } from "./route";
 
 const PET_ID = "2f1c9b0e-6a4d-4c3b-8f2e-1d5a7c9e0b31";
 const STAFF_COOKIE_HEADER = "ns_staff_session=staff-token";
@@ -26,23 +26,39 @@ const STAFF_COOKIE_HEADER = "ns_staff_session=staff-token";
 interface MockNextRequest {
   nextUrl: { pathname: string; search: string };
   headers: { get: (name: string) => string | null };
+  body: ReadableStream<Uint8Array> | null;
 }
 
 function mockNextRequest(props: {
   pathname: string;
   search?: string;
   headers?: Headers;
+  body?: ReadableStream<Uint8Array> | null;
 }): MockNextRequest {
   const headers = props.headers ?? new Headers();
   return {
     nextUrl: { pathname: props.pathname, search: props.search ?? "" },
     headers: { get: (name: string) => headers.get(name) },
+    body: props.body ?? null,
   };
+}
+
+/** Single-chunk JSON request body, mirroring a browser `fetch` body stream. */
+function jsonBody(value: unknown): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(JSON.stringify(value)));
+      controller.close();
+    },
+  });
 }
 
 interface FetchInit {
   method: string;
   headers: Record<string, string>;
+  body?: ReadableStream<Uint8Array> | undefined;
+  cache?: string;
+  duplex?: string;
 }
 
 function fetchInit(callIndex = 0): FetchInit {
@@ -65,6 +81,14 @@ function portalCookieStore(value: string | undefined): { get: (name: string) => 
 
 async function callGet(request: MockNextRequest): Promise<Response> {
   return GET(request as unknown as Parameters<typeof GET>[0]);
+}
+
+async function callPost(request: MockNextRequest): Promise<Response> {
+  return POST(request as unknown as Parameters<typeof POST>[0]);
+}
+
+async function callPut(request: MockNextRequest): Promise<Response> {
+  return PUT(request as unknown as Parameters<typeof PUT>[0]);
 }
 
 describe("/api/portal proxy", () => {
@@ -100,6 +124,10 @@ describe("/api/portal proxy", () => {
       cookie: `${PORTAL_SESSION_COOKIE}=portal-token`,
       "x-request-id": "req-abc",
     });
+    // A GET carries no body, so it keeps the exact request initialization it had
+    // before this boundary widened: widening a proxy must not change reads.
+    expect(fetchInit().body).toBeUndefined();
+    expect(fetchInit().duplex).toBeUndefined();
   });
 
   it("rewrites a nested holder-owned resource path", async () => {
@@ -160,11 +188,98 @@ describe("/api/portal proxy", () => {
     expect(fetchInit().headers).not.toHaveProperty("cookie");
   });
 
+  it("forwards a POST booking body and the portal cookie to the private API", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ id: "booking-1", status: "PENDING" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const body = jsonBody({
+      startAt: "2026-09-20T10:00:00.000Z",
+      endAt: "2026-09-20T10:30:00.000Z",
+    });
+    const request = mockNextRequest({
+      pathname: `/api/portal/pets/${PET_ID}/bookings`,
+      headers: new Headers({ "x-request-id": "req-booking" }),
+      body,
+    });
+
+    const response = await callPost(request);
+
+    expect(response.status).toBe(201);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchUrl()).toBe(`http://localhost:3001/portal/pets/${PET_ID}/bookings`);
+    const init = fetchInit();
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({
+      cookie: `${PORTAL_SESSION_COOKIE}=portal-token`,
+      "x-request-id": "req-booking",
+      "content-type": "application/json",
+    });
+    expect(init.body).toBe(body);
+    expect(init.duplex).toBe("half");
+    expect(init.cache).toBe("no-store");
+  });
+
+  it("forwards a PUT profile body and the portal cookie to the private API", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ phone: "+595981000000" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const body = jsonBody({ phone: "+595981000000" });
+    const request = mockNextRequest({ pathname: "/api/portal/profile", body });
+
+    const response = await callPut(request);
+
+    expect(response.status).toBe(200);
+    expect(fetchUrl()).toBe("http://localhost:3001/portal/profile");
+    const init = fetchInit();
+    expect(init.method).toBe("PUT");
+    expect(init.headers).toEqual({
+      cookie: `${PORTAL_SESSION_COOKIE}=portal-token`,
+      "content-type": "application/json",
+    });
+    expect(init.body).toBe(body);
+    expect(init.duplex).toBe("half");
+  });
+
+  it("forwards only the portal cookie on a write — a staff cookie never crosses", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const request = mockNextRequest({
+      pathname: "/api/portal/profile",
+      headers: new Headers({ cookie: STAFF_COOKIE_HEADER }),
+      body: jsonBody({ phone: "+595981000000" }),
+    });
+
+    await callPut(request);
+
+    const init = fetchInit();
+    expect(init.headers).toEqual({
+      cookie: `${PORTAL_SESSION_COOKIE}=portal-token`,
+      "content-type": "application/json",
+    });
+    expect(init.headers.cookie).not.toContain("staff-token");
+  });
+
   it.each([
     "/api/portal",
     "/api/portal/",
     "/api/portal/invoices",
-    "/api/portal/profile",
+    "/api/portal/login",
     "/api/portal/pets/not-a-uuid",
     `/api/portal/pets/${PET_ID}/clinical`,
     "/api/portal/pets/%2e%2e/admin",
@@ -178,6 +293,53 @@ describe("/api/portal proxy", () => {
   it("rejects any query string before reaching the API", async () => {
     const response = await callGet(
       mockNextRequest({ pathname: "/api/portal/pets", search: "?customerId=other" })
+    );
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a known path reached with a disallowed method with a 405 envelope", async () => {
+    const response = await callPut(mockNextRequest({ pathname: "/api/portal/me" }));
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const body = (await response.json()) as { error: { code: string; message: string } };
+    expect(body).toEqual({
+      error: { code: "METHOD_NOT_ALLOWED", message: "Portal route does not support this method." },
+    });
+    // No `Allow` header: the refusal must not enumerate other methods.
+    expect(response.headers.get("allow")).toBeNull();
+  });
+
+  it("refuses POST on a read-only collection shape", async () => {
+    const response = await callPost(mockNextRequest({ pathname: "/api/portal/pets" }));
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("METHOD_NOT_ALLOWED");
+  });
+
+  it("refuses POST on the read-only profile shape", async () => {
+    const response = await callPost(mockNextRequest({ pathname: "/api/portal/profile" }));
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a percent-encoded write path before reaching the API", async () => {
+    const response = await callPost(
+      mockNextRequest({ pathname: `/api/portal/pets/${PET_ID}/%62ookings` })
+    );
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a three-segment path other than pets/:uuid/bookings", async () => {
+    const response = await callPost(
+      mockNextRequest({ pathname: `/api/portal/appointments/${PET_ID}/cancel` })
     );
 
     expect(response.status).toBe(404);
