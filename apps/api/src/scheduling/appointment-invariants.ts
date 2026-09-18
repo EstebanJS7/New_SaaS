@@ -170,6 +170,39 @@ export interface AppointmentAnchorPrisma {
 }
 
 /**
+ * Branch anchor decision. A foreign (or unknown) branch UUID is a
+ * byte-equivalent 404. Extracted so every scheduling entry point — create,
+ * reschedule, portal approval and the availability read — shares the SAME
+ * error code and message instead of re-implementing the check.
+ */
+export function assertBranchAnchor(
+  branch: { id: string } | null
+): asserts branch is { id: string } {
+  if (!branch) {
+    throw new DomainError("NOT_FOUND", "Branch was not found.");
+  }
+}
+
+/**
+ * Professional membership anchor decision: a foreign/unknown membership is a
+ * 404, while an in-tenant membership without the VETERINARIAN role is a 400
+ * rule violation. Shared verbatim by every scheduling entry point.
+ */
+export function assertProfessionalAnchor(
+  membership: { id: string; role: { code: string } } | null
+): asserts membership is { id: string; role: { code: string } } {
+  if (!membership) {
+    throw new DomainError("NOT_FOUND", "Professional membership was not found.");
+  }
+  if (membership.role.code !== "VETERINARIAN") {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      "The assigned professional must have the VETERINARIAN role."
+    );
+  }
+}
+
+/**
  * Resolves the Branch, Patient and professional membership within the active
  * tenant. A foreign (or unknown) UUID is always 404; an in-tenant membership
  * without the VETERINARIAN role is a 400 rule violation.
@@ -194,21 +227,50 @@ export async function assertAppointmentAnchors(
     }),
   ]);
 
-  if (!branch) {
-    throw new DomainError("NOT_FOUND", "Branch was not found.");
-  }
+  assertBranchAnchor(branch);
   if (!patient) {
     throw new DomainError("NOT_FOUND", "Patient was not found.");
   }
-  if (!membership) {
-    throw new DomainError("NOT_FOUND", "Professional membership was not found.");
-  }
-  if (membership.role.code !== "VETERINARIAN") {
-    throw new DomainError(
-      "VALIDATION_FAILED",
-      "The assigned professional must have the VETERINARIAN role."
-    );
-  }
+  assertProfessionalAnchor(membership);
+}
+
+/** The two tenant-owned anchors the read-only availability route resolves. */
+export interface SchedulingAnchors {
+  readonly branchId: string;
+  readonly membershipId: string;
+}
+
+/** Root/tx-client seam for the branch + membership anchor reads. */
+export interface SchedulingAnchorPrisma {
+  branch: AppointmentAnchorPrisma["branch"];
+  tenantMembership: AppointmentAnchorPrisma["tenantMembership"];
+}
+
+/**
+ * Anchor-only twin of {@link assertAppointmentAnchors} for the availability
+ * read: it resolves the SAME Branch and professional membership with the SAME
+ * guards (foreign UUID -> 404, in-tenant non-VETERINARIAN -> 400) but has no
+ * Patient to resolve. Calling the shared guard helpers, rather than copying
+ * their messages, is what keeps the read and the write path byte-compatible.
+ */
+export async function assertSchedulingAnchors(
+  prisma: SchedulingAnchorPrisma,
+  tenantId: string,
+  anchors: SchedulingAnchors
+): Promise<void> {
+  const [branch, membership] = await Promise.all([
+    prisma.branch.findFirst({
+      where: { id: anchors.branchId, tenantId },
+      select: { id: true },
+    }),
+    prisma.tenantMembership.findFirst({
+      where: { id: anchors.membershipId, tenantId },
+      select: { id: true, role: { select: { code: true } } },
+    }),
+  ]);
+
+  assertBranchAnchor(branch);
+  assertProfessionalAnchor(membership);
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +383,24 @@ export async function assertNoConflictInTransaction(
     check.endAt,
     check.excludeId
   );
+}
+
+/**
+ * In-memory twin of the strict interval predicate `assertNoOverlap` pushes into
+ * SQL (`existing.startAt < candidate.endAt AND existing.endAt > candidate.startAt`).
+ * The availability read performs ONE set-based overlap query for the whole day,
+ * then applies this predicate per candidate — the DB read and the JS filter are
+ * two encodings of one rule, so the endpoint excludes exactly the appointments
+ * the write path would reject. Touch-only edges (`existing.endAt === startAt`)
+ * do NOT overlap, matching the write path.
+ */
+export function appointmentsOverlap(
+  startAt: Date,
+  endAt: Date,
+  otherStartAt: Date,
+  otherEndAt: Date
+): boolean {
+  return otherStartAt.getTime() < endAt.getTime() && otherEndAt.getTime() > startAt.getTime();
 }
 
 async function assertNoOverlap(

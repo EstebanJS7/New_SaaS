@@ -17,11 +17,21 @@ import {
   type RescheduleAppointmentInput,
 } from "./appointment.dto.js";
 import {
+  ACTIVE_APPOINTMENT_STATUSES,
   assertAppointmentAnchors,
   assertAppointmentAvailability,
   assertNoConflictInTransaction,
+  assertSchedulingAnchors,
   loadSchedulingSettings,
 } from "./appointment-invariants.js";
+import {
+  computeAvailableSlots,
+  resolveAvailabilityWindow,
+  toAvailabilityResponse,
+  zonedDayMinuteToUtc,
+  type AvailabilityQuery,
+  type AvailabilityResponse,
+} from "./appointment-availability.js";
 import { SCHEDULING_PERMISSIONS } from "./appointment.permissions.js";
 
 // The creation invariants (tenant anchors, availability/blocks, conflict
@@ -265,6 +275,53 @@ export class AppointmentService {
       branches: branches.map((branch) => ({ id: branch.id, name: branch.name })),
       professionals: memberships.map((membership) => ({ membershipId: membership.id })),
     };
+  }
+
+  /**
+   * Read-only free-slot offer for one professional/branch/day (DEC-007 A1).
+   *
+   * It resolves the SAME anchors as the write path (foreign branch/membership ->
+   * byte-equivalent 404; in-tenant non-VETERINARIAN -> 400), then filters a
+   * local-day grid by CALLING the shared availability/block predicates against
+   * the SAME `scheduling` settings and excludes overlaps against the SAME active
+   * status list. Queries: 2 anchors + 1 settings read + exactly ONE overlap read
+   * for the whole day (never one query per candidate). Writes nothing.
+   */
+  async listAvailability(input: AvailabilityQuery): Promise<AvailabilityResponse> {
+    const tenantId = this.requestContext.requireTenantId();
+    await this.requirePermission(SCHEDULING_PERMISSIONS.read);
+
+    await assertSchedulingAnchors(this.prisma, tenantId, {
+      branchId: input.branchId,
+      membershipId: input.professionalMembershipId,
+    });
+
+    const settings = await loadSchedulingSettings(this.settings);
+    const window = resolveAvailabilityWindow(
+      input.date,
+      input.professionalMembershipId,
+      input.branchId,
+      settings
+    );
+    if (!window.hasCandidates) {
+      return toAvailabilityResponse(input, window.basis, []);
+    }
+
+    // ONE set-based overlap read for the entire day window, narrowed to the
+    // tenant + professional and the shared active status list. Per-candidate
+    // filtering happens in memory against this result.
+    const activeAppointments = await this.prisma.appointment.findMany({
+      where: {
+        tenantId,
+        professionalMembershipId: input.professionalMembershipId,
+        status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
+        startAt: { lt: zonedDayMinuteToUtc(input.date, window.dayEndMinute) },
+        endAt: { gt: zonedDayMinuteToUtc(input.date, window.dayStartMinute) },
+      },
+    });
+
+    const slots = computeAvailableSlots({ input, settings, window, activeAppointments });
+    return toAvailabilityResponse(input, window.basis, slots);
   }
 
   // -------------------------------------------------------------------------
