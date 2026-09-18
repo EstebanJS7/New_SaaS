@@ -32,7 +32,7 @@ const PORTAL_RESOURCE_COLLECTIONS: ReadonlySet<string> = new Set(["pets", "appoi
  * Method-independent shapes of the portal API surface. A shape is only
  * "known"; whether it is reachable also depends on the HTTP method.
  */
-type PortalPathShape = "collection" | "resource" | "profile" | "booking";
+type PortalPathShape = "collection" | "resource" | "profile" | "booking" | "availability";
 
 /**
  * Method-aware allowlist for the portal proxy (EPIC-08 WU4D).
@@ -45,6 +45,7 @@ type PortalPathShape = "collection" | "resource" | "profile" | "booking";
  * - `GET  /portal/me`
  * - `GET  /portal/pets`, `GET  /portal/pets/:uuid`
  * - `GET  /portal/appointments`, `GET  /portal/appointments/:uuid`
+ * - `GET  /portal/availability` (DEC-007 A2a; the ONLY shape with a query)
  * - `GET  /portal/profile`, `PUT /portal/profile`
  * - `POST /portal/pets/:uuid/bookings`
  *
@@ -55,17 +56,31 @@ type PortalPathShape = "collection" | "resource" | "profile" | "booking";
  * the staff booking-status routes (approve/reject), which are staff
  * `booking-requests`, not portal routes.
  *
- * Rejections: unknown paths, any query string, percent-encoded segments
- * (which could hide a different upstream path), empty/`.`/`..` segments, nested
- * ids that are not UUIDs, and a known path reached with a method it does not
- * support. Nothing else from the browser crosses the boundary — only the portal
- * cookie and `x-request-id` are forwarded.
+ * QUERY POLICY: portal routes are query-free EXCEPT the availability read,
+ * whose contract is exactly `date`, `durationMinutes` and `stepMinutes`. Any
+ * query on another shape is refused, and an unknown availability query key is
+ * refused too (uniform 404, never dropped silently) so the proxy cannot become
+ * a query tunnel. The forwarded query is rebuilt from the allowlist, so
+ * extra/duplicate values never reach the API.
+ *
+ * Rejections: unknown paths, a query on a query-free shape, an unknown
+ * availability query key, percent-encoded segments (which could hide a
+ * different upstream path), empty/`.`/`..` segments, nested ids that are not
+ * UUIDs, and a known path reached with a method it does not support. Nothing
+ * else from the browser crosses the boundary — only the portal cookie and
+ * `x-request-id` are forwarded.
  */
 const ALLOWED_PORTAL_ROUTES: Readonly<Record<PortalMethod, ReadonlySet<PortalPathShape>>> = {
-  GET: new Set<PortalPathShape>(["collection", "resource", "profile"]),
+  GET: new Set<PortalPathShape>(["collection", "resource", "profile", "availability"]),
   POST: new Set<PortalPathShape>(["booking"]),
   PUT: new Set<PortalPathShape>(["profile"]),
 };
+
+/**
+ * The exact query keys the availability read accepts, in canonical forward
+ * order. Every other key is out of contract and the request is refused.
+ */
+const AVAILABILITY_QUERY_KEYS = ["date", "durationMinutes", "stepMinutes"] as const;
 
 /**
  * Classifies validated segments into a known portal path shape, or `null` when
@@ -77,7 +92,10 @@ function portalPathShape(segments: readonly string[]): PortalPathShape | null {
     if (PORTAL_COLLECTIONS.has(segments[0])) {
       return "collection";
     }
-    return segments[0] === "profile" ? "profile" : null;
+    if (segments[0] === "profile") {
+      return "profile";
+    }
+    return segments[0] === "availability" ? "availability" : null;
   }
   if (segments.length === 2) {
     return PORTAL_RESOURCE_COLLECTIONS.has(segments[0]) && UUID_PATTERN.test(segments[1])
@@ -123,11 +141,7 @@ function methodNotAllowed(): NextResponse {
  * wrong method is not conflated with an unknown path.
  */
 function resolvePortalSegments(request: NextRequest): string[] | null {
-  const { pathname, search } = request.nextUrl;
-  // Portal routes take no query parameters; anything present is out of contract.
-  if (search.length > 0) {
-    return null;
-  }
+  const { pathname } = request.nextUrl;
   if (pathname !== WEB_PORTAL_PREFIX && !pathname.startsWith(`${WEB_PORTAL_PREFIX}/`)) {
     return null;
   }
@@ -146,6 +160,30 @@ function resolvePortalSegments(request: NextRequest): string[] | null {
     return null;
   }
   return segments;
+}
+
+/**
+ * Rebuilds the availability query string from the allowlist, or returns null
+ * when any requested key is out of contract. Duplicate values collapse to the
+ * first occurrence because the string is rebuilt from the allowlist rather than
+ * forwarded verbatim.
+ */
+function resolveAvailabilityQuery(search: string): string | null {
+  const params = new URLSearchParams(search);
+  for (const key of params.keys()) {
+    if (!(AVAILABILITY_QUERY_KEYS as readonly string[]).includes(key)) {
+      return null;
+    }
+  }
+  const forwarded = new URLSearchParams();
+  for (const key of AVAILABILITY_QUERY_KEYS) {
+    const value = params.get(key);
+    if (value !== null) {
+      forwarded.set(key, value);
+    }
+  }
+  const serialized = forwarded.toString();
+  return serialized.length > 0 ? `?${serialized}` : "";
 }
 
 /**
@@ -178,6 +216,23 @@ async function proxyPortalRequest(
   if (!shape) {
     return notFound();
   }
+
+  // Query policy: only the availability shape accepts a query, and only its
+  // three contract keys. Everything else is refused before the method check so
+  // a query can never ride along on another route.
+  const { search } = request.nextUrl;
+  let query = "";
+  if (search.length > 0) {
+    if (shape !== "availability") {
+      return notFound();
+    }
+    const availabilityQuery = resolveAvailabilityQuery(search);
+    if (availabilityQuery === null) {
+      return notFound();
+    }
+    query = availabilityQuery;
+  }
+
   if (!ALLOWED_PORTAL_ROUTES[method].has(shape)) {
     return methodNotAllowed();
   }
@@ -210,7 +265,7 @@ async function proxyPortalRequest(
     ...(hasBody ? { duplex: "half" as const } : {}),
   };
 
-  const response = await fetch(`${apiUrl}${API_PORTAL_PREFIX}/${segments.join("/")}`, init);
+  const response = await fetch(`${apiUrl}${API_PORTAL_PREFIX}/${segments.join("/")}${query}`, init);
 
   const responseHeaders: Record<string, string> = {
     "content-type": response.headers.get("content-type") ?? "application/json",
