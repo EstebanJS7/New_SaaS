@@ -95,16 +95,16 @@ describe("portal surface staff-chrome guard", () => {
     expect(forbiddenSpecifiersIn('const bar = require("@/components/shell/topbar");')).toEqual([
       "@/components/shell/topbar",
     ]);
-    expect(forbiddenSpecifiersIn('export { x } from "@/components/shell/appearance-toggle";')).toEqual(
-      ["@/components/shell/appearance-toggle"]
-    );
+    expect(
+      forbiddenSpecifiersIn('export { x } from "@/components/shell/appearance-toggle";')
+    ).toEqual(["@/components/shell/appearance-toggle"]);
     expect(forbiddenSpecifiersIn('await import("../../app/(app)/layout");')).toEqual([
       "../../app/(app)/layout",
     ]);
     // The portal's own navigation is legitimate and must not be flagged.
-    expect(forbiddenSpecifiersIn('import { PortalNav } from "@/components/portal/portal-nav";')).toEqual(
-      []
-    );
+    expect(
+      forbiddenSpecifiersIn('import { PortalNav } from "@/components/portal/portal-nav";')
+    ).toEqual([]);
   });
 
   it("imports no staff navigation, staff shell component, or staff route group", () => {
