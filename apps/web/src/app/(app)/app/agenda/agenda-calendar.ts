@@ -1,5 +1,5 @@
 import type { EventInput } from "@fullcalendar/core";
-import type { Appointment } from "./agenda-api";
+import type { Appointment, BookingRequest } from "./agenda-api";
 import { durationMinutes, shiftIsoByMinutes } from "./agenda-time";
 
 /** The four staff agenda views. */
@@ -28,6 +28,36 @@ export function appointmentToEvent(appointment: Appointment): EventInput {
     start: appointment.startAt,
     end: appointment.endAt,
     allDay: false,
+  };
+}
+
+/**
+ * Namespace for request event ids. A pending request and an appointment are two
+ * different aggregates with independent id spaces, so the request event id is
+ * prefixed: a request id can never collide with an appointment event id.
+ */
+export const BOOKING_REQUEST_EVENT_PREFIX = "booking-request:";
+
+/** Builds the stable, collision-free FullCalendar id for a pending request. */
+export function bookingRequestEventId(id: string): string {
+  return `${BOOKING_REQUEST_EVENT_PREFIX}${id}`;
+}
+
+/**
+ * Maps a pending booking request to a visually distinct event. The request is
+ * demand, not a booking: it carries `kind: "booking-request"` in its extended
+ * properties and is non-editable, so a drag or resize can never reschedule a
+ * request that has not been approved into an appointment yet.
+ */
+export function bookingRequestToEvent(request: BookingRequest): EventInput {
+  return {
+    id: bookingRequestEventId(request.id),
+    title: "REQUEST",
+    start: request.startAt,
+    end: request.endAt,
+    allDay: false,
+    editable: false,
+    extendedProps: { kind: "booking-request" },
   };
 }
 

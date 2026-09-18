@@ -30,8 +30,9 @@ interface SchedulingRouteShape {
 
 /**
  * Allowlisted scheduling sub-routes, relative to the proxy root. The `":id"`
- * placeholder marks an appointment identifier slot; the method list mirrors the
- * upstream `AppointmentsController` contract (no generic status route exists).
+ * placeholder marks an appointment or booking-request identifier slot; the
+ * method list mirrors the upstream `AppointmentsController` and
+ * `BookingRequestsController` contracts (no generic status route exists).
  *
  * This allowlist is the proxy's security boundary: a segment that is not an
  * exact static literal or a well-formed UUID — a traversal segment, a
@@ -47,6 +48,9 @@ const SCHEDULING_ROUTE_SHAPES: readonly SchedulingRouteShape[] = [
   { segments: ["appointments", ID_SLOT, "complete"], methods: ["POST"] },
   { segments: ["appointments", ID_SLOT, "cancel"], methods: ["POST"] },
   { segments: ["appointments", ID_SLOT, "no-show"], methods: ["POST"] },
+  { segments: ["booking-requests"], methods: ["GET"] },
+  { segments: ["booking-requests", ID_SLOT, "approve"], methods: ["POST"] },
+  { segments: ["booking-requests", ID_SLOT, "reject"], methods: ["POST"] },
 ];
 
 type UpstreamResolution =
@@ -143,8 +147,10 @@ type StreamingRequestInit = RequestInit & { duplex?: "half" };
 /**
  * Proxies staff appointment API calls to the private NestJS scheduling surface.
  *
- * The web namespace is appointment-centric: `/api/scheduling/appointments/:id/
- * confirm` maps to the upstream `/appointments/:id/confirm`. An empty, unknown,
+ * The web namespace mirrors the upstream scheduling surface:
+ * `/api/scheduling/appointments/:id/confirm` maps to the upstream
+ * `/appointments/:id/confirm`, and `/api/scheduling/booking-requests/:id/approve`
+ * maps to the staff decision route. An empty, unknown,
  * malformed or method-mismatched route is rejected here before any upstream
  * call.
  *

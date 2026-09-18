@@ -2,8 +2,14 @@
  * @vitest-environment node
  */
 import { describe, expect, it } from "vitest";
-import { appointmentToEvent, FULL_CALENDAR_VIEW, resolveRescheduledRange } from "./agenda-calendar";
-import type { Appointment } from "./agenda-api";
+import {
+  appointmentToEvent,
+  bookingRequestEventId,
+  bookingRequestToEvent,
+  FULL_CALENDAR_VIEW,
+  resolveRescheduledRange,
+} from "./agenda-calendar";
+import type { Appointment, BookingRequest } from "./agenda-api";
 
 const APPOINTMENT: Appointment = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -38,6 +44,27 @@ describe("agenda-calendar event mapping", () => {
       end: "2026-09-14T12:45:00.000Z",
       allDay: false,
     });
+  });
+
+  it("namespaces a request event id and marks its kind so it can never be an appointment", () => {
+    // Same UUID in both id spaces: the request event id is still distinct.
+    const request: BookingRequest = {
+      id: APPOINTMENT.id,
+      patientId: "33333333-3333-4333-8333-333333333333",
+      status: "PENDING",
+      startAt: "2026-09-14T15:00:00.000Z",
+      endAt: "2026-09-14T15:30:00.000Z",
+    };
+
+    const event = bookingRequestToEvent(request);
+    expect(event.id).toBe(`booking-request:${APPOINTMENT.id}`);
+    expect(event.id).not.toBe(APPOINTMENT.id);
+    expect(event.extendedProps).toEqual({ kind: "booking-request" });
+    expect(event.editable).toBe(false);
+    expect(event.title).toBe("REQUEST");
+    expect(event.start).toBe(request.startAt);
+    expect(event.end).toBe(request.endAt);
+    expect(bookingRequestEventId(APPOINTMENT.id)).toBe(event.id);
   });
 });
 

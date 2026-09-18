@@ -81,6 +81,35 @@ export interface AppointmentFilters {
   readonly status?: AppointmentStatus;
 }
 
+/**
+ * Portal booking-request lifecycle states mirrored from the WU4B staff DTO.
+ * A request is demand, not a booking: it does not occupy the slot until staff
+ * approve it into an appointment.
+ */
+export type BookingRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+
+/** Allowlisted staff BookingRequest DTO mirrored from the WU4B contract. */
+export interface BookingRequest {
+  readonly id: string;
+  readonly patientId: string;
+  readonly status: BookingRequestStatus;
+  readonly startAt: string;
+  readonly endAt: string;
+}
+
+/**
+ * APPROVE body: the two anchors staff choose plus an OPTIONAL concrete slot.
+ * `startAt`/`endAt` are all-or-nothing (both or neither); the API rejects a
+ * half-supplied override. No other field is accepted — the patient comes from
+ * the stored request and a smuggled field is a 400.
+ */
+export interface ApproveBookingRequestInput {
+  readonly branchId: string;
+  readonly professionalMembershipId: string;
+  readonly startAt?: string;
+  readonly endAt?: string;
+}
+
 /** CREATE body: anchors plus a UTC start/end range. */
 export interface CreateAppointmentInput {
   readonly branchId: string;
@@ -258,6 +287,37 @@ export async function transitionAppointment(
   );
 }
 
+/**
+ * Lists the tenant's booking requests, including their status. The agenda shows
+ * the PENDING subset as a demand layer; decided requests are still returned by
+ * the contract and filtered in the view.
+ */
+export async function listBookingRequests(): Promise<BookingRequest[]> {
+  return getJson<BookingRequest[]>("/booking-requests");
+}
+
+/**
+ * Promotes one PENDING request to exactly one appointment. The optional override
+ * is all-or-nothing, so a half-supplied pair never leaves the browser.
+ */
+export async function approveBookingRequest(
+  id: string,
+  input: ApproveBookingRequestInput
+): Promise<Appointment> {
+  return postJson<Appointment>(
+    `/booking-requests/${encodeIdentifier(id, "booking request id")}/approve`,
+    input
+  );
+}
+
+/** Rejects one PENDING request; no appointment is created. */
+export async function rejectBookingRequest(id: string): Promise<BookingRequest> {
+  return postJson<BookingRequest>(
+    `/booking-requests/${encodeIdentifier(id, "booking request id")}/reject`,
+    {}
+  );
+}
+
 /** True when the failure is a permission or entitlement denial (UX-only). */
 export function isAgendaPermissionDenied(error: Error): boolean {
   if (!(error instanceof ApiRequestError)) return false;
@@ -294,6 +354,43 @@ export function userFacingAgendaError(error: Error): string {
       return "That time overlaps another appointment or falls outside availability.";
     case "VALIDATION_FAILED":
       return "Check the appointment details and try again.";
+    default:
+      return error.message;
+  }
+}
+
+/**
+ * Maps the stable scheduling error contract to staff-facing UX copy for a
+ * booking-request DECISION.
+ *
+ * `CONFLICT` is OVERLOADED upstream: the same 409 covers a slot outside
+ * availability, inside a one-off block, already overlapping an active
+ * appointment, a request that is no longer PENDING (a concurrent decision), and
+ * a revoked guardian link. The envelope's `code` is the stable contract and the
+ * message text is not, so the copy deliberately names the plausible causes
+ * WITHOUT asserting one and says the state is being refreshed. The refresh (see
+ * the agenda's `refreshAfterDecisionConflict`) is what resolves the ambiguity;
+ * do not "improve" this into a specific slot claim — it would be false for the
+ * already-decided case, where the request is no longer pending at all. The other
+ * codes are single-cause and their copy stays specific.
+ */
+export function userFacingBookingRequestError(error: Error): string {
+  const code = error instanceof ApiRequestError ? error.code : "";
+  switch (code) {
+    case "UNAUTHENTICATED":
+      return "You must be signed in to decide booking requests.";
+    case "FORBIDDEN":
+      return "You do not have permission to decide booking requests.";
+    case "FEATURE_NOT_ENTITLED":
+      return "The veterinary module is not enabled for this tenant.";
+    case "NOT_FOUND":
+      // The API masks a foreign or non-visible branch or professional with the
+      // same status, so this must not claim the request itself is missing.
+      return "The booking request, or the branch or professional you selected, could not be found.";
+    case "CONFLICT":
+      return "The request could not be decided as it stands: the slot may no longer be free, or the request may already have been decided. The latest state is being refreshed.";
+    case "VALIDATION_FAILED":
+      return "Check the branch, professional and slot and try again.";
     default:
       return error.message;
   }
