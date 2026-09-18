@@ -4,11 +4,13 @@ import { AuditModule } from "../audit/audit.module.js";
 import { AuthModule } from "../auth/auth.module.js";
 import { ContextModule } from "../context/context.module.js";
 import { EntitlementsModule } from "../entitlements/entitlements.module.js";
+import { SettingsModule } from "../settings/settings.module.js";
 import { PortalAccessController } from "./portal-access.controller.js";
 import { PortalAccessService } from "./portal-access.service.js";
 import { PortalAuthController } from "./portal-auth.controller.js";
 import { PortalAuthGuard } from "./portal-auth.guard.js";
 import { PortalAuthService } from "./portal-auth.service.js";
+import { PortalAvailabilityService } from "./portal-availability.service.js";
 import { PortalBookingController } from "./portal-booking.controller.js";
 import { PortalBookingService } from "./portal-booking.service.js";
 import { PortalProfileController } from "./portal-profile.controller.js";
@@ -32,7 +34,7 @@ import { PortalSessionService } from "./portal-session.service.js";
  * `/portal/*` surface, and the staff guards symmetrically skip it.
  */
 @Module({
-  imports: [ContextModule, AuthModule, AuditModule, EntitlementsModule],
+  imports: [ContextModule, AuthModule, AuditModule, EntitlementsModule, SettingsModule],
   controllers: [
     PortalAuthController,
     PortalAccessController,
@@ -45,6 +47,7 @@ import { PortalSessionService } from "./portal-session.service.js";
     PortalAuthService,
     PortalAccessService,
     PortalReadService,
+    PortalAvailabilityService,
     PortalBookingService,
     PortalProfileService,
     PortalAuthGuard,
