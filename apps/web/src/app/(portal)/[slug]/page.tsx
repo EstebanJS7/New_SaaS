@@ -1,30 +1,27 @@
 import type { JSX } from "react";
+import Link from "next/link";
 import { TenantHeader } from "@/components/portal/tenant-header";
-import { publicBrandingDtoToResolvedBrand, type PublicBrandingDto } from "@/lib/public-branding";
-
-const DEFAULT_API_URL = "http://localhost:3001";
+import { PortalNav } from "@/components/portal/portal-nav";
+import { fetchPortalBrand } from "@/lib/portal-branding";
 
 interface PortalPageProps {
   params: Promise<{ slug: string }> | { slug: string };
 }
 
 /**
- * Minimal portal landing page.
+ * Portal landing page.
  *
  * Proves the `(portal)/layout.tsx` brand resolution is applied: the tenant
- * header is rendered using only the public safe DTO, with no staff cookies and
- * no private fields.
+ * header is rendered from the shared public brand helper (the same code path as
+ * the layout, so no second branding request in production), and the page links
+ * the holder into the one private surface that exists after this slice — the
+ * pets list — through the portal-only navigation.
  */
 export default async function PortalPage({ params }: PortalPageProps): Promise<JSX.Element> {
   const { slug } = await params;
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL;
+  const branding = await fetchPortalBrand(slug);
 
-  const response = await fetch(
-    `${apiUrl}/api/v1/public/tenants/${encodeURIComponent(slug)}/branding`,
-    { cache: "no-store" }
-  );
-
-  if (!response.ok) {
+  if (!branding.tenantFound) {
     return (
       <main
         className="flex flex-1 flex-col items-center justify-center p-6"
@@ -35,23 +32,27 @@ export default async function PortalPage({ params }: PortalPageProps): Promise<J
     );
   }
 
-  const dto = (await response.json()) as PublicBrandingDto;
-  const brand = publicBrandingDtoToResolvedBrand(dto);
-
   return (
     <main className="flex flex-1 flex-col">
       <TenantHeader
-        productDisplayName={dto.productDisplayName}
-        displayName={dto.displayName}
-        brand={brand}
+        productDisplayName={branding.productDisplayName}
+        displayName={branding.displayName}
+        brand={branding.brand}
       />
+      <PortalNav slug={slug} />
       <section
-        className="flex flex-1 flex-col items-center justify-center p-6"
+        className="flex flex-1 flex-col items-center justify-center gap-4 p-6"
         data-testid="portal-landing"
       >
         <h1 className="text-2xl font-bold text-foreground">
-          {dto.displayName ?? dto.productDisplayName}
+          {branding.displayName ?? branding.productDisplayName}
         </h1>
+        <Link
+          href={`/${encodeURIComponent(slug)}/pets`}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          View my pets
+        </Link>
       </section>
     </main>
   );
