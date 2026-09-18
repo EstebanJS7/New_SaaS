@@ -5,16 +5,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiRequestError,
   allowedTransitions,
+  approveBookingRequest,
   listAppointmentOptions,
   listAppointments,
+  listBookingRequests,
+  rejectBookingRequest,
   rescheduleAppointment,
   transitionAppointment,
   userFacingAgendaError,
+  userFacingBookingRequestError,
   type Appointment,
+  type BookingRequest,
 } from "./agenda-api";
 
 const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_ID = "22222222-2222-4222-8222-222222222222";
+const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
+const MEMBERSHIP_ID = "44444444-4444-4444-8444-444444444444";
 
 const APPOINTMENT: Appointment = {
   id: APPOINTMENT_ID,
@@ -28,6 +35,14 @@ const APPOINTMENT: Appointment = {
   version: 1,
   createdAt: "2026-09-14T00:00:00.000Z",
   updatedAt: "2026-09-14T00:00:00.000Z",
+};
+
+const BOOKING_REQUEST: BookingRequest = {
+  id: REQUEST_ID,
+  patientId: "33333333-3333-4333-8333-333333333333",
+  status: "PENDING",
+  startAt: "2026-09-14T15:00:00.000Z",
+  endAt: "2026-09-14T15:30:00.000Z",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -148,5 +163,109 @@ describe("agenda-api contract", () => {
   it("exposes the legal lifecycle edges per status", () => {
     expect(allowedTransitions("SCHEDULED")).toEqual(["confirm", "cancel"]);
     expect(allowedTransitions("CANCELLED")).toEqual([]);
+  });
+});
+
+describe("booking-request client contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("GETs the booking-request list", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse([BOOKING_REQUEST])));
+    global.fetch = fetchMock;
+
+    await expect(listBookingRequests()).resolves.toEqual([BOOKING_REQUEST]);
+    expect(resolveRequestUrl(callInput(fetchMock, 0))).toBe("/api/scheduling/booking-requests");
+    expect(callInit(fetchMock, 0).method).toBeUndefined();
+  });
+
+  it("POSTs an approval with EXACTLY the anchors when there is no override", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(APPOINTMENT)));
+    global.fetch = fetchMock;
+
+    await approveBookingRequest(REQUEST_ID, {
+      branchId: BRANCH_ID,
+      professionalMembershipId: MEMBERSHIP_ID,
+    });
+
+    expect(resolveRequestUrl(callInput(fetchMock, 0))).toBe(
+      `/api/scheduling/booking-requests/${REQUEST_ID}/approve`
+    );
+    const init = callInit(fetchMock, 0);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      branchId: BRANCH_ID,
+      professionalMembershipId: MEMBERSHIP_ID,
+    });
+  });
+
+  it("POSTs an approval with an all-or-nothing slot override", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(APPOINTMENT)));
+    global.fetch = fetchMock;
+
+    await approveBookingRequest(REQUEST_ID, {
+      branchId: BRANCH_ID,
+      professionalMembershipId: MEMBERSHIP_ID,
+      startAt: "2026-09-14T16:00:00.000Z",
+      endAt: "2026-09-14T16:30:00.000Z",
+    });
+
+    expect(JSON.parse(callInit(fetchMock, 0).body as string)).toEqual({
+      branchId: BRANCH_ID,
+      professionalMembershipId: MEMBERSHIP_ID,
+      startAt: "2026-09-14T16:00:00.000Z",
+      endAt: "2026-09-14T16:30:00.000Z",
+    });
+  });
+
+  it("POSTs a rejection with no body fields", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ ...BOOKING_REQUEST, status: "REJECTED" }))
+    );
+    global.fetch = fetchMock;
+
+    await expect(rejectBookingRequest(REQUEST_ID)).resolves.toMatchObject({ status: "REJECTED" });
+    expect(resolveRequestUrl(callInput(fetchMock, 0))).toBe(
+      `/api/scheduling/booking-requests/${REQUEST_ID}/reject`
+    );
+    const init = callInit(fetchMock, 0);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({});
+  });
+
+  it("rejects a malformed request id before any decision request", async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock;
+
+    await expect(
+      approveBookingRequest("not-a-uuid", {
+        branchId: BRANCH_ID,
+        professionalMembershipId: MEMBERSHIP_ID,
+      })
+    ).rejects.toMatchObject({ code: "INVALID_IDENTIFIER" });
+    await expect(rejectBookingRequest("not-a-uuid")).rejects.toMatchObject({
+      code: "INVALID_IDENTIFIER",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("maps the decision error contract to non-committal 409 copy and specific other codes", () => {
+    const conflict = userFacingBookingRequestError(
+      new ApiRequestError("CONFLICT", "Overlaps another appointment.", 409)
+    );
+    // The overloaded 409 must not pick one cause nor claim the request is still
+    // pending; it names the possibilities and reports the refresh.
+    expect(conflict).toContain("may no longer be free");
+    expect(conflict).toContain("may already have been decided");
+    expect(conflict).toContain("refreshed");
+    expect(conflict).not.toBe("Overlaps another appointment.");
+    expect(userFacingBookingRequestError(new ApiRequestError("FORBIDDEN", "Denied", 403))).toBe(
+      "You do not have permission to decide booking requests."
+    );
+    expect(userFacingBookingRequestError(new ApiRequestError("NOT_FOUND", "Gone", 404))).toBe(
+      "The booking request, or the branch or professional you selected, could not be found."
+    );
+    expect(userFacingBookingRequestError(new Error("boom"))).toBe("boom");
   });
 });

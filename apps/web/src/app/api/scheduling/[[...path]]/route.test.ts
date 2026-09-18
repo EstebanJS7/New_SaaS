@@ -175,6 +175,89 @@ describe("/api/scheduling proxy", () => {
     );
   });
 
+  it("maps the booking-request list and decision routes to their upstream shapes", async () => {
+    fetchMock.mockResolvedValue(upstreamOk([]));
+
+    await GET(
+      mockNextRequest({
+        pathname: "/api/scheduling/booking-requests",
+      }) as unknown as Parameters<typeof GET>[0]
+    );
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      "http://localhost:3001/booking-requests"
+    );
+
+    fetchMock.mockClear();
+    await POST(
+      mockNextRequest({
+        pathname: `/api/scheduling/booking-requests/${APPOINTMENT_ID}/approve`,
+        body: byteStream([JSON.stringify({ branchId: BRANCH_ID })]),
+      }) as unknown as Parameters<typeof POST>[0]
+    );
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      `http://localhost:3001/booking-requests/${APPOINTMENT_ID}/approve`
+    );
+
+    fetchMock.mockClear();
+    await POST(
+      mockNextRequest({
+        pathname: `/api/scheduling/booking-requests/${APPOINTMENT_ID}/reject`,
+        body: byteStream([JSON.stringify({})]),
+      }) as unknown as Parameters<typeof POST>[0]
+    );
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      `http://localhost:3001/booking-requests/${APPOINTMENT_ID}/reject`
+    );
+  });
+
+  it("rejects booking-request near misses: method, action, id shape and encoding", async () => {
+    // GET is not exposed on the approve/reject shape.
+    const getApprove = (await GET(
+      mockNextRequest({
+        pathname: `/api/scheduling/booking-requests/${APPOINTMENT_ID}/approve`,
+      }) as unknown as Parameters<typeof GET>[0]
+    )) as Response;
+    expect(getApprove.status).toBe(404);
+
+    // POST is not exposed on the list shape.
+    const postList = (await POST(
+      mockNextRequest({
+        pathname: "/api/scheduling/booking-requests",
+        body: byteStream([JSON.stringify({})]),
+      }) as unknown as Parameters<typeof POST>[0]
+    )) as Response;
+    expect(postList.status).toBe(404);
+
+    // An unknown action segment is not allowlisted.
+    const unknownAction = (await POST(
+      mockNextRequest({
+        pathname: `/api/scheduling/booking-requests/${APPOINTMENT_ID}/escalate`,
+        body: byteStream([JSON.stringify({})]),
+      }) as unknown as Parameters<typeof POST>[0]
+    )) as Response;
+    expect(unknownAction.status).toBe(404);
+
+    // A malformed id can never fill the UUID slot.
+    const malformed = (await POST(
+      mockNextRequest({
+        pathname: "/api/scheduling/booking-requests/not-a-uuid/approve",
+        body: byteStream([JSON.stringify({})]),
+      }) as unknown as Parameters<typeof POST>[0]
+    )) as Response;
+    expect(malformed.status).toBe(404);
+
+    // A percent-encoded request path is rejected before any upstream call.
+    const encoded = (await POST(
+      mockNextRequest({
+        pathname: `/api/scheduling/booking-requests/${APPOINTMENT_ID}%2Fescalate/reject`,
+        body: byteStream([JSON.stringify({})]),
+      }) as unknown as Parameters<typeof POST>[0]
+    )) as Response;
+    expect(encoded.status).toBe(400);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("forwards only the allowlisted session cookie and x-request-id headers", async () => {
     fetchMock.mockResolvedValue(upstreamOk([]));
 
