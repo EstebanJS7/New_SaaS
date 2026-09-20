@@ -1,21 +1,23 @@
-import { Body, Controller, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import {
   createPortalBookingRequestBody,
+  type PortalBookingListResponse,
   type PortalBookingRequestResponse,
 } from "./portal-booking.dto.js";
 import { PortalBookingService } from "./portal-booking.service.js";
 import { portalResourceIdParamSchema } from "./portal-read.dto.js";
 
 /**
- * Holder booking-request command surface (EPIC-08 WU4A).
+ * Holder booking-request surface (EPIC-08): the WU4A COMMAND and the
+ * holder-facing READ of the holder's own requests.
  *
  * Lives on the `/portal/*` surface ONLY: it carries no staff
  * `@RequirePermissions` metadata (the staff chain skips the portal surface) and
  * the PortalAuthGuard enforces the portal session + `portal` entitlement. The
  * holder's tenant and Customer are resolved server-side from the session; a
  * `tenantId`/`customerId` in the path, query or body is never read — `.strict()`
- * rejects the body outright.
+ * rejects the body outright and the read takes no input at all.
  *
  * The command is intentionally narrow: it CREATES a PENDING request. Approval,
  * the Appointment it may later produce, availability and overlap evaluation are
@@ -24,6 +26,16 @@ import { portalResourceIdParamSchema } from "./portal-read.dto.js";
 @Controller("portal")
 export class PortalBookingController {
   constructor(private readonly bookings: PortalBookingService) {}
+
+  /**
+   * The holder's OWN booking requests, oldest start first, each with its
+   * resolved patient name and lifecycle status. Query-free: tenant and Customer
+   * are server-side facts, so a client identity hint is never read.
+   */
+  @Get("bookings")
+  list(): Promise<PortalBookingListResponse> {
+    return this.bookings.listBookingRequests();
+  }
 
   /**
    * Submits a booking request for a holder-owned pet. A pet outside the

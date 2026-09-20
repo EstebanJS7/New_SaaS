@@ -158,6 +158,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /portal/availability",
   // EPIC-08 WU4A — holder booking-request command (PENDING only; no Appointment)
   "POST /portal/pets/:id/bookings",
+  // EPIC-08 — holder-facing read of the holder's OWN booking requests
+  "GET /portal/bookings",
   // EPIC-08 WU4C — holder profile self-service (own phone + address only)
   "GET /portal/profile",
   "PUT /portal/profile",
@@ -401,6 +403,7 @@ describe("portal surface fence (EPIC-08 task 2.3)", () => {
       "GET /portal/appointments",
       "GET /portal/appointments/:id",
       "GET /portal/availability",
+      "GET /portal/bookings",
       "GET /portal/me",
       "GET /portal/pets",
       "GET /portal/pets/:id",
