@@ -82,9 +82,10 @@ function formatSlotTime(iso: string, timeZone: string): string {
  * States are kept visibly distinct: loading, empty (a NORMAL result, never an
  * error), denied (403), error, submitting and success. The success copy is
  * deliberately honest — the request is PENDING and needs staff approval, it is
- * NOT a confirmed appointment, and no portal route reads the holder's own
- * booking requests yet, so there is no status to follow. The `409`/`404` copy
- * never picks a cause the API masks; see `userFacingPortalError`.
+ * NOT a confirmed appointment — and it points the holder at the booking-requests
+ * section on their appointments page, which is now the way to follow the
+ * request's status. The `409`/`404` copy never picks a cause the API masks; see
+ * `userFacingPortalError`.
  *
  * The tenant slug is preserved on the "back" link so the holder never leaves
  * their own tenant.
@@ -105,6 +106,7 @@ export function PortalBookingGrid({ slug, petId }: PortalBookingGridProps): JSX.
   });
 
   const backHref = `/${encodeURIComponent(slug)}/pets/${petId}`;
+  const requestsHref = `/${encodeURIComponent(slug)}/appointments`;
 
   if (booking.data) {
     return (
@@ -112,11 +114,21 @@ export function PortalBookingGrid({ slug, petId }: PortalBookingGridProps): JSX.
         <h1 className="text-2xl font-semibold tracking-tight">Request sent</h1>
         <p className="text-sm text-muted-foreground">
           Your request is pending. Clinic staff must approve it before it becomes an appointment, so
-          it is not confirmed yet. There is no way to check its status in the portal yet.
+          it is not confirmed yet. You can follow its status in the booking requests on your
+          appointments page.
         </p>
-        <Link href={backHref} className="text-sm font-medium text-primary hover:underline">
-          Back to this pet
-        </Link>
+        <div className="flex flex-wrap gap-4">
+          <Link
+            href={requestsHref}
+            className="text-sm font-medium text-primary hover:underline"
+            data-testid="portal-booking-requests-link"
+          >
+            View my requests
+          </Link>
+          <Link href={backHref} className="text-sm font-medium text-primary hover:underline">
+            Back to this pet
+          </Link>
+        </div>
       </div>
     );
   }

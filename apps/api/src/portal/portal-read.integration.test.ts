@@ -5,6 +5,7 @@ import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-ap
 import { seedTwoTenants, type TwoTenantFixture } from "../../test/support/seed-two-tenants.js";
 import { seedPortalAccess, type PortalAccessFixture } from "../../test/support/seed-portal.js";
 import { expectCrossTenant404 } from "../../test/support/expect-cross-tenant-404.js";
+import { TENANT_TIMEZONE } from "../scheduling/appointment-invariants.js";
 import type { PatientRow } from "../../test/support/in-memory-database.js";
 
 interface ErrorEnvelopeBody {
@@ -33,6 +34,15 @@ interface AppointmentBody {
   endAt: string;
 }
 
+interface AppointmentSummaryBody extends AppointmentBody {
+  patientName: string;
+}
+
+interface AppointmentListBody {
+  timeZone: string;
+  appointments: AppointmentSummaryBody[];
+}
+
 /**
  * Distinctive, searchable CONFIDENTIAL markers. The whole point of WU3 is that
  * neither can reach a response or a log line.
@@ -53,6 +63,8 @@ const PET_DETAIL_KEYS = [
 ];
 
 const APPOINTMENT_KEYS = ["endAt", "id", "patientId", "startAt", "status"];
+const APPOINTMENT_SUMMARY_KEYS = ["endAt", "id", "patientId", "patientName", "startAt", "status"];
+const APPOINTMENT_LIST_ENVELOPE_KEYS = ["appointments", "timeZone"];
 
 /**
  * EPIC-08 WU3 — holder-owned portal READ surface over real HTTP and the full
@@ -327,20 +339,53 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
   });
 
   describe("holder-owned appointment reads", () => {
-    it("lists only appointments for holder-owned pets", async () => {
+    it("lists only appointments for holder-owned pets inside the list envelope", async () => {
       const response = await supertest(server())
         .get("/portal/appointments")
         .set("Cookie", holderA.cookie)
         .expect(200);
 
-      const body = response.body as AppointmentBody[];
-      expect(body.map((appointment) => appointment.id)).toEqual([appointmentAId]);
-      expect(body[0]).toMatchObject({ patientId: petA.id, status: "SCHEDULED" });
-      expect(Object.keys(body[0]).sort()).toEqual(APPOINTMENT_KEYS);
-      // No provenance/internal linkage leaks.
+      const body = response.body as AppointmentListBody;
+      expect(Object.keys(body).sort()).toEqual(APPOINTMENT_LIST_ENVELOPE_KEYS);
+      expect(body.timeZone).toBe(TENANT_TIMEZONE);
+      expect(body.appointments.map((appointment) => appointment.id)).toEqual([appointmentAId]);
+      expect(body.appointments[0]).toMatchObject({
+        patientId: petA.id,
+        patientName: petA.name,
+        status: "SCHEDULED",
+      });
+      expect(Object.keys(body.appointments[0]).sort()).toEqual(APPOINTMENT_SUMMARY_KEYS);
+      // No provenance/internal linkage leaks, and no other pet's name/row does.
       expect(response.text).not.toContain("portalBookingRequestId");
       expect(response.text).not.toContain(appointmentA2Id);
       expect(response.text).not.toContain(appointmentBId);
+      expect(response.text).not.toContain(petA2.name);
+      expect(response.text).not.toContain(petB.name);
+    });
+
+    it("resolves every involved pet name in exactly ONE tenant-scoped query", async () => {
+      const originalFindMany = booted.db.prisma.patient.findMany;
+      const capturedWhere: Parameters<typeof originalFindMany>[0]["where"][] = [];
+      booted.db.prisma.patient.findMany = (args) => {
+        capturedWhere.push(args.where);
+        return originalFindMany(args);
+      };
+
+      try {
+        await supertest(server())
+          .get("/portal/appointments")
+          .set("Cookie", holderA.cookie)
+          .expect(200);
+      } finally {
+        booted.db.prisma.patient.findMany = originalFindMany;
+      }
+
+      // One set-based lookup, not one per row, and it is pinned to the holder's
+      // OWN tenant and to the appointment's pet only.
+      expect(capturedWhere).toHaveLength(1);
+      const captured = capturedWhere[0];
+      expect(captured?.tenantId).toBe(fixture.tenants.a.id);
+      expect(captured?.id?.in).toEqual([petA.id]);
     });
 
     it("serves one holder-owned appointment with the allowlisted projection", async () => {

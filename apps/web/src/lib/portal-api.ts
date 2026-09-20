@@ -65,16 +65,26 @@ export type PortalAppointmentStatus =
   "SCHEDULED" | "CONFIRMED" | "ARRIVED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 
 /**
- * `GET /portal/appointments` entry. Deliberately carries NO pet name and no
- * tenant echo: the API returns the stable `patientId` and the holder resolves
- * the name by joining against their own pets (see `portal-appointments.tsx`).
+ * `GET /portal/appointments` entry: the allowlisted appointment plus the pet
+ * name the API resolves server-side. Carrying the name here is what lets the
+ * appointments page drop its own pets read and in-memory join.
  */
 export interface PortalAppointment {
   readonly id: string;
   readonly patientId: string;
+  readonly patientName: string;
   readonly status: PortalAppointmentStatus;
   readonly startAt: string;
   readonly endAt: string;
+}
+
+/**
+ * `GET /portal/appointments` response: the clinic zone that names each row's
+ * day, plus the holder's own appointments, earliest first.
+ */
+export interface PortalAppointmentList {
+  readonly timeZone: string;
+  readonly appointments: readonly PortalAppointment[];
 }
 
 /** One free slot offered by `GET /portal/availability` — times only, no identity. */
@@ -114,6 +124,28 @@ export interface PortalBookingRequest {
   readonly status: PortalBookingRequestStatus;
   readonly startAt: string;
   readonly endAt: string;
+}
+
+/**
+ * One of the holder's OWN booking requests: the lifecycle status plus the pet
+ * name the API resolves server-side, so the client never joins or prints an id.
+ */
+export interface PortalBookingSummary {
+  readonly id: string;
+  readonly patientId: string;
+  readonly patientName: string;
+  readonly status: PortalBookingRequestStatus;
+  readonly startAt: string;
+  readonly endAt: string;
+}
+
+/**
+ * `GET /portal/bookings` response: the clinic zone plus the holder's own
+ * requests, oldest start first.
+ */
+export interface PortalBookingList {
+  readonly timeZone: string;
+  readonly bookings: readonly PortalBookingSummary[];
 }
 
 /** Submission payload: the chosen slot's two ISO instants and nothing else. */
@@ -192,7 +224,7 @@ export function getPortalPet(id: string): Promise<PortalPetDetail> {
 }
 
 /** `GET /portal/appointments` — the holder's own appointments, earliest first. */
-export function listPortalAppointments(): Promise<PortalAppointment[]> {
+export function listPortalAppointments(): Promise<PortalAppointmentList> {
   return getJson("/appointments");
 }
 
@@ -234,6 +266,15 @@ export function createPortalBooking(
     startAt: input.startAt,
     endAt: input.endAt,
   });
+}
+
+/**
+ * `GET /portal/bookings` — the holder's OWN booking requests, oldest first,
+ * each with its resolved pet name. This is the read the booking success screen
+ * points at so a PENDING request can be followed up.
+ */
+export function listPortalBookings(): Promise<PortalBookingList> {
+  return getJson("/bookings");
 }
 
 /** True when the response was refused for lack of portal access/entitlement. */

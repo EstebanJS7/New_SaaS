@@ -79,3 +79,27 @@ export interface PortalAppointment {
   readonly startAt: string;
   readonly endAt: string;
 }
+
+/**
+ * Holder-owned appointment as the LIST returns it: the allowlisted appointment
+ * plus the pet name RESOLVED SERVER-SIDE.
+ *
+ * `patientName` exists so the client never has to read the pets collection and
+ * join in memory just to label a row. It is the ONLY patient field exposed — no
+ * species, no breed, no owner link. The single-appointment read keeps the lean
+ * `PortalAppointment` shape because it renders no name-labelled list.
+ */
+export interface PortalAppointmentSummary extends PortalAppointment {
+  readonly patientName: string;
+}
+
+/**
+ * Appointment list envelope: the interval data travels WITH the zone that names
+ * its day, exactly like the availability and booking-request reads. Each
+ * `startAt`/`endAt` stays a UTC instant; `timeZone` is what lets the client
+ * render the clinic-local day without a second availability probe.
+ */
+export interface PortalAppointmentListResponse {
+  readonly timeZone: string;
+  readonly appointments: readonly PortalAppointmentSummary[];
+}
