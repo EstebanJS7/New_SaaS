@@ -11,9 +11,11 @@ const navLinkClassName =
 /**
  * Portal-surface navigation.
  *
- * Renders ONLY the destinations that exist after this slice: home and pets.
- * There is deliberately no entry for appointments, profile or booking — linking
- * to a page that does not exist yet would 404 a holder. It is a distinct
+ * Renders ONLY the destinations that exist after this slice: home, pets and
+ * appointments. A holder's appointments list is the last big visibility gap on
+ * this surface, so it is now reachable from the shared chrome. There is
+ * deliberately no entry for profile or booking — a booking link needs a pet and
+ * is reached from the pet detail page, not from here. It is a distinct
  * component from the staff `NavSidebar` and must never import staff chrome.
  *
  * The tenant slug is preserved on every href so the holder stays in their own
@@ -24,6 +26,7 @@ export function PortalNav({ slug }: PortalNavProps): JSX.Element {
   const entries = [
     { href: base, label: "Home" },
     { href: `${base}/pets`, label: "Pets" },
+    { href: `${base}/appointments`, label: "Appointments" },
   ] as const;
 
   return (

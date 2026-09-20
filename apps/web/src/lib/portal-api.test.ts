@@ -9,8 +9,10 @@ import {
   getPortalPet,
   isPortalDeniedError,
   isPortalNotFoundError,
+  listPortalAppointments,
   listPortalAvailability,
   listPortalPets,
+  userFacingPortalAppointmentsError,
   userFacingPortalError,
 } from "./portal-api";
 
@@ -174,6 +176,33 @@ describe("portal booking client contract", () => {
   });
 });
 
+describe("portal appointments client contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("listPortalAppointments GETs /api/portal/appointments with cache: no-store", async () => {
+    const appointments = [
+      {
+        id: "appt-1",
+        patientId: "11111111-1111-4111-8111-111111111111",
+        status: "SCHEDULED",
+        startAt: "2026-06-15T13:00:00.000Z",
+        endAt: "2026-06-15T13:30:00.000Z",
+      },
+    ];
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(appointments)));
+    global.fetch = fetchMock;
+
+    await expect(listPortalAppointments()).resolves.toEqual(appointments);
+
+    const [input, init] = lastCall(fetchMock);
+    expect(resolveRequestUrl(input)).toBe("/api/portal/appointments");
+    expect(init).toMatchObject({ cache: "no-store" });
+    expect(init.method).toBeUndefined();
+  });
+});
+
 describe("userFacingPortalError", () => {
   it("never echoes the server message text for a known or unknown code", () => {
     const known = new ApiRequestError("NOT_FOUND", "Portal pet was not found.", 404);
@@ -208,5 +237,26 @@ describe("userFacingPortalError", () => {
     expect(copy).not.toContain("taken");
     expect(copy).not.toContain("decided");
     expect(copy).toContain("refresh");
+  });
+
+  it("maps the appointments not-found without borrowing the pet wording", () => {
+    const copy = userFacingPortalAppointmentsError(
+      new ApiRequestError("NOT_FOUND", "raw upstream detail", 404)
+    );
+    expect(copy).toContain("appointment");
+    // The appointments surface is not a single pet; never reuse the pet copy.
+    expect(copy).not.toContain("pet");
+    expect(copy).toContain("may not exist");
+    expect(copy).toContain("may not be linked to your account");
+    expect(copy).not.toContain("raw upstream detail");
+  });
+
+  it("delegates every other appointments code to the shared copy", () => {
+    expect(userFacingPortalAppointmentsError(new ApiRequestError("FORBIDDEN", "x", 403))).toBe(
+      "You do not have access to this portal."
+    );
+    expect(userFacingPortalAppointmentsError(new ApiRequestError("INTERNAL", "x", 500))).toBe(
+      "Something went wrong. Please try again."
+    );
   });
 });

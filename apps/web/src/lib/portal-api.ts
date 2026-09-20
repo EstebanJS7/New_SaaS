@@ -60,6 +60,23 @@ export interface PortalPetDetail extends PortalPet {
   };
 }
 
+/** Mirrors the `appointment_status` database enum (the full lifecycle). */
+export type PortalAppointmentStatus =
+  "SCHEDULED" | "CONFIRMED" | "ARRIVED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+
+/**
+ * `GET /portal/appointments` entry. Deliberately carries NO pet name and no
+ * tenant echo: the API returns the stable `patientId` and the holder resolves
+ * the name by joining against their own pets (see `portal-appointments.tsx`).
+ */
+export interface PortalAppointment {
+  readonly id: string;
+  readonly patientId: string;
+  readonly status: PortalAppointmentStatus;
+  readonly startAt: string;
+  readonly endAt: string;
+}
+
 /** One free slot offered by `GET /portal/availability` — times only, no identity. */
 export interface PortalAvailabilitySlot {
   readonly startAt: string;
@@ -174,6 +191,11 @@ export function getPortalPet(id: string): Promise<PortalPetDetail> {
   return getJson(`/pets/${id}`);
 }
 
+/** `GET /portal/appointments` — the holder's own appointments, earliest first. */
+export function listPortalAppointments(): Promise<PortalAppointment[]> {
+  return getJson("/appointments");
+}
+
 /**
  * `GET /portal/availability` — the clinic's real free slots for a date and a
  * duration, UNIONed across every in-tenant professional. Times only: the holder
@@ -258,4 +280,21 @@ export function userFacingPortalError(error: Error): string {
     default:
       return "Something went wrong. Please try again.";
   }
+}
+
+/**
+ * Maps the stable portal error contract for the APPOINTMENTS surface.
+ *
+ * Same contract as `userFacingPortalError` (stable-code mapping, never the
+ * server message), with ONE difference: the appointments list is not about a
+ * single pet, so a masked not-found names the appointment instead of a pet.
+ * The API masks an appointment that is not the holder's as the SAME 404 it
+ * returns for one that does not exist, so the copy keeps both possibilities
+ * rather than asserting a cause. Every other code delegates unchanged.
+ */
+export function userFacingPortalAppointmentsError(error: Error): string {
+  if (isPortalNotFoundError(error)) {
+    return "We could not find that appointment. It may not exist, or it may not be linked to your account.";
+  }
+  return userFacingPortalError(error);
 }
