@@ -22,44 +22,22 @@ function resolveRequestUrl(input: RequestInfo | URL): string {
 }
 
 const REX_ID = "11111111-1111-4111-8111-111111111111";
-const MILO_ID = "22222222-2222-4222-8222-222222222222";
-const UNLISTED_ID = "33333333-3333-4333-8333-333333333333";
 
-const REX = {
-  id: REX_ID,
-  name: "Rex",
-  speciesId: "species-1",
-  breedId: null,
-  sex: "MALE",
-  birthDate: null,
-  isActive: true,
-};
-
-const MILO = {
-  id: MILO_ID,
-  name: "Milo",
-  speciesId: "species-1",
-  breedId: null,
-  sex: "UNKNOWN",
-  birthDate: null,
-  isActive: true,
-};
-
-/** Availability shape the zone probe consumes; slots are irrelevant here. */
-const AVAILABILITY = {
-  date: "2026-06-15",
-  timeZone: "America/Asuncion",
-  durationMinutes: 30,
-  stepMinutes: 30,
-  slots: [],
-};
-
+const TIME_ZONE = "America/Asuncion";
 const START = "2026-06-15T13:00:00.000Z";
 const END = "2026-06-15T13:30:00.000Z";
 
-function appointment(id: string, patientId: string, status: string): Record<string, string> {
-  return { id, patientId, status, startAt: START, endAt: END };
+/** The appointments envelope the API now returns: zone + rows with a name. */
+function envelope(appointments: readonly Record<string, string>[]): Record<string, unknown> {
+  return { timeZone: TIME_ZONE, appointments };
 }
+
+function appointment(id: string, status: string, patientName = "Rex"): Record<string, string> {
+  return { id, patientId: REX_ID, patientName, status, startAt: START, endAt: END };
+}
+
+/** Empty booking-requests envelope so the composed section stays quiet. */
+const EMPTY_BOOKINGS = { timeZone: TIME_ZONE, bookings: [] };
 
 interface Route {
   readonly body: unknown;
@@ -67,26 +45,23 @@ interface Route {
 }
 
 /**
- * Fetch double that answers the three reads by URL. The appointments read is
- * checked first because `/api/portal/pets` is a prefix of nothing it returns,
- * but ordering keeps intent explicit.
+ * Fetch double that answers the two reads the appointments page makes by URL:
+ * the appointments envelope and the booking-requests section. Availability and
+ * pets are deliberately NOT routable: any call to them falls through to 404,
+ * and the fetch-count test asserts they are never issued.
  */
 function routeFetch(routes: {
   readonly appointments: Route;
-  readonly pets: Route;
-  readonly availability?: Route;
+  readonly bookings?: Route;
 }): ReturnType<typeof vi.fn> {
   return vi.fn((input: RequestInfo | URL) => {
     const url = resolveRequestUrl(input);
     if (url.startsWith("/api/portal/appointments")) {
       return Promise.resolve(jsonResponse(routes.appointments.body, routes.appointments.status));
     }
-    if (url.startsWith("/api/portal/pets")) {
-      return Promise.resolve(jsonResponse(routes.pets.body, routes.pets.status));
-    }
-    if (url.startsWith("/api/portal/availability")) {
-      const availability = routes.availability ?? { body: AVAILABILITY };
-      return Promise.resolve(jsonResponse(availability.body, availability.status));
+    if (url.startsWith("/api/portal/bookings")) {
+      const bookings = routes.bookings ?? { body: EMPTY_BOOKINGS };
+      return Promise.resolve(jsonResponse(bookings.body, bookings.status));
     }
     return Promise.resolve(jsonResponse({ error: { code: "NOT_FOUND" } }, 404));
   });
@@ -105,18 +80,19 @@ describe("PortalAppointmentsView", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows a loading state while the reads are in flight", () => {
-    // A never-resolving read keeps the combined query in its loading state.
+  it("shows a loading state while the read is in flight", () => {
+    // A never-resolving read keeps the query in its loading state.
     global.fetch = vi.fn(() => new Promise<Response>(() => undefined));
 
     renderView();
 
-    expect(screen.getByTestId("portal-appointments-loading")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    const loading = screen.getByTestId("portal-appointments-loading");
+    expect(loading).toBeInTheDocument();
+    expect(loading).toHaveAttribute("role", "status");
   });
 
   it("treats an empty list as a normal state, not an error", async () => {
-    global.fetch = routeFetch({ appointments: { body: [] }, pets: { body: [REX] } });
+    global.fetch = routeFetch({ appointments: { body: envelope([]) } });
 
     renderView();
 
@@ -125,19 +101,8 @@ describe("PortalAppointmentsView", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("points the empty state at the booking flow and keeps the tenant slug", async () => {
-    global.fetch = routeFetch({ appointments: { body: [] }, pets: { body: [REX, MILO] } });
-
-    renderView("acme-clinic");
-
-    expect(await screen.findByTestId("portal-appointments-book-link")).toHaveAttribute(
-      "href",
-      `/acme-clinic/pets/${REX_ID}/book`
-    );
-  });
-
-  it("points a pet-less empty state at the pets list, still slug-correct", async () => {
-    global.fetch = routeFetch({ appointments: { body: [] }, pets: { body: [] } });
+  it("points the empty state at the pets list and keeps the tenant slug", async () => {
+    global.fetch = routeFetch({ appointments: { body: envelope([]) } });
 
     renderView("acme-clinic");
 
@@ -153,7 +118,6 @@ describe("PortalAppointmentsView", () => {
         body: { error: { code: "FORBIDDEN", message: "Access denied" } },
         status: 403,
       },
-      pets: { body: [REX] },
     });
 
     renderView();
@@ -169,7 +133,6 @@ describe("PortalAppointmentsView", () => {
         body: { error: { code: "INTERNAL", message: "boom: upstream stack" } },
         status: 500,
       },
-      pets: { body: [REX] },
     });
 
     renderView();
@@ -186,7 +149,6 @@ describe("PortalAppointmentsView", () => {
         body: { error: { code: "NOT_FOUND", message: "appointment was not found upstream" } },
         status: 404,
       },
-      pets: { body: [REX] },
     });
 
     renderView();
@@ -201,10 +163,9 @@ describe("PortalAppointmentsView", () => {
     expect(error).not.toHaveTextContent(/that pet/i);
   });
 
-  it("joins the pet name by patientId and renders clinic-local slot times", async () => {
+  it("renders the envelope's patientName and clinic-local slot times with no join", async () => {
     global.fetch = routeFetch({
-      appointments: { body: [appointment("appt-1", REX_ID, "SCHEDULED")] },
-      pets: { body: [REX, MILO] },
+      appointments: { body: envelope([appointment("appt-1", "SCHEDULED")]) },
     });
 
     const { container } = render(
@@ -219,8 +180,8 @@ describe("PortalAppointmentsView", () => {
     // Slug preserved on the pet link, so the holder never leaves the tenant.
     expect(petLink).toHaveAttribute("href", `/acme-clinic/pets/${REX_ID}`);
 
-    // 13:00Z is 10:00 in America/Asuncion (UTC-3). The explicit clinic zone is
-    // what makes this deterministic: a browser-zone render would differ.
+    // 13:00Z is 10:00 in America/Asuncion (UTC-3). The envelope's zone is what
+    // makes this deterministic: a browser-zone render would differ.
     const time = screen.getByTestId("portal-appointment-time");
     expect(time).toHaveTextContent("15 Jun 2026");
     expect(time).toHaveTextContent("10:00");
@@ -230,22 +191,23 @@ describe("PortalAppointmentsView", () => {
     expect(container.textContent).not.toContain(REX_ID);
   });
 
-  it("falls back to a neutral pet label (never an identifier) when the join misses", async () => {
-    global.fetch = routeFetch({
-      appointments: { body: [appointment("appt-1", UNLISTED_ID, "SCHEDULED")] },
-      pets: { body: [REX, MILO] },
+  it("loads the list in ONE read: no availability probe and no pets join", async () => {
+    const fetchMock = routeFetch({
+      appointments: { body: envelope([appointment("appt-1", "SCHEDULED")]) },
     });
+    global.fetch = fetchMock;
 
-    const { container } = render(
-      <TestWrapper>
-        <PortalAppointmentsView slug="acme-clinic" />
-      </TestWrapper>
+    renderView();
+    await screen.findByTestId("portal-appointments-list");
+
+    const urls = (fetchMock.mock.calls as unknown as [RequestInfo | URL, RequestInit][]).map(
+      ([input]) => resolveRequestUrl(input)
     );
-
-    const pet = await screen.findByTestId("portal-appointment-pet");
-    expect(pet).toHaveTextContent("Unknown pet");
-    expect(pet.tagName).toBe("SPAN");
-    expect(container.textContent).not.toContain(UNLISTED_ID);
+    // Exactly one appointments read; the booking-requests section owns its own.
+    expect(urls.filter((url) => url.startsWith("/api/portal/appointments"))).toHaveLength(1);
+    // The two reads this page used to issue purely for the zone and the name.
+    expect(urls.some((url) => url.startsWith("/api/portal/availability"))).toBe(false);
+    expect(urls.some((url) => url.startsWith("/api/portal/pets"))).toBe(false);
   });
 
   it("renders a distinct holder-facing label for every lifecycle status", async () => {
@@ -261,9 +223,8 @@ describe("PortalAppointmentsView", () => {
 
     global.fetch = routeFetch({
       appointments: {
-        body: cases.map(([status], index) => appointment(`appt-${index}`, REX_ID, status)),
+        body: envelope(cases.map(([status], index) => appointment(`appt-${index}`, status))),
       },
-      pets: { body: [REX] },
     });
 
     const { container } = render(

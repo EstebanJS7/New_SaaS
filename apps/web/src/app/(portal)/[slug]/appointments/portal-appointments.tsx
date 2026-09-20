@@ -6,13 +6,11 @@ import { useQuery } from "@tanstack/react-query";
 import {
   isPortalDeniedError,
   listPortalAppointments,
-  listPortalAvailability,
-  listPortalPets,
   userFacingPortalAppointmentsError,
-  type PortalAppointment,
   type PortalAppointmentStatus,
-  type PortalPet,
 } from "@/lib/portal-api";
+import { formatClinicDay, formatClinicTime } from "@/components/portal/portal-datetime";
+import { PortalBookingRequests } from "@/components/portal/portal-booking-requests";
 
 interface PortalAppointmentsViewProps {
   readonly slug: string;
@@ -48,121 +46,27 @@ const STATUS_LABELS: Record<PortalAppointmentStatus, string> = {
 };
 
 /**
- * Neutral fallback used when an appointment's `patientId` is not in the
- * holder's pets list. It is intentionally a word, never the identifier: a raw
- * UUID must not surface even in the edge case where the join misses.
- */
-const UNKNOWN_PET_LABEL = "Unknown pet";
-
-/** Availability duration used ONLY to probe the clinic time zone (see below). */
-const ZONE_PROBE_DURATION_MINUTES = 30;
-
-/**
- * Local calendar date used as the availability probe's starting day. It is only
- * a default that selects which day's slots are computed; it is never trusted as
- * an authority and never displayed. Mirrors the booking grid's own default so
- * both surfaces ask the availability read the same way.
- */
-function todayLocalDate(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
-/** Renders an instant as a clinic-local date, not the holder's browser date. */
-function formatClinicDay(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(iso));
-}
-
-/** Renders an instant as a clinic-local `HH:mm`, matching the booking grid. */
-function formatClinicTime(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(iso));
-}
-
-interface AppointmentsData {
-  readonly appointments: readonly PortalAppointment[];
-  readonly pets: readonly PortalPet[];
-  readonly timeZone: string;
-}
-
-/**
- * Loads everything the list needs in one page-level query.
- *
- * Two secondary reads ride along with the appointments:
- * 1. the holder's pets, to JOIN the displayed pet name (see below);
- * 2. the availability read, to obtain the CLINIC time zone.
- *
- * The three are combined so the page keeps the single loading/empty/error/
- * denied/success state machine the other portal pages use; a failure in any of
- * them is one page-level failure rather than a half-rendered list.
- */
-async function loadAppointments(): Promise<AppointmentsData> {
-  const [appointments, pets, availability] = await Promise.all([
-    listPortalAppointments(),
-    listPortalPets(),
-    listPortalAvailability({
-      date: todayLocalDate(),
-      durationMinutes: ZONE_PROBE_DURATION_MINUTES,
-      stepMinutes: ZONE_PROBE_DURATION_MINUTES,
-    }),
-  ]);
-  return { appointments, pets, timeZone: availability.timeZone };
-}
-
-/**
- * Booking entry point for the empty state.
- *
- * The booking flow is per-pet (`/[slug]/pets/:id/book`), so a holder with at
- * least one pet goes straight to that pet's grid; a holder with no pet is sent
- * to the pets list, the only page from which a pet (and therefore a booking)
- * can exist. The slug is always preserved so neither path leaves the tenant.
- */
-function bookingHref(slug: string, pets: readonly PortalPet[]): string {
-  const base = `/${encodeURIComponent(slug)}`;
-  const firstPet = pets[0];
-  return firstPet ? `${base}/pets/${firstPet.id}/book` : `${base}/pets`;
-}
-
-/**
  * Holder-facing appointments list.
  *
- * The API returns `{ id, patientId, status, startAt, endAt }` and NO pet name,
- * so the holder's pets are read as well and joined in memory on `patientId`.
- * Without that join a row would only have an internal identifier to show, and a
- * raw UUID must never reach a holder; an appointment whose pet is missing from
- * the pets list falls back to a neutral label instead.
+ * `GET /portal/appointments` returns `{ timeZone, appointments }` and each
+ * appointment already carries the pet name the API resolved server-side. That
+ * envelope is the WHOLE data need of this list: there is no pets join and no
+ * availability probe, because the zone that names each row and the label each
+ * row shows both arrive with the read. The page therefore issues ONE request
+ * instead of three, and a transient availability failure can no longer hide an
+ * otherwise readable list.
  *
- * Times are rendered in the clinic's time zone. The appointments read does not
- * return one, so the zone is read from the SAME `timeZone` field the booking
- * grid renders with (`GET /portal/availability`): any valid query reports the
- * tenant zone regardless of the day's slots, so the probe reuses the booking
- * grid's own default query (today, 30 minutes). That keeps this list and the
- * booking grid in the same zone by construction rather than hardcoding a second
- * copy of the tenant constant or silently using the holder's browser, which
- * could shift every displayed time.
- *
- * States are kept visibly distinct: loading, denied, error, empty and success.
- * An empty list is NORMAL for a holder and never renders as an alert; it offers
- * a slug-correct route into the booking flow instead. The status labels are
- * display-only — the portal has no cancel or reschedule yet, so nothing here
- * implies a status can be changed.
+ * Times are rendered in the envelope's clinic time zone, never the holder's
+ * browser zone. States are kept visibly distinct: loading, denied, error, empty
+ * and success. An empty list is NORMAL for a holder and never renders as an
+ * alert; it offers a slug-correct route into the booking flow instead. The
+ * status labels are display-only — the portal has no cancel or reschedule yet,
+ * so nothing here implies a status can be changed.
  */
 export function PortalAppointmentsView({ slug }: PortalAppointmentsViewProps): JSX.Element {
   const query = useQuery({
     queryKey: ["portal", "appointments"],
-    queryFn: loadAppointments,
+    queryFn: listPortalAppointments,
   });
 
   const data = query.data;
@@ -205,7 +109,7 @@ export function PortalAppointmentsView({ slug }: PortalAppointmentsViewProps): J
             When your clinic schedules an appointment for one of your pets, it will appear here.
           </p>
           <Link
-            href={bookingHref(slug, data?.pets ?? [])}
+            href={`/${encodeURIComponent(slug)}/pets`}
             className={bookLinkClassName}
             data-testid="portal-appointments-book-link"
           >
@@ -214,48 +118,43 @@ export function PortalAppointmentsView({ slug }: PortalAppointmentsViewProps): J
         </div>
       ) : (
         <ul data-testid="portal-appointments-list" className="space-y-3">
-          {data.appointments.map((appointment) => {
-            const pet = data.pets.find((candidate) => candidate.id === appointment.patientId);
-            return (
-              <li
-                key={appointment.id}
-                data-testid="portal-appointment"
-                className="rounded-lg border bg-card p-4 text-card-foreground"
-              >
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="font-medium">
-                    {pet ? (
-                      <Link
-                        href={`/${encodeURIComponent(slug)}/pets/${pet.id}`}
-                        className="text-primary hover:underline"
-                        data-testid="portal-appointment-pet"
-                      >
-                        {pet.name}
-                      </Link>
-                    ) : (
-                      <span data-testid="portal-appointment-pet">{UNKNOWN_PET_LABEL}</span>
-                    )}
-                  </p>
-                  <span
-                    data-testid="portal-appointment-status"
-                    className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+          {data.appointments.map((appointment) => (
+            <li
+              key={appointment.id}
+              data-testid="portal-appointment"
+              className="rounded-lg border bg-card p-4 text-card-foreground"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="font-medium">
+                  <Link
+                    href={`/${encodeURIComponent(slug)}/pets/${appointment.patientId}`}
+                    className="text-primary hover:underline"
+                    data-testid="portal-appointment-pet"
                   >
-                    {STATUS_LABELS[appointment.status]}
-                  </span>
-                </div>
-                <p
-                  data-testid="portal-appointment-time"
-                  className="mt-1 text-sm text-muted-foreground"
-                >
-                  {formatClinicDay(appointment.startAt, data.timeZone)} ·{" "}
-                  {formatClinicTime(appointment.startAt, data.timeZone)}–
-                  {formatClinicTime(appointment.endAt, data.timeZone)}
+                    {appointment.patientName}
+                  </Link>
                 </p>
-              </li>
-            );
-          })}
+                <span
+                  data-testid="portal-appointment-status"
+                  className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                >
+                  {STATUS_LABELS[appointment.status]}
+                </span>
+              </div>
+              <p
+                data-testid="portal-appointment-time"
+                className="mt-1 text-sm text-muted-foreground"
+              >
+                {formatClinicDay(appointment.startAt, data.timeZone)} ·{" "}
+                {formatClinicTime(appointment.startAt, data.timeZone)}–
+                {formatClinicTime(appointment.endAt, data.timeZone)}
+              </p>
+            </li>
+          ))}
         </ul>
       )}
+
+      <PortalBookingRequests />
     </div>
   );
 }

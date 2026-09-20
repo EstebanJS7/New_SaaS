@@ -1,6 +1,8 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
+import { DomainError } from "@newsaas/shared";
 import { RequestContextService } from "../context/request-context.service.js";
+import { TENANT_TIMEZONE } from "../scheduling/appointment-invariants.js";
 import {
   assertHolderOwnedPatient,
   holderPatientIds,
@@ -8,7 +10,9 @@ import {
 } from "./portal-holder-scope.js";
 import type {
   PortalAppointment,
+  PortalAppointmentListResponse,
   PortalAppointmentStatusDto,
+  PortalAppointmentSummary,
   PortalClinicalSummary,
   PortalEncounterStatusDto,
   PortalPatientSexDto,
@@ -159,6 +163,21 @@ function toAppointment(row: PortalAppointmentRow): PortalAppointment {
   };
 }
 
+/** Builds the list projection with its already-resolved patient name. */
+function toAppointmentSummary(
+  row: PortalAppointmentRow,
+  patientName: string
+): PortalAppointmentSummary {
+  return {
+    id: row.id,
+    patientId: row.patientId,
+    patientName,
+    status: row.status,
+    startAt: toIso(row.startAt),
+    endAt: toIso(row.endAt),
+  };
+}
+
 /**
  * Holder-scoped portal READ boundary (EPIC-08 WU3).
  *
@@ -237,17 +256,50 @@ export class PortalReadService {
     };
   }
 
-  /** Lists appointments for holder-owned pets, earliest-start first. */
-  async listAppointments(): Promise<PortalAppointment[]> {
+  /**
+   * Lists appointments for holder-owned pets, earliest-start first, inside the
+   * envelope that also carries the clinic time zone and each pet name.
+   *
+   * The names are resolved in exactly ONE set-based, tenant-scoped query for
+   * the involved patients (never one lookup per row). The tenant clause means a
+   * foreign-tenant patient can never supply a name even if an appointment row
+   * were crafted to reference one.
+   */
+  async listAppointments(): Promise<PortalAppointmentListResponse> {
     const { tenantId, customerId } = this.requirePortalScope();
     const patientIds = await holderPatientIds(this.prisma, tenantId, customerId);
     if (patientIds.length === 0) {
-      return [];
+      return { timeZone: TENANT_TIMEZONE, appointments: [] };
     }
     const rows = await this.prisma.appointment.findMany({
       where: { tenantId, patientId: { in: patientIds } },
     });
-    return rows.map(toAppointment).sort((left, right) => left.startAt.localeCompare(right.startAt));
+    if (rows.length === 0) {
+      return { timeZone: TENANT_TIMEZONE, appointments: [] };
+    }
+
+    const appointmentPatientIds = [...new Set(rows.map((row) => row.patientId))];
+    const patients = await this.prisma.patient.findMany({
+      where: { tenantId, id: { in: appointmentPatientIds } },
+    });
+    const patientNames = new Map(patients.map((patient) => [patient.id, patient.name]));
+
+    const appointments = rows
+      .map((row) => {
+        const patientName = patientNames.get(row.patientId);
+        if (patientName === undefined) {
+          // A row without a resolvable in-tenant patient is an integrity
+          // breach, not a client error: fail loudly instead of printing an id.
+          throw new DomainError(
+            "INTERNAL",
+            "Appointment references a patient that cannot be resolved."
+          );
+        }
+        return toAppointmentSummary(row, patientName);
+      })
+      .sort((left, right) => left.startAt.localeCompare(right.startAt));
+
+    return { timeZone: TENANT_TIMEZONE, appointments };
   }
 
   /** One appointment, only when it belongs to a holder-owned pet. */
