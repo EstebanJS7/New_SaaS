@@ -144,6 +144,34 @@ describe("/api/portal proxy", () => {
     expect(fetchUrl()).toBe(`http://localhost:3001/portal/appointments/${PET_ID}`);
   });
 
+  it("forwards the holder's own booking-request read to the private API", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ timeZone: "America/Asuncion", bookings: [{ id: PET_ID }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const request = mockNextRequest({
+      pathname: "/api/portal/bookings",
+      headers: new Headers({ "x-request-id": "req-bookings" }),
+    });
+
+    const response = await callGet(request);
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchUrl()).toBe("http://localhost:3001/portal/bookings");
+    // Query-free read: no body, no rewritten query.
+    expect(fetchInit().headers).toEqual({
+      cookie: `${PORTAL_SESSION_COOKIE}=portal-token`,
+      "x-request-id": "req-bookings",
+    });
+    expect(fetchInit().body).toBeUndefined();
+    expect(fetchInit().duplex).toBeUndefined();
+  });
+
   it("forwards ONLY the portal cookie — a staff cookie never crosses the boundary", async () => {
     cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
     fetchMock.mockResolvedValue(
@@ -362,6 +390,7 @@ describe("/api/portal proxy", () => {
     for (const pathname of [
       "/api/portal/me",
       "/api/portal/profile",
+      "/api/portal/bookings",
       `/api/portal/pets/${PET_ID}`,
       "/api/portal/appointments",
     ]) {
@@ -412,6 +441,29 @@ describe("/api/portal proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("METHOD_NOT_ALLOWED");
+  });
+
+  it("refuses POST on the read-only booking-request shape", async () => {
+    const response = await callPost(mockNextRequest({ pathname: "/api/portal/bookings" }));
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("METHOD_NOT_ALLOWED");
+  });
+
+  it("refuses a deeper path under the booking-request collection", async () => {
+    const response = await callGet(mockNextRequest({ pathname: `/api/portal/bookings/${PET_ID}` }));
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a percent-encoded booking-request path before reaching the API", async () => {
+    const response = await callGet(mockNextRequest({ pathname: "/api/portal/%62ookings" }));
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses POST on the read-only profile shape", async () => {

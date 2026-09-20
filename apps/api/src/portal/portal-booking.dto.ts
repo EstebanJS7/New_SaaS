@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 /**
- * Holder booking-request command contracts (EPIC-08 WU4A).
+ * Holder booking-request contracts (EPIC-08): the WU4A command plus the
+ * holder-facing read of the holder's OWN requests.
  *
  * The holder submits a desired start/end instant pair for a pet they own; the
  * API persists a PENDING `portal_booking_request` for staff to decide later
@@ -83,6 +84,52 @@ export function toPortalBookingRequestResponse(
   return {
     id: row.id,
     patientId: row.patientId,
+    status: toStatusDto(row.status),
+    startAt: row.startAt.toISOString(),
+    endAt: row.endAt.toISOString(),
+  };
+}
+
+/**
+ * One holder-facing booking request: the lifecycle status a holder is entitled
+ * to plus the patient's name RESOLVED SERVER-SIDE.
+ *
+ * `patientName` exists so the client never has to join and never has to print
+ * an identifier (PRD: the holder must be able to recognize which pet a request
+ * is for). It is the ONLY patient field exposed — no species, no breed, no
+ * owner link. The projection stays explicit: no branch, no professional, no
+ * provenance (`source`), no `portalBookingRequestId` on any linked row, and no
+ * staff attribution.
+ */
+export interface PortalBookingSummary {
+  readonly id: string;
+  readonly patientId: string;
+  readonly patientName: string;
+  readonly status: PortalBookingRequestStatusDto;
+  readonly startAt: string;
+  readonly endAt: string;
+}
+
+/**
+ * Read envelope: the interval data travels WITH the zone that names its day,
+ * exactly like the availability read. Each `startAt`/`endAt` stays a UTC
+ * instant; `timeZone` is what lets the client render the holder's local day
+ * without guessing the tenant's zone.
+ */
+export interface PortalBookingListResponse {
+  readonly timeZone: string;
+  readonly bookings: readonly PortalBookingSummary[];
+}
+
+/** Maps a persisted row with its already-resolved patient name; never spreads. */
+export function toPortalBookingSummary(
+  row: PortalBookingRequestRecord,
+  patientName: string
+): PortalBookingSummary {
+  return {
+    id: row.id,
+    patientId: row.patientId,
+    patientName,
     status: toStatusDto(row.status),
     startAt: row.startAt.toISOString(),
     endAt: row.endAt.toISOString(),

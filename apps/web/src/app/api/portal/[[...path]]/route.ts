@@ -23,7 +23,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 type PortalMethod = "GET" | "POST" | "PUT";
 
 /** Literal portal collections reachable as a bare `GET` read. */
-const PORTAL_COLLECTIONS: ReadonlySet<string> = new Set(["me", "pets", "appointments"]);
+const PORTAL_COLLECTIONS: ReadonlySet<string> = new Set(["me", "pets", "appointments", "bookings"]);
 
 /** Collections that may be followed by exactly one UUID path segment. */
 const PORTAL_RESOURCE_COLLECTIONS: ReadonlySet<string> = new Set(["pets", "appointments"]);
@@ -46,6 +46,7 @@ type PortalPathShape = "collection" | "resource" | "profile" | "booking" | "avai
  * - `GET  /portal/pets`, `GET  /portal/pets/:uuid`
  * - `GET  /portal/appointments`, `GET  /portal/appointments/:uuid`
  * - `GET  /portal/availability` (DEC-007 A2a; the ONLY shape with a query)
+ * - `GET  /portal/bookings` (the holder's OWN requests; query-free)
  * - `GET  /portal/profile`, `PUT /portal/profile`
  * - `POST /portal/pets/:uuid/bookings`
  *
@@ -54,7 +55,8 @@ type PortalPathShape = "collection" | "resource" | "profile" | "booking" | "avai
  * `POST /portal/login` and `POST /portal/logout`, the deferred surfaces
  * (invoices, documents, files, notifications, email, clinical subdomains) and
  * the staff booking-status routes (approve/reject), which are staff
- * `booking-requests`, not portal routes.
+ * `booking-requests`, not portal routes. `bookings` is a bare collection ONLY:
+ * a nested `/portal/bookings/:uuid` is not a shipped shape and stays refused.
  *
  * QUERY POLICY: portal routes are query-free EXCEPT the availability read,
  * whose contract is exactly `date`, `durationMinutes` and `stepMinutes`. Any
