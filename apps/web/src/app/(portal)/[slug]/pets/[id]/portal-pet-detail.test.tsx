@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PortalPetDetailView } from "./portal-pet-detail";
 
 const PET_ID = "11111111-1111-4111-8111-111111111111";
+const SLUG = "acme-clinic";
 
 function TestWrapper({ children }: { readonly children: React.ReactNode }) {
   const client = new QueryClient({
@@ -45,7 +46,7 @@ const PET_DETAIL = {
 function renderDetail(): void {
   render(
     <TestWrapper>
-      <PortalPetDetailView petId={PET_ID} />
+      <PortalPetDetailView slug={SLUG} petId={PET_ID} />
     </TestWrapper>
   );
 }
@@ -65,6 +66,11 @@ describe("PortalPetDetailView", () => {
     expect(screen.getByText("Routine check-up; all healthy.")).toBeInTheDocument();
     expect(screen.getByText("Rabies")).toBeInTheDocument();
     expect(screen.getByText("Given 2026-07-15")).toBeInTheDocument();
+    // The booking entry point keeps the tenant slug.
+    expect(screen.getByTestId("portal-book-link")).toHaveAttribute(
+      "href",
+      `/acme-clinic/pets/${PET_ID}/book`
+    );
   });
 
   it("handles a 404 honestly without claiming the pet exists elsewhere", async () => {

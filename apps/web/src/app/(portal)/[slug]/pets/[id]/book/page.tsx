@@ -2,23 +2,23 @@ import type { JSX } from "react";
 import { TenantHeader } from "@/components/portal/tenant-header";
 import { PortalNav } from "@/components/portal/portal-nav";
 import { fetchPortalBrand } from "@/lib/portal-branding";
-import { PortalPetDetailView } from "./portal-pet-detail";
+import { PortalBookingGrid } from "./portal-booking-grid";
 
-interface PortalPetDetailPageProps {
+interface PortalBookingPageProps {
   params: Promise<{ slug: string; id: string }> | { slug: string; id: string };
 }
 
 /**
- * Portal pet detail page.
+ * Portal booking page.
  *
- * Thin server component: shared public brand for the header plus the interactive
- * detail view. The view owns loading, denied, error, not-found and success so a
- * masked (not-the-holder's) pet and a genuinely missing pet are handled by the
- * same honest not-found copy.
+ * Thin server component: it resolves the shared public brand for the header and
+ * hands the interactive grid its tenant slug and pet id. All holder-data
+ * fetching happens in the client component so loading/empty/error/denied and
+ * submission states stay reactive.
  */
-export default async function PortalPetDetailPage({
+export default async function PortalBookingPage({
   params,
-}: PortalPetDetailPageProps): Promise<JSX.Element> {
+}: PortalBookingPageProps): Promise<JSX.Element> {
   const { slug, id } = await params;
   const branding = await fetchPortalBrand(slug);
 
@@ -31,7 +31,7 @@ export default async function PortalPetDetailPage({
       />
       <PortalNav slug={slug} />
       <section className="flex-1 p-6">
-        <PortalPetDetailView slug={slug} petId={id} />
+        <PortalBookingGrid slug={slug} petId={id} />
       </section>
     </main>
   );

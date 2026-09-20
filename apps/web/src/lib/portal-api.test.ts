@@ -4,10 +4,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiRequestError,
+  createPortalBooking,
   getPortalMe,
   getPortalPet,
   isPortalDeniedError,
   isPortalNotFoundError,
+  listPortalAvailability,
   listPortalPets,
   userFacingPortalError,
 } from "./portal-api";
@@ -109,6 +111,69 @@ describe("portal-api contract", () => {
   });
 });
 
+describe("portal booking client contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("listPortalAvailability GETs /api/portal/availability with exactly the three allowed keys", async () => {
+    const availability = {
+      date: "2026-06-15",
+      timeZone: "America/Asuncion",
+      durationMinutes: 30,
+      stepMinutes: 30,
+      slots: [{ startAt: "2026-06-15T13:00:00.000Z", endAt: "2026-06-15T13:30:00.000Z" }],
+    };
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(availability)));
+    global.fetch = fetchMock;
+
+    await expect(
+      listPortalAvailability({ date: "2026-06-15", durationMinutes: 30, stepMinutes: 30 })
+    ).resolves.toEqual(availability);
+
+    const [input, init] = lastCall(fetchMock);
+    // The full query string is pinned: date + durationMinutes + stepMinutes and
+    // NOTHING else (an extra key would be refused by the proxy boundary).
+    expect(resolveRequestUrl(input)).toBe(
+      "/api/portal/availability?date=2026-06-15&durationMinutes=30&stepMinutes=30"
+    );
+    expect(init).toMatchObject({ cache: "no-store" });
+    expect(init.method).toBeUndefined();
+  });
+
+  it("createPortalBooking POSTs the chosen slot's exact Z-suffixed instants untouched", async () => {
+    const petId = "11111111-1111-4111-8111-111111111111";
+    const created = {
+      id: "booking-1",
+      patientId: petId,
+      status: "PENDING",
+      startAt: "2026-06-15T13:00:00.000Z",
+      endAt: "2026-06-15T13:30:00.000Z",
+    };
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(created, 201)));
+    global.fetch = fetchMock;
+
+    await expect(
+      createPortalBooking(petId, {
+        startAt: "2026-06-15T13:00:00.000Z",
+        endAt: "2026-06-15T13:30:00.000Z",
+      })
+    ).resolves.toEqual(created);
+
+    const [input, init] = lastCall(fetchMock);
+    expect(resolveRequestUrl(input)).toBe(`/api/portal/pets/${petId}/bookings`);
+    expect(init.method).toBe("POST");
+    expect(init).toMatchObject({ cache: "no-store" });
+    expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
+    // The API DTO accepts `Z`-suffixed instants (`datetime({ offset: true })`),
+    // so the availability value is forwarded verbatim — no reformatting.
+    expect(JSON.parse(init.body as string)).toEqual({
+      startAt: "2026-06-15T13:00:00.000Z",
+      endAt: "2026-06-15T13:30:00.000Z",
+    });
+  });
+});
+
 describe("userFacingPortalError", () => {
   it("never echoes the server message text for a known or unknown code", () => {
     const known = new ApiRequestError("NOT_FOUND", "Portal pet was not found.", 404);
@@ -133,5 +198,15 @@ describe("userFacingPortalError", () => {
     const copy = userFacingPortalError(new ApiRequestError("NOT_FOUND", "x", 404));
     expect(copy).toContain("may not exist");
     expect(copy).toContain("may not be linked to your account");
+  });
+
+  it("maps a 409 to cause-neutral copy naming both masked possibilities", () => {
+    const copy = userFacingPortalError(new ApiRequestError("CONFLICT", "raw conflict detail", 409));
+    expect(copy).not.toContain("raw conflict detail");
+    // The create command performs no conflict check today, so the copy must not
+    // name a cause: a wrong cause is worse than none.
+    expect(copy).not.toContain("taken");
+    expect(copy).not.toContain("decided");
+    expect(copy).toContain("refresh");
   });
 });
