@@ -1,6 +1,7 @@
 "use client";
 
 import type { JSX } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
   getPortalPet,
@@ -13,6 +14,7 @@ import {
 import { petFacts } from "@/components/portal/pet-facts";
 
 interface PortalPetDetailViewProps {
+  readonly slug: string;
   readonly petId: string;
 }
 
@@ -63,8 +65,11 @@ function VaccinationItem({
  * both may be true instead of claiming the pet exists elsewhere.
  *
  * `speciesId`/`breedId` are intentionally not rendered; see `pet-facts.ts`.
+ *
+ * A link into the booking grid is preserved with the tenant slug so the holder
+ * moves between portal pages without ever leaving their own tenant.
  */
-export function PortalPetDetailView({ petId }: PortalPetDetailViewProps): JSX.Element | null {
+export function PortalPetDetailView({ slug, petId }: PortalPetDetailViewProps): JSX.Element | null {
   const query = useQuery({
     queryKey: ["portal", "pets", petId],
     queryFn: () => getPortalPet(petId),
@@ -103,6 +108,13 @@ export function PortalPetDetailView({ petId }: PortalPetDetailViewProps): JSX.El
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{pet.name}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{petFacts(pet)}</p>
+        <Link
+          href={`/${encodeURIComponent(slug)}/pets/${petId}/book`}
+          className="mt-3 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-testid="portal-book-link"
+        >
+          Request an appointment
+        </Link>
       </div>
 
       <section className="space-y-3" data-testid="portal-pet-encounters">
