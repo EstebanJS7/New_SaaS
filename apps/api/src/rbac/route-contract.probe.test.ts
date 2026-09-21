@@ -490,6 +490,59 @@ describe("portal surface fence (EPIC-08 task 2.3)", () => {
     }
     expect(report).toEqual([]);
   });
+
+  /**
+   * EPIC-08 WU5 task 5.1 — the proxy pin.
+   *
+   * The browser reaches the API only through the Next.js portal proxy, whose
+   * method-aware allowlist forwards exactly the DEC-007 write commands below and
+   * deliberately refuses the deferred portal surfaces. WU5 pins that upstream
+   * write surface BY NAME (so a future write route cannot slip in behind the
+   * exact-inventory test unnoticed) and pins the deferred absences explicitly
+   * instead of leaving them implied by set equality.
+   */
+  it("pins the DEC-007 holder write surface the proxy forwards and the deferred surfaces it refuses", () => {
+    const portalRoutes = inventory.filter((entry) => isPortalSurfacePath(entry.path));
+    const byRoute = new Map(portalRoutes.map((entry) => [`${entry.method} ${entry.path}`, entry]));
+
+    const report: string[] = [];
+
+    // Writes the proxy allowlist forwards (WU4D slice A + DEC-007 A2d).
+    const forwardedWrites = [
+      "POST /portal/pets/:id/bookings",
+      "POST /portal/bookings/:id/cancel",
+      "POST /portal/appointments/:id/cancel",
+      "PUT /portal/appointments/:id",
+      "PUT /portal/profile",
+    ];
+    for (const route of forwardedWrites) {
+      const entry = byRoute.get(route);
+      if (!entry) {
+        report.push(`MISSING PROXY WRITE ROUTE: ${route}`);
+      } else if (entry.permissions !== undefined) {
+        report.push(`PROXY WRITE ROUTE CARRIES STAFF METADATA: ${route}`);
+      }
+    }
+
+    // Deferred surfaces: no API route may exist under the portal surface.
+    const deferredRoots = [
+      "invoices",
+      "documents",
+      "files",
+      "notifications",
+      "email",
+      "treatments",
+    ];
+    for (const root of deferredRoots) {
+      for (const entry of portalRoutes) {
+        if (entry.path === `/portal/${root}` || entry.path.startsWith(`/portal/${root}/`)) {
+          report.push(`DEFERRED PORTAL SURFACE SHIPPED: ${entry.method} ${entry.path}`);
+        }
+      }
+    }
+
+    expect(report).toEqual([]);
+  });
 });
 
 describe("runtime twin — synthetic undeclared route is denied pre-handler", () => {
