@@ -1,7 +1,7 @@
 ---
 type: roadmap
 status: active
-updated: 2026-09-15
+updated: 2026-09-21
 ---
 
 # ROADMAP
@@ -16,7 +16,7 @@ updated: 2026-09-15
 | EPIC-05 | Veterinary Patients                |    done | EPIC-04                   |
 | EPIC-06 | Clinical                           |    done | EPIC-05                   |
 | EPIC-07 | Scheduling                         |    done | EPIC-04, EPIC-05          |
-| EPIC-08 | Portal                             | planned | EPIC-04, EPIC-05, EPIC-07 |
+| EPIC-08 | Portal                             |    done | EPIC-04, EPIC-05, EPIC-07 |
 | EPIC-09 | Catalog/Taxes                      | planned | EPIC-02                   |
 | EPIC-10 | Inventory                          | planned | EPIC-09                   |
 | EPIC-11 | Suppliers/Purchases                | planned | EPIC-10                   |
@@ -42,7 +42,12 @@ at `ff786138` (archived EPIC-06 verification report plus preserved open debt).
 production-readiness statement. [[EPIC-20]] Production Hardening and the open
 Tech Debt items remain. [[EPIC-07]] Scheduling moved to `done` on 2026-09-15
 after SDD verification and archive; its durable live-PostgreSQL overlap race
-passed.
+passed. [[EPIC-08]] Portal moved to `done` on 2026-09-21 after its chained
+implementation merged at `27bc04a` and the portal write paths passed their
+durable live-PostgreSQL concurrency/isolation race (suite 40/40); its SDD change
+is archived at `openspec/changes/archive/2026-09-21-epic-08/` and its spec
+deltas are merged into the standing `portal-management` (created), `scheduling`
+and `tenant-settings` specs.
 
 Individual Stories live in `../02-stories/`.
 

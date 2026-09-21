@@ -1,7 +1,7 @@
 ---
 type: qa
 status: active
-updated: 2026-09-13
+updated: 2026-09-21
 ---
 
 # CI Evidence
@@ -16,6 +16,29 @@ open/accepted debt below, and are recorded under the
 This is a rolling record. One immutable baseline is appended per closure; the
 EPIC-02–04 baseline below is retained verbatim and the EPIC-06 baseline follows
 it.
+
+## Current gate status (2026-09-21)
+
+Branch protection is **enabled** on `main` with both required checks, so the
+quality gate is now merge-blocking for ordinary merges. The rule was applied
+through the authenticated GitHub API and read back immediately:
+
+```text
+gh api repos/EstebanJS7/New_SaaS/branches/main/protection
+→ required_status_checks.contexts = ["Database migrations", "Lint, Typecheck, Test, Build"]
+   required_status_checks.strict   = false
+   required_pull_request_reviews   = null
+   enforce_admins.enabled          = false
+   allow_force_pushes.enabled      = false
+   allow_deletions.enabled         = false
+```
+
+[[TD-001 Branch protection]] is `resolved` as of 2026-09-21. The residual gap is
+stated there rather than hidden: `enforce_admins: false`, so an administrator
+can still bypass the checks. The 2026-09-11 HTTP 404 finding recorded in the
+baselines below was true when captured and is superseded by this status; those
+baseline sections remain as historical records, not as current statements about
+`main`.
 
 ## Canonical baseline
 
@@ -82,14 +105,14 @@ Fresh PG16 service container; both steps below ran against a clean database.
 
 Recorded as limitations, not as resolved items.
 
-| Item                                                                                                        | State    | Record                                              |
-| ----------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------- |
-| `main` branch protection absent (`gh api .../branches/main/protection` → HTTP `404` "Branch not protected") | open     | [[TD-001 Branch protection]]                        |
-| Tenant-settings concurrent partial write (read/merge/upsert loses disjoint fields)                          | open     | [[TD-010 Tenant-settings concurrent partial write]] |
-| Batch 5 cross-tenant isolation, plus RBAC concurrency and audit-rollback, not run against live PG           | open     | [[TD-006 Live PG isolation run]]                    |
-| Playwright E2E coverage for Branding settings and Customer CRUD/navigation                                  | accepted | [[TD-007 Playwright E2E deferred]]                  |
-| Cross-tab appearance synchronization                                                                        | accepted | [[TD-008 Cross-tab appearance sync deferred]]       |
-| Virus scanning and reset-cleanup dead-letter alerting/retention                                             | open     | [[TD-009 Branding scope deferred]]                  |
+| Item                                                                                                                                     | State               | Record                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------- |
+| `main` branch protection absent at this baseline (2026-09-11 probe → HTTP `404`); **resolved 2026-09-21** — both required checks enabled | resolved 2026-09-21 | [[TD-001 Branch protection]]                        |
+| Tenant-settings concurrent partial write (read/merge/upsert loses disjoint fields)                                                       | open                | [[TD-010 Tenant-settings concurrent partial write]] |
+| Batch 5 cross-tenant isolation, plus RBAC concurrency and audit-rollback, not run against live PG                                        | open                | [[TD-006 Live PG isolation run]]                    |
+| Playwright E2E coverage for Branding settings and Customer CRUD/navigation                                                               | accepted            | [[TD-007 Playwright E2E deferred]]                  |
+| Cross-tab appearance synchronization                                                                                                     | accepted            | [[TD-008 Cross-tab appearance sync deferred]]       |
+| Virus scanning and reset-cleanup dead-letter alerting/retention                                                                          | open                | [[TD-009 Branding scope deferred]]                  |
 
 No open item above is treated as resolved by this baseline. `done` for
 EPIC-02/03/04 means epic implementation closure only; EPIC-20 hardening and the
@@ -132,9 +155,12 @@ A reviewer can confirm this baseline without reconstructing the closure story:
 Branch protection is a repository-admin setting and cannot be enabled from the
 workflow file. On 2026-09-11 the read-only probe
 `gh api repos/EstebanJS7/New_SaaS/branches/main/protection` returned **HTTP 404
-`Branch not protected`**, confirming the default branch has no protection rule.
-CI is therefore green but **not merge-blocking**; this is tracked as
-[[TD-001 Branch protection]] and is not remediated by this closure.
+`Branch not protected`**. That finding was **superseded on 2026-09-21**, when
+the rule was applied and read back through the authenticated API (see "Current
+gate status" above and [[TD-001 Branch protection]], now `resolved`): both
+checks are required and the gate is merge-blocking for ordinary merges. The
+residual gap is `enforce_admins: false` — an administrator can bypass the
+checks.
 
 ## EPIC-06 Closure Baseline
 
@@ -205,13 +231,13 @@ verdict `pass_with_warnings`, 0 blockers, 10/10 requirements, 16/16 scenarios,
 
 Recorded as limitations, not as resolved items.
 
-| Item                                                                                                           | State   | Record                                               |
-| -------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------- |
-| `main` branch protection absent; CI is green but not merge-blocking                                            | open    | [[TD-001 Branch protection]]                         |
-| Broader Batch 5 cross-tenant isolation plus RBAC concurrency and audit-rollback not yet run against live PG    | open    | [[TD-006 Live PG isolation run]]                     |
-| Patient guardian primary-promotion race surfaces `500 INTERNAL` instead of `409 CONFLICT`                      | open    | [[TD-011 Patient primary concurrency error mapping]] |
-| Five clinical subdomain no-delete triggers are pinned statically, not live-executed                            | warning | [[VET-004 Clinical Encounter]]                       |
-| Design §10 product questions (minimal encounter field set; whether `close` requires non-empty `clientSummary`) | open    | [[VET-004 Clinical Encounter]]                       |
+| Item                                                                                                           | State    | Record                                               |
+| -------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
+| `main` branch protection absent at this baseline; **resolved 2026-09-21** — both required checks enabled       | resolved | [[TD-001 Branch protection]]                         |
+| Broader Batch 5 cross-tenant isolation plus RBAC concurrency and audit-rollback not yet run against live PG    | open     | [[TD-006 Live PG isolation run]]                     |
+| Patient guardian primary-promotion race surfaces `500 INTERNAL` instead of `409 CONFLICT`                      | open     | [[TD-011 Patient primary concurrency error mapping]] |
+| Five clinical subdomain no-delete triggers are pinned statically, not live-executed                            | warning  | [[VET-004 Clinical Encounter]]                       |
+| Design §10 product questions (minimal encounter field set; whether `close` requires non-empty `clientSummary`) | open     | [[VET-004 Clinical Encounter]]                       |
 
 No open item above is treated as resolved by this baseline, and no code fix is
 in scope for this closure.
@@ -228,3 +254,109 @@ This authorization covers epic implementation closure under the
 production-readiness approval, a security sign-off, or authorization to
 remediate the remaining debt: TD-006 stays `open` for its broader gates and
 TD-011 stays separate.
+
+## EPIC-08 Closure Baseline
+
+Canonical quality, migration, and live-PostgreSQL evidence for the EPIC-08
+(Portal) closure. This is the post-merge `main` baseline at the merge of PR #53
+(`feat/epic-08-wu5-live-pg-evidence`). It is **not** a production-readiness
+statement: `done` for EPIC-08 and [[Portal]] means epic implementation closure
+only, and [[EPIC-20]] Production Hardening plus the open debt below remain.
+
+### Canonical baseline
+
+| Field     | Value                                                          |
+| --------- | -------------------------------------------------------------- |
+| Workflow  | `.github/workflows/ci.yml` (`CI`)                              |
+| SHA       | `27bc04ac2ca4f1724b8ba506e03d28dcbbd43c91` (`27bc04a`, `main`) |
+| Reference | PR #53 (`feat/epic-08-wu5-live-pg-evidence`)                   |
+| Event     | `push`                                                         |
+| Result    | `success`                                                      |
+
+The two required checks are the merge gate for the epic's chained PRs:
+
+| Job                            | Required | Result    |
+| ------------------------------ | -------- | --------- |
+| `Database migrations`          | yes      | `success` |
+| `Lint, Typecheck, Test, Build` | yes      | `success` |
+
+### Executed checks
+
+#### `Database migrations`
+
+Fresh PG16 service container (a clean host); migrations, reference seed, and the
+live-PG suite all ran against a clean database.
+
+| Step                                                | Result                                                                 |
+| --------------------------------------------------- | ---------------------------------------------------------------------- |
+| Apply all migrations to a fresh database            | success                                                                |
+| Seed reference data twice with count-equality probe | success — identical counts across the two seed runs                    |
+| Live PostgreSQL migration verification              | success (`pnpm db:live-verify` → `LIVE MIGRATION VERIFICATION PASSED`) |
+| Build workspace packages for live-PG test           | success (`pnpm build --filter=@newsaas/api`)                           |
+| Live PostgreSQL application-path isolation evidence | success (`pnpm test:live-pg` → live-PG suite **40/40 passed**)         |
+
+#### `Lint, Typecheck, Test, Build`
+
+| Step         | Command             | Tasks | Result  |
+| ------------ | ------------------- | ----- | ------- |
+| Lint         | `pnpm lint`         | 14/14 | success |
+| Format check | `pnpm format-check` | —     | success |
+| Typecheck    | `pnpm typecheck`    | 14/14 | success |
+| Test         | `pnpm test`         | 15/15 | success |
+| Build        | `pnpm build`        | 9/9   | success |
+
+### Live-PostgreSQL coverage added by EPIC-08
+
+The live-PG suite grew to 40/40 and now covers the portal boundary as well as
+the earlier domains:
+
+- **EPIC-08 portal identity application-path isolation** — canonical login
+  identity, the `portal` entitlement gate (403), the one-active-holder and
+  one-active-email partial unique indexes, and session revocation rejecting
+  replays with 401.
+- **EPIC-08 WU5 portal write concurrency and isolation** (the deferred half of
+  [[TD-006]]) — three genuine races, each forced behind a deterministic database
+  barrier rather than hoped for:
+  - two concurrent approvals of one PENDING request → both callers return the
+    same winner appointment with no 500, exactly one `PORTAL` appointment, one
+    audit row, request `APPROVED`;
+  - two concurrent same-version reschedules → exactly one 200 and one 409, the
+    stored row matching the winner with no lost update;
+  - two concurrent holder cancels of one PENDING request → exactly one 200 and
+    one 409, one audit row, request `CANCELLED`.
+  - Isolation on the same database: a same-tenant other-Customer and a
+    cross-tenant appointment are byte-equivalent `404` for both cancel and move,
+    the foreign rows unchanged, and an appointment stops being actionable once
+    its guardian link is revoked.
+
+### Known warnings and open limitations
+
+Recorded as limitations, not as resolved items.
+
+| Item                                                                                                                    | State    | Record                             |
+| ----------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------- |
+| `main` branch protection enabled 2026-09-21 with both required checks (supersedes the 2026-09-11 HTTP 404 finding)      | resolved | [[TD-001 Branch protection]]       |
+| Broader Batch 5 cross-tenant isolation plus RBAC concurrency and audit-rollback not yet run against live PG             | open     | [[TD-006 Live PG isolation run]]   |
+| Portal has no holder-facing profile page and no client function; `bookingRequiresApproval` is registered but unconsumed | open     | [[Portal]] / [[DEC-008]]           |
+| Species/breed names unresolved (no holder-facing catalog read); `INTERNAL` `DomainError` messages echoed to clients     | open     | [[Portal]]                         |
+| Playwright E2E coverage for the portal UI                                                                               | accepted | [[TD-007 Playwright E2E deferred]] |
+
+No open item above is treated as resolved by this baseline, and no code fix is
+in scope for this closure. Branch protection is no longer an open item: it was
+enabled on 2026-09-21 with both required checks (see "Current gate status" above
+and [[TD-001 Branch protection]], `resolved`), so the "required check" language
+is backed by an enforced rule — with the recorded residual that
+`enforce_admins: false` lets an administrator bypass it.
+
+### Documentation review criteria
+
+A reviewer can confirm this baseline without reconstructing the closure story:
+
+- [ ] The baseline SHA is the merge of PR #53 on `main` (`27bc04a`).
+- [ ] Both required checks are `success` and the live-PG suite is 40/40.
+- [ ] The EPIC-08 WU5 portal write-race block is named as live-PG evidence.
+- [ ] Every open limitation cites a Tech Debt ID or the module/decision record
+      and is not presented as resolved.
+- [ ] No statement claims production readiness; EPIC-20 and open debt are cited.
+- [ ] Branch protection is presented as enabled with both required checks,
+      consistent with the 2026-09-21 API response and TD-001 `resolved`.
