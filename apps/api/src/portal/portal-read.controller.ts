@@ -3,6 +3,7 @@ import { DomainError } from "@newsaas/shared";
 import {
   portalResourceIdParamSchema,
   type PortalAppointment,
+  type PortalAppointmentListResponse,
   type PortalPetDetail,
   type PortalPetSummary,
 } from "./portal-read.dto.js";
@@ -63,9 +64,9 @@ export class PortalReadController {
     return this.reads.getPet(parseResourceId(params));
   }
 
-  /** Lists appointments for the authenticated holder's pets. */
+  /** Lists appointments for the authenticated holder's pets, inside the envelope. */
   @Get("appointments")
-  listAppointments(): Promise<PortalAppointment[]> {
+  listAppointments(): Promise<PortalAppointmentListResponse> {
     return this.reads.listAppointments();
   }
 

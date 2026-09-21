@@ -155,7 +155,7 @@ describe("PortalBookingGrid", () => {
     });
   });
 
-  it("tells the truth on success: PENDING, not confirmed, no status page promised", async () => {
+  it("tells the truth on success: PENDING, not confirmed, and points at the requests view", async () => {
     global.fetch = availabilityAndBooking(AVAILABILITY, { body: CREATED, status: 201 });
 
     renderGrid();
@@ -164,7 +164,13 @@ describe("PortalBookingGrid", () => {
     const success = await screen.findByTestId("portal-booking-success");
     expect(success).toHaveTextContent(/pending/i);
     expect(success).toHaveTextContent(/not confirmed yet/i);
-    expect(success).toHaveTextContent(/no way to check its status in the portal yet/i);
+    // The old copy claimed there was no way to check; there is one now.
+    expect(success).not.toHaveTextContent(/no way to check/i);
+    expect(success).toHaveTextContent(/booking requests/i);
+    expect(screen.getByTestId("portal-booking-requests-link")).toHaveAttribute(
+      "href",
+      "/acme-clinic/appointments"
+    );
     // Never promise a confirmation that does not exist.
     expect(success).not.toHaveTextContent(/confirmed appointment/i);
   });

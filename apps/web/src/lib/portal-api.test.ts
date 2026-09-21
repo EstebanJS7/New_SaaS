@@ -11,6 +11,7 @@ import {
   isPortalNotFoundError,
   listPortalAppointments,
   listPortalAvailability,
+  listPortalBookings,
   listPortalPets,
   userFacingPortalAppointmentsError,
   userFacingPortalError,
@@ -143,6 +144,31 @@ describe("portal booking client contract", () => {
     expect(init.method).toBeUndefined();
   });
 
+  it("listPortalBookings GETs /api/portal/bookings and returns the envelope", async () => {
+    const envelope = {
+      timeZone: "America/Asuncion",
+      bookings: [
+        {
+          id: "booking-1",
+          patientId: "11111111-1111-4111-8111-111111111111",
+          patientName: "Rex",
+          status: "PENDING",
+          startAt: "2026-06-15T13:00:00.000Z",
+          endAt: "2026-06-15T13:30:00.000Z",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(envelope)));
+    global.fetch = fetchMock;
+
+    await expect(listPortalBookings()).resolves.toEqual(envelope);
+
+    const [input, init] = lastCall(fetchMock);
+    expect(resolveRequestUrl(input)).toBe("/api/portal/bookings");
+    expect(init).toMatchObject({ cache: "no-store" });
+    expect(init.method).toBeUndefined();
+  });
+
   it("createPortalBooking POSTs the chosen slot's exact Z-suffixed instants untouched", async () => {
     const petId = "11111111-1111-4111-8111-111111111111";
     const created = {
@@ -181,20 +207,24 @@ describe("portal appointments client contract", () => {
     vi.restoreAllMocks();
   });
 
-  it("listPortalAppointments GETs /api/portal/appointments with cache: no-store", async () => {
-    const appointments = [
-      {
-        id: "appt-1",
-        patientId: "11111111-1111-4111-8111-111111111111",
-        status: "SCHEDULED",
-        startAt: "2026-06-15T13:00:00.000Z",
-        endAt: "2026-06-15T13:30:00.000Z",
-      },
-    ];
-    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(appointments)));
+  it("listPortalAppointments GETs /api/portal/appointments and returns the envelope", async () => {
+    const envelope = {
+      timeZone: "America/Asuncion",
+      appointments: [
+        {
+          id: "appt-1",
+          patientId: "11111111-1111-4111-8111-111111111111",
+          patientName: "Rex",
+          status: "SCHEDULED",
+          startAt: "2026-06-15T13:00:00.000Z",
+          endAt: "2026-06-15T13:30:00.000Z",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(envelope)));
     global.fetch = fetchMock;
 
-    await expect(listPortalAppointments()).resolves.toEqual(appointments);
+    await expect(listPortalAppointments()).resolves.toEqual(envelope);
 
     const [input, init] = lastCall(fetchMock);
     expect(resolveRequestUrl(input)).toBe("/api/portal/appointments");
