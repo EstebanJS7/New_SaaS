@@ -104,6 +104,8 @@ describe("PortalBookingGrid", () => {
     renderGrid();
 
     const slot = await screen.findByTestId("portal-slot");
+    // The booking flow and the appointment-move flow share ONE picker.
+    expect(screen.getByTestId("portal-slot-picker")).toBeInTheDocument();
     // The clinic-local time of the returned instant (Asuncion = UTC-3).
     expect(slot).toHaveTextContent("10:00");
     fireEvent.click(slot);
@@ -232,5 +234,43 @@ describe("PortalBookingGrid", () => {
       "href",
       `/acme-clinic/pets/${PET_ID}`
     );
+  });
+
+  it("keeps a submission failure visible when the holder changes the date", async () => {
+    // The FIRST availability read offers a slot; every later read (a date or
+    // duration change) returns an EMPTY day, so the grid leaves the "has slots"
+    // state while the earlier submission error is on screen.
+    let availabilityReads = 0;
+    global.fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(
+          jsonResponse({ error: { code: "CONFLICT", message: "slot already taken upstream" } }, 409)
+        );
+      }
+      availabilityReads += 1;
+      return Promise.resolve(
+        jsonResponse(availabilityReads > 1 ? { ...AVAILABILITY, slots: [] } : AVAILABILITY)
+      );
+    });
+
+    renderGrid();
+    fireEvent.click(await screen.findByTestId("portal-slot"));
+    expect(await screen.findByTestId("portal-booking-submit-error")).toHaveAttribute(
+      "role",
+      "alert"
+    );
+
+    fireEvent.change(screen.getByTestId("portal-booking-date"), {
+      target: { value: "1999-01-01" },
+    });
+
+    // The reloaded day is empty, yet the submission failure is about the
+    // submission, not the date just typed, so it must stay visible while the
+    // holder picks a new day. Pinned so it is not silently moved back inside
+    // the availability branch by a future "cleanup".
+    expect(await screen.findByTestId("portal-booking-empty")).toBeInTheDocument();
+    const alert = screen.getByTestId("portal-booking-submit-error");
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert).toHaveTextContent(/refresh/i);
   });
 });

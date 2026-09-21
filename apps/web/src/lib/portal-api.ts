@@ -76,6 +76,12 @@ export interface PortalAppointment {
   readonly status: PortalAppointmentStatus;
   readonly startAt: string;
   readonly endAt: string;
+  /**
+   * Optimistic-concurrency guard the read exposes and the move command
+   * REQUIRES (DEC-007 A2d). Without it the reschedule cannot succeed, so it is
+   * carried on the row the holder sees rather than re-fetched at submit time.
+   */
+  readonly version: number;
 }
 
 /**
@@ -154,6 +160,18 @@ export interface CreatePortalBookingInput {
   readonly endAt: string;
 }
 
+/**
+ * Reschedule payload: the chosen slot's two ISO instants PLUS the `version` the
+ * appointment read exposed. All three are required by the API's `.strict()`
+ * DTO; the version is what makes the move an optimistic compare-and-set rather
+ * than a blind overwrite.
+ */
+export interface ReschedulePortalAppointmentInput {
+  readonly startAt: string;
+  readonly endAt: string;
+  readonly version: number;
+}
+
 interface ApiErrorEnvelope {
   readonly error: {
     readonly code?: string;
@@ -198,6 +216,19 @@ async function getJson<T>(path: string): Promise<T> {
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(`/api/portal${path}`, {
     method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`/api/portal${path}`, {
+    method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
@@ -277,6 +308,44 @@ export function listPortalBookings(): Promise<PortalBookingList> {
   return getJson("/bookings");
 }
 
+/**
+ * `POST /portal/bookings/:id/cancel` — withdraws one of the holder's own
+ * PENDING requests. The command takes no payload, so the body is the empty
+ * object (the proxy forwards a JSON body for every POST and the API ignores
+ * it); the updated request is returned.
+ */
+export function cancelPortalBooking(id: string): Promise<PortalBookingRequest> {
+  return postJson(`/bookings/${id}/cancel`, {});
+}
+
+/**
+ * `POST /portal/appointments/:id/cancel` — cancels one of the holder's own
+ * SCHEDULED/CONFIRMED appointments. The shared transition rule rejects every
+ * other state with a 409, which is why the UI offers this action only for the
+ * two states the command accepts.
+ */
+export function cancelPortalAppointment(id: string): Promise<PortalAppointment> {
+  return postJson(`/appointments/${id}/cancel`, {});
+}
+
+/**
+ * `PUT /portal/appointments/:id` — moves a holder-owned appointment to the
+ * chosen slot. The exact offered instants and the last-read `version` are sent
+ * together: the API validates all three and re-checks state, availability,
+ * blocks and overlap inside the transaction, so an unavailable slot or a stale
+ * version is a 409 that persists nothing.
+ */
+export function reschedulePortalAppointment(
+  id: string,
+  input: ReschedulePortalAppointmentInput
+): Promise<PortalAppointment> {
+  return putJson(`/appointments/${id}`, {
+    startAt: input.startAt,
+    endAt: input.endAt,
+    version: input.version,
+  });
+}
+
 /** True when the response was refused for lack of portal access/entitlement. */
 export function isPortalDeniedError(error: unknown): boolean {
   return (
@@ -288,6 +357,15 @@ export function isPortalDeniedError(error: unknown): boolean {
 /** True when the requested resource was masked as not-found. */
 export function isPortalNotFoundError(error: unknown): boolean {
   return error instanceof ApiRequestError && error.code === "NOT_FOUND";
+}
+
+/**
+ * True when the command's own precondition check failed. Unlike the create
+ * path, the cancel/move commands DO evaluate their preconditions, so a 409 is a
+ * state the UI may name (already decided, slot no longer free, stale version).
+ */
+export function isPortalConflictError(error: unknown): boolean {
+  return error instanceof ApiRequestError && error.code === "CONFLICT";
 }
 
 /**
@@ -338,4 +416,49 @@ export function userFacingPortalAppointmentsError(error: Error): string {
     return "We could not find that appointment. It may not exist, or it may not be linked to your account.";
   }
   return userFacingPortalError(error);
+}
+
+/**
+ * Error copy for withdrawing a booking request. Grounded in what the command
+ * actually checks: `cancelBookingRequest` is a PENDING compare-and-set, so a
+ * 409 means the request was already decided. The 404 copy names the request
+ * (never a pet) because this surface is not a single pet, and every other code
+ * delegates to the shared mapper.
+ */
+export function userFacingPortalBookingCancelError(error: Error): string {
+  if (isPortalConflictError(error)) {
+    return "That request may already have been decided. We refreshed your requests.";
+  }
+  if (isPortalNotFoundError(error)) {
+    return "We could not find that request. It may not exist, or it may not be linked to your account.";
+  }
+  return userFacingPortalError(error);
+}
+
+/**
+ * Error copy for cancelling an appointment. The command checks that the current
+ * status is SCHEDULED/CONFIRMED and then re-applies that SAME status in a
+ * `{ id, tenantId, status }` update — it does NOT compare a version (it only
+ * increments one) — so a 409 means the stored status had already moved on when
+ * the update matched nothing. Not-found copy reuses the appointment-worded
+ * mapper.
+ */
+export function userFacingPortalAppointmentCancelError(error: Error): string {
+  if (isPortalConflictError(error)) {
+    return "That appointment may have already changed or may no longer be cancellable. We refreshed your appointments.";
+  }
+  return userFacingPortalAppointmentsError(error);
+}
+
+/**
+ * Error copy for moving an appointment. The command re-checks availability,
+ * blocks, overlap and the version compare-and-set, so a 409 can honestly name
+ * both causes it knows: the slot may be gone, or the appointment may have
+ * changed. Not-found copy reuses the appointment-worded mapper.
+ */
+export function userFacingPortalRescheduleError(error: Error): string {
+  if (isPortalConflictError(error)) {
+    return "That time may no longer be free, or the appointment may have changed. We refreshed your appointments.";
+  }
+  return userFacingPortalAppointmentsError(error);
 }
