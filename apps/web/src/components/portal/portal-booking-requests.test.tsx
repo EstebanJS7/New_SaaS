@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PortalBookingRequests } from "./portal-booking-requests";
 
@@ -42,6 +42,45 @@ function renderSection(): void {
       <PortalBookingRequests />
     </TestWrapper>
   );
+}
+
+function resolveRequestUrl(input: RequestInfo | URL): string {
+  return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+}
+
+interface Route {
+  readonly body: unknown;
+  readonly status?: number;
+}
+
+/**
+ * Fetch double for the requests section: the FIRST bookings read returns
+ * `initial`, every later read returns `after` (so a refresh is observable), and
+ * the cancel POST returns `cancel`.
+ */
+function cancelFetch(routes: {
+  readonly initial: Route;
+  readonly after?: Route;
+  readonly cancel: Route;
+}): ReturnType<typeof vi.fn> {
+  let reads = 0;
+  return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      return Promise.resolve(jsonResponse(routes.cancel.body, routes.cancel.status));
+    }
+    const route = reads > 0 && routes.after ? routes.after : routes.initial;
+    reads += 1;
+    return Promise.resolve(jsonResponse(route.body, route.status));
+  });
+}
+
+/** How many bookings reads the mock served (initial + each refresh). */
+function bookingReads(fetchMock: ReturnType<typeof vi.fn>): number {
+  return (fetchMock.mock.calls as unknown as [RequestInfo | URL, RequestInit][]).filter(
+    ([input, init]) =>
+      (init?.method ?? "GET") === "GET" &&
+      resolveRequestUrl(input).startsWith("/api/portal/bookings")
+  ).length;
 }
 
 describe("PortalBookingRequests", () => {
@@ -148,5 +187,108 @@ describe("PortalBookingRequests", () => {
     for (const [status] of cases) {
       expect(container.textContent).not.toContain(status);
     }
+  });
+
+  it("offers the cancel action for a PENDING request only", async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse(
+          envelope([
+            booking("b1", "PENDING"),
+            booking("b2", "APPROVED"),
+            booking("b3", "REJECTED"),
+            booking("b4", "CANCELLED"),
+          ])
+        )
+      )
+    );
+
+    renderSection();
+    await screen.findByTestId("portal-booking-requests-list");
+
+    // Exactly one action, and it belongs to the PENDING row: a decided request
+    // is a PENDING compare-and-set miss, so it must offer nothing.
+    const buttons = screen.getAllByTestId("portal-booking-request-cancel");
+    expect(buttons).toHaveLength(1);
+    const pendingRow = screen.getAllByTestId("portal-booking-request")[0];
+    expect(within(pendingRow).getByTestId("portal-booking-request-cancel")).toBeInTheDocument();
+  });
+
+  it("cancels a PENDING request and refreshes so the new status is visible", async () => {
+    const fetchMock = cancelFetch({
+      initial: { body: envelope([booking("b1", "PENDING")]) },
+      after: { body: envelope([booking("b1", "CANCELLED")]) },
+      cancel: { body: booking("b1", "CANCELLED") },
+    });
+    global.fetch = fetchMock;
+
+    renderSection();
+    fireEvent.click(await screen.findByTestId("portal-booking-request-cancel"));
+
+    await waitFor(() => {
+      const post = (fetchMock.mock.calls as unknown as [RequestInfo | URL, RequestInit][]).find(
+        ([, init]) => init?.method === "POST"
+      );
+      expect(post).toBeDefined();
+      expect(resolveRequestUrl(post![0])).toBe("/api/portal/bookings/b1/cancel");
+    });
+
+    // The refreshed read carries the stored status, AND the action reports a
+    // distinct success rather than leaving the row looking untouched.
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    expect(await screen.findByTestId("portal-booking-request-cancel-success")).toHaveTextContent(
+      "Request cancelled."
+    );
+    expect(bookingReads(fetchMock)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("maps a 409 to decided-request copy and refreshes the list", async () => {
+    const fetchMock = cancelFetch({
+      initial: { body: envelope([booking("b1", "PENDING")]) },
+      after: { body: envelope([booking("b1", "APPROVED")]) },
+      cancel: {
+        body: {
+          error: {
+            code: "CONFLICT",
+            message: "Only a pending booking request can be cancelled.",
+          },
+        },
+        status: 409,
+      },
+    });
+    global.fetch = fetchMock;
+
+    renderSection();
+    fireEvent.click(await screen.findByTestId("portal-booking-request-cancel"));
+
+    const alert = await screen.findByTestId("portal-booking-request-cancel-error");
+    expect(alert).toHaveAttribute("role", "alert");
+    // The cancel command IS a PENDING compare-and-set, so the 409 may name it.
+    expect(alert).toHaveTextContent("already have been decided");
+    expect(alert).toHaveTextContent("refreshed");
+    expect(alert).not.toHaveTextContent("Only a pending booking request can be cancelled.");
+
+    // The list self-corrects to the server's decision.
+    expect(await screen.findByText("Approved")).toBeInTheDocument();
+    expect(bookingReads(fetchMock)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("leaves the request actionable after a failed cancellation", async () => {
+    const fetchMock = cancelFetch({
+      initial: { body: envelope([booking("b1", "PENDING")]) },
+      cancel: { body: { error: { code: "INTERNAL", message: "boom" } }, status: 500 },
+    });
+    global.fetch = fetchMock;
+
+    renderSection();
+    fireEvent.click(await screen.findByTestId("portal-booking-request-cancel"));
+
+    expect(await screen.findByTestId("portal-booking-request-cancel-error")).toHaveAttribute(
+      "role",
+      "alert"
+    );
+    // Not settled: the holder can retry instead of the row looking done.
+    expect(screen.getByTestId("portal-booking-request-cancel")).toBeEnabled();
+    expect(screen.queryByTestId("portal-booking-request-cancel-success")).toBeNull();
   });
 });
