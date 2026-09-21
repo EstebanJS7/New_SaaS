@@ -4,17 +4,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiRequestError,
+  cancelPortalAppointment,
+  cancelPortalBooking,
   createPortalBooking,
   getPortalMe,
   getPortalPet,
+  isPortalConflictError,
   isPortalDeniedError,
   isPortalNotFoundError,
   listPortalAppointments,
   listPortalAvailability,
   listPortalBookings,
   listPortalPets,
+  reschedulePortalAppointment,
+  userFacingPortalAppointmentCancelError,
   userFacingPortalAppointmentsError,
+  userFacingPortalBookingCancelError,
   userFacingPortalError,
+  userFacingPortalRescheduleError,
 } from "./portal-api";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -233,6 +240,86 @@ describe("portal appointments client contract", () => {
   });
 });
 
+describe("portal appointment command client contract (DEC-007 A2d)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("cancelPortalBooking POSTs /api/portal/bookings/:id/cancel with cache: no-store", async () => {
+    const cancelled = {
+      id: "booking-1",
+      patientId: "11111111-1111-4111-8111-111111111111",
+      status: "CANCELLED",
+      startAt: "2026-06-15T13:00:00.000Z",
+      endAt: "2026-06-15T13:30:00.000Z",
+    };
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(cancelled)));
+    global.fetch = fetchMock;
+
+    await expect(cancelPortalBooking("booking-1")).resolves.toEqual(cancelled);
+
+    const [input, init] = lastCall(fetchMock);
+    expect(resolveRequestUrl(input)).toBe("/api/portal/bookings/booking-1/cancel");
+    expect(init.method).toBe("POST");
+    expect(init).toMatchObject({ cache: "no-store" });
+    expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
+  });
+
+  it("cancelPortalAppointment POSTs /api/portal/appointments/:id/cancel", async () => {
+    const cancelled = {
+      id: "appt-1",
+      patientId: "11111111-1111-4111-8111-111111111111",
+      status: "CANCELLED",
+      startAt: "2026-06-15T13:00:00.000Z",
+      endAt: "2026-06-15T13:30:00.000Z",
+      version: 2,
+    };
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(cancelled)));
+    global.fetch = fetchMock;
+
+    await expect(cancelPortalAppointment("appt-1")).resolves.toEqual(cancelled);
+
+    const [input, init] = lastCall(fetchMock);
+    expect(resolveRequestUrl(input)).toBe("/api/portal/appointments/appt-1/cancel");
+    expect(init.method).toBe("POST");
+    expect(init).toMatchObject({ cache: "no-store" });
+  });
+
+  it("reschedulePortalAppointment PUTs the exact slot instants plus the read version", async () => {
+    const moved = {
+      id: "appt-1",
+      patientId: "11111111-1111-4111-8111-111111111111",
+      status: "SCHEDULED",
+      startAt: "2026-06-16T13:00:00.000Z",
+      endAt: "2026-06-16T13:30:00.000Z",
+      version: 2,
+    };
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(moved)));
+    global.fetch = fetchMock;
+
+    await expect(
+      reschedulePortalAppointment("appt-1", {
+        startAt: "2026-06-16T13:00:00.000Z",
+        endAt: "2026-06-16T13:30:00.000Z",
+        version: 1,
+      })
+    ).resolves.toEqual(moved);
+
+    const [input, init] = lastCall(fetchMock);
+    expect(resolveRequestUrl(input)).toBe("/api/portal/appointments/appt-1");
+    expect(init.method).toBe("PUT");
+    expect(init).toMatchObject({ cache: "no-store" });
+    expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
+    // The chosen slot's instants go out verbatim AND the optimistic guard is
+    // sent; without `version` the API can never accept the move.
+    expect(JSON.parse(init.body as string)).toEqual({
+      startAt: "2026-06-16T13:00:00.000Z",
+      endAt: "2026-06-16T13:30:00.000Z",
+      version: 1,
+    });
+  });
+});
+
 describe("userFacingPortalError", () => {
   it("never echoes the server message text for a known or unknown code", () => {
     const known = new ApiRequestError("NOT_FOUND", "Portal pet was not found.", 404);
@@ -286,6 +373,71 @@ describe("userFacingPortalError", () => {
       "You do not have access to this portal."
     );
     expect(userFacingPortalAppointmentsError(new ApiRequestError("INTERNAL", "x", 500))).toBe(
+      "Something went wrong. Please try again."
+    );
+  });
+
+  it("classifies only a CONFLICT as a command precondition failure", () => {
+    expect(isPortalConflictError(new ApiRequestError("CONFLICT", "x", 409))).toBe(true);
+    expect(isPortalConflictError(new ApiRequestError("NOT_FOUND", "x", 404))).toBe(false);
+    expect(isPortalConflictError(new Error("boom"))).toBe(false);
+  });
+
+  it("names the decided-request cause for a booking-cancel 409 and never echoes the server", () => {
+    const copy = userFacingPortalBookingCancelError(
+      new ApiRequestError("CONFLICT", "Only a pending booking request can be cancelled.", 409)
+    );
+    // The cancel command IS a PENDING compare-and-set, so this cause is known.
+    expect(copy).toContain("already have been decided");
+    expect(copy).toContain("refreshed");
+    expect(copy).not.toContain("Only a pending booking request can be cancelled.");
+  });
+
+  it("names the request, not a pet, for a masked booking-cancel not-found", () => {
+    const copy = userFacingPortalBookingCancelError(
+      new ApiRequestError("NOT_FOUND", "raw upstream detail", 404)
+    );
+    expect(copy).toContain("request");
+    expect(copy).not.toContain("pet");
+    expect(copy).not.toContain("raw upstream detail");
+  });
+
+  it("names the changed-appointment cause for an appointment-cancel 409", () => {
+    const copy = userFacingPortalAppointmentCancelError(
+      new ApiRequestError("CONFLICT", "Cannot cancel an appointment in status COMPLETED.", 409)
+    );
+    expect(copy).toContain("may have already changed");
+    expect(copy).toContain("cancellable");
+    expect(copy).toContain("refreshed");
+    expect(copy).not.toContain("Cannot cancel an appointment in status COMPLETED.");
+  });
+
+  it("names both causes the move command checks for a 409", () => {
+    const copy = userFacingPortalRescheduleError(
+      new ApiRequestError("CONFLICT", "The appointment was updated by another writer.", 409)
+    );
+    expect(copy).toContain("may no longer be free");
+    expect(copy).toContain("may have changed");
+    expect(copy).toContain("refreshed");
+    expect(copy).not.toContain("The appointment was updated by another writer.");
+  });
+
+  it("reuses the appointment not-found wording for cancelled or moved appointments", () => {
+    const missing = new ApiRequestError("NOT_FOUND", "raw detail", 404);
+    expect(userFacingPortalAppointmentCancelError(missing)).toContain("appointment");
+    expect(userFacingPortalRescheduleError(missing)).toContain("appointment");
+    expect(userFacingPortalAppointmentCancelError(missing)).not.toContain("pet");
+  });
+
+  it("delegates every other command code to the shared copy", () => {
+    const forbidden = new ApiRequestError("FORBIDDEN", "x", 403);
+    expect(userFacingPortalBookingCancelError(forbidden)).toBe(
+      "You do not have access to this portal."
+    );
+    expect(userFacingPortalAppointmentCancelError(forbidden)).toBe(
+      "You do not have access to this portal."
+    );
+    expect(userFacingPortalRescheduleError(new ApiRequestError("INTERNAL", "x", 500))).toBe(
       "Something went wrong. Please try again."
     );
   });
