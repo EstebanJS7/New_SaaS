@@ -13,7 +13,11 @@ import {
   type PortalBookingRequestResponse,
   type PortalBookingRequestStatusDto,
 } from "./portal-booking.dto.js";
-import { assertHolderOwnedPatient, type PortalHolderScopePrisma } from "./portal-holder-scope.js";
+import {
+  assertHolderOwnedPatient,
+  portalResourceNotFound,
+  type PortalHolderScopePrisma,
+} from "./portal-holder-scope.js";
 
 /**
  * Stable domain action code for a holder-submitted booking request, in the
@@ -24,6 +28,16 @@ export const PORTAL_BOOKING_REQUESTED_ACTION = "portal_booking.requested";
 
 /** Audit target type recorded for the created request. */
 export const PORTAL_BOOKING_REQUEST_TARGET_TYPE = "portal_booking_request";
+
+/**
+ * Stable `domain.event` action code for a holder-issued cancellation, following
+ * the aggregate naming of `portal_booking.requested`/`portal_booking.approved`.
+ */
+export const PORTAL_BOOKING_CANCELLED_ACTION = "portal_booking.cancelled";
+
+/** Stable CONFLICT message for a request that is no longer PENDING. */
+export const PORTAL_BOOKING_NOT_PENDING_MESSAGE =
+  "Only a pending booking request can be cancelled.";
 
 /** Patient row reduced to the ONLY field the holder read exposes. */
 interface PortalBookingPatientRow {
@@ -52,6 +66,24 @@ interface PortalBookingPrisma extends PortalHolderScopePrisma {
       where: { tenantId: string; customerId: string };
       orderBy: { startAt: "asc" };
     }) => Promise<PortalBookingRequestRecord[]>;
+    /** Owner-scoped single read used to tell "not owned" (404) from "not pending" (409). */
+    findFirst: (args: {
+      where: { id: string; tenantId: string; customerId: string };
+    }) => Promise<PortalBookingRequestRecord | null>;
+    /**
+     * Owner-scoped compare-and-set: only a PENDING request owned by the
+     * session's Customer is flipped, and the matched count lets the caller
+     * abort when another writer already decided it.
+     */
+    updateMany: (args: {
+      where: {
+        id: string;
+        tenantId: string;
+        customerId: string;
+        status: PortalBookingRequestStatusDto;
+      };
+      data: { status: PortalBookingRequestStatusDto };
+    }) => Promise<{ count: number }>;
   };
   /** One set-based lookup resolves every involved patient name. */
   patient: {
@@ -76,6 +108,24 @@ interface PortalBookingPrisma extends PortalHolderScopePrisma {
  * creates NO Appointment, evaluates NO overlap or availability and
  * auto-confirms NOTHING: staff approval is WU4B, so a request stays outside the
  * appointment ledger. The read writes NOTHING at all.
+ *
+ * OWNERSHIP ASYMMETRY (DEC-007 A2d) — READ THIS BEFORE "UNIFYING" THE RULES.
+ * The cancel command below scopes by the request row's OWN
+ * `(tenantId, customerId)`, while `PortalAppointmentService` scopes an
+ * appointment through the holder's ACTIVE guardian chain. That difference is
+ * intentional and load-bearing:
+ *
+ * - a booking request is the holder's OWN SUBMISSION, so it stays VISIBLE (and
+ *   cancellable) after the guardian link to its pet is revoked; the stored
+ *   customer id, not the mutable pet relationship, is the owner.
+ * - an appointment belongs to a PATIENT, so it is ACTIONABLE only while the
+ *   holder still has an active guardian link to that patient.
+ *
+ * Visibility of your own submission versus authority over a pet you no longer
+ * have. Deriving request ownership from the guardian chain would silently hide
+ * a holder's own requests; deriving appointment ownership from the stored
+ * customer would let a former guardian keep moving a pet's schedule. Both
+ * failure modes are covered by tests in this slice.
  */
 @Injectable()
 export class PortalBookingService {
@@ -136,6 +186,71 @@ export class PortalBookingService {
       );
 
       return created;
+    });
+
+    return toPortalBookingRequestResponse(row);
+  }
+
+  /**
+   * Cancels one PENDING booking request that belongs to the authenticated
+   * holder and returns its updated status.
+   *
+   * OWNERSHIP is the row's OWN `(tenantId, customerId)` — the same owner-scoping
+   * as `listBookingRequests`, and for the same reason: a request is the holder's
+   * own submission, so it remains cancellable after the guardian link to its pet
+   * is revoked. A request owned by another Customer, another tenant or an
+   * unknown id is the byte-equivalent NOT_FOUND (never a 403), because the
+   * `(tenantId, customerId, status: PENDING)` compare-and-set simply matches
+   * nothing; only an OWNED request in a non-PENDING state is a grounded `409`.
+   *
+   * The status flip and its single PORTAL-attributed audit row commit in ONE
+   * transaction; a non-PENDING request or a failed append leaves the stored
+   * status untouched. No appointment is created or touched.
+   */
+  async cancelBookingRequest(id: string): Promise<PortalBookingRequestResponse> {
+    const tenantId = this.requestContext.requireTenantId();
+    const customerId = this.requestContext.requirePortalCustomerId();
+    const portalAccessId = this.requestContext.requirePortalAccessId();
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.portalBookingRequest.updateMany({
+        where: { id, tenantId, customerId, status: "PENDING" },
+        data: { status: "CANCELLED" },
+      });
+      if (count === 0) {
+        // The compare-and-set matched nothing: either the request is not the
+        // holder's (mask as NOT_FOUND) or it is already decided (grounded 409).
+        const existing = await tx.portalBookingRequest.findFirst({
+          where: { id, tenantId, customerId },
+        });
+        if (!existing) {
+          throw portalResourceNotFound();
+        }
+        throw new DomainError("CONFLICT", PORTAL_BOOKING_NOT_PENDING_MESSAGE);
+      }
+
+      await this.audit.append(
+        {
+          action: PORTAL_BOOKING_CANCELLED_ACTION,
+          tenantId,
+          actorPortalAccessId: portalAccessId,
+          targetType: PORTAL_BOOKING_REQUEST_TARGET_TYPE,
+          targetId: id,
+          metadata: {
+            schemaVersion: PORTAL_BOOKING_DTO_SCHEMA_VERSION,
+            changedFields: ["status"],
+          },
+        },
+        tx
+      );
+
+      const updated = await tx.portalBookingRequest.findFirst({
+        where: { id, tenantId, customerId },
+      });
+      if (!updated) {
+        throw portalResourceNotFound();
+      }
+      return updated;
     });
 
     return toPortalBookingRequestResponse(row);

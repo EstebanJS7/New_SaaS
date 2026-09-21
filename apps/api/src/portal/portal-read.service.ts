@@ -65,6 +65,7 @@ interface PortalAppointmentRow {
   readonly status: PortalAppointmentStatusDto;
   readonly startAt: Date;
   readonly endAt: Date;
+  readonly version: number;
 }
 
 /**
@@ -160,6 +161,7 @@ function toAppointment(row: PortalAppointmentRow): PortalAppointment {
     status: row.status,
     startAt: toIso(row.startAt),
     endAt: toIso(row.endAt),
+    version: row.version,
   };
 }
 
@@ -175,6 +177,7 @@ function toAppointmentSummary(
     status: row.status,
     startAt: toIso(row.startAt),
     endAt: toIso(row.endAt),
+    version: row.version,
   };
 }
 

@@ -19,6 +19,10 @@ import type { AppointmentStatusDto } from "./appointment.dto.js";
  * from drifting: both call the same functions, and the transaction-scoped half
  * takes the caller's OPEN transaction handle so the invariant reads, the
  * appointment insert and the caller's own status flip stay in ONE transaction.
+ *
+ * DEC-007 A2d widens the SAME rule to the portal: the holder reschedule CALLS
+ * `RESCHEDULABLE_STATUSES` and `compareAndSetReschedule` from here instead of
+ * copying the predicate, so staff and portal can never drift apart.
  */
 
 /** The single tenant timezone fixed by the PRD for v1. */
@@ -31,6 +35,14 @@ export const ACTIVE_APPOINTMENT_STATUSES: readonly AppointmentStatusDto[] = [
   "ARRIVED",
   "IN_PROGRESS",
 ];
+
+/**
+ * States from which a reschedule is legal (spec/design): the appointment has
+ * not started. Scheduling-owned so BOTH the staff reschedule and the portal
+ * holder reschedule gate on one definition — never on the cancellation
+ * transition's `from` list, which may legitimately diverge.
+ */
+export const RESCHEDULABLE_STATUSES: readonly AppointmentStatusDto[] = ["SCHEDULED", "CONFIRMED"];
 
 // ---------------------------------------------------------------------------
 // Timezone / availability math
@@ -424,6 +436,64 @@ async function assertNoOverlap(
   if (overlap) {
     throw new DomainError("CONFLICT", "The professional already has an overlapping appointment.");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Transaction-scoped reschedule compare-and-set
+// ---------------------------------------------------------------------------
+
+/** The transaction handle the reschedule compare-and-set needs. */
+export interface AppointmentRescheduleCasTx<TRow> {
+  appointment: {
+    updateMany: (args: {
+      where: { id: string; tenantId: string; status: AppointmentStatusDto; version: number };
+      data: { startAt: Date; endAt: Date; version: { increment: number } };
+    }) => Promise<{ count: number }>;
+    findFirst: (args: { where: { id: string; tenantId: string } }) => Promise<TRow | null>;
+  };
+}
+
+/** The row identity, its last-read version/status and the new slot to apply. */
+export interface AppointmentRescheduleCas {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly status: AppointmentStatusDto;
+  readonly version: number;
+  readonly startAt: Date;
+  readonly endAt: Date;
+}
+
+/**
+ * Transaction-scoped version-plus-status compare-and-set for a reschedule — the
+ * ONE definition shared by the staff reschedule and the portal holder
+ * reschedule.
+ *
+ * The `(id, tenantId, status, version)` predicate makes the write conditional on
+ * the caller's last-read state, so a terminal status or a stale caller matches
+ * nothing; a zero-count match is the CONFLICT the staff path has always
+ * returned, and a vanished row is NOT_FOUND. Callers must run it inside the
+ * transaction that also holds their overlap check and audit append, so a
+ * rejected compare-and-set rolls the whole mutation back.
+ */
+export async function compareAndSetReschedule<TRow>(
+  tx: AppointmentRescheduleCasTx<TRow>,
+  cas: AppointmentRescheduleCas
+): Promise<TRow> {
+  const { count } = await tx.appointment.updateMany({
+    where: { id: cas.id, tenantId: cas.tenantId, status: cas.status, version: cas.version },
+    data: { startAt: cas.startAt, endAt: cas.endAt, version: { increment: 1 } },
+  });
+  if (count === 0) {
+    throw new DomainError("CONFLICT", "The appointment was updated by another writer.");
+  }
+
+  const updated = await tx.appointment.findFirst({
+    where: { id: cas.id, tenantId: cas.tenantId },
+  });
+  if (!updated) {
+    throw new DomainError("NOT_FOUND", "Appointment was not found.");
+  }
+  return updated;
 }
 
 // ---------------------------------------------------------------------------

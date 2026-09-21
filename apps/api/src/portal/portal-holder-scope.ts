@@ -8,6 +8,21 @@ import { DomainError } from "@newsaas/shared";
  * outcome must have exactly one definition: two copies could drift into
  * distinguishable 404s and let a holder probe for the existence of another
  * Customer's (or another tenant's) resources.
+ *
+ * TWO OWNERSHIP RULES LIVE ON THE HOLDER SURFACE, AND THEY ARE NOT THE SAME
+ * (DEC-007 A2d). Do not "unify" them:
+ *
+ * - PATIENT-SCOPED resources (pets, appointments) are owned through the ACTIVE
+ *   guardian chain implemented here (`holderPatientIds` /
+ *   `assertHolderOwnedPatient`). Revoking the link removes both visibility and
+ *   authority over the pet and its appointments.
+ * - A booking REQUEST is owner-scoped by its own stored `(tenantId,
+ *   customerId)` (see `PortalBookingService`): it is the holder's own
+ *   submission, so it stays visible and cancellable after the guardian link to
+ *   its pet is revoked.
+ *
+ * Visibility of your own submission versus authority over a pet you no longer
+ * have — the distinction is deliberate and covered by tests on both sides.
  */
 
 /**

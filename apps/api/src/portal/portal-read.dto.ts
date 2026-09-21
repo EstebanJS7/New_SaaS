@@ -78,6 +78,13 @@ export interface PortalAppointment {
   readonly status: PortalAppointmentStatusDto;
   readonly startAt: string;
   readonly endAt: string;
+  /**
+   * Optimistic-concurrency guard the holder echoes back when rescheduling
+   * (DEC-007 A2d). It is the row's own version, never a tenant/provenance
+   * identifier, so exposing it leaks nothing the holder cannot already infer
+   * from the mutation contract.
+   */
+  readonly version: number;
 }
 
 /**

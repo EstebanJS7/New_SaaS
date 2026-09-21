@@ -18,10 +18,12 @@ import {
 } from "./appointment.dto.js";
 import {
   ACTIVE_APPOINTMENT_STATUSES,
+  RESCHEDULABLE_STATUSES,
   assertAppointmentAnchors,
   assertAppointmentAvailability,
   assertNoConflictInTransaction,
   assertSchedulingAnchors,
+  compareAndSetReschedule,
   loadSchedulingSettings,
 } from "./appointment-invariants.js";
 import {
@@ -183,9 +185,6 @@ export const APPOINTMENT_TRANSITIONS: Readonly<
   cancel: { from: ["SCHEDULED", "CONFIRMED"], to: "CANCELLED", action: "appointment.cancelled" },
   "no-show": { from: ["CONFIRMED", "ARRIVED"], to: "NO_SHOW", action: "appointment.no_show" },
 });
-
-/** Reschedule is allowed only before the appointment is underway (spec/design). */
-const RESCHEDULABLE_STATUSES: readonly AppointmentStatusDto[] = ["SCHEDULED", "CONFIRMED"];
 
 /** Agenda filters supported by the staff views (branch, professional, status). */
 export interface AppointmentFilters {
@@ -443,19 +442,17 @@ export class AppointmentService {
       });
 
       // Status predicate blocks terminal rows; the version predicate blocks a
-      // stale caller. Either miss changes nothing and returns 409.
-      const { count } = await tx.appointment.updateMany({
-        where: { id, tenantId, status: existing.status, version: data.version },
-        data: { startAt, endAt, version: { increment: 1 } },
+      // stale caller. Either miss changes nothing and returns 409. The
+      // predicate and the conflict outcome are the SHARED scheduling helper
+      // (DEC-007 A2d), also called by the portal reschedule.
+      const updated = await compareAndSetReschedule(tx, {
+        id,
+        tenantId,
+        status: existing.status,
+        version: data.version,
+        startAt,
+        endAt,
       });
-      if (count === 0) {
-        throw new DomainError("CONFLICT", "The appointment was updated by another writer.");
-      }
-
-      const updated = await tx.appointment.findFirst({ where: { id, tenantId } });
-      if (!updated) {
-        throw new DomainError("NOT_FOUND", "Appointment was not found.");
-      }
 
       await this.appendAudit(
         tx,

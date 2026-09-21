@@ -160,6 +160,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /portal/pets/:id/bookings",
   // EPIC-08 — holder-facing read of the holder's OWN booking requests
   "GET /portal/bookings",
+  // DEC-007 A2d — holder cancellation and reschedule of their OWN resources
+  "POST /portal/bookings/:id/cancel",
+  "POST /portal/appointments/:id/cancel",
+  "PUT /portal/appointments/:id",
   // EPIC-08 WU4C — holder profile self-service (own phone + address only)
   "GET /portal/profile",
   "PUT /portal/profile",
@@ -408,9 +412,12 @@ describe("portal surface fence (EPIC-08 task 2.3)", () => {
       "GET /portal/pets",
       "GET /portal/pets/:id",
       "GET /portal/profile",
+      "POST /portal/appointments/:id/cancel",
+      "POST /portal/bookings/:id/cancel",
       "POST /portal/login",
       "POST /portal/logout",
       "POST /portal/pets/:id/bookings",
+      "PUT /portal/appointments/:id",
       "PUT /portal/profile",
     ]);
     // The predicate is never satisfied by a near-miss path.
