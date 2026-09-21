@@ -31,6 +31,16 @@ interface ErrorEnvelope {
   error: { code: string };
 }
 
+/** Allowlisted holder appointment projection returned by the portal writes. */
+interface PortalAppointmentBody {
+  id: string;
+  patientId: string;
+  status: string;
+  startAt: string;
+  endAt: string;
+  version: number;
+}
+
 const NOT_FOUND_REQUEST_ID = "live-pg-not-found-proof";
 
 /** Server-owned request id pinned on every clinical cross-tenant miss. */
@@ -293,6 +303,141 @@ async function waitForAdvisoryLockWaiters(
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+}
+
+/**
+ * Resource-scoped waiter count for the owner-scoped booking-request cancel
+ * race: how many backends are parked on the EXACT row identified by
+ * `(relation, page, tuple)`.
+ *
+ * A row-lock waiter is NOT reported as a `pg_locks` entry scoped to the locked
+ * relation: it holds a `tuple` lock on the exact `(relation, page, tuple)` it is
+ * trying to lock, and then blocks — either on the holder's XID (first waiter:
+ * `wait_event = 'transactionid'`, tuple lock GRANTED) or on the tuple lock the
+ * first waiter now holds (second waiter: `wait_event = 'tuple'`, tuple lock NOT
+ * granted). Counting every backend whose `wait_event_type = 'Lock'` AND that has
+ * a `tuple` lock row on that exact tuple therefore names precisely the sessions
+ * parked on THAT row, in BOTH positions. An unrelated lock waiter (a row lock
+ * elsewhere, an advisory lock, a catalog lock) has no tuple lock on this tuple,
+ * so the generic `waitForLockWaiters` over-count can never be satisfied by one.
+ *
+ * The barrier holder itself is excluded because `SELECT ... FOR UPDATE` registers
+ * no heavyweight tuple lock, and a racer that already acquired the row lock is no
+ * longer `wait_event_type = 'Lock'`.
+ */
+async function countBookingRowLockWaiters(
+  prisma: PrismaService,
+  relation: string,
+  page: number,
+  tuple: number
+): Promise<number> {
+  const rows = await prisma.$queryRaw<{ blocked: number }[]>`
+    SELECT count(DISTINCT l.pid)::int AS blocked
+    FROM pg_locks AS l
+    JOIN pg_stat_activity AS a ON a.pid = l.pid
+    WHERE a.datname = current_database()
+      AND a.wait_event_type = 'Lock'
+      AND l.locktype = 'tuple'
+      AND l.relation = ${relation}::regclass
+      AND l.page = ${page}
+      AND l.tuple = ${tuple}
+  `;
+  return rows[0]?.blocked ?? 0;
+}
+
+/**
+ * Resource-scoped barrier over {@link countBookingRowLockWaiters}. Throws on
+ * timeout so a release can never happen before both cancellations are provably
+ * parked on the contended row.
+ */
+async function waitForBookingRowLockWaiters(
+  prisma: PrismaService,
+  relation: string,
+  page: number,
+  tuple: number,
+  expected: number,
+  timeoutMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const blocked = await countBookingRowLockWaiters(prisma, relation, page, tuple);
+    if (blocked >= expected) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Booking-row lock barrier timed out: expected ${expected} waiters on ${relation} (${page},${tuple}), observed ${blocked}`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/**
+ * Physical `ctid` of one booking-request row, decomposed to the `page`/`tuple`
+ * pair `pg_locks` reports for a tuple lock. Read while the barrier holds the row
+ * lock, so the tuple cannot move under the racers.
+ */
+async function readBookingRowCtid(
+  prisma: PrismaService,
+  id: string
+): Promise<{ page: number; tuple: number }> {
+  const rows = await prisma.$queryRaw<{ page: number; tuple: number }[]>`
+    SELECT
+      (ctid::text::point)[0]::int AS page,
+      (ctid::text::point)[1]::int AS tuple
+    FROM portal_booking_request
+    WHERE id = ${id}::uuid
+  `;
+  const ctid = rows[0];
+  if (!ctid) {
+    throw new Error(`Booking request ${id} vanished before the barrier could lock it`);
+  }
+  return ctid;
+}
+
+/**
+ * Forces a provable overlap on the scheduling advisory lock: acquires `lockKey`
+ * from a dedicated transaction, starts every racer, waits until `expectedWaiters`
+ * backends are parked on THAT key (never an unrelated lock), then releases the
+ * barrier and returns the racers' values once every one has settled. Used by the
+ * EPIC-08 WU5 portal write races so the interleaving is decided by the database
+ * boundary, not by timing, and an unproven overlap fails loudly instead of
+ * passing as a sequential race.
+ */
+async function forceAdvisoryLockRace<T>(
+  prisma: PrismaService,
+  lockKey: string,
+  expectedWaiters: number,
+  startRacers: () => readonly Promise<T>[]
+): Promise<T[]> {
+  let releaseBarrier!: () => void;
+  const barrierReleased = new Promise<void>((resolve) => {
+    releaseBarrier = resolve;
+  });
+  let signalBarrierReady!: () => void;
+  const barrierReady = new Promise<void>((resolve) => {
+    signalBarrierReady = resolve;
+  });
+
+  const barrierTransaction = prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))::text`;
+      signalBarrierReady();
+      await barrierReleased;
+    },
+    { timeout: 20_000, maxWait: 10_000 }
+  );
+  await barrierReady;
+
+  const racers = startRacers();
+  try {
+    await waitForAdvisoryLockWaiters(prisma, lockKey, expectedWaiters, 10_000);
+  } finally {
+    releaseBarrier();
+    await barrierTransaction;
+  }
+  return Promise.all(racers);
 }
 
 /**
@@ -2410,5 +2555,496 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(body.customerId).toBe(portalCustomerA2Id);
       expect(body.status).toBe("ACTIVE");
     });
+  });
+
+  /**
+   * EPIC-08 WU5 task 5.1 — portal WRITE concurrency and isolation against a
+   * REAL PostgreSQL (the TD-006 gap).
+   *
+   * Every guarantee on the DEC-007 A2d surface rested on the synchronous
+   * in-memory boundary fake, which cannot interleave transactions. Each race
+   * below is forced by a deterministic database barrier — the scheduling
+   * advisory lock for the approval/reschedule paths and a `SELECT ... FOR
+   * UPDATE` row lock for the owner-scoped cancel — and the barrier releases
+   * only once PostgreSQL proves every racer is parked at that same boundary.
+   * A sequential-looking result therefore cannot masquerade as a race.
+   */
+  describe("EPIC-08 WU5 portal write concurrency and isolation", () => {
+    let holderCookie: string;
+    let holderCustomerId: string;
+    let holderPatientId: string;
+    let otherCustomerId: string;
+    let otherPatientId: string;
+    let foreignCustomerId: string;
+    let foreignPatientId: string;
+    let foreignBranchId: string;
+    let foreignProfessionalMembershipId: string;
+    let revokedPatientId: string;
+    let revokedLinkId: string;
+    let branchId: string;
+    let approvalProfessionalMembershipId: string;
+    let rescheduleProfessionalMembershipId: string;
+
+    beforeAll(async () => {
+      // Tenant A holds the explicit `portal` grant; the holder below must clear
+      // the guard's entitlement gate for real.
+      const portalFeature = await prisma.featureCode.upsert({
+        where: { code: "portal" },
+        create: { code: "portal" },
+        update: {},
+      });
+      await prisma.tenantEntitlement.upsert({
+        where: {
+          tenantId_featureCodeId: { tenantId: tenantAId, featureCodeId: portalFeature.id },
+        },
+        create: { tenantId: tenantAId, featureCodeId: portalFeature.id },
+        update: {},
+      });
+
+      const createCustomer = (tenantId: string, displayName: string): Promise<{ id: string }> =>
+        prisma.customer.create({ data: { tenantId, kind: "INDIVIDUAL", displayName } });
+      holderCustomerId = (await createCustomer(tenantAId, "WU5 Holder Customer")).id;
+      otherCustomerId = (await createCustomer(tenantAId, "WU5 Other Customer")).id;
+      foreignCustomerId = (await createCustomer(tenantBId, "WU5 Foreign Customer")).id;
+
+      // Inactive Patients are the minimal anchor (scheduling resolves existence,
+      // not activity) and keep this fixture free of the exactly-one-primary
+      // guardian trigger.
+      const createPatient = (tenantId: string, name: string): Promise<{ id: string }> =>
+        prisma.patient.create({
+          data: { tenantId, name, speciesId: dogSpeciesId, sex: "UNKNOWN", isActive: false },
+        });
+      holderPatientId = (await createPatient(tenantAId, "WU5 Holder Patient")).id;
+      otherPatientId = (await createPatient(tenantAId, "WU5 Other Patient")).id;
+      foreignPatientId = (await createPatient(tenantBId, "WU5 Foreign Patient")).id;
+      revokedPatientId = (await createPatient(tenantAId, "WU5 Revoked Patient")).id;
+
+      const linkGuardian = (tenantId: string, patientId: string, customerId: string) =>
+        prisma.patientGuardian.create({
+          data: { tenantId, patientId, customerId, isPrimary: true, isActive: true, position: 0 },
+        });
+      await linkGuardian(tenantAId, holderPatientId, holderCustomerId);
+      await linkGuardian(tenantAId, otherPatientId, otherCustomerId);
+      await linkGuardian(tenantBId, foreignPatientId, foreignCustomerId);
+      const revokedLink = await linkGuardian(tenantAId, revokedPatientId, holderCustomerId);
+      revokedLinkId = revokedLink.id;
+
+      branchId = (await prisma.branch.create({ data: { tenantId: tenantAId, name: "WU5 Branch" } }))
+        .id;
+      foreignBranchId = (
+        await prisma.branch.create({ data: { tenantId: tenantBId, name: "WU5 Foreign Branch" } })
+      ).id;
+
+      const veterinarianRole = await prisma.role.findUnique({ where: { code: "VETERINARIAN" } });
+      if (!veterinarianRole) {
+        throw new Error("Reference seed did not create the VETERINARIAN role");
+      }
+      const createVeterinarian = async (tenantId: string, email: string): Promise<string> => {
+        const profile = await prisma.userProfile.create({
+          data: { email, displayName: email, status: "active" },
+        });
+        const membership = await prisma.tenantMembership.create({
+          data: {
+            tenantId,
+            userProfileId: profile.id,
+            roleId: veterinarianRole.id,
+            status: "ACTIVE",
+          },
+        });
+        return membership.id;
+      };
+      approvalProfessionalMembershipId = await createVeterinarian(
+        tenantAId,
+        "wu5-vet-approval@live.test"
+      );
+      rescheduleProfessionalMembershipId = await createVeterinarian(
+        tenantAId,
+        "wu5-vet-reschedule@live.test"
+      );
+      foreignProfessionalMembershipId = await createVeterinarian(
+        tenantBId,
+        "wu5-vet-foreign@live.test"
+      );
+
+      const access = await prisma.customerPortalAccess.create({
+        data: {
+          tenantId: tenantAId,
+          customerId: holderCustomerId,
+          contactEmail: "wu5-holder@portal.test",
+          status: "ACTIVE",
+        },
+      });
+      const { token } = await app.get(PortalSessionService).issue(access.id);
+      holderCookie = `${PORTAL_SESSION_COOKIE}=${token}`;
+    }, 60_000);
+
+    /**
+     * Byte-equivalence probe for a portal write: the FOREIGN reference and a
+     * truly unknown UUID must return the SAME 404 payload (one shared inbound
+     * request id pins the echoed correlation), and no foreign identifier may
+     * leak into either body.
+     */
+    async function expectPortalWrite404(testCase: {
+      method: "POST" | "PUT";
+      path: (id: string) => string;
+      foreignId: string;
+      body?: Record<string, unknown>;
+      forbidden: readonly string[];
+    }): Promise<void> {
+      const requestId = `wu5-isolation-${randomUUID()}`;
+      const probe = (id: string) => {
+        const request =
+          testCase.method === "POST"
+            ? supertest(serverUrl).post(testCase.path(id))
+            : supertest(serverUrl).put(testCase.path(id));
+        request.set("Cookie", holderCookie).set("X-Request-Id", requestId);
+        return testCase.body === undefined ? request : request.send(testCase.body);
+      };
+      const [missing, foreign] = await Promise.all([
+        probe(randomUUID()),
+        probe(testCase.foreignId),
+      ]);
+
+      expect(missing.status).toBe(404);
+      expect(foreign.status).toBe(404);
+      expect((foreign.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect(missing.text).toBe(foreign.text);
+      const serialized = `${missing.text}${foreign.text}`;
+      for (const identifier of testCase.forbidden) {
+        expect(serialized).not.toContain(identifier);
+      }
+    }
+
+    it("serializes two concurrent approvals of ONE pending request into a single PORTAL appointment", async () => {
+      const request = await prisma.portalBookingRequest.create({
+        data: {
+          tenantId: tenantAId,
+          customerId: holderCustomerId,
+          patientId: holderPatientId,
+          status: "PENDING",
+          startAt: new Date("2030-01-07T13:00:00.000Z"),
+          endAt: new Date("2030-01-07T13:30:00.000Z"),
+        },
+      });
+
+      const approve = (requestId: string) =>
+        supertest(serverUrl)
+          .post(`/booking-requests/${request.id}/approve`)
+          .set("Cookie", ownerACookie)
+          .set("X-Request-Id", requestId)
+          .send({ branchId, professionalMembershipId: approvalProfessionalMembershipId })
+          .then((response) => ({
+            status: response.status,
+            body: response.body as PortalAppointmentBody & { error?: { code?: string } },
+          }));
+
+      // Same professional + slot: both approvals must acquire the SAME
+      // `pg_advisory_xact_lock` key, so the barrier proves the overlap.
+      const responses = await forceAdvisoryLockRace(
+        prisma,
+        `${tenantAId}:${approvalProfessionalMembershipId}`,
+        2,
+        () => [approve(`wu5-approve-a-${randomUUID()}`), approve(`wu5-approve-b-${randomUUID()}`)]
+      );
+
+      // A losing approval must never surface an unmapped INTERNAL.
+      expect(responses.filter((response) => response.status >= 500)).toEqual([]);
+
+      const appointments = await prisma.appointment.findMany({
+        where: { tenantId: tenantAId, portalBookingRequestId: request.id },
+      });
+      expect(appointments).toHaveLength(1);
+      expect(appointments[0]?.source).toBe("PORTAL");
+      const winnerId = appointments[0].id;
+
+      const stored = await prisma.portalBookingRequest.findUnique({ where: { id: request.id } });
+      expect(stored?.status).toBe("APPROVED");
+
+      const audit = await prisma.auditLog.findMany({
+        where: {
+          tenantId: tenantAId,
+          action: "portal_booking.approved",
+          targetType: "portal_booking_request",
+          targetId: request.id,
+        },
+      });
+      expect(audit).toHaveLength(1);
+
+      const successes = responses.filter((response) => response.status === 201);
+      const conflicts = responses.filter((response) => response.status === 409);
+      expect(successes.length).toBeGreaterThanOrEqual(1);
+      expect(successes.length + conflicts.length).toBe(2);
+      for (const success of successes) {
+        expect(success.body.id).toBe(winnerId);
+      }
+      for (const conflict of conflicts) {
+        expect(conflict.body.error?.code).toBe("CONFLICT");
+      }
+      // The observed WU5 5.1 outcome: both callers return the winner's
+      // appointment (idempotent recovery), never a 500 and not a bare 409.
+      expect(responses.map((response) => response.status).sort()).toEqual([201, 201]);
+      console.info(
+        `[WU5 5.1] concurrent approvals -> ${JSON.stringify(responses.map((r) => r.status))}`
+      );
+    }, 30_000);
+
+    it("admits exactly ONE of two concurrent same-version reschedules (no lost update)", async () => {
+      const appointment = await prisma.appointment.create({
+        data: {
+          tenantId: tenantAId,
+          branchId,
+          patientId: holderPatientId,
+          professionalMembershipId: rescheduleProfessionalMembershipId,
+          status: "SCHEDULED",
+          version: 1,
+          startAt: new Date("2030-02-04T09:00:00.000Z"),
+          endAt: new Date("2030-02-04T09:30:00.000Z"),
+        },
+      });
+
+      const slotA = { startAt: "2030-02-04T10:00:00.000Z", endAt: "2030-02-04T10:30:00.000Z" };
+      const slotB = { startAt: "2030-02-04T11:00:00.000Z", endAt: "2030-02-04T11:30:00.000Z" };
+      const reschedule = (slot: { startAt: string; endAt: string }) =>
+        supertest(serverUrl)
+          .put(`/portal/appointments/${appointment.id}`)
+          .set("Cookie", holderCookie)
+          .set("X-Request-Id", `wu5-reschedule-${randomUUID()}`)
+          .send({ ...slot, version: 1 })
+          .then((response) => ({
+            status: response.status,
+            body: response.body as PortalAppointmentBody & { error?: { code?: string } },
+          }));
+
+      const responses = await forceAdvisoryLockRace(
+        prisma,
+        `${tenantAId}:${rescheduleProfessionalMembershipId}`,
+        2,
+        () => [reschedule(slotA), reschedule(slotB)]
+      );
+
+      const successes = responses.filter((response) => response.status === 200);
+      const conflicts = responses.filter((response) => response.status === 409);
+      expect(successes).toHaveLength(1);
+      expect(conflicts).toHaveLength(1);
+      expect(conflicts[0]?.body.error?.code).toBe("CONFLICT");
+
+      const winner = successes[0];
+      const stored = await prisma.appointment.findUnique({ where: { id: appointment.id } });
+      expect(stored?.version).toBe(2);
+      expect(stored?.startAt.toISOString()).toBe(winner.body.startAt);
+      expect(stored?.endAt.toISOString()).toBe(winner.body.endAt);
+      // No lost update: the stored slot is EXACTLY the winner's requested slot,
+      // and the compare-and-set advanced the version a single time.
+      expect([slotA.startAt, slotB.startAt]).toContain(stored?.startAt.toISOString());
+
+      const audit = await prisma.auditLog.findMany({
+        where: { tenantId: tenantAId, action: "appointment.rescheduled", targetId: appointment.id },
+      });
+      expect(audit).toHaveLength(1);
+    }, 30_000);
+
+    it("lets exactly ONE of two concurrent holder cancels win the PENDING compare-and-set", async () => {
+      const request = await prisma.portalBookingRequest.create({
+        data: {
+          tenantId: tenantAId,
+          customerId: holderCustomerId,
+          patientId: holderPatientId,
+          status: "PENDING",
+          startAt: new Date("2030-03-11T09:00:00.000Z"),
+          endAt: new Date("2030-03-11T09:30:00.000Z"),
+        },
+      });
+
+      // Deterministic RESOURCE-SCOPED barrier: a dedicated transaction holds the
+      // request row's write lock, so both cancels block on the SAME
+      // `... WHERE status = 'PENDING'` UPDATE before either can commit. The
+      // poller counts only backends holding a granted tuple lock on EXACTLY this
+      // row's `(relation, page, tuple)` — never any generic lock waiter.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM portal_booking_request WHERE id = ${request.id}::uuid FOR UPDATE`;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+      // The row lock is held now, so the ctid cannot move under the racers.
+      const ctid = await readBookingRowCtid(prisma, request.id);
+
+      const cancel = () =>
+        supertest(serverUrl)
+          .post(`/portal/bookings/${request.id}/cancel`)
+          .set("Cookie", holderCookie)
+          .set("X-Request-Id", `wu5-cancel-${randomUUID()}`)
+          .then((response) => ({
+            status: response.status,
+            body: response.body as { status?: string; error?: { code?: string } },
+          }));
+      const cancels = [cancel(), cancel()];
+      try {
+        await waitForBookingRowLockWaiters(
+          prisma,
+          "portal_booking_request",
+          ctid.page,
+          ctid.tuple,
+          2,
+          10_000
+        );
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+      const responses = await Promise.all(cancels);
+
+      const successes = responses.filter((response) => response.status === 200);
+      const conflicts = responses.filter((response) => response.status === 409);
+      expect(successes).toHaveLength(1);
+      expect(conflicts).toHaveLength(1);
+      expect(conflicts[0]?.body.error?.code).toBe("CONFLICT");
+      expect(successes[0]?.body.status).toBe("CANCELLED");
+
+      const stored = await prisma.portalBookingRequest.findUnique({ where: { id: request.id } });
+      expect(stored?.status).toBe("CANCELLED");
+
+      const audit = await prisma.auditLog.findMany({
+        where: {
+          tenantId: tenantAId,
+          action: "portal_booking.cancelled",
+          targetId: request.id,
+        },
+      });
+      expect(audit).toHaveLength(1);
+    }, 30_000);
+
+    it("masks a same-tenant other-Customer AND a cross-tenant appointment as byte-equivalent 404 on BOTH writes", async () => {
+      const sameTenantAppointment = await prisma.appointment.create({
+        data: {
+          tenantId: tenantAId,
+          branchId,
+          patientId: otherPatientId,
+          professionalMembershipId: rescheduleProfessionalMembershipId,
+          status: "SCHEDULED",
+          version: 1,
+          startAt: new Date("2030-04-08T09:00:00.000Z"),
+          endAt: new Date("2030-04-08T09:30:00.000Z"),
+        },
+      });
+      const crossTenantAppointment = await prisma.appointment.create({
+        data: {
+          tenantId: tenantBId,
+          branchId: foreignBranchId,
+          patientId: foreignPatientId,
+          professionalMembershipId: foreignProfessionalMembershipId,
+          status: "SCHEDULED",
+          version: 1,
+          startAt: new Date("2030-04-08T09:00:00.000Z"),
+          endAt: new Date("2030-04-08T09:30:00.000Z"),
+        },
+      });
+      const sameTenantBefore = await prisma.appointment.findUnique({
+        where: { id: sameTenantAppointment.id },
+      });
+      const crossTenantBefore = await prisma.appointment.findUnique({
+        where: { id: crossTenantAppointment.id },
+      });
+
+      const moveBody = {
+        startAt: "2030-04-08T11:00:00.000Z",
+        endAt: "2030-04-08T11:30:00.000Z",
+        version: 1,
+      };
+      const cases = [
+        {
+          method: "POST" as const,
+          path: (id: string) => `/portal/appointments/${id}/cancel`,
+          foreignId: sameTenantAppointment.id,
+          forbidden: [sameTenantAppointment.id, otherPatientId],
+        },
+        {
+          method: "PUT" as const,
+          path: (id: string) => `/portal/appointments/${id}`,
+          foreignId: sameTenantAppointment.id,
+          body: moveBody,
+          forbidden: [sameTenantAppointment.id, otherPatientId],
+        },
+        {
+          method: "POST" as const,
+          path: (id: string) => `/portal/appointments/${id}/cancel`,
+          foreignId: crossTenantAppointment.id,
+          forbidden: [crossTenantAppointment.id, foreignPatientId, tenantBId],
+        },
+        {
+          method: "PUT" as const,
+          path: (id: string) => `/portal/appointments/${id}`,
+          foreignId: crossTenantAppointment.id,
+          body: moveBody,
+          forbidden: [crossTenantAppointment.id, foreignPatientId, tenantBId],
+        },
+      ];
+      for (const testCase of cases) {
+        await expectPortalWrite404(testCase);
+      }
+
+      // Neither foreign row was mutated by the denied writes.
+      expect(
+        await prisma.appointment.findUnique({ where: { id: sameTenantAppointment.id } })
+      ).toEqual(sameTenantBefore);
+      expect(
+        await prisma.appointment.findUnique({ where: { id: crossTenantAppointment.id } })
+      ).toEqual(crossTenantBefore);
+    }, 30_000);
+
+    it("stops an appointment from being actionable once the guardian link is revoked (cancel and move -> 404)", async () => {
+      const revokedAppointment = await prisma.appointment.create({
+        data: {
+          tenantId: tenantAId,
+          branchId,
+          patientId: revokedPatientId,
+          professionalMembershipId: rescheduleProfessionalMembershipId,
+          status: "SCHEDULED",
+          version: 1,
+          startAt: new Date("2030-05-06T09:00:00.000Z"),
+          endAt: new Date("2030-05-06T09:30:00.000Z"),
+        },
+      });
+      const before = await prisma.appointment.findUnique({ where: { id: revokedAppointment.id } });
+
+      const { count } = await prisma.patientGuardian.updateMany({
+        where: { id: revokedLinkId, tenantId: tenantAId },
+        data: { isActive: false },
+      });
+      expect(count).toBe(1);
+
+      await expectPortalWrite404({
+        method: "POST",
+        path: (id) => `/portal/appointments/${id}/cancel`,
+        foreignId: revokedAppointment.id,
+        forbidden: [revokedAppointment.id, revokedPatientId],
+      });
+      await expectPortalWrite404({
+        method: "PUT",
+        path: (id) => `/portal/appointments/${id}`,
+        foreignId: revokedAppointment.id,
+        body: {
+          startAt: "2030-05-06T11:00:00.000Z",
+          endAt: "2030-05-06T11:30:00.000Z",
+          version: 1,
+        },
+        forbidden: [revokedAppointment.id, revokedPatientId],
+      });
+
+      expect(await prisma.appointment.findUnique({ where: { id: revokedAppointment.id } })).toEqual(
+        before
+      );
+    }, 30_000);
   });
 });
