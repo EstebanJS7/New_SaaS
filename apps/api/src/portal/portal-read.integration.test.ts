@@ -62,8 +62,16 @@ const PET_DETAIL_KEYS = [
   "speciesId",
 ];
 
-const APPOINTMENT_KEYS = ["endAt", "id", "patientId", "startAt", "status"];
-const APPOINTMENT_SUMMARY_KEYS = ["endAt", "id", "patientId", "patientName", "startAt", "status"];
+const APPOINTMENT_KEYS = ["endAt", "id", "patientId", "startAt", "status", "version"];
+const APPOINTMENT_SUMMARY_KEYS = [
+  "endAt",
+  "id",
+  "patientId",
+  "patientName",
+  "startAt",
+  "status",
+  "version",
+];
 const APPOINTMENT_LIST_ENVELOPE_KEYS = ["appointments", "timeZone"];
 
 /**

@@ -482,12 +482,143 @@ describe("/api/portal proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a three-segment path other than pets/:uuid/bookings", async () => {
+  it("refuses a three-segment path other than pets/:uuid/bookings or a cancel shape", async () => {
+    const response = await callPost(
+      mockNextRequest({ pathname: `/api/portal/pets/${PET_ID}/cancel` })
+    );
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards a POST booking-request cancel to the private API", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ id: PET_ID, status: "CANCELLED" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const request = mockNextRequest({
+      pathname: `/api/portal/bookings/${PET_ID}/cancel`,
+      headers: new Headers({ "x-request-id": "req-cancel-booking" }),
+    });
+
+    const response = await callPost(request);
+
+    expect(response.status).toBe(200);
+    expect(fetchUrl()).toBe(`http://localhost:3001/portal/bookings/${PET_ID}/cancel`);
+    const init = fetchInit();
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({
+      cookie: `${PORTAL_SESSION_COOKIE}=portal-token`,
+      "x-request-id": "req-cancel-booking",
+      "content-type": "application/json",
+    });
+  });
+
+  it("forwards a POST appointment cancel to the private API", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ id: PET_ID, status: "CANCELLED" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
     const response = await callPost(
       mockNextRequest({ pathname: `/api/portal/appointments/${PET_ID}/cancel` })
     );
 
+    expect(response.status).toBe(200);
+    expect(fetchUrl()).toBe(`http://localhost:3001/portal/appointments/${PET_ID}/cancel`);
+  });
+
+  it("forwards a PUT appointment reschedule body and the portal cookie", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore("portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ id: PET_ID, version: 2 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const body = jsonBody({
+      startAt: "2026-09-20T10:00:00.000Z",
+      endAt: "2026-09-20T10:30:00.000Z",
+      version: 1,
+    });
+    const request = mockNextRequest({
+      pathname: `/api/portal/appointments/${PET_ID}`,
+      headers: new Headers({ "x-request-id": "req-reschedule" }),
+      body,
+    });
+
+    const response = await callPut(request);
+
+    expect(response.status).toBe(200);
+    expect(fetchUrl()).toBe(`http://localhost:3001/portal/appointments/${PET_ID}`);
+    const init = fetchInit();
+    expect(init.method).toBe("PUT");
+    expect(init.headers).toEqual({
+      cookie: `${PORTAL_SESSION_COOKIE}=portal-token`,
+      "x-request-id": "req-reschedule",
+      "content-type": "application/json",
+    });
+    expect(init.body).toBe(body);
+    expect(init.duplex).toBe("half");
+  });
+
+  it("refuses a query on each new write shape", async () => {
+    for (const [call, pathname] of [
+      [callPost, `/api/portal/bookings/${PET_ID}/cancel`],
+      [callPost, `/api/portal/appointments/${PET_ID}/cancel`],
+      [callPut, `/api/portal/appointments/${PET_ID}`],
+    ] as const) {
+      const response = await call(
+        mockNextRequest({ pathname, search: "?date=2026-06-15&durationMinutes=30" })
+      );
+      expect(response.status, pathname).toBe(404);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses the wrong verb on each new write shape", async () => {
+    const wrongVerbCases = [
+      [callGet, `/api/portal/bookings/${PET_ID}/cancel`],
+      [callGet, `/api/portal/appointments/${PET_ID}/cancel`],
+      [callPost, `/api/portal/appointments/${PET_ID}`],
+      [callPut, `/api/portal/pets/${PET_ID}`],
+    ] as const;
+    for (const [call, pathname] of wrongVerbCases) {
+      const response = await call(mockNextRequest({ pathname }));
+      expect(response.status, pathname).toBe(405);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    `/api/portal/bookings/${PET_ID}/cancel/extra`,
+    `/api/portal/appointments/${PET_ID}/cancel/extra`,
+    `/api/portal/bookings/not-a-uuid/cancel`,
+    `/api/portal/appointments/not-a-uuid/cancel`,
+    `/api/portal/appointments/%2e%2e/cancel`,
+  ])("refuses the near-miss write path %s with 404", async (pathname) => {
+    const response = await callPost(mockNextRequest({ pathname }));
+
     expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a PUT reschedule with a malformed id and a percent-encoded id", async () => {
+    for (const pathname of [
+      "/api/portal/appointments/not-a-uuid",
+      `/api/portal/appointments/%32f1c9b0e-6a4d-4c3b-8f2e-1d5a7c9e0b31`,
+    ]) {
+      const response = await callPut(mockNextRequest({ pathname, body: jsonBody({}) }));
+      expect(response.status, pathname).toBe(404);
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

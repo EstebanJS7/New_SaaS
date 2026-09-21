@@ -25,17 +25,21 @@ type PortalMethod = "GET" | "POST" | "PUT";
 /** Literal portal collections reachable as a bare `GET` read. */
 const PORTAL_COLLECTIONS: ReadonlySet<string> = new Set(["me", "pets", "appointments", "bookings"]);
 
-/** Collections that may be followed by exactly one UUID path segment. */
-const PORTAL_RESOURCE_COLLECTIONS: ReadonlySet<string> = new Set(["pets", "appointments"]);
-
 /**
  * Method-independent shapes of the portal API surface. A shape is only
  * "known"; whether it is reachable also depends on the HTTP method.
  */
-type PortalPathShape = "collection" | "resource" | "profile" | "booking" | "availability";
+type PortalPathShape =
+  | "collection"
+  | "petResource"
+  | "appointmentResource"
+  | "profile"
+  | "booking"
+  | "cancellation"
+  | "availability";
 
 /**
- * Method-aware allowlist for the portal proxy (EPIC-08 WU4D).
+ * Method-aware allowlist for the portal proxy (EPIC-08 WU4D, DEC-007 A2d).
  *
  * The proxy is the ONLY browser-facing entrypoint to the private portal API, so
  * it must not become a general-purpose tunnel. A path is forwarded only when
@@ -49,6 +53,13 @@ type PortalPathShape = "collection" | "resource" | "profile" | "booking" | "avai
  * - `GET  /portal/bookings` (the holder's OWN requests; query-free)
  * - `GET  /portal/profile`, `PUT /portal/profile`
  * - `POST /portal/pets/:uuid/bookings`
+ * - `POST /portal/bookings/:uuid/cancel` (DEC-007 A2d)
+ * - `POST /portal/appointments/:uuid/cancel` (DEC-007 A2d)
+ * - `PUT  /portal/appointments/:uuid` (DEC-007 A2d reschedule)
+ *
+ * `petResource` and `appointmentResource` are DISTINCT shapes precisely so the
+ * reschedule `PUT` is reachable for an appointment and stays refused for a pet
+ * (`PUT /portal/pets/:uuid` has no API route).
  *
  * Deliberately absent (so the request is refused here, never smuggled
  * upstream): `POST`/`PUT`/`PATCH`/`DELETE` on any read shape, the API's
@@ -73,9 +84,15 @@ type PortalPathShape = "collection" | "resource" | "profile" | "booking" | "avai
  * `x-request-id` are forwarded.
  */
 const ALLOWED_PORTAL_ROUTES: Readonly<Record<PortalMethod, ReadonlySet<PortalPathShape>>> = {
-  GET: new Set<PortalPathShape>(["collection", "resource", "profile", "availability"]),
-  POST: new Set<PortalPathShape>(["booking"]),
-  PUT: new Set<PortalPathShape>(["profile"]),
+  GET: new Set<PortalPathShape>([
+    "collection",
+    "petResource",
+    "appointmentResource",
+    "profile",
+    "availability",
+  ]),
+  POST: new Set<PortalPathShape>(["booking", "cancellation"]),
+  PUT: new Set<PortalPathShape>(["profile", "appointmentResource"]),
 };
 
 /**
@@ -100,14 +117,28 @@ function portalPathShape(segments: readonly string[]): PortalPathShape | null {
     return segments[0] === "availability" ? "availability" : null;
   }
   if (segments.length === 2) {
-    return PORTAL_RESOURCE_COLLECTIONS.has(segments[0]) && UUID_PATTERN.test(segments[1])
-      ? "resource"
-      : null;
+    if (!UUID_PATTERN.test(segments[1])) {
+      return null;
+    }
+    if (segments[0] === "pets") {
+      return "petResource";
+    }
+    return segments[0] === "appointments" ? "appointmentResource" : null;
   }
   if (segments.length === 3) {
-    return segments[0] === "pets" && UUID_PATTERN.test(segments[1]) && segments[2] === "bookings"
-      ? "booking"
-      : null;
+    if (!UUID_PATTERN.test(segments[1])) {
+      return null;
+    }
+    if (segments[0] === "pets" && segments[2] === "bookings") {
+      return "booking";
+    }
+    if (
+      (segments[0] === "bookings" || segments[0] === "appointments") &&
+      segments[2] === "cancel"
+    ) {
+      return "cancellation";
+    }
+    return null;
   }
   return null;
 }

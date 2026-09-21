@@ -11,6 +11,8 @@ import { PortalAuthController } from "./portal-auth.controller.js";
 import { PortalAuthGuard } from "./portal-auth.guard.js";
 import { PortalAuthService } from "./portal-auth.service.js";
 import { PortalAvailabilityService } from "./portal-availability.service.js";
+import { PortalAppointmentController } from "./portal-appointment.controller.js";
+import { PortalAppointmentService } from "./portal-appointment.service.js";
 import { PortalBookingController } from "./portal-booking.controller.js";
 import { PortalBookingService } from "./portal-booking.service.js";
 import { PortalProfileController } from "./portal-profile.controller.js";
@@ -39,6 +41,7 @@ import { PortalSessionService } from "./portal-session.service.js";
     PortalAuthController,
     PortalAccessController,
     PortalReadController,
+    PortalAppointmentController,
     PortalBookingController,
     PortalProfileController,
   ],
@@ -48,6 +51,7 @@ import { PortalSessionService } from "./portal-session.service.js";
     PortalAccessService,
     PortalReadService,
     PortalAvailabilityService,
+    PortalAppointmentService,
     PortalBookingService,
     PortalProfileService,
     PortalAuthGuard,

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import {
   createPortalBookingRequestBody,
@@ -57,5 +57,22 @@ export class PortalBookingController {
       startAt: new Date(parsedBody.data.startAt),
       endAt: new Date(parsedBody.data.endAt),
     });
+  }
+
+  /**
+   * Cancels one of the holder's OWN PENDING requests (DEC-007 A2d). Ownership is
+   * the row's stored `(tenantId, customerId)` — see the service for why a
+   * request stays cancellable after a guardian link is revoked, unlike an
+   * appointment. An already-decided request is a `409`; a request belonging to
+   * another Customer is the byte-equivalent 404.
+   */
+  @Post("bookings/:id/cancel")
+  @HttpCode(200)
+  cancel(@Param() params: unknown): Promise<PortalBookingRequestResponse> {
+    const parsedParams = portalResourceIdParamSchema.safeParse(params);
+    if (!parsedParams.success) {
+      throw new DomainError("VALIDATION_FAILED", "Invalid resource id.");
+    }
+    return this.bookings.cancelBookingRequest(parsedParams.data.id);
   }
 }
