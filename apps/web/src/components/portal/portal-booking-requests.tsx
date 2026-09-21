@@ -1,18 +1,25 @@
 "use client";
 
 import type { JSX } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  cancelPortalBooking,
+  isPortalConflictError,
   isPortalDeniedError,
   listPortalBookings,
+  userFacingPortalBookingCancelError,
   userFacingPortalError,
   type PortalBookingRequestStatus,
+  type PortalBookingSummary,
 } from "@/lib/portal-api";
 import { formatClinicDay, formatClinicTime } from "@/components/portal/portal-datetime";
 
 /** Shared alert chrome so denied/error read the same to a holder. */
 const alertClassName =
   "rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive";
+
+const actionButtonClassName =
+  "rounded-md border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
  * Holder-facing labels for the booking-request lifecycle.
@@ -42,6 +49,13 @@ const REQUEST_STATUS_LABELS: Record<PortalBookingRequestStatus, string> = {
  * the booking success screen points at, so a PENDING request no longer
  * disappears into a void.
  *
+ * A PENDING request can be WITHDRAWN (`POST /portal/bookings/:id/cancel`). The
+ * action is offered for `PENDING` ONLY: the command is a PENDING
+ * compare-and-set, so a decided request has nothing left to cancel and renders
+ * no button. On success AND on a grounded 409 the list is invalidated so the
+ * stored status is what the holder sees, never a stale row contradicting the
+ * server. A failed attempt keeps the row actionable.
+ *
  * The pet name is intentionally plain text, not a link: the read keeps showing
  * a request after the guardian link to its pet is revoked, and the pet detail
  * read would then answer 404. States are kept visibly distinct: loading,
@@ -49,9 +63,25 @@ const REQUEST_STATUS_LABELS: Record<PortalBookingRequestStatus, string> = {
  * have never submitted a request — and never renders as an alert.
  */
 export function PortalBookingRequests(): JSX.Element {
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["portal", "bookings"],
     queryFn: listPortalBookings,
+  });
+
+  const cancel = useMutation({
+    mutationFn: (booking: PortalBookingSummary) => cancelPortalBooking(booking.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["portal", "bookings"] });
+    },
+    onError: (error) => {
+      // The command refused on its own precondition (a 409 means "already
+      // decided"), so refresh rather than keep rendering a status the server
+      // has already moved past.
+      if (isPortalConflictError(error)) {
+        void queryClient.invalidateQueries({ queryKey: ["portal", "bookings"] });
+      }
+    },
   });
 
   const data = query.data;
@@ -95,33 +125,81 @@ export function PortalBookingRequests(): JSX.Element {
         </div>
       ) : (
         <ul data-testid="portal-booking-requests-list" className="space-y-3">
-          {data.bookings.map((booking) => (
-            <li
-              key={booking.id}
-              data-testid="portal-booking-request"
-              className="rounded-lg border bg-card p-4 text-card-foreground"
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="font-medium" data-testid="portal-booking-request-pet">
-                  {booking.patientName}
-                </p>
-                <span
-                  data-testid="portal-booking-request-status"
-                  className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground"
-                >
-                  {REQUEST_STATUS_LABELS[booking.status]}
-                </span>
-              </div>
-              <p
-                data-testid="portal-booking-request-time"
-                className="mt-1 text-sm text-muted-foreground"
+          {data.bookings.map((booking) => {
+            const cancelling = cancel.variables?.id === booking.id;
+            const cancelSettled = cancelling && cancel.isSuccess;
+
+            return (
+              <li
+                key={booking.id}
+                data-testid="portal-booking-request"
+                className="rounded-lg border bg-card p-4 text-card-foreground"
               >
-                {formatClinicDay(booking.startAt, data.timeZone)} ·{" "}
-                {formatClinicTime(booking.startAt, data.timeZone)}–
-                {formatClinicTime(booking.endAt, data.timeZone)}
-              </p>
-            </li>
-          ))}
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="font-medium" data-testid="portal-booking-request-pet">
+                    {booking.patientName}
+                  </p>
+                  <span
+                    data-testid="portal-booking-request-status"
+                    className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                  >
+                    {REQUEST_STATUS_LABELS[booking.status]}
+                  </span>
+                </div>
+                <p
+                  data-testid="portal-booking-request-time"
+                  className="mt-1 text-sm text-muted-foreground"
+                >
+                  {formatClinicDay(booking.startAt, data.timeZone)} ·{" "}
+                  {formatClinicTime(booking.startAt, data.timeZone)}–
+                  {formatClinicTime(booking.endAt, data.timeZone)}
+                </p>
+
+                {booking.status === "PENDING" && !cancelSettled ? (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => cancel.mutate(booking)}
+                      disabled={cancel.isPending}
+                      className={actionButtonClassName}
+                      data-testid="portal-booking-request-cancel"
+                    >
+                      Cancel request
+                    </button>
+                    {cancelling && cancel.isPending ? (
+                      <p
+                        role="status"
+                        data-testid="portal-booking-request-cancel-pending"
+                        className="mt-1 text-sm text-muted-foreground"
+                      >
+                        Cancelling your request...
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {cancelSettled ? (
+                  <p
+                    role="status"
+                    data-testid="portal-booking-request-cancel-success"
+                    className="mt-3 text-sm text-muted-foreground"
+                  >
+                    Request cancelled.
+                  </p>
+                ) : null}
+
+                {cancelling && cancel.error ? (
+                  <div
+                    role="alert"
+                    data-testid="portal-booking-request-cancel-error"
+                    className={`mt-2 ${alertClassName}`}
+                  >
+                    {userFacingPortalBookingCancelError(cancel.error)}
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
