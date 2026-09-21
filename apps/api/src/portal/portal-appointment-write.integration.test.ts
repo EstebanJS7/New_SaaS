@@ -847,8 +847,12 @@ describe("portal appointment writes (real HTTP, full guard chain)", () => {
           .set("Cookie", holderA.cookie)
           .send({ startAt: movedStart, endAt: movedEnd, version: 1 });
         expect(unknown.status).toBe(404);
-        expect(revoked.body.error.code).toBe(unknown.body.error.code);
-        expect(revoked.body.error.message).toBe(unknown.body.error.message);
+        expect((revoked.body as ErrorEnvelopeBody).error.code).toBe(
+          (unknown.body as ErrorEnvelopeBody).error.code
+        );
+        expect((revoked.body as ErrorEnvelopeBody).error.message).toBe(
+          (unknown.body as ErrorEnvelopeBody).error.message
+        );
 
         expect(appointmentById(detachedAppointment.id)).toMatchObject({
           startAt: new Date(TARGET_START),
