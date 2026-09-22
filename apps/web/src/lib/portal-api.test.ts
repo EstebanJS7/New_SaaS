@@ -9,6 +9,7 @@ import {
   createPortalBooking,
   getPortalMe,
   getPortalPet,
+  getPortalProfile,
   isPortalConflictError,
   isPortalDeniedError,
   isPortalNotFoundError,
@@ -17,10 +18,12 @@ import {
   listPortalBookings,
   listPortalPets,
   reschedulePortalAppointment,
+  updatePortalProfile,
   userFacingPortalAppointmentCancelError,
   userFacingPortalAppointmentsError,
   userFacingPortalBookingCancelError,
   userFacingPortalError,
+  userFacingPortalProfileError,
   userFacingPortalRescheduleError,
 } from "./portal-api";
 
@@ -240,6 +243,101 @@ describe("portal appointments client contract", () => {
   });
 });
 
+describe("portal profile client contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const profile = {
+    phone: "+595 21 555 1234",
+    address: {
+      label: "Home",
+      line1: "Av. Mcal. Lopez 123",
+      line2: null,
+      city: "Asuncion",
+      state: null,
+      postalCode: "1209",
+      countryCode: "PY",
+    },
+  };
+
+  it("getPortalProfile GETs /api/portal/profile with cache: no-store and no method", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(profile)));
+    global.fetch = fetchMock;
+
+    await expect(getPortalProfile()).resolves.toEqual(profile);
+
+    const [input, init] = lastCall(fetchMock);
+    expect(resolveRequestUrl(input)).toBe("/api/portal/profile");
+    expect(init).toMatchObject({ cache: "no-store" });
+    expect(init.method).toBeUndefined();
+  });
+
+  it("updatePortalProfile PUTs /api/portal/profile with the strict phone/address body", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(profile)));
+    global.fetch = fetchMock;
+
+    await expect(
+      updatePortalProfile({
+        phone: "+595 21 555 1234",
+        address: {
+          line1: "Av. Mcal. Lopez 123",
+          city: "Asuncion",
+          postalCode: "1209",
+          countryCode: "PY",
+        },
+      })
+    ).resolves.toEqual(profile);
+
+    const [input, init] = lastCall(fetchMock);
+    expect(resolveRequestUrl(input)).toBe("/api/portal/profile");
+    expect(init.method).toBe("PUT");
+    expect(init).toMatchObject({ cache: "no-store" });
+    expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
+    // Exactly the two top-level keys and the seven address keys: an extra key
+    // (email, name, kind, tax data, identity) is a 400 from the API's
+    // `.strict()` schema, so the client never adds one.
+    expect(JSON.parse(init.body as string)).toEqual({
+      phone: "+595 21 555 1234",
+      address: {
+        line1: "Av. Mcal. Lopez 123",
+        city: "Asuncion",
+        postalCode: "1209",
+        countryCode: "PY",
+      },
+    });
+  });
+
+  it("updatePortalProfile sends only the supplied keys, never undefined ones", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(profile)));
+    global.fetch = fetchMock;
+
+    await updatePortalProfile({ phone: "555-0000" });
+
+    const [, init] = lastCall(fetchMock);
+    // `address` is absent, so the API leaves the stored address untouched
+    // instead of receiving an `undefined` key it can only reject or ignore.
+    expect(JSON.parse(init.body as string)).toEqual({ phone: "555-0000" });
+  });
+
+  it("surfaces the stable code on a profile PUT refusal", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({ error: { code: "VALIDATION_FAILED", message: "Invalid body." } }, 400)
+      )
+    );
+    global.fetch = fetchMock;
+
+    const error = await updatePortalProfile({ phone: "555-0000" }).catch(
+      (caught: unknown) => caught
+    );
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect((error as ApiRequestError).code).toBe("VALIDATION_FAILED");
+    expect((error as ApiRequestError).status).toBe(400);
+  });
+});
+
 describe("portal appointment command client contract (DEC-007 A2d)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -438,6 +536,38 @@ describe("userFacingPortalError", () => {
       "You do not have access to this portal."
     );
     expect(userFacingPortalRescheduleError(new ApiRequestError("INTERNAL", "x", 500))).toBe(
+      "Something went wrong. Please try again."
+    );
+  });
+});
+
+describe("userFacingPortalProfileError", () => {
+  it("keeps a masked profile not-found cause-neutral and never borrows the pet wording", () => {
+    const copy = userFacingPortalProfileError(
+      new ApiRequestError("NOT_FOUND", "the session customer was not resolved upstream", 404)
+    );
+    // The profile masks "not yours" and "nothing to resolve" as the same 404,
+    // so the copy names both possibilities instead of asserting one.
+    expect(copy).toContain("profile");
+    expect(copy).toContain("may not exist yet");
+    expect(copy).toContain("may not be linked to your account");
+    expect(copy).not.toContain("pet");
+    expect(copy).not.toContain("the session customer was not resolved upstream");
+  });
+
+  it("maps a validation failure without echoing which internal rule fired", () => {
+    const copy = userFacingPortalProfileError(
+      new ApiRequestError("VALIDATION_FAILED", "Invalid profile update body.", 400)
+    );
+    expect(copy).toContain("not accepted");
+    expect(copy).not.toContain("Invalid profile update body.");
+  });
+
+  it("delegates denied and unknown codes to the shared copy", () => {
+    expect(userFacingPortalProfileError(new ApiRequestError("FORBIDDEN", "x", 403))).toBe(
+      "You do not have access to this portal."
+    );
+    expect(userFacingPortalProfileError(new ApiRequestError("INTERNAL", "x", 500))).toBe(
       "Something went wrong. Please try again."
     );
   });

@@ -14,32 +14,40 @@ describe("PortalNav", () => {
       "/acme-clinic",
       "/acme-clinic/pets",
       "/acme-clinic/appointments",
+      "/acme-clinic/profile",
     ]);
-    expect(links.map((link) => link.textContent)).toEqual(["Home", "Pets", "Appointments"]);
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Home",
+      "Pets",
+      "Appointments",
+      "Profile",
+    ]);
   });
 
   it("keeps every entry a labelled link with a test id and no staff destinations", () => {
     render(<PortalNav slug="acme-clinic" />);
 
     const entries = screen.getAllByTestId("portal-nav-entry");
-    expect(entries).toHaveLength(3);
+    expect(entries).toHaveLength(4);
     for (const entry of entries) {
       expect(entry.tagName).toBe("A");
     }
     // No staff route group, and no destination that would 404 on this surface.
-    // `/appointments` is a real portal destination and must not trip the staff
-    // `/app` route-group check, so the segment is anchored rather than bare.
+    // `/appointments` and `/profile` are real portal destinations and must not
+    // trip the staff `/app` route-group check, so the segment is anchored rather
+    // than bare; booking still has no destination from here.
     expect(entries.map((entry) => entry.getAttribute("href")).join(" ")).not.toMatch(
-      /\/app(?:\/|$)|profile|booking/i
+      /\/app(?:\/|$)|booking/i
     );
   });
 
   it("preserves a slug that needs encoding", () => {
     render(<PortalNav slug="acme clinic" />);
 
-    const [home, pets, appointments] = screen.getAllByTestId("portal-nav-entry");
+    const [home, pets, appointments, profile] = screen.getAllByTestId("portal-nav-entry");
     expect(home.getAttribute("href")).toBe("/acme%20clinic");
     expect(pets.getAttribute("href")).toBe("/acme%20clinic/pets");
     expect(appointments.getAttribute("href")).toBe("/acme%20clinic/appointments");
+    expect(profile.getAttribute("href")).toBe("/acme%20clinic/profile");
   });
 });
