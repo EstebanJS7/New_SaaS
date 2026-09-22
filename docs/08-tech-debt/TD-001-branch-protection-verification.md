@@ -2,14 +2,14 @@
 id: TD-001
 type: tech-debt
 title: Verify and configure main branch protection
-status: open
+status: resolved
 severity: high
 related_epics:
   - EPIC-00
 related_stories:
   - FOUND-006
 created: 2026-08-23
-updated: 2026-09-11
+updated: 2026-09-21
 ---
 
 # TD-001 — Verify and configure `main` branch protection
@@ -45,11 +45,44 @@ not an unverifiable item, and it remains **open** until protection is
 configured. See the canonical evidence baseline in `docs/10-qa/CI-EVIDENCE.md`
 (CI run `34605178149` at `c9cff613`).
 
+## Resolution (2026-09-21)
+
+Branch protection is now enabled on `main` with both required checks. The rule
+was applied through the authenticated GitHub API during the EPIC-08 closure work
+and read back immediately:
+
+```text
+gh api repos/EstebanJS7/New_SaaS/branches/main/protection
+→ required_status_checks.contexts = ["Database migrations", "Lint, Typecheck, Test, Build"]
+   required_status_checks.strict   = false
+   required_pull_request_reviews   = null
+   enforce_admins.enabled          = false
+   allow_force_pushes.enabled      = false
+   allow_deletions.enabled         = false
+```
+
+The gate is now **merge-blocking**: a red `Database migrations` or
+`Lint, Typecheck, Test, Build` check prevents merging into `main`, which is what
+`.github/workflows/ci.yml` has documented as required since it was written.
+
+Decisions taken with the enablement, recorded rather than left implicit:
+
+- **`strict: false`** — branches are not required to be up to date before
+  merging. Deliberate: the epic landed as a long chain of stacked PRs, and
+  requiring up-to-date branches would have forced a rebase before every merge
+  for no safety the CI runs did not already provide.
+- **No required approving reviews** — a single-maintainer repository cannot
+  satisfy a reviewer requirement with a second account.
+- **`enforce_admins: false`** — an administrator can still bypass the checks.
+  That is a deliberate escape hatch and the honest residual gap in this record:
+  the gate blocks ordinary merges, not an admin override.
+- **Force pushes and branch deletions remain disabled** on `main`.
+
 ## Debt
 
 Until branch protection is verified as enabled, the CI quality gate is green but
 **not merge-blocking**: nothing technically prevents merging commits to `main`
-while lint/typecheck/test/build fail.
+while lint/typecheck/test/build fail. _(Resolved 2026-09-21; see above.)_
 
 ## Why It Is Safe to Defer
 
@@ -96,9 +129,13 @@ repository. Must be resolved before EPIC-01 feature work starts landing on
 
 ## Verification After Resolution
 
-- [ ] Protection rule for `main` lists `Lint, Typecheck, Test, Build` as a
-      required status check. _(2026-09-11: read-only probe returned HTTP 404
-      "Branch not protected" — absence confirmed, rule still missing.)_
-- [x] Evidence quote recorded in `docs/10-qa/CI-EVIDENCE.md` (HTTP 404 finding,
-      CI run `34605178149` at `c9cff613`).
-- [ ] This record closed with a link to the evidence commit.
+- [x] Protection rule for `main` lists both `Database migrations` and
+      `Lint, Typecheck, Test, Build` as required status checks. _(2026-09-21:
+      applied and read back through the authenticated API; the response is
+      quoted in the Resolution section above.)_
+- [x] Evidence recorded in `docs/10-qa/CI-EVIDENCE.md` — the 2026-09-11 HTTP 404
+      finding (CI run `34605178149` at `c9cff613`) plus the EPIC-08 closure
+      baseline.
+- [x] This record closed: status `resolved`, API response quoted. The residual
+      gap — `enforce_admins: false`, so an administrator can bypass the checks —
+      is stated rather than hidden.

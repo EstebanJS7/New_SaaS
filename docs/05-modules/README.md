@@ -41,6 +41,12 @@ Implemented (EPIC-07):
 Scheduling.md
 ```
 
+Implemented (EPIC-08):
+
+```text
+Portal.md
+```
+
 Recommended files:
 
 ```text
@@ -50,7 +56,6 @@ Sales.md
 Cash.md
 Billing.md
 Fiscal.md
-Portal.md
 Notifications.md
 ```
 

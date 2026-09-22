@@ -11,9 +11,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
-    # `feat/epic-08-portal` is the EPIC-08 feature-branch-chain tracker target:
-    # child PRs open against it, so PR quality checks must run there too.
-    branches: [main, master, feat/epic-08-portal*]
+    # Required checks run for pull requests targeting the default branches.
+    branches: [main, master]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
