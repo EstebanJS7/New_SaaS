@@ -100,6 +100,11 @@ email flows or Catalog scope.
       kind/tax/foreign identifiers with `400 VALIDATION_FAILED`, and appends one
       co-committed `PORTAL` audit row. Evidence:
       `portal-profile.integration.test.ts`.
+- [x] The portal web surface includes a profile page where the holder reads and
+      updates their own phone and address, mirroring the API's per-field limits
+      and stating that email is staff-operated. Evidence: PR #55
+      (`apps/web/src/app/(portal)/[slug]/profile/portal-profile.tsx` and
+      `portal-profile.test.tsx`).
 - [x] Every portal route is fenced exactly to `/portal/*` with no staff
       permission metadata and login as the only `@Public` portal route; the web
       proxy forwards only allowlisted paths and only the portal cookie.
@@ -119,6 +124,11 @@ data/settings → WU2 identity/boundary → WU3 read/proxy → WU4 booking/profi
 specs: `openspec/specs/portal-management/spec.md` created, and
 `openspec/specs/scheduling/spec.md` and `openspec/specs/tenant-settings/spec.md`
 updated.
+
+The final acceptance item, the holder-facing profile page, landed **after** the
+archive as PR #55 (merged at `c9959db`). It supersedes the archived `tasks.md`
+4.3 entry, which had been left unchecked as a limitation; that entry is
+historical and this roadmap's acceptance criteria are the current truth.
 
 ## Dependencies
 
@@ -186,8 +196,11 @@ acceptance-criteria map above.
 - [[TD-012]] — two load-sensitive web tests fail intermittently and now block
   merges under the enabled branch protection; the sightings are delivery-session
   observations, not reconstructable repository evidence.
-- Merged-state limitations documented in [[Portal]]: there is no holder-facing
-  profile page or client function; `bookingRequiresApproval` is registered but
-  not consumed by the booking flow; species/breed names cannot be resolved
-  without a holder-facing catalog read; and `INTERNAL` `DomainError` messages
-  are echoed to the client by the global exception filter.
+- Merged-state limitations documented in [[Portal]]: contact details cannot be
+  removed from the portal (clearing a field sends an absent key, so the stored
+  value is kept); only the most recently updated active address is written; the
+  form's `maxLength` is a convenience and the server is the authority;
+  `bookingRequiresApproval` is registered but not consumed by the booking flow;
+  species/breed names cannot be resolved without a holder-facing catalog read;
+  and `INTERNAL` `DomainError` messages are echoed to the client by the global
+  exception filter.
