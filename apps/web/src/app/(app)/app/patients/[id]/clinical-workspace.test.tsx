@@ -449,36 +449,44 @@ describe("ClinicalWorkspace", () => {
   });
 
   it("does not clobber a newer local edit when a save resolves in flight", async () => {
-    let serverVersion = 1;
+    // A single mutable server row backs both doubles, so a refetch after a save
+    // returns what the save wrote instead of an unrelated seed row. That makes
+    // the test assert the guard, not a contradiction between its own doubles.
+    let serverRow: ClinicalEncounter = { ...DRAFT };
     let saveAttempts = 0;
     let releaseFirstSave: (() => void) | undefined;
+    let releaseSecondSave: (() => void) | undefined;
     const savedBodies: Record<string, unknown>[] = [];
 
     const fetchMock = mockClinical({
-      list: () => jsonResponse([{ ...DRAFT, version: serverVersion }]),
+      list: () => jsonResponse([{ ...serverRow }]),
       save: (body) => {
         saveAttempts += 1;
+        const submitted = body ?? {};
         if (saveAttempts === 1) {
-          const submitted = body ?? {};
           return new Promise<Response>((resolve) => {
             releaseFirstSave = () => {
-              serverVersion = 2;
-              resolve(
-                jsonResponse({
-                  ...DRAFT,
-                  version: serverVersion,
-                  diagnosis: submitted.diagnosis as string | null,
-                })
-              );
+              serverRow = {
+                ...serverRow,
+                version: serverRow.version + 1,
+                diagnosis: submitted.diagnosis as string | null,
+              };
+              resolve(jsonResponse({ ...serverRow }));
             };
           });
         }
-        savedBodies.push(body ?? {});
-        serverVersion += 1;
-        return jsonResponse({
-          ...DRAFT,
-          version: serverVersion,
-          diagnosis: body?.diagnosis as string | null,
+        savedBodies.push(submitted);
+        // Gate the follow-up save so the assertion below cannot race its echo
+        // and refetch: it is released only after the field is asserted.
+        return new Promise<Response>((resolve) => {
+          releaseSecondSave = () => {
+            serverRow = {
+              ...serverRow,
+              version: serverRow.version + 1,
+              diagnosis: submitted.diagnosis as string | null,
+            };
+            resolve(jsonResponse({ ...serverRow }));
+          };
         });
       },
     });
@@ -499,12 +507,126 @@ describe("ClinicalWorkspace", () => {
       await Promise.resolve();
     });
 
-    // The stale server echo must not clobber the newer local edit.
-    await waitFor(() => expect(screen.getByLabelText("Diagnosis")).toHaveValue("Second edit"));
+    // Wait for the first save's echo to be processed, then assert the stale echo
+    // ("First edit") did not replace the newer local edit. The follow-up save is
+    // still gated, so this cannot be satisfied by a later write restoring it.
+    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Second edit");
 
     await flushAutosave();
     await waitFor(() => expect(saveCalls(fetchMock)).toHaveLength(2));
+    await act(async () => {
+      releaseSecondSave?.();
+      await Promise.resolve();
+    });
     expect(savedBodies[0]).toMatchObject({ diagnosis: "Second edit", version: 2 });
+  });
+
+  it("does not revert the draft when an older-version refetch lands after a newer save", async () => {
+    const staleRow: ClinicalEncounter = { ...DRAFT, version: 1 };
+    let listCalls = 0;
+    let releaseStaleRefetch: (() => void) | undefined;
+    const staleRefetchGate = new Promise<void>((resolve) => {
+      releaseStaleRefetch = resolve;
+    });
+
+    mockClinical({
+      // The first read seeds the draft. The post-save refetch is held open and
+      // then resolves with the pre-save row, simulating an out-of-order response
+      // that is older than the version the save already applied.
+      list: async () => {
+        listCalls += 1;
+        if (listCalls === 1) return jsonResponse([{ ...DRAFT }]);
+        await staleRefetchGate;
+        return jsonResponse([{ ...staleRow }]);
+      },
+      save: (body) =>
+        jsonResponse({
+          ...DRAFT,
+          version: 2,
+          diagnosis: body?.diagnosis as string | null,
+        }),
+    });
+
+    renderWorkspace();
+    await selectEncounter();
+    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+      target: { value: "Edited locally" },
+    });
+    await flushAutosave();
+
+    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    // The save echo advanced the editor to version 2.
+    await waitFor(() => expect(screen.getByText(/Version 2/)).toBeInTheDocument());
+    await waitFor(() => expect(listCalls).toBeGreaterThan(1));
+
+    await act(async () => {
+      releaseStaleRefetch?.();
+      await staleRefetchGate;
+    });
+
+    // The stale refetch regressed the query data back to version 1...
+    await waitFor(() => expect(screen.getByText(/Version 1/)).toBeInTheDocument());
+    // ...but the monotonic guard must keep the newer draft in place.
+    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Edited locally");
+  });
+
+  it("sends the newer applied version on the next edit after an older-version refetch", async () => {
+    const staleRow: ClinicalEncounter = { ...DRAFT, version: 1 };
+    let listCalls = 0;
+    let releaseStaleRefetch: (() => void) | undefined;
+    const staleRefetchGate = new Promise<void>((resolve) => {
+      releaseStaleRefetch = resolve;
+    });
+    const savedBodies: Record<string, unknown>[] = [];
+
+    mockClinical({
+      // Same out-of-order refetch as the test above: the post-save read is held
+      // and then resolves with the pre-save row.
+      list: async () => {
+        listCalls += 1;
+        if (listCalls === 1) return jsonResponse([{ ...DRAFT }]);
+        await staleRefetchGate;
+        return jsonResponse([{ ...staleRow }]);
+      },
+      save: (body) => {
+        savedBodies.push(body ?? {});
+        return jsonResponse({
+          ...DRAFT,
+          version: 2,
+          diagnosis: body?.diagnosis as string | null,
+        });
+      },
+    });
+
+    renderWorkspace();
+    await selectEncounter();
+    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+      target: { value: "First edit" },
+    });
+    await flushAutosave();
+
+    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Version 2/)).toBeInTheDocument());
+    await waitFor(() => expect(listCalls).toBeGreaterThan(1));
+
+    await act(async () => {
+      releaseStaleRefetch?.();
+      await staleRefetchGate;
+    });
+
+    // The stale refetch regressed the LIST row back to version 1...
+    await waitFor(() => expect(screen.getByText(/Version 1/)).toBeInTheDocument());
+
+    // ...but the next edit must NOT submit that stale version: the ref the
+    // mutation reads stayed at the applied version 2.
+    fireEvent.change(screen.getByLabelText("Diagnosis"), {
+      target: { value: "Second edit" },
+    });
+    await flushAutosave();
+
+    await waitFor(() => expect(savedBodies).toHaveLength(2));
+    expect(savedBodies[1]).toMatchObject({ version: 2, diagnosis: "Second edit" });
   });
 
   it("renders a denied create as permission-aware UX and disables the action", async () => {

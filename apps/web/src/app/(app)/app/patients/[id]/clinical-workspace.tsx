@@ -234,8 +234,22 @@ function EncounterEditor({
   // closures without re-creating the timer callback on every keystroke.
   const contentRef = useRef(content);
   contentRef.current = content;
+  // Highest server version whose content has been applied to the shared list
+  // cache, the ref used by the NEXT mutation, and/or the local baseline.
+  // Refetches can resolve out of order (an older response landing after a newer
+  // save echo), and nothing downstream may follow the version backwards.
+  const appliedVersionRef = useRef<number>(encounter.version);
   const encounterRef = useRef(encounter);
-  encounterRef.current = encounter;
+  // Adopt the prop row only when it is at least as new as the version already
+  // applied. Without this a regressing refetch would update the ref the NEXT
+  // mutation reads, so autosave would submit a stale version and earn an
+  // avoidable 409. The comparison is `>=`, not `>`: a same-version refetch that
+  // carries newer content is legitimate and is exactly the originally observed
+  // failure. The sync effect below applies the same rule to the baseline and the
+  // visible draft, and `handleReload` applies it to the conflict refresh.
+  if (encounter.version >= appliedVersionRef.current) {
+    encounterRef.current = encounter;
+  }
   const baselineRef = useRef<ClinicalEncounterContent>(contentFromEncounter(encounter));
   const submittedRef = useRef<ClinicalEncounterContent | null>(null);
   const mountedRef = useRef(true);
@@ -257,6 +271,7 @@ function EncounterEditor({
 
   /** Adopts the authoritative server row into the shared encounter list cache. */
   function applyServerVersion(updated: ClinicalEncounter): void {
+    appliedVersionRef.current = Math.max(appliedVersionRef.current, updated.version);
     baselineRef.current = contentFromEncounter(updated);
     queryClient.setQueryData<ClinicalEncounter[]>(listQueryKey, (previous) =>
       previous ? previous.map((item) => (item.id === updated.id ? updated : item)) : previous
@@ -311,9 +326,14 @@ function EncounterEditor({
     },
   });
 
-  // Adopt a refetched server version only when the local draft has no unsaved
-  // edits; a dirty draft is preserved and its stale version surfaces as a 409.
+  // Adopt a refetched server version only when it moves forward and the local
+  // draft has no unsaved edits; a dirty draft is preserved and its stale version
+  // surfaces as a 409. The version check is monotonic because a refetch can
+  // resolve out of order: a response older than the version already applied by
+  // a save echo or a previous refetch must not overwrite the draft.
   useEffect(() => {
+    if (encounter.version < appliedVersionRef.current) return;
+    appliedVersionRef.current = encounter.version;
     const serverContent = contentFromEncounter(encounter);
     const localIsDirty = !sameContent(contentRef.current, baselineRef.current);
     baselineRef.current = serverContent;
@@ -359,8 +379,13 @@ function EncounterEditor({
       const refreshed = queryClient
         .getQueryData<ClinicalEncounter[]>(listQueryKey)
         ?.find((item) => item.id === encounterRef.current.id);
-      if (refreshed) {
+      if (refreshed && refreshed.version >= appliedVersionRef.current) {
+        // Same monotonic rule as every other adoption: a refreshed row older
+        // than the applied version must not regress the ref or install an older
+        // baseline. A same-version row is admissible because it can carry newer
+        // content.
         encounterRef.current = refreshed;
+        appliedVersionRef.current = Math.max(appliedVersionRef.current, refreshed.version);
         baselineRef.current = contentFromEncounter(refreshed);
       }
     } finally {
