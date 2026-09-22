@@ -172,6 +172,54 @@ export interface ReschedulePortalAppointmentInput {
   readonly version: number;
 }
 
+/**
+ * Allowlisted address projection the profile read/write returns: the holder's
+ * user-facing address fields only. `line1` is nullable here because the DB
+ * column is, but the WRITE contract still requires it whenever an address is
+ * supplied (see `PortalProfileAddressInput`).
+ */
+export interface PortalProfileAddress {
+  readonly label: string | null;
+  readonly line1: string | null;
+  readonly line2: string | null;
+  readonly city: string | null;
+  readonly state: string | null;
+  readonly postalCode: string | null;
+  readonly countryCode: string | null;
+}
+
+/** `GET`/`PUT /portal/profile` response: the holder's own phone and address. */
+export interface PortalProfile {
+  readonly phone: string | null;
+  readonly address: PortalProfileAddress | null;
+}
+
+/**
+ * Address payload for `PUT /portal/profile`. `line1` is REQUIRED whenever an
+ * address is sent (the API's `.strict()` schema enforces it); every other field
+ * is optional and, when absent, the API leaves the stored value untouched.
+ */
+export interface PortalProfileAddressInput {
+  readonly label?: string;
+  readonly line1: string;
+  readonly line2?: string;
+  readonly city?: string;
+  readonly state?: string;
+  readonly postalCode?: string;
+  readonly countryCode?: string;
+}
+
+/**
+ * `PUT /portal/profile` payload. The API requires at least one of `phone` or
+ * `address` and rejects every other key (`email`, `displayName`, `kind`,
+ * `taxId`, `customerId`, ...) with a 400 VALIDATION_FAILED, so this surface can
+ * only ever write the two holder-owned values.
+ */
+export interface UpdatePortalProfileInput {
+  readonly phone?: string;
+  readonly address?: PortalProfileAddressInput;
+}
+
 interface ApiErrorEnvelope {
   readonly error: {
     readonly code?: string;
@@ -242,6 +290,24 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
 /** `GET /portal/me` — the holder's server-derived identity probe. */
 export function getPortalMe(): Promise<PortalMe> {
   return getJson("/me");
+}
+
+/**
+ * `GET /portal/profile` — the holder's own phone and address. This is the
+ * profile READ only, NOT an identity probe: `getPortalMe` stays the identity
+ * read, so the two are never conflated.
+ */
+export function getPortalProfile(): Promise<PortalProfile> {
+  return getJson("/profile");
+}
+
+/**
+ * `PUT /portal/profile` — writes the holder's own phone and/or address. The
+ * body is forwarded exactly as given, so the API's `.strict()` schema sees only
+ * the keys this contract allows and never an extra one.
+ */
+export function updatePortalProfile(input: UpdatePortalProfileInput): Promise<PortalProfile> {
+  return putJson("/profile", input);
 }
 
 /** `GET /portal/pets` — the pets linked to the authenticated holder. */
@@ -461,4 +527,28 @@ export function userFacingPortalRescheduleError(error: Error): string {
     return "That time may no longer be free, or the appointment may have changed. We refreshed your appointments.";
   }
   return userFacingPortalAppointmentsError(error);
+}
+
+/**
+ * Maps the stable portal error contract for the PROFILE surface.
+ *
+ * Same contract as `userFacingPortalError` (stable-code mapping, never the
+ * server message), with one difference: the profile read/write masks a profile
+ * that cannot be resolved as the SAME 404 whether it is not the holder's or
+ * there is nothing to resolve, so the copy keeps both possibilities instead of
+ * asserting one (the shared mapper's not-found copy says "pet", which would be
+ * wrong here). A `VALIDATION_FAILED` (400) is the API refusing a body it does
+ * not accept; the copy says the details were not accepted without echoing which
+ * internal rule fired. Every other code delegates unchanged.
+ */
+export function userFacingPortalProfileError(error: Error): string {
+  const code = error instanceof ApiRequestError ? error.code : "";
+  switch (code) {
+    case "VALIDATION_FAILED":
+      return "Some of the details you entered are not accepted. Please check them and try again.";
+    case "NOT_FOUND":
+      return "We could not find your profile. It may not exist yet, or it may not be linked to your account.";
+    default:
+      return userFacingPortalError(error);
+  }
 }
