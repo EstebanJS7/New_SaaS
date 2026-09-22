@@ -329,17 +329,43 @@ the earlier domains:
     the foreign rows unchanged, and an appointment stops being actionable once
     its guardian link is revoked.
 
+### Final local closure run (2026-09-21)
+
+This is a **local run on the merged `main` at `c9959db`** (merge of PR #55,
+`feat/epic-08-portal-profile-page`), **not** a CI run. It is recorded as the
+epic's final gate evidence because it exercises the full root command set —
+including the Next build and its post-build verification — on the commit that
+carries the last acceptance item, the holder profile page. The CI baselines
+above remain the immutable CI evidence, and CI's `Database migrations` job
+remains the authority on the clean-host path.
+
+| Command             | Exit | Result                                                                 |
+| ------------------- | ---: | ---------------------------------------------------------------------- |
+| `pnpm lint`         |    0 | 14/14 tasks                                                            |
+| `pnpm format-check` |    0 | all matched files formatted                                            |
+| `pnpm typecheck`    |    0 | 14/14 tasks                                                            |
+| `pnpm test`         |    0 | 15/15 tasks                                                            |
+| `pnpm build`        |    0 | 9/9 tasks, including the Next build and its post-build verification    |
+| `pnpm services:up`  |    0 | starts the project's `newsaas-postgres` and `newsaas-redis` containers |
+| `pnpm preflight`    |    0 | PostgreSQL and Redis reachable                                         |
+
+Context for `services:up`: an earlier session could not run it because a
+pre-existing container with the same name collided; that is resolved and the
+command now starts the containers. `pnpm test` is the standard suite; the
+live-PostgreSQL application-path suite is a separate target
+(`pnpm test:live-pg`) that runs in CI's `Database migrations` job (40/40 above).
+
 ### Known warnings and open limitations
 
 Recorded as limitations, not as resolved items.
 
-| Item                                                                                                                    | State    | Record                             |
-| ----------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------- |
-| `main` branch protection enabled 2026-09-21 with both required checks (supersedes the 2026-09-11 HTTP 404 finding)      | resolved | [[TD-001 Branch protection]]       |
-| Broader Batch 5 cross-tenant isolation plus RBAC concurrency and audit-rollback not yet run against live PG             | open     | [[TD-006 Live PG isolation run]]   |
-| Portal has no holder-facing profile page and no client function; `bookingRequiresApproval` is registered but unconsumed | open     | [[Portal]] / [[DEC-008]]           |
-| Species/breed names unresolved (no holder-facing catalog read); `INTERNAL` `DomainError` messages echoed to clients     | open     | [[Portal]]                         |
-| Playwright E2E coverage for the portal UI                                                                               | accepted | [[TD-007 Playwright E2E deferred]] |
+| Item                                                                                                                                                                        | State    | Record                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------- |
+| `main` branch protection enabled 2026-09-21 with both required checks (supersedes the 2026-09-11 HTTP 404 finding)                                                          | resolved | [[TD-001 Branch protection]]       |
+| Broader Batch 5 cross-tenant isolation plus RBAC concurrency and audit-rollback not yet run against live PG                                                                 | open     | [[TD-006 Live PG isolation run]]   |
+| Portal contact details cannot be removed; only the most recently updated active address is written; form `maxLength` is a convenience; `bookingRequiresApproval` unconsumed | open     | [[Portal]] / [[DEC-008]]           |
+| Species/breed names unresolved (no holder-facing catalog read); `INTERNAL` `DomainError` messages echoed to clients                                                         | open     | [[Portal]]                         |
+| Playwright E2E coverage for the portal UI                                                                                                                                   | accepted | [[TD-007 Playwright E2E deferred]] |
 
 No open item above is treated as resolved by this baseline, and no code fix is
 in scope for this closure. Branch protection is no longer an open item: it was

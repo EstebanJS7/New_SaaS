@@ -47,7 +47,9 @@ implementation merged at `27bc04a` and the portal write paths passed their
 durable live-PostgreSQL concurrency/isolation race (suite 40/40); its SDD change
 is archived at `openspec/changes/archive/2026-09-21-epic-08/` and its spec
 deltas are merged into the standing `portal-management` (created), `scheduling`
-and `tenant-settings` specs.
+and `tenant-settings` specs. The last acceptance item, the holder profile page,
+merged as PR #55 at `c9959db`, where the epic's final local closure gate run is
+recorded in `docs/10-qa/CI-EVIDENCE.md`.
 
 Individual Stories live in `../02-stories/`.
 

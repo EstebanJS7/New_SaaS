@@ -49,7 +49,7 @@ entitlement, and mutations are audited with a `PORTAL` actor.
   active holder.
 - Staff booking-request decision surface: list, approve, reject.
 - A portal-only web surface (branded shell, nav, pets, pet detail, booking,
-  appointments) and a strict portal web proxy.
+  appointments, profile) and a strict portal web proxy.
 
 ## Main Entities
 
@@ -223,10 +223,18 @@ It does **not** hold everywhere on this surface:
 
 ## Known Limitations / Residual Risks
 
-- **No holder-facing profile page.** The profile read/write exists on the API
-  and is forwardable by the proxy, but the merged web surface has no profile
-  page and no client function for it; `PortalNav` deliberately links only home,
-  pets and appointments.
+- **Contact details cannot be removed from the portal.** Clearing a field sends
+  an absent key, and the API treats absent as "leave untouched", so the cleared
+  value is kept and restored on the next read. The form states this plainly
+  instead of implying removal. Lifting it needs an explicit clear operation in
+  the API with its own mutation and audit contract.
+- **Only the most recently updated active address is written.** The profile
+  update targets the holder's most recently updated active address, so a holder
+  with several addresses cannot choose between them from the portal.
+- **The form's `maxLength` is a convenience, not the contract.** The server is
+  the authority; the client mirrors the API's per-field limits and re-checks
+  every one in validation, because `maxLength` alone would not stop an
+  over-length value.
 - **Species/breed names are unresolved.** The pet projection returns
   `speciesId`/`breedId` as stable ids and there is no holder-facing catalog
   route, so `pet-facts.ts` intentionally renders nothing for them rather than a
@@ -277,8 +285,8 @@ It does **not** hold everywhere on this surface:
   the revoked-guardian `404`.
 - `apps/web/src/app/api/portal/[[...path]]/route.test.ts` — proxy allowlist,
   query policy and portal-cookie-only forwarding; the portal component suites
-  cover the UI states; `portal-no-staff-imports.test.ts` enforces no staff
-  chrome.
+  cover the UI states (`profile/portal-profile.test.tsx` for the profile read
+  and write form); `portal-no-staff-imports.test.ts` enforces no staff chrome.
 - WU5 durable run (2026-09-21): full live-PG suite **40/40 passed** at `27bc04a`
   (merge of PR #53), including the portal write-race block, in the
   `Database migrations` job's fresh PG16 container.
