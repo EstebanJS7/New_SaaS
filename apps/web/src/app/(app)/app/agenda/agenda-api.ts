@@ -74,6 +74,35 @@ export interface AppointmentOptions {
   readonly professionals: readonly { readonly membershipId: string }[];
 }
 
+/**
+ * One local wall-clock availability window for a (professional, branch) pair,
+ * mirrored from the `scheduling` settings namespace. `weekday` is 0 (Sunday) to
+ * 6 (Saturday) and the bounds are minutes past local midnight in the tenant
+ * timezone, so DST conversion is left to the presentation boundary.
+ */
+export interface SchedulingAvailabilityWindow {
+  readonly membershipId: string;
+  readonly branchId: string;
+  readonly weekday: number;
+  readonly startMinute: number;
+  readonly endMinute: number;
+}
+
+/** One non-recurring block over an absolute UTC range for a professional. */
+export interface SchedulingBlock {
+  readonly membershipId: string;
+  readonly branchId: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+}
+
+/** The `scheduling` namespace subset the staff-agenda overlay reads. */
+export interface SchedulingSettings {
+  readonly conflictPolicy: "REJECT" | "ALLOW";
+  readonly availability: readonly SchedulingAvailabilityWindow[];
+  readonly blocks: readonly SchedulingBlock[];
+}
+
 /** Agenda list filters; every field is optional and server-applied. */
 export interface AppointmentFilters {
   readonly branchId?: string;
@@ -192,18 +221,7 @@ async function parseError(response: Response): Promise<ApiRequestError> {
  * `NETWORK_ERROR` instead of leaking the runtime `TypeError`, and an unreadable
  * success body becomes `MALFORMED_RESPONSE`.
  */
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/scheduling${path}`, init);
-  } catch {
-    throw new ApiRequestError(
-      "NETWORK_ERROR",
-      "Unable to reach the scheduling service. Check your connection and try again.",
-      0
-    );
-  }
-
+async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     throw await parseError(response);
   }
@@ -217,6 +235,21 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
       response.status
     );
   }
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/scheduling${path}`, init);
+  } catch {
+    throw new ApiRequestError(
+      "NETWORK_ERROR",
+      "Unable to reach the scheduling service. Check your connection and try again.",
+      0
+    );
+  }
+
+  return readJson<T>(response);
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -257,6 +290,135 @@ export async function listAppointments(filters: AppointmentFilters = {}): Promis
 
 export async function listAppointmentOptions(): Promise<AppointmentOptions> {
   return getJson<AppointmentOptions>("/appointments/options");
+}
+
+/**
+ * Runtime shape checks for the `scheduling` settings namespace.
+ *
+ * These mirror `apps/api/src/settings/registry.ts` (`schedulingSettingsSchema`)
+ * WITHOUT adding a runtime dependency: the conflict policy, the two arrays, and
+ * every field the overlay mapping reads (plus the numeric ranges and the
+ * orderings the API enforces). The point is not to re-implement zod — the API
+ * remains the validating writer — but to stop a malformed payload from reaching
+ * `settings.availability.filter(...)` or being mapped as if it were valid.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** True for a string FullCalendar can parse as an absolute instant. */
+function isIsoInstant(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+function isAvailabilityWindow(value: unknown): value is SchedulingAvailabilityWindow {
+  if (!isRecord(value)) return false;
+  const { membershipId, branchId, weekday, startMinute, endMinute } = value;
+  return (
+    typeof membershipId === "string" &&
+    typeof branchId === "string" &&
+    typeof weekday === "number" &&
+    Number.isInteger(weekday) &&
+    weekday >= 0 &&
+    weekday <= 6 &&
+    typeof startMinute === "number" &&
+    Number.isInteger(startMinute) &&
+    startMinute >= 0 &&
+    startMinute <= 1439 &&
+    typeof endMinute === "number" &&
+    Number.isInteger(endMinute) &&
+    endMinute >= 1 &&
+    endMinute <= 1440 &&
+    endMinute > startMinute
+  );
+}
+
+function isSchedulingBlock(value: unknown): value is SchedulingBlock {
+  if (!isRecord(value)) return false;
+  const { membershipId, branchId, startsAt, endsAt } = value;
+  return (
+    typeof membershipId === "string" &&
+    typeof branchId === "string" &&
+    isIsoInstant(startsAt) &&
+    isIsoInstant(endsAt) &&
+    Date.parse(endsAt) > Date.parse(startsAt)
+  );
+}
+
+/** Parses an array of availability windows, or null when any entry is malformed. */
+function parseAvailability(value: unknown): SchedulingAvailabilityWindow[] | null {
+  if (!Array.isArray(value)) return null;
+  const entries: SchedulingAvailabilityWindow[] = [];
+  for (const entry of value) {
+    if (!isAvailabilityWindow(entry)) return null;
+    entries.push(entry);
+  }
+  return entries;
+}
+
+/** Parses an array of one-off blocks, or null when any entry is malformed. */
+function parseBlocks(value: unknown): SchedulingBlock[] | null {
+  if (!Array.isArray(value)) return null;
+  const entries: SchedulingBlock[] = [];
+  for (const entry of value) {
+    if (!isSchedulingBlock(entry)) return null;
+    entries.push(entry);
+  }
+  return entries;
+}
+
+/**
+ * Parses the namespace payload, or returns null when it does not match the
+ * contract. A malformed ENTRY fails the whole namespace rather than being
+ * skipped: dropping a window could make a restricted pair read as unrestricted,
+ * which is the one state the overlay must never fabricate. The caller turns a
+ * null into the same visible "availability unavailable" state as a failed read.
+ */
+function parseSchedulingSettings(value: unknown): SchedulingSettings | null {
+  if (!isRecord(value)) return null;
+  const { conflictPolicy } = value;
+  if (conflictPolicy !== "REJECT" && conflictPolicy !== "ALLOW") return null;
+  const availability = parseAvailability(value.availability);
+  if (availability === null) return null;
+  const blocks = parseBlocks(value.blocks);
+  if (blocks === null) return null;
+  return { conflictPolicy, availability, blocks };
+}
+
+/**
+ * Reads the whole `scheduling` namespace through the settings proxy.
+ *
+ * The settings proxy is a separate allowlisted surface (`/api/settings/scheduling`),
+ * so this call does not use the `/api/scheduling` prefix. The upstream response
+ * envelope is `{ settings: {...} }`; the namespace object is what the overlay
+ * consumes. A missing envelope OR a namespace that fails the runtime shape
+ * checks is `MALFORMED_RESPONSE` (not a crash in the pure mapping, and not a
+ * silently-unrestricted pair): the agenda query goes to its error state and the
+ * view shows the non-blocking "availability unavailable" warning.
+ */
+export async function getSchedulingSettings(): Promise<SchedulingSettings> {
+  let response: Response;
+  try {
+    response = await fetch("/api/settings/scheduling", { cache: "no-store" });
+  } catch {
+    throw new ApiRequestError(
+      "NETWORK_ERROR",
+      "Unable to reach the scheduling settings service. Check your connection and try again.",
+      0
+    );
+  }
+
+  const body: unknown = await readJson<unknown>(response);
+  const settings = isRecord(body) ? body.settings : undefined;
+  const parsed = parseSchedulingSettings(settings);
+  if (parsed === null) {
+    throw new ApiRequestError(
+      "MALFORMED_RESPONSE",
+      "The scheduling settings service returned an unreadable response.",
+      response.status
+    );
+  }
+  return parsed;
 }
 
 /** Reads one appointment; used to refresh the client after a version conflict. */
