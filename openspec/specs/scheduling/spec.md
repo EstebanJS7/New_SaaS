@@ -296,7 +296,13 @@ branch-scoped appointments, with time-range creation, drag/resize rescheduling,
 and filters by branch, professional, and status. It SHALL render loading, empty,
 error, success, and permission-denied states; use semantic design tokens only;
 and be reachable from the authenticated staff shell through an authenticated
-proxy. It MUST NOT expose Portal booking, recurrence, or service-label controls.
+proxy. When a branch and a professional are selected, the day and week views
+SHALL shade that pair's configured availability windows (the non-working
+complement) and one-off blocks as a DISPLAY-ONLY overlay that never constrains
+selection or dragging. A settings read that fails, or returns a namespace that
+does not match the settings contract, SHALL be surfaced as a non-blocking
+warning and SHALL NOT be rendered as an unrestricted pair. It MUST NOT expose
+Portal booking, recurrence, or service-label controls.
 
 #### Scenario: Authorized staff workflow
 
@@ -310,6 +316,43 @@ proxy. It MUST NOT expose Portal booking, recurrence, or service-label controls.
 - GIVEN staff lacking the scheduling read permission
 - WHEN they open the agenda
 - THEN a permission-denied state renders without appointment data
+
+#### Scenario: Availability overlay for a selected pair
+
+- GIVEN a branch and a professional are selected and the pair has configured
+  availability windows and one-off blocks
+- WHEN the day or week view renders
+- THEN the complement of the pair's windows for each weekday and the pair's
+  blocks are shaded, without constraining selection or dragging
+
+#### Scenario: No overlay without a selected pair
+
+- GIVEN no branch or no professional is selected
+- WHEN the day or week view renders
+- THEN no availability shading is shown and a hint asks staff to pick a branch
+  and a professional
+
+#### Scenario: Unrestricted pair shades nothing
+
+- GIVEN a selected pair with no availability windows at all
+- WHEN the day or week view renders
+- THEN nothing is shaded, because the write path treats that pair as
+  unrestricted
+
+#### Scenario: Unknown availability is never shown as unrestricted
+
+- GIVEN a branch and a professional are selected
+- WHEN the `scheduling` settings read fails or returns a namespace that does not
+  match the settings contract
+- THEN the day or week view shades nothing, shows a non-blocking warning that
+  the pair's availability could not be loaded, and the agenda stays fully usable
+
+#### Scenario: Malformed settings namespace fails closed
+
+- GIVEN the settings read returns a namespace with a malformed entry
+- WHEN the overlay would be built
+- THEN the whole namespace is rejected (no partial overlay) and the same
+  non-blocking warning is shown
 
 ### Requirement: Synthetic demo data
 

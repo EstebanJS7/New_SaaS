@@ -2,7 +2,7 @@
 type: module
 module: scheduling
 status: implemented
-updated: 2026-09-18
+updated: 2026-09-22
 ---
 
 # Module — Scheduling
@@ -33,7 +33,9 @@ inside the professional's availability and governed by a typed conflict policy.
 - Availability, one-off-block and `conflictPolicy` configuration through the
   typed `scheduling` tenant-settings namespace.
 - An authenticated staff HTTP surface plus web proxies and a semantic-token
-  agenda.
+  agenda that shades the times outside the selected professional's availability
+  windows and their one-off blocks in its day and week views (display only;
+  DEC-009).
 
 ## Main Entities
 
@@ -111,6 +113,52 @@ them, uses one appointment query for the whole day, writes nothing (no
 appointment, no booking request, no audit row) and takes the tenant only from
 the request context.
 
+## Staff agenda availability overlay (DEC-009)
+
+The staff agenda's day and week views shade the times outside the selected
+professional's configured availability windows, plus their one-off blocks. The
+behaviour is **display only**: it never feeds FullCalendar's `selectConstraint`,
+`eventConstraint` or `overlap`. The write path requires the whole appointment
+inside ONE window and rejects one-off blocks; `businessHours` is a union of
+ranges, so it cannot express the one-window rule, and a forbidden block cannot
+be handed directly to `selectConstraint` as an allowed range. Equivalent logic
+could be enforced with custom allow callbacks or computed allowed ranges, but
+reusing this display overlay as the enforcement source would make the calendar a
+second, wrong source of truth. Enforcing it would let staff select a range the
+API rejects with `409 CONFLICT`; the API stays the source of truth.
+
+The overlay is derived from the `(membershipId, branchId)` pair in the typed
+`scheduling` namespace and is **tri-state**:
+
+- no windows for the pair → the write path is unrestricted → shade **nothing**;
+- windows for the pair but none on the weekday → the day is unavailable → shade
+  the **whole day**;
+- windows on the weekday → shade the **complement** of those windows.
+
+FullCalendar realizes the last two through `businessHours` (its non-business
+complement), so an omitted weekday is shaded in full. One-off blocks are mapped
+to `display: "background"` events (there is no `backgroundEvents` option in
+FullCalendar 6). Because `businessHours` is calendar-global while windows carry
+a `branchId`, the overlay requires a selected branch and professional; otherwise
+it is hidden and a hint asks staff to pick one.
+
+**Unknown availability is never rendered as unrestricted.** When a pair IS
+selected but the settings read fails, the day and week views shade nothing and
+show a non-blocking warning that the pair's availability could not be loaded;
+the agenda stays fully usable. The namespace is shape-checked at runtime before
+it reaches the mapping (conflict policy, `availability`/`blocks` arrays, and
+each entry's fields and orderings): a malformed payload is a
+`MALFORMED_RESPONSE` that degrades to the same warning rather than crashing the
+mapping or being silently treated as a pair with no windows. A malformed entry
+fails the whole namespace — dropping it could make a restricted pair read as
+unrestricted.
+
+The pure mapping lives in
+`apps/web/src/app/(app)/app/agenda/agenda-availability.ts`, the settings read in
+`agenda-api.ts` (`getSchedulingSettings`), and the style layer maps
+`--fc-non-business-color` and `--fc-bg-event-color`/`--fc-bg-event-opacity` to
+semantic tokens.
+
 ## Events / Jobs
 
 - None. `AppointmentConfirmed` and `AppointmentCancelled` are intentionally not
@@ -166,6 +214,18 @@ the request context.
   professional against a disposable PostgreSQL 16 database, behind a
   deterministic advisory-lock barrier: exactly one persists and the other
   returns `409 CONFLICT`, with exactly one co-committed audit row.
+- `apps/web/src/app/(app)/app/agenda/agenda-availability.test.ts` — the overlay
+  tri-state (unrestricted shades nothing, unavailable shades the whole day,
+  available shades the complement), the `businessHours` grouping by weekday and
+  `HH:mm` bounds, and the one-off-block mapping (including a block on an
+  unrestricted pair).
+- `apps/web/src/app/(app)/app/agenda/agenda.test.tsx` — the overlay threaded
+  into the FullCalendar props through the existing stub: the hint and no shading
+  without a selected pair, the shading and block event with a selected pair, no
+  shading for a pair with no windows, and the non-blocking warning (with the
+  agenda still usable) when the selected pair's settings read fails or returns a
+  malformed namespace. `agenda-api.test.ts` covers the settings proxy read, its
+  envelope, and the runtime shape checks that reject a malformed namespace.
 - WU5 durable run (2026-09-14): full live-PG suite **26/26 passed**;
   `@newsaas/api` suite **543 passed / 25 skipped**; API typecheck and lint
   green.
@@ -179,3 +239,10 @@ the request context.
 ## Related ADRs
 
 - [[ADR-001 Modular Monolith]]
+
+## Related Decisions
+
+- [[DEC-007 Agenda v2]] — accepted A1 → A3 → A2; its Option B (this overlay) was
+  not selected there. DEC-009 adopts it explicitly as additive scope under PRD
+  §14.
+- [[DEC-009 Staff agenda availability overlay]]
