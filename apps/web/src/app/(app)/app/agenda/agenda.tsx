@@ -11,6 +11,7 @@ import {
   approveBookingRequest,
   createAppointment,
   getAppointment,
+  getSchedulingSettings,
   isAgendaConflict,
   isAgendaPermissionDenied,
   listAppointmentOptions,
@@ -28,6 +29,7 @@ import {
   type TransitionCommand,
 } from "./agenda-api";
 import { AgendaViews, type AgendaView } from "./agenda-views";
+import { buildAvailabilityOverlay, type AvailabilityOverlay } from "./agenda-availability";
 import {
   addDaysToKey,
   addMonthsToKey,
@@ -50,6 +52,20 @@ const controlClassName =
 
 const fieldClassName =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+
+/**
+ * Copy for the availability overlay's two non-happy states.
+ *
+ * The hint is shown when no concrete (branch, professional) pair is selected,
+ * so there is nothing honest to shade. The warning is shown when a pair IS
+ * selected but the settings read failed or returned a malformed namespace:
+ * the pair's hours are unknown, and "nothing shaded" must never be read as the
+ * unrestricted pair the write path actually accepts.
+ */
+const AVAILABILITY_HINT =
+  "Select a branch and a professional to shade the times outside their working hours, plus their one-off blocks.";
+const AVAILABILITY_UNAVAILABLE =
+  "Availability for this professional and branch could not be loaded, so nothing is shaded. The calendar may show times outside their working hours.";
 
 type EditorState =
   | { readonly kind: "create"; readonly startAt?: string; readonly endAt?: string }
@@ -523,6 +539,13 @@ export function Agenda(): JSX.Element {
     queryKey: ["scheduling", "booking-requests"],
     queryFn: listBookingRequests,
   });
+  // The `scheduling` namespace read that feeds the availability overlay. The
+  // settings proxy is a separate allowlisted surface, so this does not go
+  // through the `/api/scheduling` proxy used for appointments.
+  const settingsQuery = useQuery({
+    queryKey: ["scheduling", "settings"],
+    queryFn: getSchedulingSettings,
+  });
 
   function invalidateAppointments(): void {
     void queryClient.invalidateQueries({ queryKey: ["scheduling", "appointments"] });
@@ -682,6 +705,24 @@ export function Agenda(): JSX.Element {
   const branchLabel = (branchId: string): string =>
     branches.find((branch) => branch.id === branchId)?.name ?? "Branch";
 
+  // The overlay is only honest for a concrete (professional, branch) pair:
+  // `businessHours` is calendar-global while the windows carry a branchId, so
+  // with either filter cleared there is nothing truthful to shade.
+  const overlayPairSelected = branchFilter !== "" && professionalFilter !== "";
+  const showsHourOverlay = view === "day" || view === "week";
+  const showAvailabilityHint = showsHourOverlay && !overlayPairSelected;
+  // A failed (or malformed) settings read leaves the pair's hours unknown. That
+  // must not read as "unrestricted": the query error becomes a non-blocking
+  // warning so an unshaded day is never mistaken for a pair with no windows.
+  const showAvailabilityUnavailable =
+    showsHourOverlay && overlayPairSelected && settingsQuery.isError;
+  const availabilityOverlay = useMemo<AvailabilityOverlay | undefined>(() => {
+    if (!overlayPairSelected || settingsQuery.data === undefined) {
+      return undefined;
+    }
+    return buildAvailabilityOverlay(settingsQuery.data, professionalFilter, branchFilter);
+  }, [overlayPairSelected, settingsQuery.data, professionalFilter, branchFilter]);
+
   const denied =
     appointmentsQuery.error !== null && isAgendaPermissionDenied(appointmentsQuery.error);
   const mutationPending =
@@ -816,6 +857,22 @@ export function Agenda(): JSX.Element {
         </label>
       </div>
 
+      {showAvailabilityHint && (
+        <p data-testid="availability-hint" className="text-sm text-muted-foreground">
+          {AVAILABILITY_HINT}
+        </p>
+      )}
+
+      {showAvailabilityUnavailable && (
+        <p
+          role="status"
+          data-testid="availability-warning"
+          className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {AVAILABILITY_UNAVAILABLE}
+        </p>
+      )}
+
       {notice !== null && (
         <p role="status" className="rounded-md border bg-secondary px-3 py-2 text-sm">
           {notice}
@@ -941,6 +998,8 @@ export function Agenda(): JSX.Element {
           appointments={appointmentsQuery.data ?? []}
           requests={pendingRequests}
           branchLabel={branchLabel}
+          {...(showsHourOverlay &&
+            availabilityOverlay !== undefined && { overlay: availabilityOverlay })}
           onOpen={(appointment) => setEditorClearingConflict({ kind: "manage", appointment })}
           onOpenRequest={(request) => setEditorClearingConflict({ kind: "request", request })}
           onCreateRange={(startIso, endIso) =>
