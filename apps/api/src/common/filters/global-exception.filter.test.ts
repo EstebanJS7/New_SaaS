@@ -118,6 +118,35 @@ describe("mapExceptionToError", () => {
     expect(JSON.stringify(mapped)).not.toContain("SECRET-DB-CONNECTION-STRING");
   });
 
+  it("never renders a 5xx DomainError's internal message and keeps its code and status", () => {
+    const internal = new DomainError(
+      "INTERNAL",
+      "Booking request references a patient that cannot be resolved."
+    );
+    const mapped = mapExceptionToError(internal);
+
+    expect(mapped).toEqual({
+      status: 500,
+      code: "INTERNAL",
+      message: "Internal server error.",
+    });
+    // The envelope body is built from this mapping, so the diagnostic must not
+    // ride along in `message`.
+    expect(JSON.stringify({ error: mapped })).not.toContain("cannot be resolved");
+  });
+
+  it("keeps an authored non-5xx DomainError message while the 5xx generic copy holds", () => {
+    const conflict = mapExceptionToError(new DomainError("CONFLICT", "dup"));
+    expect(conflict).toEqual({ status: 409, code: "CONFLICT", message: "dup" });
+
+    const serverFailure = mapExceptionToError(new HttpException("db connection lost", 500));
+    expect(serverFailure).toEqual({
+      status: 500,
+      code: "INTERNAL",
+      message: "Internal server error.",
+    });
+  });
+
   it("handles non-Error thrown values without throwing", () => {
     for (const weird of ["string", 42, null, undefined, Symbol("x")]) {
       const mapped = mapExceptionToError(weird);

@@ -28,10 +28,30 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
 
 /** Reverse lookup status → code from the frozen registry (first wins). */
 const STATUS_TO_CODE = new Map<number, ErrorCode>();
+/**
+ * Codes whose registry status is a server failure (5xx). Their authored message
+ * is an operator diagnostic, never client copy, so the generic per-code message
+ * is rendered instead while the code and status stay unchanged. Derived from the
+ * frozen registry so a future 5xx code is covered without editing this filter.
+ */
+const SERVER_ERROR_CODES = new Set<ErrorCode>();
 for (const [code, entry] of Object.entries(ERROR_CODES) as [ErrorCode, { status: number }][]) {
   if (!STATUS_TO_CODE.has(entry.status)) {
     STATUS_TO_CODE.set(entry.status, code);
   }
+  if (entry.status >= 500) {
+    SERVER_ERROR_CODES.add(code);
+  }
+}
+
+/**
+ * Client-facing copy for a resolved code: the fixed generic text for every 5xx
+ * (whose authored message is diagnostic), the authored text otherwise. Non-5xx
+ * domain messages are deliberate UX copy and keep their exact wording.
+ */
+function clientMessageForCode(code: ErrorCode, authored: string | null): string {
+  if (SERVER_ERROR_CODES.has(code)) return DEFAULT_MESSAGES[code];
+  return authored ?? DEFAULT_MESSAGES[code];
 }
 
 interface ZodIssueShape {
@@ -143,7 +163,7 @@ export function mapExceptionToError(exception: unknown): MappedError {
     return {
       status: getStatusForCode(exception.code),
       code: exception.code,
-      message: exception.message,
+      message: clientMessageForCode(exception.code, exception.message),
     };
   }
 
@@ -190,7 +210,7 @@ export function mapExceptionToError(exception: unknown): MappedError {
     return {
       status: exception.getStatus(),
       code,
-      message: extractHttpExceptionMessage(response) ?? DEFAULT_MESSAGES[code],
+      message: clientMessageForCode(code, extractHttpExceptionMessage(response)),
     };
   }
 

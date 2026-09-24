@@ -552,6 +552,36 @@ describe("portal appointment writes (real HTTP, full guard chain)", () => {
     });
   });
 
+  describe("proxy-shaped cancel requests (empty JSON body)", () => {
+    // The web proxy sets `content-type: application/json` on every POST and the
+    // portal client sends `{}` as the body of BOTH cancel calls, while the API
+    // cancel controllers bind only the path param. This pins the seam the web
+    // client actually uses: an empty JSON body must not turn a valid cancel into
+    // a 400 or be treated as meaningful input.
+    it("accepts `{}` on both cancel routes and succeeds", async () => {
+      const appointment = createAppointment({ status: "SCHEDULED" });
+      const request = createBookingRequest({ status: "PENDING" });
+
+      const appointmentResponse = await supertest(server())
+        .post(cancelAppointmentUrl(appointment.id))
+        .set("Cookie", holderA.cookie)
+        .set("content-type", "application/json")
+        .send({})
+        .expect(200);
+      expect((appointmentResponse.body as AppointmentBody).status).toBe("CANCELLED");
+      expect(appointmentById(appointment.id)?.status).toBe("CANCELLED");
+
+      const bookingResponse = await supertest(server())
+        .post(cancelBookingUrl(request.id))
+        .set("Cookie", holderA.cookie)
+        .set("content-type", "application/json")
+        .send({})
+        .expect(200);
+      expect((bookingResponse.body as BookingRequestBody).status).toBe("CANCELLED");
+      expect(requestById(request.id)?.status).toBe("CANCELLED");
+    });
+  });
+
   describe("appointment reschedule (guardian-scoped)", () => {
     it("moves the times, bumps the version and appends one audit row", async () => {
       const professional = randomUUID();
