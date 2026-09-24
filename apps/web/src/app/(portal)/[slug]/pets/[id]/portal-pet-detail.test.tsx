@@ -24,7 +24,9 @@ const PET_DETAIL = {
   id: PET_ID,
   name: "Rex",
   speciesId: "species-1",
+  speciesName: "Dog",
   breedId: "breed-1",
+  breedName: "Labrador Retriever",
   sex: "MALE",
   birthDate: "2020-05-01T00:00:00.000Z",
   isActive: true,
@@ -62,7 +64,10 @@ describe("PortalPetDetailView", () => {
     renderDetail();
 
     expect(await screen.findByText("Rex")).toBeInTheDocument();
-    expect(screen.getByText("Male · Born 2020-05-01")).toBeInTheDocument();
+    // The API-resolved species/breed names are rendered (no raw catalog id).
+    expect(
+      screen.getByText("Dog · Labrador Retriever · Male · Born 2020-05-01")
+    ).toBeInTheDocument();
     expect(screen.getByText("Routine check-up; all healthy.")).toBeInTheDocument();
     expect(screen.getByText("Rabies")).toBeInTheDocument();
     expect(screen.getByText("Given 2026-07-15")).toBeInTheDocument();

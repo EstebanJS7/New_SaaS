@@ -12,14 +12,19 @@ interface ErrorEnvelopeBody {
   error: { code: string; message: string; requestId: string };
 }
 
-interface PetBody {
+interface PetSummaryBody {
   id: string;
   name: string;
   speciesId: string;
+  speciesName: string;
   breedId: string | null;
+  breedName: string | null;
   sex: string;
   birthDate: string | null;
   isActive: boolean;
+}
+
+interface PetBody extends PetSummaryBody {
   clinical: {
     encounters: { id: string; status: string; clientSummary: string; closedAt: string | null }[];
     vaccinations: { id: string; vaccine: string; administeredAt: string }[];
@@ -51,16 +56,19 @@ const INTERNAL_NOTES_MARKER = "SECRET-INTERNAL-NOTES-4f21";
 const DRAFT_INTERNAL_MARKER = "SECRET-DRAFT-NOTES-9c07";
 const CLIENT_SUMMARY = "Routine wellness visit completed.";
 
-const PET_DETAIL_KEYS = [
+const PET_SUMMARY_KEYS = [
   "birthDate",
   "breedId",
-  "clinical",
+  "breedName",
   "id",
   "isActive",
   "name",
   "sex",
   "speciesId",
+  "speciesName",
 ];
+
+const PET_DETAIL_KEYS = [...PET_SUMMARY_KEYS, "clinical"].sort();
 
 const APPOINTMENT_KEYS = ["endAt", "id", "patientId", "startAt", "status", "version"];
 const APPOINTMENT_SUMMARY_KEYS = [
@@ -88,9 +96,17 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
   let fixture: TwoTenantFixture;
   let holderA: PortalAccessFixture;
   let holderB: PortalAccessFixture;
+  let holderC: PortalAccessFixture;
   let petA: PatientRow;
   let petA2: PatientRow;
+  let petA3: PatientRow;
   let petB: PatientRow;
+  let breachPetId: string;
+  let breachSpeciesId: string;
+  let breachBreedId: string;
+  let breachBreedPetId: string;
+  let otherSpeciesId: string;
+  let otherBreedId: string;
   let encounterWithNotesId: string;
   let appointmentAId: string;
   let appointmentA2Id: string;
@@ -104,6 +120,28 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
     const tenantB = fixture.tenants.b.id;
 
     const species = prisma.species.create({ data: { code: `dog-${fixture.suffix}`, name: "Dog" } });
+    const breed = prisma.breed.create({
+      data: {
+        speciesId: species.id,
+        code: `labrador-${fixture.suffix}`,
+        name: "Labrador Retriever",
+      },
+    });
+    // Taxonomy the holder's pets do NOT reference: proves the response is scoped
+    // to the pets' own species/breed and is never a slice of the global catalog.
+    const otherSpecies = prisma.species.create({
+      data: { code: `cat-${fixture.suffix}`, name: "Cat" },
+    });
+    const otherBreed = prisma.breed.create({
+      data: { speciesId: otherSpecies.id, code: `siamese-${fixture.suffix}`, name: "Siamese" },
+    });
+    otherSpeciesId = otherSpecies.id;
+    otherBreedId = otherBreed.id;
+
+    // Ids that exist in no reference row, so the pet rows below reference an
+    // unresolvable species and an unresolvable breed respectively.
+    breachSpeciesId = randomUUID();
+    breachBreedId = randomUUID();
 
     const createCustomer = (tenantId: string, displayName: string): string =>
       prisma.customer.create({
@@ -122,24 +160,63 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
 
     const customerA1 = createCustomer(tenantA, "Holder A Customer");
     const customerA2 = createCustomer(tenantA, "Other Customer A");
+    const customerA3 = createCustomer(tenantA, "Holder C Customer");
     const customerB = createCustomer(tenantB, "Holder B Customer");
 
-    const createPatient = (tenantId: string, name: string): PatientRow =>
+    const createPatient = (
+      tenantId: string,
+      name: string,
+      breedId: string | null = null
+    ): PatientRow =>
       prisma.patient.create({
         data: {
           tenantId,
           name,
           speciesId: species.id,
-          breedId: null,
+          breedId,
           sex: "MALE",
           birthDate: new Date("2020-01-02T00:00:00.000Z"),
           isActive: true,
         },
       });
 
-    petA = createPatient(tenantA, "Pet A (holder-owned)");
+    petA = createPatient(tenantA, "Pet A (holder-owned)", breed.id);
     petA2 = createPatient(tenantA, "Pet A2 (other customer)");
+    // A second holder-owned pet with NO breed: the null `breedId` must stay null.
+    petA3 = createPatient(tenantA, "Pet Z (holder-owned, no breed)");
     petB = createPatient(tenantB, "Pet B (other tenant)");
+
+    // A pet whose GLOBAL species row cannot be resolved: the RESTRICT FK makes
+    // this an integrity breach the read must surface as INTERNAL, never a blank
+    // or a raw id. It belongs to its own holder so the happy-path list stays clean.
+    const breachPet = prisma.patient.create({
+      data: {
+        tenantId: tenantA,
+        name: "Pet C (unresolvable species)",
+        speciesId: breachSpeciesId,
+        breedId: null,
+        sex: "MALE",
+        birthDate: null,
+        isActive: true,
+      },
+    });
+    breachPetId = breachPet.id;
+
+    // A resolvable species with an unresolvable BREED is the other half of the
+    // same integrity breach, and the read must fail the same way rather than
+    // dropping the breed name or substituting the id.
+    const breachBreedPet = prisma.patient.create({
+      data: {
+        tenantId: tenantA,
+        name: "Pet C2 (unresolvable breed)",
+        speciesId: petA.speciesId,
+        breedId: breachBreedId,
+        sex: "MALE",
+        birthDate: null,
+        isActive: true,
+      },
+    });
+    breachBreedPetId = breachBreedPet.id;
 
     const linkGuardian = (tenantId: string, patientId: string, customerId: string): void => {
       prisma.patientGuardian.create({
@@ -148,6 +225,9 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
     };
     linkGuardian(tenantA, petA.id, customerA1);
     linkGuardian(tenantA, petA2.id, customerA2);
+    linkGuardian(tenantA, petA3.id, customerA1);
+    linkGuardian(tenantA, breachPet.id, customerA3);
+    linkGuardian(tenantA, breachBreedPet.id, customerA3);
     linkGuardian(tenantB, petB.id, customerB);
 
     // Clinical: one CLOSED encounter carrying a client-safe summary AND a
@@ -212,6 +292,7 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
 
     holderA = seedPortalAccess(booted.db, { tenantId: tenantA, customerId: customerA1 });
     holderB = seedPortalAccess(booted.db, { tenantId: tenantB, customerId: customerB });
+    holderC = seedPortalAccess(booted.db, { tenantId: tenantA, customerId: customerA3 });
 
     // Only tenant A holds the explicit `portal` grant.
     const portalFeature = prisma.featureCode.create({ data: { code: "portal" } });
@@ -255,11 +336,60 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
         .set("Cookie", holderA.cookie)
         .expect(200);
 
-      const body = response.body as { id: string; name: string }[];
-      expect(body.map((pet) => pet.id)).toEqual([petA.id]);
+      const body = response.body as PetSummaryBody[];
+      expect(body.map((pet) => pet.id)).toEqual([petA.id, petA3.id]);
       expect(response.text).not.toContain(petA2.id);
       expect(response.text).not.toContain(petB.id);
+      expect(response.text).not.toContain(breachPetId);
       expect(response.text).not.toContain(fixture.tenants.b.id);
+    });
+
+    it("resolves only the pets' own species and breed names, never the catalog", async () => {
+      const response = await supertest(server())
+        .get("/portal/pets")
+        .set("Cookie", holderA.cookie)
+        .expect(200);
+
+      const body = response.body as PetSummaryBody[];
+      expect(body.map((pet) => pet.speciesName)).toEqual(["Dog", "Dog"]);
+      expect(body.map((pet) => pet.breedName)).toEqual(["Labrador Retriever", null]);
+      // Every emitted field is on the allowlist: no catalog entry, no `code`,
+      // no nested `breeds` array and no tenant echo.
+      expect(Object.keys(body[0]).sort()).toEqual(PET_SUMMARY_KEYS);
+      // The GLOBAL catalog is not exposed as a list: an unrelated species/breed
+      // the holder's pets do not have can never appear in the response.
+      expect(response.text).not.toContain("Cat");
+      expect(response.text).not.toContain("Siamese");
+      expect(response.text).not.toContain(otherSpeciesId);
+      expect(response.text).not.toContain(otherBreedId);
+    });
+
+    it("resolves every involved species/breed name in exactly ONE global reference read", async () => {
+      const originalFindMany = booted.db.prisma.species.findMany;
+      const capturedArgs: { where: { id: { in: string[] } }; include: { breeds: boolean } }[] = [];
+      booted.db.prisma.species.findMany = ((args: {
+        where: { id: { in: string[] } };
+        include: { breeds: boolean };
+      }) => {
+        capturedArgs.push(args);
+        return originalFindMany(args);
+      }) as typeof originalFindMany;
+
+      try {
+        await supertest(server()).get("/portal/pets").set("Cookie", holderA.cookie).expect(200);
+      } finally {
+        booted.db.prisma.species.findMany = originalFindMany;
+      }
+
+      // ONE set-based read for the whole batch (both pets share the species id),
+      // scoped to the pets' OWN species id and deliberately NOT tenant-filtered:
+      // Species/Breed carry no tenant column, so a tenant predicate would be a
+      // category error (Decision #2211).
+      expect(capturedArgs).toHaveLength(1);
+      const captured = capturedArgs[0];
+      expect(captured?.where).toEqual({ id: { in: [petA.speciesId] } });
+      expect(captured?.where).not.toHaveProperty("tenantId");
+      expect(captured?.include).toEqual({ breeds: true });
     });
 
     it("returns the allowlisted pet detail with clinical summary and vaccinations", async () => {
@@ -293,6 +423,54 @@ describe("portal read surface (real HTTP, full guard chain)", () => {
       ]);
       // No tenant echo.
       expect(body).not.toHaveProperty("tenantId");
+    });
+
+    it("resolves the names on the pet detail and keeps a null breed null", async () => {
+      const withBreed = await supertest(server())
+        .get(`/portal/pets/${petA.id}`)
+        .set("Cookie", holderA.cookie)
+        .expect(200);
+      const withBreedBody = withBreed.body as PetBody;
+      expect(withBreedBody).toMatchObject({
+        speciesId: petA.speciesId,
+        speciesName: "Dog",
+        breedId: petA.breedId,
+        breedName: "Labrador Retriever",
+      });
+
+      const withoutBreed = await supertest(server())
+        .get(`/portal/pets/${petA3.id}`)
+        .set("Cookie", holderA.cookie)
+        .expect(200);
+      const withoutBreedBody = withoutBreed.body as PetBody;
+      expect(withoutBreedBody).toMatchObject({
+        speciesName: "Dog",
+        breedId: null,
+        breedName: null,
+      });
+      expect(Object.keys(withoutBreedBody).sort()).toEqual(PET_DETAIL_KEYS);
+    });
+
+    it("fails loudly as INTERNAL when a pet's species cannot be resolved", async () => {
+      const response = await supertest(server())
+        .get(`/portal/pets/${breachPetId}`)
+        .set("Cookie", holderC.cookie)
+        .expect(500);
+
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("INTERNAL");
+      // The raw id is never returned as a substitute for a name: the id at stake
+      // is the unresolvable SPECIES, not the pet's own id.
+      expect(response.text).not.toContain(breachSpeciesId);
+    });
+
+    it("fails loudly as INTERNAL when a pet's breed cannot be resolved", async () => {
+      const response = await supertest(server())
+        .get(`/portal/pets/${breachBreedPetId}`)
+        .set("Cookie", holderC.cookie)
+        .expect(500);
+
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("INTERNAL");
+      expect(response.text).not.toContain(breachBreedId);
     });
 
     it("never returns internalNotes or the staff clinical free text", async () => {

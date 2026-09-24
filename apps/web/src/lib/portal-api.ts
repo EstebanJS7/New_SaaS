@@ -26,12 +26,20 @@ export interface PortalMe {
   readonly requestId: string;
 }
 
-/** Holder-owned pet identity; species/breed remain stable ids. */
+/**
+ * Holder-owned pet identity. `speciesId`/`breedId` are stable ids; the API ALSO
+ * resolves `speciesName`/`breedName` server-side (they name only this pet's own
+ * species and breed — the global catalog is never returned as a list), so the UI
+ * can label a pet without reading or joining the catalog itself. `breedName`
+ * mirrors the nullable `breedId`.
+ */
 export interface PortalPet {
   readonly id: string;
   readonly name: string;
   readonly speciesId: string;
+  readonly speciesName: string;
   readonly breedId: string | null;
+  readonly breedName: string | null;
   readonly sex: PortalPetSex;
   readonly birthDate: string | null;
   readonly isActive: boolean;

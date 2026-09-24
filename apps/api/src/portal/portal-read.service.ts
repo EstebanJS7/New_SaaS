@@ -32,6 +32,31 @@ interface PortalPatientRow {
   readonly isActive: boolean;
 }
 
+/**
+ * GLOBAL Species reference row with its breeds nested. Species/Breed carry NO
+ * tenant column (Decision #2211), so this read is deliberately not tenant-scoped.
+ */
+interface PortalSpeciesRefRow {
+  readonly id: string;
+  readonly name: string;
+  readonly breeds: readonly PortalBreedRefRow[];
+}
+
+/** GLOBAL Breed reference row; belongs to exactly one global Species. */
+interface PortalBreedRefRow {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * Names resolved for the pets of ONE read, keyed by the pet's own ids. The maps
+ * can only answer for a species/breed the batch actually references.
+ */
+interface PortalPetNames {
+  readonly speciesNames: ReadonlyMap<string, string>;
+  readonly breedNames: ReadonlyMap<string, string>;
+}
+
 /** Active guardian link row; only the anchor id is consumed. */
 interface PortalGuardianLinkRow {
   readonly patientId: string;
@@ -93,6 +118,12 @@ interface PortalReadPrisma {
       where: { id: string; tenantId: string };
     }) => Promise<PortalPatientRow | null>;
   };
+  species: {
+    findMany: (args: {
+      where: { id: { in: string[] } };
+      include: { breeds: true };
+    }) => Promise<PortalSpeciesRefRow[]>;
+  };
   clinicalEncounter: {
     findMany: (args: {
       where: { tenantId: string; patientId: string };
@@ -119,13 +150,34 @@ function toIso(value: Date): string {
   return value.toISOString();
 }
 
-/** Builds the allowlisted pet summary; never spreads the source row. */
-function toPetSummary(row: PortalPatientRow): PortalPetSummary {
+/**
+ * Builds the allowlisted pet summary; never spreads the source row.
+ *
+ * Throws `INTERNAL` when a referenced species/breed name cannot be resolved:
+ * the FK is RESTRICT over GLOBAL tables, so an unresolvable reference is an
+ * integrity breach, and a blank or a raw id would hide it. Same choice as the
+ * appointment read makes for an unresolvable `patientName`.
+ */
+function toPetSummary(row: PortalPatientRow, names: PortalPetNames): PortalPetSummary {
+  const speciesName = names.speciesNames.get(row.speciesId);
+  if (speciesName === undefined) {
+    throw new DomainError("INTERNAL", "Pet references a species that cannot be resolved.");
+  }
+  let breedName: string | null = null;
+  if (row.breedId !== null) {
+    const resolvedBreedName = names.breedNames.get(row.breedId);
+    if (resolvedBreedName === undefined) {
+      throw new DomainError("INTERNAL", "Pet references a breed that cannot be resolved.");
+    }
+    breedName = resolvedBreedName;
+  }
   return {
     id: row.id,
     name: row.name,
     speciesId: row.speciesId,
+    speciesName,
     breedId: row.breedId,
+    breedName,
     sex: row.sex,
     birthDate: row.birthDate ? toIso(row.birthDate) : null,
     isActive: row.isActive,
@@ -214,7 +266,10 @@ export class PortalReadService {
     const rows = await this.prisma.patient.findMany({
       where: { tenantId, id: { in: patientIds } },
     });
-    return rows.map(toPetSummary).sort((left, right) => left.name.localeCompare(right.name));
+    const names = await this.resolvePetNames(rows);
+    return rows
+      .map((row) => toPetSummary(row, names))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   /** Pet detail: allowlisted identity + clinical summary + vaccinations. */
@@ -227,7 +282,8 @@ export class PortalReadService {
       throw portalResourceNotFound();
     }
 
-    const [encounters, vaccinations] = await Promise.all([
+    const [names, encounters, vaccinations] = await Promise.all([
+      this.resolvePetNames([patient]),
       this.prisma.clinicalEncounter.findMany({
         where: { tenantId, patientId: patient.id },
         // Select only the client-safe columns: `internalNotes` and the staff
@@ -246,7 +302,7 @@ export class PortalReadService {
     ]);
 
     return {
-      ...toPetSummary(patient),
+      ...toPetSummary(patient, names),
       clinical: {
         encounters: encounters
           .filter(hasClientSummary)
@@ -319,6 +375,51 @@ export class PortalReadService {
       throw portalResourceNotFound();
     }
     return toAppointment(row);
+  }
+
+  /**
+   * Resolves the species/breed NAMES for a batch of pets in exactly ONE
+   * set-based read (`species.findMany` with `include.breeds`), never one lookup
+   * per pet. The count is constant regardless of how many pets are involved.
+   *
+   * `Species`/`Breed` are GLOBAL reference tables with NO tenant column, so this
+   * query is deliberately NOT tenant-filtered — a tenant predicate would be a
+   * category error, and there is no cross-tenant read to guard. Scope is
+   * enforced by construction instead: only the species ids the pets reference
+   * are requested, and a breed name is read out of the nested breeds of one of
+   * those species only. The catalog is therefore never returned as a list, and a
+   * species/breed the holder's pets do not have can never reach the response.
+   */
+  private async resolvePetNames(rows: readonly PortalPatientRow[]): Promise<PortalPetNames> {
+    const speciesIds = [...new Set(rows.map((row) => row.speciesId))];
+    const breedIds = new Set(
+      rows.map((row) => row.breedId).filter((id): id is string => id !== null)
+    );
+    if (speciesIds.length === 0) {
+      return { speciesNames: new Map(), breedNames: new Map() };
+    }
+
+    const species = await this.prisma.species.findMany({
+      where: { id: { in: speciesIds } },
+      include: { breeds: true },
+    });
+
+    const involvedSpeciesIds = new Set(speciesIds);
+    const speciesNames = new Map<string, string>();
+    const breedNames = new Map<string, string>();
+    for (const row of species) {
+      // Defensive: a species the batch does not reference can never contribute.
+      if (!involvedSpeciesIds.has(row.id)) {
+        continue;
+      }
+      speciesNames.set(row.id, row.name);
+      for (const breed of row.breeds) {
+        if (breedIds.has(breed.id)) {
+          breedNames.set(breed.id, breed.name);
+        }
+      }
+    }
+    return { speciesNames, breedNames };
   }
 
   /**

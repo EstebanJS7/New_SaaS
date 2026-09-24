@@ -41,8 +41,9 @@ function PetRow({ pet, slug }: { readonly pet: PortalPet; readonly slug: string 
  * success. An empty list is a NORMAL state for a holder — a guardian link may
  * not exist yet — so it never renders as an error.
  *
- * `speciesId`/`breedId` are intentionally not rendered; see `pet-facts.ts` for
- * why a catalog read is required before species/breed names can appear.
+ * The pet's species/breed NAMES come from the API (resolved server-side for the
+ * holder's own pets only); see `pet-facts.ts`. The client never reads the global
+ * catalog and never prints a raw catalog id.
  */
 export function PortalPetsList({ slug }: PortalPetsListProps): JSX.Element {
   const query = useQuery({

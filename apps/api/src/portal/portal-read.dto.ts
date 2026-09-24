@@ -33,12 +33,24 @@ export type PortalEncounterStatusDto = "DRAFT" | "CLOSED";
 export type PortalAppointmentStatusDto =
   "SCHEDULED" | "CONFIRMED" | "ARRIVED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 
-/** Holder-owned pet identity — species/breed as stable ids, no tenant echo. */
+/**
+ * Holder-owned pet identity — species/breed as stable ids AND resolved names,
+ * no tenant echo.
+ *
+ * `speciesName`/`breedName` are RESOLVED SERVER-SIDE from the GLOBAL Species/
+ * Breed reference tables (no tenant column), the same way the appointment list
+ * resolves `patientName`. They carry ONLY the names of this pet's own species
+ * and breed: the catalog is never returned as a list, and a species or breed the
+ * holder's pets do not have is never emitted. `breedName` mirrors the nullable
+ * `breedId` — a pet with no breed has no name either.
+ */
 export interface PortalPetSummary {
   readonly id: string;
   readonly name: string;
   readonly speciesId: string;
+  readonly speciesName: string;
   readonly breedId: string | null;
+  readonly breedName: string | null;
   readonly sex: PortalPatientSexDto;
   readonly birthDate: string | null;
   readonly isActive: boolean;
