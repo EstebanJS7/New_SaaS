@@ -64,7 +64,8 @@ function VaccinationItem({
  * the SAME not-found it returns for a pet that does not exist, so the copy says
  * both may be true instead of claiming the pet exists elsewhere.
  *
- * `speciesId`/`breedId` are intentionally not rendered; see `pet-facts.ts`.
+ * The pet's species/breed NAMES are resolved server-side and rendered through
+ * `pet-facts.ts`; the client never reads the catalog or prints a raw catalog id.
  *
  * A link into the booking grid is preserved with the tenant slug so the holder
  * moves between portal pages without ever leaving their own tenant.

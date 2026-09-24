@@ -100,6 +100,9 @@ Portal surface (unprefixed `/portal/*`, DEC-002 defers `/api/v1`):
 - `POST /portal/login` (the only `@Public` portal route), `POST /portal/logout`,
   `GET /portal/me`.
 - `GET /portal/pets`, `GET /portal/pets/:id`.
+  - The pet projections carry `speciesName`/`breedName` next to `speciesId`/
+    `breedId`, resolved server-side for the holder's OWN pets only (see Species/
+    breed below); `breedName` is null when the pet has no breed.
 - `GET /portal/appointments`, `GET /portal/appointments/:id`.
 - `GET /portal/availability?date&durationMinutes[&stepMinutes]`.
 - `POST /portal/pets/:id/bookings`, `GET /portal/bookings`,
@@ -235,22 +238,32 @@ It does **not** hold everywhere on this surface:
   the authority; the client mirrors the API's per-field limits and re-checks
   every one in validation, because `maxLength` alone would not stop an
   over-length value.
-- **Species/breed names are unresolved.** The pet projection returns
-  `speciesId`/`breedId` as stable ids and there is no holder-facing catalog
-  route, so `pet-facts.ts` intentionally renders nothing for them rather than a
-  raw UUID or an invented fixture.
+- **Species/breed names are resolved per pet, from the GLOBAL reference tables,
+  not from a catalog route.** The pet projections now carry `speciesName`/
+  `breedName`. The API resolves them in ONE set-based query of `Species`/`Breed`
+  (global tables with no tenant column, so the query is deliberately NOT
+  tenant-filtered) scoped to the holder's pets' own species ids, and reads a
+  breed name only out of the nested breeds of those species. The catalog is
+  never exposed as a list, and a species or breed the holder's pets do not have
+  can never appear. `breedName` is null when the pet has no breed. An
+  unresolvable reference is an integrity breach (the FK is RESTRICT), so the
+  read fails as `INTERNAL` rather than returning a blank or a raw id.
 - **`bookingRequiresApproval` is registered but not consumed.** The typed
   `portal` namespace validates and stores the boolean (default `true`), but the
   booking flow always requires staff approval; no code path reads the setting
   yet.
-- **`INTERNAL` `DomainError` messages reach the client.** The global exception
-  filter echoes `DomainError.message` verbatim for every code, so the portal
-  integrity-breach messages (for example "Appointment references a patient that
-  cannot be resolved.") are returned in the 500 body. They carry no identifiers,
-  and the sanitized generic copy applies only to non-`DomainError` throws.
+- **`INTERNAL` messages do not reach the client.** The global exception filter
+  derives the 5xx set from the shared error registry and substitutes the generic
+  copy for those codes, so a portal integrity-breach message (for example
+  "Appointment references a patient that cannot be resolved.") stays in the
+  request-bound log line instead of the 500 body. Non-5xx domain messages —
+  `VALIDATION_FAILED`, `NOT_FOUND`, `CONFLICT`, `FORBIDDEN` — are deliberate and
+  do reach the client verbatim.
 - **No E2E gate.** Portal UX is covered by Vitest + testing-library only
-  ([[TD-007]]); the web Vitest config raises no hook/test timeout, so component
-  suites that boot under full-repo parallel load are timing-sensitive.
+  ([[TD-007]]). The web suite runs its files sequentially and raises RTL's wait
+  window in its setup file, which removed the load-sensitive flakes recorded as
+  [[TD-012]]; external CPU starvation beyond that window can still be
+  timing-sensitive.
 - **Single-replica rate limiter.** Portal login shares the in-process limiter
   with a namespaced key ([[TD-005]]).
 

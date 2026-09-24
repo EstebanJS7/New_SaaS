@@ -25,7 +25,9 @@ const PETS = [
     id: REX_ID,
     name: "Rex",
     speciesId: "species-1",
+    speciesName: "Dog",
     breedId: "breed-1",
+    breedName: "Labrador Retriever",
     sex: "MALE",
     birthDate: "2020-05-01T00:00:00.000Z",
     isActive: true,
@@ -34,7 +36,9 @@ const PETS = [
     id: MILO_ID,
     name: "Milo",
     speciesId: "species-1",
+    speciesName: "Dog",
     breedId: null,
+    breedName: null,
     sex: "UNKNOWN",
     birthDate: null,
     isActive: false,
@@ -121,9 +125,12 @@ describe("PortalPetsList", () => {
       ]);
     });
 
-    // Meaningful facts are shown; the catalog ids that have no portal route are not.
-    expect(screen.getByText("Male · Born 2020-05-01")).toBeInTheDocument();
-    expect(screen.getByText("Sex not recorded · Inactive")).toBeInTheDocument();
+    // Species/breed names resolved by the API are shown; the raw catalog ids are
+    // still never printed. A null breed name is simply omitted.
+    expect(
+      screen.getByText("Dog · Labrador Retriever · Male · Born 2020-05-01")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Dog · Sex not recorded · Inactive")).toBeInTheDocument();
     expect(container.textContent).not.toContain("species-1");
     expect(container.textContent).not.toContain("breed-1");
   });
