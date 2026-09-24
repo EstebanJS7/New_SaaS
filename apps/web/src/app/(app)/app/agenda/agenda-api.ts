@@ -490,7 +490,7 @@ export function isAgendaPermissionDenied(error: Error): boolean {
   );
 }
 
-/** True when an optimistic-concurrency or overlap write lost the race. */
+/** True when a write hit the overloaded 409 (lifecycle, version, availability or overlap). */
 export function isAgendaConflict(error: Error): boolean {
   return error instanceof ApiRequestError && error.code === "CONFLICT";
 }
@@ -500,6 +500,13 @@ export function isAgendaConflict(error: Error): boolean {
  *
  * These messages are UX-only; the backend still enforces every gate, and any
  * unmapped code falls through to the server message.
+ *
+ * `CONFLICT` is OVERLOADED upstream: the same 409 covers an illegal lifecycle
+ * transition or a status that cannot be rescheduled, a stale optimistic version
+ * (another writer), a slot that overlaps an active appointment, a slot outside
+ * the professional's availability, and a slot inside a one-off block. The
+ * envelope's `code` is the contract and the message text is not, so the copy
+ * names NO cause and points at the refreshed state instead of asserting one.
  */
 export function userFacingAgendaError(error: Error): string {
   const code = error instanceof ApiRequestError ? error.code : "";
@@ -507,13 +514,25 @@ export function userFacingAgendaError(error: Error): string {
     case "UNAUTHENTICATED":
       return "You must be signed in to view the agenda.";
     case "FORBIDDEN":
-      return "You do not have permission to view the agenda.";
+      // Reached by the read AND the write paths: a write 403 is the granular
+      // `scheduling.appointment.manage`/`transition` permission, which a staffer
+      // can lack while still holding read, so the copy names no specific one.
+      return "You do not have permission to perform this action.";
     case "FEATURE_NOT_ENTITLED":
-      return "The veterinary module is not enabled for this tenant.";
+      // The scheduling capability has NO feature-code gate: SchedulingModule
+      // imports no EntitlementsModule, `schedulingSettingsDefinition` declares
+      // no `requiresFeature`, and no scheduling route throws this code. It is
+      // therefore unreachable for this client and is kept only as a defensive
+      // mapping for the shared registry. The copy names the tenant's entitlement
+      // rather than inventing a gate that scheduling does not have.
+      return "The requested feature is not enabled for this tenant.";
     case "NOT_FOUND":
-      return "Appointment not found.";
+      // The read/write routes 404 on the appointment, but CREATE also 404s on a
+      // foreign or unknown branch, patient or professional, so the copy must not
+      // assert which anchor is missing.
+      return "The appointment, or the branch, patient or professional you selected, could not be found.";
     case "CONFLICT":
-      return "That time overlaps another appointment or falls outside availability.";
+      return "The appointment could not be changed because it conflicts with its current state. The latest details are being refreshed; review them and try again.";
     case "VALIDATION_FAILED":
       return "Check the appointment details and try again.";
     default:
@@ -544,7 +563,10 @@ export function userFacingBookingRequestError(error: Error): string {
     case "FORBIDDEN":
       return "You do not have permission to decide booking requests.";
     case "FEATURE_NOT_ENTITLED":
-      return "The veterinary module is not enabled for this tenant.";
+      // Same as the agenda mapping: the booking-request decision route lives in
+      // SchedulingModule, which has no feature-code gate, so this cannot be
+      // reached by this client. Kept defensively with copy that invents no gate.
+      return "The requested feature is not enabled for this tenant.";
     case "NOT_FOUND":
       // The API masks a foreign or non-visible branch or professional with the
       // same status, so this must not claim the request itself is missing.

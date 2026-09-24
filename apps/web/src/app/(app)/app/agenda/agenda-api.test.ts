@@ -254,12 +254,50 @@ describe("agenda-api contract", () => {
 
   it("maps the stable error contract to UX copy", () => {
     expect(userFacingAgendaError(new ApiRequestError("FORBIDDEN", "Access denied", 403))).toBe(
-      "You do not have permission to view the agenda."
+      "You do not have permission to perform this action."
     );
     expect(userFacingAgendaError(new ApiRequestError("UNAUTHENTICATED", "Auth", 401))).toBe(
       "You must be signed in to view the agenda."
     );
     expect(userFacingAgendaError(new Error("boom"))).toBe("boom");
+  });
+
+  it("covers every anchor a 404 can mean without naming one cause", () => {
+    // CREATE 404s on a foreign/unknown branch, patient or professional, so the
+    // copy must not claim the appointment itself is the missing anchor.
+    const copy = userFacingAgendaError(
+      new ApiRequestError("NOT_FOUND", "Branch was not found.", 404)
+    );
+    for (const anchor of ["appointment", "branch", "patient", "professional"]) {
+      expect(copy).toContain(anchor);
+    }
+    expect(copy).not.toBe("Appointment not found.");
+    expect(copy).not.toBe("Branch was not found.");
+  });
+
+  it("does not invent a feature gate for FEATURE_NOT_ENTITLED", () => {
+    const copy = userFacingAgendaError(new ApiRequestError("FEATURE_NOT_ENTITLED", "nope", 403));
+    // Scheduling has no feature-code gate, so the copy must not name a module.
+    expect(copy).toBe("The requested feature is not enabled for this tenant.");
+    expect(copy).not.toContain("veterinary");
+  });
+
+  it("does not name a cause for the overloaded agenda 409", () => {
+    const copy = userFacingAgendaError(
+      new ApiRequestError(
+        "CONFLICT",
+        "The professional already has an overlapping appointment.",
+        409
+      )
+    );
+    // The same 409 covers a lifecycle rule, a stale version, availability, a
+    // block and an overlap, so the copy must not assert any single cause.
+    expect(copy).not.toContain("overlap");
+    expect(copy).not.toContain("availability");
+    expect(copy).not.toContain("block");
+    expect(copy).not.toBe("The professional already has an overlapping appointment.");
+    expect(copy).toContain("conflicts with its current state");
+    expect(copy).toContain("refreshed");
   });
 
   it("exposes the legal lifecycle edges per status", () => {
@@ -368,6 +406,9 @@ describe("booking-request client contract", () => {
     expect(userFacingBookingRequestError(new ApiRequestError("NOT_FOUND", "Gone", 404))).toBe(
       "The booking request, or the branch or professional you selected, could not be found."
     );
+    expect(
+      userFacingBookingRequestError(new ApiRequestError("FEATURE_NOT_ENTITLED", "nope", 403))
+    ).toBe("The requested feature is not enabled for this tenant.");
     expect(userFacingBookingRequestError(new Error("boom"))).toBe("boom");
   });
 });
