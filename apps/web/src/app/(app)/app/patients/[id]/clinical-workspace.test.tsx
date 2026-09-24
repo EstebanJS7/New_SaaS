@@ -629,6 +629,83 @@ describe("ClinicalWorkspace", () => {
     expect(savedBodies[1]).toMatchObject({ version: 2, diagnosis: "Second edit" });
   });
 
+  it("refuses to install an older-version row on a conflict reload", async () => {
+    // The list answers differ per read: the seed (v1), the post-save echo (v2),
+    // and the conflict reload, whose out-of-order fetch resolves with a row
+    // OLDER than the version the successful save already applied. The reload is
+    // only reachable through the conflict flow, so the plain refetch tests above
+    // cannot exercise it.
+    const autosaveDelayMs = 120;
+    let listCalls = 0;
+    let saveAttempts = 0;
+    const conflictBody = {
+      error: { code: "CONFLICT", message: "The encounter was updated by another writer." },
+    };
+
+    const fetchMock = mockClinical({
+      list: () => {
+        listCalls += 1;
+        if (listCalls === 1) return jsonResponse([{ ...DRAFT }]); // seed: version 1
+        if (listCalls === 2) {
+          return jsonResponse([{ ...DRAFT, version: 2, diagnosis: "Saved edit" }]);
+        }
+        // Conflict reload: same id, OLDER version and older content.
+        if (listCalls === 3) {
+          return jsonResponse([{ ...DRAFT, diagnosis: "Stale server text" }]);
+        }
+        return jsonResponse([{ ...DRAFT, version: 3, diagnosis: "Saved edit" }]);
+      },
+      save: (body) => {
+        saveAttempts += 1;
+        if (saveAttempts === 1) {
+          return jsonResponse({
+            ...DRAFT,
+            version: 2,
+            diagnosis: body?.diagnosis as string | null,
+          });
+        }
+        // A concurrent writer advanced the server before our version-2 write.
+        return jsonResponse(conflictBody, 409);
+      },
+    });
+
+    renderWorkspace({ autosaveDelayMs });
+    await selectEncounter();
+
+    // 1) A successful save advances the applied version to 2 and makes
+    //    "Saved edit" the clean baseline.
+    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+      target: { value: "Saved edit" },
+    });
+    await flushAutosave(autosaveDelayMs);
+    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Version 2/)).toBeInTheDocument());
+
+    // 2) The next autosave loses the race and surfaces a conflict.
+    fireEvent.change(screen.getByLabelText("Diagnosis"), { target: { value: "Pending edit" } });
+    await flushAutosave(autosaveDelayMs);
+    expect(await screen.findByText(/changed on the server/)).toBeInTheDocument();
+
+    // The user discards the losing edit, so the draft is clean against the
+    // applied baseline; autosave stays suspended while the conflict remains.
+    fireEvent.change(screen.getByLabelText("Diagnosis"), { target: { value: "Saved edit" } });
+    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Saved edit");
+
+    // 3) The conflict reload resolves with an OLDER version-1 row. The monotonic
+    // guard must refuse to install it as the baseline: adopting the stale content
+    // would make the clean draft look dirty and trigger a spurious write.
+    fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
+    await waitFor(() => expect(screen.getByText(/Version 1/)).toBeInTheDocument());
+
+    await flushAutosave(autosaveDelayMs);
+
+    // Only the successful save and the losing one were ever sent: the stale row
+    // did not regress the baseline, so the draft never became dirty again.
+    expect(saveCalls(fetchMock)).toHaveLength(2);
+    expect(screen.getByText("All changes saved")).toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Saved edit");
+  });
+
   it("renders a denied create as permission-aware UX and disables the action", async () => {
     mockClinical({
       list: () => jsonResponse([]),

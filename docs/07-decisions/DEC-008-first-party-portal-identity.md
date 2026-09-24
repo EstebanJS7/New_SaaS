@@ -2,7 +2,7 @@
 id: DEC-008
 type: decision
 title: Provide portal identity first-party, deviating from PRD §8
-status: proposed
+status: accepted
 date: 2026-09-21
 related_epics:
   - EPIC-08
@@ -176,11 +176,22 @@ The approach realized by the merged implementation is:
 
 ## Approval and Governance
 
-There is **no approval evidence in the repository** for this record: no
-maintainer sign-off, review, or acceptance artifact exists, so the record is
-`proposed`. What is true is that the EPIC-08 scope required the PRD §8 deviation
-to be recorded as a Decision and that the first-party approach is realized by
-the implementation merged at `27bc04a`; formal acceptance is still outstanding.
+**Accepted 2026-09-22 by the maintainer**, who reviewed the record and accepted
+the deviation explicitly. The approval is recorded here because the repository
+cannot carry a separate sign-off artifact, and an accepted decision whose
+approval lives only in a conversation is indistinguishable from an unapproved
+one.
+
+What the acceptance authorizes: shipping the portal on first-party identity —
+session cookies issued and validated by the application, the portal's own login
+identifier and its separation from the staff boundary — while PRD §8's
+preference for an external managed authentication provider stays unmet. It does
+not authorize any other divergence from §8: staff and Customer Portal
+authorization remain separate security boundaries, and nothing here permits
+sharing controllers or weakening a role check between them.
+
+The deviation was already realized by the implementation merged at `27bc04a`;
+this acceptance records the decision rather than the code's existence.
 
 No ADR is required by this record: it adds no runtime service, datastore, queue,
 ORM, authentication provider or design-system change and stays inside the frozen
