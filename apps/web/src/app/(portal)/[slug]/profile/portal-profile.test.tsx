@@ -180,7 +180,94 @@ describe("PortalProfileView", () => {
     expect(screen.getByTestId("portal-profile-address-country-code")).toHaveValue("PY");
   });
 
-  it("states that details can be updated here but not removed", async () => {
+  it("tells the holder details can be removed and offers a removal control for each", async () => {
+    global.fetch = routeFetch({ profile: { body: FULL_PROFILE } });
+
+    renderView();
+
+    const note = await screen.findByTestId("portal-profile-removal-note");
+    expect(note).toHaveTextContent(/remove your phone number and address/i);
+    // The old claim that details cannot be removed is gone.
+    expect(note).not.toHaveTextContent("cannot remove");
+    expect(screen.getByTestId("portal-profile-remove-phone")).toBeInTheDocument();
+    expect(screen.getByTestId("portal-profile-remove-address")).toBeInTheDocument();
+  });
+
+  it("offers no removal control when there is nothing stored to remove", async () => {
+    global.fetch = routeFetch({ profile: { body: EMPTY_PROFILE } });
+
+    renderView();
+    await screen.findByTestId("portal-profile-form");
+
+    expect(screen.queryByTestId("portal-profile-remove-phone")).toBeNull();
+    expect(screen.queryByTestId("portal-profile-remove-address")).toBeNull();
+  });
+
+  it("asks for confirmation and clears the phone only after the holder confirms", async () => {
+    const fetchMock = routeFetch({
+      profile: { body: FULL_PROFILE },
+      save: { body: { phone: null, address: FULL_PROFILE.address } },
+    });
+    global.fetch = fetchMock;
+
+    renderView();
+    fireEvent.click(await screen.findByTestId("portal-profile-remove-phone"));
+
+    // The first click removes nothing: it opens the confirmation instead.
+    expect(writes(fetchMock)).toHaveLength(0);
+    const confirmation = screen.getByTestId("portal-profile-remove-phone-confirm");
+    expect(confirmation).toHaveAttribute("role", "alertdialog");
+    expect(confirmation).toHaveTextContent(/remove your phone number/i);
+
+    fireEvent.click(screen.getByTestId("portal-profile-remove-phone-confirm-yes"));
+    await waitFor(() => {
+      const put = writes(fetchMock)[0];
+      expect(put).toBeDefined();
+      expect(resolveRequestUrl(put[0])).toBe("/api/portal/profile");
+      expect(JSON.parse(put[1].body as string)).toEqual({ phone: null });
+    });
+    // The form resets from the response: the phone field is empty and the
+    // removal control is gone because there is no longer a stored phone.
+    expect(await screen.findByTestId("portal-profile-phone")).toHaveValue("");
+    await waitFor(() => {
+      expect(screen.queryByTestId("portal-profile-remove-phone")).toBeNull();
+    });
+  });
+
+  it("asks for confirmation and clears the address only after the holder confirms", async () => {
+    const fetchMock = routeFetch({
+      profile: { body: FULL_PROFILE },
+      save: { body: { phone: FULL_PROFILE.phone, address: null } },
+    });
+    global.fetch = fetchMock;
+
+    renderView();
+    fireEvent.click(await screen.findByTestId("portal-profile-remove-address"));
+    expect(writes(fetchMock)).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId("portal-profile-remove-address-confirm-yes"));
+    await waitFor(() => {
+      const put = writes(fetchMock)[0];
+      expect(put).toBeDefined();
+      expect(JSON.parse(put[1].body as string)).toEqual({ address: null });
+    });
+    expect(await screen.findByTestId("portal-profile-address-line1")).toHaveValue("");
+  });
+
+  it("cancels a removal without sending a request", async () => {
+    const fetchMock = routeFetch({ profile: { body: FULL_PROFILE } });
+    global.fetch = fetchMock;
+
+    renderView();
+    fireEvent.click(await screen.findByTestId("portal-profile-remove-address"));
+    fireEvent.click(screen.getByTestId("portal-profile-remove-address-confirm-cancel"));
+
+    expect(screen.queryByTestId("portal-profile-remove-address-confirm")).toBeNull();
+    expect(screen.getByTestId("portal-profile-remove-address")).toBeInTheDocument();
+    expect(writes(fetchMock)).toHaveLength(0);
+  });
+
+  it("does not repeat the removed-details claim after a successful save", async () => {
     const fetchMock = routeFetch({
       profile: { body: FULL_PROFILE },
       save: { body: FULL_PROFILE },
@@ -188,17 +275,12 @@ describe("PortalProfileView", () => {
     global.fetch = fetchMock;
 
     renderView();
-
-    const note = await screen.findByTestId("portal-profile-removal-note");
-    expect(note).toHaveTextContent("cannot remove them");
-    expect(note).toHaveTextContent(/contact your clinic/i);
-
-    // The success message must not read as a promise that a cleared field was
-    // deleted: clearing sends an absent key, which the API keeps.
-    fireEvent.click(screen.getByTestId("portal-profile-save"));
+    fireEvent.click(await screen.findByTestId("portal-profile-save"));
     const success = await screen.findByTestId("portal-profile-save-success");
     expect(success).toHaveTextContent("Your profile has been updated.");
-    expect(success).toHaveTextContent("cannot be removed");
+    // The fixed copy no longer tells the holder details are irremovable, and
+    // never claims a cleared field was "saved".
+    expect(success).not.toHaveTextContent("cannot be removed");
     expect(success).not.toHaveTextContent(/\bsaved\b/i);
   });
 

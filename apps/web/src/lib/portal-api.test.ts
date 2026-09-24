@@ -322,6 +322,18 @@ describe("portal profile client contract", () => {
     expect(JSON.parse(init.body as string)).toEqual({ phone: "555-0000" });
   });
 
+  it("updatePortalProfile sends an explicit null to clear a field", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ phone: null, address: null })));
+    global.fetch = fetchMock;
+
+    await updatePortalProfile({ phone: null, address: null });
+
+    const [, init] = lastCall(fetchMock);
+    // `null` is a deliberate clear and must survive JSON serialization; an
+    // absent key would instead leave the stored value untouched.
+    expect(JSON.parse(init.body as string)).toEqual({ phone: null, address: null });
+  });
+
   it("surfaces the stable code on a profile PUT refusal", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(

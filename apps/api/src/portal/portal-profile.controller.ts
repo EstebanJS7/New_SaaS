@@ -90,11 +90,12 @@ export class PortalProfileController {
   }
 
   /**
-   * Upserts the holder's phone channel and/or address. A payload carrying
-   * email, a name, kind, tax data, another Customer's identifiers, an unknown
-   * key or no key at all is a 400 VALIDATION_FAILED and persists nothing; a
-   * target identity in the query or a header is refused the same way, before
-   * the service is ever called.
+   * Upserts or clears the holder's phone channel and/or address. `null` is a
+   * CLEAR (the field's active rows are deactivated); an absent key leaves the
+   * stored value untouched. A payload carrying email, a name, kind, tax data,
+   * another Customer's identifiers, an unknown key or no key at all is a 400
+   * VALIDATION_FAILED and persists nothing; a target identity in the query or
+   * a header is refused the same way, before the service is ever called.
    */
   @Put("profile")
   update(

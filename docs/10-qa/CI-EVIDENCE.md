@@ -359,13 +359,14 @@ live-PostgreSQL application-path suite is a separate target
 
 Recorded as limitations, not as resolved items.
 
-| Item                                                                                                                                                                        | State    | Record                             |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------- |
-| `main` branch protection enabled 2026-09-21 with both required checks (supersedes the 2026-09-11 HTTP 404 finding)                                                          | resolved | [[TD-001 Branch protection]]       |
-| Broader Batch 5 cross-tenant isolation plus RBAC concurrency and audit-rollback not yet run against live PG                                                                 | open     | [[TD-006 Live PG isolation run]]   |
-| Portal contact details cannot be removed; only the most recently updated active address is written; form `maxLength` is a convenience; `bookingRequiresApproval` unconsumed | open     | [[Portal]] / [[DEC-008]]           |
-| Species/breed names unresolved (no holder-facing catalog read); `INTERNAL` `DomainError` messages echoed to clients                                                         | open     | [[Portal]]                         |
-| Playwright E2E coverage for the portal UI                                                                                                                                   | accepted | [[TD-007 Playwright E2E deferred]] |
+| Item                                                                                                                                                | State    | Record                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------- |
+| `main` branch protection enabled 2026-09-21 with both required checks (supersedes the 2026-09-11 HTTP 404 finding)                                  | resolved | [[TD-001 Branch protection]]       |
+| Broader Batch 5 cross-tenant isolation plus RBAC concurrency and audit-rollback not yet run against live PG                                         | open     | [[TD-006 Live PG isolation run]]   |
+| Portal contact details can be removed on request: `null` clears a field and the stored row is deactivated, never deleted (2026-09-22)               | resolved | [[Portal]]                         |
+| Only the most recently updated active address is written; form `maxLength` is a convenience; `bookingRequiresApproval` unconsumed                   | open     | [[Portal]] / [[DEC-008]]           |
+| Species and breed names resolve per pet without exposing the catalog, and `INTERNAL` 5xx messages are no longer echoed to clients (both 2026-09-22) | resolved | [[Portal]]                         |
+| Playwright E2E coverage for the portal UI                                                                                                           | accepted | [[TD-007 Playwright E2E deferred]] |
 
 No open item above is treated as resolved by this baseline, and no code fix is
 in scope for this closure. Branch protection is no longer an open item: it was

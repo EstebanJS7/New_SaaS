@@ -222,10 +222,14 @@ export interface PortalProfileAddressInput {
  * `address` and rejects every other key (`email`, `displayName`, `kind`,
  * `taxId`, `customerId`, ...) with a 400 VALIDATION_FAILED, so this surface can
  * only ever write the two holder-owned values.
+ *
+ * `null` is a DELIBERATE CLEAR: `{ phone: null }` removes the stored phone and
+ * `{ address: null }` removes the stored address. An ABSENT key leaves the
+ * stored value untouched, so a partial edit never clears what it omits.
  */
 export interface UpdatePortalProfileInput {
-  readonly phone?: string;
-  readonly address?: PortalProfileAddressInput;
+  readonly phone?: string | null;
+  readonly address?: PortalProfileAddressInput | null;
 }
 
 interface ApiErrorEnvelope {
@@ -312,7 +316,8 @@ export function getPortalProfile(): Promise<PortalProfile> {
 /**
  * `PUT /portal/profile` — writes the holder's own phone and/or address. The
  * body is forwarded exactly as given, so the API's `.strict()` schema sees only
- * the keys this contract allows and never an extra one.
+ * the keys this contract allows and never an extra one. A `null` value is a
+ * clear; an absent key leaves the stored value untouched.
  */
 export function updatePortalProfile(input: UpdatePortalProfileInput): Promise<PortalProfile> {
   return putJson("/profile", input);

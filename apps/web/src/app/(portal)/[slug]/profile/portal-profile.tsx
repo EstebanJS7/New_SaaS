@@ -24,6 +24,15 @@ const labelClassName = "block text-sm font-medium text-foreground";
 const saveButtonClassName =
   "rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
+const removeButtonClassName =
+  "rounded-sm text-sm font-medium text-destructive underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+
+const confirmRemoveButtonClassName =
+  "rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+
+const cancelRemoveButtonClassName =
+  "rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+
 /**
  * The address keys the holder may edit, in contract order. Kept as a list so
  * the form and the optional-field compaction share one source of truth.
@@ -228,13 +237,74 @@ interface PortalProfileFormProps {
   readonly initial: PortalProfile;
 }
 
+/** The two removable stored details, and the noun each confirmation names. */
+type RemovableDetail = "phone" | "address";
+
+const REMOVABLE_DETAIL_NOUNS: Record<RemovableDetail, string> = {
+  phone: "phone number",
+  address: "address",
+};
+
+interface PortalRemovalConfirmationProps {
+  readonly detail: RemovableDetail;
+  readonly disabled: boolean;
+  readonly onConfirm: () => void;
+  readonly onCancel: () => void;
+}
+
+/**
+ * Two-step removal guard: clicking "Remove" never removes anything on its own.
+ * The confirmation names the detail, states the effect and offers an explicit
+ * keep/cancel path, so a stray click cannot wipe a stored detail.
+ */
+function PortalRemovalConfirmation({
+  detail,
+  disabled,
+  onConfirm,
+  onCancel,
+}: PortalRemovalConfirmationProps): JSX.Element {
+  const noun = REMOVABLE_DETAIL_NOUNS[detail];
+  return (
+    <div
+      role="alertdialog"
+      aria-label={`Confirm removing your ${noun}`}
+      data-testid={`portal-profile-remove-${detail}-confirm`}
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
+    >
+      <p className="flex-1">
+        Remove your {noun}? It will no longer appear on your profile, and your clinic will keep it
+        on file.
+      </p>
+      <button
+        type="button"
+        data-testid={`portal-profile-remove-${detail}-confirm-yes`}
+        onClick={onConfirm}
+        disabled={disabled}
+        className={confirmRemoveButtonClassName}
+      >
+        Yes, remove
+      </button>
+      <button
+        type="button"
+        data-testid={`portal-profile-remove-${detail}-confirm-cancel`}
+        onClick={onCancel}
+        disabled={disabled}
+        className={cancelRemoveButtonClassName}
+      >
+        Keep {noun}
+      </button>
+    </div>
+  );
+}
+
 /**
  * The holder's editable profile form.
  *
  * It offers EXACTLY the fields `PUT /portal/profile` accepts — a phone and the
- * seven address fields — and nothing else. Email is not a field here on
- * purpose: it is staff-operated and no email is accepted or returned, so the
- * form says that plainly instead of leaving a holder to hunt for it.
+ * seven address fields — plus a two-step removal for each stored detail.
+ * Email is not a field here on purpose: it is staff-operated and no email is
+ * accepted or returned, so the form says that plainly instead of leaving a
+ * holder to hunt for it.
  *
  * On success the form resets from the RESPONSE, so the holder reads what the
  * API actually persisted, and the query cache is updated with the same object.
@@ -245,12 +315,14 @@ function PortalProfileForm({ initial }: PortalProfileFormProps): JSX.Element {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProfileFormState>(() => formStateFrom(initial));
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<RemovableDetail | null>(null);
 
   const save = useMutation({
     mutationFn: updatePortalProfile,
     onSuccess: (saved) => {
       setForm(formStateFrom(saved));
       setValidationError(null);
+      setConfirming(null);
       queryClient.setQueryData(["portal", "profile"], saved);
     },
   });
@@ -272,6 +344,41 @@ function PortalProfileForm({ initial }: PortalProfileFormProps): JSX.Element {
     save.mutate(result.payload);
   }
 
+  /**
+   * The removal control for a stored detail, or nothing when there is nothing
+   * to remove. A click only opens the confirmation; the `null` payload that
+   * clears the detail is sent from the confirmation's own button.
+   */
+  function removalControl(detail: RemovableDetail): JSX.Element | null {
+    const present = detail === "phone" ? initial.phone !== null : initial.address !== null;
+    if (!present) {
+      return null;
+    }
+    if (confirming === detail) {
+      return (
+        <PortalRemovalConfirmation
+          detail={detail}
+          disabled={save.isPending}
+          onConfirm={() => save.mutate(detail === "phone" ? { phone: null } : { address: null })}
+          onCancel={() => setConfirming(null)}
+        />
+      );
+    }
+    return (
+      <button
+        type="button"
+        data-testid={`portal-profile-remove-${detail}`}
+        onClick={() => {
+          setValidationError(null);
+          setConfirming(detail);
+        }}
+        className={removeButtonClassName}
+      >
+        Remove {REMOVABLE_DETAIL_NOUNS[detail]}
+      </button>
+    );
+  }
+
   return (
     <form onSubmit={onSubmit} data-testid="portal-profile-form" className="space-y-6" noValidate>
       <aside
@@ -286,8 +393,8 @@ function PortalProfileForm({ initial }: PortalProfileFormProps): JSX.Element {
         data-testid="portal-profile-removal-note"
         className="rounded-lg border bg-card p-4 text-sm text-card-foreground"
       >
-        You can update your phone number and address here, but you cannot remove them. Contact your
-        clinic if you need a detail removed.
+        You can update or remove your phone number and address here. Removing a detail keeps it out
+        of your profile while your clinic keeps it on file.
       </aside>
 
       {isEmpty ? (
@@ -296,20 +403,23 @@ function PortalProfileForm({ initial }: PortalProfileFormProps): JSX.Element {
         </p>
       ) : null}
 
-      <div className="space-y-1">
-        <label className={labelClassName} htmlFor="portal-profile-phone">
-          Phone
-        </label>
-        <input
-          id="portal-profile-phone"
-          data-testid="portal-profile-phone"
-          type="tel"
-          value={form.phone}
-          onChange={(event) => setField("phone", event.target.value)}
-          className={fieldClassName}
-          autoComplete="tel"
-          maxLength={PHONE_MAX_LENGTH}
-        />
+      <div className="space-y-2">
+        <div className="space-y-1">
+          <label className={labelClassName} htmlFor="portal-profile-phone">
+            Phone
+          </label>
+          <input
+            id="portal-profile-phone"
+            data-testid="portal-profile-phone"
+            type="tel"
+            value={form.phone}
+            onChange={(event) => setField("phone", event.target.value)}
+            className={fieldClassName}
+            autoComplete="tel"
+            maxLength={PHONE_MAX_LENGTH}
+          />
+        </div>
+        {removalControl("phone")}
       </div>
 
       <fieldset className="space-y-3 rounded-lg border bg-card p-4 text-card-foreground">
@@ -339,6 +449,8 @@ function PortalProfileForm({ initial }: PortalProfileFormProps): JSX.Element {
         ))}
       </fieldset>
 
+      {removalControl("address")}
+
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
@@ -363,8 +475,7 @@ function PortalProfileForm({ initial }: PortalProfileFormProps): JSX.Element {
             data-testid="portal-profile-save-success"
             className="text-sm text-muted-foreground"
           >
-            Your profile has been updated. Details cannot be removed from this page; contact your
-            clinic if you need one removed.
+            Your profile has been updated.
           </p>
         ) : null}
       </div>
