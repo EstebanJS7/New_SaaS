@@ -23,6 +23,17 @@ export const PORTAL_PROFILE_UPDATED_ACTION = "portal_profile.updated";
 /** Audit target: the holder's own Customer (never the child contact/address). */
 export const PORTAL_PROFILE_TARGET_TYPE = "customer";
 
+/**
+ * Audit field name for a real clear, distinguishing it from a set in the same
+ * `changedFields` list: a set names `phone`, a clear names `phone.cleared`.
+ * The suffix is deliberately a field-name token, not a value, so no phone
+ * number ever reaches the audit row.
+ */
+export const PORTAL_PROFILE_PHONE_CLEARED_FIELD = "phone.cleared";
+
+/** Address twin of {@link PORTAL_PROFILE_PHONE_CLEARED_FIELD}. */
+export const PORTAL_PROFILE_ADDRESS_CLEARED_FIELD = "address.cleared";
+
 /** Tenant-scoped Customer row; only its existence is consumed. */
 interface PortalProfileCustomerRow {
   readonly id: string;
@@ -104,6 +115,7 @@ interface PortalProfilePrisma {
         tenantId: string;
         customerId: string;
         kind?: "PHONE";
+        isActive?: boolean;
       };
       data: PortalPhoneUpdateData;
     }) => Promise<{ count: number }>;
@@ -136,6 +148,17 @@ const ADDRESS_FIELD_NAMES = [
 ] as const;
 
 /**
+ * Outcome of writing one profile field: the affected row id (when a row was
+ * written or deactivated) plus the audit field names for that write. A clear
+ * that found nothing active returns no id and NO field name, so a no-op clear
+ * never appears as a change in the trail.
+ */
+interface PortalFieldWriteResult {
+  readonly id: string | undefined;
+  readonly changedFields: readonly string[];
+}
+
+/**
  * Holder profile self-service boundary (EPIC-08 WU4C).
  *
  * - Tenant AND Customer come exclusively from the authenticated portal context
@@ -152,9 +175,22 @@ const ADDRESS_FIELD_NAMES = [
  * - Address: the most recently updated active address, else a new row. The
  *   holder's other addresses are deliberately left alone — a Customer may keep
  *   several, and no primary/default column exists.
- * - One `portal_profile.updated` PORTAL audit row co-commits with both upserts.
+ * - One `portal_profile.updated` PORTAL audit row co-commits with every write.
  *   Its metadata carries field NAMES and the affected ids, never a phone or
- *   address value (CONFIDENTIAL).
+ *   address value (CONFIDENTIAL). A set names the field (`phone`) or the
+ *   supplied address fields (`address.line1`, ...); a clear names a
+ *   `.cleared` token (`phone.cleared` / `address.cleared`) so the two are
+ *   distinguishable in the trail. A clear of an already-absent field appends
+ *   no field name at all (it changed nothing).
+ * - Clear (`null`): deactivates rather than deletes. Every ACTIVE row of that
+ *   kind (all active PHONE rows, all active addresses) is set `isActive:false`
+ *   in the same transaction, and the cleared phone rows are demoted, so the
+ *   read returns `null` for the field and no active primary is left dangling.
+ *   This mirrors the staff `deactivateContact`/`deactivateAddress` shape
+ *   (deactivate, never delete; the row and its history survive) but is
+ *   deliberately broader than their single-row target: the portal has no
+ *   target id and its projection is a singleton channel, so the clear removes
+ *   the whole active channel rather than one addressable row.
  */
 @Injectable()
 export class PortalProfileService {
@@ -190,13 +226,15 @@ export class PortalProfileService {
       let addressId: string | undefined;
 
       if (input.phone !== undefined) {
-        contactId = await writePortalPhone(tx, tenantId, customerId, input.phone);
-        changedFields.push("phone");
+        const phone = await writePortalPhone(tx, tenantId, customerId, input.phone);
+        contactId = phone.id;
+        changedFields.push(...phone.changedFields);
       }
 
       if (input.address !== undefined) {
-        addressId = await writePortalAddress(tx, tenantId, customerId, input.address);
-        changedFields.push(...addressChangedFields(input.address));
+        const address = await writePortalAddress(tx, tenantId, customerId, input.address);
+        addressId = address.id;
+        changedFields.push(...address.changedFields);
       }
 
       await this.audit.append(
@@ -266,7 +304,7 @@ function selectPhoneTarget(rows: readonly PortalPhoneContactRow[]): PortalPhoneC
 }
 
 /**
- * Upserts the holder's phone channel and returns the written contact id.
+ * Upserts or clears the holder's phone channel and returns the outcome.
  * Primacy bookkeeping ("exactly one primary phone") is derived, not
  * holder-supplied, so it never appears in the audit diff.
  */
@@ -274,8 +312,12 @@ async function writePortalPhone(
   tx: PortalProfilePrisma,
   tenantId: string,
   customerId: string,
-  value: string
-): Promise<string> {
+  value: string | null
+): Promise<PortalFieldWriteResult> {
+  if (value === null) {
+    return clearPortalPhone(tx, tenantId, customerId);
+  }
+
   const rows = await tx.customerContact.findMany({
     where: { tenantId, customerId, kind: "PHONE", isActive: true },
     orderBy: { updatedAt: "desc" },
@@ -311,19 +353,58 @@ async function writePortalPhone(
     data: { isPrimary: false },
   });
 
-  return contactId;
+  return { id: contactId, changedFields: ["phone"] };
 }
 
 /**
- * Upserts the holder's most recently updated active address and returns its id.
- * Other addresses are neither deactivated nor rewritten.
+ * Clear the holder's phone channel. Deactivates (never deletes) every ACTIVE
+ * PHONE row and demotes it, so the read returns `null` and no active primary is
+ * left dangling. A clear that finds nothing active is a no-op: no id, no audit
+ * field name, no failure.
+ */
+async function clearPortalPhone(
+  tx: PortalProfilePrisma,
+  tenantId: string,
+  customerId: string
+): Promise<PortalFieldWriteResult> {
+  const rows = await tx.customerContact.findMany({
+    where: { tenantId, customerId, kind: "PHONE", isActive: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  const target = selectPhoneTarget(rows);
+  if (!target) {
+    return { id: undefined, changedFields: [] };
+  }
+
+  await tx.customerContact.updateMany({
+    where: { tenantId, customerId, kind: "PHONE", isActive: true },
+    data: { isActive: false, isPrimary: false },
+  });
+
+  // The recorded id is the row the holder was actually shown — the primary, or
+  // the most recently updated active one. Every other active PHONE row is a
+  // duplicate this channel-wide clear also deactivates, and recording their ids
+  // would add unbounded noise to the trail without telling an auditor anything
+  // the profile-level target and the `.cleared` token do not already say.
+  return { id: target.id, changedFields: [PORTAL_PROFILE_PHONE_CLEARED_FIELD] };
+}
+
+/**
+ * Upserts or clears the holder's address. On a set, the most recently updated
+ * active address is targeted and other addresses are left alone. On a clear,
+ * every active address is deactivated (never deleted) so the read returns
+ * `null`.
  */
 async function writePortalAddress(
   tx: PortalProfilePrisma,
   tenantId: string,
   customerId: string,
-  input: PortalProfileAddressInput
-): Promise<string> {
+  input: PortalProfileAddressInput | null
+): Promise<PortalFieldWriteResult> {
+  if (input === null) {
+    return clearPortalAddress(tx, tenantId, customerId);
+  }
+
   const rows = await tx.customerAddress.findMany({
     where: { tenantId, customerId, isActive: true },
     orderBy: { updatedAt: "desc" },
@@ -345,14 +426,47 @@ async function writePortalAddress(
         isActive: true,
       },
     });
-    return created.id;
+    return { id: created.id, changedFields: addressChangedFields(input) };
   }
 
   await tx.customerAddress.updateMany({
     where: { id: target.id, tenantId, customerId },
     data: { ...addressUpdateData(input), isActive: true },
   });
-  return target.id;
+  return { id: target.id, changedFields: addressChangedFields(input) };
+}
+
+/**
+ * Clear the holder's address. Deactivates every ACTIVE address row one by one
+ * (the address delegate is id-keyed), preserving the row and its history. A
+ * clear that finds nothing active is a no-op: no id, no audit field name, no
+ * failure.
+ */
+async function clearPortalAddress(
+  tx: PortalProfilePrisma,
+  tenantId: string,
+  customerId: string
+): Promise<PortalFieldWriteResult> {
+  const rows = await tx.customerAddress.findMany({
+    where: { tenantId, customerId, isActive: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  const target = rows[0];
+  if (!target) {
+    return { id: undefined, changedFields: [] };
+  }
+
+  for (const row of rows) {
+    await tx.customerAddress.updateMany({
+      where: { id: row.id, tenantId, customerId },
+      data: { isActive: false },
+    });
+  }
+
+  // Same rule as the phone clear: the id recorded is the address the holder saw,
+  // and the remaining active addresses are duplicates this clear also
+  // deactivates — see the note in `clearPortalPhone`.
+  return { id: target.id, changedFields: [PORTAL_PROFILE_ADDRESS_CLEARED_FIELD] };
 }
 
 /** Only the SUPPLIED address fields are written; absent keys stay untouched. */

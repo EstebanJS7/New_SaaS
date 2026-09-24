@@ -19,6 +19,10 @@ import { z } from "zod";
  * Data classification: phone and address values are CONFIDENTIAL. They are
  * never written into audit metadata or logs — the audit row carries stable ids
  * and field NAMES only.
+ *
+ * `PUT` payload convention: `phone` and `address` are each optional, and a
+ * `null` value is a deliberate CLEAR (deactivate the stored detail) while an
+ * absent key leaves the stored value untouched.
  */
 
 /** Current contract version of the portal profile DTO. */
@@ -47,17 +51,24 @@ export type PortalProfileAddressInput = z.infer<typeof portalProfileAddressPaylo
 /**
  * Update payload: the phone channel and/or the address. `.strict()` rejects
  * every unknown key.
+ *
+ * NULL means CLEAR, absent means LEAVE UNTOUCHED. The two are deliberately
+ * distinct: `phone: null` or `address: null` is the holder instructing the API
+ * to remove the stored detail, while omitting the key leaves it as it was. A
+ * clear still counts as a present key for the at-least-one rule below, so
+ * `{ phone: null }` is a valid body and `{}` is not.
  */
 const updatePortalProfilePayload = z
   .object({
-    phone: z.string().min(1).max(255).optional(),
-    address: portalProfileAddressPayload.optional(),
+    phone: z.string().min(1).max(255).nullable().optional(),
+    address: portalProfileAddressPayload.nullable().optional(),
   })
   .strict();
 
 /**
- * At-least-one rule: an empty body must never reach the service, otherwise a
- * successful PUT would append an audit row describing no change at all.
+ * At-least-one rule: an empty body must never reach the service. A body that
+ * carries only a clear is still a body with a present key (`phone: null`), so
+ * it is accepted; `{}` is refused.
  */
 export const updatePortalProfileBody = updatePortalProfilePayload.superRefine((value, ctx) => {
   if (value.phone === undefined && value.address === undefined) {

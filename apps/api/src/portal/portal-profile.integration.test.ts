@@ -66,6 +66,8 @@ describe("portal profile self-service (real HTTP, full guard chain)", () => {
   let holderScope: HolderFixture;
   let holderSecret: HolderFixture;
   let holderGhost: HolderFixture;
+  let holderClear: HolderFixture;
+  let holderClearMulti: HolderFixture;
   let foreignCustomerId: string;
 
   const prismaRef = (): BootedTestApp["db"]["prisma"] => booted.db.prisma;
@@ -104,6 +106,8 @@ describe("portal profile self-service (real HTTP, full guard chain)", () => {
     holderReject = createHolder("Reject Holder Customer");
     holderScope = createHolder("Scope Holder Customer");
     holderSecret = createHolder("Secret Holder Customer");
+    holderClear = createHolder("Clear Holder Customer");
+    holderClearMulti = createHolder("Clear Multi Holder Customer");
 
     // A live portal session whose Customer row does not exist: the guard
     // authenticates from the access row, so the service must mask it.
@@ -199,6 +203,68 @@ describe("portal profile self-service (real HTTP, full guard chain)", () => {
         customerId: holderMulti.customerId,
         label: "actual",
         line1: "Current Street 1",
+        line2: null,
+        city: "Current City",
+        state: null,
+        postalCode: null,
+        countryCode: "PY",
+        isActive: true,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      },
+    });
+
+    // A holder with TWO active phones and TWO active addresses, to prove a
+    // clear deactivates the whole active channel (not just the projected row)
+    // and that the read is then null.
+    prisma.customerContact.create({
+      data: {
+        tenantId: tenantA,
+        customerId: holderClearMulti.customerId,
+        kind: "PHONE",
+        label: null,
+        value: "+595111222444",
+        isPrimary: true,
+        isActive: true,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      },
+    });
+    prisma.customerContact.create({
+      data: {
+        tenantId: tenantA,
+        customerId: holderClearMulti.customerId,
+        kind: "PHONE",
+        label: null,
+        value: "+595111222555",
+        isPrimary: false,
+        isActive: true,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    });
+    prisma.customerAddress.create({
+      data: {
+        tenantId: tenantA,
+        customerId: holderClearMulti.customerId,
+        label: "vieja",
+        line1: "Multi Old Street 1",
+        line2: null,
+        city: "Old City",
+        state: null,
+        postalCode: null,
+        countryCode: "PY",
+        isActive: true,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    });
+    prisma.customerAddress.create({
+      data: {
+        tenantId: tenantA,
+        customerId: holderClearMulti.customerId,
+        label: "actual",
+        line1: "Multi Current Street 1",
         line2: null,
         city: "Current City",
         state: null,
@@ -529,6 +595,140 @@ describe("portal profile self-service (real HTTP, full guard chain)", () => {
         city: before[1].city,
         isActive: true,
       });
+    });
+  });
+
+  describe("profile clear (null means clear, absent means leave untouched)", () => {
+    it("clears the phone and reports it, deactivating rather than deleting the row", async () => {
+      await profilePut(holderClear.holder.cookie, {
+        phone: "+595982000111",
+        address: { line1: "Clear Street 1", city: "Clear City" },
+      }).expect(200);
+      const before = phoneRowsFor(holderClear.customerId);
+      expect(before).toHaveLength(1);
+
+      const response = await profilePut(holderClear.holder.cookie, { phone: null }).expect(200);
+      const body = response.body as ProfileBody;
+      expect(body.phone).toBeNull();
+      // The stored address is untouched: an absent `address` key keeps it.
+      expect(body.address).toMatchObject({ line1: "Clear Street 1", city: "Clear City" });
+
+      const after = phoneRowsFor(holderClear.customerId);
+      expect(after).toHaveLength(1);
+      // Deactivated, not deleted: the SAME row survives the clear.
+      expect(after[0].id).toBe(before[0].id);
+      expect(after[0]).toMatchObject({
+        value: "+595982000111",
+        isActive: false,
+        isPrimary: false,
+      });
+    });
+
+    it("clears the address and reports it, deactivating rather than deleting the row", async () => {
+      await profilePut(holderClear.holder.cookie, {
+        phone: "+595982000222",
+        address: { line1: "Clear Street 2", city: "Clear City" },
+      }).expect(200);
+      const before = addressRowsFor(holderClear.customerId);
+      expect(before).toHaveLength(1);
+
+      const response = await profilePut(holderClear.holder.cookie, { address: null }).expect(200);
+      const body = response.body as ProfileBody;
+      expect(body.address).toBeNull();
+      // The stored phone is untouched: an absent `phone` key keeps it.
+      expect(body.phone).toBe("+595982000222");
+
+      const after = addressRowsFor(holderClear.customerId);
+      expect(after).toHaveLength(1);
+      expect(after[0].id).toBe(before[0].id);
+      expect(after[0]).toMatchObject({ line1: "Clear Street 2", isActive: false });
+    });
+
+    it("clears the whole active channel when several active rows exist", async () => {
+      const beforePhones = phoneRowsFor(holderClearMulti.customerId);
+      const beforeAddresses = addressRowsFor(holderClearMulti.customerId);
+      expect(beforePhones).toHaveLength(2);
+      expect(beforeAddresses).toHaveLength(2);
+
+      const response = await profilePut(holderClearMulti.holder.cookie, {
+        phone: null,
+        address: null,
+      }).expect(200);
+      const body = response.body as ProfileBody;
+      expect(body.phone).toBeNull();
+      expect(body.address).toBeNull();
+
+      const afterPhones = phoneRowsFor(holderClearMulti.customerId);
+      const afterAddresses = addressRowsFor(holderClearMulti.customerId);
+      expect(afterPhones).toHaveLength(2);
+      expect(afterAddresses).toHaveLength(2);
+      // Every active row is deactivated and demoted; none is deleted, and no
+      // active primary is left dangling (DEC-006 interaction).
+      for (const row of afterPhones) {
+        expect(row).toMatchObject({ isActive: false, isPrimary: false });
+      }
+      for (const row of afterAddresses) {
+        expect(row.isActive).toBe(false);
+      }
+      // A foreign Customer's rows are untouched by the holder's clear.
+      expect(storedPhones(foreignCustomerId)).toHaveLength(1);
+      expect(storedAddresses(foreignCustomerId)).toHaveLength(1);
+    });
+
+    it("names a clear with a `.cleared` token in the audit row and no value", async () => {
+      await profilePut(holderClear.holder.cookie, {
+        phone: PHONE_MARKER,
+        address: { line1: LINE1_MARKER, city: CITY_MARKER },
+      }).expect(200);
+      const requestId = `portal-profile-clear-${randomUUID()}`;
+
+      const response = await supertest(server())
+        .put("/portal/profile")
+        .set("Cookie", holderClear.holder.cookie)
+        .set(REQUEST_ID_HEADER, requestId)
+        .send({ phone: null, address: null })
+        .expect(200);
+
+      expect((response.body as ProfileBody).phone).toBeNull();
+      expect((response.body as ProfileBody).address).toBeNull();
+
+      const rows = auditRowsFor(requestId);
+      expect(rows).toHaveLength(1);
+      const audit = rows[0];
+      expect(audit.action).toBe(PROFILE_ACTION);
+      expect(audit.actorType).toBe("PORTAL");
+      expect(audit.targetType).toBe("customer");
+      expect(audit.metadata).toEqual({
+        schemaVersion: 1,
+        changedFields: ["phone.cleared", "address.cleared"],
+        contactId: phoneRowsFor(holderClear.customerId)[0].id,
+        addressId: addressRowsFor(holderClear.customerId)[0].id,
+      });
+      // No CONFIDENTIAL value reaches the clear's audit metadata.
+      const serialized = JSON.stringify(audit.metadata);
+      for (const marker of [PHONE_MARKER, LINE1_MARKER, CITY_MARKER]) {
+        expect(serialized).not.toContain(marker);
+      }
+    });
+
+    it("is idempotent: clearing an already-absent field succeeds and records no change", async () => {
+      await profilePut(holderClear.holder.cookie, { phone: "+595982000333" }).expect(200);
+      await profilePut(holderClear.holder.cookie, { phone: null }).expect(200);
+
+      const requestId = `portal-profile-clear-noop-${randomUUID()}`;
+      const response = await supertest(server())
+        .put("/portal/profile")
+        .set("Cookie", holderClear.holder.cookie)
+        .set(REQUEST_ID_HEADER, requestId)
+        .send({ phone: null })
+        .expect(200);
+      expect((response.body as ProfileBody).phone).toBeNull();
+
+      const rows = auditRowsFor(requestId);
+      expect(rows).toHaveLength(1);
+      // The row exists (one row per mutation) but claims no change: a no-op
+      // clear does not lie about having cleared something.
+      expect(rows[0].metadata).toEqual({ schemaVersion: 1, changedFields: [] });
     });
   });
 

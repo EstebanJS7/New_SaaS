@@ -2,7 +2,7 @@
 type: module
 module: portal
 status: implemented
-updated: 2026-09-21
+updated: 2026-09-24
 ---
 
 # Module — Portal
@@ -44,7 +44,8 @@ entitlement, and mutations are audited with a `PORTAL` actor.
   duration.
 - Booking requests: create (always pending), list, cancel.
 - Appointment cancel and reschedule, restricted to `SCHEDULED`/`CONFIRMED`.
-- Profile self-service: primary phone channel and active address.
+- Profile self-service: primary phone channel and active address, each updatable
+  and removable (`null` clears; an absent key leaves the stored value).
 - Staff portal-access administration: provision and revoke a Customer's single
   active holder.
 - Staff booking-request decision surface: list, approve, reject.
@@ -109,6 +110,11 @@ Portal surface (unprefixed `/portal/*`, DEC-002 defers `/api/v1`):
   `POST /portal/bookings/:id/cancel`.
 - `POST /portal/appointments/:id/cancel`, `PUT /portal/appointments/:id`.
 - `GET|PUT /portal/profile`.
+  - `PUT` treats `null` as **clear** and an absent key as "leave untouched":
+    `phone: null` deactivates the holder's active phone channel and
+    `address: null` deactivates the active address, so the next read returns
+    `null` for that field. An absent key never clears. The body must still carry
+    at least one of the two keys (`{ phone: null }` is valid; `{}` is a `400`).
 
 Staff routes that stay **off** the portal surface:
 
@@ -140,7 +146,12 @@ profile update (`portal_profile.updated`), and appointment cancel and reschedule
 (`appointment.cancelled` / `appointment.rescheduled`). Each appends exactly one
 `PORTAL`-attributed row (`actorPortalAccessId`, never a staff actor),
 co-committed with the mutation, whose metadata carries the schema version and
-changed field **names** — never a phone number, address or time value.
+changed field **names** — never a phone number, address or time value. A set
+names the field (`phone`) or the supplied address fields (`address.line1`, ...);
+a clear names a `.cleared` token (`phone.cleared` / `address.cleared`), so a
+removal is distinguishable from a set. A clear of an already-absent field is
+idempotent and records **no** field name (`changedFields: []`), so the trail
+never claims a change that did not happen.
 
 It does **not** hold everywhere on this surface:
 
@@ -209,7 +220,16 @@ It does **not** hold everywhere on this surface:
   partial unique index for primacy, so the profile upsert writes the primary
   phone and demotes the holder's other `PHONE` rows in the same transaction.
   This is correct for a single writer but not sufficient under concurrency — see
-  [[DEC-006]].
+  [[DEC-006]]. A clear deactivates the whole active phone channel AND demotes
+  it, so no active primary is left dangling; the next write creates a fresh
+  primary. Clearing does not decide or change DEC-006: the database has no
+  uniqueness backing either way, and the residual concurrency gap is unchanged.
+- **A clear deactivates, never deletes.** `null` sets `isActive: false` on the
+  affected rows, preserving the row and its history. This mirrors the staff
+  `deactivateContact`/`deactivateAddress` shape but is deliberately broader: the
+  portal has no target id and its projection is a singleton channel, so a clear
+  deactivates EVERY active row of that kind (all active `PHONE` rows, all active
+  addresses). For the phone it also clears `isPrimary`.
 
 ## Data Classification
 
@@ -226,14 +246,17 @@ It does **not** hold everywhere on this surface:
 
 ## Known Limitations / Residual Risks
 
-- **Contact details cannot be removed from the portal.** Clearing a field sends
-  an absent key, and the API treats absent as "leave untouched", so the cleared
-  value is kept and restored on the next read. The form states this plainly
-  instead of implying removal. Lifting it needs an explicit clear operation in
-  the API with its own mutation and audit contract.
-- **Only the most recently updated active address is written.** The profile
-  update targets the holder's most recently updated active address, so a holder
-  with several addresses cannot choose between them from the portal.
+- **Contact details are removable from the portal.** A holder can clear the
+  phone or the address with `null`; the API deactivates the stored rows (never
+  deletes them) and the read returns `null`. The form offers a two-step removal
+  and says so. The staff `deactivateContact`/`deactivateAddress` single-row
+  commands remain the staff-side equivalent.
+- **Only the most recently updated active address is written; a clear removes
+  the whole active channel.** The profile update targets the holder's most
+  recently updated active address, so a holder with several addresses cannot
+  choose between them from the portal. A clear (`address: null`) is not
+  row-targeted either: it deactivates every active address, because the portal
+  projects one address and a clear must leave the read `null`.
 - **The form's `maxLength` is a convenience, not the contract.** The server is
   the authority; the client mirrors the API's per-field limits and re-checks
   every one in validation, because `maxLength` alone would not stop an
@@ -282,7 +305,9 @@ It does **not** hold everywhere on this surface:
   `portal-booking-read.integration.test.ts` — pending creation, owner-scoped
   cancel, no-appointment/no-ledger proof, and the integrity-breach 500.
 - `apps/api/src/portal/portal-profile.integration.test.ts` — strict allowlist,
-  identity-hint rejection, sibling demotion, and audit co-commit.
+  identity-hint rejection, sibling demotion, `null`-clears vs absent-key-leaves,
+  deactivate-not-delete, the `.cleared` audit names, clear idempotence and audit
+  co-commit.
 - `apps/api/src/portal/portal-appointment-write.integration.test.ts` — cancel
   and reschedule state/version rules, ownership re-validation, byte-equivalent
   `404`, and audit rollback.
