@@ -6,6 +6,7 @@ import {
   ApiRequestError,
   allowedTransitions,
   approveBookingRequest,
+  getSchedulingSettings,
   listAppointmentOptions,
   listAppointments,
   listBookingRequests,
@@ -96,6 +97,107 @@ describe("agenda-api contract", () => {
       `/api/scheduling/appointments/${APPOINTMENT_ID}/confirm`
     );
     expect(callInit(fetchMock, 1).method).toBe("POST");
+  });
+
+  it("reads the scheduling namespace through the settings proxy and unwraps the envelope", async () => {
+    const namespace = { conflictPolicy: "REJECT", availability: [], blocks: [] };
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ settings: namespace })));
+    global.fetch = fetchMock;
+
+    await expect(getSchedulingSettings()).resolves.toEqual(namespace);
+    expect(resolveRequestUrl(callInput(fetchMock, 0))).toBe("/api/settings/scheduling");
+  });
+
+  it("rejects a settings response without a namespace envelope", async () => {
+    global.fetch = vi.fn(() => Promise.resolve(jsonResponse({})));
+
+    await expect(getSchedulingSettings()).rejects.toMatchObject({ code: "MALFORMED_RESPONSE" });
+  });
+
+  it("accepts a namespace whose arrays carry contract-shaped entries", async () => {
+    const namespace = {
+      conflictPolicy: "ALLOW",
+      availability: [
+        {
+          membershipId: MEMBERSHIP_ID,
+          branchId: BRANCH_ID,
+          weekday: 1,
+          startMinute: 540,
+          endMinute: 780,
+        },
+      ],
+      blocks: [
+        {
+          membershipId: MEMBERSHIP_ID,
+          branchId: BRANCH_ID,
+          startsAt: "2026-09-14T13:00:00.000Z",
+          endsAt: "2026-09-14T14:00:00.000Z",
+        },
+      ],
+    };
+    global.fetch = vi.fn(() => Promise.resolve(jsonResponse({ settings: namespace })));
+
+    await expect(getSchedulingSettings()).resolves.toEqual(namespace);
+  });
+
+  it("rejects every namespace that fails the scheduling settings shape contract", async () => {
+    const window = {
+      membershipId: MEMBERSHIP_ID,
+      branchId: BRANCH_ID,
+      weekday: 1,
+      startMinute: 540,
+      endMinute: 780,
+    };
+    const block = {
+      membershipId: MEMBERSHIP_ID,
+      branchId: BRANCH_ID,
+      startsAt: "2026-09-14T13:00:00.000Z",
+      endsAt: "2026-09-14T14:00:00.000Z",
+    };
+    // The `{ settings: {} }` case is the exact gap the runtime check closes: it
+    // used to pass the non-null-object check and cast, then crash the mapping on
+    // `settings.availability.filter(...)`.
+    const cases: [string, unknown][] = [
+      ["an empty namespace", {}],
+      ["an unknown conflict policy", { conflictPolicy: "MAYBE", availability: [], blocks: [] }],
+      ["a missing availability array", { conflictPolicy: "REJECT", blocks: [] }],
+      ["a non-array blocks value", { conflictPolicy: "REJECT", availability: [], blocks: {} }],
+      [
+        "an availability entry with a non-integer weekday",
+        { conflictPolicy: "REJECT", availability: [{ ...window, weekday: 1.5 }], blocks: [] },
+      ],
+      [
+        "an availability entry whose end is not after its start",
+        { conflictPolicy: "REJECT", availability: [{ ...window, endMinute: 540 }], blocks: [] },
+      ],
+      [
+        "an availability entry missing a read field",
+        {
+          conflictPolicy: "REJECT",
+          availability: [{ membershipId: MEMBERSHIP_ID, branchId: BRANCH_ID, weekday: 1 }],
+          blocks: [],
+        },
+      ],
+      [
+        "a block entry with an unparseable instant",
+        { conflictPolicy: "REJECT", availability: [], blocks: [{ ...block, startsAt: "soon" }] },
+      ],
+      [
+        "a block entry whose end is not after its start",
+        {
+          conflictPolicy: "REJECT",
+          availability: [],
+          blocks: [{ ...block, endsAt: block.startsAt }],
+        },
+      ],
+    ];
+
+    for (const [label, namespace] of cases) {
+      global.fetch = vi.fn(() => Promise.resolve(jsonResponse({ settings: namespace })));
+      const error = await getSchedulingSettings().catch((caught: unknown) => caught);
+      expect(error, label).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).code, label).toBe("MALFORMED_RESPONSE");
+    }
   });
 
   it("PUTs the reschedule body with the optimistic version", async () => {

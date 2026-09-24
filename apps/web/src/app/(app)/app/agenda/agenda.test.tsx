@@ -34,6 +34,33 @@ const BOOKING_REQUEST: BookingRequest = {
   endAt: "2026-09-14T15:30:00.000Z",
 };
 
+const AVAILABILITY_WINDOW = {
+  membershipId: MEMBERSHIP_ID,
+  branchId: BRANCH_ID,
+  weekday: 1,
+  startMinute: 9 * 60,
+  endMinute: 13 * 60,
+} as const;
+
+const AVAILABILITY_BLOCK = {
+  membershipId: MEMBERSHIP_ID,
+  branchId: BRANCH_ID,
+  startsAt: "2026-09-14T13:00:00.000Z",
+  endsAt: "2026-09-14T14:00:00.000Z",
+} as const;
+
+const AVAILABILITY_HINT =
+  "Select a branch and a professional to shade the times outside their working hours, plus their one-off blocks.";
+const AVAILABILITY_UNAVAILABLE =
+  "Availability for this professional and branch could not be loaded, so nothing is shaded. The calendar may show times outside their working hours.";
+
+function schedulingSettingsResponse(
+  availability: readonly unknown[],
+  blocks: readonly unknown[]
+): Response {
+  return jsonResponse({ settings: { conflictPolicy: "REJECT", availability, blocks } });
+}
+
 interface CalendarStubEvent {
   readonly id?: string;
   readonly start?: string;
@@ -43,6 +70,7 @@ interface CalendarStubEvent {
 interface CalendarStubProps {
   readonly initialView?: string;
   readonly events?: readonly CalendarStubEvent[];
+  readonly businessHours?: unknown;
   readonly eventDrop?: (arg: unknown) => void;
   readonly eventResize?: (arg: unknown) => void;
   readonly eventClick?: (arg: unknown) => void;
@@ -97,6 +125,7 @@ function requestMethod(call: unknown): string {
 interface FetchHandlers {
   readonly appointments?: (url: string) => Response | Promise<Response>;
   readonly options?: () => Response | Promise<Response>;
+  readonly settings?: () => Response | Promise<Response>;
   readonly appointment?: () => Response | Promise<Response>;
   readonly reschedule?: () => Response | Promise<Response>;
   readonly transition?: () => Response | Promise<Response>;
@@ -111,6 +140,12 @@ function mockAgendaFetch(handlers: FetchHandlers): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = resolveRequestUrl(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/api/settings/scheduling")) {
+      return Promise.resolve(
+        handlers.settings?.() ??
+          jsonResponse({ settings: { conflictPolicy: "REJECT", availability: [], blocks: [] } })
+      );
+    }
     if (url.includes("/appointments/options")) {
       return Promise.resolve(
         handlers.options?.() ?? jsonResponse({ branches: [], professionals: [] })
@@ -361,6 +396,142 @@ describe("Agenda", () => {
         allDay: false,
       },
     ]);
+  });
+
+  it("shows the availability hint and shades nothing until a branch and professional are selected", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      settings: () => schedulingSettingsResponse([AVAILABILITY_WINDOW], [AVAILABILITY_BLOCK]),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    expect(await screen.findByText(AVAILABILITY_HINT)).toBeInTheDocument();
+    // No concrete pair is selected, so the overlay is hidden: nothing shaded.
+    expect(latestCalendarProps?.businessHours).toBe(false);
+  });
+
+  it("shades the selected professional's availability and one-off block once both filters are set", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      settings: () => schedulingSettingsResponse([AVAILABILITY_WINDOW], [AVAILABILITY_BLOCK]),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    fireEvent.change(await screen.findByLabelText("Branch filter"), {
+      target: { value: BRANCH_ID },
+    });
+    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+      target: { value: MEMBERSHIP_ID },
+    });
+
+    await waitFor(() =>
+      expect(latestCalendarProps?.businessHours).toEqual([
+        { daysOfWeek: [1], startTime: "09:00", endTime: "13:00" },
+      ])
+    );
+    expect(latestCalendarProps?.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "availability-block:0",
+          display: "background",
+          start: AVAILABILITY_BLOCK.startsAt,
+          end: AVAILABILITY_BLOCK.endsAt,
+        }),
+      ])
+    );
+    expect(screen.queryByText(AVAILABILITY_HINT)).not.toBeInTheDocument();
+  });
+
+  it("shades nothing when the selected pair has no availability windows (unrestricted)", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      settings: () => schedulingSettingsResponse([], []),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    fireEvent.change(await screen.findByLabelText("Branch filter"), {
+      target: { value: BRANCH_ID },
+    });
+    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+      target: { value: MEMBERSHIP_ID },
+    });
+
+    // The pair is configured in no way at all, so the write path is
+    // unrestricted and the overlay must not shade a single minute.
+    await waitFor(() => expect(latestCalendarProps?.businessHours).toBe(false));
+    expect(latestCalendarProps?.events).toEqual([expect.objectContaining({ id: APPOINTMENT_ID })]);
+  });
+
+  it("warns, without blocking, when the selected pair's settings read fails", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      settings: () => jsonResponse({ error: { code: "INTERNAL", message: "boom" } }, 500),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    fireEvent.change(await screen.findByLabelText("Branch filter"), {
+      target: { value: BRANCH_ID },
+    });
+    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+      target: { value: MEMBERSHIP_ID },
+    });
+
+    // Nothing is shaded because the hours are unknown — the SAME canvas as an
+    // unrestricted pair — and the warning is what tells the two apart.
+    expect(await screen.findByTestId("availability-warning")).toHaveTextContent(
+      AVAILABILITY_UNAVAILABLE
+    );
+    expect(latestCalendarProps?.businessHours).toBe(false);
+    expect(screen.queryByTestId("availability-hint")).toBeNull();
+    // Information, not a barrier: the calendar and its controls stay usable.
+    expect(screen.getByTestId("fullcalendar")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New appointment" })).toBeEnabled();
+  });
+
+  it("treats a malformed settings namespace as unavailable, not as unrestricted", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      settings: () => jsonResponse({ settings: {} }),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    fireEvent.change(await screen.findByLabelText("Branch filter"), {
+      target: { value: BRANCH_ID },
+    });
+    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+      target: { value: MEMBERSHIP_ID },
+    });
+
+    expect(await screen.findByTestId("availability-warning")).toHaveTextContent(
+      AVAILABILITY_UNAVAILABLE
+    );
+    expect(latestCalendarProps?.businessHours).toBe(false);
+  });
+
+  it("shows the pick-a-pair hint, not the unavailable warning, when settings fail with no pair", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      settings: () => jsonResponse({ error: { code: "INTERNAL", message: "boom" } }, 500),
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+
+    // No pair selected: the hint is the honest message even though the read also
+    // failed, because the overlay was never going to render without a pair.
+    expect(await screen.findByTestId("availability-hint")).toHaveTextContent(AVAILABILITY_HINT);
+    expect(screen.queryByTestId("availability-warning")).toBeNull();
   });
 
   it("reschedules from a FullCalendar drop using the optimistic version", async () => {

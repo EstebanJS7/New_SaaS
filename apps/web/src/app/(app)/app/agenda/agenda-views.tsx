@@ -11,10 +11,12 @@ import type {
   EventClickArg,
   EventContentArg,
   EventDropArg,
+  EventInput,
 } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import { AGENDA_TIME_ZONE, dateKeyOf, formatDayHeading, formatTimeRange } from "./agenda-time";
 import type { Appointment, AppointmentStatus, BookingRequest } from "./agenda-api";
+import type { AvailabilityOverlay } from "./agenda-availability";
 import {
   appointmentToEvent,
   bookingRequestEventId,
@@ -63,6 +65,12 @@ const CALENDAR_STYLE = {
   "--fc-highlight-color": "hsl(var(--accent) / 0.5)",
   "--fc-today-bg-color": "hsl(var(--accent) / 0.4)",
   "--fc-now-indicator-color": "hsl(var(--destructive))",
+  // Availability overlay: the routine outside-working-hours complement is a
+  // muted wash, while a one-off block is a stronger destructive-tinted wash so
+  // the two are never confused. Both resolve from semantic tokens.
+  "--fc-non-business-color": "hsl(var(--muted-foreground) / 0.12)",
+  "--fc-bg-event-color": "hsl(var(--destructive))",
+  "--fc-bg-event-opacity": "0.15",
   "--fc-small-font-size": "0.7rem",
 } as CSSProperties;
 
@@ -72,6 +80,8 @@ export interface AgendaViewsProps {
   readonly appointments: readonly Appointment[];
   readonly requests: readonly BookingRequest[];
   readonly branchLabel: (branchId: string) => string;
+  /** Availability/block shading for a selected pair; absent for list and month. */
+  readonly overlay?: AvailabilityOverlay;
   readonly onOpen: (appointment: Appointment) => void;
   readonly onOpenRequest: (request: BookingRequest) => void;
   readonly onCreateRange: (startIso: string, endIso: string) => void;
@@ -105,6 +115,7 @@ interface AgendaCalendarProps {
   readonly anchor: string;
   readonly appointments: readonly Appointment[];
   readonly requests: readonly BookingRequest[];
+  readonly overlay?: AvailabilityOverlay;
   readonly onOpen: (appointment: Appointment) => void;
   readonly onOpenRequest: (request: BookingRequest) => void;
   readonly onCreateRange: (startIso: string, endIso: string) => void;
@@ -126,6 +137,7 @@ function AgendaCalendar({
   anchor,
   appointments,
   requests,
+  overlay,
   onOpen,
   onOpenRequest,
   onCreateRange,
@@ -140,9 +152,13 @@ function AgendaCalendar({
     () => new Map(requests.map((request) => [bookingRequestEventId(request.id), request] as const)),
     [requests]
   );
-  const events = useMemo(
-    () => [...appointments.map(appointmentToEvent), ...requests.map(bookingRequestToEvent)],
-    [appointments, requests]
+  const events = useMemo<EventInput[]>(
+    () => [
+      ...appointments.map(appointmentToEvent),
+      ...requests.map(bookingRequestToEvent),
+      ...(overlay?.blockEvents ?? []),
+    ],
+    [appointments, requests, overlay]
   );
 
   useEffect(() => {
@@ -225,6 +241,16 @@ function AgendaCalendar({
 
   return (
     <div className="rounded-lg border bg-card p-2 text-card-foreground" style={CALENDAR_STYLE}>
+      {/*
+        DISPLAY ONLY. `businessHours` shades the complement of the selected
+        pair's windows; it is deliberately NOT wired to `selectConstraint`,
+        `eventConstraint` or `overlap`. The write path requires the whole
+        appointment inside ONE window, which a union of ranges cannot express,
+        and a forbidden block cannot be passed directly as an allowed-range
+        constraint; enforcing the overlay here would make the calendar a second
+        source of truth and let staff pick a range the API rejects with 409
+        CONFLICT.
+      */}
       <FullCalendar
         ref={calendarRef}
         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
@@ -241,6 +267,7 @@ function AgendaCalendar({
         slotMinTime="07:00:00"
         slotMaxTime="21:00:00"
         events={events}
+        businessHours={overlay?.businessHours ?? false}
         eventContent={renderEventContent}
         eventClick={handleEventClick}
         eventDrop={handleEventDrop}
@@ -354,6 +381,7 @@ export function AgendaViews(props: AgendaViewsProps): JSX.Element {
       anchor={props.anchor}
       appointments={props.appointments}
       requests={props.requests}
+      {...(props.overlay !== undefined && { overlay: props.overlay })}
       onOpen={props.onOpen}
       onOpenRequest={props.onOpenRequest}
       onCreateRange={props.onCreateRange}
