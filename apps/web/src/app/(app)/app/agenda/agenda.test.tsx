@@ -251,7 +251,7 @@ describe("Agenda", () => {
     renderAgenda();
 
     expect(
-      await screen.findByText("You do not have permission to view the agenda.")
+      await screen.findByText("You do not have permission to perform this action.")
     ).toBeInTheDocument();
     expect(screen.queryByText("Manage")).not.toBeInTheDocument();
   });
@@ -677,7 +677,7 @@ describe("Agenda", () => {
     expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "GET")).toBe(true);
   });
 
-  it("keeps the overlap message when the stored version did not change", async () => {
+  it("shows the generic conflict copy, not a concurrent-writer alert, when the stored version did not change", async () => {
     mockAgendaFetch({
       appointments: () => jsonResponse([APPOINTMENT]),
       options: optionsResponse,
@@ -701,9 +701,12 @@ describe("Agenda", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save reschedule" }));
 
+    // A 409 whose stored version did NOT advance must not be misreported as a
+    // concurrent-writer conflict: the generic, cause-agnostic conflict copy is
+    // shown and the stale-version alert stays hidden.
     expect(
       await screen.findByText(
-        "That time overlaps another appointment or falls outside availability."
+        "The appointment could not be changed because it conflicts with its current state. The latest details are being refreshed; review them and try again."
       )
     ).toBeInTheDocument();
     expect(screen.queryByTestId("stale-version-alert")).not.toBeInTheDocument();
