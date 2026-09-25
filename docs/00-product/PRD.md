@@ -4,7 +4,7 @@ version: "1.3"
 status: approved-baseline
 vertical: veterinary
 market: Paraguay
-updated: 2026-08-13
+updated: 2026-09-25
 ---
 
 # PRD Technical v1.3 — SaaS Core + Veterinary + Branding
@@ -640,6 +640,12 @@ IVA_10 10%
 ```
 
 Authorized users select the applicable rate.
+
+An item may carry an optional reference price as an amount plus an ISO 4217
+currency code, offered as PYG by default and validated as a pair (both present
+or neither). That reference price is informational only: it is not a sale,
+invoice, cash or fiscal value, and no tax-inclusive/exclusive interpretation,
+tax calculation, currency conversion or rounding is derived from it.
 
 ## 16. Inventory
 
