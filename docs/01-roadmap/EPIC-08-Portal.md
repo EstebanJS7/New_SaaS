@@ -20,7 +20,7 @@ prd_sections:
   - "38"
   - "41"
 created: 2026-09-15
-updated: 2026-09-21
+updated: 2026-09-25
 ---
 
 # EPIC-08 — Portal
@@ -171,8 +171,9 @@ acceptance-criteria map above.
 
 - [[DEC-008]] records the PRD §8 deviation (first-party portal identity instead
   of external managed authentication) together with the deferrals,
-  classification and rollback position. It is `proposed`: the approach is
-  realized by the merged implementation, but formal acceptance is outstanding.
+  classification and rollback position. It is `accepted` as of 2026-09-22: the
+  approach is realized by the merged implementation, and the maintainer accepted
+  the deviation explicitly.
 - [[DEC-007]] decided the availability union, portal booking, and holder
   cancel/reschedule; it also settled that staff assign the professional at
   approval.
@@ -193,14 +194,12 @@ acceptance-criteria map above.
   is staff-provisioned.
 - [[DEC-006]] — "exactly one primary phone" is application-level and not
   sufficient under concurrency.
-- [[TD-012]] — two load-sensitive web tests fail intermittently and now block
-  merges under the enabled branch protection; the sightings are delivery-session
-  observations, not reconstructable repository evidence.
-- Merged-state limitations documented in [[Portal]]: contact details cannot be
-  removed from the portal (clearing a field sends an absent key, so the stored
-  value is kept); only the most recently updated active address is written; the
-  form's `maxLength` is a convenience and the server is the authority;
-  `bookingRequiresApproval` is registered but not consumed by the booking flow;
-  species/breed names cannot be resolved without a holder-facing catalog read;
-  and `INTERNAL` `DomainError` messages are echoed to the client by the global
-  exception filter.
+- [[TD-012]] — resolved in PRs #57–#58; PR #63 also covers the remaining
+  conflict-reload monotonic guard.
+- At epic closure, portal contact details could not be removed, species/breed
+  names were unavailable, and `INTERNAL` errors could leak their message. These
+  limitations were subsequently addressed in PRs #62, #61 and #60, respectively.
+  Remaining limitations documented in [[Portal]] include updating only the most
+  recently updated active address, the form's convenience-only `maxLength` (the
+  server remains authoritative), and the registered but unused
+  `bookingRequiresApproval` setting.

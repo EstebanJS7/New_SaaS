@@ -4,6 +4,15 @@
 **Change**: epic-08 **Verdict**: pass_with_warnings (0 CRITICAL, 0 blockers)
 **Merge**: `27bc04a` (merge of PR #53, `feat/epic-08-wu5-live-pg-evidence`)
 
+> **Historical snapshot (2026-09-21).** The limitations and contents below
+> describe the archive at merge `27bc04a`, not the current product. Later PRs
+> added the profile page (#55), corrected error copy (#60), resolved species and
+> breed names (#61), and enabled contact-detail removal (#62). For current
+> behavior see `docs/01-roadmap/EPIC-08-Portal.md` and
+> `docs/05-modules/Portal.md`. `wu4-delivery-trace.md` was added afterward to
+> preserve slice-level history; it is not part of the original archive-contents
+> checklist below.
+
 ## Summary
 
 EPIC-08 delivered a first-party, Customer-linked customer portal as a separate

@@ -84,3 +84,6 @@ Thumbs.db
 # -----------------------------------------------------------------------------
 .obsidian/*
 !.obsidian/app.json
+# Local agent runtime state
+.atl/
+.codegraph/
