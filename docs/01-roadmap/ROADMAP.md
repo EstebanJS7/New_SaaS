@@ -17,7 +17,7 @@ updated: 2026-09-25
 | EPIC-06 | Clinical                           |    done | EPIC-05                   |
 | EPIC-07 | Scheduling                         |    done | EPIC-04, EPIC-05          |
 | EPIC-08 | Portal                             |    done | EPIC-04, EPIC-05, EPIC-07 |
-| EPIC-09 | Catalog/Taxes                      |  review | EPIC-02                   |
+| EPIC-09 | Catalog/Taxes                      |    done | EPIC-02                   |
 | EPIC-10 | Inventory                          | planned | EPIC-09                   |
 | EPIC-11 | Suppliers/Purchases                | planned | EPIC-10                   |
 | EPIC-12 | POS/Payments                       | planned | EPIC-09, EPIC-10          |
@@ -53,16 +53,15 @@ recorded in `docs/10-qa/CI-EVIDENCE.md`.
 
 Individual Stories live in `../02-stories/`.
 
-[[EPIC-09]] Catalog/Taxes moved to `review` on 2026-09-25. Every gate this
-environment can run is green — both additive catalog migrations were applied to
-a local PostgreSQL 16 database, the seed idempotency probe returned identical
-counts with `taxRates: 3`, `pnpm db:live-verify` passed, and the live-PostgreSQL
-suite reported 47/47 including the EPIC-09 catalog application-path block — but
-the five work units are not committed, pushed or merged, so the exit criterion
-requiring merged work units stays open. That is implementation closure pending
-delivery, **never** production readiness: [[EPIC-20]] Production Hardening and
-the open Tech Debt items ([[TD-013]], [[TD-014]], [[TD-015]], [[TD-007]])
-remain.
+[[EPIC-09]] Catalog/Taxes moved to `done` on 2026-09-25, merged as PR #64
+(`feat/epic-09-catalog-taxes`, merge commit `aa75945`) with CI run
+[36194111568](https://github.com/EstebanJS7/New_SaaS/actions/runs/36194111568)
+green on both required checks. `done` means epic implementation closure only:
+the live-PostgreSQL suite reported 47/47 including the EPIC-09 catalog
+application-path block, and the seed idempotency probe returned identical counts
+with `taxRates: 3`. It is **never** production readiness: [[EPIC-20]] Production
+Hardening and the open Tech Debt items ([[TD-013]], [[TD-014]], [[TD-015]],
+[[TD-007]]) remain.
 
 ## Architecture baseline
 

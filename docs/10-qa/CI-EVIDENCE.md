@@ -460,3 +460,41 @@ A reviewer can confirm this evidence without reconstructing the closure story:
 - [ ] The canonical CI baselines above are unchanged.
 - [ ] No statement claims production readiness; [[EPIC-20]] and the open Tech
       Debt items are cited.
+
+## EPIC-09 Closure Baseline (CI)
+
+Canonical post-merge CI evidence for EPIC-09, captured after PR #64 merged
+`feat/epic-09-catalog-taxes` into `main` (merge commit `aa75945`). It supersedes
+the local evidence above as the immutable CI baseline for this epic. It records
+implementation closure only, never production readiness.
+
+### Canonical baseline
+
+| Field  | Value                                                           |
+| ------ | --------------------------------------------------------------- |
+| Run    | https://github.com/EstebanJS7/New_SaaS/actions/runs/36194111568 |
+| Event  | push to `main` (merge of PR #64, commit `aa75945`)              |
+| Result | both required checks passed                                     |
+
+### Executed checks
+
+| Job                            | Result |
+| ------------------------------ | ------ |
+| `Database migrations`          | pass   |
+| `Lint, Typecheck, Test, Build` | pass   |
+
+The `Database migrations` job applies both catalog migrations, runs the
+idempotent seed probe and `db:live-verify`, and executes the live-PostgreSQL
+suite (47/47, including the `EPIC-09 catalog application-path isolation` block),
+so the earlier local 47/47 is now reproduced in CI. The
+`Lint, Typecheck, Test, Build` job covers the root quality gates.
+
+### Known warnings and open limitations
+
+| Item                                                                 | State                                                                        |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Staff catalog UI browser-to-API round trip                           | not covered — component tests mock `fetch`; Playwright deferred ([[TD-007]]) |
+| Live-PostgreSQL case for the `Appointment` service link (WU4)        | not present — proven by unit/HTTP tests and the applied migration            |
+| Catalog writes have no optimistic concurrency                        | open — [[TD-014]]                                                            |
+| Staff proxies reject the same request differently                    | open — [[TD-013]]                                                            |
+| `packages/database/scripts` outside the package lint/typecheck scope | open — [[TD-015]]                                                            |
