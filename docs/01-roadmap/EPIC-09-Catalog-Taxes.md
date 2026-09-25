@@ -2,7 +2,7 @@
 id: EPIC-09
 type: epic
 title: Catalog and Taxes
-status: review
+status: done
 priority: high
 depends_on:
   - EPIC-02
@@ -367,22 +367,22 @@ that record and are consumed by [[EPIC-12]] onward, not here.
 
 ## Exit Criteria
 
-- [ ] The implementation work units are merged with named evidence. **OPEN** —
-      the five work units and their tests exist only in the working tree;
-      nothing is committed, pushed or merged, so no merged evidence and no CI
-      run exists for this epic.
+- [x] The implementation work units are merged with named evidence. Merged as PR
+      #64 (`feat/epic-09-catalog-taxes` → `main`, merge commit `aa75945`) with
+      CI run 36194111568 green on both required checks ("Database migrations"
+      and "Lint, Typecheck, Test, Build").
 - [x] The durable live-PostgreSQL isolation/concurrency evidence for the catalog
       aggregate passed. Evidence: the local run of 2026-09-25 —
       `pnpm --filter @newsaas/api test:live-pg` reported 1 file / **47 tests
       passed** against a disposable PostgreSQL 16.13 database, including
       "EPIC-09 catalog application-path isolation" and its
-      concurrent-deactivation attribution race. Because the branch is unpushed,
-      this run is recorded as LOCAL evidence in `docs/10-qa/CI-EVIDENCE.md`; its
-      promotion to the immutable CI baseline is part of the delivery step above.
+      concurrent-deactivation attribution race. The same 47/47 suite passed in
+      CI run 36194111568 after the merge; `docs/10-qa/CI-EVIDENCE.md` records
+      both the local run and the canonical CI baseline.
 - [x] Lint, typecheck, the required test suites and build are green at the epic
       level. Evidence: `pnpm lint` 14/14, `pnpm typecheck` 14/14, `pnpm test`
-      15/15, `pnpm build` 9/9 and `pnpm format-check` clean — local,
-      session-reported runs, not CI.
+      15/15, `pnpm build` 9/9 and `pnpm format-check` clean — local runs, then
+      green in CI run 36194111568.
 
 - [x] Documentation is current: this epic, the catalog module documentation, and
       the roadmap status. Evidence: [[Catalog-Taxes]], this record, the
@@ -391,21 +391,17 @@ that record and are consumed by [[EPIC-12]] onward, not here.
       carried forward as debt. Evidence: "Decided" above and the [[TD-013]],
       [[TD-014]], [[TD-015]] records.
 
-Every gate this environment can run is green and the live-PostgreSQL evidence
-exists locally, but the work is not committed, pushed or merged, so the exit
-criterion that requires merged work units is still open. That is why `status` is
-`review` and not `done`.
-
-`status: done` will mean epic implementation closure only, never a
-production-readiness statement. [[EPIC-20]] Production Hardening would remain.
+`status: done` means epic implementation closure only: the work units are merged
+as PR #64, the required CI checks are green, and the live-PostgreSQL evidence is
+recorded. It is not a production-readiness statement — [[EPIC-20]] Production
+Hardening and the open Tech Debt items remain.
 
 ## Stories
 
-The epic was delivered as five Story records, all on the working branch `main`
-(no dedicated `feat/epic-09-*` branch exists). Their frontmatter still reads
-`in-progress` because each keeps one live-database criterion unchecked at the
-time it was written; the epic-level evidence above is the current truth for the
-local state.
+The epic was delivered as five Story records on `feat/epic-09-catalog-taxes`,
+merged to `main` as PR #64. Their frontmatter still reads `in-progress` because
+each keeps one live-database criterion unchecked at the time it was written; the
+epic-level evidence above is the current truth.
 
 - [[CAT-001 Catalog item foundation]] — WU1: the `TaxRate`/`CatalogItem` schema,
   the `20260925000001_catalog` migration, `TAX_RATE_SEEDS`, the tenant-safe
