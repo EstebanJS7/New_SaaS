@@ -96,8 +96,8 @@ staff auth, and has a larger blast radius and cost than the MVP needs.
 Option A. It is the only option that delivers portal access now without an ADR
 gate or a blocked upstream epic, and it keeps the staff/portal security
 boundaries explicit instead of sharing controllers — which AGENTS.md and PRD
-§8/§29 forbid. The §8 preference is recorded here as a proposed deviation rather
-than silently ignored, mirroring [[DEC-002]] for the staff session.
+§8/§29 forbid. The §8 preference is recorded here as an accepted deviation
+rather than silently ignored, mirroring [[DEC-002]] for the staff session.
 
 ## Impact
 
@@ -135,10 +135,10 @@ live-PostgreSQL concurrency and isolation evidence.
 
 ## Decision
 
-**Proposed; not yet formally accepted.** The first-party approach below is
-already realized by the merged implementation at `27bc04a`, but no acceptance is
-recorded in the repository, so this record does not claim a decision the
-repository cannot show. Formal acceptance is outstanding.
+**Accepted 2026-09-22.** The maintainer reviewed the record and accepted the PRD
+§8 deviation explicitly (see "Approval and Governance"), so this record is an
+accepted decision rather than a proposal. The first-party approach below is
+already realized by the merged implementation at `27bc04a`.
 
 The approach realized by the merged implementation is:
 

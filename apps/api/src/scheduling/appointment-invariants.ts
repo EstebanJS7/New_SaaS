@@ -251,7 +251,6 @@ export interface SchedulingAnchors {
   readonly branchId: string;
   readonly membershipId: string;
 }
-
 /** Root/tx-client seam for the branch + membership anchor reads. */
 export interface SchedulingAnchorPrisma {
   branch: AppointmentAnchorPrisma["branch"];
@@ -283,6 +282,63 @@ export async function assertSchedulingAnchors(
 
   assertBranchAnchor(branch);
   assertProfessionalAnchor(membership);
+}
+
+// ---------------------------------------------------------------------------
+// Optional Catalog SERVICE anchor (EPIC-09 WU4)
+// ---------------------------------------------------------------------------
+
+/** Root/tx-client seam for the OPTIONAL Catalog SERVICE anchor read. */
+export interface AppointmentServiceAnchorPrisma {
+  catalogItem: {
+    findFirst: (args: {
+      where: { id: string; tenantId: string };
+      select: { id: true; kind: true; isActive: true };
+    }) => Promise<{ id: string; kind: string; isActive: boolean } | null>;
+  };
+}
+
+/** Local literal union mirroring the `catalog_item_kind` enum values. */
+export type AppointmentCatalogItemKind = "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY";
+
+/**
+ * OPTIONAL Catalog SERVICE anchor (EPIC-09 WU4). An absent (`undefined`) or
+ * explicitly cleared (`null`) reference is a valid appointment state and a
+ * no-op: no catalog read happens.
+ *
+ * The error convention is the SAME the neighboring anchors already use:
+ *   * a foreign or unknown item UUID is the byte-equivalent `404 NOT_FOUND`
+ *     (`"Service was not found."`), indistinguishable from a missing item;
+ *   * an in-tenant item that is inactive or not of kind `SERVICE` is an
+ *     in-tenant rule violation, `400 VALIDATION_FAILED`, exactly like the
+ *     VETERINARIAN role rule on the professional anchor.
+ *
+ * Kind and active are deliberately NOT database constraints (the composite FK
+ * carries tenant ownership only), so this application guard is the single
+ * authority — and the write path is the only place a link is created or changed.
+ */
+export async function assertAppointmentServiceAnchor(
+  prisma: AppointmentServiceAnchorPrisma,
+  tenantId: string,
+  serviceId: string | null | undefined
+): Promise<void> {
+  if (serviceId === undefined || serviceId === null) {
+    return;
+  }
+
+  const item = await prisma.catalogItem.findFirst({
+    where: { id: serviceId, tenantId },
+    select: { id: true, kind: true, isActive: true },
+  });
+  if (!item) {
+    throw new DomainError("NOT_FOUND", "Service was not found.");
+  }
+  if (!item.isActive) {
+    throw new DomainError("VALIDATION_FAILED", "The referenced service is not active.");
+  }
+  if (item.kind !== "SERVICE") {
+    throw new DomainError("VALIDATION_FAILED", "The referenced catalog item must be a SERVICE.");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -447,7 +503,13 @@ export interface AppointmentRescheduleCasTx<TRow> {
   appointment: {
     updateMany: (args: {
       where: { id: string; tenantId: string; status: AppointmentStatusDto; version: number };
-      data: { startAt: Date; endAt: Date; version: { increment: number } };
+      data: {
+        startAt: Date;
+        endAt: Date;
+        version: { increment: number };
+        /** Omitted leaves the stored reference untouched; `null` clears it. */
+        serviceId?: string | null;
+      };
     }) => Promise<{ count: number }>;
     findFirst: (args: { where: { id: string; tenantId: string } }) => Promise<TRow | null>;
   };
@@ -461,6 +523,11 @@ export interface AppointmentRescheduleCas {
   readonly version: number;
   readonly startAt: Date;
   readonly endAt: Date;
+  /**
+   * OPTIONAL Catalog SERVICE change (EPIC-09 WU4). Omitted leaves the stored
+   * reference untouched (what an absent payload key means); `null` clears it.
+   */
+  readonly serviceId?: string | null;
 }
 
 /**
@@ -481,7 +548,12 @@ export async function compareAndSetReschedule<TRow>(
 ): Promise<TRow> {
   const { count } = await tx.appointment.updateMany({
     where: { id: cas.id, tenantId: cas.tenantId, status: cas.status, version: cas.version },
-    data: { startAt: cas.startAt, endAt: cas.endAt, version: { increment: 1 } },
+    data: {
+      startAt: cas.startAt,
+      endAt: cas.endAt,
+      version: { increment: 1 },
+      ...(cas.serviceId !== undefined && { serviceId: cas.serviceId }),
+    },
   });
   if (count === 0) {
     throw new DomainError("CONFLICT", "The appointment was updated by another writer.");

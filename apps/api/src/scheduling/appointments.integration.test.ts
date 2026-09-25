@@ -8,7 +8,12 @@ import {
   type SchedulingHttpFixture,
 } from "../../test/support/scheduling-http-fixture.js";
 import { seedRbacActor, seedRoleWithKeys } from "../../test/support/rbac-fixture.js";
-import type { AppointmentRow, AuditLogRow } from "../../test/support/in-memory-database.js";
+import type {
+  AppointmentRow,
+  AuditLogRow,
+  CatalogItemRow,
+} from "../../test/support/in-memory-database.js";
+import { SEEDED_TAX_RATE_IDS } from "../../test/support/in-memory-database.js";
 import { REQUEST_ID_HEADER } from "../common/errors/request-id.js";
 
 interface ErrorDto {
@@ -27,6 +32,9 @@ interface AppointmentDto {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /** OPTIONAL Catalog SERVICE reference (EPIC-09 WU4). */
+  serviceId: string | null;
+  service: { id: string; name: string; kind: string } | null;
 }
 
 /** Allowlisted CONFIDENTIAL surface — any extra key must fail. */
@@ -42,6 +50,8 @@ const APPOINTMENT_RESPONSE_KEYS: readonly string[] = [
   "version",
   "createdAt",
   "updatedAt",
+  "serviceId",
+  "service",
 ];
 
 /**
@@ -104,6 +114,22 @@ describe("Appointments HTTP boundary (EPIC-07 WU3)", () => {
       .post("/appointments")
       .set("Cookie", cookie)
       .send(validCreateBody(overrides));
+  }
+
+  /** Seeds a tenant-scoped catalog item for the OPTIONAL SERVICE association. */
+  function seedService(
+    tenantId: string,
+    overrides: Partial<Pick<CatalogItemRow, "kind" | "isActive" | "name">> = {}
+  ): CatalogItemRow {
+    return booted.db.prisma.catalogItem.create({
+      data: {
+        tenantId,
+        kind: overrides.kind ?? "SERVICE",
+        name: overrides.name ?? `Service ${randomUUID().slice(0, 8)}`,
+        taxRateId: SEEDED_TAX_RATE_IDS.EXEMPT,
+        isActive: overrides.isActive ?? true,
+      },
+    });
   }
 
   it("rejects anonymous callers on the scheduling routes with 401 UNAUTHENTICATED", async () => {
@@ -236,6 +262,100 @@ describe("Appointments HTTP boundary (EPIC-07 WU3)", () => {
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({ action: "appointment.created", targetId: body.id });
     expect(audits[0].actorUserProfileId).toBe(fixture.a.actor.profile.id);
+    // No service is attached to an unlinked appointment.
+    expect(body.serviceId).toBeNull();
+    expect(body.service).toBeNull();
+  });
+
+  it("still creates an appointment when the OPTIONAL service reference is omitted", async () => {
+    const response = await createAppointmentHttp().expect(201);
+
+    const body = response.body as AppointmentDto;
+    expect(body.serviceId).toBeNull();
+    expect(body.service).toBeNull();
+  });
+
+  it("links an in-tenant ACTIVE SERVICE and projects identity only, with no price or tax", async () => {
+    const service = seedService(fixture.a.tenant.id);
+    const requestId = randomUUID();
+
+    const response = await createAppointmentHttp({ serviceId: service.id })
+      .set(REQUEST_ID_HEADER, requestId)
+      .expect(201);
+
+    const body = response.body as AppointmentDto;
+    expect(body.serviceId).toBe(service.id);
+    expect(body.service).toEqual({ id: service.id, name: service.name, kind: "SERVICE" });
+    // The nested projection is the item's identity and nothing else.
+    expect(Object.keys(body.service ?? {}).sort()).toEqual(["id", "kind", "name"]);
+    // No catalog monetary value crosses the scheduling boundary.
+    expect(response.text).not.toContain("referencePrice");
+    expect(response.text).not.toContain("taxRate");
+
+    const audits = auditRowsWith(requestId);
+    expect(audits).toHaveLength(1);
+    const changedFields = (audits[0].metadata as { changedFields?: string[] }).changedFields ?? [];
+    expect(changedFields).toContain("serviceId");
+  });
+
+  it("masks an unknown or foreign service reference as a byte-equivalent 404 and persists nothing", async () => {
+    const before = appointmentCount();
+    const foreignService = seedService(fixture.b.tenant.id);
+
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.a.actor.cookie,
+      nonexistentUrl: "/appointments",
+      foreignUrl: "/appointments",
+      method: "POST",
+      body: validCreateBody({ serviceId: randomUUID() }),
+      foreignBody: validCreateBody({ serviceId: foreignService.id }),
+      forbiddenIdentifiers: [foreignService.id, fixture.b.tenant.id],
+    });
+
+    expect(appointmentCount()).toBe(before);
+  });
+
+  it("rejects an inactive or wrong-kind in-tenant service with 400 and persists nothing", async () => {
+    const before = appointmentCount();
+    const inactive = seedService(fixture.a.tenant.id, { isActive: false });
+    const product = seedService(fixture.a.tenant.id, { kind: "PRODUCT" });
+
+    for (const serviceId of [inactive.id, product.id]) {
+      const response = await createAppointmentHttp({ serviceId }).expect(400);
+      expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    }
+
+    expect(appointmentCount()).toBe(before);
+  });
+
+  it("filters the agenda by service without changing the existing filters", async () => {
+    const service = seedService(fixture.a.tenant.id);
+    const linked = (await createAppointmentHttp({ serviceId: service.id }).expect(201))
+      .body as AppointmentDto;
+    const unlinked = (await createAppointmentHttp().expect(201)).body as AppointmentDto;
+
+    const filtered = await supertest(server())
+      .get(`/appointments?serviceId=${service.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect((filtered.body as AppointmentDto[]).map((row) => row.id)).toEqual([linked.id]);
+
+    // An omitted service filter still returns both rows (no predicate added).
+    const all = await supertest(server())
+      .get("/appointments")
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect((all.body as AppointmentDto[]).map((row) => row.id)).toEqual(
+      expect.arrayContaining([linked.id, unlinked.id])
+    );
+
+    // The pre-existing filters keep their behavior unchanged.
+    const byStatus = await supertest(server())
+      .get(`/appointments?patientId=${fixture.a.patientId}&status=SCHEDULED`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect((byStatus.body as AppointmentDto[]).length).toBeGreaterThanOrEqual(2);
   });
 
   it("masks foreign Branch, Patient and membership anchors as byte-equivalent 404", async () => {

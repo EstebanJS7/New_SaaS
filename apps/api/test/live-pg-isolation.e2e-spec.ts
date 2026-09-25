@@ -46,6 +46,9 @@ const NOT_FOUND_REQUEST_ID = "live-pg-not-found-proof";
 /** Server-owned request id pinned on every clinical cross-tenant miss. */
 const CLINICAL_NOT_FOUND_REQUEST_ID = "live-pg-clinical-not-found-proof";
 
+/** Server-owned request id pinned on every catalog cross-tenant miss. */
+const CATALOG_NOT_FOUND_REQUEST_ID = "live-pg-catalog-not-found-proof";
+
 interface CustomerDto {
   id: string;
   tenantId: string;
@@ -103,6 +106,29 @@ interface SpeciesCatalogEntryDto {
   breeds: { id: string; code: string; name: string }[];
 }
 
+/** Allowlisted staff CatalogItem DTO (EPIC-09 WU2 contract). */
+interface CatalogItemDto {
+  id: string;
+  tenantId: string;
+  kind: "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY";
+  name: string;
+  taxRateId: string;
+  taxRate: { code: string; name: string; rate: string };
+  referencePriceAmount: string | null;
+  referencePriceCurrency: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One row of the GLOBAL seeded tax-rate list (EPIC-09 WU2 contract). */
+interface TaxRateDto {
+  id: string;
+  code: string;
+  name: string;
+  rate: string;
+}
+
 /** Allowlisted staff ClinicalEncounter DTO (EPIC-06 WU2A/WU3 contract). */
 interface ClinicalEncounterDto {
   id: string;
@@ -158,6 +184,35 @@ const PATIENT_DTO_KEYS = [
   "tenantId",
   "updatedAt",
 ].sort();
+
+/** Exact allowlisted key set of the staff catalog item response DTO. */
+const CATALOG_ITEM_DTO_KEYS = [
+  "createdAt",
+  "id",
+  "isActive",
+  "kind",
+  "name",
+  "referencePriceAmount",
+  "referencePriceCurrency",
+  "taxRate",
+  "taxRateId",
+  "tenantId",
+  "updatedAt",
+].sort();
+
+/** Exact allowlisted key set of one row of the GLOBAL rate list. */
+const TAX_RATE_DTO_KEYS = ["code", "id", "name", "rate"].sort();
+
+/**
+ * The three GLOBAL platform-seeded rates (PRD §15): stable `code`, display
+ * `name` and the exact `Decimal(5,2)` literal. Seed-owned, never migration- or
+ * tenant-owned — the live suite asserts these against the real rows.
+ */
+const SEEDED_TAX_RATES = [
+  { code: "EXEMPT", name: "Exempt", rate: "0.00" },
+  { code: "IVA_5", name: "IVA 5%", rate: "5.00" },
+  { code: "IVA_10", name: "IVA 10%", rate: "10.00" },
+] as const;
 
 /**
  * Test-only recording fake for the branding reset cleanup producer. It fulfills
@@ -306,9 +361,10 @@ async function waitForAdvisoryLockWaiters(
 }
 
 /**
- * Resource-scoped waiter count for the owner-scoped booking-request cancel
- * race: how many backends are parked on the EXACT row identified by
- * `(relation, page, tuple)`.
+ * Resource-scoped waiter count for the row-lock concurrency races (the
+ * owner-scoped booking-request cancel race and the EPIC-09 catalog
+ * deactivation race): how many backends are parked on the EXACT row identified
+ * by `(relation, page, tuple)`.
  *
  * A row-lock waiter is NOT reported as a `pg_locks` entry scoped to the locked
  * relation: it holds a `tuple` lock on the exact `(relation, page, tuple)` it is
@@ -325,7 +381,7 @@ async function waitForAdvisoryLockWaiters(
  * no heavyweight tuple lock, and a racer that already acquired the row lock is no
  * longer `wait_event_type = 'Lock'`.
  */
-async function countBookingRowLockWaiters(
+async function countRowLockWaiters(
   prisma: PrismaService,
   relation: string,
   page: number,
@@ -346,11 +402,11 @@ async function countBookingRowLockWaiters(
 }
 
 /**
- * Resource-scoped barrier over {@link countBookingRowLockWaiters}. Throws on
- * timeout so a release can never happen before both cancellations are provably
- * parked on the contended row.
+ * Resource-scoped barrier over {@link countRowLockWaiters}. Throws on timeout
+ * so a release can never happen before every racer is provably parked on the
+ * contended row.
  */
-async function waitForBookingRowLockWaiters(
+async function waitForRowLockWaiters(
   prisma: PrismaService,
   relation: string,
   page: number,
@@ -360,13 +416,13 @@ async function waitForBookingRowLockWaiters(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const blocked = await countBookingRowLockWaiters(prisma, relation, page, tuple);
+    const blocked = await countRowLockWaiters(prisma, relation, page, tuple);
     if (blocked >= expected) {
       return;
     }
     if (Date.now() >= deadline) {
       throw new Error(
-        `Booking-row lock barrier timed out: expected ${expected} waiters on ${relation} (${page},${tuple}), observed ${blocked}`
+        `Row-lock barrier timed out: expected ${expected} waiters on ${relation} (${page},${tuple}), observed ${blocked}`
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -374,24 +430,30 @@ async function waitForBookingRowLockWaiters(
 }
 
 /**
- * Physical `ctid` of one booking-request row, decomposed to the `page`/`tuple`
- * pair `pg_locks` reports for a tuple lock. Read while the barrier holds the row
+ * Physical `ctid` of one `relation` row, decomposed to the `page`/`tuple` pair
+ * `pg_locks` reports for a tuple lock. Read while the barrier holds the row
  * lock, so the tuple cannot move under the racers.
+ *
+ * `relation` is a caller-supplied table NAME, which a bind parameter cannot
+ * carry, so the raw-unsafe form is used with an identifier-quoted literal (every
+ * call site passes a hardcoded table name, never a request-derived one).
  */
-async function readBookingRowCtid(
+async function readRowCtid(
   prisma: PrismaService,
+  relation: string,
   id: string
 ): Promise<{ page: number; tuple: number }> {
-  const rows = await prisma.$queryRaw<{ page: number; tuple: number }[]>`
-    SELECT
-      (ctid::text::point)[0]::int AS page,
-      (ctid::text::point)[1]::int AS tuple
-    FROM portal_booking_request
-    WHERE id = ${id}::uuid
-  `;
+  const rows = await prisma.$queryRawUnsafe<{ page: number; tuple: number }[]>(
+    `SELECT
+       (ctid::text::point)[0]::int AS page,
+       (ctid::text::point)[1]::int AS tuple
+     FROM "${relation}"
+     WHERE id = $1::uuid`,
+    id
+  );
   const ctid = rows[0];
   if (!ctid) {
-    throw new Error(`Booking request ${id} vanished before the barrier could lock it`);
+    throw new Error(`${relation} row ${id} vanished before the barrier could lock it`);
   }
   return ctid;
 }
@@ -447,6 +509,55 @@ async function forceAdvisoryLockRace<T>(
  * proves the index ignores every non-ACTIVE status AND carries no additional
  * boolean clause masking a wider index than the migration declares.
  */
+/**
+ * Counts the backends parked on a TABLE-level lock request for `relation`.
+ *
+ * A blocked INSERT shows up as an UNGRANTED `relation` lock on the table it
+ * wants to write, so matching `(locktype, relation)` — instead of the generic
+ * `wait_event_type = 'Lock'` — names exactly the writers parked on THAT table's
+ * lock. An unrelated row lock or advisory waiter has no relation lock on this
+ * table, so it can never satisfy the barrier below.
+ */
+async function countRelationLockWaiters(prisma: PrismaService, relation: string): Promise<number> {
+  const rows = await prisma.$queryRaw<{ blocked: number }[]>`
+    SELECT count(DISTINCT l.pid)::int AS blocked
+    FROM pg_locks AS l
+    JOIN pg_stat_activity AS a ON a.pid = l.pid
+    WHERE a.datname = current_database()
+      AND NOT l.granted
+      AND l.locktype = 'relation'
+      AND l.relation = ${relation}::regclass
+  `;
+  return rows[0]?.blocked ?? 0;
+}
+
+/**
+ * Relation-scoped barrier over {@link countRelationLockWaiters}. Throws on
+ * timeout so a concurrency interleaving is decided by a PROVEN database
+ * boundary rather than by wall-clock luck, and an unproven overlap can never
+ * be mistaken for a passing case.
+ */
+async function waitForRelationLockWaiters(
+  prisma: PrismaService,
+  relation: string,
+  expected: number,
+  timeoutMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const blocked = await countRelationLockWaiters(prisma, relation);
+    if (blocked >= expected) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Relation-lock barrier timed out: expected ${expected} writers blocked on ${relation}, observed ${blocked}`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 const ACTIVE_PORTAL_INDEX_PREDICATE = "status='ACTIVE'";
 
 /**
@@ -2878,7 +2989,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       );
       await barrierReady;
       // The row lock is held now, so the ctid cannot move under the racers.
-      const ctid = await readBookingRowCtid(prisma, request.id);
+      const ctid = await readRowCtid(prisma, "portal_booking_request", request.id);
 
       const cancel = () =>
         supertest(serverUrl)
@@ -2891,7 +3002,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           }));
       const cancels = [cancel(), cancel()];
       try {
-        await waitForBookingRowLockWaiters(
+        await waitForRowLockWaiters(
           prisma,
           "portal_booking_request",
           ctid.page,
@@ -3045,6 +3156,600 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(await prisma.appointment.findUnique({ where: { id: revokedAppointment.id } })).toEqual(
         before
       );
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-09 catalog application-path evidence (WU5, task 5.1).
+   *
+   * Closes the live-database gap the in-memory WU2 harness cannot: over real
+   * HTTP and real PostgreSQL this proves the catalog item's create/read/update/
+   * deactivate path with its allowlisted INTERNAL DTO and exactly one
+   * co-committed `catalog_item.*` audit row per accepted mutation (and no
+   * durable event — the public schema has no event/outbox/queue/job table), the
+   * byte-equivalent cross-tenant 404 on read, update and deactivate, the real
+   * GLOBAL rate seed behind the required rate (an unknown rate id persists
+   * nothing, a bypassed unknown `tax_rate_id` fails the RESTRICT foreign key,
+   * and the three seeded rows are served identically to both tenants), and the
+   * two physical guarantees the migration claims but the API cannot show: the
+   * BEFORE DELETE trigger rejecting a hard delete, and the amount/currency pair
+   * CHECK.
+   *
+   * CONCURRENCY CHOICE: this aggregate has NO version/optimistic-lock column, no
+   * unique business key and no cross-row cardinality rule, so it has no
+   * compare-and-set invariant to race: concurrent updates are last-write-wins
+   * (the documented CAT-003 limitation) and asserting an invented winner would
+   * be theater. The concurrency invariant this aggregate DOES have is the one
+   * WU2 claims outright — the item change and its audit row are ONE atomic unit
+   * — so no concurrent reader may ever observe the renamed item while its audit
+   * row is still absent. That interleaving is forced deterministically below
+   * with an `audit_log` table-lock barrier, and the case would fail if the audit
+   * append ever moved outside the item transaction.
+   *
+   * LIVE FINDING: PostgreSQL stores the rate and reference-price columns at
+   * their declared DECIMAL scale (`0.00`, `10.00`, `150000.00`), while Prisma's
+   * `Decimal` projection normalizes trailing zeros on read, so the live DTO
+   * carries `"10"` / `"150000"` where the in-memory harness returns the seed
+   * text verbatim (which is what the WU2 unit assertions pin). The value is
+   * exact and no arithmetic is performed on it, so the assertions below compare
+   * CANONICAL decimal forms and pin the raw `::text` column read next to them
+   * instead of assuming either padding convention.
+   */
+  describe("EPIC-09 catalog application-path isolation", () => {
+    let exemptRateId: string;
+    let iva5RateId: string;
+    let iva10RateId: string;
+    let catalogItemAId: string;
+
+    beforeAll(async () => {
+      // The rate rows are SEED-owned rather than migration-owned, so their
+      // presence proves the reference seed really ran against this database.
+      const rates = await prisma.taxRate.findMany({ orderBy: { code: "asc" } });
+      const rateIdsByCode = new Map(rates.map((rate) => [rate.code, rate.id]));
+      const requireRate = (code: string): string => {
+        const id = rateIdsByCode.get(code);
+        if (!id) {
+          throw new Error(`Reference seed did not create the global ${code} tax rate`);
+        }
+        return id;
+      };
+      exemptRateId = requireRate("EXEMPT");
+      iva5RateId = requireRate("IVA_5");
+      iva10RateId = requireRate("IVA_10");
+    }, 30_000);
+
+    it("creates a catalog item over real HTTP and reads it back through the allowlisted DTO with one co-committed audit row and no event", async () => {
+      const createRequestId = "live-pg-catalog-create";
+      const itemsBefore = await prisma.catalogItem.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count({ where: { tenantId: tenantAId } });
+
+      const created = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", createRequestId)
+        .send({
+          kind: "MEDICATION",
+          name: "Live Propofol 1%",
+          taxRateId: iva10RateId,
+          referencePriceAmount: "150000.00",
+          referencePriceCurrency: "PYG",
+        })
+        .expect(201);
+
+      const body = created.body as CatalogItemDto;
+      catalogItemAId = body.id;
+      // Allowlisted INTERNAL DTO: exact key set, no Prisma column name leaks.
+      expect(Object.keys(body).sort()).toEqual(CATALOG_ITEM_DTO_KEYS);
+      expect(Object.keys(body.taxRate).sort()).toEqual(["code", "name", "rate"]);
+      expect(body.tenantId).toBe(tenantAId);
+      expect(body.kind).toBe("MEDICATION");
+      expect(body.name).toBe("Live Propofol 1%");
+      expect(body.isActive).toBe(true);
+      expect(body.taxRateId).toBe(iva10RateId);
+      // Fixed-scale (2 decimals) at the API boundary: the column holds "10.00",
+      // Prisma trims it to "10" on read, and the DTO pads it back to the stored
+      // scale — the SAME exact string the in-memory boundary reports, so the
+      // value is canonical rather than environment-dependent.
+      expect(body.taxRate).toEqual({ code: "IVA_10", name: "IVA 10%", rate: "10.00" });
+      // The pair is stored at the declared DECIMAL(14,2) scale and the DTO
+      // reports the column text EXACTLY, so no padding divergence is tolerated.
+      const rawPrice = await prisma.$queryRaw<{ amount: string }[]>`
+        SELECT "reference_price_amount"::text AS amount
+        FROM "catalog_item" WHERE "id" = ${body.id}::uuid
+      `;
+      expect(rawPrice).toEqual([{ amount: "150000.00" }]);
+      expect(body.referencePriceAmount).toBe(rawPrice[0].amount);
+      expect(body.referencePriceCurrency).toBe("PYG");
+      expect(created.text).not.toContain("reference_price_amount");
+      expect(created.text).not.toContain("is_active");
+
+      // Read back through the SAME allowlisted projection: byte-identical.
+      const readBack = await supertest(serverUrl)
+        .get(`/catalog/${body.id}`)
+        .set("Cookie", ownerACookie)
+        .expect(200);
+      expect(readBack.text).toBe(created.text);
+
+      // Exactly one co-committed audit row, carrying stable ids and field NAMES.
+      const audit = await prisma.auditLog.findMany({ where: { requestId: createRequestId } });
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({
+        action: "catalog_item.created",
+        targetType: "catalog_item",
+        targetId: body.id,
+        tenantId: tenantAId,
+      });
+      const metadata = audit[0].metadata as { schemaVersion: number; changedFields: string[] };
+      expect(metadata.schemaVersion).toBe(1);
+      expect(metadata.changedFields).toEqual([
+        "kind",
+        "name",
+        "taxRateId",
+        "referencePriceAmount",
+        "referencePriceCurrency",
+      ]);
+      const serializedMetadata = JSON.stringify(metadata);
+      expect(serializedMetadata).not.toContain("Live Propofol");
+      expect(serializedMetadata).not.toContain("150000");
+      expect(serializedMetadata).not.toContain("PYG");
+
+      // The mutation's complete durable side effect is the item row plus that
+      // ONE audit row. No catalog event can be durably emitted, because the
+      // public schema carries no event/outbox/queue/job table at all.
+      expect(await prisma.catalogItem.count({ where: { tenantId: tenantAId } })).toBe(
+        itemsBefore + 1
+      );
+      expect(await prisma.auditLog.count({ where: { tenantId: tenantAId } })).toBe(
+        auditsBefore + 1
+      );
+      const eventTables = await prisma.$queryRaw<{ tablename: string }[]>`
+        SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public'
+          AND (tablename LIKE '%event%' OR tablename LIKE '%outbox%'
+               OR tablename LIKE '%queue%' OR tablename LIKE '%job%')
+      `;
+      expect(eventTables).toEqual([]);
+    }, 30_000);
+
+    it("updates and deactivates the live item, each co-committing exactly one audit row and emitting no event", async () => {
+      const updateRequestId = "live-pg-catalog-update";
+      const updated = await supertest(serverUrl)
+        .put(`/catalog/${catalogItemAId}`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", updateRequestId)
+        .send({ kind: "PRODUCT", name: "Live Propofol 1% (edited)" })
+        .expect(200);
+      const updatedBody = updated.body as CatalogItemDto;
+      expect(Object.keys(updatedBody).sort()).toEqual(CATALOG_ITEM_DTO_KEYS);
+      expect(updatedBody.id).toBe(catalogItemAId);
+      expect(updatedBody.kind).toBe("PRODUCT");
+      expect(updatedBody.name).toBe("Live Propofol 1% (edited)");
+      // An omitted taxRateId leaves the selected GLOBAL rate untouched.
+      expect(updatedBody.taxRateId).toBe(iva10RateId);
+      expect(updatedBody.isActive).toBe(true);
+
+      const updateAudit = await prisma.auditLog.findMany({ where: { requestId: updateRequestId } });
+      expect(updateAudit).toHaveLength(1);
+      expect(updateAudit[0]).toMatchObject({
+        action: "catalog_item.updated",
+        targetType: "catalog_item",
+        targetId: catalogItemAId,
+        tenantId: tenantAId,
+      });
+      expect((updateAudit[0].metadata as { changedFields: string[] }).changedFields).toEqual([
+        "kind",
+        "name",
+      ]);
+
+      const deactivateRequestId = "live-pg-catalog-deactivate";
+      const deactivated = await supertest(serverUrl)
+        .post(`/catalog/${catalogItemAId}/deactivate`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", deactivateRequestId)
+        .expect(201);
+      expect((deactivated.body as CatalogItemDto).isActive).toBe(false);
+      // Deactivation is a state change, never a removal.
+      expect(await prisma.catalogItem.count({ where: { id: catalogItemAId } })).toBe(1);
+
+      const deactivateAudit = await prisma.auditLog.findMany({
+        where: { requestId: deactivateRequestId },
+      });
+      expect(deactivateAudit).toHaveLength(1);
+      expect(deactivateAudit[0]).toMatchObject({
+        action: "catalog_item.deactivated",
+        targetType: "catalog_item",
+        targetId: catalogItemAId,
+      });
+      expect((deactivateAudit[0].metadata as { changedFields: string[] }).changedFields).toEqual([
+        "isActive",
+      ]);
+
+      // A repeat deactivation still co-commits exactly ONE audit row, now with
+      // an EMPTY diff because no field actually changed (idempotency pinned).
+      const repeatRequestId = "live-pg-catalog-deactivate-repeat";
+      const repeated = await supertest(serverUrl)
+        .post(`/catalog/${catalogItemAId}/deactivate`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", repeatRequestId)
+        .expect(201);
+      expect((repeated.body as CatalogItemDto).isActive).toBe(false);
+      const repeatAudit = await prisma.auditLog.findMany({ where: { requestId: repeatRequestId } });
+      expect(repeatAudit).toHaveLength(1);
+      expect((repeatAudit[0].metadata as { changedFields: string[] }).changedFields).toEqual([]);
+    }, 30_000);
+
+    it("masks tenant A's item as a byte-equivalent 404 to an unknown UUID on read, update and deactivate, leaving A untouched", async () => {
+      const rowBefore = await prisma.catalogItem.findUnique({ where: { id: catalogItemAId } });
+      const targetAuditsBefore = await prisma.auditLog.count({
+        where: { targetId: catalogItemAId },
+      });
+
+      const cases = [
+        {
+          label: "GET /catalog/:id",
+          request: () =>
+            supertest(serverUrl)
+              .get(`/catalog/${catalogItemAId}`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CATALOG_NOT_FOUND_REQUEST_ID),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .get(`/catalog/${randomUUID()}`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CATALOG_NOT_FOUND_REQUEST_ID),
+        },
+        {
+          label: "PUT /catalog/:id",
+          request: () =>
+            supertest(serverUrl)
+              .put(`/catalog/${catalogItemAId}`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CATALOG_NOT_FOUND_REQUEST_ID)
+              .send({ name: "Tampered by tenant B" }),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .put(`/catalog/${randomUUID()}`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CATALOG_NOT_FOUND_REQUEST_ID)
+              .send({ name: "Tampered by tenant B" }),
+        },
+        {
+          label: "POST /catalog/:id/deactivate",
+          request: () =>
+            supertest(serverUrl)
+              .post(`/catalog/${catalogItemAId}/deactivate`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CATALOG_NOT_FOUND_REQUEST_ID),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .post(`/catalog/${randomUUID()}/deactivate`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", CATALOG_NOT_FOUND_REQUEST_ID),
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await scenario.request().expect(404);
+        const missingResponse = await scenario.missingRequest().expect(404);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
+        // Byte-equivalence: a foreign tenant UUID is indistinguishable from a
+        // non-existent one, body and echoed correlation alike.
+        expect(response.text, scenario.label).toBe(missingResponse.text);
+        expect(response.text, scenario.label).not.toContain(catalogItemAId);
+        expect(response.text, scenario.label).not.toContain(tenantAId);
+      }
+
+      // Tenant A's row and audit trail are exactly as tenant A's own writes
+      // left them: the masked cross-tenant attempts persisted nothing.
+      expect(await prisma.catalogItem.findUnique({ where: { id: catalogItemAId } })).toEqual(
+        rowBefore
+      );
+      expect(await prisma.auditLog.count({ where: { targetId: catalogItemAId } })).toBe(
+        targetAuditsBefore
+      );
+      expect(
+        await prisma.auditLog.count({ where: { requestId: CATALOG_NOT_FOUND_REQUEST_ID } })
+      ).toBe(0);
+      expect(
+        await prisma.catalogItem.count({ where: { id: catalogItemAId, tenantId: tenantBId } })
+      ).toBe(0);
+    }, 30_000);
+
+    it("serves the three globally seeded rates to both tenants and rejects an item with an unknown rate id, persisting nothing", async () => {
+      // Real at the database level: exactly three GLOBAL rows (no tenant
+      // column) carrying the exact PRD §15 `Decimal(5,2)` literals, inserted by
+      // the seed and not by the migration.
+      const seedRows = await prisma.$queryRaw<{ code: string; rate: string }[]>`
+        SELECT "code", "rate"::text AS rate FROM "tax_rate" ORDER BY "code"
+      `;
+      // Lexicographic `code` order, exact padded column text: exactly the three
+      // PRD §15 rates, inserted by the seed and not by the migration.
+      expect(seedRows.map((row) => [row.code, row.rate])).toEqual([
+        ["EXEMPT", "0.00"],
+        ["IVA_10", "10.00"],
+        ["IVA_5", "5.00"],
+      ]);
+      const tenantColumns = await prisma.$queryRaw<{ column_name: string }[]>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'tax_rate' AND column_name = 'tenant_id'
+      `;
+      expect(tenantColumns).toEqual([]);
+
+      // The SAME three rows are served identically to BOTH tenants...
+      const ratesForA = await supertest(serverUrl)
+        .get("/catalog/tax-rates")
+        .set("Cookie", ownerACookie)
+        .expect(200);
+      const ratesForB = await supertest(serverUrl)
+        .get("/catalog/tax-rates")
+        .set("Cookie", ownerBCookie)
+        .expect(200);
+      expect(ratesForA.text).toBe(ratesForB.text);
+      const rates = ratesForA.body as TaxRateDto[];
+      for (const rate of rates) {
+        expect(Object.keys(rate).sort(), rate.code).toEqual(TAX_RATE_DTO_KEYS);
+      }
+      // The list is ordered by `code` ascending, which is lexicographic: IVA_10
+      // precedes IVA_5.
+      expect(rates.map((rate) => rate.code)).toEqual(["EXEMPT", "IVA_10", "IVA_5"]);
+      const ratesByCode = new Map(rates.map((rate) => [rate.code, rate]));
+      for (const seed of SEEDED_TAX_RATES) {
+        const rate = ratesByCode.get(seed.code);
+        expect(rate?.name, seed.code).toBe(seed.name);
+        // The DTO reports the seeded two-decimal literal EXACTLY — the same
+        // string the column holds, not a trimmed form.
+        expect(rate?.rate, seed.code).toBe(seed.rate);
+      }
+      // ...and they ARE the seeded database rows, not a projection of a cache.
+      expect(rates.map((rate) => rate.id).sort()).toEqual(
+        [exemptRateId, iva5RateId, iva10RateId].sort()
+      );
+
+      // An unknown rate id is rejected before any write: no item, no audit row.
+      const requestId = "live-pg-catalog-unknown-rate";
+      const itemsBefore = await prisma.catalogItem.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count({ where: { tenantId: tenantAId } });
+      const rejected = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .send({ kind: "SUPPLY", name: "No Such Rate", taxRateId: randomUUID() })
+        .expect(400);
+      expect((rejected.body as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+      expect(await prisma.catalogItem.count({ where: { tenantId: tenantAId } })).toBe(itemsBefore);
+      expect(await prisma.catalogItem.count({ where: { name: "No Such Rate" } })).toBe(0);
+      expect(await prisma.auditLog.count({ where: { tenantId: tenantAId } })).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+
+      // The required rate is a REAL precondition, not just a Zod rule: with the
+      // service bypassed entirely a raw insert with an unknown rate id is
+      // rejected by the RESTRICT foreign key, so no rate-less item can exist.
+      const bypassedInsert = () =>
+        prisma.$executeRaw`
+          INSERT INTO "catalog_item" ("tenant_id", "kind", "name", "tax_rate_id")
+          VALUES (${tenantAId}::uuid, 'SUPPLY'::catalog_item_kind, 'Bypassed Rate Probe', ${randomUUID()}::uuid)
+        `;
+      await expect(bypassedInsert()).rejects.toThrow(/catalog_item_tax_rate_id_fkey/);
+      expect(await prisma.catalogItem.count({ where: { tenantId: tenantAId } })).toBe(itemsBefore);
+    }, 30_000);
+
+    it("proves the delete-rejecting trigger and the reference-price pair CHECK at the database level", async () => {
+      // Mirrors the EPIC-06 clinical proof: the BEFORE DELETE trigger raises and
+      // the row physically survives.
+      const rowBefore = await prisma.catalogItem.findUnique({ where: { id: catalogItemAId } });
+      expect(rowBefore).not.toBeNull();
+      const hardDelete = prisma.$executeRaw`DELETE FROM "catalog_item" WHERE "id" = ${catalogItemAId}::uuid`;
+      await expect(hardDelete).rejects.toThrow(/cannot be hard-deleted/);
+      const surviving = await prisma.$queryRaw<{ rows: number }[]>`
+        SELECT count(*)::int AS rows FROM "catalog_item" WHERE "id" = ${catalogItemAId}::uuid
+      `;
+      expect(surviving).toEqual([{ rows: 1 }]);
+      expect(await prisma.catalogItem.findUnique({ where: { id: catalogItemAId } })).toEqual(
+        rowBefore
+      );
+
+      // The migration's amount/currency pair CHECK is real too: an amount
+      // without a currency (and the reverse) is refused by PostgreSQL, so a
+      // half pair can never be stored even by raw SQL.
+      const itemsBefore = await prisma.catalogItem.count();
+      const pairViolations = [
+        // Amount supplied, currency absent.
+        () =>
+          prisma.$executeRaw`
+            INSERT INTO "catalog_item" ("tenant_id", "kind", "name", "tax_rate_id", "reference_price_amount")
+            VALUES (${tenantAId}::uuid, 'PRODUCT'::catalog_item_kind, 'Pair Probe Amount Only', ${iva5RateId}::uuid, 1500.00)
+          `,
+        // Currency supplied, amount absent.
+        () =>
+          prisma.$executeRaw`
+            INSERT INTO "catalog_item" ("tenant_id", "kind", "name", "tax_rate_id", "reference_price_currency")
+            VALUES (${tenantAId}::uuid, 'PRODUCT'::catalog_item_kind, 'Pair Probe Currency Only', ${iva5RateId}::uuid, 'PYG')
+          `,
+      ];
+      for (const insert of pairViolations) {
+        await expect(insert()).rejects.toThrow(/catalog_item_reference_price_pair_check/);
+      }
+      expect(await prisma.catalogItem.count()).toBe(itemsBefore);
+      expect(
+        await prisma.catalogItem.count({
+          where: { name: { in: ["Pair Probe Amount Only", "Pair Probe Currency Only"] } },
+        })
+      ).toBe(0);
+    }, 30_000);
+
+    it("keeps the item mutation and its audit row atomically visible under a concurrent reader (co-commit invariant)", async () => {
+      // A second item, so the masking and audit assertions above stay untouched.
+      const concurrentName = "Live Concurrent Consulta";
+      const created = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", "live-pg-catalog-concurrency-create")
+        .send({ kind: "SERVICE", name: concurrentName, taxRateId: exemptRateId })
+        .expect(201);
+      const concurrentItemId = (created.body as CatalogItemDto).id;
+
+      const updateRequestId = "live-pg-catalog-concurrency-update";
+      const renamed = "Live Concurrent Consulta v2";
+
+      // Deterministic barrier: hold a SHARE table lock on `audit_log`. SHARE
+      // conflicts with the ROW EXCLUSIVE an INSERT needs, so the writer parks on
+      // its audit append AFTER the item UPDATE has already run inside its still
+      // open transaction — while every SELECT (ACCESS SHARE) stays allowed, so
+      // the concurrent reader is never blocked by the barrier itself.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe('LOCK TABLE "audit_log" IN SHARE MODE');
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+
+      const write = supertest(serverUrl)
+        .put(`/catalog/${concurrentItemId}`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", updateRequestId)
+        .send({ name: renamed })
+        .then((response) => response);
+
+      try {
+        // The writer is PROVABLY parked on the audit_log relation lock, so its
+        // item UPDATE is mid-transaction and uncommitted.
+        await waitForRelationLockWaiters(prisma, "audit_log", 1, 10_000);
+
+        // No reader may observe the rename before its audit row exists: both
+        // the HTTP read and a raw read still see the pre-state, and the trail
+        // holds no row for the in-flight request yet.
+        const whileBlocked = await supertest(serverUrl)
+          .get(`/catalog/${concurrentItemId}`)
+          .set("Cookie", ownerACookie)
+          .expect(200);
+        expect((whileBlocked.body as CatalogItemDto).name).toBe(concurrentName);
+        const rawWhileBlocked = await prisma.catalogItem.findUnique({
+          where: { id: concurrentItemId },
+        });
+        expect(rawWhileBlocked?.name).toBe(concurrentName);
+        expect(await prisma.auditLog.count({ where: { requestId: updateRequestId } })).toBe(0);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const written = await write;
+      expect(written.status).toBe(200);
+      expect((written.body as CatalogItemDto).name).toBe(renamed);
+
+      // After the commit BOTH halves are visible TOGETHER — the renamed item and
+      // exactly one co-committed audit row, never a partial state.
+      const after = await supertest(serverUrl)
+        .get(`/catalog/${concurrentItemId}`)
+        .set("Cookie", ownerACookie)
+        .expect(200);
+      expect((after.body as CatalogItemDto).name).toBe(renamed);
+      const audit = await prisma.auditLog.findMany({ where: { requestId: updateRequestId } });
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({
+        action: "catalog_item.updated",
+        targetType: "catalog_item",
+        targetId: concurrentItemId,
+        tenantId: tenantAId,
+      });
+      expect((audit[0].metadata as { changedFields: string[] }).changedFields).toEqual(["name"]);
+    }, 30_000);
+
+    it("attributes the isActive flip to exactly ONE of two concurrent deactivations of the same item", async () => {
+      const itemName = "Live Concurrent Deactivation";
+      const created = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", "live-pg-catalog-race-create")
+        .send({ kind: "SUPPLY", name: itemName, taxRateId: exemptRateId })
+        .expect(201);
+      const raceItemId = (created.body as CatalogItemDto).id;
+
+      const winnerRequestId = "live-pg-catalog-race-deactivate-1";
+      const loserRequestId = "live-pg-catalog-race-deactivate-2";
+
+      // Deterministic overlap: a dedicated transaction holds the item's row lock
+      // (`SELECT ... FOR UPDATE`), so both racers park on the SAME conditional
+      // `isActive = true` UPDATE and neither can commit before the other is
+      // parked. A plain reader is never blocked by a row lock, so the pre-state
+      // read this command used to perform also happened before either write —
+      // which is exactly why the LOSER must not claim the flip.
+      // `waitForRowLockWaiters` proves both are parked on that exact tuple, so the
+      // interleaving is decided by the database boundary rather than by timing.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "catalog_item" WHERE id = ${raceItemId}::uuid FOR UPDATE`;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+      // The row lock is held now, so the ctid cannot move under the racers.
+      const ctid = await readRowCtid(prisma, "catalog_item", raceItemId);
+
+      const deactivate = (requestId: string) =>
+        supertest(serverUrl)
+          .post(`/catalog/${raceItemId}/deactivate`)
+          .set("Cookie", ownerACookie)
+          .set("X-Request-Id", requestId)
+          .then((response) => response);
+      const racers = [deactivate(winnerRequestId), deactivate(loserRequestId)];
+
+      try {
+        await waitForRowLockWaiters(prisma, "catalog_item", ctid.page, ctid.tuple, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      for (const response of responses) {
+        expect(response.status).toBe(201);
+        expect((response.body as CatalogItemDto).isActive).toBe(false);
+      }
+
+      // Deactivation stays idempotent: both accepted commands co-commit their
+      // own trail row...
+      const trail = await prisma.auditLog.findMany({
+        where: { requestId: { in: [winnerRequestId, loserRequestId] } },
+      });
+      expect(trail).toHaveLength(2);
+      expect(trail.map((row) => row.action)).toEqual([
+        "catalog_item.deactivated",
+        "catalog_item.deactivated",
+      ]);
+      expect(trail.map((row) => row.targetId)).toEqual([raceItemId, raceItemId]);
+
+      // ...but only ONE of them actually flipped `isActive`. The loser's own
+      // conditional update matched ZERO rows once the winner committed, so its
+      // diff is empty — an isActive change may never be reported twice for one
+      // physical transition.
+      const diffs = trail.map((row) => (row.metadata as { changedFields: string[] }).changedFields);
+      expect(diffs.filter((diff) => diff.includes("isActive"))).toHaveLength(1);
+      expect(diffs.filter((diff) => diff.length === 0)).toHaveLength(1);
+      expect(await prisma.catalogItem.count({ where: { id: raceItemId } })).toBe(1);
     }, 30_000);
   });
 });

@@ -4,6 +4,7 @@ import { StorageModule } from "@newsaas/storage";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { BrandingModule } from "./branding/branding.module.js";
+import { CatalogModule } from "./catalog/catalog.module.js";
 import { ClinicalModule } from "./clinical/clinical.module.js";
 import { CommonModule } from "./common/common.module.js";
 import { ContextModule } from "./context/context.module.js";
@@ -41,6 +42,9 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     PatientsModule,
     ClinicalModule,
     SchedulingModule,
+    // EPIC-09 catalog: a leaf consumer of the platform; it adds no APP_GUARD,
+    // so its position carries no guard-ordering contract.
+    CatalogModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.

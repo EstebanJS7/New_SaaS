@@ -10,6 +10,7 @@ import type { AppointmentResponseSource } from "./appointment.dto.js";
 const BRANCH_A = "11111111-1111-4111-8111-111111111101";
 const PATIENT_A = "22222222-2222-4222-8222-222222222201";
 const VET_A = "33333333-3333-4333-8333-333333333301";
+const SERVICE_A = "55555555-5555-4555-8555-555555555501";
 const START = "2026-09-14T12:00:00.000Z";
 const END = "2026-09-14T12:30:00.000Z";
 
@@ -21,6 +22,8 @@ const APPOINTMENT_DTO_KEYS = [
   "id",
   "patientId",
   "professionalMembershipId",
+  "service",
+  "serviceId",
   "startAt",
   "status",
   "tenantId",
@@ -108,6 +111,80 @@ describe("appointment input schemas (400-class validation)", () => {
     });
     expect(valid.success).toBe(true);
   });
+
+  it("accepts an OPTIONAL service reference on create and reschedule", () => {
+    // Absent is valid (no service) and an explicit null is the same state.
+    expect(
+      createAppointmentInputSchema.safeParse({
+        branchId: BRANCH_A,
+        patientId: PATIENT_A,
+        professionalMembershipId: VET_A,
+        startAt: START,
+        endAt: END,
+      }).success
+    ).toBe(true);
+    expect(
+      createAppointmentInputSchema.safeParse({
+        branchId: BRANCH_A,
+        patientId: PATIENT_A,
+        professionalMembershipId: VET_A,
+        startAt: START,
+        endAt: END,
+        serviceId: null,
+      }).success
+    ).toBe(true);
+    expect(
+      createAppointmentInputSchema.safeParse({
+        branchId: BRANCH_A,
+        patientId: PATIENT_A,
+        professionalMembershipId: VET_A,
+        startAt: START,
+        endAt: END,
+        serviceId: SERVICE_A,
+      }).success
+    ).toBe(true);
+    // Absent leaves the stored reference untouched; null clears it.
+    expect(
+      rescheduleAppointmentInputSchema.safeParse({ startAt: START, endAt: END, version: 1 }).success
+    ).toBe(true);
+    expect(
+      rescheduleAppointmentInputSchema.safeParse({
+        startAt: START,
+        endAt: END,
+        version: 1,
+        serviceId: SERVICE_A,
+      }).success
+    ).toBe(true);
+    expect(
+      rescheduleAppointmentInputSchema.safeParse({
+        startAt: START,
+        endAt: END,
+        version: 1,
+        serviceId: null,
+      }).success
+    ).toBe(true);
+  });
+
+  it("rejects a malformed service reference", () => {
+    expect(
+      createAppointmentInputSchema.safeParse({
+        branchId: BRANCH_A,
+        patientId: PATIENT_A,
+        professionalMembershipId: VET_A,
+        startAt: START,
+        endAt: END,
+        serviceId: "not-a-uuid",
+      }).success
+    ).toBe(false);
+    expect(
+      rescheduleAppointmentInputSchema.safeParse({
+        startAt: START,
+        endAt: END,
+        version: 1,
+        serviceId: "not-a-uuid",
+      }).success
+    ).toBe(false);
+  });
 });
 
 describe("appointment response DTO (CONFIDENTIAL allowlist)", () => {
@@ -124,22 +201,53 @@ describe("appointment response DTO (CONFIDENTIAL allowlist)", () => {
       endAt: new Date(END),
       createdAt: new Date(START),
       updatedAt: new Date(START),
+      serviceId: null,
       ...overrides,
     };
   }
 
-  it("emits exactly the allowlisted keys and no internals or service field", () => {
+  it("emits exactly the allowlisted keys and never leaks catalog internals or pricing", () => {
     const response = toAppointmentResponse({
       ...source(),
       // Extra row fields a Prisma model could carry must never leak.
-      ...({ serviceId: "svc-1", catalogItemId: "cat-1", internalNotes: "secret" } as object),
+      ...({
+        catalogItemId: "cat-1",
+        internalNotes: "secret",
+        referencePriceAmount: "150000.00",
+        referencePriceCurrency: "PYG",
+        taxRateId: "rate-1",
+        rate: "10.00",
+      } as object),
     });
 
     expect(Object.keys(response).sort()).toEqual(APPOINTMENT_DTO_KEYS);
     const record = response as unknown as Record<string, unknown>;
-    expect(record.serviceId).toBeUndefined();
-    expect(record.catalogItemId).toBeUndefined();
-    expect(record.internalNotes).toBeUndefined();
+    for (const key of [
+      "catalogItemId",
+      "internalNotes",
+      "referencePriceAmount",
+      "referencePriceCurrency",
+      "taxRateId",
+      "rate",
+    ]) {
+      expect(record[key]).toBeUndefined();
+    }
+    // Absent reference is a valid, explicit null state on both keys.
+    expect(record.serviceId).toBeNull();
+    expect(record.service).toBeNull();
+  });
+
+  it("projects the linked service identity without any price, tax or rate value", () => {
+    const response = toAppointmentResponse(source({ serviceId: SERVICE_A }), {
+      id: SERVICE_A,
+      name: "Consulta general",
+      kind: "SERVICE",
+    });
+
+    expect(response.serviceId).toBe(SERVICE_A);
+    expect(response.service).toEqual({ id: SERVICE_A, name: "Consulta general", kind: "SERVICE" });
+    // Identity keys only: a linked service cannot become a monetary source.
+    expect(Object.keys(response.service ?? {}).sort()).toEqual(["id", "kind", "name"]);
   });
 
   it("renders every timestamp as an ISO-8601 UTC string", () => {

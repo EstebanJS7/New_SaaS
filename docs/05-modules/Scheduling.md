@@ -2,7 +2,7 @@
 type: module
 module: scheduling
 status: implemented
-updated: 2026-09-22
+updated: 2026-09-25
 ---
 
 # Module — Scheduling
@@ -13,11 +13,16 @@ Staff-only, tenant- and branch-scoped appointment scheduling for the veterinary
 vertical: an `Appointment` assigned to an in-tenant `VETERINARIAN`
 `TenantMembership`, anchored to an in-tenant Patient and Branch, scheduled
 inside the professional's availability and governed by a typed conflict policy.
+An appointment may OPTIONALLY carry one in-tenant, active `SERVICE` catalog item
+(EPIC-09 WU4); the reference is convenience metadata and never changes how the
+appointment is scheduled.
 
 ## Does Not Own
 
-- Portal booking/approval (EPIC-08) and Catalog service relations or labels
-  (EPIC-09); the appointment boundary exposes no user-facing service field.
+- Portal booking/approval (EPIC-08).
+- Catalog administration — item CRUD, deactivation, prices, taxes and rates —
+  and Catalog labels/Branding (EPIC-09). Scheduling only READS an active
+  `SERVICE` item; it never creates, updates or prices one.
 - Recurring appointments/blocks, reminders, or internal appointment events.
 - A separate practitioner entity, branch administration, or clinical-encounter
   linkage.
@@ -26,6 +31,8 @@ inside the professional's availability and governed by a typed conflict policy.
 ## Public Capabilities
 
 - Create, read, list and reschedule branch-scoped appointments.
+- OPTIONALLY attach one in-tenant, active `SERVICE` catalog item on create or
+  reschedule, and filter the agenda by that reference (EPIC-09 WU4).
 - Six named lifecycle commands (`confirm`, `arrive`, `start`, `complete`,
   `cancel`, `no-show`); terminal rows are immutable.
 - Filtered agenda reads and `options` (tenant branches + VETERINARIAN
@@ -40,8 +47,8 @@ inside the professional's availability and governed by a typed conflict policy.
 ## Main Entities
 
 - `Appointment` — `tenantId`, `branchId`, `patientId`,
-  `professionalMembershipId`, `status`, `startAt`/`endAt` (UTC
-  `TIMESTAMPTZ(3)`), `version`, timestamps.
+  `professionalMembershipId`, optional `serviceId`, `status`, `startAt`/`endAt`
+  (UTC `TIMESTAMPTZ(3)`), `version`, timestamps.
 - `AppointmentStatus` enum — `SCHEDULED`, `CONFIRMED`, `ARRIVED`, `IN_PROGRESS`,
   `COMPLETED`, `CANCELLED`, `NO_SHOW`.
 
@@ -72,7 +79,8 @@ additionally uses the `version` predicate.
 
 ## API
 
-- `GET|POST /appointments`
+- `GET|POST /appointments` — the list accepts the optional `serviceId` filter
+  below; the create body accepts the optional `serviceId` reference.
 - `GET /appointments/options`
 - `GET /appointments/availability?branchId&professionalMembershipId&date&durationMinutes[&stepMinutes]`
   — the free-slot read added by DEC-007. `durationMinutes` and `stepMinutes` are
@@ -81,13 +89,37 @@ additionally uses the `version` predicate.
   is
   `{ date, branchId, professionalMembershipId, durationMinutes, stepMinutes, timeZone, basis, slots: [{ startAt, endAt }] }`
   with UTC instants.
-- `GET|PUT /appointments/:id` (reschedule body `{startAt, endAt, version}`)
+- `GET|PUT /appointments/:id` (reschedule body `{startAt, endAt, version}` plus
+  the optional `serviceId` below)
 - `POST /appointments/:id/{confirm|arrive|start|complete|cancel|no-show}`
 - `GET|PUT /settings/scheduling` — typed namespace (availability, blocks,
   `conflictPolicy`).
 - `GET /api/scheduling/[...path]` and `GET|PUT /api/settings/[...path]` —
   authenticated staff web proxies with strict route/query allowlists and only
   the staff session cookie forwarded.
+
+## Appointment service association (EPIC-09 WU4)
+
+`Appointment.serviceId` is an OPTIONAL reference to a tenant-scoped
+`CatalogItem` of kind `SERVICE`. The field is nullable, so every appointment
+that predates EPIC-09 — staff and portal alike — keeps working and is never
+rewritten; the migration only adds the column, its composite tenant FK and its
+index.
+
+| Concern             | Behavior                                                                                                                                                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create / reschedule | `serviceId` is optional. Absent on create means no service. On reschedule, absent leaves the stored reference untouched and an explicit `null` clears it.                                                                                      |
+| Validation          | A present value must resolve to an in-tenant, ACTIVE `SERVICE` item. Unknown or foreign UUIDs are the byte-equivalent `404 NOT_FOUND`; an in-tenant inactive or wrong-kind item is `400 VALIDATION_FAILED`. Nothing is persisted on rejection. |
+| Agenda filter       | `GET /appointments?serviceId=<uuid>` returns only appointments carrying exactly that reference. Omitting the parameter adds no predicate, so every existing query keeps its behavior.                                                          |
+| Response            | The allowlisted DTO gains `serviceId` plus a small read-only `service` projection of the item's identity (`id`, `name`, `kind`).                                                                                                               |
+| Duration            | `durationMinutes` remains the explicit caller-supplied parameter of DEC-007. No code path derives, defaults or overwrites it from the service.                                                                                                 |
+| Monetary values     | No price, tax, rate or currency value is read or projected. The batched identity read selects `id`, `name` and `kind` only, and the DTO carries no amount.                                                                                     |
+| Portal              | The portal booking-request body stays `.strict()` and gains no service field; no portal surface exposes service selection.                                                                                                                     |
+
+The reference is rendered from ONE batched catalog read per result set (never
+one query per appointment). A link that points at an item later deactivated
+still renders its identity; only new or changed links are validated against
+`isActive`.
 
 ## Availability read (DEC-007)
 
@@ -172,9 +204,12 @@ semantic tokens.
   serialize: one persists, the other returns `409 CONFLICT`. The lock query
   casts the `void` result to `text` because Prisma `$queryRaw` cannot
   deserialize `void` (P2010).
-- A tenancy composite `(tenant_id, …)` foreign key set plus an
+- A tenancy composite `(tenant_id, …)` foreign key set — including the OPTIONAL
+  `(tenant_id, service_id)` reference to `catalog_item` — plus an
   `end_at > start_at` CHECK and a DELETE-rejecting trigger enforce invariants at
   the database; the trigger is not bypassed by application code.
+- The service reference is a link only: it never derives, defaults or overwrites
+  `durationMinutes`, and it carries no price, tax, rate or currency value.
 - Exactly one audit row is appended per mutation, co-committed in the same
   transaction with stable IDs and field names only.
 - Availability/block violations and overlap rejection both return `409 CONFLICT`
@@ -185,21 +220,33 @@ semantic tokens.
 
 - Tenant identity comes only from the server-side `RequestContextService`; a
   route- or body-supplied `tenantId` is never trusted.
-- A foreign Patient/Branch/membership anchor or a foreign appointment UUID
-  returns a byte-equivalent `404 NOT_FOUND` and persists nothing; an in-tenant
-  non-VETERINARIAN professional is a `400 VALIDATION_FAILED`.
+- A foreign Patient/Branch/membership anchor, a foreign `SERVICE` reference or a
+  foreign appointment UUID returns a byte-equivalent `404 NOT_FOUND` and
+  persists nothing; an in-tenant non-VETERINARIAN professional, an inactive
+  service or a wrong-kind catalog item is a `400 VALIDATION_FAILED`.
 - Appointment DTOs are allowlisted and classified **CONFIDENTIAL**; Prisma
   models are never returned. The allowlist is exactly `id`, `tenantId`,
   `branchId`, `patientId`, `professionalMembershipId`, `status`, `startAt`,
-  `endAt`, `version`, `createdAt`, `updatedAt` — no service/Catalog field and no
-  patient name. Appointment details are not logged.
+  `endAt`, `version`, `createdAt`, `updatedAt`, `serviceId` and a nested
+  `service` object of `id`, `name`, `kind` — no catalog price, tax or rate value
+  and no patient name. Appointment details are not logged.
 
 ## Verification
 
 - `apps/api/src/scheduling/{appointment.service,appointment.dto,appointments.integration}.test.ts`
   — transition/version predicates, tenant 404, non-VETERINARIAN 400,
-  REJECT/ALLOW, availability/block, audit co-commit rollback, timezone/DST and
-  the allowlisted CONFIDENTIAL DTO.
+  REJECT/ALLOW, availability/block, audit co-commit rollback, timezone/DST, the
+  allowlisted CONFIDENTIAL DTO, and the OPTIONAL service association: an
+  in-tenant active `SERVICE` is accepted and projected as identity only, no
+  service is a valid `null` state, unknown/foreign references are the
+  byte-equivalent 404, inactive/wrong-kind references are 400, the service never
+  derives the duration and the agenda service filter narrows without changing
+  the other filters.
+- `packages/database/src/scheduling.test.ts` — the
+  `20260925000002_appointment_service` DDL is additive (one nullable
+  `service_id` column, composite `(tenant_id, service_id)` FK, index, no
+  backfill, no data mutation, no monetary or duration column) and the schema
+  declares the nullable reference with `CatalogItem`'s reverse relation.
 - `apps/api/src/scheduling/appointments-availability.integration.test.ts` —
   read-versus-write agreement in both directions, active statuses, `ALLOW`
   strict-subset, window and block boundaries, local-midnight and the real
@@ -235,6 +282,8 @@ semantic tokens.
 ## Related Stories
 
 - EPIC-07 change: `openspec/changes/archive/2026-09-15-epic-07/`
+- [[CAT-005 Appointment service link]] — EPIC-09 WU4: the OPTIONAL `SERVICE`
+  association and the agenda service filter.
 
 ## Related ADRs
 

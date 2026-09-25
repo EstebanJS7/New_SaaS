@@ -6,9 +6,14 @@
  * the server-side session cookie — the browser never supplies a tenant id.
  *
  * Data classification: appointment details are CONFIDENTIAL. Only the
- * allowlisted DTO fields mirrored from the WU2/WU3 contract cross this boundary;
- * there is no service/Catalog field and no internal linkage.
+ * allowlisted DTO fields mirrored from the WU2/WU3 contract cross this boundary.
+ * EPIC-09 WU4 adds the OPTIONAL Catalog SERVICE association: the appointment
+ * carries `serviceId` plus a small read-only IDENTITY projection of the linked
+ * item (`id`, `name`, `kind`). No price, tax, rate or currency value is read
+ * here, and the association never derives the appointment duration.
  */
+
+import type { CatalogItemKind } from "../catalog/catalog-api";
 
 /** Appointment lifecycle states, pinned by the EPIC-07 spec. */
 export type AppointmentStatus =
@@ -53,6 +58,19 @@ export function allowedTransitions(status: AppointmentStatus): readonly Transiti
   return ALLOWED_TRANSITIONS[status];
 }
 
+/**
+ * Read-only IDENTITY projection of the linked Catalog item, mirrored from the
+ * WU4 appointment DTO. Deliberately carry-free: it holds the item's id, name and
+ * kind only, so no price, tax, rate or currency can reach the agenda and a
+ * linked appointment can never become a monetary source. `kind` reuses the
+ * catalog client's pinned union instead of re-declaring it.
+ */
+export interface AppointmentService {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: CatalogItemKind;
+}
+
 /** Allowlisted staff Appointment DTO mirrored from the WU2D/WU3 contract. */
 export interface Appointment {
   readonly id: string;
@@ -66,6 +84,10 @@ export interface Appointment {
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** OPTIONAL Catalog SERVICE reference; `null` means no service is attached. */
+  readonly serviceId: string | null;
+  /** Identity of the attached service, or `null`; never carries a monetary value. */
+  readonly service: AppointmentService | null;
 }
 
 /** Agenda filter options: tenant branches plus assignable VETERINARIAN memberships. */
@@ -108,6 +130,7 @@ export interface AppointmentFilters {
   readonly branchId?: string;
   readonly professionalMembershipId?: string;
   readonly status?: AppointmentStatus;
+  readonly serviceId?: string;
 }
 
 /**
@@ -139,20 +162,31 @@ export interface ApproveBookingRequestInput {
   readonly endAt?: string;
 }
 
-/** CREATE body: anchors plus a UTC start/end range. */
+/**
+ * CREATE body: anchors plus a UTC start/end range and an OPTIONAL service.
+ * `durationMinutes` is not part of this contract: the span is the explicit
+ * caller-supplied `startAt`/`endAt` pair, never derived from a service.
+ */
 export interface CreateAppointmentInput {
   readonly branchId: string;
   readonly patientId: string;
   readonly professionalMembershipId: string;
   readonly startAt: string;
   readonly endAt: string;
+  /** OPTIONAL Catalog SERVICE reference; omitted means no service. */
+  readonly serviceId?: string;
 }
 
-/** RESCHEDULE body: a UTC start/end range plus the caller's last-read version. */
+/**
+ * RESCHEDULE body: a UTC start/end range plus the caller's last-read version.
+ * `serviceId` is OPTIONAL: omitted leaves the stored reference untouched, while
+ * an explicit `null` clears it (the catalog update convention).
+ */
 export interface RescheduleAppointmentInput {
   readonly startAt: string;
   readonly endAt: string;
   readonly version: number;
+  readonly serviceId?: string | null;
 }
 
 /**
@@ -280,6 +314,7 @@ function filtersQuery(filters: AppointmentFilters): string {
     params.set("professionalMembershipId", filters.professionalMembershipId);
   }
   if (filters.status !== undefined) params.set("status", filters.status);
+  if (filters.serviceId !== undefined) params.set("serviceId", filters.serviceId);
   const query = params.toString();
   return query.length > 0 ? `?${query}` : "";
 }

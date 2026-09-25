@@ -12,6 +12,7 @@ import {
   toAppointmentResponse,
   type AppointmentOptionsResponse,
   type AppointmentResponse,
+  type AppointmentServiceProjection,
   type AppointmentStatusDto,
   type CreateAppointmentInput,
   type RescheduleAppointmentInput,
@@ -21,6 +22,7 @@ import {
   RESCHEDULABLE_STATUSES,
   assertAppointmentAnchors,
   assertAppointmentAvailability,
+  assertAppointmentServiceAnchor,
   assertNoConflictInTransaction,
   assertSchedulingAnchors,
   compareAndSetReschedule,
@@ -59,6 +61,8 @@ export interface AppointmentRow {
   patientId: string;
   professionalMembershipId: string;
   status: AppointmentStatusDto;
+  /** OPTIONAL Catalog SERVICE reference (EPIC-09 WU4); `null` when unset. */
+  serviceId: string | null;
   version: number;
   startAt: Date;
   endAt: Date;
@@ -73,6 +77,8 @@ export interface AppointmentWhere {
   branchId?: string;
   patientId?: string;
   professionalMembershipId?: string;
+  /** Agenda filter on the OPTIONAL Catalog SERVICE reference (EPIC-09 WU4). */
+  serviceId?: string;
   status?: AppointmentStatusDto | { in: AppointmentStatusDto[] };
   version?: number;
   /** Overlap predicate: existing.startAt < candidate.endAt. */
@@ -90,6 +96,8 @@ export interface AppointmentCreateData {
   version: number;
   startAt: Date;
   endAt: Date;
+  /** OPTIONAL Catalog SERVICE reference; omitted means `null`. */
+  serviceId?: string | null;
 }
 
 export interface AppointmentUpdateData {
@@ -152,12 +160,34 @@ export interface AppointmentTransaction {
   $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>;
 }
 
+/**
+ * Read-only Catalog seam for the OPTIONAL SERVICE association (EPIC-09 WU4).
+ *
+ * `findFirst` is the anchor guard's tenant-scoped resolution; `findMany` is the
+ * batched identity read the response projection uses (never one query per
+ * appointment). Only `id`, `name`, `kind` and `isActive` are selectable — no
+ * price, tax, rate or currency column is part of this contract, so scheduling
+ * cannot read one.
+ */
+export interface AppointmentCatalogItemDelegate {
+  findFirst: (args: {
+    where: { id: string; tenantId: string };
+    select: { id: true; kind: true; isActive: true };
+  }) => Promise<{ id: string; kind: string; isActive: boolean } | null>;
+  findMany: (args: {
+    where: { tenantId: string; id: { in: string[] } };
+    select: { id: true; name: true; kind: true };
+  }) => Promise<{ id: string; name: string; kind: string }[]>;
+}
+
 export interface AppointmentPrisma {
   $transaction: <T>(work: (tx: AppointmentTransaction) => Promise<T>) => Promise<T>;
   branch: AppointmentBranchDelegate;
   patient: AppointmentPatientDelegate;
   tenantMembership: AppointmentMembershipDelegate;
   appointment: AppointmentDelegate;
+  /** Read-only Catalog item lookup for the OPTIONAL SERVICE association. */
+  catalogItem: AppointmentCatalogItemDelegate;
 }
 
 /** The six named lifecycle commands; no generic status patch exists. */
@@ -186,12 +216,14 @@ export const APPOINTMENT_TRANSITIONS: Readonly<
   "no-show": { from: ["CONFIRMED", "ARRIVED"], to: "NO_SHOW", action: "appointment.no_show" },
 });
 
-/** Agenda filters supported by the staff views (branch, professional, status). */
+/** Agenda filters supported by the staff views (branch, professional, status, service). */
 export interface AppointmentFilters {
   readonly branchId?: string;
   readonly patientId?: string;
   readonly professionalMembershipId?: string;
   readonly status?: AppointmentStatusDto;
+  /** OPTIONAL Catalog SERVICE filter (EPIC-09 WU4); omitted adds no predicate. */
+  readonly serviceId?: string;
 }
 
 interface AuditDescriptor {
@@ -244,18 +276,26 @@ export class AppointmentService {
       where.professionalMembershipId = filters.professionalMembershipId;
     }
     if (filters.status !== undefined) where.status = filters.status;
+    // An omitted service filter adds NO predicate, so existing query behavior is
+    // unchanged; a supplied one narrows to rows carrying exactly that reference.
+    if (filters.serviceId !== undefined) where.serviceId = filters.serviceId;
 
     const rows = await this.prisma.appointment.findMany({
       where,
       orderBy: { startAt: "asc" },
     });
-    return rows.map(toAppointmentResponse);
+    return this.mapAppointments(tenantId, rows);
   }
 
   async getAppointment(id: string): Promise<AppointmentResponse> {
     const tenantId = this.requestContext.requireTenantId();
     await this.requirePermission(SCHEDULING_PERMISSIONS.read);
-    return toAppointmentResponse(await this.findAppointmentOrThrow(tenantId, id));
+    const row = await this.findAppointmentOrThrow(tenantId, id);
+    const [response] = await this.mapAppointments(tenantId, [row]);
+    if (!response) {
+      throw new DomainError("INTERNAL", "Appointment response could not be produced.");
+    }
+    return response;
   }
 
   async listAppointmentOptions(): Promise<AppointmentOptionsResponse> {
@@ -339,12 +379,19 @@ export class AppointmentService {
     const data = parsed.data;
     const startAt = new Date(data.startAt);
     const endAt = new Date(data.endAt);
+    // Resolve the OPTIONAL reference once: `null` means "no service attached".
+    const serviceId = data.serviceId ?? null;
 
     await assertAppointmentAnchors(this.prisma, tenantId, {
       branchId: data.branchId,
       patientId: data.patientId,
       membershipId: data.professionalMembershipId,
     });
+
+    // OPTIONAL Catalog SERVICE anchor: absent/null is a no-op; a present value
+    // must resolve to an in-tenant ACTIVE SERVICE item (foreign/unknown -> 404,
+    // in-tenant rule violation -> 400) BEFORE anything is written.
+    await assertAppointmentServiceAnchor(this.prisma, tenantId, serviceId);
 
     const settings = await loadSchedulingSettings(this.settings);
     assertAppointmentAvailability(settings, {
@@ -373,6 +420,7 @@ export class AppointmentService {
           version: 1,
           startAt,
           endAt,
+          serviceId,
         },
       });
 
@@ -388,6 +436,7 @@ export class AppointmentService {
             "startAt",
             "endAt",
             "status",
+            ...(serviceId === null ? [] : ["serviceId"]),
           ],
         },
         tenantId,
@@ -396,7 +445,11 @@ export class AppointmentService {
       return created;
     });
 
-    return toAppointmentResponse(row);
+    const [response] = await this.mapAppointments(tenantId, [row]);
+    if (!response) {
+      throw new DomainError("INTERNAL", "Appointment response could not be produced.");
+    }
+    return response;
   }
 
   async rescheduleAppointment(
@@ -421,6 +474,13 @@ export class AppointmentService {
         "CONFLICT",
         "Only scheduled or confirmed appointments can be rescheduled."
       );
+    }
+
+    // The OPTIONAL service reference is only touched when the caller supplied
+    // the key: absent leaves it untouched, `null` clears it. Either way the
+    // duration stays the caller's `startAt`/`endAt`.
+    if (data.serviceId !== undefined) {
+      await assertAppointmentServiceAnchor(this.prisma, tenantId, data.serviceId);
     }
 
     const settings = await loadSchedulingSettings(this.settings);
@@ -452,6 +512,7 @@ export class AppointmentService {
         version: data.version,
         startAt,
         endAt,
+        ...(data.serviceId !== undefined && { serviceId: data.serviceId }),
       });
 
       await this.appendAudit(
@@ -459,7 +520,12 @@ export class AppointmentService {
         {
           action: "appointment.rescheduled",
           targetId: id,
-          changedFields: ["startAt", "endAt", "version"],
+          changedFields: [
+            "startAt",
+            "endAt",
+            "version",
+            ...(data.serviceId !== undefined ? ["serviceId"] : []),
+          ],
         },
         tenantId,
         actorUserProfileId
@@ -467,7 +533,11 @@ export class AppointmentService {
       return updated;
     });
 
-    return toAppointmentResponse(row);
+    const [response] = await this.mapAppointments(tenantId, [row]);
+    if (!response) {
+      throw new DomainError("INTERNAL", "Appointment response could not be produced.");
+    }
+    return response;
   }
 
   async transitionAppointment(
@@ -514,12 +584,81 @@ export class AppointmentService {
       return updated;
     });
 
-    return toAppointmentResponse(row);
+    const [response] = await this.mapAppointments(tenantId, [row]);
+    if (!response) {
+      throw new DomainError("INTERNAL", "Appointment response could not be produced.");
+    }
+    return response;
   }
 
   // -------------------------------------------------------------------------
   // Internal helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Maps appointment rows to the allowlisted DTO, resolving every linked
+   * service in ONE tenant-scoped batched read (never one query per row).
+   */
+  private async mapAppointments(
+    tenantId: string,
+    rows: readonly AppointmentRow[]
+  ): Promise<AppointmentResponse[]> {
+    const services = await this.loadServiceProjections(tenantId, rows);
+    return rows.map((row) => toAppointmentResponse(row, this.resolveService(row, services)));
+  }
+
+  /**
+   * Batched identity read for the connected services. Only `id`, `name` and
+   * `kind` are selected: no price, tax, rate or currency value is read from
+   * Catalog at all. Deactivated items are still returned, because an existing
+   * link keeps rendering its identity.
+   */
+  private async loadServiceProjections(
+    tenantId: string,
+    rows: readonly AppointmentRow[]
+  ): Promise<Map<string, AppointmentServiceProjection>> {
+    const ids = [
+      ...new Set(rows.flatMap((row) => (row.serviceId === null ? [] : [row.serviceId]))),
+    ];
+    if (ids.length === 0) {
+      return new Map();
+    }
+
+    const items = await this.prisma.catalogItem.findMany({
+      where: { tenantId, id: { in: ids } },
+      select: { id: true, name: true, kind: true },
+    });
+    return new Map(
+      items.map((item) => [
+        item.id,
+        {
+          id: item.id,
+          name: item.name,
+          kind: item.kind as AppointmentServiceProjection["kind"],
+        },
+      ])
+    );
+  }
+
+  /**
+   * Resolves one row's projection. The composite tenant FK plus the catalog
+   * DELETE rejection guarantee the referenced item exists in this tenant, so a
+   * miss is a scoping defect and fails loudly instead of silently returning a
+   * `serviceId` with no `service`.
+   */
+  private resolveService(
+    row: AppointmentRow,
+    services: ReadonlyMap<string, AppointmentServiceProjection>
+  ): AppointmentServiceProjection | null {
+    if (row.serviceId === null) {
+      return null;
+    }
+    const service = services.get(row.serviceId);
+    if (!service) {
+      throw new DomainError("INTERNAL", "The linked appointment service is unavailable.");
+    }
+    return service;
+  }
 
   private async requirePermission(key: string): Promise<void> {
     const permissions = await this.permissionResolver.resolveForActiveRequest();

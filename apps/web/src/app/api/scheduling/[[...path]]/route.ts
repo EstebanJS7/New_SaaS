@@ -16,6 +16,10 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * query keys (`.strict()`), so the proxy forwards only these and drops
  * everything else — including any parameter an attacker appends.
  *
+ * `serviceId` is the WU4 C2 agenda service filter (`GET /appointments`). Adding it
+ * to this shared list is the only widening this slice makes; every other key and
+ * every drop rule is unchanged.
+ *
  * The list is shared by every route rather than scoped per route. A key that does
  * not apply to the route reached (for example `date` on `GET /appointments`) is
  * forwarded and then refused by the API's own validation, so that is a 400 rather
@@ -26,6 +30,7 @@ const ALLOWED_QUERY_KEYS = [
   "patientId",
   "professionalMembershipId",
   "status",
+  "serviceId",
   "date",
   "durationMinutes",
   "stepMinutes",

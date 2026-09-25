@@ -180,7 +180,9 @@ function AgendaCalendar({
         </div>
       );
     }
-    const status = byId.get(arg.event.id)?.status ?? "SCHEDULED";
+    const appointment = byId.get(arg.event.id);
+    const status = appointment?.status ?? "SCHEDULED";
+    const linkedService = appointment?.service ?? null;
     return (
       <div
         className={`h-full w-full overflow-hidden rounded-sm border px-1 py-0.5 ${STATUS_CLASSES[status]}`}
@@ -189,6 +191,19 @@ function AgendaCalendar({
         <span className="block truncate text-[0.6rem] font-medium uppercase tracking-wide">
           {status.replace("_", " ")}
         </span>
+        {/*
+          The linked service's NAME only. The agenda deliberately renders no
+          price, tax, rate or currency, so the association stays a schedule hint
+          and never becomes a monetary surface.
+        */}
+        {linkedService !== null && (
+          <span
+            data-testid="event-service"
+            className="block truncate text-[0.6rem] text-muted-foreground"
+          >
+            {linkedService.name}
+          </span>
+        )}
       </div>
     );
   }
@@ -343,6 +358,13 @@ function ListView({
               <p className="text-xs text-muted-foreground">
                 {branchLabel(appointment.branchId)} · Professional{" "}
                 {appointment.professionalMembershipId.slice(0, 8)}
+                {/* Name only: no price, tax, rate or currency on the agenda. */}
+                {appointment.service !== null && (
+                  <span data-testid="appointment-service">
+                    {" "}
+                    · Service {appointment.service.name}
+                  </span>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-2">

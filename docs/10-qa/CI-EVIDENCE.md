@@ -1,7 +1,7 @@
 ---
 type: qa
 status: active
-updated: 2026-09-21
+updated: 2026-09-25
 ---
 
 # CI Evidence
@@ -387,3 +387,76 @@ A reviewer can confirm this baseline without reconstructing the closure story:
 - [ ] No statement claims production readiness; EPIC-20 and open debt are cited.
 - [ ] Branch protection is presented as enabled with both required checks,
       consistent with the 2026-09-21 API response and TD-001 `resolved`.
+
+## EPIC-09 Local Closure Evidence (2026-09-25)
+
+**This is a LOCAL run, not a CI run.** It was executed on 2026-09-25 against the
+uncommitted working tree on branch `main`, using the locally running project
+services. No CI baseline exists for EPIC-09: the five work units are not
+committed, pushed or merged, so this section records on-demand local evidence
+and is **not** an immutable CI baseline. It promotes nothing: `done` for EPIC-09
+would require the merged-work-units exit criterion, and no statement here
+approves delivery, merge or release. The canonical CI baselines above remain the
+immutable CI evidence and are deliberately unchanged by this section.
+
+### Environment
+
+```text
+PostgreSQL 16.13   127.0.0.1:5433   local, project .env
+Redis              127.0.0.1:6380   local, project .env
+```
+
+### Executed checks
+
+| Command                                                                                                        | Observed result                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm preflight`                                                                                               | PostgreSQL reachable; Redis reachable                                                                                    |
+| `pnpm --filter @newsaas/database db:deploy`                                                                    | all migrations applied, including `20260925000001_catalog` and `20260925000002_appointment_service`                      |
+| `pnpm --filter @newsaas/database db:seed` (run twice) then `node packages/database/scripts/ci-seed-counts.mjs` | identical counts on both runs, including `taxRates: 3` — the seed is idempotent                                          |
+| `pnpm --filter @newsaas/database db:live-verify`                                                               | `LIVE MIGRATION VERIFICATION PASSED` (requires `tax_rate` and `catalog_item`, asserts the global-vs-tenant column scope) |
+| `pnpm --filter @newsaas/api test:live-pg`                                                                      | 1 file / **47 tests passed**, including the `EPIC-09 catalog application-path isolation` block                           |
+
+### Raw-SQL database probes
+
+These run inside the live suite (`apps/api/test/live-pg-isolation.e2e-spec.ts`,
+EPIC-09 block) against real PostgreSQL, bypassing the API service where noted:
+
+| Probe                                                    | Observed result                                                                                                                  |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `DELETE FROM "catalog_item"` (raw `$executeRaw`)         | rejected by the `BEFORE DELETE` trigger — `catalog items are deactivated and cannot be hard-deleted`; the row survived unchanged |
+| `INSERT` with an unknown `tax_rate_id`, service bypassed | rejected by `catalog_item_tax_rate_id_fkey`, so no rate-less item can exist                                                      |
+| `INSERT` with an amount but no currency, and the reverse | both rejected by `catalog_item_reference_price_pair_check`                                                                       |
+
+The remaining `catalog_item` `CHECK` constraints (non-negative amount, ISO 4217
+currency shape) and the `tax_rate` non-negative `CHECK` are pinned by the
+textual DDL gates in `packages/database/src/schema-catalog.test.ts`, not
+exercised as raw-SQL probes.
+
+### Scope of this local evidence
+
+| Item                                                                | State                                                                               |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Both catalog migrations applied to a real PostgreSQL 16.13 database | observed locally                                                                    |
+| Reference seed idempotent (`taxRates: 3` twice)                     | observed locally                                                                    |
+| Catalog aggregate live isolation/audit/concurrency block            | observed locally (part of 47/47)                                                    |
+| EPIC-09 work units committed, pushed or merged                      | **not done** — the exit criterion stays open                                        |
+| CI run for EPIC-09                                                  | **none exists**; the `Database migrations` job will be its durable form once pushed |
+| Staff catalog UI browser-to-API round trip                          | not covered — component tests mock `fetch`; Playwright stays deferred ([[TD-007]])  |
+| Live-PostgreSQL case for the `Appointment` service link (WU4)       | not present — the link is proven by unit/HTTP tests and the applied migration       |
+
+No catalog value, rate, price or fiscal arithmetic is claimed by this evidence:
+the epic performs none, and nothing here changes that.
+
+### Documentation review criteria
+
+A reviewer can confirm this evidence without reconstructing the closure story:
+
+- [ ] The section is labelled LOCAL and never presented as a CI run.
+- [ ] The environment, commands and observed results match the table above.
+- [ ] The delete-trigger and pair-`CHECK` probes are named as raw SQL, and the
+      textually pinned `CHECK`s are distinguished from them.
+- [ ] The section states that no CI run exists for EPIC-09 and that the merged
+      exit criterion is open.
+- [ ] The canonical CI baselines above are unchanged.
+- [ ] No statement claims production readiness; [[EPIC-20]] and the open Tech
+      Debt items are cited.

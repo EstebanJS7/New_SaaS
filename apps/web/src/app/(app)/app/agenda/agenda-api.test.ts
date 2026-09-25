@@ -6,6 +6,7 @@ import {
   ApiRequestError,
   allowedTransitions,
   approveBookingRequest,
+  createAppointment,
   getSchedulingSettings,
   listAppointmentOptions,
   listAppointments,
@@ -21,8 +22,10 @@ import {
 
 const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_ID = "22222222-2222-4222-8222-222222222222";
+const PATIENT_ID = "33333333-3333-4333-8333-333333333333";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 const MEMBERSHIP_ID = "44444444-4444-4444-8444-444444444444";
+const SERVICE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 const APPOINTMENT: Appointment = {
   id: APPOINTMENT_ID,
@@ -36,6 +39,8 @@ const APPOINTMENT: Appointment = {
   version: 1,
   createdAt: "2026-09-14T00:00:00.000Z",
   updatedAt: "2026-09-14T00:00:00.000Z",
+  serviceId: null,
+  service: null,
 };
 
 const BOOKING_REQUEST: BookingRequest = {
@@ -83,6 +88,76 @@ describe("agenda-api contract", () => {
     expect(resolveRequestUrl(callInput(fetchMock, 1))).toBe(
       `/api/scheduling/appointments?branchId=${BRANCH_ID}&status=CONFIRMED`
     );
+
+    // The optional service filter is forwarded when set and adds NO key when
+    // omitted, so an existing query keeps its behavior byte-for-byte.
+    await listAppointments({ serviceId: SERVICE_ID });
+    expect(resolveRequestUrl(callInput(fetchMock, 2))).toBe(
+      `/api/scheduling/appointments?serviceId=${SERVICE_ID}`
+    );
+  });
+
+  it("mirrors the optional service identity without any monetary field", async () => {
+    const linked: Appointment = {
+      ...APPOINTMENT,
+      serviceId: SERVICE_ID,
+      service: { id: SERVICE_ID, name: "Vaccination", kind: "SERVICE" },
+    };
+    global.fetch = vi.fn(() => Promise.resolve(jsonResponse([linked])));
+
+    await expect(listAppointments()).resolves.toEqual([linked]);
+    // The identity projection is exactly id/name/kind: no price, tax, rate or
+    // currency key exists on the client type either.
+    expect(Object.keys(linked.service ?? {})).toEqual(["id", "name", "kind"]);
+  });
+
+  it("sends the optional service on create and reschedule without touching the span", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(APPOINTMENT)));
+    global.fetch = fetchMock;
+
+    await createAppointment({
+      branchId: BRANCH_ID,
+      patientId: PATIENT_ID,
+      professionalMembershipId: MEMBERSHIP_ID,
+      startAt: "2026-09-14T12:00:00.000Z",
+      endAt: "2026-09-14T12:45:00.000Z",
+      serviceId: SERVICE_ID,
+    });
+    expect(JSON.parse(callInit(fetchMock, 0).body as string)).toEqual({
+      branchId: BRANCH_ID,
+      patientId: PATIENT_ID,
+      professionalMembershipId: MEMBERSHIP_ID,
+      startAt: "2026-09-14T12:00:00.000Z",
+      endAt: "2026-09-14T12:45:00.000Z",
+      serviceId: SERVICE_ID,
+    });
+
+    // An omitted `serviceId` on reschedule (a calendar drag) leaves the stored
+    // reference untouched, and the caller's range is passed through verbatim.
+    await rescheduleAppointment(APPOINTMENT_ID, {
+      startAt: "2026-09-14T13:00:00.000Z",
+      endAt: "2026-09-14T13:45:00.000Z",
+      version: 2,
+    });
+    expect(JSON.parse(callInit(fetchMock, 1).body as string)).toEqual({
+      startAt: "2026-09-14T13:00:00.000Z",
+      endAt: "2026-09-14T13:45:00.000Z",
+      version: 2,
+    });
+
+    // An explicit `null` is the only way to clear the reference.
+    await rescheduleAppointment(APPOINTMENT_ID, {
+      startAt: "2026-09-14T13:00:00.000Z",
+      endAt: "2026-09-14T13:45:00.000Z",
+      version: 2,
+      serviceId: null,
+    });
+    expect(JSON.parse(callInit(fetchMock, 2).body as string)).toEqual({
+      startAt: "2026-09-14T13:00:00.000Z",
+      endAt: "2026-09-14T13:45:00.000Z",
+      version: 2,
+      serviceId: null,
+    });
   });
 
   it("requests the options and named-command paths", async () => {

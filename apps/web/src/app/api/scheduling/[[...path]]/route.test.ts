@@ -23,6 +23,7 @@ import { GET, POST, PUT } from "./route";
 const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_ID = "22222222-2222-4222-8222-222222222222";
 const PATIENT_ID = "33333333-3333-4333-8333-333333333333";
+const SERVICE_ID = "44444444-4444-4444-8444-444444444444";
 
 interface MockNextRequest {
   nextUrl: { pathname: string; searchParams: URLSearchParams };
@@ -124,16 +125,37 @@ describe("/api/scheduling proxy", () => {
   it("forwards only the allowlisted query parameters and drops the rest", async () => {
     fetchMock.mockResolvedValue(upstreamOk([]));
 
+    // `serviceId` is the WU4 C2 widening. This exact-URL assertion is the
+    // allowlist pin: the four forwarded keys appear in allowlist order, a
+    // repeated key keeps its first value, and everything else — including the
+    // `service`/`admin` keys the browser might append — is dropped.
     const request = mockNextRequest({
       pathname: "/api/scheduling/appointments",
-      search: `?branchId=${BRANCH_ID}&status=CONFIRMED&patientId=${PATIENT_ID}&admin=true&status=ALLOW`,
+      search: `?branchId=${BRANCH_ID}&status=CONFIRMED&patientId=${PATIENT_ID}&serviceId=${SERVICE_ID}&service=1&admin=true&status=ALLOW`,
     });
 
     await GET(request as unknown as Parameters<typeof GET>[0]);
 
     const call = fetchMock.mock.calls[0] as unknown as [string, FetchInit];
     expect(call[0]).toBe(
-      `http://localhost:3001/appointments?branchId=${BRANCH_ID}&patientId=${PATIENT_ID}&status=CONFIRMED`
+      `http://localhost:3001/appointments?branchId=${BRANCH_ID}&patientId=${PATIENT_ID}&status=CONFIRMED&serviceId=${SERVICE_ID}`
+    );
+  });
+
+  it("forwards the agenda service filter on its own so it reaches the API", async () => {
+    fetchMock.mockResolvedValue(upstreamOk([]));
+
+    // Exactly the query `listAppointments({ serviceId })` builds in the agenda
+    // client, so this proves the browser filter survives the proxy boundary.
+    const request = mockNextRequest({
+      pathname: "/api/scheduling/appointments",
+      search: `?serviceId=${SERVICE_ID}`,
+    });
+
+    await GET(request as unknown as Parameters<typeof GET>[0]);
+
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      `http://localhost:3001/appointments?serviceId=${SERVICE_ID}`
     );
   });
 

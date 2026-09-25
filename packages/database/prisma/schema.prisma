@@ -150,6 +150,7 @@ model Tenant {
   clinicalWeights             ClinicalWeight[]
   appointments                Appointment[]
   portalBookingRequests       PortalBookingRequest[]
+  catalogItems                CatalogItem[]
 
   @@map("tenant")
 }
@@ -1085,8 +1086,9 @@ enum AppointmentStatus {
 /// Tenant- and branch-scoped appointment assigned to one in-tenant
 /// `TenantMembership` (role VETERINARIAN, a service rule) and anchored to one
 /// in-tenant Patient via composite `(tenant_id, x_id)` FKs. Start/end persist in
-/// UTC. Reschedule is guarded by an explicit `version`. There is deliberately no
-/// service/Catalog field and no clinical-encounter linkage yet.
+/// UTC. Reschedule is guarded by an explicit `version`. There is still no
+/// clinical-encounter linkage; the OPTIONAL Catalog SERVICE association below
+/// was added by EPIC-09 WU4 and never derives `durationMinutes`.
 model Appointment {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
@@ -1101,6 +1103,12 @@ model Appointment {
   /// Nullable provenance link to the Portal booking request this appointment
   /// fulfils; the unique below makes a repeated approval idempotent.
   portalBookingRequestId String?           @map("portal_booking_request_id") @db.Uuid
+  /// OPTIONAL Catalog SERVICE association (EPIC-09 WU4 CAT-005). Nullable, so
+  /// every existing and portal-created appointment stays valid and no row is
+  /// ever rewritten. The duration remains the caller-supplied `startAt`/`endAt`
+  /// span; the service never derives or overwrites it, and no price, tax, rate
+  /// or currency value crosses this reference.
+  serviceId              String?           @map("service_id") @db.Uuid
   /// Optimistic-concurrency guard for the reschedule command.
   version                Int               @default(1)
 
@@ -1119,6 +1127,11 @@ model Appointment {
   professionalMembership TenantMembership      @relation(fields: [tenantId, professionalMembershipId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK (EPIC-08): the booking request must be in the same tenant.
   portalBookingRequest   PortalBookingRequest? @relation(fields: [tenantId, portalBookingRequestId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// OPTIONAL composite tenant-ownership FK (EPIC-09 WU4): when a service is
+  /// attached, the referenced CatalogItem must be in the SAME tenant. The
+  /// database carries ownership only; "kind = SERVICE" and "isActive" are
+  /// application rules re-asserted on every write.
+  service                CatalogItem?          @relation(fields: [tenantId, serviceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   /// Tenant-ownership key: keeps a future clinical-encounter linkage additive.
   @@unique([tenantId, id])
@@ -1128,6 +1141,7 @@ model Appointment {
   @@index([tenantId, branchId])
   @@index([tenantId, professionalMembershipId])
   @@index([tenantId, patientId])
+  @@index([tenantId, serviceId])
   @@index([tenantId, status])
   @@map("appointment")
 }
@@ -1184,6 +1198,99 @@ model PortalBookingRequest {
   @@index([tenantId, customerId])
   @@index([tenantId, patientId])
   @@map("portal_booking_request")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog and Taxes (EPIC-09 WU1 CAT-001 data foundation). TaxRate is GLOBAL
+// seeded reference data mirroring Species/Breed — never tenant-scoped. The
+// CatalogItem aggregate is tenant-scoped and references exactly one global rate
+// through a RESTRICT foreign key. The optional reference price is an
+// amount/currency pair (DEC-010) and is informational only: no sale, invoice,
+// cash or fiscal value is derived from it. There is no stock flag, SKU, barcode,
+// category, unit or branch column here — EPIC-10 owns stock and EPIC-12 owns
+// POS. Data classification: catalog configuration is INTERNAL.
+// ---------------------------------------------------------------------------
+
+/// Catalog item kind (PRD §15). Values are pinned; evolve additively only.
+enum CatalogItemKind {
+  PRODUCT
+  SERVICE
+  MEDICATION
+  SUPPLY
+
+  @@map("catalog_item_kind")
+}
+
+/// GLOBAL system-seeded Paraguay tax-rate catalog (PRD §15, DEC-010). Not
+/// tenant-scoped: every tenant reads the seeded rows (`EXEMPT`, `IVA_5`,
+/// `IVA_10`) and can never create, edit, deactivate or delete one. `code` is the
+/// stable natural key used by the reference seed; `rate` is a percentage stored
+/// as DECIMAL(5,2) with a non-negative CHECK in the migration. This model
+/// defines no arithmetic: no tax-included/excluded interpretation, calculation,
+/// rounding or currency conversion is derived from it.
+model TaxRate {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  code String  @unique
+  name String
+  rate Decimal @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  catalogItems CatalogItem[]
+
+  @@map("tax_rate")
+}
+
+/// Tenant-scoped catalog item (PRD §15, EPIC-09 WU1). Every item references
+/// exactly one GLOBAL seeded TaxRate — `taxRateId` is NOT NULL — through a
+/// RESTRICT foreign key, so a rate-less item is not a representable state and a
+/// referenced rate can never be deleted. Removal is deactivation
+/// (`isActive = false`); the migration rejects DELETE.
+///
+/// The optional reference price is an amount/currency pair (DEC-010): both
+/// present or both absent, validated server-side and by a database CHECK. It is
+/// informational — no sale, invoice, cash or fiscal total is derived from it.
+model CatalogItem {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String          @map("tenant_id") @db.Uuid
+  kind     CatalogItemKind
+
+  name String
+
+  /// Global rate reference (PRD §15): NOT NULL and RESTRICT, so the seeded rate
+  /// must exist before an item is inserted and is never tenant-filtered.
+  taxRateId String @map("tax_rate_id") @db.Uuid
+
+  /// Optional reference price amount/currency pair (DEC-010). Both columns are
+  /// nullable and are validated as one pair; DEC-010 deliberately fixes the
+  /// scale at Decimal(14, 2) for every currency, so the catalog implies no
+  /// per-currency arithmetic.
+  referencePriceAmount   Decimal? @map("reference_price_amount") @db.Decimal(14, 2)
+  referencePriceCurrency String?  @map("reference_price_currency") @db.VarChar(3)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  taxRate TaxRate @relation(fields: [taxRateId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// OPTIONAL back-reference of the Appointment service association (EPIC-09
+  /// WU4). No catalog column is added or changed by that linkage.
+  appointments Appointment[]
+
+  /// Tenant-ownership key: target of the composite service FK from Appointment
+  /// (EPIC-09 WU4), so a service item can only be referenced by an appointment
+  /// of the SAME tenant.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@index([taxRateId])
+  @@map("catalog_item")
 }
 
 // ---------------------------------------------------------------------------

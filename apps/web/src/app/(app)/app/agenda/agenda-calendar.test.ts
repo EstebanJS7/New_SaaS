@@ -23,6 +23,8 @@ const APPOINTMENT: Appointment = {
   version: 3,
   createdAt: "2026-09-14T00:00:00.000Z",
   updatedAt: "2026-09-14T00:00:00.000Z",
+  serviceId: null,
+  service: null,
 };
 
 describe("agenda-calendar view mapping", () => {
@@ -42,6 +44,25 @@ describe("agenda-calendar event mapping", () => {
       title: "CONFIRMED",
       start: "2026-09-14T12:00:00.000Z",
       end: "2026-09-14T12:45:00.000Z",
+      allDay: false,
+    });
+  });
+
+  it("keeps the linked service out of the event payload", () => {
+    // The service is rendered from the appointment lookup in the event content,
+    // never smuggled into the event object, so the calendar payload cannot carry
+    // a catalog value and the linked service never changes the event shape.
+    const linked: Appointment = {
+      ...APPOINTMENT,
+      serviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      service: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Vaccination", kind: "SERVICE" },
+    };
+
+    expect(appointmentToEvent(linked)).toEqual({
+      id: APPOINTMENT.id,
+      title: "CONFIRMED",
+      start: APPOINTMENT.startAt,
+      end: APPOINTMENT.endAt,
       allDay: false,
     });
   });

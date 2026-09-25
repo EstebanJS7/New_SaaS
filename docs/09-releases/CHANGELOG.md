@@ -6,6 +6,40 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-09 — Catalog and taxes:
+  - Tenant-scoped `CatalogItem` aggregate over `PRODUCT`, `SERVICE`,
+    `MEDICATION` and `SUPPLY`, with deactivation as the only removal (a
+    `BEFORE DELETE` trigger rejects hard deletes) and an optional informational
+    reference price as an amount plus ISO 4217 currency pair (`Decimal(14, 2)`,
+    PYG default).
+  - Global, platform-seeded and tenant read-only tax-rate list (`EXEMPT 0%`,
+    `IVA_5 5%`, `IVA_10 10%`) that every item must reference through a non-null
+    `Restrict` foreign key; no tenant-created rates, no rate mutation route and
+    no per-item override. The seed must run before any item can be inserted.
+  - `catalog.read` / `catalog.create` / `catalog.update` / `catalog.deactivate`
+    with the decided role matrix, six allowlisted INTERNAL routes (rate list,
+    list, detail, create, update, deactivate), Zod validation, transactional
+    `catalog_item.*` audit rows and byte-equivalent cross-tenant `404`.
+  - Staff catalog surface at `/app/catalog` (kind/status filters, read-only
+    detail, create/edit with a required rate selector, explicit deactivate)
+    behind an allowlisted `/api/catalog` proxy that forwards only the staff
+    session cookie.
+  - An OPTIONAL `SERVICE` catalog reference on `Appointment` and the PRD §14
+    agenda service filter, preserving the caller-supplied `durationMinutes` and
+    adding no portal service selection.
+  - Two additive migrations, seed idempotency coverage, and local
+    live-PostgreSQL evidence for the catalog aggregate (47/47, including its
+    isolation, audit-co-commit and concurrent-deactivation cases).
+  - `EPIC-09`, `CAT-001`–`CAT-005`, the `Catalog-Taxes` module documentation,
+    and the `TD-013`/`TD-014`/`TD-015` debt records.
+
+  The epic is `review`, not `done`: every gate this environment can run is green
+  and the live-PostgreSQL evidence exists locally, but the work units are not
+  committed, pushed or merged, so the merged-work-units exit criterion is still
+  open. `review` means implementation closure pending delivery — it is **not** a
+  production-readiness statement. [[EPIC-20]] Production Hardening and the open
+  Tech Debt items remain.
+
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,
     vaccinations, deworming, studies, weights) with a RESTRICT-FK additive

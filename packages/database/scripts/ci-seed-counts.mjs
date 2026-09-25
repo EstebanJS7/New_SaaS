@@ -15,6 +15,7 @@ try {
     planCapabilities: await db.planCapability.count(),
     species: await db.species.count(),
     breeds: await db.breed.count(),
+    taxRates: await db.taxRate.count(),
   };
   console.log(JSON.stringify(counts));
 } finally {

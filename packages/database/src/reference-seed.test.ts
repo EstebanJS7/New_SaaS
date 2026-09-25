@@ -9,6 +9,7 @@ import {
   ROLE_SEEDS,
   SPECIES_SEEDS,
   STARTER_PLAN_SEED,
+  TAX_RATE_SEEDS,
   seedReferenceData,
   type ReferenceSeedClient,
 } from "./reference-seed.js";
@@ -47,6 +48,12 @@ function createRecordingClient() {
     id: string;
     code: string;
   }
+  interface TaxRateRow {
+    id: string;
+    code: string;
+    name: string;
+    rate: string;
+  }
   interface PairRow {
     id: string;
   }
@@ -59,6 +66,7 @@ function createRecordingClient() {
   const planCapabilities = new Map<string, PairRow>();
   const species = new Map<string, CodeNameRow>();
   const breeds = new Map<string, CodeRow & { speciesId: string }>();
+  const taxRates = new Map<string, TaxRateRow>();
 
   const client = {
     role: {
@@ -159,6 +167,22 @@ function createRecordingClient() {
         return breeds.get(`${speciesId}:${code}`) ?? null;
       },
     },
+    taxRate: {
+      upsert: (args: {
+        where: { code: string };
+        create: { code: string; name: string; rate: string };
+      }) => {
+        calls.push(`taxRate.upsert:${args.where.code}`);
+        const existing = taxRates.get(args.where.code);
+        if (existing) {
+          existing.name = args.create.name;
+          existing.rate = args.create.rate;
+        } else {
+          taxRates.set(args.where.code, { id: nextId(), ...args.create });
+        }
+      },
+      findUnique: (args: { where: { code: string } }) => taxRates.get(args.where.code) ?? null,
+    },
   };
 
   const counts = () => ({
@@ -170,9 +194,10 @@ function createRecordingClient() {
     planCapabilities: planCapabilities.size,
     species: species.size,
     breeds: breeds.size,
+    taxRates: taxRates.size,
   });
 
-  return { calls, counts, client };
+  return { calls, counts, client, taxRates };
 }
 
 /** Contract cast: the recording fake satisfies the delegates the seed touches. */
@@ -307,6 +332,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "patients.read",
       "patients.create",
       "patients.update",
+      "catalog.read",
     ]);
     for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
       for (const key of [
@@ -386,6 +412,37 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     }
   });
 
+  it("seeds the catalog permission catalog and decided matrix (EPIC-09 WU2)", () => {
+    const catalogPermissionKeys = [
+      "catalog.read",
+      "catalog.create",
+      "catalog.update",
+      "catalog.deactivate",
+    ] as const;
+    const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of catalogPermissionKeys) {
+      expect(seededKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    // Maintainer matrix (2026-09-25): the catalog is the inventory domain, so
+    // the owner, the admin and the inventory manager hold all four keys.
+    for (const roleCode of ["OWNER", "ADMIN", "INVENTORY_MANAGER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toEqual(
+        expect.arrayContaining([...catalogPermissionKeys])
+      );
+    }
+    // Front-desk, veterinary and cash roles read the catalog but never write
+    // it; the three write keys stay withheld from every non-owning role.
+    const writeKeys = ["catalog.create", "catalog.update", "catalog.deactivate"] as const;
+    for (const roleCode of ["VETERINARIAN", "RECEPTIONIST", "CASHIER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("catalog.read");
+      for (const key of writeKeys) {
+        expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
+      }
+    }
+  });
+
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
     expect(SPECIES_SEEDS.map((species) => species.code)).toEqual([
       "dog",
@@ -411,6 +468,20 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
   it("ships the single inert starter plan", () => {
     expect(STARTER_PLAN_SEED.code).toBe("starter");
   });
+
+  it("seeds the three global Paraguay tax rates as reference data (PRD §15, EPIC-09)", () => {
+    expect(TAX_RATE_SEEDS.map((taxRate) => taxRate.code)).toEqual(["EXEMPT", "IVA_5", "IVA_10"]);
+    expect(TAX_RATE_SEEDS.map((taxRate) => taxRate.rate)).toEqual(["0.00", "5.00", "10.00"]);
+    for (const taxRate of TAX_RATE_SEEDS) {
+      // `rate` matches the Decimal(5, 2) column: at most three integer digits
+      // and exactly two decimals, written as a literal to avoid float drift.
+      expect(taxRate.rate).toMatch(/^\d{1,3}\.\d{2}$/);
+      expect(taxRate.name.length).toBeGreaterThan(0);
+    }
+    // The natural key is unique, so the upsert is deterministic.
+    const codes = TAX_RATE_SEEDS.map((taxRate) => taxRate.code);
+    expect(new Set(codes).size).toBe(codes.length);
+  });
 });
 
 describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () => {
@@ -422,15 +493,62 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const fake = await seededOnce();
     expect(fake.counts()).toEqual({
       roles: 6,
-      // 24 pre-EPIC-08 keys + portal.access.manage + portal.settings.manage.
-      permissions: 28,
+      // 26 pre-EPIC-08 keys + portal.access.manage + portal.settings.manage +
+      // the four catalog.* keys added by EPIC-09 WU2 (the earlier "24" was an
+      // arithmetic slip in the EPIC-08 commit; 26 + 2 = 28 was the real sum).
+      permissions: 32,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,
       planCapabilities: FEATURE_CODE_SEEDS.length,
       species: SPECIES_SEEDS.length,
       breeds: BREED_SEEDS.length,
+      taxRates: TAX_RATE_SEEDS.length,
     });
+  });
+
+  it("upserts the three global tax rates by natural code, after the taxonomy", async () => {
+    const fake = await seededOnce();
+    const expectedRateCalls = TAX_RATE_SEEDS.map((taxRate) => `taxRate.upsert:${taxRate.code}`);
+    expect(fake.calls.filter((call) => call.startsWith("taxRate."))).toEqual(expectedRateCalls);
+
+    // Global reference data: keyed by the stable code, never by a tenant or a
+    // generated id, and the persisted Decimal(5, 2) literal is the seeded one.
+    for (const call of fake.calls.filter((entry) => entry.startsWith("taxRate."))) {
+      expect(call).not.toContain("generated-uuid");
+      expect(call).not.toContain("tenant");
+    }
+    expect(fake.taxRates.size).toBe(TAX_RATE_SEEDS.length);
+    for (const taxRate of TAX_RATE_SEEDS) {
+      expect(fake.taxRates.get(taxRate.code)).toMatchObject({
+        code: taxRate.code,
+        name: taxRate.name,
+        rate: taxRate.rate,
+      });
+    }
+  });
+
+  it("re-runs the tax-rate upserts identically without duplicating a rate", async () => {
+    const fake = createRecordingClient();
+    const db = asSeedClient(fake.client);
+
+    await seedReferenceData(db);
+    const expectedRateCalls = TAX_RATE_SEEDS.map((taxRate) => `taxRate.upsert:${taxRate.code}`);
+    const firstRunRateCalls = fake.calls.filter((call) => call.startsWith("taxRate."));
+    const firstRunIds = TAX_RATE_SEEDS.map((taxRate) => fake.taxRates.get(taxRate.code)?.id);
+    // Non-vacuity: the first run really wrote all three rates.
+    expect(firstRunRateCalls).toEqual(expectedRateCalls);
+    expect(firstRunIds.every((id) => id !== undefined)).toBe(true);
+
+    await seedReferenceData(db);
+
+    const allRateCalls = fake.calls.filter((call) => call.startsWith("taxRate."));
+    expect(allRateCalls.slice(firstRunRateCalls.length)).toEqual(firstRunRateCalls);
+    expect(fake.taxRates.size).toBe(TAX_RATE_SEEDS.length);
+    // Identity-stable: the rerun reused the same rows instead of re-creating them.
+    expect(TAX_RATE_SEEDS.map((taxRate) => fake.taxRates.get(taxRate.code)?.id)).toEqual(
+      firstRunIds
+    );
   });
 
   it("re-running produces zero diffs: no new rows, identical upsert pattern", async () => {

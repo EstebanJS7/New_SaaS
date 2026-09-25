@@ -47,6 +47,12 @@ Implemented (EPIC-08):
 Portal.md
 ```
 
+Implemented (EPIC-09):
+
+```text
+Catalog-Taxes.md
+```
+
 Recommended files:
 
 ```text
