@@ -4,13 +4,14 @@ import { Button } from "@newsaas/ui/components/ui/button";
 
 /**
  * Real staff destinations shipped so far. Business entries land with their
- * epics (Customers in EPIC-04, Patients in EPIC-05, Agenda in EPIC-07); the
- * placeholder labels below remain chrome-only until a later epic supplies a
- * real surface.
+ * epics (Customers in EPIC-04, Patients in EPIC-05, Agenda in EPIC-07, Catalog
+ * in EPIC-09); the placeholder labels below remain chrome-only until a later
+ * epic supplies a real surface.
  */
 const NAV_LINKS = [
   { href: "/app/customers", label: "Customers" },
   { href: "/app/patients", label: "Patients" },
+  { href: "/app/catalog", label: "Catalog" },
   { href: "/app/agenda", label: "Agenda" },
 ] as const;
 
@@ -31,7 +32,8 @@ const navLinkClassName =
  *
  * Plain `<aside>` composition per design D8; entries are semantic links or
  * inert buttons styled exclusively with semantic tokens. Customers (EPIC-04),
- * Patients (EPIC-05) and Agenda (EPIC-07) are real `next/link` destinations.
+ * Patients (EPIC-05), Catalog (EPIC-09) and Agenda (EPIC-07) are real
+ * `next/link` destinations.
  */
 export function NavSidebar(): JSX.Element {
   return (

@@ -26,8 +26,10 @@ import {
   type AppointmentStatus,
   type ApproveBookingRequestInput,
   type BookingRequest,
+  type CreateAppointmentInput,
   type TransitionCommand,
 } from "./agenda-api";
+import { listCatalogItems } from "../catalog/catalog-api";
 import { AgendaViews, type AgendaView } from "./agenda-views";
 import { buildAvailabilityOverlay, type AvailabilityOverlay } from "./agenda-availability";
 import {
@@ -54,6 +56,45 @@ const fieldClassName =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 /**
+ * The agenda's own narrow view of a catalog SERVICE item: id and name only.
+ * Projecting here (instead of passing the full `CatalogItem`) keeps price, tax,
+ * rate and currency structurally out of the selector and the agenda filter.
+ */
+interface ServiceOption {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * Copy for the service-option read's degradation state.
+ *
+ * The catalog read is a convenience and the appointment reference is OPTIONAL,
+ * so a failed read must neither break the page nor invent a permission rule:
+ * the selectors stay empty and saving the appointment without a service keeps
+ * working. The client is never the authorization authority.
+ */
+const SERVICE_OPTIONS_UNAVAILABLE =
+  "The service list could not be loaded, so no service can be selected right now. You can still save the appointment without one.";
+
+/**
+ * Offers the linked service even when it is absent from the active list.
+ *
+ * A link created before the item was deactivated still renders its identity on
+ * reads, so the edit surface must show it as the current selection; dropping it
+ * would silently turn "keep the link" into "clear the link".
+ */
+function serviceOptionsFor(
+  services: readonly ServiceOption[],
+  appointment: Appointment
+): readonly ServiceOption[] {
+  const linked = appointment.service;
+  if (linked === null || services.some((service) => service.id === linked.id)) {
+    return services;
+  }
+  return [{ id: linked.id, name: linked.name }, ...services];
+}
+
+/**
  * Copy for the availability overlay's two non-happy states.
  *
  * The hint is shown when no concrete (branch, professional) pair is selected,
@@ -77,6 +118,7 @@ type EditorState =
 function CreateAppointmentForm({
   branches,
   professionals,
+  services,
   isPending,
   error,
   initialStartAt,
@@ -86,17 +128,12 @@ function CreateAppointmentForm({
 }: {
   readonly branches: readonly { readonly id: string; readonly name: string }[];
   readonly professionals: readonly { readonly membershipId: string }[];
+  readonly services: readonly ServiceOption[];
   readonly isPending: boolean;
   readonly error: Error | null;
   readonly initialStartAt?: string;
   readonly initialEndAt?: string;
-  readonly onSubmit: (input: {
-    branchId: string;
-    patientId: string;
-    professionalMembershipId: string;
-    startAt: string;
-    endAt: string;
-  }) => void;
+  readonly onSubmit: (input: CreateAppointmentInput) => void;
   readonly onClose: () => void;
 }): JSX.Element {
   const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
@@ -104,6 +141,7 @@ function CreateAppointmentForm({
     professionals[0]?.membershipId ?? ""
   );
   const [patientId, setPatientId] = useState("");
+  const [serviceId, setServiceId] = useState("");
   const [startAt, setStartAt] = useState(() =>
     initialStartAt !== undefined ? isoToLocalInput(initialStartAt) : ""
   );
@@ -131,6 +169,10 @@ function CreateAppointmentForm({
       professionalMembershipId,
       startAt: startIso,
       endAt: endIso,
+      // The service is OPTIONAL and is deliberately NOT part of the range: the
+      // start/end span is the explicit user input and the service never derives
+      // or overwrites it. An empty selection sends no key at all.
+      ...(serviceId !== "" && { serviceId }),
     });
   }
 
@@ -184,7 +226,22 @@ function CreateAppointmentForm({
               placeholder="Patient UUID"
             />
           </label>
-          <div aria-hidden className="hidden sm:block" />
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">Service (optional)</span>
+            <select
+              aria-label="Service"
+              className={fieldClassName}
+              value={serviceId}
+              onChange={(event) => setServiceId(event.target.value)}
+            >
+              <option value="">No service</option>
+              {services.map((service) => (
+                <option key={service.id} value={service.id}>
+                  {service.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="space-y-1 text-sm">
             <span className="font-medium">Start</span>
             <input
@@ -229,6 +286,7 @@ function CreateAppointmentForm({
 /** Manage panel: version-guarded reschedule plus the legal lifecycle commands. */
 function ManageAppointmentForm({
   appointment,
+  services,
   isPending,
   error,
   onReschedule,
@@ -236,14 +294,16 @@ function ManageAppointmentForm({
   onClose,
 }: {
   readonly appointment: Appointment;
+  readonly services: readonly ServiceOption[];
   readonly isPending: boolean;
   readonly error: Error | null;
-  readonly onReschedule: (startIso: string, endIso: string) => void;
+  readonly onReschedule: (startIso: string, endIso: string, serviceId: string | null) => void;
   readonly onTransition: (command: TransitionCommand) => void;
   readonly onClose: () => void;
 }): JSX.Element {
   const [startAt, setStartAt] = useState(() => isoToLocalInput(appointment.startAt));
   const [endAt, setEndAt] = useState(() => isoToLocalInput(appointment.endAt));
+  const [serviceId, setServiceId] = useState(() => appointment.serviceId ?? "");
   const [validation, setValidation] = useState<string | null>(null);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
@@ -255,10 +315,14 @@ function ManageAppointmentForm({
       return;
     }
     setValidation(null);
-    onReschedule(startIso, endIso);
+    // An empty selection is an explicit `null`, which CLEARS the stored link; a
+    // selection keeps or sets it. The start/end span stays the explicit user
+    // input, so the service never derives or overwrites the appointment range.
+    onReschedule(startIso, endIso, serviceId === "" ? null : serviceId);
   }
 
   const transitions = allowedTransitions(appointment.status);
+  const serviceOptions = serviceOptionsFor(services, appointment);
 
   return (
     <Card>
@@ -269,6 +333,13 @@ function ManageAppointmentForm({
             <p className="text-xs text-muted-foreground">
               {formatDayHeading(dateKeyOf(appointment.startAt))} ·{" "}
               {formatTimeRange(appointment.startAt, appointment.endAt)}
+              {/* Name only: no price, tax, rate or currency on the agenda. */}
+              {appointment.service !== null && (
+                <span data-testid="manage-appointment-service">
+                  {" "}
+                  · Service {appointment.service.name}
+                </span>
+              )}
             </p>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={onClose}>
@@ -296,6 +367,23 @@ function ManageAppointmentForm({
               onChange={(event) => setEndAt(event.target.value)}
             />
           </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">Service (optional)</span>
+            <select
+              aria-label="Service"
+              className={fieldClassName}
+              value={serviceId}
+              onChange={(event) => setServiceId(event.target.value)}
+            >
+              <option value="">No service</option>
+              {serviceOptions.map((service) => (
+                <option key={service.id} value={service.id}>
+                  {service.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div aria-hidden className="hidden sm:block" />
           <div className="sm:col-span-2">
             {validation !== null && (
               <p role="alert" className="mb-2 text-sm text-destructive">
@@ -511,6 +599,7 @@ export function Agenda(): JSX.Element {
   const [branchFilter, setBranchFilter] = useState("");
   const [professionalFilter, setProfessionalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | AppointmentStatus>("");
+  const [serviceFilter, setServiceFilter] = useState("");
   const [editor, setEditor] = useState<EditorState>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [staleConflict, setStaleConflict] = useState<{
@@ -523,8 +612,9 @@ export function Agenda(): JSX.Element {
       ...(branchFilter !== "" && { branchId: branchFilter }),
       ...(professionalFilter !== "" && { professionalMembershipId: professionalFilter }),
       ...(statusFilter !== "" && { status: statusFilter }),
+      ...(serviceFilter !== "" && { serviceId: serviceFilter }),
     }),
-    [branchFilter, professionalFilter, statusFilter]
+    [branchFilter, professionalFilter, statusFilter, serviceFilter]
   );
 
   const optionsQuery = useQuery({
@@ -545,6 +635,15 @@ export function Agenda(): JSX.Element {
   const settingsQuery = useQuery({
     queryKey: ["scheduling", "settings"],
     queryFn: getSchedulingSettings,
+  });
+  // The active SERVICE items the selector and the agenda filter offer. This
+  // reuses the catalog client instead of duplicating one, and it is a
+  // CONVENIENCE read: the API remains the authority, so a failure degrades to an
+  // empty selector with a clear message rather than a blocked page or an
+  // invented permission rule.
+  const serviceOptionsQuery = useQuery({
+    queryKey: ["catalog", "service-options"],
+    queryFn: () => listCatalogItems({ kind: "SERVICE", isActive: true }),
   });
 
   function invalidateAppointments(): void {
@@ -605,11 +704,20 @@ export function Agenda(): JSX.Element {
     },
   });
   const rescheduleMutation = useMutation({
-    mutationFn: (input: { id: string; startAt: string; endAt: string; version: number }) =>
+    mutationFn: (input: {
+      id: string;
+      startAt: string;
+      endAt: string;
+      version: number;
+      serviceId?: string | null;
+    }) =>
       rescheduleAppointment(input.id, {
         startAt: input.startAt,
         endAt: input.endAt,
         version: input.version,
+        // Omitted when absent (a calendar drag), so the stored link is left
+        // untouched; `null` is an explicit clear from the edit surface.
+        ...(input.serviceId !== undefined && { serviceId: input.serviceId }),
       }),
     onSuccess: () => {
       setStaleConflict(null);
@@ -704,6 +812,15 @@ export function Agenda(): JSX.Element {
   const professionals = optionsQuery.data?.professionals ?? [];
   const branchLabel = (branchId: string): string =>
     branches.find((branch) => branch.id === branchId)?.name ?? "Branch";
+
+  // Projected to id + name so no catalog price, tax, rate or currency can reach
+  // the selector or the filter. A failed read yields an empty list, which the
+  // UI reports honestly instead of blocking the appointment surface.
+  const serviceOptions = useMemo<readonly ServiceOption[]>(
+    () => (serviceOptionsQuery.data ?? []).map((item) => ({ id: item.id, name: item.name })),
+    [serviceOptionsQuery.data]
+  );
+  const serviceOptionsUnavailable = serviceOptionsQuery.isError;
 
   // The overlay is only honest for a concrete (professional, branch) pair:
   // `businessHours` is calendar-global while the windows carry a branchId, so
@@ -806,7 +923,7 @@ export function Agenda(): JSX.Element {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="space-y-1 text-sm">
           <span className="font-medium">Branch filter</span>
           <select
@@ -855,7 +972,39 @@ export function Agenda(): JSX.Element {
             ))}
           </select>
         </label>
+        <label className="space-y-1 text-sm">
+          <span className="font-medium">Service filter</span>
+          <select
+            aria-label="Service filter"
+            className={`${controlClassName} w-full`}
+            value={serviceFilter}
+            onChange={(event) => setServiceFilter(event.target.value)}
+          >
+            <option value="">All services</option>
+            {serviceOptions.map((service) => (
+              <option key={service.id} value={service.id}>
+                {service.name}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
+
+      {/*
+        The service list is a convenience, not a gate: when its read fails the
+        selectors stay empty and this message says so, while every other control
+        — including saving an appointment without a service — keeps working. The
+        client never invents a permission rule from a failed read.
+      */}
+      {serviceOptionsUnavailable && (
+        <p
+          role="status"
+          data-testid="service-options-unavailable"
+          className="text-sm text-muted-foreground"
+        >
+          {SERVICE_OPTIONS_UNAVAILABLE}
+        </p>
+      )}
 
       {showAvailabilityHint && (
         <p data-testid="availability-hint" className="text-sm text-muted-foreground">
@@ -912,6 +1061,7 @@ export function Agenda(): JSX.Element {
         <CreateAppointmentForm
           branches={branches}
           professionals={professionals}
+          services={serviceOptions}
           isPending={createMutation.isPending}
           error={createMutation.error}
           {...(editor.startAt !== undefined && { initialStartAt: editor.startAt })}
@@ -934,11 +1084,18 @@ export function Agenda(): JSX.Element {
         <ManageAppointmentForm
           key={`${editor.appointment.id}:${editor.appointment.version}`}
           appointment={editor.appointment}
+          services={serviceOptions}
           isPending={mutationPending}
           error={staleConflict !== null ? null : mutationError}
           onClose={() => setEditorClearingConflict(null)}
-          onReschedule={(startIso, endIso) =>
-            handleRescheduleRange(editor.appointment, startIso, endIso)
+          onReschedule={(startIso, endIso, serviceId) =>
+            rescheduleMutation.mutate({
+              id: editor.appointment.id,
+              startAt: startIso,
+              endAt: endIso,
+              version: editor.appointment.version,
+              serviceId,
+            })
           }
           onTransition={(command) =>
             transitionMutation.mutate({ id: editor.appointment.id, command })

@@ -11,6 +11,13 @@ const MEMBERSHIP_ID = "44444444-4444-4444-8444-444444444444";
 const OTHER_MEMBERSHIP_ID = "55555555-5555-4555-8555-555555555555";
 const OTHER_BRANCH_ID = "66666666-6666-4666-8666-666666666666";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
+const OTHER_APPOINTMENT_ID = "77777777-7777-4777-8777-777777777777";
+const CATALOG_SERVICE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const OTHER_SERVICE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const SERVICE_NAME = "Vaccination";
+// Present in the catalog payload the selector reads, and never rendered on the
+// agenda: the agenda shows the item's identity, not its price.
+const SERVICE_PRICE = "150000";
 
 const APPOINTMENT: Appointment = {
   id: APPOINTMENT_ID,
@@ -24,6 +31,8 @@ const APPOINTMENT: Appointment = {
   version: 1,
   createdAt: "2026-09-14T00:00:00.000Z",
   updatedAt: "2026-09-14T00:00:00.000Z",
+  serviceId: null,
+  service: null,
 };
 
 const BOOKING_REQUEST: BookingRequest = {
@@ -33,6 +42,33 @@ const BOOKING_REQUEST: BookingRequest = {
   startAt: "2026-09-14T15:00:00.000Z",
   endAt: "2026-09-14T15:30:00.000Z",
 };
+
+/** One active SERVICE item as the catalog read returns it (price included). */
+const CATALOG_SERVICE = {
+  id: CATALOG_SERVICE_ID,
+  tenantId: "tenant-a",
+  kind: "SERVICE",
+  name: SERVICE_NAME,
+  taxRateId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  taxRate: { code: "IVA_10", name: "IVA 10%", rate: "0.10" },
+  referencePriceAmount: SERVICE_PRICE,
+  referencePriceCurrency: "PYG",
+  isActive: true,
+  createdAt: "2026-09-14T00:00:00.000Z",
+  updatedAt: "2026-09-14T00:00:00.000Z",
+} as const;
+
+/** A service-linked appointment as the WU4 appointment DTO returns it. */
+function linkedAppointment(
+  serviceId: string = CATALOG_SERVICE_ID,
+  name: string = SERVICE_NAME
+): Appointment {
+  return {
+    ...APPOINTMENT,
+    serviceId,
+    service: { id: serviceId, name, kind: "SERVICE" },
+  };
+}
 
 const AVAILABILITY_WINDOW = {
   membershipId: MEMBERSHIP_ID,
@@ -71,6 +107,7 @@ interface CalendarStubProps {
   readonly initialView?: string;
   readonly events?: readonly CalendarStubEvent[];
   readonly businessHours?: unknown;
+  readonly eventContent?: (arg: unknown) => React.ReactNode;
   readonly eventDrop?: (arg: unknown) => void;
   readonly eventResize?: (arg: unknown) => void;
   readonly eventClick?: (arg: unknown) => void;
@@ -126,6 +163,7 @@ interface FetchHandlers {
   readonly appointments?: (url: string) => Response | Promise<Response>;
   readonly options?: () => Response | Promise<Response>;
   readonly settings?: () => Response | Promise<Response>;
+  readonly catalog?: () => Response | Promise<Response>;
   readonly appointment?: () => Response | Promise<Response>;
   readonly reschedule?: () => Response | Promise<Response>;
   readonly transition?: () => Response | Promise<Response>;
@@ -140,6 +178,9 @@ function mockAgendaFetch(handlers: FetchHandlers): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = resolveRequestUrl(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/api/catalog")) {
+      return Promise.resolve(handlers.catalog?.() ?? jsonResponse([CATALOG_SERVICE]));
+    }
     if (url.includes("/api/settings/scheduling")) {
       return Promise.resolve(
         handlers.settings?.() ??
@@ -364,6 +405,234 @@ describe("Agenda", () => {
     expect(screen.getByText("North · Professional 44444444")).toBeInTheDocument();
   });
 
+  it("refetches the agenda scoped to the selected service filter without disturbing the others", async () => {
+    const linked: Appointment = { ...linkedAppointment(), id: OTHER_APPOINTMENT_ID };
+    const fetchMock = mockAgendaFetch({
+      appointments: (url) =>
+        jsonResponse(
+          url.includes(`serviceId=${CATALOG_SERVICE_ID}`) ? [linked] : [APPOINTMENT, linked]
+        ),
+      options: optionsResponse,
+    });
+    renderAgenda();
+
+    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(2));
+
+    fireEvent.change(await screen.findByLabelText("Service filter"), {
+      target: { value: CATALOG_SERVICE_ID },
+    });
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          (call) =>
+            resolveRequestUrl(call[0] as RequestInfo) ===
+            `/api/scheduling/appointments?serviceId=${CATALOG_SERVICE_ID}`
+        )
+      ).toBe(true);
+    });
+    // Only the matching appointment stays visible, and the existing filters and
+    // navigation are untouched.
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(1));
+    expect(screen.getByTestId("appointment-service")).toHaveTextContent(SERVICE_NAME);
+    expect(screen.getByLabelText("Branch filter")).toBeInTheDocument();
+    expect(screen.getByLabelText("Professional filter")).toBeInTheDocument();
+    expect(screen.getByLabelText("Status filter")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Today" })).toBeInTheDocument();
+  });
+
+  it("offers an optional service selector and sends the chosen id without deriving the span", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+    });
+    renderAgenda();
+
+    fireEvent.click(await screen.findByRole("button", { name: "New appointment" }));
+    const service = await screen.findByLabelText("Service");
+    expect(within(service).getByRole("option", { name: "No service" })).toBeInTheDocument();
+    expect(within(service).getByRole("option", { name: SERVICE_NAME })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Patient id"), { target: { value: PATIENT_ID } });
+    fireEvent.change(screen.getByLabelText("Start"), { target: { value: "2026-09-14T09:00" } });
+    fireEvent.change(screen.getByLabelText("End"), { target: { value: "2026-09-14T09:45" } });
+    fireEvent.change(service, { target: { value: CATALOG_SERVICE_ID } });
+    fireEvent.click(screen.getByRole("button", { name: "Create appointment" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          (call) =>
+            requestMethod(call) === "POST" &&
+            resolveRequestUrl(call[0] as RequestInfo).endsWith("/appointments")
+        )
+      ).toBe(true);
+    });
+    const postCall = fetchMock.mock.calls.find(
+      (call) =>
+        requestMethod(call) === "POST" &&
+        resolveRequestUrl(call[0] as RequestInfo).endsWith("/appointments")
+    );
+    const body = JSON.parse((postCall?.[1] as unknown as { body: string }).body) as {
+      serviceId?: string;
+      startAt: string;
+      endAt: string;
+    };
+    expect(body.serviceId).toBe(CATALOG_SERVICE_ID);
+    // America/Asuncion is UTC-3 in September, so 09:00 local is 12:00Z. The span
+    // stays exactly what the user typed: a service derives and overwrites nothing.
+    expect(body.startAt).toBe("2026-09-14T12:00:00.000Z");
+    expect(body.endAt).toBe("2026-09-14T12:45:00.000Z");
+  });
+
+  it("creates an appointment with no service and sends no service key", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+    });
+    renderAgenda();
+
+    fireEvent.click(await screen.findByRole("button", { name: "New appointment" }));
+    await screen.findByLabelText("Service");
+    fireEvent.change(screen.getByLabelText("Patient id"), { target: { value: PATIENT_ID } });
+    fireEvent.change(screen.getByLabelText("Start"), { target: { value: "2026-09-14T09:00" } });
+    fireEvent.change(screen.getByLabelText("End"), { target: { value: "2026-09-14T09:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create appointment" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "POST")).toBe(true)
+    );
+    const postCall = fetchMock.mock.calls.find((call) => requestMethod(call) === "POST");
+    const body = JSON.parse((postCall?.[1] as unknown as { body: string }).body) as Record<
+      string,
+      unknown
+    >;
+    // The reference is OPTIONAL: leaving the selector untouched submits the
+    // appointment with no service key at all.
+    expect(body).not.toHaveProperty("serviceId");
+  });
+
+  it("shows the linked service by name in the list and the manage panel, and never a price", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([linkedAppointment()]),
+      options: optionsResponse,
+    });
+    renderAgenda();
+
+    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    expect(await screen.findByTestId("appointment-service")).toHaveTextContent(
+      `Service ${SERVICE_NAME}`
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    expect(await screen.findByTestId("manage-appointment-service")).toHaveTextContent(
+      `Service ${SERVICE_NAME}`
+    );
+
+    // The selector read carries the reference price, but the agenda renders no
+    // price, tax, rate or currency anywhere.
+    expect(screen.queryByText(SERVICE_PRICE)).toBeNull();
+    expect(screen.queryByText(/PYG/)).toBeNull();
+    expect(screen.queryByText(/IVA/)).toBeNull();
+  });
+
+  it("shows the linked service name on the calendar event content without a price", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([linkedAppointment()]),
+      options: optionsResponse,
+    });
+    renderAgenda();
+
+    await screen.findByTestId("fullcalendar");
+    const content = latestCalendarProps?.eventContent?.({
+      event: { id: APPOINTMENT_ID },
+      timeText: "12:00",
+    });
+    render(<>{content}</>);
+
+    expect(screen.getByTestId("event-service")).toHaveTextContent(SERVICE_NAME);
+    expect(screen.queryByText(SERVICE_PRICE)).toBeNull();
+  });
+
+  it("keeps the linked service selected in the manage panel and clears it explicitly", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([linkedAppointment()]),
+      options: optionsResponse,
+    });
+    renderAgenda();
+
+    await openManagePanel();
+    const service = await screen.findByLabelText<HTMLSelectElement>("Service");
+    expect(service.value).toBe(CATALOG_SERVICE_ID);
+
+    fireEvent.change(service, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save reschedule" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "PUT")).toBe(true)
+    );
+    const putCall = fetchMock.mock.calls.find((call) => requestMethod(call) === "PUT");
+    const body = JSON.parse((putCall?.[1] as unknown as { body: string }).body) as {
+      serviceId?: string | null;
+      version: number;
+    };
+    // Emptying the selector is the explicit `null` that clears the link; the
+    // optimistic version guard is unchanged.
+    expect(body.serviceId).toBeNull();
+    expect(body.version).toBe(1);
+  });
+
+  it("shows the linked service as the current selection even when it is not in the active list", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([linkedAppointment(OTHER_SERVICE_ID, "Retired service")]),
+      options: optionsResponse,
+      // The catalog read returns only the active item, so the linked one is absent.
+      catalog: () => jsonResponse([CATALOG_SERVICE]),
+    });
+    renderAgenda();
+
+    await openManagePanel();
+    const service = await screen.findByLabelText<HTMLSelectElement>("Service");
+    expect(service.value).toBe(OTHER_SERVICE_ID);
+    expect(within(service).getByRole("option", { name: "Retired service" })).toBeInTheDocument();
+    expect(within(service).getByRole("option", { name: SERVICE_NAME })).toBeInTheDocument();
+  });
+
+  it("degrades honestly to an empty selector with a clear message when the service list fails", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      catalog: () => jsonResponse({ error: { code: "INTERNAL", message: "boom" } }, 500),
+    });
+    renderAgenda();
+
+    expect(await screen.findByTestId("service-options-unavailable")).toHaveTextContent(
+      "The service list could not be loaded"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New appointment" }));
+    const service = await screen.findByLabelText("Service");
+    expect(within(service).getAllByRole("option")).toHaveLength(1);
+
+    // The appointment is still creatable without a service: the failed read is
+    // not a barrier and the client invents no permission rule from it.
+    fireEvent.change(screen.getByLabelText("Patient id"), { target: { value: PATIENT_ID } });
+    fireEvent.change(screen.getByLabelText("Start"), { target: { value: "2026-09-14T09:00" } });
+    fireEvent.change(screen.getByLabelText("End"), { target: { value: "2026-09-14T09:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create appointment" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "POST")).toBe(true)
+    );
+    const postCall = fetchMock.mock.calls.find((call) => requestMethod(call) === "POST");
+    const body = JSON.parse((postCall?.[1] as unknown as { body: string }).body) as Record<
+      string,
+      unknown
+    >;
+    expect(body).not.toHaveProperty("serviceId");
+  });
+
   it("switches the FullCalendar view and falls back to the accessible list", async () => {
     mockAgendaFetch({ appointments: () => jsonResponse([APPOINTMENT]), options: optionsResponse });
     renderAgenda();
@@ -563,6 +832,8 @@ describe("Agenda", () => {
     };
     expect(body.version).toBe(1);
     expect(body.startAt).toBe("2026-09-14T13:00:00.000Z");
+    // A calendar drag never clears or changes the stored service link.
+    expect((body as Record<string, unknown>).serviceId).toBeUndefined();
   });
 
   it("opens the create form prefilled from a calendar time-range selection", async () => {

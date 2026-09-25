@@ -11,9 +11,9 @@ import type { PrismaClient } from "./generated/index.js";
  * covered by lint, typecheck and the vitest suites.
  *
  * IDEMPOTENCY CONTRACT: every write is an upsert keyed by the stable natural
- * key (role.code, permission.key, feature_code.code, plan.code and the two
- * compound pair uniques), executed in fixed array order — re-running produces
- * zero diffs.
+ * key (role.code, permission.key, feature_code.code, plan.code, species.code,
+ * breed (species_id, code), tax_rate.code and the two compound pair uniques),
+ * executed in fixed array order — re-running produces zero diffs.
  */
 
 /** PRD §9 permission naming: two or three lowercase segments `domain.action` or `domain.resource.action`. */
@@ -50,6 +50,13 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  * - EPIC-08 adds the `portal` family: `portal.access.manage` governs staff
  *   provisioning/revocation of a Customer's portal holder, and
  *   `portal.settings.manage` gates writes to the typed `portal` namespace.
+ * - EPIC-09 adds the `catalog` family over the Core catalog domain:
+ *   `catalog.read`/`create`/`update`/`deactivate` mirror the
+ *   `customers`/`patients` shape, where the operational roles read widely and
+ *   only the owning roles manage. The three write keys are seeded BEFORE the
+ *   routes that consume them, exactly as `scheduling.appointment.manage` was
+ *   seeded in EPIC-01 ahead of its EPIC-07 routes; the catalog HTTP surface
+ *   lands in a later slice of the same epic.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -80,6 +87,10 @@ export const PERMISSION_SEEDS = [
   { key: "patients.guardian.manage", name: "Manage patient guardians" },
   { key: "portal.access.manage", name: "Manage customer portal access" },
   { key: "portal.settings.manage", name: "Manage portal settings" },
+  { key: "catalog.read", name: "Read catalog items" },
+  { key: "catalog.create", name: "Create catalog items" },
+  { key: "catalog.update", name: "Update catalog items" },
+  { key: "catalog.deactivate", name: "Deactivate catalog items" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -118,6 +129,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "patients.guardian.manage",
     "portal.access.manage",
     "portal.settings.manage",
+    "catalog.read",
+    "catalog.create",
+    "catalog.update",
+    "catalog.deactivate",
   ],
   ADMIN: [
     "vet.clinical.create",
@@ -148,6 +163,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "patients.guardian.manage",
     "portal.access.manage",
     "portal.settings.manage",
+    "catalog.read",
+    "catalog.create",
+    "catalog.update",
+    "catalog.deactivate",
   ],
   VETERINARIAN: [
     "vet.clinical.create",
@@ -161,6 +180,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "patients.read",
     "patients.create",
     "patients.update",
+    "catalog.read",
   ],
   RECEPTIONIST: [
     "scheduling.appointment.read",
@@ -175,9 +195,18 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "patients.create",
     "patients.update",
     "patients.guardian.manage",
+    "catalog.read",
   ],
-  CASHIER: ["cash.session.close", "fiscal.invoice.issue"],
-  INVENTORY_MANAGER: ["inventory.stock.transfer"],
+  CASHIER: ["cash.session.close", "fiscal.invoice.issue", "catalog.read"],
+  // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
+  // keys; front-desk, veterinary and cash roles read the catalog only.
+  INVENTORY_MANAGER: [
+    "inventory.stock.transfer",
+    "catalog.read",
+    "catalog.create",
+    "catalog.update",
+    "catalog.deactivate",
+  ],
 };
 
 /** The twelve MVP feature codes, verbatim from PRD §10. */
@@ -231,6 +260,22 @@ export const BREED_SEEDS = [
   { speciesCode: "reptile", code: "mixed", name: "Mixed Breed" },
 ] as const;
 
+/**
+ * GLOBAL Paraguay tax-rate catalog (PRD §15, EPIC-09 WU1 / CAT-001). Tax rates
+ * are platform-seeded reference data — never tenant-scoped and never
+ * tenant-filtered — mirroring `Species`/`Breed`. `code` is the stable natural
+ * key and the item references the row through a RESTRICT FK, so the seed must
+ * run before any catalog item can be inserted. `rate` is written as the exact
+ * `Decimal(5, 2)` literal: `EXEMPT` 0%, `IVA_5` 5%, `IVA_10` 10%.
+ */
+export const TAX_RATE_SEEDS = [
+  { code: "EXEMPT", name: "Exempt", rate: "0.00" },
+  { code: "IVA_5", name: "IVA 5%", rate: "5.00" },
+  { code: "IVA_10", name: "IVA 10%", rate: "10.00" },
+] as const;
+
+export type TaxRateCode = (typeof TAX_RATE_SEEDS)[number]["code"];
+
 export type ReferenceSeedClient = Pick<
   PrismaClient,
   | "role"
@@ -241,12 +286,13 @@ export type ReferenceSeedClient = Pick<
   | "planCapability"
   | "species"
   | "breed"
+  | "taxRate"
 >;
 
 /**
  * Seeds all reference data idempotently. Write order is deterministic:
  * roles → permissions → feature codes → plan → id resolution → pairs →
- * global Species/Breed taxonomy.
+ * global Species/Breed taxonomy → global tax rates.
  */
 export async function seedReferenceData(db: ReferenceSeedClient): Promise<void> {
   for (const role of ROLE_SEEDS) {
@@ -379,6 +425,17 @@ export async function seedReferenceData(db: ReferenceSeedClient): Promise<void> 
       where: { speciesId_code: { speciesId, code: breed.code } },
       create: { speciesId, code: breed.code, name: breed.name },
       update: {},
+    });
+  }
+
+  // GLOBAL Paraguay tax rates (PRD §15, EPIC-09 WU1 / CAT-001): the three
+  // platform-owned rates every catalog item references. Seeded last so the
+  // write order stays append-only; there is no dependency on the taxonomy.
+  for (const taxRate of TAX_RATE_SEEDS) {
+    await db.taxRate.upsert({
+      where: { code: taxRate.code },
+      create: { code: taxRate.code, name: taxRate.name, rate: taxRate.rate },
+      update: {}, // identity-stable rerun: never touch updated_at on unchanged rows
     });
   }
 }

@@ -6,6 +6,7 @@ import { seedTwoTenants, type TwoTenantFixture } from "../../test/support/seed-t
 import { enumerateRouteContracts, type RouteContractEntry } from "./route-enumeration.js";
 import { isPortalSurfacePath, isPublicExemptRoute } from "./route-contract.js";
 import { SCHEDULING_PERMISSIONS } from "../scheduling/appointment.permissions.js";
+import { CATALOG_PERMISSIONS } from "../catalog/catalog.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -141,6 +142,13 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /appointments/:id/complete",
   "POST /appointments/:id/cancel",
   "POST /appointments/:id/no-show",
+  // EPIC-09 WU2 — catalog surface (allowlisted items + global tax rates)
+  "GET /catalog",
+  "POST /catalog",
+  "GET /catalog/tax-rates",
+  "GET /catalog/:id",
+  "PUT /catalog/:id",
+  "POST /catalog/:id/deactivate",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -243,6 +251,23 @@ const PORTAL_ACCESS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /customers/:customerId/portal-access/revoke": PORTAL_ACCESS_PERMISSION,
 };
 
+/**
+ * EPIC-09 WU2 catalog surface. Every catalog route MUST declare exactly the
+ * granular key below — `read` for the three reads, and `create`/`update`/
+ * `deactivate` for the three commands. A route decorated with another catalog
+ * tier (or none) fails by name, which the permission-less 403 sweep cannot
+ * catch. There is deliberately NO delete route: removal is the `deactivate`
+ * command, and this map fails by name if a hard-delete route ever appears.
+ */
+const CATALOG_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /catalog": CATALOG_PERMISSIONS.read,
+  "GET /catalog/tax-rates": CATALOG_PERMISSIONS.read,
+  "GET /catalog/:id": CATALOG_PERMISSIONS.read,
+  "POST /catalog": CATALOG_PERMISSIONS.create,
+  "PUT /catalog/:id": CATALOG_PERMISSIONS.update,
+  "POST /catalog/:id/deactivate": CATALOG_PERMISSIONS.deactivate,
+};
+
 describe("route-contract probe (deny-by-default)", () => {
   let booted: BootedTestApp;
   let inventory: RouteContractEntry[];
@@ -323,6 +348,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in SCHEDULING_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED SCHEDULING ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY catalog route to its single intended granular catalog.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/catalog"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(CATALOG_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING CATALOG ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG CATALOG PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in CATALOG_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED CATALOG ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);

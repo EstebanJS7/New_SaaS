@@ -28,6 +28,7 @@ import {
 const SCHEMA = loadPrismaSchema();
 const MIGRATIONS = loadMigrations();
 const SCHEDULING_SQL = findMigration(MIGRATIONS, "_scheduling").sql;
+const APPOINTMENT_SERVICE_SQL = findMigration(MIGRATIONS, "_appointment_service").sql;
 
 function modelBlock(model: string): string {
   const start = SCHEMA.indexOf(`model ${model} `);
@@ -150,6 +151,65 @@ describe("schema · appointment inventory (EPIC-07 WU1)", () => {
   it("exposes tenant-ownership keys on Branch and TenantMembership", () => {
     expect(modelBlock("Branch")).toMatch(/@@unique\(\[tenantId, id\]\)/);
     expect(modelBlock("TenantMembership")).toMatch(/@@unique\(\[tenantId, id\]\)/);
+  });
+});
+
+describe("migration · appointment service association (EPIC-09 WU4 CAT-005)", () => {
+  it("adds only a nullable service_id column, with no backfill and no data mutation", () => {
+    expect(APPOINTMENT_SERVICE_SQL).toMatch(
+      /ALTER TABLE "appointment" ADD COLUMN "service_id" UUID;/
+    );
+    // Nullable by construction: an existing appointment is never rewritten.
+    expect(APPOINTMENT_SERVICE_SQL).not.toMatch(/"service_id" UUID NOT NULL/);
+    expect(APPOINTMENT_SERVICE_SQL).not.toMatch(/"service_id" UUID DEFAULT/);
+    // Pure DDL: no row is inserted, updated or deleted by this migration.
+    expect(APPOINTMENT_SERVICE_SQL).not.toMatch(/\bINSERT\b/i);
+    expect(APPOINTMENT_SERVICE_SQL).not.toMatch(/(UPDATE|DELETE)\s+"appointment"/i);
+    expect(APPOINTMENT_SERVICE_SQL).not.toMatch(/NOT NULL/);
+  });
+
+  it("uses the composite tenant-ownership FK to catalog_item with RESTRICT", () => {
+    expect(APPOINTMENT_SERVICE_SQL).toMatch(
+      /ALTER TABLE "appointment" ADD CONSTRAINT "appointment_tenant_id_service_id_fkey"\s+FOREIGN KEY \("tenant_id", "service_id"\) REFERENCES "catalog_item"\("tenant_id", "id"\)\s+ON DELETE RESTRICT ON UPDATE RESTRICT/
+    );
+  });
+
+  it("indexes the (tenant_id, service_id) pair", () => {
+    expect(APPOINTMENT_SERVICE_SQL).toMatch(
+      /CREATE INDEX "appointment_tenant_id_service_id_idx"\s+ON "appointment"\("tenant_id", "service_id"\)/
+    );
+  });
+
+  it("touches only the appointment table and adds no catalog value or duration column", () => {
+    const alteredTables = [...APPOINTMENT_SERVICE_SQL.matchAll(/ALTER TABLE "([a-z_]+)"/g)].map(
+      ([, table]) => table
+    );
+    expect(new Set(alteredTables)).toEqual(new Set(["appointment"]));
+    // No price, tax, rate, currency or derived duration is persisted here.
+    expect(APPOINTMENT_SERVICE_SQL).not.toMatch(
+      /"(price|reference_price_amount|reference_price_currency|tax_rate_id|rate|currency|amount|duration_minutes)"/
+    );
+  });
+});
+
+describe("schema · appointment service association (EPIC-09 WU4 CAT-005)", () => {
+  it("declares the OPTIONAL service reference with its composite tenant FK and index", () => {
+    const block = modelBlock("Appointment");
+
+    expect(block).toMatch(/serviceId\s+String\?\s+@map\("service_id"\)\s+@db\.Uuid/);
+    expect(block).toMatch(
+      /service\s+CatalogItem\?\s+@relation\(fields: \[tenantId, serviceId\], references: \[tenantId, id\], onDelete: Restrict, onUpdate: Restrict\)/
+    );
+    expect(block).toMatch(/@@index\(\[tenantId, serviceId\]\)/);
+  });
+
+  it("exposes the reverse relation on CatalogItem without adding a monetary dimension", () => {
+    const block = modelBlock("CatalogItem");
+
+    // The WU4 linkage only adds the back-relation; the item's own price/rate
+    // columns are CAT-001/CAT-002 scope and are untouched by this slice.
+    expect(block).toMatch(/appointments\s+Appointment\[\]/);
+    expect(block).toMatch(/taxRate\s+TaxRate\s+@relation\(fields: \[taxRateId\]/);
   });
 });
 

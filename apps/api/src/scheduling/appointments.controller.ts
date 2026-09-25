@@ -163,13 +163,14 @@ const APPOINTMENT_STATUSES = [
   "NO_SHOW",
 ] as const satisfies readonly AppointmentStatusDto[];
 
-/** Agenda list filters (branch, professional, status); unknown keys are rejected. */
+/** Agenda list filters (branch, professional, status, optional service); unknown keys are rejected. */
 const appointmentFiltersQuery = z
   .object({
     branchId: z.string().uuid().optional(),
     patientId: z.string().uuid().optional(),
     professionalMembershipId: z.string().uuid().optional(),
     status: z.enum(APPOINTMENT_STATUSES).optional(),
+    serviceId: z.string().uuid().optional(),
   })
   .strict()
   .transform((filters): AppointmentFilters => ({
@@ -179,4 +180,5 @@ const appointmentFiltersQuery = z
       professionalMembershipId: filters.professionalMembershipId,
     }),
     ...(filters.status !== undefined && { status: filters.status }),
+    ...(filters.serviceId !== undefined && { serviceId: filters.serviceId }),
   }));

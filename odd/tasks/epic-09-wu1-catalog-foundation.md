@@ -44,21 +44,25 @@ slice only.
 
 ## Tasks
 
-- [ ] W1: Create Story `CAT-001` and move EPIC-09 to `in-progress` with the
-      working branch recorded.
-- [ ] W2: Add the catalog item model, the global tax-rate model, the kind enum
+- [x] W1: Create Story `CAT-001` and move EPIC-09 to `in-progress` with the
+      working branch recorded; keep the roadmap table row consistent.
+- [x] W2: Add the catalog item model, the global tax-rate model, the kind enum
       and the tenant relation to `schema.prisma`, plus the migration, with the
       physical guarantees: composite tenant uniqueness, `Restrict` foreign keys,
       price/currency pair `CHECK`, non-negative guards and a delete-rejecting
       trigger.
-- [ ] W3: Add `schema-catalog.test.ts` textual gates mirroring the existing
-      schema tests, and keep the convention tests green.
-- [ ] W4: Seed the three global rates idempotently through `reference-seed.ts`,
+- [x] W3: Add `schema-catalog.test.ts` textual gates mirroring the existing
+      schema tests and keep the convention tests green. The required composite
+      tenant key pushed the pre-existing count assertion in
+      `packages/database/src/schema-clinical.test.ts` from `7` to `8`; the
+      maintainer authorized that one file, the literal and its model-list
+      comment were updated, and the package suite is green again.
+- [x] W4: Seed the three global rates idempotently through `reference-seed.ts`,
       exported from the package, with the seed test, CI seed-count probe and
       live-migration verification updated.
-- [ ] W5: Add the tenant-scoped catalog repository seam and its tenant-isolation
+- [x] W5: Add the tenant-scoped catalog repository seam and its tenant-isolation
       unit tests.
-- [ ] W6: Run the focused and root checks; report every executed command with
+- [x] W6: Run the focused and root checks; report every executed command with
       its observed result and any command that could not run.
 
 ## Acceptance criteria and checks
@@ -81,15 +85,78 @@ slice only.
 ## Progress
 
 - Exploration: read-only map of the schema, migrations, seed and evidence
-  conventions completed; candidate surfaces and sub-slices identified. No source
-  file written yet.
-- Verification: pending.
-- Next: W1.
+  conventions completed; candidate surfaces and sub-slices identified.
+- W1: Story `CAT-001` created, EPIC-09 flipped to `in-progress`, and the roadmap
+  table row aligned by the parent.
+- W2: `TaxRate`, `CatalogItemKind`, `CatalogItem` and the tenant relation added,
+  with the migration authored at `20260925000001_catalog`. The Prisma client was
+  regenerated; package typecheck and lint are clean.
+- W3: `schema-catalog.test.ts` written with 15 gates. The convention gate in
+  `schema-clinical.test.ts` needed the authorized one-line count update; after
+  it, the package suite is 13 files / 200 tests green. A read-only mutant probe
+  confirmed the new gates are revert-sensitive and that the negative assertions
+  cannot pass against an empty block.
+- W4: `TAX_RATE_SEEDS` added in fixed order (`EXEMPT` `0.00`, `IVA_5` `5.00`,
+  `IVA_10` `10.00`) and upserted by natural `code` with `update: {}` after the
+  species/breed block; the package exports, the recording-fake seed test, the CI
+  count probe and the live-migration table checks were updated. The package
+  suite is now 13 files / 203 tests green, and a scoped mutation (emptying the
+  seed loop) turned the three new seed cases red, so they are revert-sensitive.
+- W5: `apps/api/src/catalog/catalog.repository.ts` and its unit test added. The
+  repository resolves the tenant only from `RequestContextService`, keeps the
+  predicate implicit on every path, funnels unknown and foreign ids into one
+  shared not-found outcome, allows only an allowlisted update payload, offers
+  create/read/list/update/soft-deactivate and exposes no delete path. It adds no
+  route, DTO, permission, module registration, audit write or UI. The API suite
+  is green at 68 files / 804 tests with the live-PG file skipped.
+- Verification: green for the executed checks, with the same honest gap. `api`
+  suite (68/804), focused repository test (11/11), `api` `typecheck` and `lint`,
+  `database` suite (13/203), root `pnpm format-check` and `git diff --check` all
+  passed. `scripts/*` sit outside the database package's lint/typecheck scope,
+  so that edited verifier script was checked with a scoped `tsc --noEmit`.
+  `pnpm preflight` still shows PostgreSQL and Redis unreachable, so the
+  migration, the seed and the live-PG isolation suite remain unexecuted.
+- W6: Root gates run and green — `pnpm lint` (14 tasks), `pnpm typecheck` (14),
+  `pnpm test` (15 tasks: database 13/203, worker 6/37, web 43/428, api 68 passed
+  - 1 skipped, preflight 2/6), `pnpm build` (9 tasks), `pnpm format-check`, and
+    both `git diff --check` variants. After the build
+    `packages/database/dist/generated/index.d.ts` contains the catalog delegates
+    again, and the package `typecheck` still passes.
+- Verification: complete for every check this environment can run. Still
+  unexecuted because PostgreSQL `127.0.0.1:5433` and Redis `6380` are
+  unreachable: migration application, `pnpm db:seed`, the CI count probe,
+  `pnpm db:live-verify` and `pnpm test:live-pg`. No live constraint or row has
+  been exercised, so CAT-001 keeps its live-migration criterion unchecked and
+  stays `in-progress`.
+- Tooling note: the delegated read-only verifier role failed twice without
+  running a single command, and no native agent fallback is exposed in this
+  session, so the root gates were executed by the orchestrator itself and that
+  evidence is self-reported rather than independently produced.
+- Next: none for WU1 beyond the live-database evidence. WU1 code is still
+  uncommitted; EPIC-09 WU2 owns the HTTP surface, permissions and audit.
 
 ## Verification evidence
 
-- Pending. Each task records the exact command and observed outcome when it
-  runs.
+- `pnpm --filter @newsaas/database db:generate`: success, Prisma Client 6.19.3
+  generated.
+- `pnpm --filter @newsaas/database typecheck`: clean.
+- `pnpm --filter @newsaas/database test`: 13 files / 203 tests passed, after the
+  authorized count update in `schema-clinical.test.ts` and the new seed cases.
+  The parent reproduced the 199/200, 200/200 and 203/203 states.
+- `pnpm --filter @newsaas/api test`: 68 files passed, 1 skipped; 804 tests
+  passed, 40 skipped. The skipped file is the live-PG isolation suite, which
+  needs an unreachable database.
+- `pnpm --filter @newsaas/api typecheck` and `lint`: clean.
+- Focused `vitest run src/catalog/catalog.repository.test.ts`: 11/11 passed.
+- `pnpm --filter @newsaas/database lint`: clean.
+- `pnpm exec prettier --check` on the `.prisma` path fails with "No parser could
+  be inferred"; verified pre-existing on the untouched base, and root
+  `pnpm format-check` passes.
+- `pnpm preflight`: PostgreSQL `127.0.0.1:5433` and Redis `6380` refused, so no
+  migration was applied anywhere.
+  `prisma migrate diff --from-empty --to-schema-datamodel` was used read-only to
+  confirm the hand-written DDL matches the schema.
+- `git diff --check`: clean.
 
 ## Rationale for settled choices
 
@@ -100,3 +167,14 @@ slice only.
 - Fixed price scale: [[DEC-010]] deliberately leaves per-currency scale open, so
   the catalog must not imply per-currency arithmetic; a later POS requirement
   needs its own decision and migration.
+- Seed idempotency uses `upsert` by stable natural key with `update: {}`,
+  matching the existing global-catalog convention; a corrected rate literal
+  would not overwrite an existing row and would need an explicit decision.
+- The catalog repository depends on a structural Prisma delegate contract rather
+  than the generated `PrismaClient` type, because the database package's local
+  build output predates the catalog models until `pnpm build` regenerates it.
+  The real client satisfies the contract at runtime, and the contract is also
+  what makes the isolation tests able to inject a typed fake without touching
+  the shared in-memory harness. WU2 owns module registration, so nothing
+  constructs the repository at runtime yet; W6's full build should confirm the
+  generated types now include the catalog delegates.

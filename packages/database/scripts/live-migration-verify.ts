@@ -10,6 +10,8 @@ import { PrismaClient } from "../src/generated/index.js";
  * - tenant isolation holds at the persistence boundary for Customer/Address/Contact;
  * - PatientGuardian is activated with BOTH patient_id and customer_id FKs;
  * - the global Species/Breed taxonomy is not tenant-scoped;
+ * - the global tax-rate catalog (EPIC-09 WU1) is not tenant-scoped while the
+ *   catalog item aggregate is;
  * - audit_log captures tenant-scoped customer mutations;
  * - BOTH deferred constraint triggers enforce exactly-one active primary
  *   guardian across guardian writes AND active Patient INSERT/UPDATE, including
@@ -56,6 +58,8 @@ async function main(): Promise<void> {
       "breed",
       "patient",
       "patient_guardian",
+      "tax_rate",
+      "catalog_item",
       "audit_log",
     ];
     for (const table of requiredTables) {
@@ -85,16 +89,29 @@ async function main(): Promise<void> {
       throw new Error("patient_guardian must have a customer_id FK");
     }
 
-    // Verify the global taxonomy is not tenant-scoped and the partial primary
-    // index exists (Decisions #2210/#2211).
-    const speciesColumns = await prisma.$queryRawUnsafe<Array<{ column_name: string }>>(
+    // Verify the global reference catalogs are not tenant-scoped and the
+    // tenant-scoped catalog item aggregate is (Decisions #2210/#2211, EPIC-09).
+    const globalTableColumns = await prisma.$queryRawUnsafe<
+      Array<{ table_name: string; column_name: string }>
+    >(
       `
-      SELECT column_name FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name IN ('species', 'breed')
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name IN ('species', 'breed', 'tax_rate')
       `
     );
-    if (speciesColumns.some((row) => row.column_name === "tenant_id")) {
-      throw new Error("species/breed must be global: no tenant_id column");
+    if (globalTableColumns.some((row) => row.column_name === "tenant_id")) {
+      throw new Error("species/breed/tax_rate must be global: no tenant_id column");
+    }
+
+    const catalogItemColumns = await prisma.$queryRawUnsafe<Array<{ column_name: string }>>(
+      `
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'catalog_item'
+      `
+    );
+    if (!catalogItemColumns.some((row) => row.column_name === "tenant_id")) {
+      throw new Error("catalog_item must be tenant-scoped: tenant_id column is required");
     }
 
     const primaryIndexes = await prisma.$queryRawUnsafe<Array<{ indexname: string }>>(

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { TAX_RATE_SEEDS } from "@newsaas/database";
 import { InMemoryStorageDriver } from "@newsaas/storage";
 
 /**
@@ -269,6 +270,56 @@ export interface BreedRow {
   name: string;
 }
 
+/**
+ * GLOBAL TaxRate reference row (EPIC-09 WU1/WU2); never tenant-scoped. `rate`
+ * is an exact `Prisma.Decimal` in production; the fake stores the exact seed
+ * literal so the read projection is deterministic.
+ */
+export interface TaxRateRow {
+  id: string;
+  code: string;
+  name: string;
+  rate: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Tenant-scoped CatalogItem row as the repository/read boundary sees it. */
+export interface CatalogItemRow {
+  id: string;
+  tenantId: string;
+  kind: "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY";
+  name: string;
+  taxRateId: string;
+  /** Exact decimal string (or null): never a JavaScript float. */
+  referencePriceAmount: string | null;
+  referencePriceCurrency: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Stable ids for the three GLOBAL seeded rates, so HTTP suites can address a
+ * rate without a lookup. The codes/names/rates mirror `TAX_RATE_SEEDS` from
+ * `@newsaas/database`, which the real seed writes into `tax_rate`.
+ */
+export const SEEDED_TAX_RATE_IDS = Object.freeze({
+  EXEMPT: "3f1a2b4c-5d6e-4f70-8a91-b2c3d4e5f601",
+  IVA_5: "3f1a2b4c-5d6e-4f70-8a91-b2c3d4e5f602",
+  IVA_10: "3f1a2b4c-5d6e-4f70-8a91-b2c3d4e5f603",
+} as const);
+
+/** The three seeded GLOBAL rates, ready for the in-memory `taxRate` table. */
+export const SEEDED_TAX_RATES: readonly TaxRateRow[] = TAX_RATE_SEEDS.map((seed) => ({
+  id: SEEDED_TAX_RATE_IDS[seed.code],
+  code: seed.code,
+  name: seed.name,
+  rate: seed.rate,
+  createdAt: new Date("2026-01-01T00:00:00Z"),
+  updatedAt: new Date("2026-01-01T00:00:00Z"),
+}));
+
 /** Tenant-scoped Patient identity row (EPIC-05). */
 export interface PatientRow {
   id: string;
@@ -365,6 +416,12 @@ export interface AppointmentRow {
    * `null` for staff-created rows, exactly like the nullable schema column.
    */
   portalBookingRequestId: string | null;
+  /**
+   * OPTIONAL Catalog SERVICE reference (EPIC-09 WU4). Mirrors the nullable
+   * `service_id` column: `null` when no service is attached, exactly like the
+   * schema (existing and portal rows never gain one).
+   */
+  serviceId: string | null;
   version: number;
   startAt: Date;
   endAt: Date;
@@ -385,6 +442,8 @@ export interface AppointmentWhere {
   status?: AppointmentStatusRow | { in: AppointmentStatusRow[] };
   /** Provenance link: the approval idempotency pre-check filters on this. */
   portalBookingRequestId?: string;
+  /** OPTIONAL Catalog SERVICE filter (EPIC-09 WU4); omitted adds no predicate. */
+  serviceId?: string;
   version?: number;
   /** Overlap predicate: existing.startAt < candidate.endAt. */
   startAt?: { lt: Date };
@@ -398,6 +457,8 @@ export interface AppointmentUpdateData {
   version?: number | { increment: number };
   startAt?: Date;
   endAt?: Date;
+  /** Omitted leaves the reference untouched; `null` clears it (EPIC-09 WU4). */
+  serviceId?: string | null;
 }
 
 /**
@@ -666,6 +727,47 @@ export interface IsolationDatabase {
         select?: { id: true };
       }) => BreedRow | null;
     };
+    taxRate: {
+      /** GLOBAL catalog read: NO tenant predicate (EPIC-09 WU2). */
+      findMany: (args?: { orderBy?: { code?: "asc" | "desc" } }) => TaxRateRow[];
+      /** Global rate lookup by id (the write path's FK validation seam). */
+      findFirst: (args: { where: { id: string } }) => TaxRateRow | null;
+    };
+    catalogItem: {
+      findMany: (args: {
+        where: {
+          tenantId: string;
+          kind?: CatalogItemRow["kind"];
+          isActive?: boolean;
+          /** Batched identity read for the appointment projection (EPIC-09 WU4). */
+          id?: { in: string[] };
+        };
+        orderBy?: readonly { name?: "asc" | "desc"; id?: "asc" | "desc" }[];
+      }) => CatalogItemRow[];
+      findFirst: (args: { where: { id: string; tenantId: string } }) => CatalogItemRow | null;
+      create: (args: {
+        data: {
+          tenantId: string;
+          kind: CatalogItemRow["kind"];
+          name: string;
+          taxRateId: string;
+          referencePriceAmount?: string | { toString(): string } | null;
+          referencePriceCurrency?: string | null;
+          isActive?: boolean;
+        };
+      }) => CatalogItemRow;
+      updateMany: (args: {
+        where: { id: string; tenantId: string; isActive?: boolean };
+        data: {
+          kind?: CatalogItemRow["kind"];
+          name?: string;
+          taxRateId?: string;
+          referencePriceAmount?: string | { toString(): string } | null;
+          referencePriceCurrency?: string | null;
+          isActive?: boolean;
+        };
+      }) => { count: number };
+    };
     patient: {
       findMany: (args: {
         // `id.in` mirrors the portal read's holder-owned pet id set.
@@ -766,12 +868,14 @@ export interface IsolationDatabase {
       create: (args: {
         data: Omit<
           AppointmentRow,
-          "id" | "createdAt" | "updatedAt" | "source" | "portalBookingRequestId"
+          "id" | "createdAt" | "updatedAt" | "source" | "portalBookingRequestId" | "serviceId"
         > & {
           /** Optional: mirrors the schema default STAFF. */
           source?: AppointmentSourceRow;
           /** Optional: mirrors the nullable provenance link. */
           portalBookingRequestId?: string | null;
+          /** Optional: mirrors the nullable service link (EPIC-09 WU4). */
+          serviceId?: string | null;
         };
       }) => AppointmentRow;
       updateMany: (args: { where: AppointmentWhere; data: AppointmentUpdateData }) => {
@@ -938,6 +1042,8 @@ export interface IsolationDatabase {
     portalSessions: Map<string, PortalSessionRow>;
     species: Map<string, SpeciesRow>;
     breeds: Map<string, BreedRow>;
+    taxRates: Map<string, TaxRateRow>;
+    catalogItems: Map<string, CatalogItemRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
@@ -1061,6 +1167,9 @@ function matchesAppointment(where: AppointmentWhere, candidate: AppointmentRow):
   ) {
     return false;
   }
+  if (where.serviceId !== undefined && candidate.serviceId !== where.serviceId) {
+    return false;
+  }
   if (where.status !== undefined) {
     if (typeof where.status === "string") {
       if (candidate.status !== where.status) return false;
@@ -1135,6 +1244,18 @@ function orderByDate<T extends { createdAt: Date; updatedAt: Date }>(
   return direction === "desc" ? sorted.reverse() : sorted;
 }
 
+/**
+ * Normalizes a Decimal-or-string amount to the exact decimal STRING the fake
+ * stores. Production passes a `Prisma.Decimal`; callers may pass the literal
+ * string. Floats are never produced here.
+ */
+function toDecimalStringOrNull(
+  value: string | { toString(): string } | null | undefined
+): string | null {
+  if (value === null || value === undefined) return null;
+  return typeof value === "string" ? value : value.toString();
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -1160,6 +1281,13 @@ export function createIsolationDatabase(): IsolationDatabase {
   const portalSessions = new Map<string, PortalSessionRow>();
   const speciesTable = new Map<string, SpeciesRow>();
   const breedTable = new Map<string, BreedRow>();
+  // GLOBAL tax rates are seeded reference data — the same three rows for every
+  // tenant, so the shared boundary seeds them at construction (EPIC-09 WU2).
+  const taxRateTable = new Map<string, TaxRateRow>();
+  for (const rate of SEEDED_TAX_RATES) {
+    taxRateTable.set(rate.id, { ...rate });
+  }
+  const catalogItemTable = new Map<string, CatalogItemRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
@@ -1198,6 +1326,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     portalSessions,
     species: speciesTable,
     breeds: breedTable,
+    taxRates: taxRateTable,
+    catalogItems: catalogItemTable,
     patients: patientTable,
     patientGuardians: patientGuardianTable,
     clinicalEncounters: clinicalEncounterTable,
@@ -1723,6 +1853,87 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) => candidate.id === where.id && candidate.speciesId === where.speciesId
         ) ?? null,
     },
+    taxRate: {
+      // GLOBAL catalog: NO tenant predicate. `code` is the stable natural key.
+      findMany: ({ orderBy } = {}) => {
+        const rows = [...taxRateTable.values()];
+        if (orderBy?.code) {
+          rows.sort((left, right) => left.code.localeCompare(right.code));
+          if (orderBy.code === "desc") rows.reverse();
+        }
+        return rows;
+      },
+      findFirst: ({ where }) => taxRateTable.get(where.id) ?? null,
+    },
+    catalogItem: {
+      findMany: ({ where, orderBy }) => {
+        let rows = [...catalogItemTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            (where.kind === undefined || candidate.kind === where.kind) &&
+            (where.isActive === undefined || candidate.isActive === where.isActive) &&
+            (where.id === undefined || where.id.in.includes(candidate.id))
+        );
+        if (orderBy) {
+          rows = rows.sort((left, right) => {
+            for (const clause of orderBy) {
+              if (clause.name !== undefined) {
+                const compared = left.name.localeCompare(right.name);
+                if (compared !== 0) return clause.name === "asc" ? compared : -compared;
+              }
+              if (clause.id !== undefined) {
+                const compared = left.id.localeCompare(right.id);
+                if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+              }
+            }
+            return 0;
+          });
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...catalogItemTable.values()].find(
+          (candidate) => candidate.id === where.id && candidate.tenantId === where.tenantId
+        ) ?? null,
+      create: ({ data }) => {
+        const now = new Date();
+        const created: CatalogItemRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          kind: data.kind,
+          name: data.name,
+          taxRateId: data.taxRateId,
+          referencePriceAmount: toDecimalStringOrNull(data.referencePriceAmount),
+          referencePriceCurrency: data.referencePriceCurrency ?? null,
+          // Mirrors the schema default so an omitted flag still lands active.
+          isActive: data.isActive ?? true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        catalogItemTable.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const candidate of catalogItemTable.values()) {
+          if (candidate.id !== where.id || candidate.tenantId !== where.tenantId) continue;
+          if (where.isActive !== undefined && candidate.isActive !== where.isActive) continue;
+          if (data.kind !== undefined) candidate.kind = data.kind;
+          if (data.name !== undefined) candidate.name = data.name;
+          if (data.taxRateId !== undefined) candidate.taxRateId = data.taxRateId;
+          if (data.referencePriceAmount !== undefined) {
+            candidate.referencePriceAmount = toDecimalStringOrNull(data.referencePriceAmount);
+          }
+          if (data.referencePriceCurrency !== undefined) {
+            candidate.referencePriceCurrency = data.referencePriceCurrency ?? null;
+          }
+          if (data.isActive !== undefined) candidate.isActive = data.isActive;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
     patient: {
       findMany: ({ where, orderBy }) => {
         let rows = [...patientTable.values()].filter(
@@ -1919,6 +2130,9 @@ export function createIsolationDatabase(): IsolationDatabase {
           // STAFF unless explicitly PORTAL, and the request link is nullable.
           source: data.source ?? "STAFF",
           portalBookingRequestId: data.portalBookingRequestId ?? null,
+          // Mirror the nullable service column (EPIC-09 WU4): an omitted link
+          // lands on `null`, exactly like the schema default.
+          serviceId: data.serviceId ?? null,
           createdAt: now,
           updatedAt: now,
         };
@@ -1932,6 +2146,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (data.status !== undefined) candidate.status = data.status;
           if (data.startAt !== undefined) candidate.startAt = data.startAt;
           if (data.endAt !== undefined) candidate.endAt = data.endAt;
+          if (data.serviceId !== undefined) candidate.serviceId = data.serviceId;
           if (data.version !== undefined) {
             candidate.version =
               typeof data.version === "number"
@@ -2327,6 +2542,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       portalSessions,
       species: speciesTable,
       breeds: breedTable,
+      taxRates: taxRateTable,
+      catalogItems: catalogItemTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,

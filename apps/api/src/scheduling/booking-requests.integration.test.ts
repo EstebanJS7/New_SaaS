@@ -46,7 +46,12 @@ interface AppointmentBody {
 /** Allowlisted staff booking-request DTO surface. */
 const BOOKING_REQUEST_KEYS = ["endAt", "id", "patientId", "startAt", "status"];
 
-/** Allowlisted staff appointment DTO surface (EPIC-07 WU3 contract). */
+/**
+ * Allowlisted staff appointment DTO surface (EPIC-07 WU3 contract, widened by
+ * EPIC-09 WU4 with the OPTIONAL Catalog SERVICE reference and its identity
+ * projection). The approval response is the SAME `AppointmentResponse` the
+ * appointments routes return, so it carries the same exact key set.
+ */
 const APPOINTMENT_KEYS = [
   "branchId",
   "createdAt",
@@ -54,6 +59,8 @@ const APPOINTMENT_KEYS = [
   "id",
   "patientId",
   "professionalMembershipId",
+  "service",
+  "serviceId",
   "startAt",
   "status",
   "tenantId",

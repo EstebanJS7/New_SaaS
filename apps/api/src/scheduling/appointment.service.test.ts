@@ -18,6 +18,7 @@ import {
 } from "./appointment.service.js";
 import type {
   AppointmentBranchDelegate,
+  AppointmentCatalogItemDelegate,
   AppointmentDelegate,
   AppointmentFilters,
   AppointmentMembershipDelegate,
@@ -39,6 +40,17 @@ const BRANCH_B = "11111111-1111-4111-8111-111111111102";
 const PATIENT_B = "22222222-2222-4222-8222-222222222202";
 const VET_B = "33333333-3333-4333-8333-333333333302";
 const ACTOR = "44444444-4444-4444-8444-444444444401";
+
+/** In-tenant ACTIVE SERVICE anchor (EPIC-09 WU4). */
+const SERVICE_A = "55555555-5555-4555-8555-555555555501";
+/** SERVICE owned by the FOREIGN tenant. */
+const SERVICE_FOREIGN = "55555555-5555-4555-8555-555555555502";
+/** In-tenant SERVICE that was deactivated. */
+const SERVICE_INACTIVE = "55555555-5555-4555-8555-555555555503";
+/** In-tenant ACTIVE item of the WRONG kind. */
+const SERVICE_PRODUCT = "55555555-5555-4555-8555-555555555504";
+/** Unknown catalog item id (never seeded). */
+const SERVICE_UNKNOWN = "55555555-5555-4555-8555-5555555555ff";
 
 const START = "2026-09-14T12:00:00.000Z";
 const END = "2026-09-14T12:30:00.000Z";
@@ -71,6 +83,7 @@ function matchesAppointment(row: AppointmentRow, where: AppointmentWhere): boole
     return false;
   }
   if (where.version !== undefined && row.version !== where.version) return false;
+  if (where.serviceId !== undefined && row.serviceId !== where.serviceId) return false;
   if (where.status !== undefined) {
     if (typeof where.status === "string") {
       if (row.status !== where.status) return false;
@@ -91,6 +104,7 @@ interface Harness {
   service: AppointmentService;
   rows: Map<string, AppointmentRow>;
   memberships: Map<string, { tenantId: string; roleCode: string }>;
+  catalogItems: Map<string, CatalogItemFixture>;
   appendMock: AppendMock;
   resolveMock: Mock<() => Promise<Set<string>>>;
   settingsMock: Mock<(namespace: string) => Promise<unknown>>;
@@ -99,11 +113,31 @@ interface Harness {
   seed(overrides?: Partial<AppointmentRow>): AppointmentRow;
 }
 
+/** Minimal in-memory catalog item the service anchor and projection read. */
+interface CatalogItemFixture {
+  tenantId: string;
+  kind: string;
+  isActive: boolean;
+  name: string;
+}
+
 function buildHarness(requestContext: RequestContextService): Harness {
   const branches = new Map<string, string>([[BRANCH_A, TENANT_A]]);
   const patients = new Map<string, string>([[PATIENT_A, TENANT_A]]);
   const memberships = new Map<string, { tenantId: string; roleCode: string }>([
     [VET_A, { tenantId: TENANT_A, roleCode: "VETERINARIAN" }],
+  ]);
+  const catalogItems = new Map<string, CatalogItemFixture>([
+    [SERVICE_A, { tenantId: TENANT_A, kind: "SERVICE", isActive: true, name: "Consulta" }],
+    [
+      SERVICE_FOREIGN,
+      { tenantId: TENANT_B, kind: "SERVICE", isActive: true, name: "Foreign consultation" },
+    ],
+    [
+      SERVICE_INACTIVE,
+      { tenantId: TENANT_A, kind: "SERVICE", isActive: false, name: "Retired consultation" },
+    ],
+    [SERVICE_PRODUCT, { tenantId: TENANT_A, kind: "PRODUCT", isActive: true, name: "Dog food" }],
   ]);
   const rows = new Map<string, AppointmentRow>();
   let nextId = 1;
@@ -160,6 +194,7 @@ function buildHarness(requestContext: RequestContextService): Harness {
       const created: AppointmentRow = {
         id: `apt-${nextId++}`,
         ...data,
+        serviceId: data.serviceId ?? null,
         createdAt: now,
         updatedAt: now,
       };
@@ -189,6 +224,20 @@ function buildHarness(requestContext: RequestContextService): Harness {
     $queryRaw: queryRawMock,
   };
 
+  const catalogItemDelegate: AppointmentCatalogItemDelegate = {
+    findFirst: ({ where }) => {
+      const item = catalogItems.get(where.id);
+      if (item?.tenantId !== where.tenantId) return Promise.resolve(null);
+      return Promise.resolve({ id: where.id, kind: item.kind, isActive: item.isActive });
+    },
+    findMany: ({ where }) =>
+      Promise.resolve(
+        [...catalogItems.entries()]
+          .filter(([id, item]) => item.tenantId === where.tenantId && where.id.in.includes(id))
+          .map(([id, item]) => ({ id, name: item.name, kind: item.kind }))
+      ),
+  };
+
   const prisma: AppointmentPrisma = {
     $transaction: async <T>(work: (scope: AppointmentTransaction) => Promise<T>): Promise<T> => {
       const snapshot = new Map(rows);
@@ -204,6 +253,7 @@ function buildHarness(requestContext: RequestContextService): Harness {
     patient: patientDelegate,
     tenantMembership: membershipDelegate,
     appointment: appointmentDelegate,
+    catalogItem: catalogItemDelegate,
   };
 
   const appendMock: AppendMock = vi.fn().mockResolvedValue({ id: "audit-1" });
@@ -231,6 +281,7 @@ function buildHarness(requestContext: RequestContextService): Harness {
       patientId: PATIENT_A,
       professionalMembershipId: VET_A,
       status: "SCHEDULED",
+      serviceId: null,
       version: 1,
       startAt: new Date(START),
       endAt: new Date(END),
@@ -246,6 +297,7 @@ function buildHarness(requestContext: RequestContextService): Harness {
     service,
     rows,
     memberships,
+    catalogItems,
     appendMock,
     resolveMock,
     settingsMock,
@@ -509,6 +561,113 @@ describe("AppointmentService (EPIC-07 WU2 domain service)", () => {
       withContext(() => harness.service.createAppointment(createInput()))
     ).rejects.toMatchObject({ code: "CONFLICT" });
     expect(harness.rows.size).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // OPTIONAL Catalog SERVICE association (EPIC-09 WU4)
+  // -------------------------------------------------------------------------
+
+  it("creates an appointment with no service: serviceId and service are null", async () => {
+    const result = await withContext(() => harness.service.createAppointment(createInput()));
+
+    expect(result.serviceId).toBeNull();
+    expect(result.service).toBeNull();
+    expect(harness.rows.get(result.id)?.serviceId).toBeNull();
+  });
+
+  it("attaches an in-tenant ACTIVE SERVICE and projects its identity", async () => {
+    const result = await withContext(() =>
+      harness.service.createAppointment(createInput({ serviceId: SERVICE_A }))
+    );
+
+    expect(result.serviceId).toBe(SERVICE_A);
+    // Identity only: no price, tax, rate or currency key is present.
+    expect(result.service).toEqual({ id: SERVICE_A, name: "Consulta", kind: "SERVICE" });
+    expect(Object.keys(result.service ?? {}).sort()).toEqual(["id", "kind", "name"]);
+    expect(harness.rows.get(result.id)?.serviceId).toBe(SERVICE_A);
+    const auditInput = harness.appendMock.mock.calls[0][0];
+    expect((auditInput.metadata as { changedFields: string[] }).changedFields).toContain(
+      "serviceId"
+    );
+  });
+
+  it("masks an unknown or foreign service UUID as NOT_FOUND and persists nothing", async () => {
+    for (const serviceId of [SERVICE_UNKNOWN, SERVICE_FOREIGN]) {
+      await expect(
+        withContext(() => harness.service.createAppointment(createInput({ serviceId })))
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    }
+
+    expect(harness.rows.size).toBe(0);
+    expect(harness.appendMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inactive or wrong-kind in-tenant item with VALIDATION_FAILED and persists nothing", async () => {
+    for (const serviceId of [SERVICE_INACTIVE, SERVICE_PRODUCT]) {
+      await expect(
+        withContext(() => harness.service.createAppointment(createInput({ serviceId })))
+      ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    }
+
+    expect(harness.rows.size).toBe(0);
+    expect(harness.appendMock).not.toHaveBeenCalled();
+  });
+
+  it("never derives the duration from the attached service", async () => {
+    const seeded = harness.seed({ serviceId: null });
+
+    const result = await withContext(() =>
+      harness.service.rescheduleAppointment(seeded.id, {
+        startAt: "2026-09-14T15:00:00.000Z",
+        endAt: "2026-09-14T15:15:00.000Z",
+        version: 1,
+        serviceId: SERVICE_A,
+      })
+    );
+
+    // The caller-supplied 15-minute span is preserved verbatim.
+    expect(result.startAt).toBe("2026-09-14T15:00:00.000Z");
+    expect(result.endAt).toBe("2026-09-14T15:15:00.000Z");
+    expect(result.serviceId).toBe(SERVICE_A);
+  });
+
+  it("leaves the service untouched when the update omits it and clears it on null", async () => {
+    const seeded = harness.seed({ serviceId: SERVICE_A, version: 1 });
+
+    const untouched = await withContext(() =>
+      harness.service.rescheduleAppointment(seeded.id, {
+        startAt: "2026-09-14T16:00:00.000Z",
+        endAt: "2026-09-14T16:30:00.000Z",
+        version: 1,
+      })
+    );
+    expect(untouched.serviceId).toBe(SERVICE_A);
+
+    const cleared = await withContext(() =>
+      harness.service.rescheduleAppointment(seeded.id, {
+        startAt: "2026-09-14T17:00:00.000Z",
+        endAt: "2026-09-14T17:30:00.000Z",
+        version: 2,
+        serviceId: null,
+      })
+    );
+    expect(cleared.serviceId).toBeNull();
+    expect(cleared.service).toBeNull();
+  });
+
+  it("filters the agenda list by service and leaves an omitted filter unfiltered", async () => {
+    const linked = await withContext(() =>
+      harness.service.createAppointment(createInput({ serviceId: SERVICE_A }))
+    );
+    harness.seed();
+
+    const filtered = await withContext(() =>
+      harness.service.listAppointments({ serviceId: SERVICE_A })
+    );
+    expect(filtered.map((row) => row.id)).toEqual([linked.id]);
+
+    const all = await withContext(() => harness.service.listAppointments());
+    expect(all).toHaveLength(2);
   });
 
   // -------------------------------------------------------------------------
