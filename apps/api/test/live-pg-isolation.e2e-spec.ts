@@ -4587,10 +4587,18 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     }, 30_000);
 
     it("admits two suppliers with an ABSENT taxId inside one tenant", async () => {
+      const suppliersBefore = await prisma.supplier.count({ where: { tenantId: tenantAId } });
       const first = await createSupplier(ownerACookie, { name: "Live Sin TaxId Uno" }).expect(201);
       const second = await createSupplier(ownerACookie, { name: "Live Sin TaxId Dos" }).expect(201);
       const firstBody = first.body as SupplierDto;
       const secondBody = second.body as SupplierDto;
+      // Neither create hit the duplicate-identifier conflict: with the tax id
+      // absent there is no key to collide on, so both attempts are ADMITTED and
+      // neither response carries the conflict envelope.
+      expect((first.body as { error?: unknown }).error).toBeUndefined();
+      expect((second.body as { error?: unknown }).error).toBeUndefined();
+      expect(first.text).not.toContain(SUPPLIER_TAX_ID_CONFLICT_MESSAGE);
+      expect(second.text).not.toContain(SUPPLIER_TAX_ID_CONFLICT_MESSAGE);
       // Both rows are real, distinct and carry no identifier: absent values sit
       // outside the partial index entirely and can never collide.
       expect(firstBody.taxId).toBeNull();
@@ -4598,6 +4606,17 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(firstBody.id).not.toBe(secondBody.id);
       expect(firstBody.tenantId).toBe(tenantAId);
       expect(secondBody.tenantId).toBe(tenantAId);
+      // Exactly TWO rows were persisted over the pre-case baseline: nothing was
+      // lost and no extra row appeared.
+      expect(await prisma.supplier.count({ where: { tenantId: tenantAId } })).toBe(
+        suppliersBefore + 2
+      );
+      // Both returned ids resolve to stored rows whose identifier is NULL, so
+      // the admitted responses are backed by real database state.
+      const storedFirst = await prisma.supplier.findUnique({ where: { id: firstBody.id } });
+      const storedSecond = await prisma.supplier.findUnique({ where: { id: secondBody.id } });
+      expect(storedFirst?.taxId).toBeNull();
+      expect(storedSecond?.taxId).toBeNull();
       expect(
         await prisma.supplier.count({ where: { tenantId: tenantAId, taxId: null } })
       ).toBeGreaterThanOrEqual(2);
@@ -4671,9 +4690,32 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     it("returns a byte-equivalent 404 for cross-tenant supplier read, update and deactivation and leaves tenant A untouched", async () => {
       const supplier = await createSupplier(ownerACookie, {
         name: "Live Proveedor Aislado",
+        legalName: "Live Proveedor Aislado S.A.",
+        taxId: "live-pg-aislado-50000001",
+        email: "aislado@example.test",
+        phone: "+595981000001",
+        address: "Live Aislado 123",
       }).expect(201);
       const supplierId = (supplier.body as SupplierDto).id;
       const requestId = SUPPLIER_NOT_FOUND_REQUEST_ID;
+
+      // The COMPLETE stored row, captured before any foreign-tenant attempt, so
+      // "untouched" can be asserted over every field the model exposes instead
+      // of two of them. Every optional field is populated so a masked write that
+      // slipped through would have to change or clear one of them.
+      const before = await prisma.supplier.findUnique({ where: { id: supplierId } });
+      if (!before) {
+        throw new Error("supplier row vanished before the cross-tenant attempts");
+      }
+      expect(before.name).toBe("Live Proveedor Aislado");
+      expect(before.legalName).toBe("Live Proveedor Aislado S.A.");
+      expect(before.taxId).toBe("live-pg-aislado-50000001");
+      expect(before.email).toBe("aislado@example.test");
+      expect(before.phone).toBe("+595981000001");
+      expect(before.address).toBe("Live Aislado 123");
+      expect(before.isActive).toBe(true);
+
+      const auditsBefore = await prisma.auditLog.count();
 
       const cases = [
         {
@@ -4732,11 +4774,26 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         expect(response.text, scenario.label).not.toContain(tenantAId);
       }
 
-      // Tenant A's supplier survived every masked attempt unchanged.
+      // Tenant A's supplier survived every masked attempt unchanged, and
+      // "unchanged" is the WHOLE row: every field the model exposes still holds
+      // its pre-attempt value, `updatedAt` included — a real update would have
+      // bumped it.
       const stored = await prisma.supplier.findUnique({ where: { id: supplierId } });
-      expect(stored?.isActive).toBe(true);
-      expect(stored?.name).toBe("Live Proveedor Aislado");
+      if (!stored) {
+        throw new Error("supplier row vanished after the cross-tenant attempts");
+      }
+      expect(stored.name).toBe(before.name);
+      expect(stored.legalName).toBe(before.legalName);
+      expect(stored.taxId).toBe(before.taxId);
+      expect(stored.email).toBe(before.email);
+      expect(stored.phone).toBe(before.phone);
+      expect(stored.address).toBe(before.address);
+      expect(stored.isActive).toBe(before.isActive);
+      expect(stored.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+      // None of the three masked attempts wrote an audit row: not one scoped to
+      // the shared request id, and not one anywhere in the log.
       expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
     }, 30_000);
 
     it("asserts the partial unique index, the RESTRICT tenant FK and the delete-rejecting trigger against the applied schema", async () => {
