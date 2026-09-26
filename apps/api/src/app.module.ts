@@ -11,6 +11,7 @@ import { ContextModule } from "./context/context.module.js";
 import { CustomersModule } from "./customers/customers.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
 import { HealthModule } from "./health/health.module.js";
+import { InventoryModule } from "./inventory/inventory.module.js";
 import { PatientsModule } from "./patients/patients.module.js";
 import { PortalModule } from "./portal/portal.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
@@ -45,6 +46,10 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // EPIC-09 catalog: a leaf consumer of the platform; it adds no APP_GUARD,
     // so its position carries no guard-ordering contract.
     CatalogModule,
+    // EPIC-10 inventory: the stock ledger consumer of the catalog identity; it
+    // adds no APP_GUARD either, so its position is free — kept after Catalog so
+    // the dependency direction reads top-down.
+    InventoryModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.

@@ -135,16 +135,19 @@ describe("migration · catalog (EPIC-09 WU1 CAT-001)", () => {
     expect(CATALOG_SQL).not.toMatch(/\b(DOUBLE|REAL|FLOAT)\b/i);
   });
 
-  it("is additive: no existing table is altered and no forbidden dimension is added", () => {
+  it("is additive: no existing table is altered and no later-epic dimension is added", () => {
     const alteredTables = [...CATALOG_SQL.matchAll(/ALTER TABLE "([a-z_]+)"/g)].map(
       ([, table]) => table
     );
     expect(alteredTables.length).toBeGreaterThan(0);
     expect(new Set(alteredTables)).toEqual(new Set(["catalog_item"]));
 
-    // No stock, category, SKU, barcode, unit or branch dimension exists in this
-    // slice (EPIC-10 owns stock, EPIC-12 owns POS, WU4 owns the appointment
-    // service link), so none may appear as a column here.
+    // EPIC-10 WU1 (CAT-006) now OWNS the stock dimension, but it lands in its
+    // own additive migration (`20260925000003_inventory`), not here: this
+    // catalog migration is historical and must stay stock-free, so the pin is
+    // kept deliberately rather than loosened. SKU, barcode, category, unit and
+    // branch remain unowned by every shipped slice, and `tracks_inventory` is
+    // not a valid alias for the real `tracks_stock` column.
     expect(CATALOG_SQL).not.toMatch(
       /"(sku|barcode|category|category_id|unit|unit_id|branch_id|tracks_stock|tracks_inventory)"/
     );
@@ -187,7 +190,7 @@ describe("schema · catalog inventory (EPIC-09 WU1 CAT-001)", () => {
     expect(catalogItemModel).toMatch(/@@index\(\[taxRateId\]\)/);
   });
 
-  it("maps the optional price pair and the deactivation flag, with no forbidden dimension", () => {
+  it("maps the optional price pair, the deactivation flag and the EPIC-10 stock dimension", () => {
     const catalogItemModel = modelBlock("CatalogItem");
 
     expect(catalogItemModel).toMatch(
@@ -197,8 +200,16 @@ describe("schema · catalog inventory (EPIC-09 WU1 CAT-001)", () => {
       /referencePriceCurrency\s+String\?\s+@map\("reference_price_currency"\)\s+@db\.VarChar\(3\)/
     );
     expect(catalogItemModel).toMatch(/isActive\s+Boolean\s+@default\(true\)\s+@map\("is_active"\)/);
+    // EPIC-10 WU1 (CAT-006) deliberately adds the ONE stock dimension to the
+    // catalog: a non-null boolean defaulted to true and backfilled by kind in
+    // the inventory migration. This gate is revised to pin that exact field
+    // instead of forbidding it; `tracks_inventory` is still rejected as a
+    // non-existent alias, and every other later-epic dimension stays forbidden.
+    expect(catalogItemModel).toMatch(
+      /tracksStock\s+Boolean\s+@default\(true\)\s+@map\("tracks_stock"\)/
+    );
     expect(catalogItemModel).not.toMatch(
-      /"(sku|barcode|category|category_id|unit|unit_id|branch_id|tracks_stock|tracks_inventory)"/
+      /"(sku|barcode|category|category_id|unit|unit_id|branch_id|tracks_inventory)"/
     );
   });
 

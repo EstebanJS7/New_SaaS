@@ -40,6 +40,45 @@ All notable product changes will be documented here.
   production-readiness statement. [[EPIC-20]] Production Hardening and the open
   Tech Debt items remain.
 
+- EPIC-10 — Inventory:
+  - Tenant-scoped, immutable `StockMovement` ledger (PRD §16): signed
+    `Decimal(10, 3)` quantity with `CHECK (quantity <> 0)`, a mandatory reason,
+    movements created confirmed, a `BEFORE DELETE` trigger rejecting hard
+    deletes and reserved compensating `reversesMovementId` self-reference. The
+    movement-type enum ships `ADJUSTMENT` only; purchases, sales, transfers and
+    reversals arrive with [[EPIC-11]]/[[EPIC-12]].
+  - `StockBalance` transactional projection, exactly one row per (tenant, item)
+    with `CHECK (quantity >= 0)`, updated in the same transaction as its
+    movements.
+  - `CatalogItem.tracksStock` (`tracks_stock`) with a database default and a
+    by-kind backfill, consumed as the inventory write-path gate: a movement
+    against a non-tracking or inactive item is a `409 CONFLICT` and persists
+    nothing.
+  - `POST /inventory/stock/adjustments` (signed adjustment; movement, balance
+    and exactly ONE audit row co-committed in one transaction under the fixed
+    `BLOCK` negative-stock policy), plus `GET /inventory/stock` and
+    `GET /inventory/stock/movements` with allowlisted INTERNAL projections and a
+    byte-equivalent cross-tenant `404`.
+  - `inventory.stock.adjust` / `inventory.stock.read` with the decided role
+    matrix (OWNER/ADMIN/INVENTORY_MANAGER hold both; the other three roles
+    read).
+  - Transaction-scoped per-`(tenant, item)` advisory-lock serialization
+    (`pg_advisory_xact_lock` on `stockSerializationLockKey`): every future stock
+    writer MUST acquire the same key before touching `stock_balance`.
+  - One additive migration, `20260925000003_inventory`, and local
+    live-PostgreSQL evidence at 52/52 for the ledger — including a REAL lost
+    update (two concurrent outputs both committed, projection `3.000` against a
+    ledger sum of `-4.000`) that the keyed lock found and fixed.
+  - `EPIC-10`, `CAT-006`, `CAT-007`, the `Inventory` module documentation and
+    the `TD-016` serialization-protocol debt record.
+
+  The epic is `review`, not `done`: every gate this environment can run is green
+  and the live-PostgreSQL evidence exists locally, but the work is not
+  committed, pushed or merged, so the merged-work-units exit criterion is still
+  open. `review` means implementation closure pending delivery — it is **not** a
+  production-readiness statement. [[EPIC-20]] Production Hardening and the open
+  Tech Debt items remain.
+
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,
     vaccinations, deworming, studies, weights) with a RESTRICT-FK additive

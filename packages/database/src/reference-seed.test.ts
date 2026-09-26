@@ -321,6 +321,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     );
     expect(ROLE_PERMISSION_MATRIX.RECEPTIONIST).not.toContain("customers.deactivate");
     expect(ROLE_PERMISSION_MATRIX.VETERINARIAN).toEqual([
+      "inventory.stock.read",
       "vet.clinical.create",
       "vet.clinical.read",
       "vet.clinical.update",
@@ -443,6 +444,34 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     }
   });
 
+  it("seeds the inventory stock permission catalog and decided matrix (EPIC-10 WU1)", () => {
+    const inventoryKeys = ["inventory.stock.read", "inventory.stock.adjust"] as const;
+    const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of inventoryKeys) {
+      expect(seededKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    // Maintainer matrix (2026-09-25): the owning roles adjust stock; every
+    // operational role reads it.
+    for (const roleCode of ["OWNER", "ADMIN", "INVENTORY_MANAGER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toEqual(
+        expect.arrayContaining(["inventory.stock.read", "inventory.stock.adjust"])
+      );
+    }
+    for (const roleCode of ["VETERINARIAN", "RECEPTIONIST", "CASHIER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("inventory.stock.read");
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain("inventory.stock.adjust");
+    }
+    // The pre-existing transfer key keeps its EPIC-01 ownership unchanged.
+    for (const roleCode of ["OWNER", "ADMIN", "INVENTORY_MANAGER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("inventory.stock.transfer");
+    }
+    for (const roleCode of ["VETERINARIAN", "RECEPTIONIST", "CASHIER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain("inventory.stock.transfer");
+    }
+  });
+
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
     expect(SPECIES_SEEDS.map((species) => species.code)).toEqual([
       "dog",
@@ -495,8 +524,9 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       roles: 6,
       // 26 pre-EPIC-08 keys + portal.access.manage + portal.settings.manage +
       // the four catalog.* keys added by EPIC-09 WU2 (the earlier "24" was an
-      // arithmetic slip in the EPIC-08 commit; 26 + 2 = 28 was the real sum).
-      permissions: 32,
+      // arithmetic slip in the EPIC-08 commit; 26 + 2 = 28 was the real sum) +
+      // the two inventory.stock.* keys added by EPIC-10 WU1.
+      permissions: 34,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

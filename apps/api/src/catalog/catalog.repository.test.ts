@@ -30,6 +30,9 @@ function row(
     referencePriceAmount: null,
     referencePriceCurrency: null,
     isActive: true,
+    // EPIC-10 stock dimension: the column is NOT NULL with a database default,
+    // so every persisted row literal carries it.
+    tracksStock: true,
     createdAt: new Date("2026-09-25T00:00:00Z"),
     updatedAt: new Date("2026-09-25T00:00:00Z"),
     ...overrides,
@@ -107,6 +110,8 @@ function makeFakePrisma(seedRows: CatalogItemRow[]) {
             typeof rawAmount === "string" ? new Prisma.Decimal(rawAmount) : (rawAmount ?? null),
           referencePriceCurrency: args.data.referencePriceCurrency ?? null,
           isActive: true,
+          // Mirrors the column default, so an omitted flag still lands true.
+          tracksStock: args.data.tracksStock ?? true,
           createdAt: new Date("2026-09-25T00:00:00Z"),
           updatedAt: new Date("2026-09-25T00:00:00Z"),
         };
@@ -298,6 +303,30 @@ describe("CatalogRepository — implicit tenant scoping", () => {
     expect(updated.tenantId).toBe(TENANT_A);
     expect(db.calls.writeWhere[0]).toEqual({ id: own.id, tenantId: TENANT_A });
     expect(db.calls.writeData[0]).toEqual({ name: "After" });
+  });
+
+  it("forwards tracksStock on create and update, and leaves it untouched when omitted", async () => {
+    const db = makeFakePrisma([]);
+
+    await withTenantContext(
+      TENANT_A,
+      async (repo) => {
+        const created = await repo.create(createInput({ kind: "SERVICE", tracksStock: false }));
+        expect(db.calls.createData[0]?.tracksStock).toBe(false);
+        expect(created.tracksStock).toBe(false);
+
+        // A present flag is part of the allowlisted update payload...
+        const flipped = await repo.update(created.id, { tracksStock: true });
+        expect(db.calls.writeData[0]).toEqual({ tracksStock: true });
+        expect(flipped.tracksStock).toBe(true);
+
+        // ...and an omitted one is not sent at all, so the stored value stays.
+        const renamed = await repo.update(created.id, { name: "Renamed" });
+        expect(db.calls.writeData[1]).toEqual({ name: "Renamed" });
+        expect(renamed.tracksStock).toBe(true);
+      },
+      db.prisma
+    );
   });
 
   it("prevents CROSS-TENANT writes: a foreign target fails not-found and stays unchanged", async () => {
