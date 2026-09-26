@@ -79,6 +79,31 @@ belong to other epics and are explicitly out of scope here.
 Everything below is planned and unchecked: no acceptance criterion in this
 record has been implemented.
 
+## Progress (2026-09-26)
+
+The snapshot above records the pre-implementation state verified on 2026-09-26
+and is retained as such; it is not the current state. Since then the first Story
+has landed: the [[SUP-001]] supplier registry work units are merged with CI
+green.
+
+- Pull request #68 (`feat(EPIC-11): implement the supplier registry (SUP-001)`,
+  base `main`) merged `feat/epic-11-suppliers-purchases` into `main` as merge
+  commit `baa66ca` (`baa66ca4a2ac6fdac29115440c94038e6437dff7`), merged
+  `2026-09-26T21:00:58Z`.
+- CI run
+  [`36270774108`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36270774108)
+  on the evaluated head commit `4b8adf8`
+  (`4b8adf8438b7457034c6f18c5c9a8d250501c6f2`) concluded `completed` / `success`
+  in 3m57s, with `Database migrations` (`108484172152`) and
+  `Lint, Typecheck, Test, Build` (`108484172375`) both `SUCCESS`.
+- The slice's live-PostgreSQL evidence is recorded as the EPIC-11 CI baseline in
+  `docs/10-qa/CI-EVIDENCE.md`.
+
+The epic is **not** closed: [[PUR-001]], [[PUR-002]] and [[PUR-003]] remain
+`planned`, every exit criterion below is still open, and this record keeps
+`status: planned`. The story list below is unchanged; [[SUP-001]] carries its
+own `status: done`.
+
 ## Scope
 
 - A tenant-scoped supplier aggregate with a tenant composite ownership key, an
