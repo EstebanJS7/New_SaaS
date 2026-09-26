@@ -3,7 +3,7 @@ id: SUP-001
 type: story
 title: Supplier foundation
 epic: EPIC-11
-status: planned
+status: done
 priority: high
 depends_on:
   - EPIC-10
@@ -14,8 +14,12 @@ prd_sections:
   - "28"
   - "29"
   - "41"
-permissions: []
-branch:
+permissions:
+  - suppliers.read
+  - suppliers.create
+  - suppliers.update
+  - suppliers.deactivate
+branch: feat/epic-11-suppliers-purchases
 created: 2026-09-26
 updated: 2026-09-26
 ---
@@ -50,8 +54,8 @@ Decision") rather than inventing fields.
   [[EPIC-09]] and [[EPIC-10]].
 - PRD §41 requires every new field carrying personal, fiscal or secret material
   to be classified. If the attribute Decision includes a tax identifier, a
-  contact person or an email, that field needs a classification and a
-  no-logging rule before it is persisted.
+  contact person or an email, that field needs a classification and a no-logging
+  rule before it is persisted.
 
 ## In Scope
 
@@ -74,8 +78,8 @@ Decision") rather than inventing fields.
 
 - **Purchases and receiving** — [[PUR-001 Purchase draft]] and
   [[PUR-002 Purchase receiving]].
-- **Supplier balances, accounts payable, payments and settlement** —
-  [[EPIC-12]] and [[EPIC-13]]. A supplier here is identity data, not a ledger.
+- **Supplier balances, accounts payable, payments and settlement** — [[EPIC-12]]
+  and [[EPIC-13]]. A supplier here is identity data, not a ledger.
 - **Supplier portal or supplier self-service** — portal access is a separate
   security boundary.
 - **Supplier or purchase imports** — [[EPIC-19]].
@@ -87,29 +91,36 @@ Decision") rather than inventing fields.
 
 ## Acceptance Criteria
 
-- [ ] Supplier records are tenant-scoped with a tenant composite ownership key
+- [x] Supplier records are tenant-scoped with a tenant composite ownership key
       and a `RESTRICT` tenant foreign key; a cross-tenant or unknown supplier
       UUID is one byte-equivalent `404`, indistinguishable by shape or message.
-- [ ] Every route enforces authentication, server-side tenant context and a
+- [x] Every route enforces authentication, server-side tenant context and a
       granular permission; the service re-asserts the permission before any data
       access, so a missing permission is `403` and persists nothing.
-- [ ] Request and response contracts are allowlisted and strict: unknown keys
+- [x] Request and response contracts are allowlisted and strict: unknown keys
       are rejected, `tenantId` is never read from body, query or route, and no
       Prisma model crosses the HTTP boundary.
-- [ ] Removal is an explicit deactivation command, never a hard delete: there is
+- [x] Removal is an explicit deactivation command, never a hard delete: there is
       no `DELETE` route and no generic `PATCH isActive`.
 - [x] The supplier attribute set, uniqueness rules, lifecycle and data
       classification are fixed by the accepted [[DEC-011]] record (accepted
-      2026-09-26), which is binding on this slice; the schema and DTO themselves
-      are still not written, and no attribute is persisted on assumption.
-- [ ] Supplier changes do not cascade-delete or orphan a purchase reference: a
-      deactivated supplier stays readable for historical purchases.
-- [ ] The new permission keys and role matrix are seeded, and the seed-count
+      2026-09-26), which is binding on this slice; the schema and DTO implement
+      exactly that record and persist no attribute on assumption.
+- [x] Supplier changes do not cascade-delete or orphan a purchase reference: a
+      deactivated supplier stays readable for historical purchases. _Note: no
+      purchase table exists yet, so this holds today through the `RESTRICT`
+      tenant/supplier foreign keys plus deactivation-without-delete — a supplier
+      row can never be removed and its deactivated state never rewrites a
+      reference. The purchase-side half of the criterion becomes testable with
+      [[PUR-001 Purchase draft]]._
+- [x] The new permission keys and role matrix are seeded, and the seed-count
       probe is reconciled, including whether the `purchases` entitlement gates
-      the surface.
-- [ ] Tenant isolation tests exist for the new private aggregate (list, create,
+      the surface. _Resolved: no entitlement gate applies — suppliers are a Core
+      capability, like catalog and inventory. The seed count moved 34 → 38; five
+      further `purchases.*` keys arrive with PUR-001/PUR-002._
+- [x] Tenant isolation tests exist for the new private aggregate (list, create,
       read, update, deactivate), including a cross-tenant reference.
-- [ ] Required lint/typecheck/test checks pass.
+- [x] Required lint/typecheck/test checks pass.
 
 ## Domain Invariants
 
@@ -128,15 +139,27 @@ Decision") rather than inventing fields.
 
 ### Added
 
-```text
-None yet. The routes and their permission keys are fixed by the accepted
-Decision records and the implementation slice; no route is implemented yet.
-```
+| Route                            | Permission             | Contract                                                     |
+| -------------------------------- | ---------------------- | ------------------------------------------------------------ |
+| `GET /suppliers`                 | `suppliers.read`       | Caller-tenant list; optional `isActive`; no implicit filter. |
+| `GET /suppliers/:id`             | `suppliers.read`       | One supplier; foreign/unknown UUID is the same `404`.        |
+| `POST /suppliers`                | `suppliers.create`     | Create one supplier (`201`).                                 |
+| `PUT /suppliers/:id`             | `suppliers.update`     | Partial update (`200`); omitted keys untouched.              |
+| `POST /suppliers/:id/deactivate` | `suppliers.deactivate` | Idempotent soft removal.                                     |
+
+All five routes are unprefixed per [[DEC-002]], return allowlisted INTERNAL
+DTOs, and are registered in `apps/api/src/app.module.ts`. The module imports
+Context, RBAC and Audit and has no entitlement gate — suppliers are a Core
+capability. `GET /suppliers` is ordered by `name` ascending with an id
+tiebreaker and applies no implicit active-only default. `PUT /suppliers/:id`
+ignores `isActive`: deactivation is its own command. There is no `PATCH` and no
+`DELETE` route anywhere on this surface.
 
 ### Changed
 
 ```text
-None yet.
+None. Existing routes are untouched: this Story adds no field, permission or
+behavior to any pre-existing API surface.
 ```
 
 ## Database
@@ -144,15 +167,55 @@ None yet.
 ### Migration
 
 ```text
-None yet. An additive migration is required; no destructive statement is
-accepted.
+packages/database/prisma/migrations/20260926000001_suppliers/
 ```
+
+The migration is strictly additive and creates the `supplier` table: a
+`RESTRICT` tenant foreign key, the composite ownership unique index
+`supplier_tenant_id_id_key` on `(tenant_id, id)`, the partial unique index
+`supplier_tenant_id_tax_id_key` on
+`(tenant_id, tax_id) WHERE tax_id IS NOT NULL` declared as raw SQL because
+Prisma cannot express partial indexes, the lookup index
+`supplier_tenant_id_name_idx` on `(tenant_id, name)`, the `supplier_name_length`
+CHECK bounding the name to 1..200 characters, and the `BEFORE DELETE` trigger
+`supplier_no_delete_trigger` raising `restrict_violation` with the message
+`suppliers are deactivated and cannot be hard-deleted`. It alters no existing
+table and inserts no rows.
 
 ### Models/Tables
 
-- Proposed `Supplier` with a tenant composite ownership key and a `RESTRICT`
-  tenant foreign key. The attribute columns, indexes and uniqueness constraints
-  are fixed by the accepted [[DEC-011]] record.
+`Supplier` (`@@map("supplier")`):
+
+| Column       | Shape                                                               |
+| ------------ | ------------------------------------------------------------------- |
+| `id`         | `UUID` primary key, `gen_random_uuid()` default                     |
+| `tenant_id`  | `UUID NOT NULL`, `RESTRICT` FK to `tenant(id)` on delete and update |
+| `name`       | `VARCHAR(200) NOT NULL` — deliberately not unique                   |
+| `legal_name` | `VARCHAR(200)` nullable                                             |
+| `tax_id`     | `VARCHAR(50)` nullable                                              |
+| `email`      | `VARCHAR(320)` nullable                                             |
+| `phone`      | `VARCHAR(50)` nullable                                              |
+| `address`    | `VARCHAR(500)` nullable                                             |
+| `is_active`  | `BOOLEAN NOT NULL DEFAULT true`                                     |
+| `created_at` | `TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP`                 |
+| `updated_at` | `TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP`                 |
+
+Physical guarantees:
+
+| Guarantee              | Shape                                                                                              |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| Tenant scope           | `supplier_tenant_id_fkey` — `RESTRICT` on delete and update                                        |
+| Ownership is composite | `supplier_tenant_id_id_key` unique on `(tenant_id, id)`, the target of the purchase composite FK   |
+| Tax id when present    | `supplier_tenant_id_tax_id_key` unique on `(tenant_id, tax_id) WHERE tax_id IS NOT NULL` (raw SQL) |
+| Lookup                 | `supplier_tenant_id_name_idx` on `(tenant_id, name)`                                               |
+| Name bounds            | `supplier_name_length` `CHECK (char_length("name") BETWEEN 1 AND 200)`                             |
+| No hard delete         | `supplier_no_delete_trigger` (`BEFORE DELETE`) raises `restrict_violation`                         |
+
+The schema deliberately declares `@@unique([tenantId, id])` and
+`@@index([tenantId, name])` and **no** `@@unique([tenantId, taxId])`, because
+the partial index lives only in the migration SQL; the model doc comment
+documents that. `name` is not unique on purpose — two suppliers may share a
+trading name while `taxId` is unique per tenant when present.
 
 ## UI
 
@@ -162,32 +225,115 @@ accepted.
 
 ## Implementation Summary
 
-_Not implemented. All required Decision records are accepted as of 2026-09-26 —
-[[DEC-011 Supplier identity, uniqueness and classification]], [[DEC-016
-Suppliers/purchases permission keys, role matrix and entitlement gating]] and
-[[DEC-017 Suppliers/purchases audit scope]] — and the slice awaits
-implementation authorization._
+Implemented on branch `feat/epic-11-suppliers-purchases`. Three work units plus
+a correction commit:
+
+- `ed3b056` — data foundation: the `Supplier` model, the additive
+  `20260926000001_suppliers` migration and the schema gate.
+- `d39d90d` — correction: the partial unique index on `(tenant_id, tax_id)`.
+- `826e7ac` — API surface: the module, its five routes, the permission keys and
+  their role matrix, and the route-contract pins.
+
+What shipped:
+
+- **Model and migration.** A `supplier` table with the tenant composite
+  ownership key, the `RESTRICT` tenant foreign key, the partial per-tenant
+  tax-id unique index, the name lookup index, the 1..200 name CHECK and the
+  delete-rejecting trigger. The migration is strictly additive.
+- **Permissions.** Exactly four keys — `suppliers.read`, `suppliers.create`,
+  `suppliers.update`, `suppliers.deactivate` — seeded with the [[DEC-016]] role
+  matrix: all six roles hold `suppliers.read`, and only `OWNER`, `ADMIN` and
+  `INVENTORY_MANAGER` hold the three write keys. No entitlement gate applies.
+  The seed count moved 34 → 38.
+- **Module and routes.** `apps/api/src/suppliers/` with the permission contract,
+  allowlisted INTERNAL DTOs, strict Zod contracts, tenant-safe repository,
+  service, controller and module, registered in `apps/api/src/app.module.ts`.
+  The five routes are list, detail, create, partial update and idempotent
+  deactivation; there is no `PATCH` and no `DELETE`.
+- **Audit.** One co-committed audit row per accepted mutation inside the
+  mutating transaction, actions `supplier.created`, `supplier.updated` and
+  `supplier.deactivated`, target type `supplier`, metadata
+  `{ schemaVersion, changedFields }` carrying field names only. Reads are never
+  audited and a repeated deactivation still appends exactly one row.
+- **Error contract.** A foreign or unknown supplier UUID is one shared
+  byte-equivalent `404 NOT_FOUND` (`Supplier was not found.`); a duplicate
+  **present** `taxId` inside one tenant is `409 CONFLICT` with the value-free
+  message `A supplier with this tax identifier already exists in this tenant.`,
+  scoped to the `supplier_tenant_id_tax_id_key` index, while every unrelated
+  Prisma `P2002` is rethrown; unknown keys, a supplied `tenantId` and a supplied
+  `isActive` are `400 VALIDATION_FAILED` and persist nothing.
 
 ## Verification
 
-```text
-Not run.
-```
+Observed results on `feat/epic-11-suppliers-purchases`:
+
+| Command                                     | Result                                                        |
+| ------------------------------------------- | ------------------------------------------------------------- |
+| `pnpm --filter @newsaas/database test`      | 14 files / 245 tests passed                                   |
+| `pnpm --filter @newsaas/api test`           | 71 files passed, 1 skipped (72); 869 tests passed, 52 skipped |
+| `pnpm --filter @newsaas/database typecheck` | clean                                                         |
+| `pnpm --filter @newsaas/api typecheck`      | clean                                                         |
+| `pnpm --filter @newsaas/api lint`           | clean                                                         |
+| `git diff --check`                          | clean                                                         |
+
+**Runnable but not run here — and therefore unverified.** `db:deploy`, `db:seed`
+and the live-PostgreSQL suite cannot run in this environment: the Docker daemon
+is unavailable, so PostgreSQL on `localhost:5433` cannot start. Consequently the
+migration has not been applied anywhere, and the partial index's runtime
+enforcement, the real PostgreSQL-rejection path behind the `409`, and a
+drift-free `migrate status` remain unproven. See "Known Limitations".
 
 ## Tests Added
 
-- None yet. Planned: `schema-*.test.ts` gates for the new table and its tenant
-  ownership key, an HTTP integration suite over the real guard chain
-  (permissions, cross-tenant `404`, strict DTO rejects, deactivation without
-  delete), and a route-contract pin for the new permissions.
+- `packages/database/src/schema-suppliers.test.ts` — **15 tests**: the additive
+  migration's table/columns/constraints, the `RESTRICT` tenant FK, the composite
+  ownership key, the partial tax-id index, the name CHECK, the delete-rejecting
+  trigger, migration additivity, and the model mapping plus the DEC-011
+  classification.
+- `apps/api/src/suppliers/suppliers.integration.test.ts` — **15 tests** over the
+  real guard chain: the read and write permission sweeps that persist nothing on
+  denial, the create with its co-committed audit row and allowlisted DTO, the
+  invalid create/update sweeps, the absent-versus-null update matrix, the
+  byte-equivalent cross-tenant `404` on read/update/deactivation, idempotent
+  deactivation, the audit-diff co-commit, the duplicate-`taxId` `409` on create
+  and update, the rethrow of an unrelated `P2002`, the absence of any delete or
+  patch route, and the list ordering and `isActive` filter.
+- `apps/api/src/rbac/route-contract.probe.test.ts` — the five supplier routes
+  and their per-route permission pins (`SUPPLIERS_PERMISSION_BY_ROUTE`).
 
 ## Known Limitations
 
-- None recorded; the Story is unimplemented.
+- **The migration is unapplied and its runtime enforcement is unverified.**
+  `db:deploy`, `db:seed` and the live-PostgreSQL suite are unrunnable here
+  because the Docker daemon is unavailable, so the partial index's enforcement,
+  the real PostgreSQL-rejection path behind the `409` and a drift-free
+  `migrate status` have not been observed.
+- **The duplicate-conflict tests inject a synthetic `P2002`.** The in-memory
+  test boundary does not enforce partial indexes, so the duplicate-`taxId` tests
+  raise a synthetic Prisma `P2002` shaped like the index violation. They do
+  assert in-memory supplier state, audit counts and unchanged stored fields, so
+  they are not status-only — but the real PostgreSQL-rejection path is unproven,
+  and the matcher accepts both plausible `meta.target` shapes defensively.
+- **The schema gate inspects DDL text, not execution.** The gate asserts the
+  migration SQL rather than running the index against a live database.
+- **The partial index lives only in the migration SQL.** Prisma cannot model it,
+  so a live-database `migrate status`/drift check is still owed for an index the
+  schema cannot represent.
+- **No staff UI.** The module is API-only in this slice;
+  [[PUR-003 Staff purchases surface]] owns the browser surface.
 
 ## Technical Debt
 
-- None.
+No debt record is created by this Story. The live-PostgreSQL follow-up is not a
+new debt item: it is folded into [[EPIC-11]]'s durable closure criterion ("The
+durable live-PostgreSQL evidence for receiving … passes and is recorded in
+`docs/10-qa/CI-EVIDENCE.md`"). The evidence owed there, named explicitly, is:
+
+- a duplicate **present** `taxId` rejected through the partial index and
+  surfaced as the stable `409 CONFLICT`;
+- multiple **absent** `taxId` values coexisting inside one tenant;
+- the same `taxId` allowed in another tenant;
+- a drift-free `migrate status` for the index Prisma cannot model.
 
 ## Decisions / ADRs
 
@@ -195,9 +341,9 @@ Not run.
   - [[DEC-011 Supplier identity, uniqueness and classification]] — fixes the
     required and optional supplier attributes, the per-tenant `taxId` uniqueness
     rule and its mechanism, the lifecycle and the per-field data classification.
-  - [[DEC-016 Suppliers/purchases permission keys, role matrix and entitlement
-    gating]] — fixes the `suppliers.*` keys, the role matrix that holds them and
-    the absence of an entitlement gate.
+  - [[DEC-016]] _Suppliers/purchases permission keys, role matrix and
+    entitlement gating_ — fixes the `suppliers.*` keys, the role matrix that
+    holds them and the absence of an entitlement gate.
   - [[DEC-017 Suppliers/purchases audit scope]] — fixes supplier
     create/update/deactivate audit as exactly one co-committed row per accepted
     mutation.
@@ -209,8 +355,8 @@ Not run.
 - **Required attributes and uniqueness** — answered by [[DEC-011]]: `name` is
   required (1..200 characters, not unique) and `legalName`, `taxId` (RUC),
   `email`, `phone` and `address` are optional, with `taxId` unique per tenant
-  when present through a partial unique index over `(tenant_id, tax_id) WHERE
-  tax_id IS NOT NULL`.
+  when present through a partial unique index over
+  `(tenant_id, tax_id) WHERE tax_id IS NOT NULL`.
 - **Lifecycle** — answered by [[DEC-011]]: the lifecycle is the catalog's, an
   `isActive` flag with an explicit deactivate command and no delete route.
 - **Data classification** — answered by [[DEC-011]]: `taxId`, `legalName`,
@@ -226,9 +372,9 @@ Not run.
 
 ## Files / Modules
 
-- `packages/database/prisma/schema.prisma` — the proposed supplier model.
-- `packages/database/prisma/migrations/<timestamp>_suppliers/` — the additive
-  migration.
+- `packages/database/prisma/schema.prisma` — the `Supplier` model.
+- `packages/database/prisma/migrations/20260926000001_suppliers/migration.sql` —
+  the additive migration.
 - `packages/database/src/schema-suppliers.test.ts` — the schema gates.
 - `apps/api/src/suppliers/` — permissions, DTOs, Zod contracts, repository,
   service, controller and module.
@@ -240,5 +386,11 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass; the attribute
-Decision is accepted as of 2026-09-26._
+Done for implementation and verification scope: the supplier registry, its
+additive migration, its four permission keys with the seeded role matrix, its
+five routes, its audit rows and its tests are implemented and the runnable
+checks are green. This is **not** a production-readiness statement. The durable
+live-PostgreSQL evidence for the partial index and the migration application is
+still owed, and [[EPIC-11]] as a whole remains open for
+[[PUR-001 Purchase draft]], [[PUR-002 Purchase receiving]] and
+[[PUR-003 Staff purchases surface]].

@@ -59,6 +59,12 @@ Implemented (EPIC-10):
 Inventory.md
 ```
 
+Implemented (EPIC-11):
+
+```text
+Suppliers.md
+```
+
 Recommended files:
 
 ```text

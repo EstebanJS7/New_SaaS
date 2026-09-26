@@ -79,6 +79,40 @@ All notable product changes will be documented here.
   production-readiness statement. [[EPIC-20]] Production Hardening and the open
   Tech Debt items remain.
 
+- EPIC-11 — Suppliers (SUP-001 supplier foundation):
+  - Tenant-scoped supplier registry (PRD §5) with a `RESTRICT` tenant foreign
+    key, the composite ownership unique key `(tenant_id, id)`, a name lookup
+    index, a 1..200 name CHECK and a `BEFORE DELETE` trigger rejecting hard
+    deletes — removal is deactivation, so historical references survive.
+  - Per-tenant `taxId` uniqueness **when present** through the partial unique
+    index `supplier_tenant_id_tax_id_key` on
+    `(tenant_id, tax_id) WHERE tax_id IS NOT NULL`, declared as raw SQL because
+    Prisma cannot express partial indexes; any number of absent identifiers
+    coexist and the same value in another tenant is a different key.
+  - One additive migration, `20260926000001_suppliers`, creating the `supplier`
+    table without altering any existing table or inserting rows.
+  - `suppliers.read` / `suppliers.create` / `suppliers.update` /
+    `suppliers.deactivate` with the decided role matrix (all six roles read;
+    OWNER, ADMIN and INVENTORY_MANAGER write) and no entitlement gate —
+    suppliers are a Core capability. The seed count moves 34 → 38; the five
+    `purchases.*` keys arrive with PUR-001/PUR-002.
+  - Five unprefixed allowlisted INTERNAL routes — `GET /suppliers`,
+    `GET /suppliers/:id`, `POST /suppliers`, `PUT /suppliers/:id` (partial
+    update with absent-versus-null semantics) and
+    `POST /suppliers/:id/deactivate` (idempotent) — plus a shared
+    byte-equivalent cross-tenant `404` and a stable value-free `409 CONFLICT`
+    for a duplicate present `taxId`.
+  - One co-committed `supplier.created` / `supplier.updated` /
+    `supplier.deactivated` audit row per accepted mutation, carrying field
+    **names** only; reads are never audited.
+  - `SUP-001`, the `Suppliers` module documentation and the module index entry.
+
+  EPIC-11 is **incomplete**: purchases (`PUR-001`, `PUR-002`) and the staff
+  surface (`PUR-003`) are pending, and the durable live-PostgreSQL evidence —
+  the partial index's enforcement, the real `409` rejection path and a
+  drift-free `migrate status` — is owed before the epic closes. Nothing here is
+  merged or production-ready.
+
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,
     vaccinations, deworming, studies, weights) with a RESTRICT-FK additive
