@@ -9,6 +9,7 @@ import {
   createPurchaseBody,
   purchaseIdParam,
   purchaseListQuery,
+  receivePurchaseBody,
   updatePurchaseBody,
 } from "./purchases.zod.js";
 
@@ -21,12 +22,13 @@ import {
  * responses are allowlisted INTERNAL DTOs — no Prisma model crosses the
  * boundary.
  *
- * The surface is EXACTLY five routes: two reads, the draft create, the draft
- * update (which reconciles the whole line set by `catalogItemId`) and the
- * explicit `POST /purchases/:id/cancel` transition. There is deliberately NO
- * `PATCH` (status is server-owned) and NO delete route anywhere: a draft drops
- * a line through the update command and a confirmed purchase is immutable
- * (DEC-015/DEC-019). No receive route exists here — that is PUR-002.
+ * The surface is EXACTLY six routes: two reads, the draft create, the draft
+ * update (which reconciles the whole line set by `catalogItemId`), the
+ * explicit `POST /purchases/:id/cancel` transition and the explicit
+ * `POST /purchases/:id/receive` command. There is deliberately NO `PATCH`
+ * (status is server-owned) and NO delete route anywhere: a draft drops a line
+ * through the update command and a confirmed purchase is immutable
+ * (DEC-015/DEC-019).
  */
 @Controller("purchases")
 export class PurchasesController {
@@ -83,6 +85,21 @@ export class PurchasesController {
   async cancel(@Param() params: unknown): Promise<PurchaseResponse> {
     const { id } = parseInput(purchaseIdParam, params, "Invalid purchase id.");
     return this.purchases.cancel(id);
+  }
+
+  /**
+   * Receives a `DRAFT` purchase: the purchase's only stock effect. ONLY a
+   * `DRAFT` is receivable — a replay or any `RECEIVED`/`CANCELLED` purchase is
+   * a stable `409` and persists nothing. The body is a strict empty contract:
+   * an absent or empty body is accepted, while any supplied key (including
+   * `tenantId` or `status`) is rejected rather than ignored.
+   */
+  @Post(":id/receive")
+  @RequirePermissions(PURCHASES_PERMISSIONS.receive)
+  async receive(@Param() params: unknown, @Body() body: unknown): Promise<PurchaseResponse> {
+    const { id } = parseInput(purchaseIdParam, params, "Invalid purchase id.");
+    parseInput(receivePurchaseBody, body ?? {}, "Invalid purchase receive body.");
+    return this.purchases.receive(id);
   }
 }
 

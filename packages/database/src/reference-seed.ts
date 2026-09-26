@@ -70,9 +70,10 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   surface that consumes them.
  * - EPIC-11 continues with the `purchases` family over the Core purchases
  *   domain: `purchases.read` mirrors the read-wide catalog shape, and
- *   `purchases.create`/`update`/`cancel` are the owning-roles write keys. Like
- *   the keys above they are seeded BEFORE the API surface that consumes them;
- *   the fifth key, `purchases.receive`, arrives with PUR-002.
+ *   `purchases.create`/`update`/`cancel`/`receive` are the owning-roles write
+ *   keys. Like the keys above they are seeded BEFORE the API surface that
+ *   consumes them; `purchases.receive` is the fifth and final key DEC-016
+ *   names, which brings the seeded catalog to its DEC-016 total of 43.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -115,14 +116,15 @@ export const PERMISSION_SEEDS = [
   { key: "suppliers.create", name: "Create suppliers" },
   { key: "suppliers.update", name: "Update suppliers" },
   { key: "suppliers.deactivate", name: "Deactivate suppliers" },
-  // EPIC-11 PUR-001 adds the `purchases` family (DEC-016): all six roles read
-  // purchases, `OWNER`/`ADMIN`/`INVENTORY_MANAGER` create, update and cancel
-  // them. The fifth key, `purchases.receive`, arrives with PUR-002 and reaches
-  // the DEC-016 total of 43.
+  // EPIC-11 PUR-001/PUR-002 add the `purchases` family (DEC-016): all six roles
+  // read purchases, `OWNER`/`ADMIN`/`INVENTORY_MANAGER` create, update, cancel
+  // and receive them. `purchases.receive` is the fifth and final key and brings
+  // the seeded catalog to the DEC-016 total of 43.
   { key: "purchases.read", name: "Read purchases" },
   { key: "purchases.create", name: "Create purchases" },
   { key: "purchases.update", name: "Update purchases" },
   { key: "purchases.cancel", name: "Cancel purchases" },
+  { key: "purchases.receive", name: "Receive purchases" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -175,6 +177,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "purchases.create",
     "purchases.update",
     "purchases.cancel",
+    "purchases.receive",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -219,6 +222,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "purchases.create",
     "purchases.update",
     "purchases.cancel",
+    "purchases.receive",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
@@ -282,6 +286,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "purchases.create",
     "purchases.update",
     "purchases.cancel",
+    "purchases.receive",
   ],
 };
 

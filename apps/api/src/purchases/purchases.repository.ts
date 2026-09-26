@@ -80,6 +80,17 @@ export interface PurchaseWhere {
   status?: PurchaseStatusValue;
 }
 
+/**
+ * Raw-SQL seam for the transaction-scoped purchase header row lock. Declared
+ * structurally (the inventory raw-seam convention) so the generated client and
+ * the shared in-memory boundary both satisfy it. The in-memory boundary models
+ * `SELECT ... FOR UPDATE` as a plain read because a synchronous map cannot
+ * interleave, so the real serialization proof stays live-PostgreSQL-owned.
+ */
+export interface PurchaseRawClient {
+  $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>;
+}
+
 /** Deterministic ordering clauses accepted by {@link PurchaseDelegate.findMany}. */
 export type PurchaseOrderBy = { createdAt?: "asc" | "desc" } | { id?: "asc" | "desc" };
 
@@ -166,9 +177,10 @@ export interface PurchaseCatalogItemLookup {
 /**
  * The delegate set this repository touches. Doubles as the optional
  * transaction seam: the audited service passes its open transaction handle
- * here so the purchase change and its audit row co-commit.
+ * here so the purchase change and its audit row co-commit. Extends the raw
+ * seam because the receive command row-locks the purchase header through it.
  */
-export interface PurchaseTx {
+export interface PurchaseTx extends PurchaseRawClient {
   purchase: PurchaseDelegate;
   purchaseLine: PurchaseLineDelegate;
   supplier: PurchaseSupplierLookup;
@@ -385,6 +397,60 @@ export class PurchaseRepository {
         },
       });
     }
+  }
+
+  /**
+   * Row-locks one purchase HEADER of the caller's active tenant, identified by
+   * the `(tenant_id, id)` pair, for the rest of the caller's open transaction.
+   *
+   * This is the PRIMARY serialization of the receive command (DEC-014): the
+   * receiving transaction takes the header lock BEFORE any per-`(tenant, item)`
+   * advisory lock, so two concurrent receives of the SAME purchase serialize
+   * here — the loser blocks on this row lock and its post-lock status read then
+   * sees the winner's committed `RECEIVED` and is rejected with the stable
+   * `409`. Because every receive takes the header first and the item locks in
+   * ascending `catalogItemId` order second, two receives that share items
+   * cannot deadlock. The lock is transaction-scoped, so a rolled-back receive
+   * leaves nothing locked.
+   *
+   * A zero-row match (unknown or foreign id, which by construction takes no
+   * lock) is not an error here: the caller's subsequent tenant-scoped read is
+   * what renders the shared byte-equivalent `404`. The in-memory boundary models
+   * this as a plain read; the real interleaving is proven by the live-PostgreSQL
+   * evidence owned by the next slice.
+   */
+  async lockById(id: string, tx?: PurchaseTx): Promise<void> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    await client.$queryRaw`
+      SELECT "id" FROM "purchase"
+      WHERE "tenant_id" = ${tenantId} AND "id" = ${id}
+      FOR UPDATE
+    `;
+  }
+
+  /**
+   * Applies the `DRAFT` → `RECEIVED` transition of one purchase of the caller's
+   * active tenant.
+   *
+   * This write is the BACKSTOP of the receive serialization, not its primary
+   * mechanism (DEC-014): {@link lockById}'s header row lock is what makes a
+   * concurrent second receive observe the committed status. The write is still
+   * conditional on the STORED status being `DRAFT`, so if that status were ever
+   * not `DRAFT` the statement affects zero rows and returns `false`, which the
+   * service maps to the same stable `409 CONFLICT` as any other non-`DRAFT`
+   * purchase. It never deletes the purchase, never touches its lines and never
+   * touches stock; the movements and the balance projections of a receive are
+   * written separately through the ledger seam, INSIDE the same transaction.
+   */
+  async receive(id: string, tx?: PurchaseTx): Promise<boolean> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const result = await client.purchase.updateMany({
+      where: { id, tenantId, status: "DRAFT" },
+      data: { status: "RECEIVED" },
+    });
+    return result.count > 0;
   }
 
   /**

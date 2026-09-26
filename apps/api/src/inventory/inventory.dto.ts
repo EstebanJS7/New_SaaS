@@ -22,11 +22,12 @@
 export type StockItemKindDto = "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY";
 
 /**
- * Movement kinds pinned by the `stock_movement_type` enum (PRD §16, W1). This
- * slice ships ONLY the standalone signed adjustment; purchases, sales,
- * transfers and the `*_REVERSAL` compensations are added additively later.
+ * Movement kinds pinned by the `stock_movement_type` enum (PRD §16). EPIC-10
+ * ships the standalone `ADJUSTMENT`; EPIC-11 PUR-002 appends `PURCHASE`, the
+ * positive receiving input a purchase command writes. Sales, transfers and the
+ * `*_REVERSAL` compensations are added additively later.
  */
-export type StockMovementTypeDto = "ADJUSTMENT";
+export type StockMovementTypeDto = "ADJUSTMENT" | "PURCHASE";
 
 /**
  * Read-only projection of the item a balance belongs to. It carries the
