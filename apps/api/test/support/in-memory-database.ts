@@ -295,6 +295,39 @@ export interface CatalogItemRow {
   referencePriceAmount: string | null;
   referencePriceCurrency: string | null;
   isActive: boolean;
+  /** EPIC-10 stock dimension. Mirrors the schema default (`true`) when omitted. */
+  tracksStock: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Tenant-scoped immutable stock ledger row (EPIC-10 W2). `quantity` is a SIGNED
+ * exact decimal string — positive input, negative output — never a float, and
+ * `reversesMovementId` stays null until the reversal slice ships.
+ */
+export interface StockMovementRow {
+  id: string;
+  tenantId: string;
+  catalogItemId: string;
+  type: "ADJUSTMENT";
+  quantity: string;
+  reason: string;
+  reversesMovementId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Tenant-scoped stock projection row (EPIC-10 W2): one per (tenant, item).
+ * `quantity` is an exact NON-NEGATIVE decimal string under the fixed BLOCK
+ * policy.
+ */
+export interface StockBalanceRow {
+  id: string;
+  tenantId: string;
+  catalogItemId: string;
+  quantity: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -754,6 +787,8 @@ export interface IsolationDatabase {
           referencePriceAmount?: string | { toString(): string } | null;
           referencePriceCurrency?: string | null;
           isActive?: boolean;
+          /** EPIC-10 stock dimension; omitted mirrors the schema default `true`. */
+          tracksStock?: boolean;
         };
       }) => CatalogItemRow;
       updateMany: (args: {
@@ -765,8 +800,51 @@ export interface IsolationDatabase {
           referencePriceAmount?: string | { toString(): string } | null;
           referencePriceCurrency?: string | null;
           isActive?: boolean;
+          tracksStock?: boolean;
         };
       }) => { count: number };
+    };
+    stockMovement: {
+      /**
+       * Ledger append. The ONLY mutation: there is no update and no delete on
+       * this delegate, mirroring the schema's immutability trigger.
+       */
+      create: (args: {
+        data: {
+          tenantId: string;
+          catalogItemId: string;
+          type: StockMovementRow["type"];
+          quantity: string | { toString(): string };
+          reason: string;
+          reversesMovementId?: string | null;
+        };
+      }) => StockMovementRow;
+      findMany: (args: {
+        where: { tenantId: string; catalogItemId?: string };
+        orderBy?: readonly {
+          createdAt?: "asc" | "desc";
+          id?: "asc" | "desc";
+        }[];
+      }) => StockMovementRow[];
+    };
+    stockBalance: {
+      findFirst: (args: {
+        where: { tenantId: string; catalogItemId: string };
+      }) => StockBalanceRow | null;
+      findMany: (args: {
+        where: { tenantId: string };
+        orderBy?: readonly { catalogItemId?: "asc" | "desc"; id?: "asc" | "desc" }[];
+      }) => StockBalanceRow[];
+      /** Compound-unique upsert on `(tenantId, catalogItemId)` (one row per pair). */
+      upsert: (args: {
+        where: { tenantId_catalogItemId: { tenantId: string; catalogItemId: string } };
+        create: {
+          tenantId: string;
+          catalogItemId: string;
+          quantity: string | { toString(): string };
+        };
+        update: { quantity: string | { toString(): string } };
+      }) => StockBalanceRow;
     };
     patient: {
       findMany: (args: {
@@ -1044,6 +1122,8 @@ export interface IsolationDatabase {
     breeds: Map<string, BreedRow>;
     taxRates: Map<string, TaxRateRow>;
     catalogItems: Map<string, CatalogItemRow>;
+    stockMovements: Map<string, StockMovementRow>;
+    stockBalances: Map<string, StockBalanceRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
@@ -1256,6 +1336,56 @@ function toDecimalStringOrNull(
   return typeof value === "string" ? value : value.toString();
 }
 
+/** Required-decimal variant of {@link toDecimalStringOrNull} (never null). */
+function toDecimalString(value: string | { toString(): string }): string {
+  return typeof value === "string" ? value : value.toString();
+}
+
+/**
+ * Ordering for the movement ledger: chronological, then id as a stable
+ * tie-break (two movements of the same millisecond still order deterministically).
+ */
+function orderStockMovements(
+  rows: StockMovementRow[],
+  orderBy: readonly { createdAt?: "asc" | "desc"; id?: "asc" | "desc" }[] | undefined
+): StockMovementRow[] {
+  if (orderBy === undefined) return rows;
+  return [...rows].sort((left, right) => {
+    for (const clause of orderBy) {
+      if (clause.createdAt !== undefined) {
+        const compared = left.createdAt.getTime() - right.createdAt.getTime();
+        if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.id !== undefined) {
+        const compared = left.id.localeCompare(right.id);
+        if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+      }
+    }
+    return 0;
+  });
+}
+
+/** Ordering for the balance projection (item id, then id as a tie-break). */
+function orderStockBalances(
+  rows: StockBalanceRow[],
+  orderBy: readonly { catalogItemId?: "asc" | "desc"; id?: "asc" | "desc" }[] | undefined
+): StockBalanceRow[] {
+  if (orderBy === undefined) return rows;
+  return [...rows].sort((left, right) => {
+    for (const clause of orderBy) {
+      if (clause.catalogItemId !== undefined) {
+        const compared = left.catalogItemId.localeCompare(right.catalogItemId);
+        if (compared !== 0) return clause.catalogItemId === "asc" ? compared : -compared;
+      }
+      if (clause.id !== undefined) {
+        const compared = left.id.localeCompare(right.id);
+        if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+      }
+    }
+    return 0;
+  });
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -1288,6 +1418,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     taxRateTable.set(rate.id, { ...rate });
   }
   const catalogItemTable = new Map<string, CatalogItemRow>();
+  const stockMovementTable = new Map<string, StockMovementRow>();
+  const stockBalanceTable = new Map<string, StockBalanceRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
@@ -1328,6 +1460,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     breeds: breedTable,
     taxRates: taxRateTable,
     catalogItems: catalogItemTable,
+    stockMovements: stockMovementTable,
+    stockBalances: stockBalanceTable,
     patients: patientTable,
     patientGuardians: patientGuardianTable,
     clinicalEncounters: clinicalEncounterTable,
@@ -1907,6 +2041,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           referencePriceCurrency: data.referencePriceCurrency ?? null,
           // Mirrors the schema default so an omitted flag still lands active.
           isActive: data.isActive ?? true,
+          // Mirrors the schema default so an omitted flag still tracks stock.
+          tracksStock: data.tracksStock ?? true,
           createdAt: now,
           updatedAt: now,
         };
@@ -1928,10 +2064,74 @@ export function createIsolationDatabase(): IsolationDatabase {
             candidate.referencePriceCurrency = data.referencePriceCurrency ?? null;
           }
           if (data.isActive !== undefined) candidate.isActive = data.isActive;
+          if (data.tracksStock !== undefined) candidate.tracksStock = data.tracksStock;
           candidate.updatedAt = new Date();
           count += 1;
         }
         return { count };
+      },
+    },
+    stockMovement: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: StockMovementRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          catalogItemId: data.catalogItemId,
+          type: data.type,
+          quantity: toDecimalString(data.quantity),
+          reason: data.reason,
+          // Nullable reserved compensating link: nothing populates it in W2.
+          reversesMovementId: data.reversesMovementId ?? null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        stockMovementTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where, orderBy }) => {
+        const rows = [...stockMovementTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            (where.catalogItemId === undefined || candidate.catalogItemId === where.catalogItemId)
+        );
+        return orderBy === undefined ? rows : orderStockMovements(rows, orderBy);
+      },
+    },
+    stockBalance: {
+      findFirst: ({ where }) =>
+        [...stockBalanceTable.values()].find(
+          (candidate) =>
+            candidate.tenantId === where.tenantId && candidate.catalogItemId === where.catalogItemId
+        ) ?? null,
+      findMany: ({ where, orderBy }) => {
+        const rows = [...stockBalanceTable.values()].filter(
+          (candidate) => candidate.tenantId === where.tenantId
+        );
+        return orderBy === undefined ? rows : orderStockBalances(rows, orderBy);
+      },
+      upsert: ({ where, create, update }) => {
+        const key = where.tenantId_catalogItemId;
+        const existing = [...stockBalanceTable.values()].find(
+          (candidate) =>
+            candidate.tenantId === key.tenantId && candidate.catalogItemId === key.catalogItemId
+        );
+        const now = new Date();
+        if (existing) {
+          existing.quantity = toDecimalString(update.quantity);
+          existing.updatedAt = now;
+          return existing;
+        }
+        const created: StockBalanceRow = {
+          id: randomUUID(),
+          tenantId: create.tenantId,
+          catalogItemId: create.catalogItemId,
+          quantity: toDecimalString(create.quantity),
+          createdAt: now,
+          updatedAt: now,
+        };
+        stockBalanceTable.set(created.id, created);
+        return created;
       },
     },
     patient: {
@@ -2544,6 +2744,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       breeds: breedTable,
       taxRates: taxRateTable,
       catalogItems: catalogItemTable,
+      stockMovements: stockMovementTable,
+      stockBalances: stockBalanceTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,

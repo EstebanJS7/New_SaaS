@@ -38,6 +38,7 @@ interface CatalogItemDto {
   referencePriceAmount: string | null;
   referencePriceCurrency: string | null;
   isActive: boolean;
+  tracksStock: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -57,6 +58,7 @@ const CATALOG_ITEM_RESPONSE_KEYS: readonly string[] = [
   "referencePriceAmount",
   "referencePriceCurrency",
   "isActive",
+  "tracksStock",
   "createdAt",
   "updatedAt",
 ];
@@ -528,6 +530,62 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
     expect(auditMeta(rows[0]).changedFields).toEqual(["kind", "name", "taxRateId"]);
   });
 
+  it("defaults tracksStock by kind on create and honors an explicit override", async () => {
+    async function create(overrides: Record<string, unknown>): Promise<CatalogItemDto> {
+      const response = await supertest(booted.app.getHttpServer())
+        .post("/catalog")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(createBody(overrides))
+        .expect(201);
+      return response.body as CatalogItemDto;
+    }
+
+    // Omitted flag: the KIND decides, not the column's own `true` default.
+    const service = await create({ kind: "SERVICE", name: "Consulta de rutina" });
+    const product = await create({ kind: "PRODUCT", name: "Alimento balanceado" });
+    const medication = await create({ kind: "MEDICATION", name: "Antibiotico" });
+    const supply = await create({ kind: "SUPPLY", name: "Gasa esteril" });
+    expect(service.tracksStock).toBe(false);
+    expect(product.tracksStock).toBe(true);
+    expect(medication.tracksStock).toBe(true);
+    expect(supply.tracksStock).toBe(true);
+
+    // The flag is part of the allowlisted DTO and the PERSISTED row agrees, so
+    // the projection is a read of stored state rather than a re-derived rule.
+    expect(Object.keys(service).sort()).toEqual([...CATALOG_ITEM_RESPONSE_KEYS].sort());
+    expect(booted.db.tables.catalogItems.get(service.id)?.tracksStock).toBe(false);
+    expect(booted.db.tables.catalogItems.get(product.id)?.tracksStock).toBe(true);
+
+    // A supplied value wins over the kind default in BOTH directions, because
+    // the flag is a manual, staff-editable decision.
+    const trackingService = await create({
+      kind: "SERVICE",
+      name: "Cirugia con insumos",
+      tracksStock: true,
+    });
+    const untrackedProduct = await create({
+      kind: "PRODUCT",
+      name: "Producto sin stock",
+      tracksStock: false,
+    });
+    expect(trackingService.tracksStock).toBe(true);
+    expect(untrackedProduct.tracksStock).toBe(false);
+
+    // The audit names tracksStock only when the caller actually sent it: the
+    // by-kind default is already determined by the `kind` it records.
+    const defaultRows = auditsForTarget(booted, service.id);
+    expect(defaultRows).toHaveLength(1);
+    expect(auditMeta(defaultRows[0]).changedFields).toEqual(["kind", "name", "taxRateId"]);
+    const overrideRows = auditsForTarget(booted, untrackedProduct.id);
+    expect(overrideRows).toHaveLength(1);
+    expect(auditMeta(overrideRows[0]).changedFields).toEqual([
+      "kind",
+      "name",
+      "taxRateId",
+      "tracksStock",
+    ]);
+  });
+
   it("rejects every invalid create and persists nothing", async () => {
     const itemsBefore = booted.db.tables.catalogItems.size;
     const auditsBefore = booted.db.tables.audits.size;
@@ -560,6 +618,9 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
         createBody({ referencePriceAmount: "1.234", referencePriceCurrency: "PYG" }),
       ],
       ["numeric amount", createBody({ referencePriceAmount: 1500, referencePriceCurrency: "PYG" })],
+      ["text tracksStock", createBody({ tracksStock: "true" })],
+      ["null tracksStock", createBody({ tracksStock: null })],
+      ["numeric tracksStock", createBody({ tracksStock: 1 })],
       ["client isActive", createBody({ isActive: false })],
       ["client tenantId", createBody({ tenantId: randomUUID() })],
     ];
@@ -624,6 +685,59 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
     const rows = auditsForTarget(booted, item.id);
     expect(rows).toHaveLength(1);
     expect(auditMeta(rows[0]).changedFields).toEqual(["taxRateId"]);
+  });
+
+  it("changes tracksStock on update only when the update supplies it", async () => {
+    // Created through HTTP so the by-kind default (SERVICE → false) applies.
+    const created = await supertest(booted.app.getHttpServer())
+      .post("/catalog")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(createBody({ kind: "SERVICE", name: "Bano medicado" }))
+      .expect(201);
+    const item = created.body as CatalogItemDto;
+    expect(item.tracksStock).toBe(false);
+
+    // An omitted flag changes nothing: the stored value must survive an update
+    // that never mentions the field.
+    const omitted = await supertest(booted.app.getHttpServer())
+      .put(`/catalog/${item.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ name: "Bano medicado (revisado)" })
+      .expect(200);
+    const omittedBody = omitted.body as CatalogItemDto;
+    expect(omittedBody.tracksStock).toBe(false);
+    expect(Object.keys(omittedBody).sort()).toEqual([...CATALOG_ITEM_RESPONSE_KEYS].sort());
+    const omittedAudit = auditsForTarget(booted, item.id);
+    expect(omittedAudit).toHaveLength(2); // the create row plus this update
+    expect(auditMeta(omittedAudit[1]).changedFields).toEqual(["name"]);
+
+    // A present flag flips it — staff-editable, BOTH directions.
+    const tracked = await supertest(booted.app.getHttpServer())
+      .put(`/catalog/${item.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ tracksStock: true })
+      .expect(200);
+    expect((tracked.body as CatalogItemDto).tracksStock).toBe(true);
+
+    const untrackedAgain = await supertest(booted.app.getHttpServer())
+      .put(`/catalog/${item.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ tracksStock: false })
+      .expect(200);
+    expect((untrackedAgain.body as CatalogItemDto).tracksStock).toBe(false);
+    expect(booted.db.tables.catalogItems.get(item.id)?.tracksStock).toBe(false);
+
+    // Each flip names its own field in the trail; no value ever reaches it.
+    const flips = auditsForTarget(booted, item.id);
+    expect(flips.map((row) => row.action)).toEqual([
+      "catalog_item.created",
+      "catalog_item.updated",
+      "catalog_item.updated",
+      "catalog_item.updated",
+    ]);
+    expect(auditMeta(flips[2]).changedFields).toEqual(["tracksStock"]);
+    expect(auditMeta(flips[3]).changedFields).toEqual(["tracksStock"]);
+    expect(JSON.stringify(flips[2].metadata)).not.toContain("true");
   });
 
   it("treats an explicit null pair as a clear and an absent field as untouched", async () => {
@@ -706,6 +820,8 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
       ["unsupported currency", { referencePriceAmount: "20.00", referencePriceCurrency: "ZZZ" }],
       ["negative amount", { referencePriceAmount: "-20.00", referencePriceCurrency: "PYG" }],
       ["unknown kind", { kind: "UNKNOWN" }],
+      ["text tracksStock", { tracksStock: "false" }],
+      ["null tracksStock", { tracksStock: null }],
       ["client isActive", { isActive: false }],
     ];
 

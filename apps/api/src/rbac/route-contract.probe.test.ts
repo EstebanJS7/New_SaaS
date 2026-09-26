@@ -7,6 +7,7 @@ import { enumerateRouteContracts, type RouteContractEntry } from "./route-enumer
 import { isPortalSurfacePath, isPublicExemptRoute } from "./route-contract.js";
 import { SCHEDULING_PERMISSIONS } from "../scheduling/appointment.permissions.js";
 import { CATALOG_PERMISSIONS } from "../catalog/catalog.permissions.js";
+import { INVENTORY_PERMISSIONS } from "../inventory/inventory.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -149,6 +150,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /catalog/:id",
   "PUT /catalog/:id",
   "POST /catalog/:id/deactivate",
+  // EPIC-10 W2 — inventory stock ledger (signed adjustment + tenant reads)
+  "GET /inventory/stock",
+  "GET /inventory/stock/movements",
+  "POST /inventory/stock/adjustments",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -268,6 +273,21 @@ const CATALOG_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /catalog/:id/deactivate": CATALOG_PERMISSIONS.deactivate,
 };
 
+/**
+ * EPIC-10 W2 inventory stock surface. Both reads MUST declare exactly
+ * `inventory.stock.read` and the adjustment command exactly
+ * `inventory.stock.adjust`; a route decorated with another inventory tier (or
+ * none) fails by name, which the permission-less 403 sweep cannot catch. There
+ * is deliberately NO update, PATCH or delete route on the ledger: a confirmed
+ * movement is immutable, and this map fails by name if such a route ever
+ * appears.
+ */
+const INVENTORY_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /inventory/stock": INVENTORY_PERMISSIONS.read,
+  "GET /inventory/stock/movements": INVENTORY_PERMISSIONS.read,
+  "POST /inventory/stock/adjustments": INVENTORY_PERMISSIONS.adjust,
+};
+
 describe("route-contract probe (deny-by-default)", () => {
   let booted: BootedTestApp;
   let inventory: RouteContractEntry[];
@@ -376,6 +396,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in CATALOG_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED CATALOG ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY inventory route to its single intended granular inventory.stock.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/inventory/stock"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(INVENTORY_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING INVENTORY ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG INVENTORY PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in INVENTORY_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED INVENTORY ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);

@@ -2,7 +2,7 @@
 type: module
 module: catalog-taxes
 status: implemented
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 # Module — Catalog and Taxes
@@ -15,8 +15,8 @@ platform-seeded and tenant read-only Paraguay tax-rate list (`EXEMPT 0%`,
 `IVA_5 5%`, `IVA_10 10%`), plus an optional informational reference price stored
 as an amount and an ISO 4217 currency pair. Removal is deactivation; hard delete
 does not exist. The module performs NO tax arithmetic, rounding, conversion or
-tax-included/excluded interpretation, and owns no stock, POS, invoice or fiscal
-state.
+tax-included/excluded interpretation, and owns no stock ledger, POS, invoice or
+fiscal state.
 
 Every catalog item is anchored to one tenant and is read or written only through
 the server-side request context. The reference price is a convenience value on
@@ -24,8 +24,10 @@ the item, never a sale, invoice, cash or fiscal total ([[DEC-010]]).
 
 ## Does Not Own
 
-- **Stock.** No stock movement, balance, flag or `tracksStock` column exists
-  here; the maintainer deferred that dimension to [[EPIC-10]] Inventory.
+- **The stock ledger.** No `StockMovement`, no `StockBalance` and no stock
+  arithmetic lives here. Catalog owns the `tracksStock` flag on the item and its
+  write path; [[EPIC-10]] Inventory owns the ledger that consumes it (see "Stock
+  tracking flag").
 - **POS, sales, payments, cash, invoices and fiscal documents** ([[EPIC-12]]
   onward). The module stores a rate reference and projects it; it never computes
   a percentage, applies a rate, rounds, converts or splits tax.
@@ -44,6 +46,8 @@ the item, never a sale, invoice, cash or fiscal total ([[DEC-010]]).
 - List the GLOBAL seeded tax-rate list; every entitled tenant reads the same
   three rows and no mutation route exists.
 - Filter the item list by `kind` and by `isActive`.
+- Default the per-item `tracksStock` flag by kind on create, and change it on
+  update, for the [[EPIC-10]] stock ledger.
 - An authenticated staff web surface at `/app/catalog` (list, read-only detail,
   create/edit, explicit deactivate) behind the allowlisted `/api/catalog` proxy.
 
@@ -56,10 +60,11 @@ the item, never a sale, invoice, cash or fiscal total ([[DEC-010]]).
 - `CatalogItem` — tenant-scoped aggregate: `id`, `tenantId`, `kind`, `name`,
   non-null `taxRateId` (`RESTRICT` FK to `TaxRate`), nullable
   `referencePriceAmount` `DECIMAL(14,2)`, nullable `referencePriceCurrency`
-  `VARCHAR(3)`, `isActive` (`true` by default), timestamps. Physical guarantees:
-  `@@unique([tenantId, id])`, a `RESTRICT` tenant FK, three `CHECK`s (pair,
-  non-negative amount, ISO 4217 shape) and a `BEFORE DELETE` trigger that raises
-  `restrict_violation`.
+  `VARCHAR(3)`, `isActive` (`true` by default), `tracksStock` (`true` by
+  default, backfilled by kind — see "Stock tracking flag"), timestamps. Physical
+  guarantees: `@@unique([tenantId, id])`, a `RESTRICT` tenant FK, three `CHECK`s
+  (pair, non-negative amount, ISO 4217 shape) and a `BEFORE DELETE` trigger that
+  raises `restrict_violation`.
 - `AuditLog` rows — one co-committed row per accepted mutation, described under
   "Audit".
 
@@ -144,6 +149,7 @@ Two contract details worth stating because clients depend on them:
 | `taxRateId`               | Required UUID, must resolve to a GLOBAL seeded rate | Omitted ⇒ unchanged; present ⇒ must resolve; explicit `null` ⇒ `400`     |
 | Reference price pair      | Both keys present with values, or both absent       | Omitted ⇒ unchanged; `null` **on both** ⇒ cleared; one key alone ⇒ `400` |
 | `isActive`                | Not accepted (`400`)                                | Not accepted (`400`) — deactivation is its own command                   |
+| `tracksStock`             | Optional boolean; omitted ⇒ the kind default        | Omitted ⇒ unchanged; present boolean ⇒ changed; `null` ⇒ `400`           |
 | `tenantId` / unknown keys | Rejected (`400`, `.strict()`)                       | Rejected (`400`, `.strict()`)                                            |
 
 - **A rate is mandatory and no rate-less state exists.** `taxRateId` is required
@@ -167,6 +173,31 @@ Two contract details worth stating because clients depend on them:
 - Rejected input is `400 VALIDATION_FAILED` and persists nothing. An unknown
   **or foreign-tenant** item id on read, update or deactivate is a
   byte-equivalent `404 NOT_FOUND` behind one shared message constant.
+
+## Stock tracking flag (`tracksStock`)
+
+`CatalogItem.tracksStock` (`tracks_stock`) is the EPIC-10 stock dimension: a
+manual boolean on the item stating whether the stock ledger accepts movements
+for it. Catalog owns the column and its write path; [[EPIC-10]] Inventory only
+reads it as a write-path gate.
+
+- Column: `BOOLEAN NOT NULL DEFAULT true`, with the schema default
+  `Boolean @default(true)` and a migration backfill by kind
+  (`SET tracks_stock = (kind <> 'SERVICE')`).
+- **Create defaults by kind, in the service and not in the database.**
+  `POST /catalog` accepts an optional `tracksStock`; when the caller omits it
+  the service writes `SERVICE` → `false` and `PRODUCT`/`MEDICATION`/`SUPPLY` →
+  `true`. The database default is deliberately never relied upon, because it
+  would silently make a new `SERVICE` a tracking item.
+- **An explicit value always wins**, in both directions: a stock-tracking
+  `SERVICE` and a non-tracking `PRODUCT` are both reachable on create.
+- **The flag is staff-editable.** `PUT /catalog/:id` accepts `tracksStock`; an
+  omitted key leaves the stored value untouched, a present boolean changes it,
+  and an explicit `null` is `400` because the column is `NOT NULL` and no third
+  "unset" state exists.
+- It is part of the allowlisted item DTO, so every read returns the stored value
+  rather than a re-derived rule. The staff browser toggle that surfaces it is a
+  separate follow-up; the API is the authority today.
 
 ## Canonical decimal representation
 
@@ -218,6 +249,9 @@ item change, carrying stable ids and field names only:
   "Verification").
 - Metadata is `{ schemaVersion, changedFields }` with `schemaVersion` `1`; no
   value, name, amount or currency is recorded.
+- `tracksStock` is named only when the caller actually supplied it: on create
+  the by-kind default is fully determined by the `kind` the same row records,
+  and on update the field is named exactly when the payload carried it.
 - **No catalog event is emitted.** Nothing reacts post-commit, and the audit row
   is the mutation's only side effect besides the item row.
 
@@ -282,6 +316,9 @@ new or changed link is validated against `isActive`.
 - **The reference price is informational.** Nothing in this module computes,
   sums, converts or rounds it, and no sale, invoice, cash or fiscal value is
   derived from it.
+- **The stock flag is explicit, never accidental.** Every create writes a
+  boolean derived from `kind` unless the caller overrides it, so the database
+  default can never make a new `SERVICE` track stock.
 
 ## Security / tenant rules
 
@@ -347,16 +384,18 @@ new or changed link is validated against `isActive`.
 - `packages/database/src/reference-seed.test.ts` — the three global rates and
   their `Decimal(5,2)` literals, the natural-key upserts with the `taxRates`
   count, and the identity-stable rerun.
-- `apps/api/src/catalog/catalog.repository.test.ts` — 11 tenant-isolation cases
+- `apps/api/src/catalog/catalog.repository.test.ts` — 12 tenant-isolation cases
   for the persistence seam (context-only tenant resolution, byte-equivalent
   foreign/unknown not-found, no implicit active predicate, soft idempotent
-  deactivation, no delete path).
-- `apps/api/src/catalog/catalog.integration.test.ts` — 18 HTTP cases over the
+  deactivation, the forwarded `tracksStock` flag, no delete path).
+- `apps/api/src/catalog/catalog.integration.test.ts` — 20 HTTP cases over the
   real guard chain: the `403`-persists-nothing sweep, the exact allowlisted key
   sets, both list filters, the unknown/malformed id `400`, the create and update
-  rejection sweeps, the pair `null`-clears/absent-untouched matrix, one
-  co-committed audit row per accepted mutation, idempotent deactivation, the
-  byte-equivalent cross-tenant `404` and the absence of a delete route.
+  rejection sweeps, the pair `null`-clears/absent-untouched matrix, the
+  `tracksStock` by-kind default with its explicit override on create and its
+  change on update, one co-committed audit row per accepted mutation, idempotent
+  deactivation, the byte-equivalent cross-tenant `404` and the absence of a
+  delete route.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — the pinned catalog route
   inventory and `CATALOG_PERMISSION_BY_ROUTE`.
 - `apps/api/src/scheduling/{appointment.dto,appointment.service,appointments.integration}.test.ts`

@@ -45,6 +45,10 @@ export interface TaxRateResponse {
  * Allowlisted CatalogItem response. `tenantId` is the CALLER's own tenant —
  * the same disclosure the Customer/Patient DTOs make — and the global rate
  * arrives as a nested read-only projection instead of a duplicated column.
+ *
+ * `tracksStock` is the EPIC-10 stock dimension: a plain manual boolean set by
+ * kind on create (`SERVICE` false, the physical kinds true) and editable by
+ * staff afterwards, so a caller can read back what the write path stored.
  */
 export interface CatalogItemResponse {
   readonly id: string;
@@ -57,6 +61,8 @@ export interface CatalogItemResponse {
   readonly referencePriceAmount: string | null;
   readonly referencePriceCurrency: string | null;
   readonly isActive: boolean;
+  /** Whether the item participates in the EPIC-10 stock ledger. */
+  readonly tracksStock: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

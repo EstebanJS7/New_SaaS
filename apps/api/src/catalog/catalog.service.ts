@@ -91,7 +91,23 @@ const CATALOG_UPDATE_FIELD_ORDER = [
   "taxRateId",
   "referencePriceAmount",
   "referencePriceCurrency",
+  "tracksStock",
 ] as const;
+
+/**
+ * The EPIC-10 by-kind default of {@link CatalogItemResponse.tracksStock}: the
+ * physical kinds (`PRODUCT`, `MEDICATION`, `SUPPLY`) participate in the ledger
+ * and only `SERVICE` does not. The same predicate the migration backfill used
+ * (`SET tracks_stock = (kind <> 'SERVICE')`), so a row created after the
+ * migration and a row backfilled by it agree.
+ *
+ * The default lives HERE, not in the database: the column's own default is
+ * `true`, which would silently make every new `SERVICE` a tracking item. The
+ * catalog create path therefore always writes an explicit value.
+ */
+function defaultTracksStockForKind(kind: CatalogItemKindDto): boolean {
+  return kind !== "SERVICE";
+}
 
 /**
  * Fixed scale of every decimal this boundary projects, in digits after the
@@ -156,12 +172,18 @@ function toCatalogItemResponse(
         : decimalToFixedScaleString(row.referencePriceAmount),
     referencePriceCurrency: row.referencePriceCurrency,
     isActive: row.isActive,
+    tracksStock: row.tracksStock,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
-/** Create payload: an absent reference-price pair is written as NULL/NULL. */
+/**
+ * Create payload: an absent reference-price pair is written as NULL/NULL, and
+ * an absent `tracksStock` is written as the by-kind default. The caller's
+ * explicit value always wins, so staff can create a non-tracking `PRODUCT` or a
+ * stock-tracking `SERVICE` when the business case calls for it.
+ */
 function buildCreateData(input: CreateCatalogItemInput): CatalogItemCreateData {
   return {
     kind: input.kind,
@@ -169,6 +191,7 @@ function buildCreateData(input: CreateCatalogItemInput): CatalogItemCreateData {
     taxRateId: input.taxRateId,
     referencePriceAmount: input.referencePriceAmount ?? null,
     referencePriceCurrency: input.referencePriceCurrency ?? null,
+    tracksStock: input.tracksStock ?? defaultTracksStockForKind(input.kind),
   };
 }
 
@@ -188,18 +211,26 @@ function buildUpdateData(input: UpdateCatalogItemInput): CatalogItemUpdateData {
   if (input.referencePriceCurrency !== undefined) {
     data.referencePriceCurrency = input.referencePriceCurrency;
   }
+  // Only a SUPPLIED flag is copied, so an omitted `tracksStock` leaves the
+  // stored value exactly as it was (that is what omitting it means).
+  if (input.tracksStock !== undefined) data.tracksStock = input.tracksStock;
   return data;
 }
 
 /**
  * Audit diff for a create: the field NAMES the caller actually set — never a
  * name, an amount or any other value. The reference-price pair is named only
- * when it carries a value (a create has nothing to clear).
+ * when it carries a value (a create has nothing to clear), and `tracksStock` is
+ * named only when the caller supplied it: the by-kind default is fully
+ * determined by `kind`, which every create already records.
  */
 function createChangedFields(input: CreateCatalogItemInput): string[] {
   const fields = ["kind", "name", "taxRateId"];
   if (input.referencePriceAmount !== undefined && input.referencePriceAmount !== null) {
     fields.push("referencePriceAmount", "referencePriceCurrency");
+  }
+  if (input.tracksStock !== undefined) {
+    fields.push("tracksStock");
   }
   return fields;
 }

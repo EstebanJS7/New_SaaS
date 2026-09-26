@@ -151,6 +151,8 @@ model Tenant {
   appointments                Appointment[]
   portalBookingRequests       PortalBookingRequest[]
   catalogItems                CatalogItem[]
+  stockMovements              StockMovement[]
+  stockBalances               StockBalance[]
 
   @@map("tenant")
 }
@@ -1206,9 +1208,10 @@ model PortalBookingRequest {
 // CatalogItem aggregate is tenant-scoped and references exactly one global rate
 // through a RESTRICT foreign key. The optional reference price is an
 // amount/currency pair (DEC-010) and is informational only: no sale, invoice,
-// cash or fiscal value is derived from it. There is no stock flag, SKU, barcode,
-// category, unit or branch column here — EPIC-10 owns stock and EPIC-12 owns
-// POS. Data classification: catalog configuration is INTERNAL.
+// cash or fiscal value is derived from it. EPIC-10 WU1 (CAT-006) added the ONE
+// stock dimension — `tracksStock`, defaulted by kind — while SKU, barcode,
+// category, unit and branch stay absent (EPIC-12 owns POS). Data
+// classification: catalog configuration is INTERNAL.
 // ---------------------------------------------------------------------------
 
 /// Catalog item kind (PRD §15). Values are pinned; evolve additively only.
@@ -1273,6 +1276,13 @@ model CatalogItem {
 
   isActive Boolean @default(true) @map("is_active")
 
+  /// EPIC-10 WU1 stock dimension (PRD §16). NOT NULL with a database default of
+  /// true; the inventory migration backfills existing rows BY KIND
+  /// (PRODUCT/MEDICATION/SUPPLY true, SERVICE false) and the write path sets it
+  /// explicitly by kind. It is the only stock dimension on the catalog — no
+  /// SKU, barcode, category, unit or branch column exists.
+  tracksStock Boolean @default(true) @map("tracks_stock")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1283,14 +1293,114 @@ model CatalogItem {
   /// WU4). No catalog column is added or changed by that linkage.
   appointments Appointment[]
 
+  /// EPIC-10 ledger back-references: the immutable movements and the balance
+  /// projection that belong to this item.
+  stockMovements StockMovement[]
+  stockBalances  StockBalance[]
+
   /// Tenant-ownership key: target of the composite service FK from Appointment
-  /// (EPIC-09 WU4), so a service item can only be referenced by an appointment
-  /// of the SAME tenant.
+  /// (EPIC-09 WU4) and of the composite item FKs from the EPIC-10 stock ledger,
+  /// so a service item or a stock row can only be referenced by a row of the
+  /// SAME tenant.
   @@unique([tenantId, id])
   @@index([tenantId])
   @@index([tenantId, isActive])
   @@index([taxRateId])
   @@map("catalog_item")
+}
+
+// ---------------------------------------------------------------------------
+// Inventory ledger (EPIC-10 WU1 CAT-006 data foundation). Tenant-scoped,
+// ledger-based stock per PRD §16: `StockMovement` is the auditable source of
+// truth and `StockBalance` is a transactional projection, one row per
+// (tenant, item). Movements are created confirmed and signed (inputs positive,
+// outputs negative), with a mandatory reason and a non-zero quantity CHECK.
+// Immutability is a database property: the migration rejects DELETE with a
+// trigger and declares no UPDATE semantics, so a correction is a compensating
+// movement linked through the reserved `reversesMovementId` self-FK (the
+// reversal command lands in a later slice). There is no location, branch or
+// warehouse dimension and no arithmetic beyond the quantity CHECKs; the
+// negative-stock policy is a fixed BLOCK in the application layer. Data
+// classification: stock quantities and adjustment reasons are INTERNAL; logs
+// and audit carry stable IDs only.
+// ---------------------------------------------------------------------------
+
+/// Stock movement kind (PRD §16). This slice ships ONLY the standalone signed
+/// adjustment; PURCHASE, SALE, TRANSFER_* and the *_REVERSAL compensations
+/// belong to EPIC-11/EPIC-12 and are added additively then. Evolve additively
+/// only.
+enum StockMovementType {
+  ADJUSTMENT
+
+  @@map("stock_movement_type")
+}
+
+/// Immutable stock ledger entry (PRD §16). `quantity` is signed — inputs
+/// positive, outputs negative — with a database CHECK rejecting zero, and
+/// `reason` is mandatory. Tenant ownership is carried by the composite
+/// `(tenant_id, catalog_item_id)` FK to `catalog_item`, so a movement can only
+/// reference an item of the SAME tenant. `reversesMovementId` is the reserved
+/// self-reference a future compensating movement uses; nothing populates it in
+/// this slice.
+model StockMovement {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String            @map("tenant_id") @db.Uuid
+  catalogItemId String            @map("catalog_item_id") @db.Uuid
+  type          StockMovementType
+
+  /// Signed quantity: positive is an input, negative an output. NOT NULL with a
+  /// database CHECK rejecting zero, so a movement always moves stock.
+  quantity Decimal @db.Decimal(10, 3)
+
+  reason String
+
+  /// Reserved compensating link: a reversal points at the movement it
+  /// compensates. Nullable — every adjustment shipped in this slice carries
+  /// NULL. The composite self-FK keeps the referenced movement in the same
+  /// tenant.
+  reversesMovementId String? @map("reverses_movement_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the CatalogItem must be in the SAME tenant.
+  catalogItem CatalogItem @relation(fields: [tenantId, catalogItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership self-FK for the compensating link (reserved).
+  reversesMovement StockMovement?  @relation("StockMovementReversal", fields: [tenantId, reversesMovementId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  reversals        StockMovement[] @relation("StockMovementReversal")
+
+  /// Tenant-ownership key: target of the composite item FK and of the
+  /// compensating self-FK.
+  @@unique([tenantId, id])
+  @@index([tenantId, catalogItemId])
+  @@index([tenantId, reversesMovementId])
+  @@map("stock_movement")
+}
+
+/// Transactional stock projection (PRD §16): exactly one row per (tenant,
+/// item), updated in the SAME transaction as the movements that change it.
+/// `quantity` is non-negative by database CHECK — under the fixed BLOCK policy
+/// the projection never goes below zero. It is a projection, never the source
+/// of truth: the ledger owns the history.
+model StockBalance {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String  @map("tenant_id") @db.Uuid
+  catalogItemId String  @map("catalog_item_id") @db.Uuid
+  quantity      Decimal @db.Decimal(10, 3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the CatalogItem must be in the SAME tenant.
+  catalogItem CatalogItem @relation(fields: [tenantId, catalogItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Exactly one balance row per (tenant, item).
+  @@unique([tenantId, catalogItemId])
+  @@map("stock_balance")
 }
 
 // ---------------------------------------------------------------------------

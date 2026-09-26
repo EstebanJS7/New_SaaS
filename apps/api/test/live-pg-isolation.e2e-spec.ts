@@ -17,6 +17,7 @@ import { createApiLogger } from "../src/common/http/api-logger.factory.js";
 import { createFastifyAdapter } from "../src/common/http/fastify-adapter.factory.js";
 import { RequestContextService } from "../src/context/request-context.service.js";
 import { PermissionResolver } from "../src/rbac/permission-resolver.service.js";
+import { stockSerializationLockKey } from "../src/inventory/inventory.repository.js";
 import {
   AppointmentService,
   type AppointmentPrisma,
@@ -48,6 +49,9 @@ const CLINICAL_NOT_FOUND_REQUEST_ID = "live-pg-clinical-not-found-proof";
 
 /** Server-owned request id pinned on every catalog cross-tenant miss. */
 const CATALOG_NOT_FOUND_REQUEST_ID = "live-pg-catalog-not-found-proof";
+
+/** Server-owned request id pinned on every inventory cross-tenant miss. */
+const INVENTORY_NOT_FOUND_REQUEST_ID = "live-pg-inventory-not-found-proof";
 
 interface CustomerDto {
   id: string;
@@ -150,6 +154,30 @@ interface ClinicalEncounterDto {
   updatedAt: string;
 }
 
+/** Allowlisted staff StockMovement DTO (EPIC-10 W2 contract). */
+interface StockMovementDto {
+  id: string;
+  tenantId: string;
+  catalogItemId: string;
+  type: "ADJUSTMENT";
+  quantity: string;
+  reason: string;
+  reversesMovementId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Allowlisted staff StockBalance DTO (EPIC-10 W2 contract). */
+interface StockBalanceDto {
+  id: string;
+  tenantId: string;
+  catalogItemId: string;
+  item: { name: string; kind: "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY" };
+  quantity: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Exact allowlisted key set of the staff encounter response DTO. */
 const CLINICAL_ENCOUNTER_DTO_KEYS = [
   "amendmentReason",
@@ -199,6 +227,33 @@ const CATALOG_ITEM_DTO_KEYS = [
   "tenantId",
   "updatedAt",
 ].sort();
+
+/** Exact allowlisted key set of one stock-movement response DTO. */
+const STOCK_MOVEMENT_DTO_KEYS = [
+  "catalogItemId",
+  "createdAt",
+  "id",
+  "quantity",
+  "reason",
+  "reversesMovementId",
+  "tenantId",
+  "type",
+  "updatedAt",
+].sort();
+
+/** Exact allowlisted key set of one stock-balance response DTO. */
+const STOCK_BALANCE_DTO_KEYS = [
+  "catalogItemId",
+  "createdAt",
+  "id",
+  "item",
+  "quantity",
+  "tenantId",
+  "updatedAt",
+].sort();
+
+/** Exact allowlisted key set of the nested balance item projection. */
+const STOCK_ITEM_PROJECTION_KEYS = ["kind", "name"].sort();
 
 /** Exact allowlisted key set of one row of the GLOBAL rate list. */
 const TAX_RATE_DTO_KEYS = ["code", "id", "name", "rate"].sort();
@@ -3750,6 +3805,621 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(diffs.filter((diff) => diff.includes("isActive"))).toHaveLength(1);
       expect(diffs.filter((diff) => diff.length === 0)).toHaveLength(1);
       expect(await prisma.catalogItem.count({ where: { id: raceItemId } })).toBe(1);
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-10 W3 live-PostgreSQL evidence (CAT-006/CAT-007 closure, task W3).
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP, real row locks and the migration's real DDL — what the in-memory
+   * boundary cannot represent:
+   *   1. a signed adjustment co-commits ONE immutable movement, the exact
+   *      projection and exactly ONE audit row;
+   *   2. the fixed `BLOCK` policy persists nothing when it rejects, and accepts
+   *      an output that lands exactly on zero;
+   *   3. the `BLOCK` race is decided by a PROVEN database overlap, admits
+   *      exactly one output and never drives the balance negative;
+   *   4. immutability and the non-negative projection hold against RAW SQL
+   *      because the trigger and the CHECKs are real;
+   *   5. another tenant's item id is a byte-equivalent 404 with the owner's
+   *      ledger untouched.
+   *
+   * The ledger is the source of truth, so every acceptance also compares the
+   * projection with the raw SIGNED sum of its movements: a lost update that
+   * left the balance non-negative but diverged from the ledger would fail here.
+   */
+  describe("EPIC-10 inventory application-path isolation", () => {
+    /** Global SEED-owned EXEMPT rate, the catalog precondition for an item. */
+    let exemptRateId: string;
+    /** Tenant A item funded by the first adjustment; reused by the raw-SQL probe. */
+    let stockedItemAId: string;
+    /** First movement insert of that item: the immutability probe target. */
+    let openingMovementAId: string;
+    /** The single projection row of that item: the balance CHECK probe target. */
+    let openingBalanceAId: string;
+    /** Tenant B item whose id tenant A must never resolve. */
+    let foreignItemBId: string;
+    /** Tenant B's own ledger row for that item. */
+    let foreignMovementBId: string;
+
+    /** Creates a tenant item through the REAL catalog command (by-kind tracking). */
+    const createStockedItem = async (cookie: string, name: string): Promise<string> => {
+      const created = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", cookie)
+        .send({ kind: "PRODUCT", name, taxRateId: exemptRateId })
+        .expect(201);
+      return (created.body as { id: string }).id;
+    };
+
+    /** One SIGNED adjustment over real HTTP, with a pinned correlation id. */
+    const adjust = (
+      cookie: string,
+      catalogItemId: string,
+      quantity: string,
+      requestId: string,
+      reason = "Live adjustment"
+    ) =>
+      supertest(serverUrl)
+        .post("/inventory/stock/adjustments")
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .send({ catalogItemId, quantity, reason });
+
+    /**
+     * Raw `DECIMAL(10,3)` column text of one item's projection, or `null` when
+     * the item has no projection row. The stored scale is read from PostgreSQL
+     * itself, so a padded DTO can never masquerade as the stored value.
+     */
+    const rawBalanceText = async (
+      tenantId: string,
+      catalogItemId: string
+    ): Promise<string | null> => {
+      const rows = await prisma.$queryRaw<{ quantity: string }[]>`
+        SELECT "quantity"::text AS quantity FROM "stock_balance"
+        WHERE "tenant_id" = ${tenantId}::uuid AND "catalog_item_id" = ${catalogItemId}::uuid
+      `;
+      return rows[0]?.quantity ?? null;
+    };
+
+    /** Raw SIGNED sum of one item's movements at the projection's exact scale. */
+    const rawLedgerSum = async (tenantId: string, catalogItemId: string): Promise<string> => {
+      const rows = await prisma.$queryRaw<{ total: string }[]>`
+        SELECT COALESCE(sum("quantity"), 0)::numeric(10,3)::text AS total
+        FROM "stock_movement"
+        WHERE "tenant_id" = ${tenantId}::uuid AND "catalog_item_id" = ${catalogItemId}::uuid
+      `;
+      return rows[0]?.total ?? "0.000";
+    };
+
+    beforeAll(async () => {
+      // The rate row is SEED-owned, so resolving it proves the reference seed
+      // really ran against this database.
+      const exempt = await prisma.taxRate.findUnique({ where: { code: "EXEMPT" } });
+      if (!exempt) {
+        throw new Error("Reference seed did not create the global EXEMPT tax rate");
+      }
+      exemptRateId = exempt.id;
+
+      // Tenant B's own stocked item, funded by tenant B's own command: the
+      // cross-tenant probes below need a REAL foreign ledger to leave intact.
+      foreignItemBId = await createStockedItem(ownerBCookie, "Live Foreign Stocked Item");
+      const funded = await adjust(
+        ownerBCookie,
+        foreignItemBId,
+        "99.000",
+        "live-pg-inventory-foreign-fund",
+        "Foreign opening count"
+      ).expect(201);
+      foreignMovementBId = (funded.body as StockMovementDto).id;
+    }, 30_000);
+
+    it("creates one immutable movement, moves the balance to the exact quantity and appends exactly one co-committed audit row per signed adjustment", async () => {
+      const itemId = await createStockedItem(ownerACookie, "Live Gasa estéril");
+      stockedItemAId = itemId;
+      const inputRequestId = "live-pg-inventory-adjust-input";
+      const movementsBefore = await prisma.stockMovement.count();
+      const balancesBefore = await prisma.stockBalance.count();
+      const auditsBefore = await prisma.auditLog.count();
+
+      // A POSITIVE quantity is an input.
+      const input = await adjust(
+        ownerACookie,
+        itemId,
+        "10.000",
+        inputRequestId,
+        "Live opening count"
+      ).expect(201);
+      const body = input.body as StockMovementDto;
+      expect(Object.keys(body).sort()).toEqual(STOCK_MOVEMENT_DTO_KEYS);
+      expect(body.tenantId).toBe(tenantAId);
+      expect(body.catalogItemId).toBe(itemId);
+      expect(body.type).toBe("ADJUSTMENT");
+      expect(body.quantity).toBe("10.000");
+      expect(body.reason).toBe("Live opening count");
+      // The reserved compensating link is never populated in this slice.
+      expect(body.reversesMovementId).toBeNull();
+      // No Prisma column name crosses the HTTP boundary.
+      expect(input.text).not.toContain("catalog_item_id");
+      expect(input.text).not.toContain("reverses_movement_id");
+
+      // The movement is CREATED CONFIRMED: the ledger has no draft/status
+      // column at all, so a movement cannot represent an unconfirmed state.
+      const statusColumn = await prisma.$queryRaw<{ column_name: string }[]>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'stock_movement' AND column_name = 'status'
+      `;
+      expect(statusColumn).toEqual([]);
+
+      openingMovementAId = body.id;
+      const rawMovement = await prisma.$queryRaw<
+        { quantity: string; movement_type: string; reverses: string | null }[]
+      >`
+        SELECT "quantity"::text AS quantity, "type"::text AS movement_type,
+               "reverses_movement_id"::text AS reverses
+        FROM "stock_movement" WHERE "id" = ${body.id}::uuid
+      `;
+      // Exact stored DECIMAL(10,3) text: the column holds the submitted value.
+      expect(rawMovement).toEqual([
+        { quantity: "10.000", movement_type: "ADJUSTMENT", reverses: null },
+      ]);
+
+      // The projection is the ledger's sum, stored at the same exact scale.
+      expect(await rawBalanceText(tenantAId, itemId)).toBe("10.000");
+      expect(await rawLedgerSum(tenantAId, itemId)).toBe("10.000");
+      const balanceRow = await prisma.stockBalance.findFirst({
+        where: { tenantId: tenantAId, catalogItemId: itemId },
+      });
+      expect(balanceRow).not.toBeNull();
+      openingBalanceAId = balanceRow!.id;
+      // ONE row per (tenant, item): the upsert target, never an accumulation.
+      expect(
+        await prisma.stockBalance.count({ where: { tenantId: tenantAId, catalogItemId: itemId } })
+      ).toBe(1);
+
+      // Exactly one co-committed audit row carrying stable ids and field NAMES.
+      const audit = await prisma.auditLog.findMany({ where: { requestId: inputRequestId } });
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({
+        action: "stock_movement.created",
+        targetType: "stock_movement",
+        targetId: body.id,
+        tenantId: tenantAId,
+      });
+      const metadata = audit[0].metadata as { schemaVersion: number; changedFields: string[] };
+      expect(metadata.schemaVersion).toBe(1);
+      expect(metadata.changedFields).toEqual(["quantity", "reason"]);
+      // The reason VALUE and the quantity VALUE never reach the trail.
+      const serializedMetadata = JSON.stringify(metadata);
+      expect(serializedMetadata).not.toContain("Live opening count");
+      expect(serializedMetadata).not.toContain("10.000");
+
+      // The command's complete durable side effect: one movement, one
+      // projection row and ONE audit row above the pre-command counts.
+      expect(await prisma.stockMovement.count()).toBe(movementsBefore + 1);
+      expect(await prisma.stockBalance.count()).toBe(balancesBefore + 1);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+
+      // The read path projects the exact fixed-scale balance with the item
+      // identity through the allowlisted DTO.
+      const listed = await supertest(serverUrl)
+        .get("/inventory/stock")
+        .set("Cookie", ownerACookie)
+        .expect(200);
+      const listedRow = (listed.body as StockBalanceDto[]).find(
+        (entry) => entry.catalogItemId === itemId
+      );
+      expect(listedRow).toBeDefined();
+      expect(Object.keys(listedRow ?? {}).sort()).toEqual(STOCK_BALANCE_DTO_KEYS);
+      expect(Object.keys(listedRow?.item ?? {}).sort()).toEqual(STOCK_ITEM_PROJECTION_KEYS);
+      expect(listedRow?.quantity).toBe("10.000");
+      expect(listedRow?.item).toEqual({ name: "Live Gasa estéril", kind: "PRODUCT" });
+
+      // A NEGATIVE quantity is an output and moves the balance back.
+      const outputRequestId = "live-pg-inventory-adjust-output";
+      const output = await adjust(
+        ownerACookie,
+        itemId,
+        "-4.000",
+        outputRequestId,
+        "Live consumption"
+      ).expect(201);
+      const outputBody = output.body as StockMovementDto;
+      expect(outputBody.quantity).toBe("-4.000");
+      expect(outputBody.reason).toBe("Live consumption");
+      expect(outputBody.reversesMovementId).toBeNull();
+      expect(await rawBalanceText(tenantAId, itemId)).toBe("6.000");
+      expect(await rawLedgerSum(tenantAId, itemId)).toBe("6.000");
+
+      // Two movements, ONE projection row, two audit rows: the second command
+      // appended its own trail entry and rewrote no ledger row.
+      expect(await prisma.stockMovement.count({ where: { catalogItemId: itemId } })).toBe(2);
+      expect(
+        await prisma.stockBalance.count({ where: { tenantId: tenantAId, catalogItemId: itemId } })
+      ).toBe(1);
+      expect(await prisma.auditLog.count({ where: { requestId: outputRequestId } })).toBe(1);
+      const stillRaw = await prisma.$queryRaw<
+        { quantity: string; movement_type: string; reverses: string | null }[]
+      >`
+        SELECT "quantity"::text AS quantity, "type"::text AS movement_type,
+               "reverses_movement_id"::text AS reverses
+        FROM "stock_movement" WHERE "id" = ${openingMovementAId}::uuid
+      `;
+      expect(stillRaw).toEqual(rawMovement);
+
+      // The immutable ledger keeps the SIGN of every entry.
+      const signed = await prisma.$queryRaw<{ quantity: string }[]>`
+        SELECT "quantity"::text AS quantity FROM "stock_movement"
+        WHERE "tenant_id" = ${tenantAId}::uuid AND "catalog_item_id" = ${itemId}::uuid
+      `;
+      expect(signed.map((row) => row.quantity).sort()).toEqual(["-4.000", "10.000"]);
+    }, 30_000);
+
+    it("persists nothing when the fixed BLOCK policy rejects, and accepts an output that lands exactly on zero", async () => {
+      // From an EMPTY balance even one unit out is rejected.
+      const emptyItemId = await createStockedItem(ownerACookie, "Live Sin stock");
+      const movementsBefore = await prisma.stockMovement.count();
+      const balancesBefore = await prisma.stockBalance.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const fromZeroRequestId = "live-pg-inventory-block-empty";
+
+      const fromZero = await adjust(
+        ownerACookie,
+        emptyItemId,
+        "-1.000",
+        fromZeroRequestId,
+        "Sin stock"
+      ).expect(409);
+      expect((fromZero.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((fromZero.body as { error: { message: string } }).error.message).toBe(
+        "The adjustment would drive the stock balance below zero."
+      );
+      // The rejection rolled back: no projection row, no movement, no audit.
+      expect(await rawBalanceText(tenantAId, emptyItemId)).toBeNull();
+      expect(await prisma.stockMovement.count()).toBe(movementsBefore);
+      expect(await prisma.stockBalance.count()).toBe(balancesBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId: fromZeroRequestId } })).toBe(0);
+
+      // One thousandth past a funded balance is still an overdraw: the rule is
+      // exact Decimal(10,3) arithmetic, not a coerced float.
+      const fundedItemId = await createStockedItem(ownerACookie, "Live Propofol 1%");
+      await adjust(
+        ownerACookie,
+        fundedItemId,
+        "5.000",
+        "live-pg-inventory-block-fund",
+        "Live funding"
+      ).expect(201);
+      const fundedMovements = await prisma.stockMovement.count();
+      const fundedBalances = await prisma.stockBalance.count();
+      const fundedAudits = await prisma.auditLog.count();
+
+      const overdrawRequestId = "live-pg-inventory-block-overdraw";
+      const overdraw = await adjust(
+        ownerACookie,
+        fundedItemId,
+        "-5.001",
+        overdrawRequestId,
+        "One thousandth past"
+      ).expect(409);
+      expect((overdraw.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect(await rawBalanceText(tenantAId, fundedItemId)).toBe("5.000");
+      expect(await rawLedgerSum(tenantAId, fundedItemId)).toBe("5.000");
+      expect(await prisma.stockMovement.count()).toBe(fundedMovements);
+      expect(await prisma.stockBalance.count()).toBe(fundedBalances);
+      expect(await prisma.auditLog.count()).toBe(fundedAudits);
+      expect(await prisma.auditLog.count({ where: { requestId: overdrawRequestId } })).toBe(0);
+
+      // Exactly zero is NOT negative: an output that empties the balance is
+      // accepted and the projection row SURVIVES at zero.
+      const toZeroRequestId = "live-pg-inventory-block-to-zero";
+      await adjust(ownerACookie, fundedItemId, "-5.000", toZeroRequestId, "Ajuste a cero").expect(
+        201
+      );
+      expect(await rawBalanceText(tenantAId, fundedItemId)).toBe("0.000");
+      expect(await rawLedgerSum(tenantAId, fundedItemId)).toBe("0.000");
+      expect(
+        await prisma.stockBalance.count({
+          where: { tenantId: tenantAId, catalogItemId: fundedItemId },
+        })
+      ).toBe(1);
+      expect(await prisma.auditLog.count({ where: { requestId: toZeroRequestId } })).toBe(1);
+      // Still never negative anywhere, and the ledger sum equals the projection.
+      const negative = await prisma.$queryRaw<{ rows: number }[]>`
+        SELECT count(*)::int AS rows FROM "stock_balance" WHERE "quantity" < 0
+      `;
+      expect(negative).toEqual([{ rows: 0 }]);
+    }, 30_000);
+
+    it("admits exactly one of two concurrent overdrawing outputs under a proven transaction-scoped overlap", async () => {
+      const raceItemId = await createStockedItem(ownerACookie, "Live Concurrent Overdraw");
+      await adjust(
+        ownerACookie,
+        raceItemId,
+        "10.000",
+        "live-pg-inventory-race-fund",
+        "Live race funding"
+      ).expect(201);
+
+      const movementsBefore = await prisma.stockMovement.count({
+        where: { catalogItemId: raceItemId },
+      });
+      const firstRequestId = "live-pg-inventory-block-race-1";
+      const secondRequestId = "live-pg-inventory-block-race-2";
+
+      // Deterministic overlap: a dedicated transaction holds the SAME
+      // transaction-scoped advisory lock the command takes for this
+      // `(tenant, item)`, so BOTH outputs park on that exact key before either
+      // one can read the projection. `waitForAdvisoryLockWaiters` matches the
+      // reconstructed 64-bit key, so an unrelated lock waiter can never satisfy
+      // it: the interleaving is decided by the database, never by wall-clock
+      // timing.
+      const lockKey = stockSerializationLockKey(tenantAId, raceItemId);
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))::text`;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+
+      const racers = [
+        adjust(ownerACookie, raceItemId, "-7.000", firstRequestId, "Race output one").then(
+          (response) => response
+        ),
+        adjust(ownerACookie, raceItemId, "-7.000", secondRequestId, "Race output two").then(
+          (response) => response
+        ),
+      ];
+
+      try {
+        await waitForAdvisoryLockWaiters(prisma, lockKey, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      // Regression for the lost update this case FIRST exposed (both outputs
+      // returned 201, the projection ended at "3.000" against a ledger sum of
+      // "-4.000"): the per-`(tenant, item)` advisory lock now makes the `BLOCK`
+      // pre-check and the absolute balance write ONE serialized
+      // read-modify-write, so exactly one output commits and the projection
+      // stays the ledger's signed sum. The overlap above is still proven by the
+      // database, not by timing.
+      const admitted = responses.filter((response) => response.status === 201);
+      const rejected = responses.filter((response) => response.status === 409);
+      expect(admitted).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0].body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((rejected[0].body as { error: { message: string } }).error.message).toBe(
+        "The adjustment would drive the stock balance below zero."
+      );
+      const admittedMovementId = (admitted[0].body as StockMovementDto).id;
+
+      // The projection is the ledger's SIGNED sum: exactly one output
+      // committed, so the balance is 3.000 and the loser left NO movement and
+      // NO audit row behind. A lost update would leave the projection
+      // non-negative but DIFFERENT from the ledger sum, so this comparison is
+      // what makes the atomicity claim real.
+      expect(await rawBalanceText(tenantAId, raceItemId)).toBe("3.000");
+      expect(await rawLedgerSum(tenantAId, raceItemId)).toBe("3.000");
+      expect(await prisma.stockMovement.count({ where: { catalogItemId: raceItemId } })).toBe(
+        movementsBefore + 1
+      );
+      expect(
+        await prisma.stockBalance.count({
+          where: { tenantId: tenantAId, catalogItemId: raceItemId },
+        })
+      ).toBe(1);
+      const raceAudits = await prisma.auditLog.findMany({
+        where: { requestId: { in: [firstRequestId, secondRequestId] } },
+      });
+      expect(raceAudits).toHaveLength(1);
+      expect(raceAudits[0]).toMatchObject({
+        action: "stock_movement.created",
+        targetType: "stock_movement",
+        targetId: admittedMovementId,
+        tenantId: tenantAId,
+      });
+      // The balance was never driven negative at any point.
+      const negative = await prisma.$queryRaw<{ rows: number }[]>`
+        SELECT count(*)::int AS rows FROM "stock_balance" WHERE "quantity" < 0
+      `;
+      expect(negative).toEqual([{ rows: 0 }]);
+    }, 30_000);
+
+    it("rejects a raw DELETE at the immutability trigger and a negative projection at the balance CHECK", async () => {
+      // The deletion this slice can never issue is refused by the migration's
+      // BEFORE DELETE row trigger, and the movement physically survives.
+      const movementBefore = await prisma.stockMovement.findUnique({
+        where: { id: openingMovementAId },
+      });
+      expect(movementBefore).not.toBeNull();
+
+      const triggers = await prisma.$queryRaw<
+        { tgname: string; tgtype: number; proname: string }[]
+      >`
+        SELECT t.tgname, t.tgtype::int AS tgtype, p.proname
+        FROM pg_trigger AS t
+        JOIN pg_class AS c ON c.oid = t.tgrelid
+        JOIN pg_proc AS p ON p.oid = t.tgfoid
+        WHERE c.relname = 'stock_movement' AND NOT t.tgisinternal
+        ORDER BY t.tgname
+      `;
+      expect(triggers).toHaveLength(1);
+      expect(triggers[0].tgname).toBe("stock_movement_no_delete_trigger");
+      expect(triggers[0].proname).toBe("stock_movement_no_delete");
+      // BEFORE (2) | DELETE (8) | ROW (1), and NOT UPDATE (16): the ledger
+      // declares no update semantics of any kind.
+      expect(triggers[0].tgtype & 1).toBe(1);
+      expect(triggers[0].tgtype & 2).toBe(2);
+      expect(triggers[0].tgtype & 8).toBe(8);
+      expect(triggers[0].tgtype & 16).toBe(0);
+
+      await expect(
+        prisma.$executeRaw`DELETE FROM "stock_movement" WHERE "id" = ${openingMovementAId}::uuid`
+      ).rejects.toThrow(/cannot be hard-deleted/);
+      expect(await prisma.stockMovement.findUnique({ where: { id: openingMovementAId } })).toEqual(
+        movementBefore
+      );
+
+      // The balance CHECK is the last line of defence: raw SQL cannot drive an
+      // existing projection negative...
+      await expect(
+        prisma.$executeRaw`UPDATE "stock_balance" SET "quantity" = -0.001 WHERE "id" = ${openingBalanceAId}::uuid`
+      ).rejects.toThrow(/stock_balance_quantity_non_negative/);
+      expect(await rawBalanceText(tenantAId, stockedItemAId)).toBe("6.000");
+
+      // ...nor insert a negative projection row for another item.
+      const checkItemId = await createStockedItem(ownerACookie, "Live CHECK probe");
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO "stock_balance" ("tenant_id", "catalog_item_id", "quantity")
+          VALUES (${tenantAId}::uuid, ${checkItemId}::uuid, -1.000)
+        `
+      ).rejects.toThrow(/stock_balance_quantity_non_negative/);
+      expect(await rawBalanceText(tenantAId, checkItemId)).toBeNull();
+
+      // The signed-quantity CHECK is real too: a zero movement is not a movement.
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO "stock_movement" ("tenant_id", "catalog_item_id", "type", "quantity", "reason")
+          VALUES (${tenantAId}::uuid, ${checkItemId}::uuid, 'ADJUSTMENT'::stock_movement_type, 0.000, 'Zero probe')
+        `
+      ).rejects.toThrow(/stock_movement_quantity_non_zero/);
+      expect(await prisma.stockMovement.count({ where: { catalogItemId: checkItemId } })).toBe(0);
+
+      // The composite tenant-ownership FK is real as well: a raw movement can
+      // never reference another tenant's item, whatever the application does.
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO "stock_movement" ("tenant_id", "catalog_item_id", "type", "quantity", "reason")
+          VALUES (${tenantAId}::uuid, ${foreignItemBId}::uuid, 'ADJUSTMENT'::stock_movement_type, 1.000, 'Composite FK probe')
+        `
+      ).rejects.toThrow(/stock_movement_tenant_id_catalog_item_id_fkey/);
+      expect(await prisma.stockMovement.count({ where: { catalogItemId: checkItemId } })).toBe(0);
+    }, 30_000);
+
+    it("masks another tenant's item id as a byte-equivalent 404 on write and read, leaving the owner's ledger untouched", async () => {
+      const foreignMovementsBefore = await prisma.stockMovement.count({
+        where: { tenantId: tenantBId },
+      });
+      const foreignBalancesBefore = await prisma.stockBalance.count({
+        where: { tenantId: tenantBId },
+      });
+      const foreignAuditsBefore = await prisma.auditLog.count({ where: { tenantId: tenantBId } });
+      const ownMovementsBefore = await prisma.stockMovement.count({
+        where: { tenantId: tenantAId },
+      });
+      const ownAuditsBefore = await prisma.auditLog.count({ where: { tenantId: tenantAId } });
+      const foreignBalanceBefore = await prisma.stockBalance.findFirst({
+        where: { tenantId: tenantBId, catalogItemId: foreignItemBId },
+      });
+
+      const cases = [
+        {
+          label: "POST /inventory/stock/adjustments",
+          request: () =>
+            supertest(serverUrl)
+              .post("/inventory/stock/adjustments")
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", INVENTORY_NOT_FOUND_REQUEST_ID)
+              .send({ catalogItemId: foreignItemBId, quantity: "1.000", reason: "Probe" }),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .post("/inventory/stock/adjustments")
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", INVENTORY_NOT_FOUND_REQUEST_ID)
+              .send({ catalogItemId: randomUUID(), quantity: "1.000", reason: "Probe" }),
+        },
+        {
+          label: "GET /inventory/stock/movements?catalogItemId",
+          request: () =>
+            supertest(serverUrl)
+              .get(`/inventory/stock/movements?catalogItemId=${foreignItemBId}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", INVENTORY_NOT_FOUND_REQUEST_ID),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .get(`/inventory/stock/movements?catalogItemId=${randomUUID()}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", INVENTORY_NOT_FOUND_REQUEST_ID),
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await scenario.request().expect(404);
+        const missingResponse = await scenario.missingRequest().expect(404);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
+        // Byte-equivalence: a foreign tenant UUID is indistinguishable from a
+        // non-existent one, body and echoed correlation alike.
+        expect(response.text, scenario.label).toBe(missingResponse.text);
+        expect(response.text, scenario.label).not.toContain(foreignItemBId);
+        expect(response.text, scenario.label).not.toContain(tenantBId);
+      }
+
+      // The balance and ledger READS are tenant-scoped: tenant A observes no
+      // tenant B item, movement, balance or correlation.
+      const balances = await supertest(serverUrl)
+        .get("/inventory/stock")
+        .set("Cookie", ownerACookie)
+        .expect(200);
+      const movements = await supertest(serverUrl)
+        .get("/inventory/stock/movements")
+        .set("Cookie", ownerACookie)
+        .expect(200);
+      for (const row of balances.body as StockBalanceDto[]) {
+        expect(Object.keys(row).sort()).toEqual(STOCK_BALANCE_DTO_KEYS);
+        expect(Object.keys(row.item).sort()).toEqual(STOCK_ITEM_PROJECTION_KEYS);
+        expect(row.tenantId).toBe(tenantAId);
+      }
+      for (const row of movements.body as StockMovementDto[]) {
+        expect(Object.keys(row).sort()).toEqual(STOCK_MOVEMENT_DTO_KEYS);
+        expect(row.tenantId).toBe(tenantAId);
+      }
+      expect(balances.text).not.toContain(foreignItemBId);
+      expect(balances.text).not.toContain(tenantBId);
+      expect(movements.text).not.toContain(foreignItemBId);
+      expect(movements.text).not.toContain(foreignMovementBId);
+      expect(movements.text).not.toContain(tenantBId);
+
+      // The owner's ledger is exactly as the owner's own command left it, and
+      // the masked attempts persisted nothing anywhere.
+      expect(await prisma.stockMovement.count({ where: { tenantId: tenantBId } })).toBe(
+        foreignMovementsBefore
+      );
+      expect(await prisma.stockBalance.count({ where: { tenantId: tenantBId } })).toBe(
+        foreignBalancesBefore
+      );
+      expect(await prisma.auditLog.count({ where: { tenantId: tenantBId } })).toBe(
+        foreignAuditsBefore
+      );
+      expect(
+        await prisma.stockBalance.findFirst({
+          where: { tenantId: tenantBId, catalogItemId: foreignItemBId },
+        })
+      ).toEqual(foreignBalanceBefore);
+      expect(await prisma.stockMovement.count({ where: { tenantId: tenantAId } })).toBe(
+        ownMovementsBefore
+      );
+      expect(await prisma.auditLog.count({ where: { tenantId: tenantAId } })).toBe(ownAuditsBefore);
+      expect(
+        await prisma.auditLog.count({ where: { requestId: INVENTORY_NOT_FOUND_REQUEST_ID } })
+      ).toBe(0);
     }, 30_000);
   });
 });

@@ -32,6 +32,12 @@ export interface CatalogItemRow {
   referencePriceAmount: Prisma.Decimal | null;
   referencePriceCurrency: string | null;
   isActive: boolean;
+  /**
+   * EPIC-10 stock dimension. The column is non-null with a database default,
+   * so a persisted row ALWAYS carries it; the create/update payloads below can
+   * omit it, and only the service owns the by-kind default.
+   */
+  tracksStock: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -50,6 +56,13 @@ export interface CatalogItemCreateData {
   readonly taxRateId: string;
   readonly referencePriceAmount?: Prisma.Decimal | string | null;
   readonly referencePriceCurrency?: string | null;
+  /**
+   * Optional here on purpose: the by-kind default (`SERVICE` false, the
+   * physical kinds true) is a SERVICE-layer rule, not a persistence rule. When
+   * the key is omitted the database default `true` applies, which is why the
+   * write path always sends an explicit value from the service.
+   */
+  readonly tracksStock?: boolean;
 }
 
 /**
@@ -64,6 +77,8 @@ export interface CatalogItemUpdateData {
   referencePriceAmount?: Prisma.Decimal | string | null;
   referencePriceCurrency?: string | null;
   isActive?: boolean;
+  /** Absent leaves the stored flag untouched; a present value changes it. */
+  tracksStock?: boolean;
 }
 
 /** Supported read filters for {@link CatalogRepository.list}. */
@@ -127,6 +142,7 @@ function buildUpdateData(input: CatalogItemUpdateData): CatalogItemUpdateData {
     data.referencePriceCurrency = input.referencePriceCurrency;
   }
   if (input.isActive !== undefined) data.isActive = input.isActive;
+  if (input.tracksStock !== undefined) data.tracksStock = input.tracksStock;
   return data;
 }
 

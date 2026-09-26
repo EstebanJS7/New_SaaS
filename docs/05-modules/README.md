@@ -53,10 +53,15 @@ Implemented (EPIC-09):
 Catalog-Taxes.md
 ```
 
-Recommended files:
+Implemented (EPIC-10):
 
 ```text
 Inventory.md
+```
+
+Recommended files:
+
+```text
 Purchases.md
 Sales.md
 Cash.md

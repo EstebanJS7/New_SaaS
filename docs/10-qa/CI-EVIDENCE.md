@@ -498,3 +498,110 @@ so the earlier local 47/47 is now reproduced in CI. The
 | Catalog writes have no optimistic concurrency                        | open — [[TD-014]]                                                            |
 | Staff proxies reject the same request differently                    | open — [[TD-013]]                                                            |
 | `packages/database/scripts` outside the package lint/typecheck scope | open — [[TD-015]]                                                            |
+
+## EPIC-10 Local Closure Evidence (2026-09-25)
+
+**This is a LOCAL run, not a CI run.** It was executed on 2026-09-25 against the
+uncommitted working tree on branch `main`, using the locally running project
+services. No CI baseline exists for EPIC-10: the work units are not committed,
+pushed or merged, so this section records on-demand local evidence and is
+**not** an immutable CI baseline. It promotes nothing: `done` for EPIC-10 would
+require the merged-work-units exit criterion, and no statement here approves
+delivery, merge or release. The canonical CI baselines above remain the
+immutable CI evidence and are deliberately unchanged by this section.
+
+### Environment
+
+```text
+PostgreSQL 16.13   127.0.0.1:5433   local, project .env
+Redis              127.0.0.1:6380   local, project .env
+```
+
+### Executed checks
+
+| Command                                                                                                        | Observed result                                                                                                                 |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm preflight`                                                                                               | PostgreSQL reachable; Redis reachable                                                                                           |
+| `pnpm --filter @newsaas/database db:deploy`                                                                    | all migrations applied, including `20260925000001_catalog`, `20260925000002_appointment_service` and `20260925000003_inventory` |
+| `pnpm --filter @newsaas/database db:seed` (run twice) then `node packages/database/scripts/ci-seed-counts.mjs` | identical counts on both runs, including `inventory.stock.read` and `inventory.stock.adjust` — the seed is idempotent           |
+| `pnpm --filter @newsaas/database db:live-verify`                                                               | `LIVE MIGRATION VERIFICATION PASSED`                                                                                            |
+| `pnpm --filter @newsaas/api test:live-pg`                                                                      | 1 file / **52 tests passed**, including the `EPIC-10 inventory application-path isolation` block                                |
+
+### EPIC-10 live-PostgreSQL coverage
+
+The `EPIC-10 inventory application-path isolation` block
+(`apps/api/test/live-pg-isolation.e2e-spec.ts`) runs real HTTP against real
+PostgreSQL through the booted `AppModule` and the migration's real DDL, and adds
+five cases to the 52/52 suite:
+
+- a signed adjustment co-commits exactly ONE immutable movement, the exact
+  projection row and exactly ONE audit row, and the projection equals the raw
+  signed sum of its movements;
+- the fixed `BLOCK` policy persists nothing when it rejects, and accepts an
+  output that lands **exactly on zero** (`0.000`, projection row surviving);
+- the concurrent-overdraw race admits exactly one output under a **proven**
+  transaction-scoped overlap (`waitForAdvisoryLockWaiters` on the reconstructed
+  `stockSerializationLockKey`), with one movement, one audit row and the
+  projection equal to the ledger's signed sum;
+- raw SQL is rejected by the immutability trigger, the two `CHECK`s and the
+  composite tenant-ownership FK;
+- another tenant's item id is a byte-equivalent `404` on write and read, leaving
+  the owner's ledger untouched.
+
+**The race case first exposed a real lost update and now proves its fix.**
+Before the per-`(tenant, item)` advisory lock, two concurrent outputs of
+`-7.000` against a `10.000` balance both returned `201`, the projection ended at
+`3.000` and the ledger sum was `-4.000`: an admitted overdraw AND a projection
+that had stopped being the ledger's signed sum. The lock makes the `BLOCK`
+pre-check and the absolute balance write ONE serialized read-modify-write, so
+the same case now yields exactly one `201`, one `409`, one movement and one
+audit row. See [[CAT-007]] and [[TD-016]].
+
+### Raw-SQL database probes
+
+These run inside the live suite's EPIC-10 block against real PostgreSQL,
+bypassing the API service:
+
+| Probe                                                     | Observed result                                                                                                                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DELETE FROM "stock_movement"` (raw `$executeRaw`)        | rejected by `stock_movement_no_delete_trigger` (`cannot be hard-deleted`); the row survived unchanged                                                                                |
+| `UPDATE "stock_balance" SET "quantity" = -0.001`          | rejected by `stock_balance_quantity_non_negative`; the stored balance was unchanged                                                                                                  |
+| `INSERT INTO "stock_balance" ... -1.000`                  | rejected by `stock_balance_quantity_non_negative`; no row was created                                                                                                                |
+| `INSERT INTO "stock_movement" ... 0.000`                  | rejected by `stock_movement_quantity_non_zero`                                                                                                                                       |
+| `INSERT INTO "stock_movement"` with tenant A and B's item | rejected by `stock_movement_tenant_id_catalog_item_id_fkey`                                                                                                                          |
+| `pg_trigger` catalog for `stock_movement`                 | exactly one non-internal trigger, `stock_movement_no_delete_trigger` / `stock_movement_no_delete`; its `tgtype` sets the BEFORE, DELETE and ROW bits and leaves the UPDATE bit clear |
+
+The remaining `stock_movement` / `stock_balance` constraints (the tenant FKs,
+the composite item FKs and the reserved compensating self-FK) are pinned by the
+textual DDL gates in `packages/database/src/schema-inventory.test.ts`.
+
+### Scope of this local evidence
+
+| Item                                                                 | State                                                                               |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Three migrations applied to a real PostgreSQL 16.13 database         | observed locally                                                                    |
+| Reference seed idempotent, with both `inventory.stock.*` keys        | observed locally                                                                    |
+| EPIC-10 ledger live isolation/immutability/`BLOCK`-race block        | observed locally (part of 52/52)                                                    |
+| Lost update on the `BLOCK` race found and fixed by the advisory lock | observed locally (the same case now passes)                                         |
+| EPIC-10 work units committed, pushed or merged                       | **not done** — the exit criterion stays open                                        |
+| CI run for EPIC-10                                                   | **none exists**; the `Database migrations` job will be its durable form once pushed |
+| A self-enforcing stock serialization guard                           | not implemented — recorded as [[TD-016]]                                            |
+| Staff inventory UI / web proxy                                       | not present — the module is API-only in this slice                                  |
+
+No purchase, sale, transfer, cash, invoice or fiscal operation is claimed by
+this evidence: EPIC-10 performs none, and nothing here changes that.
+
+### Documentation review criteria
+
+A reviewer can confirm this evidence without reconstructing the closure story:
+
+- [ ] The section is labelled LOCAL and never presented as a CI run.
+- [ ] The environment, commands and observed results match the tables above.
+- [ ] The 52/52 live suite is named, with the EPIC-10 block inside it.
+- [ ] The lost update and the advisory-lock fix are stated as observed, with the
+      raw-SQL probes distinguished from the textually pinned constraints.
+- [ ] The section states that no CI run exists for EPIC-10 and that the merged
+      exit criterion is open.
+- [ ] The canonical CI baselines above are unchanged.
+- [ ] No statement claims production readiness; [[EPIC-20]] and the open Tech
+      Debt items are cited.

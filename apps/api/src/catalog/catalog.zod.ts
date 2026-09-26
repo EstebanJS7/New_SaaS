@@ -126,6 +126,12 @@ function assertReferencePricePair(value: ReferencePricePairInput, ctx: z.Refinem
  * service additionally resolves the id against the three GLOBAL seeded rates.
  * `.strict()` rejects unknown keys — including `isActive`, which only the
  * dedicated deactivate command may change.
+ *
+ * `tracksStock` is OPTIONAL and never defaults here: the by-kind rule
+ * (`SERVICE` false, `PRODUCT`/`MEDICATION`/`SUPPLY` true) is an application
+ * rule the service applies, and only a caller-supplied value overrides it. The
+ * column is `NOT NULL` with a database default, so the service always writes an
+ * explicit value rather than letting the database fallback decide.
  */
 const createCatalogItemPayload = z
   .object({
@@ -134,6 +140,7 @@ const createCatalogItemPayload = z
     taxRateId: z.string().uuid(),
     referencePriceAmount: catalogReferencePriceAmount.nullable().optional(),
     referencePriceCurrency: catalogReferencePriceCurrency.nullable().optional(),
+    tracksStock: z.boolean().optional(),
   })
   .strict();
 
@@ -153,6 +160,11 @@ export type CreateCatalogItemInput = z.infer<typeof createCatalogItemPayload>;
  * `isActive` is absent on purpose: deactivation has its own command route and
  * its own `catalog.deactivate` permission, so `catalog.update` can never
  * deactivate an item (a supplied `isActive` is an unknown key and a 400).
+ *
+ * `tracksStock` is optional and NOT nullable: an omitted key leaves the stored
+ * flag untouched, a present boolean changes it (the EPIC-10 staff-editable
+ * override), and an explicit `null` fails the boolean check with `400` because
+ * there is no third "unset" state — the column is `NOT NULL`.
  */
 const updateCatalogItemPayload = z
   .object({
@@ -161,6 +173,7 @@ const updateCatalogItemPayload = z
     taxRateId: z.string().uuid().optional(),
     referencePriceAmount: catalogReferencePriceAmount.nullable().optional(),
     referencePriceCurrency: catalogReferencePriceCurrency.nullable().optional(),
+    tracksStock: z.boolean().optional(),
   })
   .strict();
 
