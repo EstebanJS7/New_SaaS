@@ -184,3 +184,53 @@ DEC-018 exists because the E4 writer refused to check a Decision-precondition ac
 ## Next step
 
 Authorize the first implementation slice, [[SUP-001 Supplier foundation]], now that DEC-011, DEC-016 and DEC-017 are binding. Delivery still needs an explicit branch/commit decision.
+
+---
+
+# SUP-001 Supplier foundation — implementation tracking
+
+## Objective
+
+Implement the tenant-scoped supplier registry that EPIC-11 purchases reference: persistence with tenant composite ownership, an additive migration, the four `suppliers.*` permission keys with the DEC-016 matrix, and a tenant-safe read/write API behind the real guard chain.
+
+## Authorization and delivery decisions
+
+- The user authorized the implementation slice and the branch/commit work on 2026-09-26 ("autorizo y crea comitea").
+- Branch: `feat/epic-11-suppliers-purchases`, created from `main` at `450b5f2`.
+- Documentation committed first as two work units: `350e28e` (DEC-011..DEC-018), `7d0b4af` (epic, stories, this plan).
+- Delivery strategy: `single-pr` on the feature branch, matching the shipped EPIC-09 (PR #64) and EPIC-10 (PR #66) convention of one feature branch merged once. Push and PR remain the user's decision.
+- TDD: mode off (no project or session configuration enables it, and no runner is designated for ODD). Functional checks are the ordinary gate.
+
+## Binding decisions for this slice
+
+- [[DEC-011]]: fields `name` (required, 1..200), optional `legalName`, `taxId`, `email`, `phone`, `address`; `taxId` unique per tenant when present; active/inactive lifecycle with deactivation instead of delete; `taxId`, `legalName`, `email`, `phone`, `address` CONFIDENTIAL and `name` INTERNAL, with logs carrying ids only.
+- [[DEC-016]]: keys `suppliers.read`, `suppliers.create`, `suppliers.update`, `suppliers.deactivate`; all six roles read, `OWNER`/`ADMIN`/`INVENTORY_MANAGER` write; no entitlement gate. This slice moves the seeded permission count 34 -> 38; the remaining five `purchases.*` keys that reach the DEC-016 total of 43 arrive with PUR-001/PUR-002.
+- [[DEC-017]]: one co-committed audit row per accepted mutation (create, update, deactivate) with `metadata { schemaVersion, changedFields }`; reads are never audited.
+
+## Tasks
+
+- [ ] W1: Data foundation — the `Supplier` model with the tenant composite ownership key, the additive migration (RESTRICT tenant FK, per-tenant `taxId` uniqueness that tolerates multiple NULLs, the name-length CHECK, the no-delete trigger), `schema-suppliers.test.ts` gates, the four permission keys with the DEC-016 matrix, and the seed-count probe reconciled.
+- [ ] W2: API surface — the `apps/api/src/suppliers/` module (permissions, DTOs, Zod contracts, tenant-safe repository, service, controller, module), the five routes, DEC-017 audit, the route-contract pins, the shared in-memory boundary extension, and the integration suite over the real guard chain.
+
+## Route declaration per task
+
+| Task | Route | Trigger evidence |
+| ---- | ----- | ---------------- |
+| W1 | delegated | Multi-file write rule: schema, migration, schema test, seed and seed probe |
+| W2 | delegated | Multi-file write rule: 7 new module files plus route pins and tests |
+
+## Acceptance criteria and checks
+
+Inherited from [[SUP-001 Supplier foundation]]; the criteria that require implemented behavior are the ones this slice must close. Cross-tenant and unknown supplier ids must be one byte-equivalent `404`; unknown keys must be rejected; `tenantId` must never be read from body, query or route; no Prisma model may cross the HTTP boundary.
+
+## Progress
+
+- 2026-09-26: plan written before the first source write; W1 delegated.
+
+## Verification evidence
+
+- Pending; recorded per work unit below as each returns.
+
+## Next step
+
+Run W1, verify, commit it as its own work unit, then run W2.

@@ -334,6 +334,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "patients.create",
       "patients.update",
       "catalog.read",
+      "suppliers.read",
     ]);
     for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
       for (const key of [
@@ -472,6 +473,42 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     }
   });
 
+  it("seeds the supplier permission catalog and decided matrix (EPIC-11 WU1)", () => {
+    const supplierPermissionKeys = [
+      "suppliers.read",
+      "suppliers.create",
+      "suppliers.update",
+      "suppliers.deactivate",
+    ] as const;
+    const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of supplierPermissionKeys) {
+      expect(seededKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    // Maintainer matrix (DEC-016, 2026-09-26): every operational role reads
+    // suppliers; only the owner, the admin and the inventory manager write
+    // them. No entitlement gate applies — suppliers are a Core capability.
+    for (const roleCode of ["OWNER", "ADMIN", "INVENTORY_MANAGER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toEqual(
+        expect.arrayContaining([...supplierPermissionKeys])
+      );
+    }
+    const supplierWriteKeys = [
+      "suppliers.create",
+      "suppliers.update",
+      "suppliers.deactivate",
+    ] as const;
+    for (const roleCode of ["VETERINARIAN", "RECEPTIONIST", "CASHIER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("suppliers.read");
+      for (const key of supplierWriteKeys) {
+        expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
+      }
+    }
+    // The `purchases` entitlement is deliberately NOT consulted (DEC-016).
+    expect(FEATURE_CODE_SEEDS).toContain("purchases");
+  });
+
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
     expect(SPECIES_SEEDS.map((species) => species.code)).toEqual([
       "dog",
@@ -525,8 +562,11 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // 26 pre-EPIC-08 keys + portal.access.manage + portal.settings.manage +
       // the four catalog.* keys added by EPIC-09 WU2 (the earlier "24" was an
       // arithmetic slip in the EPIC-08 commit; 26 + 2 = 28 was the real sum) +
-      // the two inventory.stock.* keys added by EPIC-10 WU1.
-      permissions: 34,
+      // the two inventory.stock.* keys added by EPIC-10 WU1 + the four
+      // suppliers.* keys added by EPIC-11 WU1. The five purchases.* keys that
+      // reach the DEC-016 total of 43 arrive with PUR-001/PUR-002, so the next
+      // slice expects 38 -> 43.
+      permissions: 38,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,
