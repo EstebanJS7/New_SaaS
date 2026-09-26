@@ -555,3 +555,113 @@ index and the `409` path, the migration application, and a drift-free
 PUR-001 (draft lifecycle), then PUR-002 (receiving), then PUR-003 (staff
 surface), and finally EPIC-11 closure with durable live-PostgreSQL evidence.
 Push and PR remain the user's decision.
+
+---
+
+# SUP-001 live-PostgreSQL evidence — tracking
+
+## Why this slice exists
+
+The user started Docker Desktop, which unblocked the evidence the whole epic
+owed: until then every database-level claim was asserted by construction or by
+injected errors, and `db:deploy`, `db:seed` and the live suite were unrunnable.
+
+## Tasks
+
+- [x] L1: Environment — bring up `postgres` and `redis`, confirm PostgreSQL 16
+      answers on `localhost:5433`, apply all migrations including
+      `20260926000001_suppliers`, confirm `prisma migrate status` reports the
+      schema up to date (20 migrations), and run the seed.
+- [x] L2: Database-level proof by hand — rollback-wrapped SQL against the live
+      database for every supplier guarantee, leaving zero rows behind.
+- [x] L3: Run the pre-existing live suite (52/52) and then add durable supplier
+      coverage (6 new cases, 58/58).
+- [x] L4: Tighten two cases whose assertions were weaker than their names, and
+      record the evidence durably in `docs/10-qa/CI-EVIDENCE.md`.
+- [x] L5: Native review preflight — attempted, blocked by a provider defect;
+      reported with user consent.
+
+## Commits
+
+| Commit    | Work unit                                                   |
+| --------- | ----------------------------------------------------------- |
+| `913c1fb` | Supplier live-PostgreSQL coverage plus documentation update |
+| `1c1fd96` | Tightened assertions plus the durable evidence record       |
+
+## Database-level proof (rollback-wrapped, zero rows left behind)
+
+| Guarantee                                            | Observed result                                                                                                                   |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Multiple absent `taxId` values coexist in one tenant | 2 rows                                                                                                                            |
+| Duplicate present `taxId` inside one tenant          | rejected by `supplier_tenant_id_tax_id_key` (`23505`)                                                                             |
+| Same `taxId` in another tenant                       | admitted, 2 rows                                                                                                                  |
+| Raw hard delete                                      | raises `suppliers are deactivated and cannot be hard-deleted`                                                                     |
+| Empty `name`                                         | violates `supplier_name_length`                                                                                                   |
+| 201-character `name`                                 | rejected by the column bound (so the CHECK's effective job is the non-empty lower bound)                                          |
+| Applied index shape                                  | `CREATE UNIQUE INDEX supplier_tenant_id_tax_id_key ON public.supplier USING btree (tenant_id, tax_id) WHERE (tax_id IS NOT NULL)` |
+
+## Application-path coverage added
+
+An `EPIC-11 suppliers application-path isolation` block in the live suite with
+six cases: the duplicate present `taxId` through the **real** partial index
+returning the stable value-free `409` on create and update with nothing
+persisted and no audit row; two absent identifiers coexisting; the same
+identifier admitted in another tenant; two concurrent duplicate creations
+admitting exactly one with exactly one audit row and no timing assumption;
+byte-equivalent cross-tenant `404` on read, update and deactivation; and the
+applied schema asserted for the partial predicate, the `RESTRICT` tenant foreign
+key and the delete-rejecting trigger. No injected `P2002`, no mock, no sleep, no
+retry.
+
+## Verification (all run by the parent)
+
+- `pnpm --filter @newsaas/database db:deploy` -> all migrations applied
+  successfully.
+- `prisma migrate status` -> `Database schema is up to date!`.
+- `pnpm --filter @newsaas/database db:seed` -> ran clean.
+- live suite -> **58/58**; with the database available and `DATABASE_URL_TEST`
+  exported, `pnpm --filter @newsaas/api test` includes the live tests, so the
+  local run is **72 files / 927 tests, all passing, no skips** (previously 869
+  passed with 58 skipped).
+- `pnpm --filter @newsaas/database test` -> 245/245; typecheck, lint,
+  `format-check` and `git diff --check` all clean.
+- Environment trap worth remembering: the live suite reads
+  `DATABASE_URL_TEST ?? DATABASE_URL`, and `psql` **rejects** Prisma's
+  `?schema=public` query parameter, so the suite needs the schema-less form.
+- Independent verification of `913c1fb` (all claims PASS) found the two weak
+  assertions, which `1c1fd96` then closed.
+
+## Native review preflight: blocked by a provider defect, reported
+
+RDD is enabled, so the preflight ran. `assess` with
+`{"baseRef":…,"committedOnly":true}` returns `risk: unassessable` with reason
+`schema-incompatible` and `changedPaths: 0` for a range that does contain
+changes; `inspect` returns an empty workspace projection with
+`empty_candidate_base_ref_required`; and `start` with the same committed range
+is refused with `Judgment Day graph-v1 START requires lineageId`, a requirement
+from a different lifecycle. The native review lifecycle is therefore unusable in
+this build, which is why every work unit was verified by an independent
+read-only pass instead.
+
+The user authorized reporting it. The definitive lookup covered open **and**
+closed issues in `Gentleman-Programming/gentle-ai` and found two canonical
+trackers with no verifiable published fix, so exactly one occurrence comment was
+added to each and **no label was added, removed or changed**:
+
+- issue 4791 (`assess over a committed range returns schema-incompatible`) —
+  comment `5849444328`;
+- issue 4947
+  (`inspect/START ignore explicit committed-range baseRef and dead-end on empty_candidate_base_ref_required`,
+  3.7.0) — comment `5849445621`.
+
+No lineage was created and no authority was burned. Because no consent envelope
+was ever captured, no provider continuation existed to execute, so nothing was
+substituted and work continued under ordinary policy. Installed builds for the
+record: `gentle-ai` 3.7.0 stable, `gentle-pi` 3.6.0.
+
+## Still owed
+
+Nothing for SUP-001: its acceptance criteria, its live runtime evidence and its
+documentation are now all satisfied. EPIC-11 remains open for PUR-001, PUR-002
+and PUR-003, and the epic's own durable live-PostgreSQL criterion is now
+partially satisfied (the supplier slice has it; purchases do not yet).
