@@ -154,6 +154,8 @@ model Tenant {
   stockMovements              StockMovement[]
   stockBalances               StockBalance[]
   suppliers                   Supplier[]
+  purchases                   Purchase[]
+  purchaseLines               PurchaseLine[]
 
   @@map("tenant")
 }
@@ -1299,6 +1301,10 @@ model CatalogItem {
   stockMovements StockMovement[]
   stockBalances  StockBalance[]
 
+  /// EPIC-11 purchase back-reference: the draft lines that reference this item
+  /// through the composite tenant-ownership FK.
+  purchaseLines PurchaseLine[]
+
   /// Tenant-ownership key: target of the composite service FK from Appointment
   /// (EPIC-09 WU4) and of the composite item FKs from the EPIC-10 stock ledger,
   /// so a service item or a stock row can only be referenced by a row of the
@@ -1459,6 +1465,10 @@ model Supplier {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  /// EPIC-11 purchase back-reference: the purchases that reference this
+  /// supplier through the composite tenant-ownership FK.
+  purchases Purchase[]
+
   /// Tenant-ownership key: target of the composite supplier FK from the EPIC-11
   /// purchase aggregate, so a purchase can only reference a supplier of the
   /// SAME tenant.
@@ -1467,6 +1477,138 @@ model Supplier {
   /// list without a second scan.
   @@index([tenantId, name])
   @@map("supplier")
+}
+
+// ---------------------------------------------------------------------------
+// Purchases (EPIC-11 PUR-001 data foundation). Tenant-scoped purchase draft
+// aggregate of the Core `purchases` domain (PRD §17): one purchase names one
+// supplier of the same tenant and carries the lines that will become the
+// ledger entries when PUR-002 receives it. This slice ships the DRAFT half of
+// the lifecycle only — the create/edit/cancel commands land with the API slice
+// (PUR-001 P2) and the receive-time ledger transaction with PUR-002.
+//
+// There is deliberately NO human-readable identifier (DEC-018): the purchase
+// is identified by its UUID plus supplier and creation date, so no `number`,
+// no `code` and no sequence column exists and no allocation step is implied.
+// The cost surface is equally deliberate (DEC-013): one OPTIONAL informational
+// `unit_cost`, with no tax rate, no computed line total, no purchase total and
+// no valuation derived from it.
+//
+// Tenant ownership is carried by composite `(tenant_id, id)` keys, so a
+// purchase can only reference a supplier of the SAME tenant and a line can
+// only reference a purchase and a catalog item of the SAME tenant.
+//
+// Immutability is CONDITIONAL on the purchase status (DEC-019, refining
+// DEC-015): the migration rejects DELETE with a `BEFORE DELETE` trigger on
+// each table ONLY while the owning purchase is RECEIVED or CANCELLED, so a
+// DRAFT stays fully editable — including dropping a line entered by mistake —
+// while a confirmed inventory fact stays immutable and readable.
+//
+// Data classification: the supplier reference and the purchase quantities are
+// INTERNAL, the optional informational unit cost is INTERNAL, and logs and
+// audit carry ids and field names only — never a payload. The supplier's own
+// identity fields keep their CONFIDENTIAL classification in the supplier
+// registry (DEC-011); a purchase stores the reference id only.
+// ---------------------------------------------------------------------------
+
+/// Purchase lifecycle (PRD §17), pinned to exactly these three states. Receiving
+/// validates DRAFT and marks RECEIVED; CANCELLED is reachable only from DRAFT
+/// (DEC-015). Evolve additively only.
+enum PurchaseStatus {
+  DRAFT
+  RECEIVED
+  CANCELLED
+
+  @@map("purchase_status")
+}
+
+/// Tenant-scoped purchase draft (DEC-012, DEC-018). `supplierId` is required
+/// and resolved through the composite `(tenantId, supplierId)` FK, so a foreign
+/// supplier is not a representable state; the composite `(tenantId, id)` key is
+/// what the line FK targets.
+///
+/// No number, code or sequence column exists (DEC-018): the purchase is
+/// identified by its UUID plus supplier and creation date. No total, tax or
+/// valuation column exists either (DEC-013).
+///
+/// A purchase is hard-deletable ONLY while it is DRAFT (DEC-019); the migration
+/// rejects DELETE for a RECEIVED or CANCELLED row. Data classification: the
+/// supplier reference and the purchase quantities are INTERNAL; logs and audit
+/// carry ids and field names only.
+model Purchase {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId   String         @map("tenant_id") @db.Uuid
+  supplierId String         @map("supplier_id") @db.Uuid
+  /// PRD §17 lifecycle. Defaults to DRAFT: a new purchase is a draft until the
+  /// explicit receive command (PUR-002) transitions it.
+  status     PurchaseStatus @default(DRAFT)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the Supplier must be in the SAME tenant.
+  supplier Supplier @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  lines PurchaseLine[]
+
+  /// Tenant-ownership key: target of the composite purchase FK from
+  /// `PurchaseLine`.
+  @@unique([tenantId, id])
+  /// Tenant list lookup: `(tenant_id, status)` serves the status-filtered
+  /// purchase list without a second scan (there is no numbering column to sort
+  /// on).
+  @@index([tenantId, status])
+  @@map("purchase")
+}
+
+/// Tenant-scoped purchase line (DEC-012, DEC-013). `quantity` is a strictly
+/// positive exact `Decimal(10, 3)` — the same scale and scale discipline the
+/// EPIC-10 ledger uses — and `unitCost` is an OPTIONAL informational
+/// `Decimal(14, 2)` matching the catalog reference-price scale. There is NO tax
+/// field, no computed line total, no purchase total and no valuation: nothing
+/// derives an amount from this row (DEC-013).
+///
+/// A duplicate `catalogItemId` within one purchase is rejected by the tenant-
+/// leading unique key, which is what makes receiving deterministic (one line,
+/// one movement). Both references are composite tenant-ownership FKs, so a line
+/// can only reference a purchase and a catalog item of the SAME tenant.
+///
+/// A line is hard-deletable ONLY while its purchase is DRAFT (DEC-019); the
+/// migration rejects DELETE when the owning purchase is RECEIVED or CANCELLED.
+/// Data classification: purchase quantities and the optional unit cost are
+/// INTERNAL; logs and audit carry ids and field names only.
+model PurchaseLine {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String @map("tenant_id") @db.Uuid
+  purchaseId    String @map("purchase_id") @db.Uuid
+  catalogItemId String @map("catalog_item_id") @db.Uuid
+
+  /// Strictly positive exact quantity, matching the ledger's `Decimal(10, 3)`
+  /// scale; the migration adds the `> 0` CHECK (DEC-012).
+  quantity Decimal  @db.Decimal(10, 3)
+  /// Optional informational unit cost (DEC-013), matching the catalog
+  /// reference-price scale. The migration adds the `>= 0` CHECK; a line without
+  /// a cost is a valid state and no total is derived from it.
+  unitCost Decimal? @map("unit_cost") @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the Purchase must be in the SAME tenant.
+  purchase Purchase @relation(fields: [tenantId, purchaseId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the CatalogItem must be in the SAME tenant.
+  catalogItem CatalogItem @relation(fields: [tenantId, catalogItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// One line per catalog item inside one purchase (DEC-012): the duplicate
+  /// rejection that keeps receiving deterministic.
+  @@unique([tenantId, purchaseId, catalogItemId])
+  /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
+  @@unique([tenantId, id])
+  @@map("purchase_line")
 }
 
 // ---------------------------------------------------------------------------

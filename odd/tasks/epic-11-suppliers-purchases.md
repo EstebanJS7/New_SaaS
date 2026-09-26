@@ -720,7 +720,7 @@ accepted and unchanged; DEC-019 refines the scope of its blanket sentence.
 
 ## Tasks
 
-- [ ] P1: Data foundation — the `purchase_status` enum, the `Purchase` and
+- [x] P1: Data foundation — the `purchase_status` enum, the `Purchase` and
       `PurchaseLine` models with tenant composite ownership keys, the additive
       migration (RESTRICT FKs, composite ownership FKs, the positive-quantity
       CHECK, the non-negative cost CHECK, the two conditional delete triggers),
@@ -753,7 +753,38 @@ stock movement and no balance change.
 
 - 2026-09-26: branch created, DEC-019 recorded, plan written before the first
   source write.
+- 2026-09-26: P1 implemented and committed; verified against the live database.
+
+## Verification evidence (P1)
+
+- `pnpm --filter @newsaas/database test` -> 15 files / 268 tests passed (was
+  245: +22 in the new `schema-purchases.test.ts`, +1 PUR-001 seed test). Parent
+  re-ran this command as its own spot check and reproduced 268/268.
+- `pnpm --filter @newsaas/database build`, `typecheck`,
+  `pnpm --filter @newsaas/api test` (869 passed, 58 skipped),
+  `pnpm format-check` and `git diff --check` all clean.
+- Migration `20260926000002_purchases` applied to the live database and
+  `prisma migrate status` reports the schema up to date (21 migrations); the
+  seed reports `permissions: 42`, up from 38, with no `purchases.receive` key.
+- The writer's 16 rollback-wrapped SQL cases behaved as designed. The parent
+  independently reproduced the decisive ones with its own fixtures inside a
+  rolled-back transaction: a `DRAFT` line and then its `DRAFT` purchase delete
+  successfully (`DELETE 1` each), while deleting a `RECEIVED` purchase raises
+  `a received or cancelled purchase cannot be deleted`; zero rows were left
+  behind (`purchase` 0, `purchase_line` 0, probe tenant 0).
+- The parent read both trigger bodies directly: the `purchase` trigger guards on
+  `OLD."status" IN ('RECEIVED', 'CANCELLED')`, and the `purchase_line` trigger
+  reads the owning purchase's status, so both are conditional rather than the
+  unconditional sibling shape DEC-019 rejects.
+- Carried risk, accepted for now: the migration writes `updated_at` with a
+  `DEFAULT CURRENT_TIMESTAMP`, following the closest sibling migrations, so
+  `prisma migrate diff` lists a `DROP DEFAULT` for two more columns. That drift
+  is pre-existing repo-wide (22 tables before this slice, 24 now);
+  `migrate status` is green and CI applies migrations rather than diffing.
+  Recorded rather than hidden.
 
 ## Next step
 
-Run P1, verify it, commit it as its own work unit, then P2.
+Run P2 (the draft API surface: module, routes, line-set edit path, audit, route
+pins and the integration suite), then P3 (live-PostgreSQL coverage for the draft
+boundary and the conditional immutability, plus documentation closure).
