@@ -108,10 +108,13 @@ All notable product changes will be documented here.
   - `SUP-001`, the `Suppliers` module documentation and the module index entry.
 
   EPIC-11 is **incomplete**: purchases (`PUR-001`, `PUR-002`) and the staff
-  surface (`PUR-003`) are pending, and the durable live-PostgreSQL evidence —
-  the partial index's enforcement, the real `409` rejection path and a
-  drift-free `migrate status` — is owed before the epic closes. Nothing here is
-  merged or production-ready.
+  surface (`PUR-003`) are pending, the epic's durable live-PostgreSQL evidence
+  for receiving is owed before it closes, and a drift-free `migrate status` for
+  the index Prisma cannot model is still outstanding. The supplier registry work
+  units are merged into `main` as merge commit `baa66ca` through pull request
+  #68, with the required CI checks green; the slice's live-PostgreSQL evidence
+  is now the merged CI baseline in `docs/10-qa/CI-EVIDENCE.md`. Nothing here is
+  a production-readiness claim.
 
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,

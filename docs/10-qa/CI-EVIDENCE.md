@@ -1,7 +1,7 @@
 ---
 type: qa
 status: active
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 # CI Evidence
@@ -762,3 +762,99 @@ A reviewer can confirm this evidence without reconstructing the run:
 - [ ] The section states that this is not CI and not a merge or release
       statement.
 - [ ] The canonical CI baselines above are unchanged.
+
+## EPIC-11 Closure Baseline (CI) — SUP-001 (2026-09-26)
+
+Canonical post-merge CI evidence for the SUP-001 slice of [[EPIC-11]], captured
+after pull request #68 merged `feat/epic-11-suppliers-purchases` into `main`.
+This is the machine-generated receipt for the merged slice: the run below was
+produced by CI on the evaluated head commit, and it **supersedes** the local
+live-PostgreSQL section above as the canonical baseline. The local run was the
+author's pre-push evidence on the feature branch and remains useful as such.
+
+It records delivery of the supplier registry slice only. It is **not** a
+production-readiness statement and it closes nothing at epic level: [[EPIC-11]]
+remains open, and no exit criterion of that epic is checked by this section.
+
+### Delivery
+
+| Field        | Value                                                            |
+| ------------ | ---------------------------------------------------------------- |
+| Pull request | #68 — `feat(EPIC-11): implement the supplier registry (SUP-001)` |
+| Branch       | `feat/epic-11-suppliers-purchases` into `main`                   |
+| Merge commit | `baa66ca4a2ac6fdac29115440c94038e6437dff7` (`baa66ca`, `main`)   |
+| Merged at    | `2026-09-26T21:00:58Z`                                           |
+
+### Canonical baseline
+
+| Field      | Value                                                           |
+| ---------- | --------------------------------------------------------------- |
+| Workflow   | `.github/workflows/ci.yml` (`CI`)                               |
+| Run        | `36270774108`                                                   |
+| Head SHA   | `4b8adf8438b7457034c6f18c5c9a8d250501c6f2` (`4b8adf8`, PR head) |
+| Conclusion | `completed` / `success`                                         |
+| Started    | `2026-09-26T20:48:12Z`                                          |
+| Finished   | `2026-09-26T20:52:09Z`                                          |
+| Duration   | 3m57s                                                           |
+| URL        | https://github.com/EstebanJS7/New_SaaS/actions/runs/36270774108 |
+
+Both required jobs reported `SUCCESS`:
+
+| Job                            | Job ID         | Result    |
+| ------------------------------ | -------------- | --------- |
+| `Database migrations`          | `108484172152` | `SUCCESS` |
+| `Lint, Typecheck, Test, Build` | `108484172375` | `SUCCESS` |
+
+### Executed checks
+
+#### `Database migrations` (`108484172152`)
+
+Duration 1m3s. This job applies every migration to a fresh database, seeds
+reference data twice with a count-equality probe, runs the live migration
+verification, builds the API and runs the live-PostgreSQL application-path
+isolation suite — the durable form of the supplier slice's live evidence.
+
+#### `Lint, Typecheck, Test, Build` (`108484172375`)
+
+The job that covers the root quality gates. Both jobs are required checks, so
+the run above is the merge-blocking gate PR #68 passed.
+
+### Pre-push replication of the migrations gate (2026-09-26)
+
+Before pushing, the author replicated the `Database migrations` gate locally
+against a freshly created database. That run is local, and it is kept as
+pre-push evidence rather than as a CI baseline:
+
+| Step                                                | Observed result                                       |
+| --------------------------------------------------- | ----------------------------------------------------- |
+| Apply all migrations to a fresh database            | all migrations applied                                |
+| Seed reference data twice with count-equality probe | identical counts on both runs, with `permissions: 38` |
+| Live PostgreSQL migration verification              | `LIVE MIGRATION VERIFICATION PASSED`                  |
+| Live PostgreSQL application-path isolation suite    | passed 58/58                                          |
+
+This section is the canonical baseline; the pre-push replication above stays a
+local check, and the local EPIC-11 section further above remains the historical
+record of the pre-merge state. Its statements that no EPIC-11 CI baseline
+existed and that the slice was not merged were accurate when written and are
+superseded here without being altered.
+
+### Scope and standing
+
+- This baseline covers the SUP-001 supplier slice only.
+- [[EPIC-11]] is **not** closed: [[PUR-001]], [[PUR-002]] and [[PUR-003]] remain
+  `planned`, and the epic's own exit criteria are still open.
+- No statement here claims release, deployment or production readiness.
+
+### Documentation review criteria
+
+- [ ] The pull request, merge commit and merge timestamp match the delivery
+      table.
+- [ ] The head SHA, run, conclusion, duration and both jobs with their job IDs
+      match the baseline table.
+- [ ] The section is the canonical CI baseline and is presented as superseding
+      the local run, which stays as pre-push evidence.
+- [ ] The pre-push migration-gate replication is labelled local.
+- [ ] [[EPIC-11]] is stated as open, with [[PUR-001]], [[PUR-002]] and
+      [[PUR-003]] named.
+- [ ] The local EPIC-11 section above is unchanged.
+- [ ] No statement claims release, deployment or production readiness.
