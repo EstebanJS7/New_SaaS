@@ -726,7 +726,7 @@ accepted and unchanged; DEC-019 refines the scope of its blanket sentence.
       CHECK, the non-negative cost CHECK, the two conditional delete triggers),
       the schema gate, and the four `purchases.*` permission keys with the
       DEC-016 matrix.
-- [ ] P2: API surface — the `apps/api/src/purchases/` module, the draft routes
+- [x] P2: API surface — the `apps/api/src/purchases/` module, the draft routes
       (list, read, create, update, cancel), the line-set edit path, DEC-017
       audit, the route-contract pins, the in-memory boundary extension and the
       integration suite over the real guard chain.
@@ -783,8 +783,42 @@ stock movement and no balance change.
   `migrate status` is green and CI applies migrations rather than diffing.
   Recorded rather than hidden.
 
+- 2026-09-26: P2 implemented and committed; verified locally.
+
+## Verification evidence (P2)
+
+- `pnpm --filter @newsaas/api test` -> 72 files passed, 1 skipped (73); 886
+  tests passed, 58 skipped (944). The new `purchases.integration.test.ts` holds
+  16 cases and the route-contract probe 18. The parent re-ran this command as
+  its own spot check and reproduced 886/944 with the live suite skipped.
+- `pnpm --filter @newsaas/api typecheck`, `lint`,
+  `pnpm --filter @newsaas/database test` (268/268), `pnpm format-check` and
+  `git diff --check` all clean.
+- Parent-verified in the source: exactly five routes, each with one
+  `@RequirePermissions` key; no `@Delete` and no `@Patch` anywhere in the
+  module; no `purchases.receive` key declared; and the DRAFT-only gate raises
+  the stable `409 CONFLICT` "Only a draft purchase can be changed." for a
+  `RECEIVED` or `CANCELLED` purchase.
+- The suite's inertness case diffs every in-memory table across create, update
+  and cancel and asserts the only tables that change are `audits`, `purchases`
+  and `purchaseLines`, with zero stock movements and zero stock balances.
+
+## Carried risks from P2, recorded rather than hidden
+
+- A lines-only update does not bump the purchase header's `updatedAt`, because
+  Prisma's `@updatedAt` fires on a header-row write; the DTO's `updatedAt`
+  therefore reflects the last header write. Documented behaviour, not pinned by
+  a test.
+- The in-memory boundary cannot enforce the composite ownership foreign keys or
+  the `(tenantId, purchaseId, catalogItemId)` unique, so that DDL-level
+  behaviour rests on P1's schema gate until P3 proves it against a live
+  database.
+- No cash or invoice tables exist in the boundary fake, so "no cash or invoice
+  row" is proven by the exhaustive table diff rather than by interrogating those
+  tables.
+
 ## Next step
 
-Run P2 (the draft API surface: module, routes, line-set edit path, audit, route
-pins and the integration suite), then P3 (live-PostgreSQL coverage for the draft
-boundary and the conditional immutability, plus documentation closure).
+Run P3: live-PostgreSQL coverage for the draft boundary (including DEC-019's
+conditional immutability and the duplicate-line unique against the real schema),
+then documentation closure for PUR-001.

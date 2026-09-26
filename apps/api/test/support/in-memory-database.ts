@@ -353,6 +353,66 @@ export interface SupplierRow {
   updatedAt: Date;
 }
 
+/** Lifecycle values pinned by schema enum `purchase_status` (PRD §17). */
+export type PurchaseStatusRow = "DRAFT" | "RECEIVED" | "CANCELLED";
+
+/**
+ * Tenant-scoped purchase HEADER as the in-memory boundary stores it (EPIC-11
+ * PUR-001). Lines live in {@link PurchaseLineRow} and are assembled onto the
+ * read model by the delegates, mirroring the real `include: { lines: true }`
+ * read. There is deliberately no number, code, total or tax field
+ * (DEC-018/DEC-013).
+ */
+export interface PurchaseHeaderRow {
+  id: string;
+  tenantId: string;
+  supplierId: string;
+  status: PurchaseStatusRow;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Tenant-scoped purchase line row. `quantity` is a strictly positive exact
+ * `Decimal(10, 3)` and `unitCost` an optional informational `Decimal(14, 2)`,
+ * both stored as exact decimal strings — never JavaScript floats.
+ */
+export interface PurchaseLineRow {
+  id: string;
+  tenantId: string;
+  purchaseId: string;
+  catalogItemId: string;
+  quantity: string;
+  unitCost: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Purchase read model WITH its line set (the `include: { lines: true }` shape). */
+export interface PurchaseRow extends PurchaseHeaderRow {
+  lines: PurchaseLineRow[];
+}
+
+/** Predicate fields the in-memory purchase reads/writes are allowed to build. */
+export interface PurchaseWhere {
+  id?: string;
+  tenantId?: string;
+  status?: PurchaseStatusRow;
+}
+
+/** Ordering clauses the in-memory purchase list accepts. */
+export interface PurchaseOrderBy {
+  createdAt?: "asc" | "desc";
+  id?: "asc" | "desc";
+}
+
+/** Nested line create payload accepted by the in-memory `purchase.create`. */
+export interface PurchaseLineCreateData {
+  catalogItemId: string;
+  quantity: string | { toString(): string };
+  unitCost?: string | { toString(): string } | null;
+}
+
 /**
  * Stable ids for the three GLOBAL seeded rates, so HTTP suites can address a
  * rate without a lookup. The codes/names/rates mirror `TAX_RATE_SEEDS` from
@@ -856,6 +916,47 @@ export interface IsolationDatabase {
         };
       }) => { count: number };
     };
+    purchase: {
+      /** Reads assemble the line set, mirroring `include: { lines: true }`. */
+      findFirst: (args: { where: PurchaseWhere; include?: { lines?: true } }) => PurchaseRow | null;
+      findMany: (args: {
+        where: PurchaseWhere;
+        include?: { lines?: true };
+        orderBy?: readonly PurchaseOrderBy[];
+      }) => PurchaseRow[];
+      /** Nested line create; the fake fills tenant/purchase ids from the header. */
+      create: (args: {
+        data: {
+          tenantId: string;
+          supplierId: string;
+          status?: PurchaseStatusRow;
+          lines: { create: readonly PurchaseLineCreateData[] };
+        };
+      }) => PurchaseRow;
+      updateMany: (args: {
+        where: PurchaseWhere;
+        data: { supplierId?: string; status?: PurchaseStatusRow };
+      }) => { count: number };
+    };
+    purchaseLine: {
+      deleteMany: (args: {
+        where: { tenantId: string; purchaseId: string; catalogItemId: { notIn: string[] } };
+      }) => { count: number };
+      upsert: (args: {
+        where: {
+          tenantId_purchaseId_catalogItemId: {
+            tenantId: string;
+            purchaseId: string;
+            catalogItemId: string;
+          };
+        };
+        create: PurchaseLineCreateData & { tenantId: string; purchaseId: string };
+        update: {
+          quantity: string | { toString(): string };
+          unitCost?: string | { toString(): string } | null;
+        };
+      }) => PurchaseLineRow;
+    };
     stockMovement: {
       /**
        * Ledger append. The ONLY mutation: there is no update and no delete on
@@ -1177,6 +1278,8 @@ export interface IsolationDatabase {
     stockMovements: Map<string, StockMovementRow>;
     stockBalances: Map<string, StockBalanceRow>;
     suppliers: Map<string, SupplierRow>;
+    purchases: Map<string, PurchaseHeaderRow>;
+    purchaseLines: Map<string, PurchaseLineRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
@@ -1439,6 +1542,49 @@ function orderStockBalances(
   });
 }
 
+/**
+ * Ordering for the purchase list: `createdAt` (newest first on the shipped
+ * query) with `id` as the stable tie-break, mirroring the repository's declared
+ * deterministic order.
+ */
+function orderPurchases(
+  rows: PurchaseHeaderRow[],
+  orderBy: readonly PurchaseOrderBy[] | undefined
+): PurchaseHeaderRow[] {
+  if (orderBy === undefined) return rows;
+  return [...rows].sort((left, right) => {
+    for (const clause of orderBy) {
+      if (clause.createdAt !== undefined) {
+        const compared = left.createdAt.getTime() - right.createdAt.getTime();
+        if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.id !== undefined) {
+        const compared = left.id.localeCompare(right.id);
+        if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+      }
+    }
+    return 0;
+  });
+}
+
+/**
+ * A purchase's related lines in insertion order, `id` as the tie-break — the
+ * shape the repository's `include: { lines: true }` read assembles onto the
+ * aggregate.
+ */
+function linesForPurchase(
+  purchaseLineTable: Map<string, PurchaseLineRow>,
+  purchaseId: string
+): PurchaseLineRow[] {
+  return [...purchaseLineTable.values()]
+    .filter((line) => line.purchaseId === purchaseId)
+    .sort((left, right) => {
+      const byCreated = left.createdAt.getTime() - right.createdAt.getTime();
+      if (byCreated !== 0) return byCreated;
+      return left.id.localeCompare(right.id);
+    });
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -1474,6 +1620,8 @@ export function createIsolationDatabase(): IsolationDatabase {
   const stockMovementTable = new Map<string, StockMovementRow>();
   const stockBalanceTable = new Map<string, StockBalanceRow>();
   const supplierTable = new Map<string, SupplierRow>();
+  const purchaseTable = new Map<string, PurchaseHeaderRow>();
+  const purchaseLineTable = new Map<string, PurchaseLineRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
@@ -1517,6 +1665,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     stockMovements: stockMovementTable,
     stockBalances: stockBalanceTable,
     suppliers: supplierTable,
+    purchases: purchaseTable,
+    purchaseLines: purchaseLineTable,
     patients: patientTable,
     patientGuardians: patientGuardianTable,
     clinicalEncounters: clinicalEncounterTable,
@@ -2189,6 +2339,119 @@ export function createIsolationDatabase(): IsolationDatabase {
           count += 1;
         }
         return { count };
+      },
+    },
+    purchase: {
+      findFirst: ({ where, include }) => {
+        const header =
+          [...purchaseTable.values()].find(
+            (candidate) =>
+              (where.id === undefined || candidate.id === where.id) &&
+              (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+              (where.status === undefined || candidate.status === where.status)
+          ) ?? null;
+        if (!header) return null;
+        return include?.lines
+          ? { ...header, lines: linesForPurchase(purchaseLineTable, header.id) }
+          : { ...header, lines: [] };
+      },
+      findMany: ({ where, include, orderBy }) => {
+        const headers = [...purchaseTable.values()].filter(
+          (candidate) =>
+            (where.id === undefined || candidate.id === where.id) &&
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.status === undefined || candidate.status === where.status)
+        );
+        const ordered = orderBy === undefined ? headers : orderPurchases(headers, orderBy);
+        return ordered.map((header) =>
+          include?.lines
+            ? { ...header, lines: linesForPurchase(purchaseLineTable, header.id) }
+            : { ...header, lines: [] }
+        );
+      },
+      create: ({ data }) => {
+        const now = new Date();
+        const created: PurchaseHeaderRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          supplierId: data.supplierId,
+          // Mirrors the schema default so an omitted status still lands DRAFT.
+          status: data.status ?? "DRAFT",
+          createdAt: now,
+          updatedAt: now,
+        };
+        purchaseTable.set(created.id, created);
+        // Nested create: the line inherits the header's tenant and purchase id,
+        // exactly as Prisma fills them from the parent relation.
+        for (const line of data.lines.create) {
+          const lineNow = new Date();
+          const createdLine: PurchaseLineRow = {
+            id: randomUUID(),
+            tenantId: created.tenantId,
+            purchaseId: created.id,
+            catalogItemId: line.catalogItemId,
+            quantity: toDecimalString(line.quantity),
+            unitCost: toDecimalStringOrNull(line.unitCost),
+            createdAt: lineNow,
+            updatedAt: lineNow,
+          };
+          purchaseLineTable.set(createdLine.id, createdLine);
+        }
+        return { ...created, lines: linesForPurchase(purchaseLineTable, created.id) };
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const candidate of purchaseTable.values()) {
+          if (where.id !== undefined && candidate.id !== where.id) continue;
+          if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) continue;
+          if (where.status !== undefined && candidate.status !== where.status) continue;
+          if (data.supplierId !== undefined) candidate.supplierId = data.supplierId;
+          if (data.status !== undefined) candidate.status = data.status;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
+    purchaseLine: {
+      deleteMany: ({ where }) => {
+        let count = 0;
+        for (const [id, line] of purchaseLineTable) {
+          if (line.tenantId !== where.tenantId) continue;
+          if (line.purchaseId !== where.purchaseId) continue;
+          if (where.catalogItemId.notIn.includes(line.catalogItemId)) continue;
+          purchaseLineTable.delete(id);
+          count += 1;
+        }
+        return { count };
+      },
+      upsert: ({ where, create, update }) => {
+        const key = where.tenantId_purchaseId_catalogItemId;
+        const existing = [...purchaseLineTable.values()].find(
+          (line) =>
+            line.tenantId === key.tenantId &&
+            line.purchaseId === key.purchaseId &&
+            line.catalogItemId === key.catalogItemId
+        );
+        const now = new Date();
+        if (existing) {
+          existing.quantity = toDecimalString(update.quantity);
+          existing.unitCost = toDecimalStringOrNull(update.unitCost);
+          existing.updatedAt = now;
+          return existing;
+        }
+        const created: PurchaseLineRow = {
+          id: randomUUID(),
+          tenantId: create.tenantId,
+          purchaseId: create.purchaseId,
+          catalogItemId: create.catalogItemId,
+          quantity: toDecimalString(create.quantity),
+          unitCost: toDecimalStringOrNull(create.unitCost),
+          createdAt: now,
+          updatedAt: now,
+        };
+        purchaseLineTable.set(created.id, created);
+        return created;
       },
     },
     stockMovement: {
@@ -2867,6 +3130,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       stockMovements: stockMovementTable,
       stockBalances: stockBalanceTable,
       suppliers: supplierTable,
+      purchases: purchaseTable,
+      purchaseLines: purchaseLineTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,

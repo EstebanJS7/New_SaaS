@@ -9,6 +9,7 @@ import { SCHEDULING_PERMISSIONS } from "../scheduling/appointment.permissions.js
 import { CATALOG_PERMISSIONS } from "../catalog/catalog.permissions.js";
 import { INVENTORY_PERMISSIONS } from "../inventory/inventory.permissions.js";
 import { SUPPLIERS_PERMISSIONS } from "../suppliers/suppliers.permissions.js";
+import { PURCHASES_PERMISSIONS } from "../purchases/purchases.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -161,6 +162,12 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /suppliers/:id",
   "PUT /suppliers/:id",
   "POST /suppliers/:id/deactivate",
+  // EPIC-11 PUR-001 — purchase draft surface (reads + create/update + cancel)
+  "GET /purchases",
+  "POST /purchases",
+  "GET /purchases/:id",
+  "PUT /purchases/:id",
+  "POST /purchases/:id/cancel",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -309,6 +316,24 @@ const SUPPLIERS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /suppliers": SUPPLIERS_PERMISSIONS.create,
   "PUT /suppliers/:id": SUPPLIERS_PERMISSIONS.update,
   "POST /suppliers/:id/deactivate": SUPPLIERS_PERMISSIONS.deactivate,
+};
+
+/**
+ * EPIC-11 PUR-001 purchase draft surface. Both reads MUST declare exactly
+ * `purchases.read`, and create/update/cancel MUST declare exactly their own
+ * write key; a route decorated with another purchase tier (or none) fails by
+ * name, which the permission-less 403 sweep cannot catch. There is deliberately
+ * NO `PATCH` — the lifecycle is server-owned, and `POST /purchases/:id/cancel`
+ * is the only status transition this slice ships — and NO delete route: a draft
+ * drops a line through the update command. The map also pins that NO
+ * `purchases.receive` route exists here; receiving is PUR-002.
+ */
+const PURCHASES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /purchases": PURCHASES_PERMISSIONS.read,
+  "GET /purchases/:id": PURCHASES_PERMISSIONS.read,
+  "POST /purchases": PURCHASES_PERMISSIONS.create,
+  "PUT /purchases/:id": PURCHASES_PERMISSIONS.update,
+  "POST /purchases/:id/cancel": PURCHASES_PERMISSIONS.cancel,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -475,6 +500,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in SUPPLIERS_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED SUPPLIER ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY purchase route to its single intended granular purchases.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/purchases"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(PURCHASES_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING PURCHASE ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG PURCHASE PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in PURCHASES_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED PURCHASE ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);
