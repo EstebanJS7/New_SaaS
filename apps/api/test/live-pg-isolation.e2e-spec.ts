@@ -53,6 +53,17 @@ const CATALOG_NOT_FOUND_REQUEST_ID = "live-pg-catalog-not-found-proof";
 /** Server-owned request id pinned on every inventory cross-tenant miss. */
 const INVENTORY_NOT_FOUND_REQUEST_ID = "live-pg-inventory-not-found-proof";
 
+/** Server-owned request id pinned on every supplier cross-tenant miss. */
+const SUPPLIER_NOT_FOUND_REQUEST_ID = "live-pg-supplier-not-found-proof";
+
+/**
+ * Exact stable `409` wire message for a duplicate PRESENT `taxId` inside one
+ * tenant, mirrored as a literal so the live suite asserts the byte-exact body
+ * the application emits rather than importing the production constant.
+ */
+const SUPPLIER_TAX_ID_CONFLICT_MESSAGE =
+  "A supplier with this tax identifier already exists in this tenant.";
+
 interface CustomerDto {
   id: string;
   tenantId: string;
@@ -76,6 +87,20 @@ interface ContactDto {
   kind: "EMAIL" | "PHONE";
   value: string;
   isActive: boolean;
+}
+
+interface SupplierDto {
+  id: string;
+  tenantId: string;
+  name: string;
+  legalName: string | null;
+  taxId: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface PatientDto {
@@ -258,6 +283,21 @@ const STOCK_ITEM_PROJECTION_KEYS = ["kind", "name"].sort();
 
 /** Exact allowlisted key set of one row of the GLOBAL rate list. */
 const TAX_RATE_DTO_KEYS = ["code", "id", "name", "rate"].sort();
+
+/** Exact allowlisted key set of the supplier response DTO (EPIC-11 contract). */
+const SUPPLIER_DTO_KEYS = [
+  "address",
+  "createdAt",
+  "email",
+  "id",
+  "isActive",
+  "legalName",
+  "name",
+  "phone",
+  "taxId",
+  "tenantId",
+  "updatedAt",
+].sort();
 
 /**
  * The three GLOBAL platform-seeded rates (PRD §15): stable `code`, display
@@ -615,6 +655,17 @@ async function waitForRelationLockWaiters(
 }
 
 const ACTIVE_PORTAL_INDEX_PREDICATE = "status='ACTIVE'";
+
+/**
+ * Exact normalized rendering of the WU1 partial index predicate
+ * `tax_id IS NOT NULL`. `normalizeIndexPredicate` strips the parser-added
+ * enclosing parenthesis pair and formatting whitespace, so the stored
+ * `(tax_id IS NOT NULL)` becomes this token string; a plain composite unique
+ * index (no predicate) normalizes to the empty string and can never compare
+ * equal. Asserting exact equality therefore proves the index is PARTIAL and
+ * carries no additional boolean term beyond the one declared.
+ */
+const SUPPLIER_TAX_ID_INDEX_PREDICATE = "tax_idISNOTNULL";
 
 /**
  * Strips only parenthesis pairs enclosing the WHOLE expression, so an extra
@@ -4421,6 +4472,326 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(
         await prisma.auditLog.count({ where: { requestId: INVENTORY_NOT_FOUND_REQUEST_ID } })
       ).toBe(0);
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-11 WU1 live-PostgreSQL evidence (SUP-001 closure, task V1).
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP and the W1 migration's real DDL — what the in-memory boundary
+   * cannot represent:
+   *   1. a duplicate PRESENT `taxId` is rejected by the PARTIAL unique index
+   *      itself, through Prisma, and surfaces as the stable `409 CONFLICT`
+   *      with the exact value-free message, persisting no supplier and no audit
+   *      row (on create AND on update);
+   *   2. two suppliers with an ABSENT `taxId` coexist inside one tenant;
+   *   3. the same present `taxId` in another tenant is a different key;
+   *   4. the database admits exactly one of two concurrent duplicates;
+   *   5. a foreign supplier id is a byte-equivalent `404` on read, update and
+   *      deactivation, leaving the owner's supplier untouched;
+   *   6. the applied schema carries the partial UNIQUE index on
+   *      `(tenant_id, tax_id) WHERE tax_id IS NOT NULL`, the `RESTRICT` tenant
+   *      FK and the delete-rejecting trigger.
+   *
+   * Case 1 deliberately exercises the REAL index path: it never injects, stubs
+   * or shapes a synthetic `P2002`.
+   */
+  describe("EPIC-11 suppliers application-path isolation", () => {
+    /** One supplier create over REAL HTTP, with an optional pinned request id. */
+    const createSupplier = (
+      cookie: string,
+      body: Record<string, unknown>,
+      requestId?: string
+    ): supertest.Test => {
+      const request = supertest(serverUrl).post("/suppliers").set("Cookie", cookie);
+      return (requestId === undefined ? request : request.set("X-Request-Id", requestId)).send(
+        body
+      );
+    };
+
+    it("rejects a duplicate PRESENT taxId through the real partial index as a stable 409 on create and update, persisting nothing", async () => {
+      // A unique value for the whole suite: the partial index forbids a repeat
+      // inside tenant A, so every case owns its own present identifier.
+      const taxId = "live-pg-dup-tax-80012345";
+      const first = await createSupplier(
+        ownerACookie,
+        { name: "Live Proveedor Duplicado", taxId },
+        "live-pg-suppliers-dup-first"
+      ).expect(201);
+      const firstBody = first.body as SupplierDto;
+      expect(Object.keys(firstBody).sort()).toEqual(SUPPLIER_DTO_KEYS);
+      expect(firstBody.tenantId).toBe(tenantAId);
+      expect(firstBody.taxId).toBe(taxId);
+
+      const suppliersBefore = await prisma.supplier.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count();
+      const rejectedCreateRequestId = "live-pg-suppliers-dup-create-rejected";
+
+      // The duplicate attempt: a real second insert with the same present
+      // `taxId`. The partial unique index rejects it — no pre-read, no injected
+      // `P2002` — and the W2 service renders the stable value-free 409.
+      const duplicate = await supertest(serverUrl)
+        .post("/suppliers")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", rejectedCreateRequestId)
+        .send({ name: "Live Otro Proveedor", taxId })
+        .expect(409);
+      expect((duplicate.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((duplicate.body as { error: { message: string } }).error.message).toBe(
+        SUPPLIER_TAX_ID_CONFLICT_MESSAGE
+      );
+      // The rejection is value-free: the CONFIDENTIAL identifier and the tenant
+      // id never leak into the response.
+      expect(duplicate.text).not.toContain(taxId);
+      expect(duplicate.text).not.toContain(tenantAId);
+      // Nothing was persisted and no audit row trailed the rejected attempt.
+      expect(await prisma.supplier.count({ where: { tenantId: tenantAId } })).toBe(suppliersBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId: rejectedCreateRequestId } })).toBe(
+        0
+      );
+
+      // The same duplicate through PUT /suppliers/:id: create a second supplier
+      // with an ABSENT taxId, then move it onto the first one's identifier.
+      const second = await createSupplier(ownerACookie, {
+        name: "Live Proveedor Secundario",
+      }).expect(201);
+      const secondId = (second.body as SupplierDto).id;
+      expect((second.body as SupplierDto).taxId).toBeNull();
+
+      const updateRequestId = "live-pg-suppliers-dup-update-rejected";
+      const auditsBeforeUpdate = await prisma.auditLog.count();
+      const update = await supertest(serverUrl)
+        .put(`/suppliers/${secondId}`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", updateRequestId)
+        .send({ taxId })
+        .expect(409);
+      expect((update.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((update.body as { error: { message: string } }).error.message).toBe(
+        SUPPLIER_TAX_ID_CONFLICT_MESSAGE
+      );
+      expect(update.text).not.toContain(taxId);
+      // The update rolled back: the second supplier keeps its absent identifier,
+      // the first is untouched, and no audit row was appended.
+      expect((await prisma.supplier.findUnique({ where: { id: secondId } }))?.taxId).toBeNull();
+      expect((await prisma.supplier.findUnique({ where: { id: firstBody.id } }))?.taxId).toBe(
+        taxId
+      );
+      expect(await prisma.supplier.count({ where: { tenantId: tenantAId } })).toBe(
+        suppliersBefore + 1
+      );
+      expect(await prisma.auditLog.count()).toBe(auditsBeforeUpdate);
+      expect(await prisma.auditLog.count({ where: { requestId: updateRequestId } })).toBe(0);
+    }, 30_000);
+
+    it("admits two suppliers with an ABSENT taxId inside one tenant", async () => {
+      const first = await createSupplier(ownerACookie, { name: "Live Sin TaxId Uno" }).expect(201);
+      const second = await createSupplier(ownerACookie, { name: "Live Sin TaxId Dos" }).expect(201);
+      const firstBody = first.body as SupplierDto;
+      const secondBody = second.body as SupplierDto;
+      // Both rows are real, distinct and carry no identifier: absent values sit
+      // outside the partial index entirely and can never collide.
+      expect(firstBody.taxId).toBeNull();
+      expect(secondBody.taxId).toBeNull();
+      expect(firstBody.id).not.toBe(secondBody.id);
+      expect(firstBody.tenantId).toBe(tenantAId);
+      expect(secondBody.tenantId).toBe(tenantAId);
+      expect(
+        await prisma.supplier.count({ where: { tenantId: tenantAId, taxId: null } })
+      ).toBeGreaterThanOrEqual(2);
+    }, 30_000);
+
+    it("admits the same present taxId in another tenant because tenant_id leads the index", async () => {
+      const taxId = "live-pg-cross-tenant-90000001";
+      const tenantA = await createSupplier(ownerACookie, {
+        name: "Live Tenant A Identificador",
+        taxId,
+      }).expect(201);
+      const tenantB = await createSupplier(ownerBCookie, {
+        name: "Live Tenant B Identificador",
+        taxId,
+      }).expect(201);
+      expect((tenantA.body as SupplierDto).tenantId).toBe(tenantAId);
+      expect((tenantB.body as SupplierDto).tenantId).toBe(tenantBId);
+      expect((tenantA.body as SupplierDto).taxId).toBe(taxId);
+      expect((tenantB.body as SupplierDto).taxId).toBe(taxId);
+      // Exactly one row per tenant: the key is `(tenant_id, tax_id)`, so the
+      // same value in a different tenant is a different key.
+      expect(await prisma.supplier.count({ where: { tenantId: tenantAId, taxId } })).toBe(1);
+      expect(await prisma.supplier.count({ where: { tenantId: tenantBId, taxId } })).toBe(1);
+    }, 30_000);
+
+    it("admits exactly one of two concurrent duplicate creations with no timing assumption", async () => {
+      const taxId = "live-pg-concurrent-70000001";
+      const firstRequestId = "live-pg-suppliers-race-1";
+      const secondRequestId = "live-pg-suppliers-race-2";
+      const suppliersBefore = await prisma.supplier.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count();
+
+      // Two REAL concurrent inserts of the same present identifier. The database
+      // guarantees the outcome for EVERY interleaving, so the assertion below
+      // never depends on which request won and never sleeps or retries.
+      const responses = await Promise.all([
+        createSupplier(ownerACookie, { name: "Live Carrera Uno", taxId }, firstRequestId),
+        createSupplier(ownerACookie, { name: "Live Carrera Dos", taxId }, secondRequestId),
+      ]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+      const admitted = responses.find((response) => response.status === 201)!;
+      const rejected = responses.find((response) => response.status === 409)!;
+      expect((rejected.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((rejected.body as { error: { message: string } }).error.message).toBe(
+        SUPPLIER_TAX_ID_CONFLICT_MESSAGE
+      );
+
+      // Exactly one supplier row for the identifier, and exactly one MORE than
+      // the pre-race baseline: the loser left nothing behind.
+      expect(await prisma.supplier.count({ where: { tenantId: tenantAId, taxId } })).toBe(1);
+      expect(await prisma.supplier.count({ where: { tenantId: tenantAId } })).toBe(
+        suppliersBefore + 1
+      );
+
+      // Exactly one co-committed `supplier.created` audit row across BOTH
+      // attempts, and it names the row the 201 response returned.
+      const raceAudits = await prisma.auditLog.findMany({
+        where: { requestId: { in: [firstRequestId, secondRequestId] } },
+      });
+      expect(raceAudits).toHaveLength(1);
+      expect(raceAudits[0]).toMatchObject({
+        action: "supplier.created",
+        targetType: "supplier",
+        targetId: (admitted.body as SupplierDto).id,
+        tenantId: tenantAId,
+      });
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+    }, 30_000);
+
+    it("returns a byte-equivalent 404 for cross-tenant supplier read, update and deactivation and leaves tenant A untouched", async () => {
+      const supplier = await createSupplier(ownerACookie, {
+        name: "Live Proveedor Aislado",
+      }).expect(201);
+      const supplierId = (supplier.body as SupplierDto).id;
+      const requestId = SUPPLIER_NOT_FOUND_REQUEST_ID;
+
+      const cases = [
+        {
+          label: "GET /suppliers/:id",
+          request: () =>
+            supertest(serverUrl)
+              .get(`/suppliers/${supplierId}`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", requestId),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .get(`/suppliers/${randomUUID()}`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", requestId),
+        },
+        {
+          label: "PUT /suppliers/:id",
+          request: () =>
+            supertest(serverUrl)
+              .put(`/suppliers/${supplierId}`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", requestId)
+              .send({ name: "Tampered" }),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .put(`/suppliers/${randomUUID()}`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", requestId)
+              .send({ name: "Tampered" }),
+        },
+        {
+          label: "POST /suppliers/:id/deactivate",
+          request: () =>
+            supertest(serverUrl)
+              .post(`/suppliers/${supplierId}/deactivate`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", requestId)
+              .send({}),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .post(`/suppliers/${randomUUID()}/deactivate`)
+              .set("Cookie", ownerBCookie)
+              .set("X-Request-Id", requestId)
+              .send({}),
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await scenario.request().expect(404);
+        const missingResponse = await scenario.missingRequest().expect(404);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
+        // Byte-equivalence: a foreign tenant UUID is indistinguishable from a
+        // non-existent one, echoed correlation included.
+        expect(response.text, scenario.label).toBe(missingResponse.text);
+        expect(response.text, scenario.label).not.toContain(supplierId);
+        expect(response.text, scenario.label).not.toContain(tenantAId);
+      }
+
+      // Tenant A's supplier survived every masked attempt unchanged.
+      const stored = await prisma.supplier.findUnique({ where: { id: supplierId } });
+      expect(stored?.isActive).toBe(true);
+      expect(stored?.name).toBe("Live Proveedor Aislado");
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+    }, 30_000);
+
+    it("asserts the partial unique index, the RESTRICT tenant FK and the delete-rejecting trigger against the applied schema", async () => {
+      // The PARTIAL unique index is the mechanism behind the 409. Assert its
+      // exact shape — UNIQUE validity, both key columns and the normalized
+      // predicate — because a plain `(tenant_id, tax_id)` composite unique would
+      // also reject duplicates but would forbid multiple absent identifiers.
+      const indexRows = await prisma.$queryRaw<
+        { is_unique: boolean; key_1: string; key_2: string; predicate: string }[]
+      >`
+        SELECT
+          i.indisunique AS is_unique,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = 'supplier_tenant_id_tax_id_key'
+      `;
+      expect(indexRows).toHaveLength(1);
+      expect(indexRows[0].is_unique).toBe(true);
+      expect(indexRows[0].key_1).toBe("tenant_id");
+      expect(indexRows[0].key_2).toBe("tax_id");
+      expect(normalizeIndexPredicate(indexRows[0].predicate)).toBe(SUPPLIER_TAX_ID_INDEX_PREDICATE);
+
+      // The tenant FK is RESTRICT on BOTH delete and update: a tenant cannot be
+      // removed while it still owns suppliers.
+      const fkRows = await prisma.$queryRaw<
+        {
+          is_foreign_key: boolean;
+          on_delete_restrict: boolean;
+          on_update_restrict: boolean;
+        }[]
+      >`
+        SELECT
+          c.contype = 'f' AS is_foreign_key,
+          c.confdeltype = 'r' AS on_delete_restrict,
+          c.confupdtype = 'r' AS on_update_restrict
+        FROM pg_constraint c
+        WHERE c.conname = 'supplier_tenant_id_fkey'
+      `;
+      expect(fkRows).toEqual([
+        { is_foreign_key: true, on_delete_restrict: true, on_update_restrict: true },
+      ]);
+
+      // Removal is deactivation: a raw hard DELETE raises at the migration's
+      // BEFORE DELETE trigger and the row physically survives.
+      const probe = await createSupplier(ownerACookie, {
+        name: "Live Trigger Probe",
+      }).expect(201);
+      const probeId = (probe.body as SupplierDto).id;
+      await expect(
+        prisma.$executeRaw`DELETE FROM "supplier" WHERE "id" = ${probeId}::uuid`
+      ).rejects.toThrow(/suppliers are deactivated and cannot be hard-deleted/);
+      expect(await prisma.supplier.findUnique({ where: { id: probeId } })).not.toBeNull();
     }, 30_000);
   });
 });

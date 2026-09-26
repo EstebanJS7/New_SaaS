@@ -273,23 +273,32 @@ response as the **caller's own** tenant; a foreign tenant id is never returned.
 
 ## Known Limitations / Residual Risks
 
-- **The migration is unapplied and its runtime enforcement is unverified.** No
-  database can run in this environment (the Docker daemon is unavailable, so
-  PostgreSQL on `localhost:5433` cannot start), so the partial index's
-  enforcement, the real PostgreSQL-rejection path behind the `409` and a
-  drift-free `migrate status` have not been observed. The durable
-  live-PostgreSQL evidence is owed before [[EPIC-11]] closes.
-- **The duplicate-conflict tests inject a synthetic `P2002`.** The in-memory
-  test boundary does not enforce partial indexes, so the duplicate-`taxId` tests
-  raise a synthetic Prisma `P2002` shaped like the index violation. They do
-  assert in-memory supplier state, audit counts and unchanged stored fields, so
-  they are not status-only; but the real PostgreSQL-rejection path is unproven,
-  and the matcher accepts both plausible `meta.target` shapes defensively.
+- **The runtime enforcement is proven in the live suite; only a drift check is
+  still owed.** The live-PostgreSQL suite now applies the W1 suppliers migration
+  to a disposable database (`db:deploy` + `db:seed`) and asserts the applied
+  physical guarantees directly, so the migration is proven to apply cleanly and
+  the partial index is proven to exist exactly as declared. The migration was
+  also applied to the local development database by hand. A drift-free
+  `migrate status` against a persistent database has not been run here and
+  remains the only outstanding database-level check.
+- **The real PostgreSQL-rejection path behind the `409` is now proven.** The
+  live suite exercises a duplicate **present** `taxId` through the booted
+  application and the real `supplier_tenant_id_tax_id_key` partial unique index
+  — it never injects a synthetic `P2002` — and observes the stable
+  `409 CONFLICT` with the exact value-free message, persisting no supplier and
+  no audit row, on both create and update. It also observes multiple **absent**
+  identifiers coexisting inside one tenant and the same identifier allowed in
+  another tenant. The in-memory `suppliers.integration.test.ts` duplicate cases
+  still inject a synthetic `P2002`, which is now a unit-level complement to —
+  not the evidence for — the runtime path.
 - **The schema gate inspects DDL text rather than executing the index.** The
-  gate asserts the migration SQL; it does not run against a live database.
-- **The partial index lives only in the migration SQL.** Prisma cannot model it,
-  so the schema has no `@@unique([tenantId, taxId])` and a live
-  `migrate status`/drift check is still owed.
+  gate asserts the migration SQL; the live suite's introspection case is what
+  now proves the applied partial index, its predicate, the `RESTRICT` tenant FK
+  and the delete-rejecting trigger at runtime.
+- **The partial index lives only in the migration SQL.** Prisma still cannot
+  model it, so the schema has no `@@unique([tenantId, taxId])`; the applied
+  index is now asserted live, and only a live `migrate status`/drift check
+  remains owed.
 - **No staff UI and no web proxy.** The module is API-only in this slice;
   [[PUR-003 Staff purchases surface]] owns the browser surface.
 - **The purchase side of a reference is not testable yet.** No purchase table
@@ -314,13 +323,22 @@ response as the **caller's own** tenant; a foreign tenant id is never returned.
   patch route, and the list ordering and `isActive` filter.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — the five supplier routes in
   the survival inventory and `SUPPLIERS_PERMISSION_BY_ROUTE`.
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — the
+  `EPIC-11 suppliers application-path isolation` block (**6 tests**) against the
+  booted AppModule and a disposable real PostgreSQL: the real partial-index
+  `409` on create and update with nothing persisted and no audit row, two absent
+  identifiers coexisting, the same identifier allowed in another tenant, exactly
+  one of two concurrent duplicates admitted, the byte-equivalent cross-tenant
+  `404`, and the applied schema's partial unique index, `RESTRICT` tenant FK and
+  delete-rejecting trigger.
 - Observed package runs: `pnpm --filter @newsaas/database test` → 14 files / 245
   tests passed; `pnpm --filter @newsaas/api test` → 71 files passed, 1 skipped
-  (72), 869 tests passed, 52 skipped; the database and API typechecks, the API
+  (72), 869 tests passed, 58 skipped; the database and API typechecks, the API
   lint and `git diff --check` all clean.
-- `db:deploy`, `db:seed` and the live-PostgreSQL suite are **unrunnable here**
-  (see "Known Limitations"): the migration is not applied anywhere, so the live
-  partial-index and `migrate status` evidence remains owed.
+- Observed live-PostgreSQL run: `pnpm --filter @newsaas/api test:live-pg` → 1
+  file / **58 tests passed**. The suite applies the W1 migration and the
+  reference seed to a fresh disposable database itself; the migration was also
+  applied to the local development database by hand.
 
 ## Related Stories
 

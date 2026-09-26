@@ -270,18 +270,38 @@ Observed results on `feat/epic-11-suppliers-purchases`:
 | Command                                     | Result                                                        |
 | ------------------------------------------- | ------------------------------------------------------------- |
 | `pnpm --filter @newsaas/database test`      | 14 files / 245 tests passed                                   |
-| `pnpm --filter @newsaas/api test`           | 71 files passed, 1 skipped (72); 869 tests passed, 52 skipped |
+| `pnpm --filter @newsaas/api test`           | 71 files passed, 1 skipped (72); 869 tests passed, 58 skipped |
 | `pnpm --filter @newsaas/database typecheck` | clean                                                         |
 | `pnpm --filter @newsaas/api typecheck`      | clean                                                         |
 | `pnpm --filter @newsaas/api lint`           | clean                                                         |
 | `git diff --check`                          | clean                                                         |
 
-**Runnable but not run here — and therefore unverified.** `db:deploy`, `db:seed`
-and the live-PostgreSQL suite cannot run in this environment: the Docker daemon
-is unavailable, so PostgreSQL on `localhost:5433` cannot start. Consequently the
-migration has not been applied anywhere, and the partial index's runtime
-enforcement, the real PostgreSQL-rejection path behind the `409`, and a
-drift-free `migrate status` remain unproven. See "Known Limitations".
+**Live-PostgreSQL evidence — previously unverified, now closed.** The original
+limitation (kept below as history) recorded that the live-PostgreSQL suite could
+not run, so the partial index's runtime enforcement and the real
+PostgreSQL-rejection path behind the `409` were unproven. That gap is now closed
+by the `EPIC-11 suppliers application-path isolation` block in
+`apps/api/test/live-pg-isolation.e2e-spec.ts`. The exact command that was run
+and its observed result:
+
+```text
+set -a && . ./.env && set +a
+export DATABASE_URL_TEST="$(sed -n 's/^DATABASE_URL=//p' .env | cut -d'?' -f1)"
+pnpm --filter @newsaas/api test:live-pg
+→ 1 file / 58 tests passed   (was 52 before this work; +6 supplier cases)
+```
+
+The new block exercises the REAL partial index `supplier_tenant_id_tax_id_key`
+through Prisma — never a synthetic `P2002` — and observes the stable
+`409 CONFLICT` with the exact value-free message on create and update, two
+absent identifiers coexisting in one tenant, the same identifier allowed in
+another tenant, exactly one of two concurrent duplicates admitted, a
+byte-equivalent cross-tenant `404` on read/update/deactivation, and the applied
+schema's partial unique index, `RESTRICT` tenant FK and delete-rejecting
+trigger. `docker compose up -d` reported `newsaas-postgres` `healthy` and
+`pg_isready` accepted connections on `5433`. The migration was also applied to
+the local development database by hand. A drift-free `migrate status` against a
+persistent database remains the only outstanding database-level check.
 
 ## Tests Added
 
@@ -303,22 +323,28 @@ drift-free `migrate status` remain unproven. See "Known Limitations".
 
 ## Known Limitations
 
-- **The migration is unapplied and its runtime enforcement is unverified.**
-  `db:deploy`, `db:seed` and the live-PostgreSQL suite are unrunnable here
-  because the Docker daemon is unavailable, so the partial index's enforcement,
-  the real PostgreSQL-rejection path behind the `409` and a drift-free
-  `migrate status` have not been observed.
-- **The duplicate-conflict tests inject a synthetic `P2002`.** The in-memory
-  test boundary does not enforce partial indexes, so the duplicate-`taxId` tests
-  raise a synthetic Prisma `P2002` shaped like the index violation. They do
-  assert in-memory supplier state, audit counts and unchanged stored fields, so
-  they are not status-only — but the real PostgreSQL-rejection path is unproven,
-  and the matcher accepts both plausible `meta.target` shapes defensively.
+- ~~**The migration is unapplied and its runtime enforcement is unverified.**~~
+  **Superseded.** The migration is applied in the live suite's disposable
+  database and was applied to the local development database by hand; the
+  partial index's runtime enforcement and the real PostgreSQL-rejection path
+  behind the `409` are now observed (see "Verification"). A drift-free
+  `migrate status` against a persistent database has not been run here and
+  remains owed.
+- ~~**The duplicate-conflict tests inject a synthetic `P2002`.**~~ **Superseded
+  as the runtime evidence.** The in-memory `suppliers.integration.test.ts`
+  duplicate cases still inject a synthetic Prisma `P2002` shaped like the index
+  violation; they remain valid unit-level coverage (they assert in-memory
+  supplier state, audit counts and unchanged stored fields, and the matcher
+  accepts both plausible `meta.target` shapes defensively), but they are no
+  longer the evidence for runtime behaviour — the real PostgreSQL-rejection path
+  is now proven by the live suite.
 - **The schema gate inspects DDL text, not execution.** The gate asserts the
-  migration SQL rather than running the index against a live database.
+  migration SQL rather than executing the index; the live suite's introspection
+  case now proves the applied index, predicate, `RESTRICT` FK and delete trigger
+  at runtime.
 - **The partial index lives only in the migration SQL.** Prisma cannot model it,
   so a live-database `migrate status`/drift check is still owed for an index the
-  schema cannot represent.
+  schema cannot represent; the applied index itself is now asserted live.
 - **No staff UI.** The module is API-only in this slice;
   [[PUR-003 Staff purchases surface]] owns the browser surface.
 
@@ -327,13 +353,17 @@ drift-free `migrate status` remain unproven. See "Known Limitations".
 No debt record is created by this Story. The live-PostgreSQL follow-up is not a
 new debt item: it is folded into [[EPIC-11]]'s durable closure criterion ("The
 durable live-PostgreSQL evidence for receiving … passes and is recorded in
-`docs/10-qa/CI-EVIDENCE.md`"). The evidence owed there, named explicitly, is:
+`docs/10-qa/CI-EVIDENCE.md`"). The evidence owed there, named explicitly, is now
+split as follows:
 
-- a duplicate **present** `taxId` rejected through the partial index and
-  surfaced as the stable `409 CONFLICT`;
-- multiple **absent** `taxId` values coexisting inside one tenant;
-- the same `taxId` allowed in another tenant;
-- a drift-free `migrate status` for the index Prisma cannot model.
+- **Closed** by the `EPIC-11 suppliers application-path isolation` block in
+  `apps/api/test/live-pg-isolation.e2e-spec.ts`:
+  - a duplicate **present** `taxId` rejected through the partial index and
+    surfaced as the stable `409 CONFLICT` (on create and on update);
+  - multiple **absent** `taxId` values coexisting inside one tenant;
+  - the same `taxId` allowed in another tenant.
+- **Still owed** — a drift-free `migrate status` for the index Prisma cannot
+  model.
 
 ## Decisions / ADRs
 
@@ -391,6 +421,7 @@ additive migration, its four permission keys with the seeded role matrix, its
 five routes, its audit rows and its tests are implemented and the runnable
 checks are green. This is **not** a production-readiness statement. The durable
 live-PostgreSQL evidence for the partial index and the migration application is
-still owed, and [[EPIC-11]] as a whole remains open for
-[[PUR-001 Purchase draft]], [[PUR-002 Purchase receiving]] and
-[[PUR-003 Staff purchases surface]].
+now recorded (see "Verification"); a drift-free `migrate status` for the index
+Prisma cannot model remains the only outstanding database-level check.
+[[EPIC-11]] as a whole remains open for [[PUR-001 Purchase draft]],
+[[PUR-002 Purchase receiving]] and [[PUR-003 Staff purchases surface]].
