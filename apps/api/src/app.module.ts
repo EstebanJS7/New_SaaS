@@ -17,6 +17,7 @@ import { PortalModule } from "./portal/portal.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
 import { SchedulingModule } from "./scheduling/scheduling.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
+import { SuppliersModule } from "./suppliers/suppliers.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
 
 // Guard-chain wire order (design D3 + EPIC-02 design D1): AuthModule's
@@ -50,6 +51,10 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // adds no APP_GUARD either, so its position is free — kept after Catalog so
     // the dependency direction reads top-down.
     InventoryModule,
+    // EPIC-11 W2 suppliers: the Core supplier registry EPIC-11 purchases
+    // reference; it adds no APP_GUARD either, so its position is free — kept
+    // after Inventory so the dependency direction reads top-down.
+    SuppliersModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.

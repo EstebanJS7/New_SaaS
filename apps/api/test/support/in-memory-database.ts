@@ -333,6 +333,27 @@ export interface StockBalanceRow {
 }
 
 /**
+ * Tenant-scoped supplier identity row (EPIC-11 W2). Data classification
+ * (DEC-011): `name` is INTERNAL and the five optional identity/contact fields
+ * are CONFIDENTIAL. This fake does NOT enforce the per-tenant `taxId` partial
+ * unique index (an in-memory Map cannot), so the real index behavior is proven
+ * by the W1 migration DDL checks and the live-PostgreSQL gate.
+ */
+export interface SupplierRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  legalName: string | null;
+  taxId: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
  * Stable ids for the three GLOBAL seeded rates, so HTTP suites can address a
  * rate without a lookup. The codes/names/rates mirror `TAX_RATE_SEEDS` from
  * `@newsaas/database`, which the real seed writes into `tax_rate`.
@@ -804,6 +825,37 @@ export interface IsolationDatabase {
         };
       }) => { count: number };
     };
+    supplier: {
+      findMany: (args: {
+        where: { tenantId: string; isActive?: boolean };
+        orderBy?: readonly { name?: "asc" | "desc"; id?: "asc" | "desc" }[];
+      }) => SupplierRow[];
+      findFirst: (args: { where: { id: string; tenantId: string } }) => SupplierRow | null;
+      create: (args: {
+        data: {
+          tenantId: string;
+          name: string;
+          legalName?: string | null;
+          taxId?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          address?: string | null;
+          isActive?: boolean;
+        };
+      }) => SupplierRow;
+      updateMany: (args: {
+        where: { id: string; tenantId: string; isActive?: boolean };
+        data: {
+          name?: string;
+          legalName?: string | null;
+          taxId?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          address?: string | null;
+          isActive?: boolean;
+        };
+      }) => { count: number };
+    };
     stockMovement: {
       /**
        * Ledger append. The ONLY mutation: there is no update and no delete on
@@ -1124,6 +1176,7 @@ export interface IsolationDatabase {
     catalogItems: Map<string, CatalogItemRow>;
     stockMovements: Map<string, StockMovementRow>;
     stockBalances: Map<string, StockBalanceRow>;
+    suppliers: Map<string, SupplierRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
@@ -1420,6 +1473,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const catalogItemTable = new Map<string, CatalogItemRow>();
   const stockMovementTable = new Map<string, StockMovementRow>();
   const stockBalanceTable = new Map<string, StockBalanceRow>();
+  const supplierTable = new Map<string, SupplierRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
@@ -1462,6 +1516,7 @@ export function createIsolationDatabase(): IsolationDatabase {
     catalogItems: catalogItemTable,
     stockMovements: stockMovementTable,
     stockBalances: stockBalanceTable,
+    suppliers: supplierTable,
     patients: patientTable,
     patientGuardians: patientGuardianTable,
     clinicalEncounters: clinicalEncounterTable,
@@ -2065,6 +2120,71 @@ export function createIsolationDatabase(): IsolationDatabase {
           }
           if (data.isActive !== undefined) candidate.isActive = data.isActive;
           if (data.tracksStock !== undefined) candidate.tracksStock = data.tracksStock;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
+    supplier: {
+      findMany: ({ where, orderBy }) => {
+        let rows = [...supplierTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            (where.isActive === undefined || candidate.isActive === where.isActive)
+        );
+        if (orderBy) {
+          rows = rows.sort((left, right) => {
+            for (const clause of orderBy) {
+              if (clause.name !== undefined) {
+                const compared = left.name.localeCompare(right.name);
+                if (compared !== 0) return clause.name === "asc" ? compared : -compared;
+              }
+              if (clause.id !== undefined) {
+                const compared = left.id.localeCompare(right.id);
+                if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+              }
+            }
+            return 0;
+          });
+        }
+        return rows;
+      },
+      findFirst: ({ where }) =>
+        [...supplierTable.values()].find(
+          (candidate) => candidate.id === where.id && candidate.tenantId === where.tenantId
+        ) ?? null,
+      create: ({ data }) => {
+        const now = new Date();
+        const created: SupplierRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          name: data.name,
+          legalName: data.legalName ?? null,
+          taxId: data.taxId ?? null,
+          email: data.email ?? null,
+          phone: data.phone ?? null,
+          address: data.address ?? null,
+          // Mirrors the schema default so an omitted flag still lands active.
+          isActive: data.isActive ?? true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        supplierTable.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const candidate of supplierTable.values()) {
+          if (candidate.id !== where.id || candidate.tenantId !== where.tenantId) continue;
+          if (where.isActive !== undefined && candidate.isActive !== where.isActive) continue;
+          if (data.name !== undefined) candidate.name = data.name;
+          if (data.legalName !== undefined) candidate.legalName = data.legalName;
+          if (data.taxId !== undefined) candidate.taxId = data.taxId;
+          if (data.email !== undefined) candidate.email = data.email;
+          if (data.phone !== undefined) candidate.phone = data.phone;
+          if (data.address !== undefined) candidate.address = data.address;
+          if (data.isActive !== undefined) candidate.isActive = data.isActive;
           candidate.updatedAt = new Date();
           count += 1;
         }
@@ -2746,6 +2866,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       catalogItems: catalogItemTable,
       stockMovements: stockMovementTable,
       stockBalances: stockBalanceTable,
+      suppliers: supplierTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,

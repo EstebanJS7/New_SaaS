@@ -209,8 +209,9 @@ Implement the tenant-scoped supplier registry that EPIC-11 purchases reference: 
 
 ## Tasks
 
-- [ ] W1: Data foundation — the `Supplier` model with the tenant composite ownership key, the additive migration (RESTRICT tenant FK, per-tenant `taxId` uniqueness that tolerates multiple NULLs, the name-length CHECK, the no-delete trigger), `schema-suppliers.test.ts` gates, the four permission keys with the DEC-016 matrix, and the seed-count probe reconciled.
-- [ ] W2: API surface — the `apps/api/src/suppliers/` module (permissions, DTOs, Zod contracts, tenant-safe repository, service, controller, module), the five routes, DEC-017 audit, the route-contract pins, the shared in-memory boundary extension, and the integration suite over the real guard chain.
+- [x] W1: Data foundation — the `Supplier` model with the tenant composite ownership key, the additive migration (RESTRICT tenant FK, per-tenant `taxId` uniqueness that tolerates multiple NULLs, the name-length CHECK, the no-delete trigger), `schema-suppliers.test.ts` gates, the four permission keys with the DEC-016 matrix, and the seed-count probe reconciled.
+- [x] W2: API surface — the `apps/api/src/suppliers/` module (permissions, DTOs, Zod contracts, tenant-safe repository, service, controller, module), the five routes, DEC-017 audit, the route-contract pins, the shared in-memory boundary extension, and the integration suite over the real guard chain.
+- [x] W3: Remediation of the independent verification findings — the partial unique index DEC-011 mandates, and the stable `409` for a duplicate present `taxId`.
 
 ## Route declaration per task
 
@@ -218,6 +219,15 @@ Implement the tenant-scoped supplier registry that EPIC-11 purchases reference: 
 | ---- | ----- | ---------------- |
 | W1 | delegated | Multi-file write rule: schema, migration, schema test, seed and seed probe |
 | W2 | delegated | Multi-file write rule: 7 new module files plus route pins and tests |
+| W3 | delegated | Verification findings remediation: migration, schema, service and tests |
+
+## Commits
+
+| Commit | Work unit |
+| ------ | --------- |
+| `ed3b056` | W1 supplier data foundation (superseded in part by `d39d90d`) |
+| `d39d90d` | W1 correction: the partial unique index DEC-011 fixes |
+| W2 commit | Supplier API surface (recorded here when committed) |
 
 ## Acceptance criteria and checks
 
@@ -226,11 +236,18 @@ Inherited from [[SUP-001 Supplier foundation]]; the criteria that require implem
 ## Progress
 
 - 2026-09-26: plan written before the first source write; W1 delegated.
+- 2026-09-26: W1 committed as `ed3b056`; independent verification (`gentle-ai-verify`) then found a real nonconformance — the migration used a plain composite UNIQUE where DEC-011 fixes a partial unique index — plus the missing stable conflict for a duplicate present `taxId`.
+- 2026-09-26: W3 remediation applied and committed as `d39d90d` (partial index, schema comment, schema gate) with the `409` mapping landing in the W2 commit; both findings are closed.
+- 2026-09-26: W2 implemented and verified locally; awaiting its commit.
 
 ## Verification evidence
 
-- Pending; recorded per work unit below as each returns.
+- Parent spot check after remediation, run by the parent and not only reported: `pnpm --filter @newsaas/database test` -> 14 files / 245 tests passed; `pnpm --filter @newsaas/api test` -> 71 files passed, 1 skipped (72), 869 tests passed, 52 skipped (the live-PostgreSQL suite).
+- `pnpm --filter @newsaas/database typecheck`, `pnpm --filter @newsaas/api typecheck`, `pnpm --filter @newsaas/api lint` and `git diff --check` all clean.
+- Writer-reported and parent-reviewed: the P2002 matcher accepts only `supplier_tenant_id_tax_id_key` (both the index-name and the column-name target shapes) and rethrows every unrelated `P2002`; the conflict message is value-free because the tax identifier is CONFIDENTIAL.
+- `db:deploy`, `db:seed` and the live-PostgreSQL suite are UNRUNNABLE here: the Docker daemon is unavailable, so PostgreSQL on `localhost:5433` cannot start. The schema gate inspects DDL text and does not execute the partial index against a live database, so the runtime uniqueness behaviour is asserted by construction, not by execution.
+- Native risk assessment through `gentle_review` (`assess`) could not be produced for this candidate: the committed-range form returned `schema-incompatible` with zero changed paths, and the ambient form replied that there are no pending changes. Per the contract the candidate is therefore treated as high risk and an independent verifier ran, which is how the index deviation was found.
 
 ## Next step
 
-Run W1, verify, commit it as its own work unit, then run W2.
+Commit W2, run one independent verification pass over the corrected range, then hand the epic back for its remaining stories (PUR-001, PUR-002, PUR-003).
