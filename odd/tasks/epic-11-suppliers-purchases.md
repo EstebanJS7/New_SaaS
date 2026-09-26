@@ -225,9 +225,11 @@ Implement the tenant-scoped supplier registry that EPIC-11 purchases reference: 
 
 | Commit | Work unit |
 | ------ | --------- |
-| `ed3b056` | W1 supplier data foundation (superseded in part by `d39d90d`) |
+| `350e28e` | Accepted Decisions DEC-011..DEC-018 |
+| `7d0b4af` | Epic, four stories and this plan |
+| `ed3b056` | W1 supplier data foundation (part superseded by `d39d90d`) |
 | `d39d90d` | W1 correction: the partial unique index DEC-011 fixes |
-| W2 commit | Supplier API surface (recorded here when committed) |
+| `826e7ac` | W2 supplier API surface |
 
 ## Acceptance criteria and checks
 
@@ -238,16 +240,18 @@ Inherited from [[SUP-001 Supplier foundation]]; the criteria that require implem
 - 2026-09-26: plan written before the first source write; W1 delegated.
 - 2026-09-26: W1 committed as `ed3b056`; independent verification (`gentle-ai-verify`) then found a real nonconformance — the migration used a plain composite UNIQUE where DEC-011 fixes a partial unique index — plus the missing stable conflict for a duplicate present `taxId`.
 - 2026-09-26: W3 remediation applied and committed as `d39d90d` (partial index, schema comment, schema gate) with the `409` mapping landing in the W2 commit; both findings are closed.
-- 2026-09-26: W2 implemented and verified locally; awaiting its commit.
+- 2026-09-26: W2 implemented and verified locally; committed as `826e7ac` together with this tracking update.
+- 2026-09-26: second independent verification pass over the corrected range: PASS on all eight claims, no remaining accepted-decision deviation, with the live-database behaviour reported as unverified rather than passed.
 
 ## Verification evidence
 
 - Parent spot check after remediation, run by the parent and not only reported: `pnpm --filter @newsaas/database test` -> 14 files / 245 tests passed; `pnpm --filter @newsaas/api test` -> 71 files passed, 1 skipped (72), 869 tests passed, 52 skipped (the live-PostgreSQL suite).
 - `pnpm --filter @newsaas/database typecheck`, `pnpm --filter @newsaas/api typecheck`, `pnpm --filter @newsaas/api lint` and `git diff --check` all clean.
 - Writer-reported and parent-reviewed: the P2002 matcher accepts only `supplier_tenant_id_tax_id_key` (both the index-name and the column-name target shapes) and rethrows every unrelated `P2002`; the conflict message is value-free because the tax identifier is CONFIDENTIAL.
-- `db:deploy`, `db:seed` and the live-PostgreSQL suite are UNRUNNABLE here: the Docker daemon is unavailable, so PostgreSQL on `localhost:5433` cannot start. The schema gate inspects DDL text and does not execute the partial index against a live database, so the runtime uniqueness behaviour is asserted by construction, not by execution.
-- Native risk assessment through `gentle_review` (`assess`) could not be produced for this candidate: the committed-range form returned `schema-incompatible` with zero changed paths, and the ambient form replied that there are no pending changes. Per the contract the candidate is therefore treated as high risk and an independent verifier ran, which is how the index deviation was found.
+- Independent verification, pass 2 (all eight claims PASS): the partial index DDL matches DEC-011 exactly and no plain composite UNIQUE remains; the schema declares no `@@unique([tenantId, taxId])` and documents the raw index; the schema gate requires the predicate and states that it inspects DDL text; the conflict catch does not disturb the shared `404`, the permission re-assertion or the DEC-017 audit call; the conflict tests assert persistence and audit counts rather than only the status code; the W2 commit contains no file outside its allowed set; the five routes carry one seeded permission each with no `PATCH`/`DELETE`; and the four keys and their matrix are unchanged from W1 with no `purchases.*` key added.
+- `db:deploy`, `db:seed` and the live-PostgreSQL suite are UNRUNNABLE here: the Docker daemon is unavailable, so PostgreSQL on `localhost:5433` cannot start. As a consequence the migration application, the partial index's runtime enforcement (duplicate present identifier rejected, multiple absent identifiers coexisting, cross-tenant reuse allowed) and the real-PostgreSQL `409` path are asserted by construction or by injected errors, NOT executed. EPIC-11's exit criteria still require durable live-PostgreSQL evidence before the epic closes.
+- Native risk assessment through `gentle_review` (`assess`) could not be produced for this candidate: the committed-range form returned `schema-incompatible` with zero changed paths, and the ambient form replied that there are no pending changes. Per the contract the candidate is therefore treated as high risk, which is why independent verification ran at each work unit; that pass is what found the index deviation.
 
 ## Next step
 
-Commit W2, run one independent verification pass over the corrected range, then hand the epic back for its remaining stories (PUR-001, PUR-002, PUR-003).
+Hand the epic back for its remaining stories: PUR-001 (draft lifecycle), PUR-002 (receiving, the slice that must acquire the ledger's advisory lock in ascending `catalogItemId` order) and PUR-003 (staff surface), then close EPIC-11 with durable live-PostgreSQL evidence once a database can run. Nothing has been pushed; push and PR remain the user's decision.
