@@ -2,7 +2,7 @@
 id: EPIC-10
 type: epic
 title: Inventory
-status: review
+status: done
 priority: high
 depends_on:
   - EPIC-09
@@ -239,17 +239,18 @@ Maintainer decisions of 2026-09-25, unchanged by the implementation slices.
 
 ## Exit Criteria
 
-- [ ] The implementation work units are committed, pushed and merged with a CI
-      run green on both required checks. **Open.** The work is on a local
-      uncommitted working tree; there is no commit, no push and no PR for
-      EPIC-10.
+- [x] The implementation work units are committed, pushed and merged with a CI
+      run green on both required checks. Merged as PR #66
+      (`feat/epic-10-inventory` → `main`, merge commit `ee558a7`) with CI run
+      36249268114 green on both "Database migrations" and "Lint, Typecheck,
+      Test, Build".
 - [x] The durable live-PostgreSQL isolation/concurrency evidence for the ledger
       passed **locally**. Evidence: the local run of 2026-09-25 —
       `pnpm --filter @newsaas/api test:live-pg` reported 1 file / **52 tests
       passed** against a disposable PostgreSQL 16.13 database, including the
       `EPIC-10 inventory application-path isolation` block and the
       concurrent-overdraw race that first exposed the lost update and now proves
-      the fix. The CI half of this criterion is open until the work is pushed.
+      the fix. The same suite passed in CI run 36249268114 after the merge.
 - [x] The root and focused quality gates are green at the epic level. Evidence:
       `pnpm --filter @newsaas/database build|test|typecheck`,
       `pnpm --filter @newsaas/api test|typecheck|lint`,
@@ -263,11 +264,11 @@ Maintainer decisions of 2026-09-25, unchanged by the implementation slices.
 - [x] Decisions and debt are recorded: the "Decided" section above and
       [[TD-016 Inventory stock serialization protocol]].
 
-`status: review` means implementation closure pending delivery — it is **not** a
-production-readiness statement. Every gate this environment can run is green and
-the live-PostgreSQL evidence exists locally, but the work is not committed,
-pushed or merged, so the merged-work-units exit criterion is still open.
-[[EPIC-20]] Production Hardening and the open Tech Debt items remain.
+`status: done` means epic implementation closure only: the work units are merged
+as PR #66, the required CI checks are green, and the live-PostgreSQL evidence is
+recorded. It is **not** a production-readiness statement — [[EPIC-20]]
+Production Hardening and the open Tech Debt items ([[TD-016]], [[TD-007]])
+remain.
 
 ## Technical Debt
 

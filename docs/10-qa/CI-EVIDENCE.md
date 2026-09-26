@@ -605,3 +605,40 @@ A reviewer can confirm this evidence without reconstructing the closure story:
 - [ ] The canonical CI baselines above are unchanged.
 - [ ] No statement claims production readiness; [[EPIC-20]] and the open Tech
       Debt items are cited.
+
+## EPIC-10 Closure Baseline (CI)
+
+Canonical post-merge CI evidence for EPIC-10, captured after PR #66 merged
+`feat/epic-10-inventory` into `main` (merge commit `ee558a7`). It supersedes the
+local evidence above as the immutable CI baseline for this epic. It records
+implementation closure only, never production readiness.
+
+### Canonical baseline
+
+| Field  | Value                                                           |
+| ------ | --------------------------------------------------------------- |
+| Run    | https://github.com/EstebanJS7/New_SaaS/actions/runs/36249268114 |
+| Event  | push to `main` (merge of PR #66, commit `ee558a7`)              |
+| Result | both required checks passed                                     |
+
+### Executed checks
+
+| Job                            | Result |
+| ------------------------------ | ------ |
+| `Database migrations`          | pass   |
+| `Lint, Typecheck, Test, Build` | pass   |
+
+The `Database migrations` job applies all three inventory migrations, runs the
+idempotent seed probe and `db:live-verify`, and executes the live-PostgreSQL
+suite (52/52, including the `EPIC-10 inventory application-path isolation` block
+and the proven-and-fixed `BLOCK` race), so the earlier local 52/52 is now
+reproduced in CI.
+
+### Known warnings and open limitations
+
+| Item                                                       | State                                                  |
+| ---------------------------------------------------------- | ------------------------------------------------------ |
+| Staff inventory UI / web proxy                             | not present — the module is API-only in this slice     |
+| Staff `tracksStock` UI toggle                              | not present — the API is the only writer today         |
+| Self-enforcing stock serialization guard                   | open — [[TD-016]]                                      |
+| Live-PostgreSQL case for the `tracksStock` by-kind default | not present — the column default/backfill is unchanged |

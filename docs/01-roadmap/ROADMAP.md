@@ -6,29 +6,29 @@ updated: 2026-09-25
 
 # ROADMAP
 
-| Epic    | Name                               |      Status | Depends on                |
-| ------- | ---------------------------------- | ----------: | ------------------------- |
-| EPIC-00 | Foundation                         |        done | —                         |
-| EPIC-01 | Database/Auth/Tenancy              |        done | EPIC-00                   |
-| EPIC-02 | RBAC/Entitlements/Tenant Settings  |        done | EPIC-01                   |
-| EPIC-03 | Staff Shell/Design System/Branding |        done | EPIC-01                   |
-| EPIC-04 | Customers                          |        done | EPIC-02, EPIC-03          |
-| EPIC-05 | Veterinary Patients                |        done | EPIC-04                   |
-| EPIC-06 | Clinical                           |        done | EPIC-05                   |
-| EPIC-07 | Scheduling                         |        done | EPIC-04, EPIC-05          |
-| EPIC-08 | Portal                             |        done | EPIC-04, EPIC-05, EPIC-07 |
-| EPIC-09 | Catalog/Taxes                      |        done | EPIC-02                   |
-| EPIC-10 | Inventory                          | in-progress | EPIC-09                   |
-| EPIC-11 | Suppliers/Purchases                |     planned | EPIC-10                   |
-| EPIC-12 | POS/Payments                       |     planned | EPIC-09, EPIC-10          |
-| EPIC-13 | Cash                               |     planned | EPIC-12                   |
-| EPIC-14 | Billing                            |     planned | EPIC-12                   |
-| EPIC-15 | Fiscal Abstraction                 |     planned | EPIC-14                   |
-| EPIC-16 | Fiscal Third-party Adapter         |     planned | EPIC-15                   |
-| EPIC-17 | Notifications                      |     planned | EPIC-07                   |
-| EPIC-18 | Dashboards/Reports                 |     planned | prior domains             |
-| EPIC-19 | Imports                            |     planned | EPIC-04, EPIC-05          |
-| EPIC-20 | Production Hardening               |     planned | MVP feature epics         |
+| Epic    | Name                               |  Status | Depends on                |
+| ------- | ---------------------------------- | ------: | ------------------------- |
+| EPIC-00 | Foundation                         |    done | —                         |
+| EPIC-01 | Database/Auth/Tenancy              |    done | EPIC-00                   |
+| EPIC-02 | RBAC/Entitlements/Tenant Settings  |    done | EPIC-01                   |
+| EPIC-03 | Staff Shell/Design System/Branding |    done | EPIC-01                   |
+| EPIC-04 | Customers                          |    done | EPIC-02, EPIC-03          |
+| EPIC-05 | Veterinary Patients                |    done | EPIC-04                   |
+| EPIC-06 | Clinical                           |    done | EPIC-05                   |
+| EPIC-07 | Scheduling                         |    done | EPIC-04, EPIC-05          |
+| EPIC-08 | Portal                             |    done | EPIC-04, EPIC-05, EPIC-07 |
+| EPIC-09 | Catalog/Taxes                      |    done | EPIC-02                   |
+| EPIC-10 | Inventory                          |    done | EPIC-09                   |
+| EPIC-11 | Suppliers/Purchases                | planned | EPIC-10                   |
+| EPIC-12 | POS/Payments                       | planned | EPIC-09, EPIC-10          |
+| EPIC-13 | Cash                               | planned | EPIC-12                   |
+| EPIC-14 | Billing                            | planned | EPIC-12                   |
+| EPIC-15 | Fiscal Abstraction                 | planned | EPIC-14                   |
+| EPIC-16 | Fiscal Third-party Adapter         | planned | EPIC-15                   |
+| EPIC-17 | Notifications                      | planned | EPIC-07                   |
+| EPIC-18 | Dashboards/Reports                 | planned | prior domains             |
+| EPIC-19 | Imports                            | planned | EPIC-04, EPIC-05          |
+| EPIC-20 | Production Hardening               | planned | MVP feature epics         |
 
 Update this table when Epic status changes.
 
@@ -63,21 +63,16 @@ with `taxRates: 3`. It is **never** production readiness: [[EPIC-20]] Production
 Hardening and the open Tech Debt items ([[TD-013]], [[TD-014]], [[TD-015]],
 [[TD-007]]) remain.
 
-[[EPIC-10]] Inventory moved to `in-progress` on 2026-09-25 when its W1 data
-foundation landed: the `tracks_stock` catalog dimension, the `stock_movement`
-ledger and `stock_balance` projection, the additive migration
-`20260925000003_inventory` and the two `inventory.stock.*` permissions. On the
-same day W2 delivered the adjustment surface
-(`POST /inventory/stock/adjustments` plus the balance and movement reads) and W3
-closed the ledger's live-PostgreSQL evidence locally: the migration is applied
-to a local PostgreSQL 16.13 database, `db:live-verify` passes, and the live
-suite is 52/52, including the `EPIC-10 inventory application-path isolation`
-block whose `BLOCK` race first exposed a real lost update — fixed by a
-per-`(tenant, item)` advisory lock — and now proves exactly one output admitted
-with the projection equal to the ledger's signed sum. The epic record moved to
-`review` with [[Inventory]] and [[TD-016]] written, **not** `done`: the work is
-not committed, pushed or merged, so the row stays `in-progress` here until
-delivery.
+[[EPIC-10]] Inventory moved to `done` on 2026-09-25, merged as PR #66
+(`feat/epic-10-inventory`, merge commit `ee558a7`) with CI run
+[36249268114](https://github.com/EstebanJS7/New_SaaS/actions/runs/36249268114)
+green on both required checks. `done` means epic implementation closure only:
+the live-PostgreSQL suite is 52/52, including the
+`EPIC-10 inventory application-path isolation` block whose `BLOCK` race first
+exposed a real lost update — fixed by a per-`(tenant, item)` advisory lock — and
+now proves exactly one output admitted with the projection equal to the ledger's
+signed sum. It is **never** production readiness: [[EPIC-20]] Production
+Hardening and the open Tech Debt items ([[TD-016]], [[TD-007]]) remain.
 
 ## Architecture baseline
 
