@@ -107,9 +107,9 @@ record has been implemented.
 - **Invoices, billing and invoice confirmation/cancellation** — [[EPIC-14]].
 - **Fiscal documents, fiscal provider calls or fiscal cancellation** —
   [[EPIC-15]] and [[EPIC-16]]. EPIC-11 makes no external call.
-- **Payments, settlement, paid/unpaid state or accounts payable** —
-  [[EPIC-12]] POS/Payments and [[EPIC-13]]. EPIC-11 adds no payment concept and
-  no owed amount.
+- **Payments, settlement, paid/unpaid state or accounts payable** — [[EPIC-12]]
+  POS/Payments and [[EPIC-13]]. EPIC-11 adds no payment concept and no owed
+  amount.
 - **POS, keyboard/barcode/touch selling flows and sale completion** —
   [[EPIC-12]].
 - **Purchase reversal** and compensating movements for a `RECEIVED` purchase.
@@ -145,11 +145,11 @@ record has been implemented.
 - [ ] Every protected operation validates authentication, server-side tenant
       context, permission/policy and resource tenant ownership before data
       access; frontend permission checks are UX only.
-- [ ] All external input is validated against a strict allowlisted contract
-      that rejects unknown keys; `tenantId` is never read from body, query or
-      route; no Prisma model crosses the HTTP boundary.
-- [ ] The purchase status enum is exactly `DRAFT`, `RECEIVED`, `CANCELLED`
-      (PRD §17), and receiving/cancelling are explicit transition commands, not
+- [ ] All external input is validated against a strict allowlisted contract that
+      rejects unknown keys; `tenantId` is never read from body, query or route;
+      no Prisma model crosses the HTTP boundary.
+- [ ] The purchase status enum is exactly `DRAFT`, `RECEIVED`, `CANCELLED` (PRD
+      §17), and receiving/cancelling are explicit transition commands, not
       generic `PATCH status` writes.
 - [ ] Receiving validates `DRAFT`, creates the stock movements, updates
       balances, marks the purchase `RECEIVED` and writes audit **atomically**: a
@@ -160,10 +160,10 @@ record has been implemented.
       signed sum after the command.
 - [ ] `stock_movement_type` gains `PURCHASE` additively; existing `ADJUSTMENT`
       behavior is unchanged.
-- [ ] Purchase receive is audited with stable ids and field names only
-      (PRD §27).
-- [ ] No cash, billing, fiscal, payment, POS or low-stock behavior is
-      introduced by any EPIC-11 slice.
+- [ ] Purchase receive is audited with stable ids and field names only (PRD
+      §27).
+- [ ] No cash, billing, fiscal, payment, POS or low-stock behavior is introduced
+      by any EPIC-11 slice.
 - [ ] The staff surface implements loading, empty, error, success and
       permission-denied states using semantic design tokens only.
 - [ ] Tenant isolation tests exist for every new private aggregate;
@@ -171,9 +171,8 @@ record has been implemented.
       transaction has live-PostgreSQL evidence.
 - [x] Every open product decision is resolved by an accepted Decision record
       before the dependent schema or contract is written: the eight records
-      [[DEC-011]]–[[DEC-018]] were accepted on 2026-09-26 and are binding on
-      the dependent slices; the schema and contracts themselves are not yet
-      written.
+      [[DEC-011]]–[[DEC-018]] were accepted on 2026-09-26 and are binding on the
+      dependent slices; the schema and contracts themselves are not yet written.
 - [ ] Documentation is current, and the lint/typecheck/test/build checks
       required by the epic are green.
 
@@ -218,29 +217,29 @@ EPIC-12 as depending on EPIC-09 and EPIC-10 only.
 The eight EPIC-11 Decisions were accepted on 2026-09-26 by the maintainer, each
 as its recommended Option A:
 
-- [[DEC-011 Supplier identity, uniqueness and classification]] — which supplier
+- [[DEC-011]] — supplier identity, uniqueness and classification: which supplier
   attributes are required and optional, what is unique per tenant, what
   lifecycle applies, and what data classification each field carries.
-- [[DEC-012 Purchase aggregate shape and the draft-versus-receive validation
-  gate]] — what a purchase aggregate must contain to be saved as a draft and to
-  be received, and at which of those two moments catalog-item state is checked.
-- [[DEC-013 Purchase line cost and tax structure]] — whether a purchase line
+- [[DEC-012]] — purchase aggregate shape and the draft-versus-receive validation
+  gate: what a purchase aggregate must contain to be saved as a draft and to be
+  received, and at which of those two moments catalog-item state is checked.
+- [[DEC-013]] — purchase line cost and tax structure: whether a purchase line
   carries a unit cost, a tax rate, a computed total or nothing at all, given
   that no consumer of a purchase amount exists.
-- [[DEC-014 Purchase receiving semantics — single-shot transition,
-  all-or-nothing line gates and deterministic lock order]] — what a receive does
-  on a replay, which lines it may accept, what it persists when any line is
+- [[DEC-014]] — purchase receiving semantics — single-shot transition,
+  all-or-nothing line gates and deterministic lock order: what a receive does on
+  a replay, which lines it may accept, what it persists when any line is
   rejected, and in what order it takes the ledger's advisory locks.
-- [[DEC-015 Purchase cancellation and the correction boundary for a received
-  purchase]] — whether `CANCELLED` is reachable from a received purchase, and
-  how a received purchase is corrected.
-- [[DEC-016 Suppliers/purchases permission keys, role matrix and entitlement
-  gating]] — which `suppliers.*` and `purchases.*` keys exist, which roles hold
+- [[DEC-015]] — purchase cancellation and the correction boundary for a received
+  purchase: whether `CANCELLED` is reachable from a received purchase, and how a
+  received purchase is corrected.
+- [[DEC-016]] — suppliers/purchases permission keys, role matrix and entitlement
+  gating: which `suppliers.*` and `purchases.*` keys exist, which roles hold
   them, and whether the `purchases` entitlement gates the surface.
-- [[DEC-017 Suppliers/purchases audit scope]] — which supplier and purchase
+- [[DEC-017]] — suppliers/purchases audit scope: which supplier and purchase
   operations write an audit row, at what granularity, and what each row may
   carry.
-- [[DEC-018 Purchase numbering (EPIC-11)]] — whether the purchase aggregate
+- [[DEC-018]] — purchase numbering (EPIC-11): whether the purchase aggregate
   carries a human-readable business number, and if so who generates it, under
   what uniqueness scope and with what gap-free guarantee.
 

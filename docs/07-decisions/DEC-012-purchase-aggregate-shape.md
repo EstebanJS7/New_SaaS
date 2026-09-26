@@ -2,7 +2,8 @@
 id: DEC-012
 type: decision
 title:
-  Purchase aggregate shape and the draft-versus-receive validation gate (EPIC-11)
+  Purchase aggregate shape and the draft-versus-receive validation gate
+  (EPIC-11)
 status: accepted
 date: 2026-09-26
 related_epics:
@@ -29,9 +30,8 @@ Verified current state in this repository (2026-09-26):
 - No purchase model exists in `packages/database/prisma/schema.prisma`, and no
   `apps/api/src/purchases/` module exists.
 - The ledger's quantity discipline is fixed: `StockMovement.quantity` and
-  `StockBalance.quantity` are `Decimal(10, 3)` and signed
-  (`schema.prisma:1354`, `schema.prisma:1392`), and the movement CHECK rejects a
-  zero quantity.
+  `StockBalance.quantity` are `Decimal(10, 3)` and signed (`schema.prisma:1354`,
+  `schema.prisma:1392`), and the movement CHECK rejects a zero quantity.
 - The catalog's decimal discipline is fixed: `CatalogItem.referencePriceAmount`
   is `Decimal(14, 2)` and exact decimal strings are validated at the boundary
   (no floats).
@@ -54,12 +54,12 @@ received, and at which of those two moments is catalog-item state checked?
 ### Option A — Required supplier, at least one positive line, item state gated at receive (recommended)
 
 `supplierId` is required. A saved draft has at least one line. Each line
-quantity is strictly positive and validated as an exact `Decimal(10, 3)`
-decimal **string** at the boundary; a float is never accepted. Each line resolves
-one in-tenant catalog item, and a duplicate `catalogItemId` within the same
-purchase is rejected. Item `isActive` / `tracksStock` state is **not** checked
-when the draft is saved — a draft is inert and changes no stock — and is checked
-at receive (see [[DEC-014]]).
+quantity is strictly positive and validated as an exact `Decimal(10, 3)` decimal
+**string** at the boundary; a float is never accepted. Each line resolves one
+in-tenant catalog item, and a duplicate `catalogItemId` within the same purchase
+is rejected. Item `isActive` / `tracksStock` state is **not** checked when the
+draft is saved — a draft is inert and changes no stock — and is checked at
+receive (see [[DEC-014]]).
 
 Benefits: duplicate-line rejection keeps receiving deterministic (one movement
 per line, no ambiguity about which quantity wins), the strict positive quantity
@@ -91,8 +91,8 @@ Rejected as the recommended option because it makes an **inert** draft fail on
 state that can still change before receive: an item deactivated after the draft
 was saved would leave a previously valid draft permanently unreceivable with no
 path but cancellation. It is a legitimate defense-in-depth alternative if the
-maintainer prefers earlier feedback, and it does not change the receive-time gate
-that A and [[DEC-014]] require.
+maintainer prefers earlier feedback, and it does not change the receive-time
+gate that A and [[DEC-014]] require.
 
 ## Recommendation
 
@@ -109,10 +109,10 @@ consumes when it defines the receive-time validation.
 
 ### Product
 
-A draft always names a supplier and at least one item, so the staff surface never
-shows a purchasable document that cannot exist. Catalog state is reported when it
-matters — at receiving — rather than blocking work on a document that changes
-nothing.
+A draft always names a supplier and at least one item, so the staff surface
+never shows a purchasable document that cannot exist. Catalog state is reported
+when it matters — at receiving — rather than blocking work on a document that
+changes nothing.
 
 ### Architecture
 
@@ -132,21 +132,21 @@ reject unknown keys; `tenantId` is never read from body, query or route.
 
 ### Delivery
 
-[[PUR-001 Purchase draft]] owns the models, the enum, the draft create/edit/cancel
-routes and their schema gate; [[PUR-002 Purchase receiving]] owns the receive-time
-item gate and the ledger transaction. No numbering, cost or tax column is decided
-here.
+[[PUR-001 Purchase draft]] owns the models, the enum, the draft
+create/edit/cancel routes and their schema gate; [[PUR-002 Purchase receiving]]
+owns the receive-time item gate and the ledger transaction. No numbering, cost
+or tax column is decided here.
 
 ## Decision
 
 Accepted on 2026-09-26 by the maintainer. Option A is the decision: `supplierId`
 is required; a saved draft has at least one line; each line quantity is strictly
 positive and validated as an exact `Decimal(10, 3)` decimal **string** at the
-boundary, and a float is never accepted; each line resolves one in-tenant catalog
-item, and a duplicate `catalogItemId` within the same purchase is rejected; and
-item `isActive` / `tracksStock` state is **not** checked when the draft is saved —
-a draft is inert and changes no stock — and is checked at receive
-([[DEC-014]]).
+boundary, and a float is never accepted; each line resolves one in-tenant
+catalog item, and a duplicate `catalogItemId` within the same purchase is
+rejected; and item `isActive` / `tracksStock` state is **not** checked when the
+draft is saved — a draft is inert and changes no stock — and is checked at
+receive ([[DEC-014]]).
 
 The other options stay recorded above as the alternatives that were considered;
 acceptance selects Option A only.

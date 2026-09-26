@@ -89,10 +89,7 @@ export type SupplierOrderBy = { name?: "asc" | "desc" } | { id?: "asc" | "desc" 
  */
 export interface SupplierDelegate {
   findFirst: (args: { where: SupplierWhere }) => Promise<SupplierRow | null>;
-  findMany: (args: {
-    where: SupplierWhere;
-    orderBy?: SupplierOrderBy[];
-  }) => Promise<SupplierRow[]>;
+  findMany: (args: { where: SupplierWhere; orderBy?: SupplierOrderBy[] }) => Promise<SupplierRow[]>;
   create: (args: { data: SupplierCreateData & { tenantId: string } }) => Promise<SupplierRow>;
   updateMany: (args: {
     where: SupplierWhere;

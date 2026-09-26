@@ -121,7 +121,9 @@ describe("migration · suppliers (EPIC-11 WU1 SUP-001)", () => {
     );
     // The trading name is deliberately NOT unique (DEC-011).
     expect(SUPPLIERS_SQL).not.toMatch(/CREATE UNIQUE INDEX [^;]*ON "supplier"\("name"\)/);
-    expect(SUPPLIERS_SQL).not.toMatch(/CREATE UNIQUE INDEX [^;]*ON "supplier"\("tenant_id", "name"\)/);
+    expect(SUPPLIERS_SQL).not.toMatch(
+      /CREATE UNIQUE INDEX [^;]*ON "supplier"\("tenant_id", "name"\)/
+    );
   });
 
   it("enforces per-tenant tax-id uniqueness when present with an explicit partial index", () => {
@@ -205,8 +207,12 @@ describe("schema · suppliers (EPIC-11 WU1 SUP-001)", () => {
     expect(supplier).toMatch(/phone\s+String\?\s+@db\.VarChar\(50\)/);
     expect(supplier).toMatch(/address\s+String\?\s+@db\.VarChar\(500\)/);
     expect(supplier).toMatch(/isActive\s+Boolean\s+@default\(true\)\s+@map\("is_active"\)/);
-    expect(supplier).toMatch(/createdAt\s+DateTime\s+@default\(now\(\)\)\s+@map\("created_at"\)\s+@db\.Timestamptz\(3\)/);
-    expect(supplier).toMatch(/updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)\s+@db\.Timestamptz\(3\)/);
+    expect(supplier).toMatch(
+      /createdAt\s+DateTime\s+@default\(now\(\)\)\s+@map\("created_at"\)\s+@db\.Timestamptz\(3\)/
+    );
+    expect(supplier).toMatch(
+      /updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)\s+@db\.Timestamptz\(3\)/
+    );
 
     // The trading name is required but not unique (DEC-011).
     expect(supplier).not.toMatch(/name\s+String\s+@unique/);
@@ -214,7 +220,7 @@ describe("schema · suppliers (EPIC-11 WU1 SUP-001)", () => {
     // field declarations, not doc-comment prose, so wording like "any number of
     // rows" is not mistaken for a column.
     expect(supplier).not.toMatch(
-      /^\s*(balance|owedAmount|creditLimit|paymentTerm|paymentTerms|number|code|currency|amount)\s+(String|Decimal|Int|BigInt|Float|Boolean)\b/mi
+      /^\s*(balance|owedAmount|creditLimit|paymentTerm|paymentTerms|number|code|currency|amount)\s+(String|Decimal|Int|BigInt|Float|Boolean)\b/im
     );
   });
 

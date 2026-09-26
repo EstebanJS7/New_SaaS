@@ -234,7 +234,13 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "catalog.read",
     "suppliers.read",
   ],
-  CASHIER: ["cash.session.close", "fiscal.invoice.issue", "catalog.read", "inventory.stock.read", "suppliers.read"],
+  CASHIER: [
+    "cash.session.close",
+    "fiscal.invoice.issue",
+    "catalog.read",
+    "inventory.stock.read",
+    "suppliers.read",
+  ],
   // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
   // catalog keys plus the EPIC-10 stock write key; front-desk, veterinary and
   // cash roles read the catalog and the stock projection only.

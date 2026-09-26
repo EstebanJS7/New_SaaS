@@ -48,8 +48,7 @@ that [[TD-016]] names as the next stock writer.
   `PURCHASE` arrives additively with the epic that owns its command, so the enum
   extension belongs to this Story.
 - `docs/05-modules/Inventory.md` and [[TD-016]] make the serialization protocol
-  mandatory for every future stock writer:
-  `InventoryRepository.lockItemStock` /
+  mandatory for every future stock writer: `InventoryRepository.lockItemStock` /
   `stockSerializationLockKey(tenantId, catalogItemId)` is acquired **before**
   reading or writing `stock_balance`.
 - Purchases reference catalog items, so the same `tracksStock` and `isActive`
@@ -130,16 +129,16 @@ that [[TD-016]] names as the next stock writer.
       keys; `tenantId` is never read from body, query or route; no Prisma model
       crosses the HTTP boundary.
 - [x] Replay behavior, line gates for non-tracking and inactive items, and the
-      immutability of a `RECEIVED` purchase are fixed by the accepted and binding
-      Decision records [[DEC-014]], [[DEC-012]] and [[DEC-015]] (accepted
-      2026-09-26); the receive command itself is still not written, and no
-      idempotency or gating semantics are invented.
+      immutability of a `RECEIVED` purchase are fixed by the accepted and
+      binding Decision records [[DEC-014]], [[DEC-012]] and [[DEC-015]]
+      (accepted 2026-09-26); the receive command itself is still not written,
+      and no idempotency or gating semantics are invented.
 - [ ] The new permission key and role matrix are seeded, and the seed-count
       probe is reconciled.
 - [ ] Tenant isolation tests exist for the receiving path, authorization and
       validation tests cover the route, and the live-PostgreSQL suite proves
-      atomicity, immutability, cross-tenant isolation and the
-      `(tenant, item)` serialization race.
+      atomicity, immutability, cross-tenant isolation and the `(tenant, item)`
+      serialization race.
 - [ ] Required lint/typecheck/test checks pass.
 
 ## Domain Invariants
@@ -156,8 +155,8 @@ that [[TD-016]] names as the next stock writer.
   purchase to `DRAFT`, and no purchase, line or movement is hard-deleted.
 - **Every write belongs to exactly one tenant.** Tenant identity comes only from
   the server-side request context; a cross-tenant UUID is a `404`.
-- **Atomicity is all-or-nothing.** A failed receive leaves no partial stock,
-  no orphan movement and no audit row.
+- **Atomicity is all-or-nothing.** A failed receive leaves no partial stock, no
+  orphan movement and no audit row.
 
 ## API
 
@@ -189,8 +188,8 @@ accepted and no existing migration is rewritten.
 - `StockMovement.type` — gains `PURCHASE` (`stock_movement_type`). Quantity
   stays `DECIMAL(10, 3)`, signed, non-zero, immutable, with the no-delete
   trigger unchanged.
-- `StockBalance` — consumed through the existing `(tenant, item)` projection;
-  no schema change expected.
+- `StockBalance` — consumed through the existing `(tenant, item)` projection; no
+  schema change expected.
 - The purchase tables are owned by [[PUR-001 Purchase draft]].
 
 ## UI
@@ -202,13 +201,13 @@ accepted and no existing migration is rewritten.
 ## Implementation Summary
 
 _Not implemented. All required Decision records are accepted as of 2026-09-26 —
-[[DEC-012 Purchase aggregate shape and the draft-versus-receive validation
-gate]], [[DEC-013 Purchase line cost and tax structure]], [[DEC-014 Purchase
+[[DEC-012]] purchase aggregate shape and the draft-versus-receive validation
+gate, [[DEC-013]] purchase line cost and tax structure, [[DEC-014]] purchase
 receiving semantics — single-shot transition, all-or-nothing line gates and
-deterministic lock order]], [[DEC-015 Purchase cancellation and the correction
-boundary for a received purchase]], [[DEC-016 Suppliers/purchases permission
-keys, role matrix and entitlement gating]] and [[DEC-017 Suppliers/purchases
-audit scope]] — and the slice awaits implementation authorization._
+deterministic lock order, [[DEC-015]] purchase cancellation and the correction
+boundary for a received purchase, [[DEC-016]] suppliers/purchases permission
+keys, role matrix and entitlement gating and [[DEC-017]] suppliers/purchases
+audit scope — and the slice awaits implementation authorization._
 
 ## Verification
 
@@ -242,23 +241,24 @@ Not run.
 ## Decisions / ADRs
 
 - Accepted Decision records govern this Story (accepted 2026-09-26):
-  - [[DEC-012 Purchase aggregate shape and the draft-versus-receive validation
-    gate]] — fixes the aggregate the receive command consumes and gates
-    catalog-item state at receive rather than at draft save.
-  - [[DEC-013 Purchase line cost and tax structure]] — fixes the informational
-    unit cost, and the ledger receives no amount.
-  - [[DEC-014 Purchase receiving semantics — single-shot transition,
-    all-or-nothing line gates and deterministic lock order]] — fixes the replay
-    as `409 CONFLICT`, the all-or-nothing line gates, the single transaction with
-    exactly one audit row, and the ascending `catalogItemId` lock order.
-  - [[DEC-015 Purchase cancellation and the correction boundary for a received
-    purchase]] — fixes that a `RECEIVED` purchase is immutable and is corrected
-    only by a future reversal rather than an edit.
-  - [[DEC-016 Suppliers/purchases permission keys, role matrix and entitlement
-    gating]] — fixes `purchases.receive`, the roles that hold it and the absence
-    of an entitlement gate.
-  - [[DEC-017 Suppliers/purchases audit scope]] — fixes the receive audit as
-    exactly one co-committed row per accepted mutation.
+  - [[DEC-012]] — purchase aggregate shape and the draft-versus-receive
+    validation gate, which fixes the aggregate the receive command consumes and
+    gates catalog-item state at receive rather than at draft save.
+  - [[DEC-013]] — purchase line cost and tax structure, which fixes the
+    informational unit cost, and the ledger receives no amount.
+  - [[DEC-014]] — purchase receiving semantics — single-shot transition,
+    all-or-nothing line gates and deterministic lock order, which fixes the
+    replay as `409 CONFLICT`, the all-or-nothing line gates, the single
+    transaction with exactly one audit row, and the ascending `catalogItemId`
+    lock order.
+  - [[DEC-015]] — purchase cancellation and the correction boundary for a
+    received purchase, which fixes that a `RECEIVED` purchase is immutable and
+    is corrected only by a future reversal rather than an edit.
+  - [[DEC-016]] — suppliers/purchases permission keys, role matrix and
+    entitlement gating, which fixes `purchases.receive`, the roles that hold it
+    and the absence of an entitlement gate.
+  - [[DEC-017]] — suppliers/purchases audit scope, which fixes the receive audit
+    as exactly one co-committed row per accepted mutation.
 - An ADR is not expected: the command preserves the ledger, the transaction
   model and the approved stack.
 
@@ -268,23 +268,23 @@ Not run.
   `409 CONFLICT` and persists nothing, with no idempotent short-circuit.
 - **Line gates** — answered by [[DEC-014]]: every line must resolve in-tenant to
   an ACTIVE item with `tracksStock` true, otherwise the whole command fails with
-  the same stable `409` messages the adjustment path uses; [[DEC-012]] fixes that
-  this gate runs at receive, not at draft save.
-- **Zero or negative line quantities** — answered by [[DEC-012]]: a line quantity
-  is strictly positive and validated as an exact `Decimal(10, 3)` decimal string,
-  so a zero or negative quantity is invalid rather than skipped.
+  the same stable `409` messages the adjustment path uses; [[DEC-012]] fixes
+  that this gate runs at receive, not at draft save.
+- **Zero or negative line quantities** — answered by [[DEC-012]]: a line
+  quantity is strictly positive and validated as an exact `Decimal(10, 3)`
+  decimal string, so a zero or negative quantity is invalid rather than skipped.
 - **Empty purchase** — answered by [[DEC-012]]: a saved draft has at least one
   line, so an empty purchase is not a receivable state.
 - **Failure ordering and partial lines** — answered by [[DEC-014]]: the whole
   command fails with the rejected line's stable `409` message and persists no
   partial effect.
 - **Audit shape** — answered by [[DEC-017]] and [[DEC-014]]: exactly one row per
-  receive, carrying `action`, `targetType`, `targetId` and `metadata {
-  schemaVersion, changedFields }` with stable ids and field names only, and no
-  per-line rows.
+  receive, carrying `action`, `targetType`, `targetId` and
+  `metadata { schemaVersion, changedFields }` with stable ids and field names
+  only, and no per-line rows.
 - **Permission key and role matrix** — answered by [[DEC-016]]:
-  `purchases.receive` is held by `OWNER`, `ADMIN` and `INVENTORY_MANAGER`, and no
-  entitlement gate applies.
+  `purchases.receive` is held by `OWNER`, `ADMIN` and `INVENTORY_MANAGER`, and
+  no entitlement gate applies.
 - **Lock scope per request** — answered by [[DEC-014]]: the per-`(tenant, item)`
   advisory locks are acquired in ascending `catalogItemId` order, which is part
   of the decision rather than an implementation detail.
@@ -298,8 +298,8 @@ Not run.
 - `packages/database/src/schema-inventory.test.ts` — the enum gate.
 - `apps/api/src/purchases/` — the receiving contract, service transaction,
   controller and DTO.
-- `apps/api/src/inventory/inventory.repository.ts` — the reused
-  `lockItemStock` / `stockSerializationLockKey` seam.
+- `apps/api/src/inventory/inventory.repository.ts` — the reused `lockItemStock`
+  / `stockSerializationLockKey` seam.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — the route and permission
   pin.
 - `packages/database/src/reference-seed.ts` — the permission seed and matrix.

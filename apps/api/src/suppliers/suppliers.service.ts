@@ -133,14 +133,7 @@ function isSupplierTaxIdConflict(error: unknown): boolean {
  * `phone` and `address` are CONFIDENTIAL (DEC-011/DEC-017), so no stored value
  * may be copied into the trail. Ids and field names are all the row carries.
  */
-const SUPPLIER_FIELD_ORDER = [
-  "name",
-  "legalName",
-  "taxId",
-  "email",
-  "phone",
-  "address",
-] as const;
+const SUPPLIER_FIELD_ORDER = ["name", "legalName", "taxId", "email", "phone", "address"] as const;
 
 type SupplierFieldName = (typeof SUPPLIER_FIELD_ORDER)[number];
 

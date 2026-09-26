@@ -64,8 +64,7 @@ Decisions now fix (see "Resolved by Decision").
 - `apps/api/src/purchases/` — permission contract, allowlisted DTOs, strict Zod
   contracts, tenant-safe repository, service, controller and module; the module
   registration in `apps/api/src/app.module.ts`.
-- Draft create, edit, cancel and read routes, with `DRAFT`-only mutation
-  guards.
+- Draft create, edit, cancel and read routes, with `DRAFT`-only mutation guards.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — the new routes and their
   per-route permission pins.
 - `packages/database/src/reference-seed.ts` — the new permission keys and role
@@ -94,8 +93,8 @@ Decisions now fix (see "Resolved by Decision").
 
 ## Acceptance Criteria
 
-- [ ] The purchase status enum is exactly `DRAFT`, `RECEIVED`, `CANCELLED`
-      (PRD §17); no other state is representable, and there is no partial or
+- [ ] The purchase status enum is exactly `DRAFT`, `RECEIVED`, `CANCELLED` (PRD
+      §17); no other state is representable, and there is no partial or
       back-order state.
 - [ ] A purchase is tenant-scoped with a tenant composite ownership key and a
       `RESTRICT` tenant foreign key; a cross-tenant or unknown purchase UUID is
@@ -188,12 +187,12 @@ accepted.
 ## Implementation Summary
 
 _Not implemented. All required Decision records are accepted as of 2026-09-26 —
-[[DEC-012 Purchase aggregate shape and the draft-versus-receive validation
-gate]], [[DEC-013 Purchase line cost and tax structure]], [[DEC-015 Purchase
-cancellation and the correction boundary for a received purchase]], [[DEC-016
-Suppliers/purchases permission keys, role matrix and entitlement gating]],
-[[DEC-017 Suppliers/purchases audit scope]] and [[DEC-018 Purchase numbering
-(EPIC-11)]] — and the slice awaits implementation authorization._
+[[DEC-012]] purchase aggregate shape and the draft-versus-receive validation
+gate, [[DEC-013]] purchase line cost and tax structure, [[DEC-015]] purchase
+cancellation and the correction boundary for a received purchase, [[DEC-016]]
+suppliers/purchases permission keys, role matrix and entitlement gating,
+[[DEC-017]] suppliers/purchases audit scope and [[DEC-018]] purchase numbering
+(EPIC-11) — and the slice awaits implementation authorization._
 
 ## Verification
 
@@ -220,24 +219,26 @@ Not run.
 ## Decisions / ADRs
 
 - Accepted Decision records govern this Story (accepted 2026-09-26):
-  - [[DEC-012 Purchase aggregate shape and the draft-versus-receive validation
-    gate]] — fixes what a purchase aggregate must contain to be saved as a draft
-    and to be received, including required `supplierId`, at least one line,
-    strictly positive quantities, and the moment catalog-item state is checked.
-  - [[DEC-013 Purchase line cost and tax structure]] — fixes the line's single
-    optional informational unit cost and the absence of a tax rate, a computed
-    line total or a purchase total.
-  - [[DEC-015 Purchase cancellation and the correction boundary for a received
-    purchase]] — fixes that `CANCELLED` is reachable only from `DRAFT` and that
-    a `RECEIVED` purchase is corrected only by a future reversal.
-  - [[DEC-016 Suppliers/purchases permission keys, role matrix and entitlement
-    gating]] — fixes the `purchases.*` keys, the role matrix that holds them and
-    the absence of an entitlement gate.
-  - [[DEC-017 Suppliers/purchases audit scope]] — fixes purchase
+  - [[DEC-012]] — purchase aggregate shape and the draft-versus-receive
+    validation gate, which fixes what a purchase aggregate must contain to be
+    saved as a draft and to be received, including required `supplierId`, at
+    least one line, strictly positive quantities, and the moment catalog-item
+    state is checked.
+  - [[DEC-013]] — purchase line cost and tax structure, which fixes the line's
+    single optional informational unit cost and the absence of a tax rate, a
+    computed line total or a purchase total.
+  - [[DEC-015]] — purchase cancellation and the correction boundary for a
+    received purchase, which fixes that `CANCELLED` is reachable only from
+    `DRAFT` and that a `RECEIVED` purchase is corrected only by a future
+    reversal.
+  - [[DEC-016]] — suppliers/purchases permission keys, role matrix and
+    entitlement gating, which fixes the `purchases.*` keys, the role matrix that
+    holds them and the absence of an entitlement gate.
+  - [[DEC-017]] — suppliers/purchases audit scope, which fixes purchase
     create/update/cancel audit as exactly one co-committed row per accepted
     mutation.
-  - [[DEC-018 Purchase numbering (EPIC-11)]] — fixes that the aggregate carries
-    no human-readable number.
+  - [[DEC-018]] — purchase numbering (EPIC-11), which fixes that the aggregate
+    carries no human-readable number.
 - An ADR is not expected: the draft aggregate introduces no architecture change
   that the complexity budget gates.
 

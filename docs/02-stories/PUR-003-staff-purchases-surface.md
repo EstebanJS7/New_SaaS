@@ -49,9 +49,9 @@ authorization authority and no stock arithmetic.
 - Reusable components consume semantic design tokens; no project-specific brand
   literal, no tenant CSS or JavaScript injection, and no arbitrary remote font
   enters this surface.
-- Supplier contact data is CONFIDENTIAL per [[DEC-011]], so the surface must
-  not log payloads and must not place unclassified supplier data in
-  client-visible telemetry.
+- Supplier contact data is CONFIDENTIAL per [[DEC-011]], so the surface must not
+  log payloads and must not place unclassified supplier data in client-visible
+  telemetry.
 
 ## In Scope
 
@@ -112,8 +112,8 @@ authorization authority and no stock arithmetic.
       Veterinary-specific or hardcoded brand color, logo, radius or font is
       introduced, and no arbitrary tenant CSS or JavaScript is accepted.
 - [ ] Supplier contact and identifier fields are not written to client logs,
-      error telemetry or analytics payloads; the classification from
-      [[SUP-001]] is honored in the UI.
+      error telemetry or analytics payloads; the classification from [[SUP-001]]
+      is honored in the UI.
 - [ ] Cache invalidation runs after each accepted mutation so a list or detail
       view never shows stale draft or status data.
 - [ ] Component and route-handler tests cover the allowlist pairs, the envelope
@@ -167,14 +167,14 @@ None. This Story owns no persistence.
 - Loading, empty, error, success and permission-denied states on every page and
   mutation, plus a distinct `409` conflict presentation for a rejected
   transition.
-- Reusable components use semantic branding tokens rather than
-  project-specific literals.
+- Reusable components use semantic branding tokens rather than project-specific
+  literals.
 
 ## Implementation Summary
 
 _Not implemented. The Decision records this Story consumes are accepted as of
-2026-09-26 — [[DEC-016 Suppliers/purchases permission keys, role matrix and
-entitlement gating]] plus the accepted outcomes of [[DEC-011]], [[DEC-012]],
+2026-09-26 — [[DEC-016]] suppliers/purchases permission keys, role matrix and
+entitlement gating plus the accepted outcomes of [[DEC-011]], [[DEC-012]],
 [[DEC-013]], [[DEC-014]], [[DEC-015]] and [[DEC-017]] — and the slice awaits
 implementation authorization, which also depends on the API stories it
 consumes._
@@ -206,24 +206,24 @@ Not run.
 ## Decisions / ADRs
 
 - Accepted Decision records govern this Story (accepted 2026-09-26):
-  - [[DEC-016 Suppliers/purchases permission keys, role matrix and entitlement
-    gating]] — fixes the permission keys and the role matrix this surface renders
-    as UX gates only, and the absence of an entitlement gate.
-  - [[DEC-011 Supplier identity, uniqueness and classification]], [[DEC-012
-    Purchase aggregate shape and the draft-versus-receive validation gate]],
-    [[DEC-013 Purchase line cost and tax structure]], [[DEC-014 Purchase
+  - [[DEC-016]] — suppliers/purchases permission keys, role matrix and
+    entitlement gating, which fixes the permission keys and the role matrix this
+    surface renders as UX gates only, and the absence of an entitlement gate.
+  - [[DEC-011]] supplier identity, uniqueness and classification, [[DEC-012]]
+    purchase aggregate shape and the draft-versus-receive validation gate,
+    [[DEC-013]] purchase line cost and tax structure, [[DEC-014]] purchase
     receiving semantics — single-shot transition, all-or-nothing line gates and
-    deterministic lock order]], [[DEC-015 Purchase cancellation and the
-    correction boundary for a received purchase]] and [[DEC-017
-    Suppliers/purchases audit scope]] — the accepted outcomes of the API stories
+    deterministic lock order, [[DEC-015]] purchase cancellation and the
+    correction boundary for a received purchase and [[DEC-017]]
+    suppliers/purchases audit scope — the accepted outcomes of the API stories
     this surface consumes.
 - No ADR is expected: this Story introduces no architecture change.
 
 ## Resolved by Decision
 
 None. This Story owns presentation and transport only, and the Decision records
-it consumes — [[DEC-016 Suppliers/purchases permission keys, role matrix and
-entitlement gating]] plus the accepted outcomes of [[DEC-011]], [[DEC-012]],
+it consumes — [[DEC-016]] suppliers/purchases permission keys, role matrix and
+entitlement gating plus the accepted outcomes of [[DEC-011]], [[DEC-012]],
 [[DEC-013]], [[DEC-014]], [[DEC-015]] and [[DEC-017]] — are accepted as of
 2026-09-26 and fix the API contract and the permission gates it renders.
 
@@ -242,8 +242,8 @@ decisions, and no Decision record is required for them.
 3. **Navigation and shell integration.** Whether suppliers and purchases appear
    as separate staff nav entries, and which entitlement or permission gates the
    nav item.
-4. **Conflict presentation.** The exact copy and retry affordance for a `409`
-   on receive versus a `409` on a draft edit.
+4. **Conflict presentation.** The exact copy and retry affordance for a `409` on
+   receive versus a `409` on a draft edit.
 5. **Cancel confirmation.** Whether cancelling a draft requires a typed
    confirmation or a simple dialog.
 

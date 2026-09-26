@@ -28,56 +28,59 @@ purchases surface]] all record this as an open question.
 
 Verified current state in this repository (2026-09-26):
 
-- Permission keys must match `PERMISSION_KEY_PATTERN =
-  /^[a-z]+(?:\.[a-z_]+){1,2}$/` (`packages/database/src/reference-seed.ts:20`).
-  Each module declares its keys in a frozen `as const` contract
+- Permission keys must match
+  `PERMISSION_KEY_PATTERN = /^[a-z]+(?:\.[a-z_]+){1,2}$/`
+  (`packages/database/src/reference-seed.ts:20`). Each module declares its keys
+  in a frozen `as const` contract
   (`apps/api/src/catalog/catalog.permissions.ts`,
-  `apps/api/src/inventory/inventory.permissions.ts`), and no such contract exists
-  for suppliers or purchases today.
+  `apps/api/src/inventory/inventory.permissions.ts`), and no such contract
+  exists for suppliers or purchases today.
 - `PERMISSION_SEEDS` currently holds **34** entries and `ROLE_PERMISSION_MATRIX`
-  spans the six `ROLE_SEEDS` codes `OWNER, ADMIN, VETERINARIAN, RECEPTIONIST,
-  CASHIER, INVENTORY_MANAGER`. The seed-count probe pins the exact volumes in
+  spans the six `ROLE_SEEDS` codes
+  `OWNER, ADMIN, VETERINARIAN, RECEPTIONIST, CASHIER, INVENTORY_MANAGER`. The
+  seed-count probe pins the exact volumes in
   `packages/database/src/reference-seed.test.ts:517-538` (test "writes the
   expected row volumes"), and `apps/api/src/rbac/route-contract.probe.test.ts`
   pins the route inventory and per-route permission maps.
 - The shipped role precedent: `catalog.read` and `inventory.stock.read` are held
   by **all six** roles; `catalog.create|update|deactivate` and
   `inventory.stock.adjust` are held by `OWNER, ADMIN, INVENTORY_MANAGER` only.
-- There is **no generic entitlement decorator**. `EntitlementsService.has(tenantId,
-  featureCode)` is called explicitly inside services, and the `purchases` feature
-  code already exists in `FEATURE_CODE_SEEDS`
-  (`packages/database/src/reference-seed.ts`, 12 feature codes) and is granted per
-  tenant through `tenant_entitlement` rows.
+- There is **no generic entitlement decorator**.
+  `EntitlementsService.has(tenantId, featureCode)` is called explicitly inside
+  services, and the `purchases` feature code already exists in
+  `FEATURE_CODE_SEEDS` (`packages/database/src/reference-seed.ts`, 12 feature
+  codes) and is granted per tenant through `tenant_entitlement` rows.
 - `apps/api/src/catalog/catalog.module.ts` and
-  `apps/api/src/inventory/inventory.module.ts` state explicitly that they have no
-  entitlement gate because they are Core capabilities, not Veterinary features.
+  `apps/api/src/inventory/inventory.module.ts` state explicitly that they have
+  no entitlement gate because they are Core capabilities, not Veterinary
+  features.
 
 ## Question
 
-Which `suppliers.*` and `purchases.*` keys exist, which roles hold them, and does
-the `purchases` entitlement gate the surface the way the inventory routes are
-deliberately ungated?
+Which `suppliers.*` and `purchases.*` keys exist, which roles hold them, and
+does the `purchases` entitlement gate the surface the way the inventory routes
+are deliberately ungated?
 
 ## Options
 
 ### Option A — Permission-only, no entitlement gate, mirroring the Core precedent (recommended)
 
 Keys: `suppliers.read`, `suppliers.create`, `suppliers.update`,
-`suppliers.deactivate`, `purchases.read`, `purchases.create`, `purchases.update`,
-`purchases.cancel` and `purchases.receive`. Matrix: all six roles hold
-`suppliers.read` and `purchases.read`; `OWNER`, `ADMIN` and `INVENTORY_MANAGER`
-hold every write key; `VETERINARIAN`, `RECEPTIONIST` and `CASHIER` are read-only.
-No entitlement gate, exactly as the catalog and inventory Core modules declare.
-The seed count moves **34 → 43** and the seed-count probe plus the route-contract
-probe must be reconciled.
+`suppliers.deactivate`, `purchases.read`, `purchases.create`,
+`purchases.update`, `purchases.cancel` and `purchases.receive`. Matrix: all six
+roles hold `suppliers.read` and `purchases.read`; `OWNER`, `ADMIN` and
+`INVENTORY_MANAGER` hold every write key; `VETERINARIAN`, `RECEPTIONIST` and
+`CASHIER` are read-only. No entitlement gate, exactly as the catalog and
+inventory Core modules declare. The seed count moves **34 → 43** and the
+seed-count probe plus the route-contract probe must be reconciled.
 
 Benefits: it is the shipped precedent for a Core capability (read-wide keys for
 all six roles, write keys for the owning roles), it needs no new concept, and it
 keeps suppliers and purchases usable on every plan as the PRD's Core domains.
 
 Costs: adding nine keys forces a coordinated update of `PERMISSION_SEEDS`, the
-matrix, the seed-count probe and the route-contract probe in the same slice, so a
-partial seed change fails CI by design.
+matrix, the seed-count probe and the route-contract probe in the same slice, so
+a partial seed change fails CI by design.
 
 ### Option B — Gate the surface on the already-seeded `purchases` feature code
 
@@ -94,13 +97,13 @@ authorization concept to reason about on top of the mandatory permission check.
 
 ### Option C — Finer-grained keys
 
-Separate keys for facts that a read key currently bundles — for example a distinct
-cost-visibility key, or line-level keys.
+Separate keys for facts that a read key currently bundles — for example a
+distinct cost-visibility key, or line-level keys.
 
 Rejected for now: it multiplies `PERMISSION_SEEDS` churn, matrix rows and
 route-contract pins without a requirement that needs the separation. A real
-requirement can add a key later as an additive seed change, which is cheaper than
-removing one.
+requirement can add a key later as an additive seed change, which is cheaper
+than removing one.
 
 ## Recommendation
 
@@ -141,21 +144,21 @@ permission and resource ownership.
 
 [[SUP-001 Supplier foundation]] owns the `suppliers.*` keys and the supplier
 module; [[PUR-001 Purchase draft]] and [[PUR-002 Purchase receiving]] own the
-`purchases.*` keys; [[PUR-003 Staff purchases surface]] consumes them as UX gates
-only. The seed-count and route-contract probe updates ship in the same work units
-as the keys, never in a follow-up.
+`purchases.*` keys; [[PUR-003 Staff purchases surface]] consumes them as UX
+gates only. The seed-count and route-contract probe updates ship in the same
+work units as the keys, never in a follow-up.
 
 ## Decision
 
 Accepted on 2026-09-26 by the maintainer. Option A is the decision: the keys are
-`suppliers.read`, `suppliers.create`, `suppliers.update`, `suppliers.deactivate`,
-`purchases.read`, `purchases.create`, `purchases.update`, `purchases.cancel` and
-`purchases.receive`; all six roles hold `suppliers.read` and `purchases.read`,
-`OWNER`, `ADMIN` and `INVENTORY_MANAGER` hold every write key, and
-`VETERINARIAN`, `RECEPTIONIST` and `CASHIER` are read-only; there is no
-entitlement gate, exactly as the catalog and inventory Core modules declare; and
-the seed count moves **34 → 43**, with the seed-count probe and the
-route-contract probe reconciled in the same slice.
+`suppliers.read`, `suppliers.create`, `suppliers.update`,
+`suppliers.deactivate`, `purchases.read`, `purchases.create`,
+`purchases.update`, `purchases.cancel` and `purchases.receive`; all six roles
+hold `suppliers.read` and `purchases.read`, `OWNER`, `ADMIN` and
+`INVENTORY_MANAGER` hold every write key, and `VETERINARIAN`, `RECEPTIONIST` and
+`CASHIER` are read-only; there is no entitlement gate, exactly as the catalog
+and inventory Core modules declare; and the seed count moves **34 → 43**, with
+the seed-count probe and the route-contract probe reconciled in the same slice.
 
 The other options stay recorded above as what was considered; acceptance selects
 Option A only.
@@ -169,9 +172,9 @@ follow-up.
 
 ## PRD Update
 
-No PRD change is required. PRD §9 already establishes permission keys and PRD §10
-already lists `purchases` as a capability; this record applies existing intent to
-two planned Core domains and chooses not to activate the already-seeded
-entitlement. None of the options extends approved scope, and the engineering
-rules forbid editing the PRD to normalize an implementation detail, so no PRD
-edit is proposed here.
+No PRD change is required. PRD §9 already establishes permission keys and PRD
+§10 already lists `purchases` as a capability; this record applies existing
+intent to two planned Core domains and chooses not to activate the
+already-seeded entitlement. None of the options extends approved scope, and the
+engineering rules forbid editing the PRD to normalize an implementation detail,
+so no PRD edit is proposed here.

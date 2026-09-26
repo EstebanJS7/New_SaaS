@@ -1,8 +1,7 @@
 ---
 id: DEC-011
 type: decision
-title:
-  Supplier identity, uniqueness and classification (EPIC-11)
+title: Supplier identity, uniqueness and classification (EPIC-11)
 status: accepted
 date: 2026-09-26
 related_epics:
@@ -25,16 +24,16 @@ secret material to be classified before it is persisted.
 
 Verified current state in this repository (2026-09-26):
 
-- No supplier implementation exists.
-  `packages/database/prisma/schema.prisma` has no supplier model, no
-  `apps/api/src/suppliers/` module exists, and no `suppliers.*` permission key is
-  seeded in `PERMISSION_SEEDS` (`packages/database/src/reference-seed.ts`).
+- No supplier implementation exists. `packages/database/prisma/schema.prisma`
+  has no supplier model, no `apps/api/src/suppliers/` module exists, and no
+  `suppliers.*` permission key is seeded in `PERMISSION_SEEDS`
+  (`packages/database/src/reference-seed.ts`).
 - A **classification precedent already exists**: the `Customer` model documents
   `display_name`, `legal_name`, `tax_id`, `first_name`, `last_name` and
   `document_number` as CONFIDENTIAL with application logs carrying IDs only
-  (`schema.prisma:631-633`), and `docs/05-modules/Customers.md` repeats the rule.
-  `docs/05-modules/Patients.md` carries the same per-field classification in a
-  `## Data Classification` section.
+  (`schema.prisma:631-633`), and `docs/05-modules/Customers.md` repeats the
+  rule. `docs/05-modules/Patients.md` carries the same per-field classification
+  in a `## Data Classification` section.
 - A **lifecycle precedent already exists**: `CatalogItem` removes an item by
   setting `isActive = false` and the migration rejects `DELETE`
   (`schema.prisma`, catalog model comment). `suppliers` is the same kind of Core
@@ -52,15 +51,14 @@ that PRD §17 does not define a supplier and no supplier consumer exists yet?
 
 ### Option A — Minimal identity with per-tenant tax-id uniqueness (recommended)
 
-Required `name` (1..200 characters, **not** unique, because two real suppliers may
-share a trading name). Optional `legalName`, `taxId` (RUC), `email`, `phone` and
-`address`. `taxId` is unique per tenant **when present** — the partial unique
-index over the nullable column is the mechanism the decision fixes, not a
-service-only convention. Lifecycle is the
-catalog's: an `isActive` flag with an explicit deactivate command and no delete
-route. Classification follows the `Customer` precedent: `taxId`, `legalName`,
-`email`, `phone` and `address` are CONFIDENTIAL; `name` is INTERNAL; application
-logs carry IDs only.
+Required `name` (1..200 characters, **not** unique, because two real suppliers
+may share a trading name). Optional `legalName`, `taxId` (RUC), `email`, `phone`
+and `address`. `taxId` is unique per tenant **when present** — the partial
+unique index over the nullable column is the mechanism the decision fixes, not a
+service-only convention. Lifecycle is the catalog's: an `isActive` flag with an
+explicit deactivate command and no delete route. Classification follows the
+`Customer` precedent: `taxId`, `legalName`, `email`, `phone` and `address` are
+CONFIDENTIAL; `name` is INTERNAL; application logs carry IDs only.
 
 Benefits: it is the smallest attribute set that PRD §17's purchase can reference
 without inventing product scope, it reuses two shipped patterns (deactivation
@@ -97,14 +95,15 @@ describe a supplier.
 
 ## Recommendation
 
-Option A. It is the smallest set that makes a purchase reference meaningful while
-reusing the classification precedent (`schema.prisma:631-633`) and the catalog's
-deactivation-not-delete lifecycle, and it keeps every non-identity field out.
-Options B and C are rejected as written: B on the ground that it will be reopened
-by the first fiscal or import slice, C because settlement is a different domain
-and a different epic. Because `taxId` is optional, the decision fixes the
-**uniqueness mechanism** (a partial unique index over `(tenant_id, tax_id) WHERE
-tax_id IS NOT NULL`) and not merely a service-level check.
+Option A. It is the smallest set that makes a purchase reference meaningful
+while reusing the classification precedent (`schema.prisma:631-633`) and the
+catalog's deactivation-not-delete lifecycle, and it keeps every non-identity
+field out. Options B and C are rejected as written: B on the ground that it will
+be reopened by the first fiscal or import slice, C because settlement is a
+different domain and a different epic. Because `taxId` is optional, the decision
+fixes the **uniqueness mechanism** (a partial unique index over
+`(tenant_id, tax_id) WHERE tax_id IS NOT NULL`) and not merely a service-level
+check.
 
 ## Impact
 
@@ -112,22 +111,22 @@ tax_id IS NOT NULL`) and not merely a service-level check.
 
 Staff can register a supplier with the fiscal and contact data a purchase
 reference needs, and retire a supplier without destroying the purchases that
-point at it. No supplier becomes a financial record: it holds no balance, no owed
-amount and no payment state.
+point at it. No supplier becomes a financial record: it holds no balance, no
+owed amount and no payment state.
 
 ### Architecture
 
 No new runtime, datastore, queue, dependency or API protocol. The aggregate
 follows the tenant-scoped Core registry shape already used by the catalog, so
 tenant-isolation tests are required for the new private aggregate under the
-engineering rules. It stays a Core capability and is not entitlement-gated
-(see [[DEC-016]]).
+engineering rules. It stays a Core capability and is not entitlement-gated (see
+[[DEC-016]]).
 
 ### Database/API
 
 A new tenant-scoped supplier table with a tenant composite ownership key and a
-`RESTRICT` tenant foreign key, plus a partial unique index on nullable `taxId`. A
-deactivate command replaces any delete route. DTOs are strict and allowlisted;
+`RESTRICT` tenant foreign key, plus a partial unique index on nullable `taxId`.
+A deactivate command replaces any delete route. DTOs are strict and allowlisted;
 no Prisma model crosses the HTTP boundary. Classification is documented on the
 model the way `Customer` documents it, so the no-logging rule is visible at the
 schema.
@@ -141,10 +140,10 @@ follow-ups.
 
 ## Decision
 
-Accepted on 2026-09-26 by the maintainer. Option A is the decision: the
-supplier aggregate requires `name` (1..200 characters, **not** unique, because two
-real suppliers may share a trading name) and offers the optional `legalName`,
-`taxId` (RUC), `email`, `phone` and `address`; `taxId` is unique per tenant **when
+Accepted on 2026-09-26 by the maintainer. Option A is the decision: the supplier
+aggregate requires `name` (1..200 characters, **not** unique, because two real
+suppliers may share a trading name) and offers the optional `legalName`, `taxId`
+(RUC), `email`, `phone` and `address`; `taxId` is unique per tenant **when
 present**, and the mechanism the decision fixes is the partial unique index over
 the nullable column over `(tenant_id, tax_id) WHERE tax_id IS NOT NULL`, not a
 service-only convention; the lifecycle is the catalog's, an `isActive` flag with
@@ -163,7 +162,7 @@ prerequisites of that slice, not follow-ups.
 ## PRD Update
 
 No PRD change is required. PRD §5 already lists `suppliers` as a Core domain and
-PRD §41 already requires classification; this record applies existing intent to a
-domain whose attributes the PRD deliberately leaves open. None of the options
+PRD §41 already requires classification; this record applies existing intent to
+a domain whose attributes the PRD deliberately leaves open. None of the options
 extends or alters approved PRD scope, and the engineering rules forbid editing
 the PRD to normalize an implementation detail, so no PRD edit is proposed here.

@@ -1,8 +1,7 @@
 ---
 id: DEC-018
 type: decision
-title:
-  Purchase numbering (EPIC-11)
+title: Purchase numbering (EPIC-11)
 status: accepted
 date: 2026-09-26
 related_epics:
@@ -37,9 +36,9 @@ Verified current state in this repository (2026-09-26):
   `Customer.documentNumber` (`packages/database/prisma/schema.prisma:647`),
   which is external identity data the user types in, not a system-generated
   sequence.
-- [[DEC-012 Purchase aggregate shape and the draft-versus-receive validation
-  gate]] fixes the purchase aggregate's shape and **deliberately decides no
-  numbering, cost or tax column**, so the aggregate has no number field today.
+- [[DEC-012]] fixes the purchase aggregate shape and the draft-versus-receive
+  validation gate and **deliberately decides no numbering, cost or tax column**,
+  so the aggregate has no number field today.
 - A human-readable purchase number is typically a printed or fiscal artifact,
   and PRD §40 and Billing/Fiscal ([[EPIC-14]], [[EPIC-15]]) own printed and
   fiscal documents.
