@@ -492,3 +492,66 @@ Hand the epic back for its remaining stories: PUR-001 (draft lifecycle), PUR-002
 `catalogItemId` order) and PUR-003 (staff surface), then close EPIC-11 with
 durable live-PostgreSQL evidence once a database can run. Nothing has been
 pushed; push and PR remain the user's decision.
+
+---
+
+# SUP-001 closure — tracking
+
+## Tasks
+
+- [x] C1: Story closure — `docs/02-stories/SUP-001-supplier-foundation.md` moved
+      from pre-implementation to implemented, with the real migration and API
+      sections, the exact verification commands and observed results, the nine
+      acceptance criteria the evidence now satisfies (the purchase-reference one
+      carrying the explicit no-purchase-table note), the known limitations and
+      the closure note.
+- [x] C2: Module documentation — new `docs/05-modules/Suppliers.md` describing
+      only implemented behavior, indexed under EPIC-11 in
+      `docs/05-modules/README.md`, and recorded in the changelog with the epic
+      stated as still incomplete.
+- [x] C3: Toolchain defect found and fixed — see below.
+
+Commits: `a36e531` (closure), `db9aa9b` (prettier stability plus TD-017).
+
+## Formatter defect found during closure
+
+The parent ran the repository formatter and found the branch failing
+`pnpm format-check`, a repository gate that EPIC-10 had reported green.
+Seventeen files were unformatted, including two supplier source files,
+`reference-seed.ts` and the schema gate. The writers had reported
+`git diff --check` clean, which is a different check that only catches
+whitespace errors, and the parent's own spot checks had covered tests, typecheck
+and lint but not the formatter. That miss is the parent's.
+
+Applying the formatter then exposed a second, real defect: the markdown printer
+is **not idempotent** for a wikilink whose text wraps inside a list item. Each
+`prettier --write` adds two more spaces of continuation indentation, so the file
+never converges and the gate can never go green; a single write does not reveal
+it because the next `--check` still reports style issues. Reproduced in
+isolation with a minimal file, where a plain wrapped list item is unaffected and
+only the wrapped wikilink oscillates. The affected documents were rewritten to
+the short anchor form (`[[DEC-012]]` plus adjacent prose), which stabilizes the
+formatter with no change to any claim, status, number or decision id, and the
+defect plus its workaround is recorded as [[TD-017]].
+
+## Closure verification on the final state, run by the parent
+
+- `pnpm format-check` -> "All matched files use Prettier code style!".
+- `pnpm --filter @newsaas/database test` -> 14 files / 245 tests passed.
+- `pnpm --filter @newsaas/api test` -> 71 files passed, 1 skipped (72), 869
+  tests passed, 52 skipped (the live-PostgreSQL suite).
+- `pnpm --filter @newsaas/database typecheck`,
+  `pnpm --filter @newsaas/api typecheck` and `pnpm --filter @newsaas/api lint`
+  all clean.
+- Formatter idempotence proven by two consecutive `--write` runs producing
+  identical md5 hashes on the documents that had oscillated.
+
+Still owed and unchanged: the live-PostgreSQL evidence for the supplier partial
+index and the `409` path, the migration application, and a drift-free
+`migrate status` — all blocked on a runnable database.
+
+## Next step
+
+PUR-001 (draft lifecycle), then PUR-002 (receiving), then PUR-003 (staff
+surface), and finally EPIC-11 closure with durable live-PostgreSQL evidence.
+Push and PR remain the user's decision.
