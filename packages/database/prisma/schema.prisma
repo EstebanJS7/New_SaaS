@@ -1410,17 +1410,28 @@ model StockBalance {
 // §17). Identity data only: no balance, no owed amount and no payment state.
 // Lifecycle is the catalog's — removal is deactivation through `isActive` and
 // the migration rejects DELETE — so a purchase keeps its supplier reference.
-// `taxId` is unique per tenant WHEN PRESENT through the plain composite key
-// `(tenant_id, tax_id)`: PostgreSQL treats NULLs as distinct, so any number of
-// suppliers may omit the identifier while a repeated present value inside one
-// tenant is rejected. Data classification: taxId, legalName, email, phone and
-// address are CONFIDENTIAL; name is INTERNAL; application logs carry ids only.
+// `taxId` is unique per tenant WHEN PRESENT through the explicit partial unique
+// index `(tenant_id, tax_id) WHERE tax_id IS NOT NULL`, declared as raw SQL in
+// the suppliers migration because Prisma cannot express partial indexes, so
+// absent identifiers are outside the index entirely while a repeated present
+// value inside one tenant is rejected. Data classification: taxId, legalName,
+// email, phone and address are CONFIDENTIAL; name is INTERNAL; application logs
+// carry ids only.
 // ---------------------------------------------------------------------------
 
 /// Tenant-scoped supplier register (DEC-011). `name` is required, 1..200
 /// characters and deliberately NOT unique (two real suppliers may share a
 /// trading name); the optional fiscal/contact fields carry only what a purchase
-/// reference needs. Data classification: taxId, legalName, email, phone and
+/// reference needs.
+///
+/// Per-tenant `taxId` uniqueness WHEN PRESENT is enforced by the partial unique
+/// index `supplier_tenant_id_tax_id_key` on (tenant_id, tax_id) WHERE tax_id IS
+/// NOT NULL, declared as raw SQL in the suppliers migration because Prisma
+/// cannot express partial indexes. Absent identifiers are outside the index
+/// entirely, so any number of suppliers may omit `taxId` while a repeated
+/// present value inside one tenant is rejected. The composite `(tenantId, id)`
+/// ownership key targets the supplier FK from the EPIC-11 purchase aggregate.
+/// Data classification: taxId, legalName, email, phone and
 /// address are CONFIDENTIAL; name is INTERNAL; application logs carry ids only.
 model Supplier {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -1452,9 +1463,6 @@ model Supplier {
   /// purchase aggregate, so a purchase can only reference a supplier of the
   /// SAME tenant.
   @@unique([tenantId, id])
-  /// Per-tenant tax-id uniqueness when present. PostgreSQL's NULL-distinct
-  /// unique semantics allow any number of rows with an absent `tax_id`.
-  @@unique([tenantId, taxId])
   /// Tenant list lookup: `(tenant_id, name)` serves the alphabetical supplier
   /// list without a second scan.
   @@index([tenantId, name])

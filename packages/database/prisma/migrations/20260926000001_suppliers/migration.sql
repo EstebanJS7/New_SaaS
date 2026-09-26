@@ -11,11 +11,12 @@
 --   * a supplier can never be hard-deleted (DELETE raises `restrict_violation`);
 --     removal is deactivation through `is_active`, so historical purchases keep
 --     their supplier reference;
---   * `tax_id` is unique per tenant WHEN PRESENT. This is the plain composite
---     UNIQUE `(tenant_id, tax_id)`, NOT an explicit partial index: PostgreSQL
---     treats NULLs as distinct in a unique index, so any number of suppliers may
---     omit the identifier while a repeated present value inside one tenant is
---     rejected. The NULL tolerance is therefore PostgreSQL semantics.
+--   * `tax_id` is unique per tenant WHEN PRESENT. The mechanism is the explicit
+--     PARTIAL unique index `supplier_tenant_id_tax_id_key` on
+--     (tenant_id, tax_id) WHERE tax_id IS NOT NULL, declared as raw SQL because
+--     Prisma cannot express partial indexes. Absent identifiers are outside the
+--     index entirely, so any number of suppliers may omit the identifier, while
+--     a repeated present value inside one tenant is rejected.
 --   * `name` is bounded to 1..200 characters, matching the column and the W2
 --     DTO bound.
 --
@@ -49,12 +50,13 @@ CREATE TABLE "supplier" (
 -- the SAME tenant.
 CREATE UNIQUE INDEX "supplier_tenant_id_id_key" ON "supplier"("tenant_id", "id");
 
--- Per-tenant tax-id uniqueness WHEN PRESENT. Plain composite UNIQUE rather than
--- a partial index: PostgreSQL does not treat NULLs as equal, so multiple
--- suppliers with an absent tax_id coexist and the same tax_id in another tenant
--- is a different key. The NULL tolerance is PostgreSQL semantics, not an
--- explicit `WHERE tax_id IS NOT NULL` clause.
-CREATE UNIQUE INDEX "supplier_tenant_id_tax_id_key" ON "supplier"("tenant_id", "tax_id");
+-- Per-tenant tax-id uniqueness WHEN PRESENT. Explicit PARTIAL unique index,
+-- declared as raw SQL because Prisma cannot express partial indexes: the
+-- `WHERE tax_id IS NOT NULL` predicate leaves absent identifiers outside the
+-- index entirely, so multiple suppliers with an absent tax_id coexist while a
+-- repeated present value inside one tenant is rejected. The same tax_id in
+-- another tenant is a different key because tenant_id leads the index.
+CREATE UNIQUE INDEX "supplier_tenant_id_tax_id_key" ON "supplier"("tenant_id", "tax_id") WHERE "tax_id" IS NOT NULL;
 
 -- Tenant list lookup: `(tenant_id, name)` serves the alphabetical supplier list.
 CREATE INDEX "supplier_tenant_id_name_idx" ON "supplier"("tenant_id", "name");

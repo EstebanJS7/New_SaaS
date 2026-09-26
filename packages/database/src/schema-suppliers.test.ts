@@ -124,21 +124,32 @@ describe("migration · suppliers (EPIC-11 WU1 SUP-001)", () => {
     expect(SUPPLIERS_SQL).not.toMatch(/CREATE UNIQUE INDEX [^;]*ON "supplier"\("tenant_id", "name"\)/);
   });
 
-  it("enforces per-tenant tax-id uniqueness when present and tolerates multiple absent values", () => {
-    // A duplicate PRESENT tax_id inside one tenant collides on the unique pair.
+  it("enforces per-tenant tax-id uniqueness when present with an explicit partial index", () => {
+    // DEC-011 fixes the MECHANISM: an explicit PARTIAL unique index. The
+    // `WHERE tax_id IS NOT NULL` predicate puts absent identifiers outside the
+    // index entirely, so a repeated PRESENT tax_id inside one tenant collides
+    // while multiple absent values coexist by construction.
+    //
+    // These assertions inspect the applied DDL text only: the always-on schema
+    // gate runs without a live PostgreSQL, so the three runtime behaviours (a
+    // repeated present value rejected, multiple absent values coexisting, the
+    // same value allowed in another tenant) are asserted at the SQL level and
+    // are NOT executed here. The live-PostgreSQL suite owns runtime proof.
     expect(SUPPLIERS_SQL).toMatch(
-      /CREATE UNIQUE INDEX "supplier_tenant_id_tax_id_key" ON "supplier"\("tenant_id", "tax_id"\)/
+      /CREATE UNIQUE INDEX "supplier_tenant_id_tax_id_key" ON "supplier"\("tenant_id", "tax_id"\) WHERE "tax_id" IS NOT NULL/
+    );
+    // The predicate is explicit, never silently approximated by a plain
+    // composite UNIQUE: the same index name must never appear without it.
+    expect(SUPPLIERS_SQL).not.toMatch(
+      /CREATE UNIQUE INDEX "supplier_tenant_id_tax_id_key" ON "supplier"\("tenant_id", "tax_id"\);/
     );
     // The SAME tax_id in ANOTHER tenant is a different key: tenant_id leads the
-    // index, so uniqueness is scoped to the owning tenant.
-    // Two suppliers with an ABSENT tax_id coexist because tax_id is a NULLABLE
-    // column with NO explicit `WHERE tax_id IS NOT NULL` partial predicate:
-    // PostgreSQL treats NULLs as distinct in a unique index. The NULL tolerance
-    // is PostgreSQL semantics, not a hand-written partial index.
+    // partial index, so uniqueness is scoped to the owning tenant.
+    // Two suppliers with an ABSENT tax_id coexist because the column stays
+    // NULLABLE and the partial predicate leaves those rows out of the index.
     const block = tableBlock("supplier");
     expect(block).toMatch(/"tax_id" VARCHAR\(50\),/);
     expect(block).not.toMatch(/"tax_id" VARCHAR\(50\) NOT NULL/);
-    expect(SUPPLIERS_SQL).not.toMatch(/CREATE UNIQUE INDEX [^;]*WHERE "tax_id" IS NOT NULL/);
   });
 
   it("makes suppliers undeletable: DELETE raises restrict_violation", () => {
@@ -207,15 +218,30 @@ describe("schema · suppliers (EPIC-11 WU1 SUP-001)", () => {
     );
   });
 
-  it("scopes Supplier to its tenant and exposes the composite ownership and tax-id keys", () => {
+  it("scopes Supplier to its tenant and exposes the composite ownership and lookup keys", () => {
     const supplier = modelBlock("Supplier");
 
     expect(supplier).toMatch(
       /tenant\s+Tenant\s+@relation\(fields: \[tenantId\], references: \[id\], onDelete: Restrict, onUpdate: Restrict\)/
     );
     expect(supplier).toMatch(/@@unique\(\[tenantId, id\]\)/);
-    expect(supplier).toMatch(/@@unique\(\[tenantId, taxId\]\)/);
+    // The DEC-011 partial index cannot be expressed as a plain `@@unique`: that
+    // would approximate the predicate with full-column uniqueness. It is
+    // declared as raw SQL in the suppliers migration and documented on the model
+    // doc comment, which the next test asserts.
+    expect(supplier).not.toMatch(/@@unique\(\[tenantId, taxId\]\)/);
     expect(supplier).toMatch(/@@index\(\[tenantId, name\]\)/);
+  });
+
+  it("documents the raw partial tax-id index on the Supplier model doc comment", () => {
+    const doc = modelDocComment("Supplier");
+    // Index name, columns and predicate -- the CustomerPortalAccess /
+    // PatientGuardian documentation shape.
+    expect(doc).toMatch(/supplier_tenant_id_tax_id_key/);
+    expect(doc).toMatch(/\(tenant_id, tax_id\) WHERE tax_id IS\s+NOT NULL/);
+    // Why it lives in raw SQL rather than a Prisma attribute.
+    expect(doc).toMatch(/raw SQL in the suppliers migration/);
+    expect(doc).toMatch(/Prisma\s+cannot express partial indexes/);
   });
 
   it("exposes the Tenant side of the supplier relation", () => {
