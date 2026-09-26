@@ -184,6 +184,22 @@ record has been implemented.
   integration.
 - [[PUR-003 Staff purchases surface]] — the browser transport and pages.
 
+## Progress
+
+- 2026-09-26: [[SUP-001 Supplier foundation]] implemented, independently
+  verified, merged, and backed by live-PostgreSQL evidence; the supplier half of
+  the epic is done.
+- 2026-09-26: [[PUR-001 Purchase draft]] implemented on branch
+  `feat/epic-11-purchase-draft` (commits `517ad69`, `59031c3`, `43ac6dd`) with
+  its schema gate, HTTP integration suite, route-contract pins and a 7-case
+  live-PostgreSQL block; the draft half of the epic is done.
+
+This note records implementation progress only. Every epic acceptance and exit
+criterion in this record remains unchecked and the epic `status` stays
+`planned`, because receiving ([[PUR-002 Purchase receiving]]) and the staff
+surface ([[PUR-003 Staff purchases surface]]) are not implemented, so the epic's
+exit criteria are not met.
+
 ## Dependencies
 
 - [[EPIC-10]] Inventory (**done**) — the signed ledger, the `(tenant, item)`
