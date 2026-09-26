@@ -303,6 +303,28 @@ trigger. `docker compose up -d` reported `newsaas-postgres` `healthy` and
 the local development database by hand. A drift-free `migrate status` against a
 persistent database remains the only outstanding database-level check.
 
+### Delivery (merged)
+
+The work units are merged into `main` through pull request #68
+(`feat(EPIC-11): implement the supplier registry (SUP-001)`, base `main`) as
+merge commit `baa66ca` (`baa66ca4a2ac6fdac29115440c94038e6437dff7`), merged
+`2026-09-26T21:00:58Z`. The required checks passed on the evaluated head commit
+`4b8adf8` (`4b8adf8438b7457034c6f18c5c9a8d250501c6f2`) in CI run
+[`36270774108`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36270774108),
+concluded `completed` / `success` in 3m57s:
+
+| Job                            | Job ID         | Result    |
+| ------------------------------ | -------------- | --------- |
+| `Database migrations`          | `108484172152` | `SUCCESS` |
+| `Lint, Typecheck, Test, Build` | `108484172375` | `SUCCESS` |
+
+The `Database migrations` job (1m3s) applies every migration to a fresh
+database, seeds reference data twice with a count-equality probe, runs the live
+migration verification, builds the API and runs the live-PostgreSQL
+application-path isolation suite, so this slice's live evidence is now recorded
+in CI. This satisfies the Story's delivery expectations: the work units are
+merged and the required checks are green.
+
 ## Tests Added
 
 - `packages/database/src/schema-suppliers.test.ts` — **15 tests**: the additive
@@ -416,10 +438,13 @@ split as follows:
 
 ## Completion Notes
 
-Done for implementation and verification scope: the supplier registry, its
-additive migration, its four permission keys with the seeded role matrix, its
-five routes, its audit rows and its tests are implemented and the runnable
-checks are green. This is **not** a production-readiness statement. The durable
+Done for implementation, verification and delivery scope: the supplier registry,
+its additive migration, its four permission keys with the seeded role matrix,
+its five routes, its audit rows and its tests are implemented and the runnable
+checks are green. The work units are merged into `main` through pull request #68
+as merge commit `baa66ca`, and the required CI checks passed on head `4b8adf8`
+(run `36270774108`, both jobs `SUCCESS`), which satisfies the Story's delivery
+expectations. This is **not** a production-readiness statement. The durable
 live-PostgreSQL evidence for the partial index and the migration application is
 now recorded (see "Verification"); a drift-free `migrate status` for the index
 Prisma cannot model remains the only outstanding database-level check.

@@ -144,10 +144,17 @@ All notable product changes will be documented here.
     reconciliation, the DRAFT-only `409`, the composite foreign keys and the
     quantity/cost CHECKs).
 
-  EPIC-11 is **incomplete**: the purchase draft (`PUR-001`) is implemented on
-  its branch, but receiving (`PUR-002`, its `PURCHASE` movement type and its
-  ledger integration) and the staff surface (`PUR-003`) are pending, so the
-  epic's exit criteria are not met. Nothing here is merged or production-ready.
+  EPIC-11 is **incomplete**. The supplier registry work units are merged into
+  `main` as merge commit `baa66ca` through pull request #68 with the required CI
+  checks green, and that slice's live-PostgreSQL evidence is the merged CI
+  baseline in `docs/10-qa/CI-EVIDENCE.md`. The purchase draft (`PUR-001`) is
+  implemented on its own branch with its live coverage at 65/65, but it is not
+  merged. Receiving (`PUR-002`, its `PURCHASE` movement type and its ledger
+  integration) and the staff surface (`PUR-003`) are pending, the epic's durable
+  live-PostgreSQL evidence for receiving is owed before it closes, and a
+  drift-free `migrate status` for the index Prisma cannot model is still
+  outstanding, so the epic's exit criteria are not met. Nothing here is merged
+  or production-ready.
 
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,
