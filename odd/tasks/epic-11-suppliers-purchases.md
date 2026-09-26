@@ -665,3 +665,95 @@ Nothing for SUP-001: its acceptance criteria, its live runtime evidence and its
 documentation are now all satisfied. EPIC-11 remains open for PUR-001, PUR-002
 and PUR-003, and the epic's own durable live-PostgreSQL criterion is now
 partially satisfied (the supplier slice has it; purchases do not yet).
+
+---
+
+# PUR-001 Purchase draft — implementation tracking
+
+## Objective
+
+Implement the `DRAFT` half of the purchase lifecycle: a tenant-scoped purchase
+with a supplier and at least one positive line, editable while it stays `DRAFT`,
+cancellable through an explicit command, and inert until PUR-002 receives it.
+
+## Authorization and delivery decisions
+
+- The user authorized continuing with PUR-001 after the SUP-001 merge
+  (2026-09-26), on a new branch from `main`.
+- Branch: `feat/epic-11-purchase-draft`, created from `main` at `baa66ca`.
+- Delivery strategy: `single-pr` on the feature branch, matching the shipped
+  EPIC-09/EPIC-10 convention and the SUP-001 slice.
+- TDD: mode off (no project or session configuration enables it). Functional
+  checks are the ordinary gate.
+
+## New decision taken for this slice
+
+[[DEC-019]] was accepted on 2026-09-26 after the parent found a real collision
+between two accepted records: [[DEC-015]] states that no purchase, line or
+movement is hard-deleted, while [[DEC-012]] requires a saved draft to carry at
+least one line. A blanket delete ban would make a draft unable to drop a
+mis-entered line. The maintainer chose **conditional immutability**: a
+`BEFORE DELETE` trigger on `purchase` and `purchase_line` rejects the delete
+only when the owning purchase is `RECEIVED` or `CANCELLED`, so a `DRAFT` stays
+fully editable and a confirmed inventory fact stays immutable. DEC-015 remains
+accepted and unchanged; DEC-019 refines the scope of its blanket sentence.
+
+## Binding decisions for this slice
+
+- [[DEC-018]]: no human-readable number; no numbering column, no sequence, no
+  allocation step.
+- [[DEC-012]]: `supplierId` required; at least one line to save a draft; each
+  line quantity strictly positive as an exact `Decimal(10,3)`; duplicate
+  `catalogItemId` within one purchase rejected; catalog-item state is NOT
+  checked when saving a draft and IS checked at receive.
+- [[DEC-013]]: one optional informational unit cost `Decimal(14,2)`; no tax
+  rate, no computed line total, no purchase total, no valuation.
+- [[DEC-015]] as refined by [[DEC-019]]: `CANCELLED` only from `DRAFT`; a
+  `RECEIVED` purchase is immutable; conditional delete triggers.
+- [[DEC-016]]: keys `purchases.read`, `purchases.create`, `purchases.update`,
+  `purchases.cancel` (and `purchases.receive` with PUR-002); all six roles read,
+  `OWNER`/`ADMIN`/`INVENTORY_MANAGER` write; no entitlement gate. This slice
+  moves the seeded permission count 38 -> 42, and `purchases.receive` arrives
+  with PUR-002 to reach the DEC-016 total of 43.
+- [[DEC-017]]: one co-committed audit row per accepted mutation; reads never
+  audited; metadata carries field names and ids only.
+
+## Tasks
+
+- [ ] P1: Data foundation — the `purchase_status` enum, the `Purchase` and
+      `PurchaseLine` models with tenant composite ownership keys, the additive
+      migration (RESTRICT FKs, composite ownership FKs, the positive-quantity
+      CHECK, the non-negative cost CHECK, the two conditional delete triggers),
+      the schema gate, and the four `purchases.*` permission keys with the
+      DEC-016 matrix.
+- [ ] P2: API surface — the `apps/api/src/purchases/` module, the draft routes
+      (list, read, create, update, cancel), the line-set edit path, DEC-017
+      audit, the route-contract pins, the in-memory boundary extension and the
+      integration suite over the real guard chain.
+- [ ] P3: Live-PostgreSQL coverage for the draft boundary and the conditional
+      immutability, plus documentation closure.
+
+## Route declaration per task
+
+| Task | Route     | Trigger evidence                                                       |
+| ---- | --------- | ---------------------------------------------------------------------- |
+| P1   | delegated | Multi-file write rule: schema, migration, schema test, seeds and probe |
+| P2   | delegated | Multi-file write rule: new module files plus route pins and tests      |
+| P3   | delegated | Live-suite and documentation surfaces                                  |
+
+## Acceptance criteria and checks
+
+Inherited from [[PUR-001 Purchase draft]]. A cross-tenant or unknown purchase
+UUID and a foreign supplier or catalog-item reference are one byte-equivalent
+`404`; only a `DRAFT` is mutable; cancellation never deletes; no draft operation
+touches stock, cash, billing or fiscal state; the draft write path performs no
+stock movement and no balance change.
+
+## Progress
+
+- 2026-09-26: branch created, DEC-019 recorded, plan written before the first
+  source write.
+
+## Next step
+
+Run P1, verify it, commit it as its own work unit, then P2.
