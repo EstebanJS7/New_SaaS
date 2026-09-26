@@ -153,6 +153,7 @@ model Tenant {
   catalogItems                CatalogItem[]
   stockMovements              StockMovement[]
   stockBalances               StockBalance[]
+  suppliers                   Supplier[]
 
   @@map("tenant")
 }
@@ -1401,6 +1402,71 @@ model StockBalance {
   /// Exactly one balance row per (tenant, item).
   @@unique([tenantId, catalogItemId])
   @@map("stock_balance")
+}
+
+// ---------------------------------------------------------------------------
+// Suppliers (EPIC-11 WU1 SUP-001 data foundation). Tenant-scoped registry of
+// the Core `suppliers` domain (PRD §5) referenced by EPIC-11 purchases (PRD
+// §17). Identity data only: no balance, no owed amount and no payment state.
+// Lifecycle is the catalog's — removal is deactivation through `isActive` and
+// the migration rejects DELETE — so a purchase keeps its supplier reference.
+// `taxId` is unique per tenant WHEN PRESENT through the explicit partial unique
+// index `(tenant_id, tax_id) WHERE tax_id IS NOT NULL`, declared as raw SQL in
+// the suppliers migration because Prisma cannot express partial indexes, so
+// absent identifiers are outside the index entirely while a repeated present
+// value inside one tenant is rejected. Data classification: taxId, legalName,
+// email, phone and address are CONFIDENTIAL; name is INTERNAL; application logs
+// carry ids only.
+// ---------------------------------------------------------------------------
+
+/// Tenant-scoped supplier register (DEC-011). `name` is required, 1..200
+/// characters and deliberately NOT unique (two real suppliers may share a
+/// trading name); the optional fiscal/contact fields carry only what a purchase
+/// reference needs.
+///
+/// Per-tenant `taxId` uniqueness WHEN PRESENT is enforced by the partial unique
+/// index `supplier_tenant_id_tax_id_key` on (tenant_id, tax_id) WHERE tax_id IS
+/// NOT NULL, declared as raw SQL in the suppliers migration because Prisma
+/// cannot express partial indexes. Absent identifiers are outside the index
+/// entirely, so any number of suppliers may omit `taxId` while a repeated
+/// present value inside one tenant is rejected. The composite `(tenantId, id)`
+/// ownership key targets the supplier FK from the EPIC-11 purchase aggregate.
+/// Data classification: taxId, legalName, email, phone and
+/// address are CONFIDENTIAL; name is INTERNAL; application logs carry ids only.
+model Supplier {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  /// Trading name. Required, bounded to 1..200 characters by the column and the
+  /// migration CHECK, matching the W2 DTO bound.
+  name String @db.VarChar(200)
+
+  /// Optional identity/contact fields (DEC-011), all CONFIDENTIAL. Bounds are
+  /// deliberately modest and mirror the `Customer` precedent: a legal name
+  /// shares the trading-name bound, a tax identifier and a phone stay short
+  /// free text, an email fits the RFC 5321 maximum and an address is free text.
+  legalName String? @map("legal_name") @db.VarChar(200)
+  taxId     String? @map("tax_id") @db.VarChar(50)
+  email     String? @db.VarChar(320)
+  phone     String? @db.VarChar(50)
+  address   String? @db.VarChar(500)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Tenant-ownership key: target of the composite supplier FK from the EPIC-11
+  /// purchase aggregate, so a purchase can only reference a supplier of the
+  /// SAME tenant.
+  @@unique([tenantId, id])
+  /// Tenant list lookup: `(tenant_id, name)` serves the alphabetical supplier
+  /// list without a second scan.
+  @@index([tenantId, name])
+  @@map("supplier")
 }
 
 // ---------------------------------------------------------------------------

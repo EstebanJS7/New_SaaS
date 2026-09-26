@@ -642,3 +642,123 @@ reproduced in CI.
 | Staff `tracksStock` UI toggle                              | not present — the API is the only writer today         |
 | Self-enforcing stock serialization guard                   | open — [[TD-016]]                                      |
 | Live-PostgreSQL case for the `tracksStock` by-kind default | not present — the column default/backfill is unchanged |
+
+## EPIC-11 Local Live-PostgreSQL Evidence (2026-09-26)
+
+**This is a LOCAL run, not a CI run.** It was executed on 2026-09-26 against the
+working tree on branch `feat/epic-11-suppliers-purchases` (follow-up to commit
+`913c1fb`), using a locally running PostgreSQL 16 container. No CI baseline
+exists for EPIC-11: the slice is committed on the feature branch but not merged,
+so this section records on-demand local evidence and is **not** an immutable CI
+baseline. It promotes nothing: it is not a merge or release statement, and
+`done` for EPIC-11 would require the merged-work-units exit criterion. The
+canonical CI baselines above remain the immutable CI evidence and are
+deliberately unchanged by this section.
+
+### Environment
+
+```text
+PostgreSQL 16   localhost:5433   started with `docker compose up -d` (container newsaas-postgres)
+```
+
+**Trap recorded deliberately:** the live suite provisions its own disposable
+database through `psql`, and `psql` rejects Prisma's `?schema=public` query
+parameter, so `DATABASE_URL_TEST` MUST be the schema-less form. Exporting the
+raw `DATABASE_URL` makes the suite fail before it can apply migrations. The
+schema-less value is derived from `.env` with:
+
+```bash
+set -a && . ./.env && set +a && export DATABASE_URL_TEST="$(sed -n 's/^DATABASE_URL=//p' .env | cut -d'?' -f1)"
+```
+
+### Executed checks
+
+| Command                                                                                | Observed result                                                                                        |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `pnpm --filter @newsaas/database db:deploy`                                            | all migrations applied successfully, including `20260926000001_suppliers`                              |
+| `pnpm --filter @newsaas/database exec prisma migrate status`                           | `Database schema is up to date!` (20 migrations found)                                                 |
+| `pnpm --filter @newsaas/database db:seed`                                              | ran without error                                                                                      |
+| schema-less `DATABASE_URL_TEST` export, then `pnpm --filter @newsaas/api test:live-pg` | 1 file / **58 tests passed**, six of them the new `EPIC-11 suppliers application-path isolation` cases |
+| `pnpm --filter @newsaas/api test`                                                      | **869 passed, 58 skipped** (the live-PostgreSQL suite is skipped in this target)                       |
+| `pnpm --filter @newsaas/database test`                                                 | **245 passed in 14 files**                                                                             |
+| `pnpm --filter @newsaas/api typecheck`                                                 | clean                                                                                                  |
+| `pnpm --filter @newsaas/api lint`                                                      | clean                                                                                                  |
+| `pnpm format-check`                                                                    | clean                                                                                                  |
+| `git diff --check`                                                                     | clean                                                                                                  |
+
+### EPIC-11 live-PostgreSQL coverage
+
+The `EPIC-11 suppliers application-path isolation` block
+(`apps/api/test/live-pg-isolation.e2e-spec.ts`) runs real HTTP against real
+PostgreSQL through the booted `AppModule` and the migration's real DDL, and adds
+six cases to the 58/58 suite:
+
+- a duplicate PRESENT `taxId` is rejected through the REAL partial index as the
+  stable value-free `409` on create and on update, persisting nothing;
+- two suppliers with an ABSENT `taxId` are both admitted in one tenant;
+- the same present `taxId` is admitted in another tenant because `tenant_id`
+  leads the index;
+- two concurrent duplicate creations admit exactly one, with exactly one
+  `supplier.created` audit row and no timing assumption;
+- a foreign supplier id is a byte-equivalent `404` on read, update and
+  deactivation, leaving the owner's whole supplier row untouched;
+- the applied schema carries the partial UNIQUE index, the `RESTRICT` tenant FK
+  and the delete-rejecting trigger.
+
+### Applied-schema confirmation
+
+The applied schema was read back from the live database and confirmed to carry
+the partial unique index `supplier_tenant_id_tax_id_key` on
+`(tenant_id, tax_id)` with the `WHERE tax_id IS NOT NULL` predicate — the
+mechanism that lets multiple absent identifiers coexist while a repeated present
+value inside one tenant is rejected.
+
+### Database-level probes (rollback-wrapped SQL)
+
+These were confirmed directly against the live development database with
+rollback-wrapped SQL, so every probe was undone and **no rows were left
+behind**:
+
+| Probe                                                       | Observed result                                                |
+| ----------------------------------------------------------- | -------------------------------------------------------------- |
+| Multiple absent `taxId` values inserted into one tenant     | admitted — they coexist outside the partial index              |
+| Duplicate PRESENT `taxId` inside one tenant                 | rejected by `supplier_tenant_id_tax_id_key`                    |
+| The same `taxId` inserted into another tenant               | admitted — a different key because `tenant_id` leads the index |
+| Raw `DELETE FROM "supplier"`                                | raises `suppliers are deactivated and cannot be hard-deleted`  |
+| Empty `name`                                                | violates `supplier_name_length`                                |
+| `supplier` row count afterwards in the development database | **zero** — the rollback left nothing behind                    |
+
+### Scope of this local evidence
+
+| Item                                                                       | State                                                                               |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `20260926000001_suppliers` applied to a real PostgreSQL 16 database        | observed locally                                                                    |
+| `prisma migrate status` reports the schema up to date (20 migrations)      | observed locally                                                                    |
+| Reference seed runs without error                                          | observed locally                                                                    |
+| EPIC-11 supplier live isolation/immutability/race block                    | observed locally (six of 58/58)                                                     |
+| Partial index + `WHERE tax_id IS NOT NULL` confirmed on the applied schema | observed locally                                                                    |
+| CI run for EPIC-11                                                         | **none exists**; the `Database migrations` job will be its durable form once pushed |
+| Merge or release of the EPIC-11 slice                                      | **not done** — this evidence approves neither                                       |
+
+This local evidence is not CI and is not a merge or release statement: it
+records what was observed on one developer machine against a local container,
+and the durable form remains the `Database migrations` CI job once the branch is
+pushed.
+
+### Documentation review criteria
+
+A reviewer can confirm this evidence without reconstructing the run:
+
+- [ ] The section is labelled LOCAL and never presented as a CI run.
+- [ ] The date (`2026-09-26`) and branch (`feat/epic-11-suppliers-purchases`)
+      match the run being recorded.
+- [ ] The environment, commands and observed results match the tables above.
+- [ ] The schema-less `DATABASE_URL_TEST` trap is recorded.
+- [ ] The 58/58 live suite is named, with the six EPIC-11 cases inside it.
+- [ ] The applied-schema confirmation of `supplier_tenant_id_tax_id_key` and its
+      `WHERE tax_id IS NOT NULL` predicate is recorded.
+- [ ] The rollback-wrapped probes are named as such and the zero-row outcome is
+      stated.
+- [ ] The section states that this is not CI and not a merge or release
+      statement.
+- [ ] The canonical CI baselines above are unchanged.

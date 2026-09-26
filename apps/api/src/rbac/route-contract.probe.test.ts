@@ -8,6 +8,7 @@ import { isPortalSurfacePath, isPublicExemptRoute } from "./route-contract.js";
 import { SCHEDULING_PERMISSIONS } from "../scheduling/appointment.permissions.js";
 import { CATALOG_PERMISSIONS } from "../catalog/catalog.permissions.js";
 import { INVENTORY_PERMISSIONS } from "../inventory/inventory.permissions.js";
+import { SUPPLIERS_PERMISSIONS } from "../suppliers/suppliers.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -154,6 +155,12 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /inventory/stock",
   "GET /inventory/stock/movements",
   "POST /inventory/stock/adjustments",
+  // EPIC-11 W2 — supplier registry (reads + create/update + deactivate command)
+  "GET /suppliers",
+  "POST /suppliers",
+  "GET /suppliers/:id",
+  "PUT /suppliers/:id",
+  "POST /suppliers/:id/deactivate",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -286,6 +293,22 @@ const INVENTORY_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /inventory/stock": INVENTORY_PERMISSIONS.read,
   "GET /inventory/stock/movements": INVENTORY_PERMISSIONS.read,
   "POST /inventory/stock/adjustments": INVENTORY_PERMISSIONS.adjust,
+};
+
+/**
+ * EPIC-11 W2 supplier registry surface. Both reads MUST declare exactly
+ * `suppliers.read`, and create/update/deactivate MUST declare exactly their own
+ * write key; a route decorated with another supplier tier (or none) fails by
+ * name, which the permission-less 403 sweep cannot catch. There is deliberately
+ * NO `PATCH` and NO hard-delete route: removal is the `deactivate` command, and
+ * this map fails by name if such a route ever appears.
+ */
+const SUPPLIERS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /suppliers": SUPPLIERS_PERMISSIONS.read,
+  "GET /suppliers/:id": SUPPLIERS_PERMISSIONS.read,
+  "POST /suppliers": SUPPLIERS_PERMISSIONS.create,
+  "PUT /suppliers/:id": SUPPLIERS_PERMISSIONS.update,
+  "POST /suppliers/:id/deactivate": SUPPLIERS_PERMISSIONS.deactivate,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -424,6 +447,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in INVENTORY_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED INVENTORY ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY supplier route to its single intended granular suppliers.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/suppliers"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(SUPPLIERS_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING SUPPLIER ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG SUPPLIER PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in SUPPLIERS_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED SUPPLIER ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);
