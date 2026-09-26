@@ -665,3 +665,160 @@ Nothing for SUP-001: its acceptance criteria, its live runtime evidence and its
 documentation are now all satisfied. EPIC-11 remains open for PUR-001, PUR-002
 and PUR-003, and the epic's own durable live-PostgreSQL criterion is now
 partially satisfied (the supplier slice has it; purchases do not yet).
+
+---
+
+# PUR-001 Purchase draft — implementation tracking
+
+## Objective
+
+Implement the `DRAFT` half of the purchase lifecycle: a tenant-scoped purchase
+with a supplier and at least one positive line, editable while it stays `DRAFT`,
+cancellable through an explicit command, and inert until PUR-002 receives it.
+
+## Authorization and delivery decisions
+
+- The user authorized continuing with PUR-001 after the SUP-001 merge
+  (2026-09-26), on a new branch from `main`.
+- Branch: `feat/epic-11-purchase-draft`, created from `main` at `baa66ca`.
+- Delivery strategy: `single-pr` on the feature branch, matching the shipped
+  EPIC-09/EPIC-10 convention and the SUP-001 slice.
+- TDD: mode off (no project or session configuration enables it). Functional
+  checks are the ordinary gate.
+
+## New decision taken for this slice
+
+[[DEC-019]] was accepted on 2026-09-26 after the parent found a real collision
+between two accepted records: [[DEC-015]] states that no purchase, line or
+movement is hard-deleted, while [[DEC-012]] requires a saved draft to carry at
+least one line. A blanket delete ban would make a draft unable to drop a
+mis-entered line. The maintainer chose **conditional immutability**: a
+`BEFORE DELETE` trigger on `purchase` and `purchase_line` rejects the delete
+only when the owning purchase is `RECEIVED` or `CANCELLED`, so a `DRAFT` stays
+fully editable and a confirmed inventory fact stays immutable. DEC-015 remains
+accepted and unchanged; DEC-019 refines the scope of its blanket sentence.
+
+## Binding decisions for this slice
+
+- [[DEC-018]]: no human-readable number; no numbering column, no sequence, no
+  allocation step.
+- [[DEC-012]]: `supplierId` required; at least one line to save a draft; each
+  line quantity strictly positive as an exact `Decimal(10,3)`; duplicate
+  `catalogItemId` within one purchase rejected; catalog-item state is NOT
+  checked when saving a draft and IS checked at receive.
+- [[DEC-013]]: one optional informational unit cost `Decimal(14,2)`; no tax
+  rate, no computed line total, no purchase total, no valuation.
+- [[DEC-015]] as refined by [[DEC-019]]: `CANCELLED` only from `DRAFT`; a
+  `RECEIVED` purchase is immutable; conditional delete triggers.
+- [[DEC-016]]: keys `purchases.read`, `purchases.create`, `purchases.update`,
+  `purchases.cancel` (and `purchases.receive` with PUR-002); all six roles read,
+  `OWNER`/`ADMIN`/`INVENTORY_MANAGER` write; no entitlement gate. This slice
+  moves the seeded permission count 38 -> 42, and `purchases.receive` arrives
+  with PUR-002 to reach the DEC-016 total of 43.
+- [[DEC-017]]: one co-committed audit row per accepted mutation; reads never
+  audited; metadata carries field names and ids only.
+
+## Tasks
+
+- [x] P1: Data foundation — the `purchase_status` enum, the `Purchase` and
+      `PurchaseLine` models with tenant composite ownership keys, the additive
+      migration (RESTRICT FKs, composite ownership FKs, the positive-quantity
+      CHECK, the non-negative cost CHECK, the two conditional delete triggers),
+      the schema gate, and the four `purchases.*` permission keys with the
+      DEC-016 matrix.
+- [x] P2: API surface — the `apps/api/src/purchases/` module, the draft routes
+      (list, read, create, update, cancel), the line-set edit path, DEC-017
+      audit, the route-contract pins, the in-memory boundary extension and the
+      integration suite over the real guard chain.
+- [ ] P3: Live-PostgreSQL coverage for the draft boundary and the conditional
+      immutability, plus documentation closure.
+
+## Route declaration per task
+
+| Task | Route     | Trigger evidence                                                       |
+| ---- | --------- | ---------------------------------------------------------------------- |
+| P1   | delegated | Multi-file write rule: schema, migration, schema test, seeds and probe |
+| P2   | delegated | Multi-file write rule: new module files plus route pins and tests      |
+| P3   | delegated | Live-suite and documentation surfaces                                  |
+
+## Acceptance criteria and checks
+
+Inherited from [[PUR-001 Purchase draft]]. A cross-tenant or unknown purchase
+UUID and a foreign supplier or catalog-item reference are one byte-equivalent
+`404`; only a `DRAFT` is mutable; cancellation never deletes; no draft operation
+touches stock, cash, billing or fiscal state; the draft write path performs no
+stock movement and no balance change.
+
+## Progress
+
+- 2026-09-26: branch created, DEC-019 recorded, plan written before the first
+  source write.
+- 2026-09-26: P1 implemented and committed; verified against the live database.
+
+## Verification evidence (P1)
+
+- `pnpm --filter @newsaas/database test` -> 15 files / 268 tests passed (was
+  245: +22 in the new `schema-purchases.test.ts`, +1 PUR-001 seed test). Parent
+  re-ran this command as its own spot check and reproduced 268/268.
+- `pnpm --filter @newsaas/database build`, `typecheck`,
+  `pnpm --filter @newsaas/api test` (869 passed, 58 skipped),
+  `pnpm format-check` and `git diff --check` all clean.
+- Migration `20260926000002_purchases` applied to the live database and
+  `prisma migrate status` reports the schema up to date (21 migrations); the
+  seed reports `permissions: 42`, up from 38, with no `purchases.receive` key.
+- The writer's 16 rollback-wrapped SQL cases behaved as designed. The parent
+  independently reproduced the decisive ones with its own fixtures inside a
+  rolled-back transaction: a `DRAFT` line and then its `DRAFT` purchase delete
+  successfully (`DELETE 1` each), while deleting a `RECEIVED` purchase raises
+  `a received or cancelled purchase cannot be deleted`; zero rows were left
+  behind (`purchase` 0, `purchase_line` 0, probe tenant 0).
+- The parent read both trigger bodies directly: the `purchase` trigger guards on
+  `OLD."status" IN ('RECEIVED', 'CANCELLED')`, and the `purchase_line` trigger
+  reads the owning purchase's status, so both are conditional rather than the
+  unconditional sibling shape DEC-019 rejects.
+- Carried risk, accepted for now: the migration writes `updated_at` with a
+  `DEFAULT CURRENT_TIMESTAMP`, following the closest sibling migrations, so
+  `prisma migrate diff` lists a `DROP DEFAULT` for two more columns. That drift
+  is pre-existing repo-wide (22 tables before this slice, 24 now);
+  `migrate status` is green and CI applies migrations rather than diffing.
+  Recorded rather than hidden.
+
+- 2026-09-26: P2 implemented and committed; verified locally.
+
+## Verification evidence (P2)
+
+- `pnpm --filter @newsaas/api test` -> 72 files passed, 1 skipped (73); 886
+  tests passed, 58 skipped (944). The new `purchases.integration.test.ts` holds
+  16 cases and the route-contract probe 18. The parent re-ran this command as
+  its own spot check and reproduced 886/944 with the live suite skipped.
+- `pnpm --filter @newsaas/api typecheck`, `lint`,
+  `pnpm --filter @newsaas/database test` (268/268), `pnpm format-check` and
+  `git diff --check` all clean.
+- Parent-verified in the source: exactly five routes, each with one
+  `@RequirePermissions` key; no `@Delete` and no `@Patch` anywhere in the
+  module; no `purchases.receive` key declared; and the DRAFT-only gate raises
+  the stable `409 CONFLICT` "Only a draft purchase can be changed." for a
+  `RECEIVED` or `CANCELLED` purchase.
+- The suite's inertness case diffs every in-memory table across create, update
+  and cancel and asserts the only tables that change are `audits`, `purchases`
+  and `purchaseLines`, with zero stock movements and zero stock balances.
+
+## Carried risks from P2, recorded rather than hidden
+
+- A lines-only update does not bump the purchase header's `updatedAt`, because
+  Prisma's `@updatedAt` fires on a header-row write; the DTO's `updatedAt`
+  therefore reflects the last header write. Documented behaviour, not pinned by
+  a test.
+- The in-memory boundary cannot enforce the composite ownership foreign keys or
+  the `(tenantId, purchaseId, catalogItemId)` unique, so that DDL-level
+  behaviour rests on P1's schema gate until P3 proves it against a live
+  database.
+- No cash or invoice tables exist in the boundary fake, so "no cash or invoice
+  row" is proven by the exhaustive table diff rather than by interrogating those
+  tables.
+
+## Next step
+
+Run P3: live-PostgreSQL coverage for the draft boundary (including DEC-019's
+conditional immutability and the duplicate-line unique against the real schema),
+then documentation closure for PUR-001.

@@ -106,15 +106,55 @@ All notable product changes will be documented here.
     `supplier.deactivated` audit row per accepted mutation, carrying field
     **names** only; reads are never audited.
   - `SUP-001`, the `Suppliers` module documentation and the module index entry.
+  - Tenant-scoped purchase draft aggregate (PRD §17) — `Purchase` with a
+    `DRAFT`/`RECEIVED`/`CANCELLED` `purchase_status` enum and `PurchaseLine`
+    children, both carrying composite `(tenant_id, id)` ownership keys and
+    `RESTRICT` tenant/supplier/purchase/catalog-item foreign keys, plus the
+    `purchase_line_quantity_positive` and `purchase_line_unit_cost_non_negative`
+    CHECKs, the tenant-leading duplicate-line unique
+    `(tenant_id, purchase_id, catalog_item_id)` and the
+    `purchase_tenant_id_status_idx` list lookup. There is no number, total, tax
+    or valuation column ([[DEC-018]], [[DEC-013]]).
+  - One additive migration, `20260926000002_purchases`, creating the enum and
+    the two tables without altering any existing table or inserting rows.
+  - Conditional immutability ([[DEC-019]]): a `BEFORE DELETE` trigger on each of
+    `purchase` and `purchase_line` raises `restrict_violation` only while the
+    owning purchase is `RECEIVED` or `CANCELLED`, so a `DRAFT` stays fully
+    editable — including dropping a line entered by mistake — while a confirmed
+    or cancelled purchase and its lines stay immutable and readable.
+  - `purchases.read` / `purchases.create` / `purchases.update` /
+    `purchases.cancel` with the decided role matrix (all six roles read; OWNER,
+    ADMIN and INVENTORY_MANAGER write) and no entitlement gate. The seed count
+    moves 38 → 42; `purchases.receive` arrives with PUR-002 to reach 43.
+  - Five unprefixed allowlisted INTERNAL routes — `GET /purchases`,
+    `GET /purchases/:id`, `POST /purchases`, `PUT /purchases/:id` and
+    `POST /purchases/:id/cancel` — with the submitted line set reconciled by
+    `catalogItemId` on update (retain, update in place, insert, remove), a
+    byte-equivalent cross-tenant `404`, and a stable `409 CONFLICT` for an edit
+    or cancel of a non-`DRAFT` purchase. There is no `PATCH` and no `DELETE`.
+  - One co-committed `purchase.created` / `purchase.updated` /
+    `purchase.cancelled` audit row per accepted mutation, carrying field
+    **names** only; reads are never audited. The draft path is inert: it writes
+    no stock movement, no balance, no cash, invoice, payment or fiscal state and
+    allocates no number — receiving belongs to PUR-002.
+  - `PUR-001`, the `Purchases` module documentation, the module index entry and
+    durable live-PostgreSQL coverage: the live suite now runs 65/65, including a
+    7-case purchase-draft boundary block (the ledger-inert draft create, the
+    duplicate-line unique, [[DEC-019]]'s conditional immutability, the line-set
+    reconciliation, the DRAFT-only `409`, the composite foreign keys and the
+    quantity/cost CHECKs).
 
-  EPIC-11 is **incomplete**: purchases (`PUR-001`, `PUR-002`) and the staff
-  surface (`PUR-003`) are pending, the epic's durable live-PostgreSQL evidence
-  for receiving is owed before it closes, and a drift-free `migrate status` for
-  the index Prisma cannot model is still outstanding. The supplier registry work
-  units are merged into `main` as merge commit `baa66ca` through pull request
-  #68, with the required CI checks green; the slice's live-PostgreSQL evidence
-  is now the merged CI baseline in `docs/10-qa/CI-EVIDENCE.md`. Nothing here is
-  a production-readiness claim.
+  EPIC-11 is **incomplete**. The supplier registry work units are merged into
+  `main` as merge commit `baa66ca` through pull request #68 with the required CI
+  checks green, and that slice's live-PostgreSQL evidence is the merged CI
+  baseline in `docs/10-qa/CI-EVIDENCE.md`. The purchase draft (`PUR-001`) is
+  implemented on its own branch with its live coverage at 65/65, but it is not
+  merged. Receiving (`PUR-002`, its `PURCHASE` movement type and its ledger
+  integration) and the staff surface (`PUR-003`) are pending, the epic's durable
+  live-PostgreSQL evidence for receiving is owed before it closes, and a
+  drift-free `migrate status` for the index Prisma cannot model is still
+  outstanding, so the epic's exit criteria are not met. Nothing here is merged
+  or production-ready.
 
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,

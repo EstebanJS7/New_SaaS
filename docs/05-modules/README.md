@@ -63,12 +63,12 @@ Implemented (EPIC-11):
 
 ```text
 Suppliers.md
+Purchases.md
 ```
 
 Recommended files:
 
 ```text
-Purchases.md
 Sales.md
 Cash.md
 Billing.md

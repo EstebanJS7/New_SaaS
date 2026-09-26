@@ -68,6 +68,11 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   `suppliers.create`/`update`/`deactivate` are the owning-roles write keys.
  *   As with the catalog and inventory keys, they are seeded BEFORE the W2 API
  *   surface that consumes them.
+ * - EPIC-11 continues with the `purchases` family over the Core purchases
+ *   domain: `purchases.read` mirrors the read-wide catalog shape, and
+ *   `purchases.create`/`update`/`cancel` are the owning-roles write keys. Like
+ *   the keys above they are seeded BEFORE the API surface that consumes them;
+ *   the fifth key, `purchases.receive`, arrives with PUR-002.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -105,13 +110,19 @@ export const PERMISSION_SEEDS = [
   { key: "catalog.update", name: "Update catalog items" },
   { key: "catalog.deactivate", name: "Deactivate catalog items" },
   // EPIC-11 WU1 SUP-001 adds the `suppliers` family (DEC-016): all six roles
-  // read suppliers, `OWNER`/`ADMIN`/`INVENTORY_MANAGER` write them. Five
-  // further `purchases.*` keys arrive with PUR-001/PUR-002 to reach the DEC-016
-  // total of 43, so the next slice expects this count to move 38 -> 43.
+  // read suppliers, `OWNER`/`ADMIN`/`INVENTORY_MANAGER` write them.
   { key: "suppliers.read", name: "Read suppliers" },
   { key: "suppliers.create", name: "Create suppliers" },
   { key: "suppliers.update", name: "Update suppliers" },
   { key: "suppliers.deactivate", name: "Deactivate suppliers" },
+  // EPIC-11 PUR-001 adds the `purchases` family (DEC-016): all six roles read
+  // purchases, `OWNER`/`ADMIN`/`INVENTORY_MANAGER` create, update and cancel
+  // them. The fifth key, `purchases.receive`, arrives with PUR-002 and reaches
+  // the DEC-016 total of 43.
+  { key: "purchases.read", name: "Read purchases" },
+  { key: "purchases.create", name: "Create purchases" },
+  { key: "purchases.update", name: "Update purchases" },
+  { key: "purchases.cancel", name: "Cancel purchases" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -160,6 +171,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "suppliers.create",
     "suppliers.update",
     "suppliers.deactivate",
+    "purchases.read",
+    "purchases.create",
+    "purchases.update",
+    "purchases.cancel",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -200,6 +215,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "suppliers.create",
     "suppliers.update",
     "suppliers.deactivate",
+    "purchases.read",
+    "purchases.create",
+    "purchases.update",
+    "purchases.cancel",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
@@ -216,6 +235,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "patients.update",
     "catalog.read",
     "suppliers.read",
+    "purchases.read",
   ],
   RECEPTIONIST: [
     "inventory.stock.read",
@@ -233,6 +253,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "patients.guardian.manage",
     "catalog.read",
     "suppliers.read",
+    "purchases.read",
   ],
   CASHIER: [
     "cash.session.close",
@@ -240,6 +261,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "catalog.read",
     "inventory.stock.read",
     "suppliers.read",
+    "purchases.read",
   ],
   // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
   // catalog keys plus the EPIC-10 stock write key; front-desk, veterinary and
@@ -256,6 +278,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "suppliers.create",
     "suppliers.update",
     "suppliers.deactivate",
+    "purchases.read",
+    "purchases.create",
+    "purchases.update",
+    "purchases.cancel",
   ],
 };
 

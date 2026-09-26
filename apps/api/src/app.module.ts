@@ -14,6 +14,7 @@ import { HealthModule } from "./health/health.module.js";
 import { InventoryModule } from "./inventory/inventory.module.js";
 import { PatientsModule } from "./patients/patients.module.js";
 import { PortalModule } from "./portal/portal.module.js";
+import { PurchasesModule } from "./purchases/purchases.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
 import { SchedulingModule } from "./scheduling/scheduling.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
@@ -55,6 +56,11 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // reference; it adds no APP_GUARD either, so its position is free — kept
     // after Inventory so the dependency direction reads top-down.
     SuppliersModule,
+    // EPIC-11 PUR-001 purchases: the Core draft aggregate that references the
+    // supplier registry and the catalog; it adds no APP_GUARD either, so its
+    // position is free — kept after Suppliers so the dependency direction reads
+    // top-down. Registered BEFORE PortalModule, which must stay last.
+    PurchasesModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.
