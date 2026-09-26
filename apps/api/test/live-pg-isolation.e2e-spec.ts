@@ -225,6 +225,7 @@ const CATALOG_ITEM_DTO_KEYS = [
   "taxRate",
   "taxRateId",
   "tenantId",
+  "tracksStock",
   "updatedAt",
 ].sort();
 
