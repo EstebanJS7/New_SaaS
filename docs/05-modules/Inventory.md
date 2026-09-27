@@ -19,7 +19,9 @@ the negative-stock policy is a fixed `BLOCK`.
 The module owns three HTTP routes: the signed adjustment command that writes the
 ledger, and two tenant-scoped reads that expose the projection and the ledger.
 It performs no purchase, sale, transfer, cash, invoice or fiscal operation, and
-it owns no location dimension — stock is tenant-wide.
+it owns no location dimension — stock is tenant-wide. The EPIC-11 purchase
+receive command is the first external writer to append to this ledger; it does
+so through this module's repository seam, never with its own ledger SQL.
 
 Every movement and balance is anchored to one tenant and one in-tenant
 `CatalogItem`; nothing is read or written outside the server-side request
@@ -56,11 +58,13 @@ identity are **INTERNAL**.
 
 ## Main Entities
 
-- `StockMovementType` — database enum `stock_movement_type`, pinned to
-  `ADJUSTMENT` only. `PURCHASE`, `SALE`, `TRANSFER_*` and the `*_REVERSAL`
-  compensations arrive additively with the epics that own their commands.
+- `StockMovementType` — database enum `stock_movement_type`. It ships
+  `ADJUSTMENT` (the EPIC-10 signed adjustment) and the additively appended
+  `PURCHASE` (the EPIC-11 receive command). `SALE`, `TRANSFER_*` and the
+  `*_REVERSAL` compensations remain **future** and arrive additively with the
+  epics that own their commands.
 - `StockMovement` — the immutable ledger. `id`, `tenantId`, `catalogItemId`,
-  `type` (`ADJUSTMENT`), `quantity` `DECIMAL(10,3)` **signed** with
+  `type` (`ADJUSTMENT` | `PURCHASE`), `quantity` `DECIMAL(10,3)` **signed** with
   `CHECK (quantity <> 0)`, `reason` `TEXT NOT NULL`, nullable
   `reversesMovementId`, timestamps. `@@unique([tenantId, id])`, lookup indexes
   on `(tenantId, catalogItemId)` and `(tenantId, reversesMovementId)`.
@@ -276,6 +280,17 @@ writing `stock_balance`. A writer that skips it reintroduces the lost update.
 The stronger long-term shape (a self-enforcing row-level guard such as
 `SELECT … FOR UPDATE` or an atomic guarded `updateMany`) requires extending the
 shared in-memory boundary and is recorded as [[TD-016]].
+
+**Compliance today.** [[PUR-002 Purchase receiving]] is the first writer after
+the adjustment to comply with the protocol: the receive command takes the
+purchase HEADER row lock first, then acquires the same
+`stockSerializationLockKey(tenantId, catalogItemId)` per line in ascending
+`catalogItemId` order before reading or writing `stock_balance`, and writes the
+movements and the projection through this repository seam. [[TD-016]] stays
+**open** because compliance is still a convention rather than a
+database-enforced guarantee, and the live-PostgreSQL race case (exactly one
+`201`, one `409`, one movement per line and the projection equal to the ledger's
+signed sum) is the regression guard.
 
 The shared in-memory test boundary models `pg_advisory_xact_lock` as a no-op
 because a synchronous map cannot interleave, so the real serialization proof is

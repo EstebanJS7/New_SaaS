@@ -422,9 +422,13 @@ export class PurchaseRepository {
   async lockById(id: string, tx?: PurchaseTx): Promise<void> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
+    // Explicit `::uuid` casts (the clinical/`manage-holdership` row-lock
+    // precedent): Prisma binds template values as `text`, so comparing them
+    // directly against the `uuid` columns fails with `42883: operator does not
+    // exist: uuid = text`.
     await client.$queryRaw`
       SELECT "id" FROM "purchase"
-      WHERE "tenant_id" = ${tenantId} AND "id" = ${id}
+      WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid
       FOR UPDATE
     `;
   }

@@ -9,28 +9,29 @@ updated: 2026-09-26
 
 ## Responsibility
 
-The `DRAFT` half of the PRD §17 purchase lifecycle for the Core Business domain:
-a tenant-scoped purchase aggregate that names one in-tenant supplier and carries
-at least one line referencing in-tenant catalog items. A purchase is created,
-edited and cancelled while it stays `DRAFT`; it has no stock, cash, billing,
-fiscal or payment effect and is **inert** until [[PUR-002 Purchase receiving]]
-receives it ([[DEC-012]], [[DEC-014]]).
+The PRD §17 purchase lifecycle for the Core Business domain: a tenant-scoped
+purchase aggregate that names one in-tenant supplier and carries at least one
+line referencing in-tenant catalog items. A purchase is created, edited and
+cancelled while it stays `DRAFT`, and is **inert** until the explicit receive
+command marks it `RECEIVED` ([[DEC-012]], [[DEC-014]]).
 
 Every purchase is anchored to one tenant and is read or written only through the
-server-side request context. The module owns five unprefixed HTTP routes behind
-four granular permissions, returns allowlisted INTERNAL DTOs, and re-asserts its
+server-side request context. The module owns six unprefixed HTTP routes behind
+five granular permissions, returns allowlisted INTERNAL DTOs, and re-asserts its
 permission in the service before any data access. It deliberately ships **no**
 human-readable number ([[DEC-018]]) and **no** monetary total: a line carries
 one optional informational unit cost and nothing derives an amount from it
 ([[DEC-013]]). Data classification: the supplier reference, the status, the line
-quantities and the optional unit cost are all **INTERNAL**.
+quantities and the optional unit cost are all **INTERNAL**. Receiving is the
+module's only stock effect, and it writes the ledger through the EPIC-10 seam
+rather than touching `stock_balance` directly.
 
 ## Does Not Own
 
-- **Receiving and every stock effect** — [[PUR-002 Purchase receiving]]. No
-  route creates a `StockMovement`, touches a `StockBalance` or acquires the
-  ledger's serialization lock. `stock_movement_type` still ships `ADJUSTMENT`
-  only.
+- **Purchase reversal and compensating movements** — PRD §40 names purchase
+  reversal as a correction case, but this module ships no reversal command; a
+  `RECEIVED` purchase is corrected only by the future compensating operation
+  ([[DEC-015]]).
 - **Cash movements and cash sessions** — [[EPIC-13]]. A purchase stores no cash
   state.
 - **Invoices and billing** — [[EPIC-14]]. A purchase creates no invoice.
@@ -38,9 +39,6 @@ quantities and the optional unit cost are all **INTERNAL**.
   purchase makes no external call and emits no fiscal document.
 - **Payments, settlement and accounts payable** — [[EPIC-12]] and [[EPIC-13]]. A
   purchase records no owed amount, no payment term and no paid/unpaid state.
-- **Purchase reversal** — PRD §40 names it as a correction case, but this module
-  ships no reversal command; a `RECEIVED` purchase is corrected only by the
-  future compensating operation ([[DEC-015]]).
 - **Purchase numbering** — [[DEC-018]] settles that the aggregate carries no
   human-readable number; the purchase is identified by its UUID plus supplier
   and date.
@@ -63,6 +61,10 @@ quantities and the optional unit cost are all **INTERNAL**.
   place, insert, remove).
 - Cancel a `DRAFT` purchase through an explicit command; `CANCELLED` is
   reachable only from `DRAFT` and never deletes the purchase or its lines.
+- Receive a `DRAFT` purchase through the explicit `POST /purchases/:id/receive`
+  command, which atomically writes one positive `PURCHASE` movement and one
+  balance projection per line through the EPIC-10 ledger, marks the purchase
+  `RECEIVED` and appends exactly one audit row — or persists nothing.
 - An authenticated staff HTTP surface behind allowlisted INTERNAL DTOs, with
   per-route granular permissions and defense-in-depth service re-assertion.
 
@@ -107,49 +109,55 @@ tenant and a line can only reference a purchase and a catalog item of the SAME
 tenant; the tenant-leading unique key means one line per catalog item inside one
 purchase, which is what keeps receiving deterministic ([[DEC-012]]).
 
+Receiving also consumes the EPIC-10 ledger tables — `StockMovement`
+(`stock_movement_type` now carries the additive `PURCHASE` value) and
+`StockBalance` — but owns no column on them. The receive command writes them
+only through the reused `InventoryRepository` seam, never with direct SQL.
+
 ## State Transitions
 
 `status` is server-owned; no request contract accepts a caller-supplied status.
-A new purchase is always `DRAFT`, and `CANCELLED` is reachable **only** from
-`DRAFT`.
+A new purchase is always `DRAFT`, `RECEIVED` is reachable **only** through the
+explicit receive command, and `CANCELLED` is reachable **only** from `DRAFT`.
 
 ```text
-                POST /purchases           (PUR-002 receive command, not shipped)
-   (new)  --------------->  DRAFT  ----------------->  RECEIVED
-                            |
-                            | POST /purchases/:id/cancel
-                            v
-                        CANCELLED
+                POST /purchases/:id/receive
+   (new)  -->  DRAFT  ------------------------>  RECEIVED
+                |
+                | POST /purchases/:id/cancel
+                v
+            CANCELLED
 ```
 
-`POST /purchases/:id/cancel` is the only state change this module ships and is a
-status transition, **never** a delete: the purchase and its lines stay readable.
-A repeat cancel, an edit of a `RECEIVED` purchase or an edit of a `CANCELLED`
-purchase is a stable `409 CONFLICT` and persists nothing ([[DEC-015]]). The
-migration's conditional `BEFORE DELETE` triggers refuse a raw delete exactly
-when the owning purchase is `RECEIVED` or `CANCELLED`, so a `DRAFT` remains
-fully editable while a confirmed or cancelled purchase is immutable
-([[DEC-019]]).
+Both transitions are explicit commands and status changes, **never** deletes:
+the purchase and its lines stay readable. A repeat receive, a receive of a
+`CANCELLED` purchase, a repeat cancel, an edit of a `RECEIVED` purchase or an
+edit of a `CANCELLED` purchase is a stable `409 CONFLICT` and persists nothing
+([[DEC-014]], [[DEC-015]]). The migration's conditional `BEFORE DELETE` triggers
+refuse a raw delete exactly when the owning purchase is `RECEIVED` or
+`CANCELLED`, so a `DRAFT` remains fully editable while a confirmed or cancelled
+purchase is immutable ([[DEC-019]]).
 
 ## Permissions
 
-Four granular keys, seeded by `PERMISSION_SEEDS` with the decided role matrix
-([[DEC-016]], 2026-09-26). The seeded count moved 38 → 42; `purchases.receive`
-arrives with [[PUR-002 Purchase receiving]] to reach 43.
+Five granular keys, seeded by `PERMISSION_SEEDS` with the decided role matrix
+([[DEC-016]], 2026-09-26). The seeded count moved 38 → 42 with the draft slice
+and 42 → 43 with `purchases.receive`, the [[DEC-016]] total.
 
-| Role                | `purchases.read` | `purchases.create` | `purchases.update` | `purchases.cancel` |
-| ------------------- | :--------------: | :----------------: | :----------------: | :----------------: |
-| `OWNER`             |        ✓         |         ✓          |         ✓          |         ✓          |
-| `ADMIN`             |        ✓         |         ✓          |         ✓          |         ✓          |
-| `INVENTORY_MANAGER` |        ✓         |         ✓          |         ✓          |         ✓          |
-| `VETERINARIAN`      |        ✓         |                    |                    |                    |
-| `RECEPTIONIST`      |        ✓         |                    |                    |                    |
-| `CASHIER`           |        ✓         |                    |                    |                    |
+| Role                | `purchases.read` | `purchases.create` | `purchases.update` | `purchases.cancel` | `purchases.receive` |
+| ------------------- | :--------------: | :----------------: | :----------------: | :----------------: | :-----------------: |
+| `OWNER`             |        ✓         |         ✓          |         ✓          |         ✓          |          ✓          |
+| `ADMIN`             |        ✓         |         ✓          |         ✓          |         ✓          |          ✓          |
+| `INVENTORY_MANAGER` |        ✓         |         ✓          |         ✓          |         ✓          |          ✓          |
+| `VETERINARIAN`      |        ✓         |                    |                    |                    |                     |
+| `RECEPTIONIST`      |        ✓         |                    |                    |                    |                     |
+| `CASHIER`           |        ✓         |                    |                    |                    |                     |
 
 - `purchases.read` — `GET /purchases`, `GET /purchases/:id`.
 - `purchases.create` — `POST /purchases`.
 - `purchases.update` — `PUT /purchases/:id`.
 - `purchases.cancel` — `POST /purchases/:id/cancel`.
+- `purchases.receive` — `POST /purchases/:id/receive`.
 
 Each route declares its single key with `@RequirePermissions` **and**
 `PurchasesService` re-asserts it before any data access, so a missing permission
@@ -157,22 +165,23 @@ is `403 FORBIDDEN` and persists nothing. Route-by-route pins live in
 `apps/api/src/rbac/route-contract.probe.test.ts`
 (`PURCHASES_PERMISSION_BY_ROUTE`). There is **no entitlement gate**: purchases
 are a Core capability, like catalog, inventory and suppliers, so no feature code
-gates this surface. `purchases.receive` is deliberately absent from this
-module's contract because it belongs to [[PUR-002 Purchase receiving]].
+gates this surface.
 
 ## API
 
-All five routes are unprefixed per [[DEC-002]] and return allowlisted INTERNAL
+All six routes are unprefixed per [[DEC-002]] and return allowlisted INTERNAL
 DTOs; no Prisma model crosses the HTTP boundary. The module is registered in
-`apps/api/src/app.module.ts` and imports Context, RBAC and Audit.
+`apps/api/src/app.module.ts`, imports Context, RBAC and Audit, and provides the
+reused `InventoryRepository` as the receive command's ledger seam.
 
-| Route                        | Permission         | Contract                                                                                                                    |
-| ---------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `GET /purchases`             | `purchases.read`   | The caller tenant's purchases with their lines, newest first with an id tiebreaker; optional `status`; no implicit default. |
-| `GET /purchases/:id`         | `purchases.read`   | One purchase; a foreign or unknown UUID is the same byte-equivalent `404`.                                                  |
-| `POST /purchases`            | `purchases.create` | Create one `DRAFT` purchase with at least one line (`201`).                                                                 |
-| `PUT /purchases/:id`         | `purchases.update` | Update a `DRAFT` (`200`); `supplierId` optional, `lines` is the authoritative line set; any other status is a stable `409`. |
-| `POST /purchases/:id/cancel` | `purchases.cancel` | Cancel a `DRAFT` (`201`); `CANCELLED` is reachable only from `DRAFT` and never deletes.                                     |
+| Route                         | Permission          | Contract                                                                                                                    |
+| ----------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `GET /purchases`              | `purchases.read`    | The caller tenant's purchases with their lines, newest first with an id tiebreaker; optional `status`; no implicit default. |
+| `GET /purchases/:id`          | `purchases.read`    | One purchase; a foreign or unknown UUID is the same byte-equivalent `404`.                                                  |
+| `POST /purchases`             | `purchases.create`  | Create one `DRAFT` purchase with at least one line (`201`).                                                                 |
+| `PUT /purchases/:id`          | `purchases.update`  | Update a `DRAFT` (`200`); `supplierId` optional, `lines` is the authoritative line set; any other status is a stable `409`. |
+| `POST /purchases/:id/cancel`  | `purchases.cancel`  | Cancel a `DRAFT` (`201`); `CANCELLED` is reachable only from `DRAFT` and never deletes.                                     |
+| `POST /purchases/:id/receive` | `purchases.receive` | Receive a `DRAFT` (`201`); the body is a strict empty contract; a non-`DRAFT` purchase is a stable `409`.                   |
 
 There is **no** `PATCH` route (the status is server-owned and a transition is
 its own command) and **no** `DELETE` route anywhere on this surface. The
@@ -229,36 +238,73 @@ ignored.
 
 Stable, value-free message constants:
 
-| Constant                                  | Message                                       | When                                                                            |
-| ----------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------- |
-| `PURCHASE_NOT_FOUND_MESSAGE`              | `Purchase was not found.`                     | Unknown **or** foreign-tenant purchase id — one byte-equivalent `404`.          |
-| `PURCHASE_SUPPLIER_NOT_FOUND_MESSAGE`     | `The purchase supplier was not found.`        | Unknown or foreign supplier reference — `404`.                                  |
-| `PURCHASE_CATALOG_ITEM_NOT_FOUND_MESSAGE` | `A purchase line catalog item was not found.` | Unknown or foreign catalog-item reference — `404`.                              |
-| `PURCHASE_NOT_EDITABLE_MESSAGE`           | `Only a draft purchase can be changed.`       | Edit or cancel of a `RECEIVED` or `CANCELLED` purchase — stable `409 CONFLICT`. |
+| Constant                                  | Message                                       | When                                                                       |
+| ----------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| `PURCHASE_NOT_FOUND_MESSAGE`              | `Purchase was not found.`                     | Unknown **or** foreign-tenant purchase id — one byte-equivalent `404`.     |
+| `PURCHASE_SUPPLIER_NOT_FOUND_MESSAGE`     | `The purchase supplier was not found.`        | Unknown or foreign supplier reference — `404`.                             |
+| `PURCHASE_CATALOG_ITEM_NOT_FOUND_MESSAGE` | `A purchase line catalog item was not found.` | Unknown or foreign catalog-item reference — `404`.                         |
+| `PURCHASE_NOT_EDITABLE_MESSAGE`           | `Only a draft purchase can be changed.`       | Edit, cancel or receive of a non-`DRAFT` purchase — stable `409 CONFLICT`. |
+| `STOCK_ITEM_NOT_TRACKED_MESSAGE`          | `The catalog item does not track stock.`      | A receive line whose item does not track stock — reused `409 CONFLICT`.    |
+| `STOCK_ITEM_INACTIVE_MESSAGE`             | `The catalog item is inactive.`               | A receive line whose item is deactivated — reused `409 CONFLICT`.          |
 
 The three `404` messages are each backed by one shared constant, so the read,
 the update and the cancel verbs of a resource are byte-equivalent by
 construction rather than by coincidence. The `409` is scoped to the `DRAFT`-only
-mutability rule and never echoes a stored value. Malformed bodies, rejected keys
-and a malformed path id are `400 VALIDATION_FAILED`.
+mutability rule and never echoes a stored value. The two line-gate messages are
+the **same** constants the EPIC-10 adjustment path raises, so the two stock
+writers report those conditions identically instead of inventing a second
+vocabulary. Malformed bodies, rejected keys and a malformed path id are
+`400 VALIDATION_FAILED`.
 
 ## Audit
 
-Every accepted mutation (`create`, `update`, `cancel`) appends **exactly one**
-audit row through `AuditWriter` **inside the same transaction** as the purchase
-change, carrying stable ids and field **names** only ([[DEC-017]]):
+Every accepted mutation (`create`, `update`, `cancel`, `receive`) appends
+**exactly one** audit row through `AuditWriter` **inside the same transaction**
+as the purchase change, carrying stable ids and field **names** only
+([[DEC-017]]):
 
 | Action               | `targetType` | Metadata                                                                                                      |
 | -------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- |
 | `purchase.created`   | `purchase`   | `{ schemaVersion, changedFields }` — always `["supplierId", "lines"]`.                                        |
 | `purchase.updated`   | `purchase`   | `{ schemaVersion, changedFields }` — the supplied keys only; `lines` always, `supplierId` only when supplied. |
 | `purchase.cancelled` | `purchase`   | `{ schemaVersion, changedFields }` — `["status"]`.                                                            |
+| `purchase.received`  | `purchase`   | `{ schemaVersion, changedFields }` — `["status"]`; ONE row for the whole receive, never one per line.         |
 
 Metadata is `{ schemaVersion, changedFields }` with `schemaVersion` `1`; no
 field **value** is ever recorded, so no quantity, unit cost, catalog-item id or
 supplier id reaches the trail. Reads are never audited. No purchase event is
 emitted: nothing reacts post-commit, and the module owns no user-facing domain
 event (`PurchaseDrafted` and similar are not defined).
+
+## Receiving and the ledger
+
+`POST /purchases/:id/receive` is the module's only stock effect. It runs in one
+transaction and follows [[DEC-014]] exactly:
+
+1. It row-locks the purchase HEADER for the caller's tenant
+   (`SELECT "id" FROM "purchase" WHERE "tenant_id" = $1::uuid AND "id" = $2::uuid FOR UPDATE`)
+   and reads the status **after** the lock. A concurrent second receive of the
+   SAME purchase parks on that row, then sees the committed `RECEIVED` and is
+   rejected with the stable `409`.
+2. It resolves and gates EVERY line in-tenant before any stock work: the item
+   must be ACTIVE and `tracksStock`, or the whole command fails with the reused
+   EPIC-10 `409` and persists nothing.
+3. It acquires the ledger's per-`(tenant, item)` advisory locks in **ascending
+   `catalogItemId` order** through `InventoryRepository.lockItemStock`.
+4. It writes one positive `PURCHASE` movement and one balance projection per
+   line through `InventoryRepository.createMovement` and `upsertBalance`, flips
+   the status with a conditional `DRAFT`-only write as a backstop, and appends
+   exactly one `purchase.received` audit row.
+
+The global lock order is header first, then items ascending, for every receive,
+so two receives that share items cannot deadlock. No balance is ever written
+directly and no ledger SQL is duplicated: the command reuses the EPIC-10 seam. A
+rejection rolls the whole transaction back, leaving no movement, no balance
+change, no status change and no audit row. The concurrent race is proven by the
+live-PostgreSQL block, which holds the purchase header row lock in a dedicated
+transaction and asserts exactly one `201`, one `409`, one movement per line and
+exactly one `purchase.received` audit row across both attempts, with the
+projection equal to the ledger's signed sum.
 
 ## Draft inertness guarantee
 
@@ -269,8 +315,8 @@ the `purchase` aggregate, its `purchase_line` children and the co-committed
 provider or allocates a number. The integration suite proves this by diffing
 every table in the boundary fake across a full create → update → cancel cycle:
 the only tables that change are `purchases`, `purchaseLines` and `audits`, with
-zero stock movements and zero stock balances. [[PUR-002 Purchase receiving]]
-owns the first operation that is allowed to touch the ledger.
+zero stock movements and zero stock balances. The explicit receive command is
+the only operation allowed to touch the ledger.
 
 ## Data classification
 
@@ -295,6 +341,17 @@ response as the **caller's own** tenant; a foreign tenant id is never returned.
 
 - **A draft is inert.** No draft operation changes stock, cash, an invoice or a
   fiscal document.
+- **Receiving is the purchase's only stock effect.** The explicit receive
+  command is the single transition that writes a `StockMovement` and updates the
+  `StockBalance` projection, and it does so through the EPIC-10 ledger seam in
+  one transaction with the status change and exactly one audit row.
+- **A receive is all-or-nothing.** Every line must resolve in-tenant to an
+  ACTIVE item that tracks stock; otherwise the whole command fails with the
+  reused stable `409` and persists no movement, no balance change, no status
+  change and no audit row.
+- **A purchase is received at most once.** The command row-locks the purchase
+  header before reading its status and keeps the status write conditional, so a
+  replay or a concurrent second receive is the stable `409`.
 - **Every purchase belongs to exactly one tenant.** Tenant identity comes only
   from the server-side request context; a foreign record is indistinguishable
   from a missing one.
@@ -349,12 +406,20 @@ response as the **caller's own** tenant; a foreign tenant id is never returned.
   proves both against real DDL: the duplicate unique by catalog introspection
   plus a raw duplicate insert, and the composite foreign keys by a raw
   cross-tenant supplier and catalog-item reference the database rejects.
-- **What the live block does not prove.** It does not exercise the receive
-  command (that is [[PUR-002 Purchase receiving]]), it does not race two
-  concurrent duplicate-line inserts, and it does not run a `migrate status`
-  drift check. The migration is applied to a disposable database by `db:deploy`
-  in the suite's setup, so application is proven, but a drift-free
-  `migrate status` against a persistent database is still owed by the epic.
+- **The in-memory suite cannot prove the concurrent receive interleaving.** The
+  shared boundary is single-threaded, so the HTTP suite pins the header-lock
+  ordering and the loser's observable outcome; the true race is proven by the
+  live-PostgreSQL block. It does not race two concurrent duplicate-line inserts,
+  and it does not run a `migrate status` drift check. The migration is applied
+  to a disposable database by `db:deploy` in the suite's setup, so application
+  is proven, but a drift-free `migrate status` against a persistent database is
+  still owed by the epic.
+- **The receive movement `reason` is a fixed literal.** The ledger column is
+  `TEXT NOT NULL` and the receive command takes no caller reason, so every
+  `PURCHASE` movement records `"Purchase received"`. The ledger row carries no
+  purchase identifier; the co-committed audit row identifies the purchase.
+- **No partial receiving.** PRD §17 defines no partial state, so a receive
+  applies every line or none.
 - **Carried, pre-existing drift.** The migration writes `updated_at` with a
   `DEFAULT CURRENT_TIMESTAMP`, following the closest sibling migrations, so
   `prisma migrate diff` lists a `DROP DEFAULT` for two more columns. That drift
@@ -372,37 +437,49 @@ response as the **caller's own** tenant; a foreign tenant id is never returned.
   migration's enum literal, the two tables and columns, the composite ownership
   keys, the `RESTRICT` foreign keys, the duplicate-line unique, the two CHECKs,
   the two conditional delete triggers, and the model mappings.
-- `apps/api/src/purchases/purchases.integration.test.ts` — **16 tests** over the
+- `packages/database/src/schema-inventory.test.ts` — the enum gate pins the
+  effective additive literal set `{ADJUSTMENT, PURCHASE}` (creating migration +
+  additive receiving migration) and the schema enum block.
+- `apps/api/src/purchases/purchases.integration.test.ts` — **25 tests** over the
   real guard chain: the permission sweeps that persist nothing on denial; the
   draft create/update/cancel/list; the DRAFT-only `409`; the invalid
   create/update sweeps; the line-set reconciliation; the co-committed audit
-  rows; the cross-tenant and foreign-reference `404`; and the draft inertness
-  probe.
-- `apps/api/src/rbac/route-contract.probe.test.ts` — the five purchase routes in
+  rows; the cross-tenant and foreign-reference `404`; the draft inertness probe;
+  and the receive cases — atomic receive with one positive `PURCHASE` movement
+  and projection per line and one `purchase.received` audit row, the replay
+  `409`, the reused line-gate `409`, the shared receive `404`, the strict empty
+  body, the header-lock ordering pin and the header-race loser.
+- `apps/api/src/rbac/route-contract.probe.test.ts` — the six purchase routes in
   the survival inventory and `PURCHASES_PERMISSION_BY_ROUTE`.
 - `apps/api/test/live-pg-isolation.e2e-spec.ts` — the
-  `EPIC-11 purchases application-path isolation` block (**7 tests**) against the
-  booted AppModule and a disposable real PostgreSQL: the draft create that
-  persists its lines and leaves the ledger untouched; the duplicate-line unique;
-  [[DEC-019]]'s conditional immutability with the exact trigger messages; the
-  line-set reconciliation over HTTP; the DRAFT-only `409`; the composite foreign
-  keys and the byte-equivalent cross-tenant `404`; and the quantity/cost CHECKs.
+  `EPIC-11 purchases application-path isolation` block (**7 tests**) and the
+  `EPIC-11 purchase receiving application-path isolation` block (**6 tests**)
+  against the booted AppModule and a disposable real PostgreSQL: the draft
+  create that persists its lines and leaves the ledger untouched; the
+  duplicate-line unique; [[DEC-019]]'s conditional immutability with the exact
+  trigger messages; the line-set reconciliation over HTTP; the DRAFT-only `409`;
+  the composite foreign keys and the byte-equivalent cross-tenant `404`; the
+  quantity/cost CHECKs; and for receiving, atomicity with the projection equal
+  to the ledger's signed sum, the replay `409`, the concurrent double-receive
+  race admitting exactly one, the byte-equivalent receive `404`, the
+  all-or-nothing line gate and the applied additive enum with the no-delete
+  trigger.
 - Observed package runs: `pnpm --filter @newsaas/database test` → 15 files / 268
   tests passed; `pnpm --filter @newsaas/api test` → 72 files passed, 1 skipped
-  (73), 886 tests passed, 65 skipped; the API typecheck, the API lint,
+  (73), 895 tests passed, 71 skipped; the API typecheck, the API lint,
   `pnpm format-check` and `git diff --check` all clean.
 - Observed live-PostgreSQL run: `pnpm --filter @newsaas/api test:live-pg` → 1
-  file / **65 tests passed**, including the 7 new purchase cases. The suite
-  applies the migration and the reference seed to a fresh disposable database
-  itself.
+  file / **71 tests passed**, including the 7 purchase and the 6 receiving
+  cases. The suite applies the migration and the reference seed to a fresh
+  disposable database itself.
 
 ## Related Stories
 
 - [[PUR-001 Purchase draft]] — the `DRAFT` lifecycle, its additive migration,
   the four permission keys with their role matrix, the five routes, the line-set
   reconciliation, the conditional immutability, the audit rows and the tests.
-- [[PUR-002 Purchase receiving]] — the explicit receive command and the ledger
-  integration this module deliberately does not own.
+- [[PUR-002 Purchase receiving]] — the explicit receive command, its
+  header-first lock order and its EPIC-10 ledger integration.
 
 ## Related ADRs
 

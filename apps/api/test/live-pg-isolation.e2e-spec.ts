@@ -68,6 +68,9 @@ const SUPPLIER_TAX_ID_CONFLICT_MESSAGE =
 /** Server-owned request id pinned on every purchase cross-tenant miss. */
 const PURCHASE_NOT_FOUND_REQUEST_ID = "live-pg-purchase-not-found-proof";
 
+/** Server-owned request id pinned on every receiving cross-tenant miss. */
+const RECEIVE_NOT_FOUND_REQUEST_ID = "live-pg-receive-not-found-proof";
+
 /**
  * Stable `409` wire message for an edit or cancel against a non-DRAFT
  * purchase, mirrored as a literal so the live suite asserts the byte-exact body
@@ -77,6 +80,21 @@ const PURCHASE_NOT_EDITABLE_MESSAGE = "Only a draft purchase can be changed.";
 
 /** Stable `404` wire message shared by every purchase verb. */
 const PURCHASE_NOT_FOUND_MESSAGE = "Purchase was not found.";
+
+/**
+ * The reused inventory `409` wire messages for the two receive-time line
+ * gates, mirrored as literals so the live suite asserts the byte-exact bodies
+ * the application emits rather than importing the production constants.
+ */
+const STOCK_ITEM_INACTIVE_MESSAGE = "The catalog item is inactive.";
+const STOCK_ITEM_NOT_TRACKED_MESSAGE = "The catalog item does not track stock.";
+
+/**
+ * Fixed reason recorded on every `PURCHASE` ledger movement of a receive: the
+ * ledger column is `TEXT NOT NULL` and the receive command takes no caller
+ * reason, so this literal is the value.
+ */
+const PURCHASE_RECEIVE_MOVEMENT_REASON = "Purchase received";
 
 interface CustomerDto {
   id: string;
@@ -5513,6 +5531,526 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
       // Every probe rolled back: no rejected line survived.
       expect(await prisma.purchaseLine.count()).toBe(linesBefore);
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-11 PUR-002 live-PostgreSQL evidence (task R3).
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP and the `20260926000003_purchase_receiving` migration's applied
+   * enum — what the single-threaded in-memory boundary cannot represent:
+   *   1. a receive is atomic: exactly one positive `PURCHASE` movement and one
+   *      balance projection per line, the projection equal to the ledger's
+   *      signed sum, and exactly one `purchase.received` audit row;
+   *   2. a replay is the stable `409 CONFLICT` and persists nothing (DEC-014);
+   *   3. two concurrent receives of the SAME purchase admit exactly one under a
+   *      PROVEN overlap on the purchase header row lock — the case the in-memory
+   *      suite could not prove;
+   *   4. a cross-tenant and an unknown purchase id are one byte-equivalent `404`,
+   *      persisting nothing for either;
+   *   5. a line gate is all-or-nothing with the reused inventory `409` messages,
+   *      writing no movement for any line including the good ones;
+   *   6. the applied `stock_movement_type` carries `PURCHASE` additively and the
+   *      pre-existing no-delete trigger still rejects a raw delete of one.
+   *
+   * Every assertion is deterministic: no injected Prisma error, no mock, no
+   * sleep, no timeout and no retry.
+   */
+  describe("EPIC-11 purchase receiving application-path isolation", () => {
+    /** Global SEED-owned EXEMPT rate, the catalog precondition for an item. */
+    let exemptRateId: string;
+    /** Fixture suppliers owned by the two live tenants. */
+    let supplierAId: string;
+    let supplierBId: string;
+    /** Tenant B catalog item, referenced only by tenant B's own draft. */
+    let itemBId: string;
+
+    /** One supplier create over REAL HTTP. */
+    const createSupplier = async (cookie: string, name: string): Promise<string> => {
+      const created = await supertest(serverUrl)
+        .post("/suppliers")
+        .set("Cookie", cookie)
+        .send({ name })
+        .expect(201);
+      return (created.body as SupplierDto).id;
+    };
+
+    /**
+     * One tenant catalog item through the REAL catalog command. `overrides`
+     * carries the state under test (for example `tracksStock: false`) on top of
+     * an ACTIVE, stock-tracking default.
+     */
+    const createItem = async (
+      cookie: string,
+      name: string,
+      overrides: Record<string, unknown> = {}
+    ): Promise<string> => {
+      const created = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", cookie)
+        .send({ kind: "SUPPLY", name, taxRateId: exemptRateId, ...overrides })
+        .expect(201);
+      return (created.body as { id: string }).id;
+    };
+
+    /** One tenant-A draft purchase over REAL HTTP; returns its projection. */
+    const createDraft = async (
+      cookie: string,
+      lines: { catalogItemId: string; quantity: string }[]
+    ): Promise<PurchaseDto> => {
+      const created = await supertest(serverUrl)
+        .post("/purchases")
+        .set("Cookie", cookie)
+        .send({ supplierId: supplierAId, lines })
+        .expect(201);
+      return created.body as PurchaseDto;
+    };
+
+    /** The explicit receive command over REAL HTTP, with a pinned request id. */
+    const receive = (cookie: string, purchaseId: string, requestId: string) =>
+      supertest(serverUrl)
+        .post(`/purchases/${purchaseId}/receive`)
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .then((response) => response);
+
+    /** Raw `DECIMAL(10,3)` projection text, or `null` when the item has no row. */
+    const rawBalanceText = async (
+      tenantId: string,
+      catalogItemId: string
+    ): Promise<string | null> => {
+      const rows = await prisma.$queryRaw<{ quantity: string }[]>`
+        SELECT "quantity"::text AS quantity FROM "stock_balance"
+        WHERE "tenant_id" = ${tenantId}::uuid AND "catalog_item_id" = ${catalogItemId}::uuid
+      `;
+      return rows[0]?.quantity ?? null;
+    };
+
+    /** Raw SIGNED sum of one item's movements at the projection's exact scale. */
+    const rawLedgerSum = async (tenantId: string, catalogItemId: string): Promise<string> => {
+      const rows = await prisma.$queryRaw<{ total: string }[]>`
+        SELECT COALESCE(sum("quantity"), 0)::numeric(10,3)::text AS total
+        FROM "stock_movement"
+        WHERE "tenant_id" = ${tenantId}::uuid AND "catalog_item_id" = ${catalogItemId}::uuid
+      `;
+      return rows[0]?.total ?? "0.000";
+    };
+
+    /** Raw `PURCHASE` movements of one item, at the column's exact scale. */
+    const purchaseMovements = async (
+      tenantId: string,
+      catalogItemId: string
+    ): Promise<{ quantity: string; reason: string }[]> => {
+      return prisma.$queryRaw<{ quantity: string; reason: string }[]>`
+        SELECT "quantity"::text AS quantity, "reason" AS reason
+        FROM "stock_movement"
+        WHERE "tenant_id" = ${tenantId}::uuid AND "catalog_item_id" = ${catalogItemId}::uuid
+          AND "type" = 'PURCHASE'::stock_movement_type
+        ORDER BY "created_at" ASC, "id" ASC
+      `;
+    };
+
+    beforeAll(async () => {
+      // The rate row is SEED-owned, so resolving it proves the reference seed
+      // really ran against this database.
+      const exempt = await prisma.taxRate.findUnique({ where: { code: "EXEMPT" } });
+      if (!exempt) {
+        throw new Error("Reference seed did not create the global EXEMPT tax rate");
+      }
+      exemptRateId = exempt.id;
+
+      // Every live case owns its funding fixtures: the development database
+      // seeds no supplier and no catalog item, so this block creates what it
+      // references. The tenant-A items are created per case so each "exactly one
+      // movement" assertion starts from an item with an empty ledger.
+      supplierAId = await createSupplier(ownerACookie, "Live Receiving Supplier A");
+      supplierBId = await createSupplier(ownerBCookie, "Live Receiving Supplier B");
+      itemBId = await createItem(ownerBCookie, "Live Receiving Item B1");
+    }, 30_000);
+
+    it("receives a draft atomically: one positive PURCHASE movement and projection per line, projection equal to the ledger sum, one audit row", async () => {
+      const firstItemId = await createItem(ownerACookie, "Live Receiving Item A1");
+      const secondItemId = await createItem(ownerACookie, "Live Receiving Item A2");
+      const draft = await createDraft(ownerACookie, [
+        { catalogItemId: firstItemId, quantity: "2.500" },
+        { catalogItemId: secondItemId, quantity: "7.000" },
+      ]);
+      expect(draft.status).toBe("DRAFT");
+
+      const movementsBefore = await prisma.stockMovement.count();
+      const balancesBefore = await prisma.stockBalance.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = "live-pg-receiving-success";
+
+      const response = await receive(ownerACookie, draft.id, requestId);
+      expect(response.status).toBe(201);
+      const body = response.body as PurchaseDto;
+      expect(Object.keys(body).sort()).toEqual(PURCHASE_DTO_KEYS);
+      expect(body.tenantId).toBe(tenantAId);
+      expect(body.status).toBe("RECEIVED");
+      expect(body.lines).toHaveLength(2);
+      // No Prisma column name crosses the HTTP boundary.
+      expect(response.text).not.toContain("stock_movement");
+      expect(response.text).not.toContain("catalog_item_id");
+
+      // Exactly ONE positive `PURCHASE` movement per line, at the ledger's
+      // signed convention and the column's own exact scale.
+      expect(await purchaseMovements(tenantAId, firstItemId)).toEqual([
+        { quantity: "2.500", reason: PURCHASE_RECEIVE_MOVEMENT_REASON },
+      ]);
+      expect(await purchaseMovements(tenantAId, secondItemId)).toEqual([
+        { quantity: "7.000", reason: PURCHASE_RECEIVE_MOVEMENT_REASON },
+      ]);
+      // The movement TYPE itself is the new enum value: an adjustment for the
+      // same items would be a different type, so this is asserted from the
+      // stored column rather than inferred from the response.
+      const types = await prisma.$queryRaw<{ type: string }[]>`
+        SELECT DISTINCT "type"::text AS type FROM "stock_movement"
+        WHERE "tenant_id" = ${tenantAId}::uuid
+          AND "catalog_item_id" IN (${firstItemId}::uuid, ${secondItemId}::uuid)
+      `;
+      expect(types).toEqual([{ type: "PURCHASE" }]);
+
+      // The projection equals the ledger's SIGNED sum for each item, at the
+      // projection's own exact scale, and there is ONE row per `(tenant, item)`.
+      for (const [itemId, expected] of [
+        [firstItemId, "2.500"],
+        [secondItemId, "7.000"],
+      ] as const) {
+        expect(await rawBalanceText(tenantAId, itemId)).toBe(expected);
+        expect(await rawLedgerSum(tenantAId, itemId)).toBe(await rawBalanceText(tenantAId, itemId));
+        expect(
+          await prisma.stockBalance.count({ where: { tenantId: tenantAId, catalogItemId: itemId } })
+        ).toBe(1);
+      }
+
+      // Exactly ONE co-committed `purchase.received` audit row, naming the
+      // status change only: field names, no identifier and no stored value.
+      const audits = await prisma.auditLog.findMany({ where: { requestId } });
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        action: "purchase.received",
+        targetType: "purchase",
+        targetId: draft.id,
+        tenantId: tenantAId,
+      });
+      const metadata = audits[0].metadata as { schemaVersion: number; changedFields: string[] };
+      expect(metadata.schemaVersion).toBe(1);
+      expect(metadata.changedFields).toEqual(["status"]);
+      // No CONFIDENTIAL value and no identifier reach the trail.
+      const serializedMetadata = JSON.stringify(metadata);
+      expect(serializedMetadata).not.toContain(firstItemId);
+      expect(serializedMetadata).not.toContain("2.500");
+      expect(serializedMetadata).not.toContain(supplierAId);
+
+      // The command's complete durable side effect above the pre-command counts:
+      // two movements, two projection rows and exactly ONE audit row.
+      expect(await prisma.stockMovement.count()).toBe(movementsBefore + 2);
+      expect(await prisma.stockBalance.count()).toBe(balancesBefore + 2);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(await prisma.purchase.findUnique({ where: { id: draft.id } })).toMatchObject({
+        status: "RECEIVED",
+      });
+    }, 30_000);
+
+    it("rejects a replay of the same purchase with the stable 409 and persists nothing", async () => {
+      const itemId = await createItem(ownerACookie, "Live Receiving Replay Item");
+      const draft = await createDraft(ownerACookie, [{ catalogItemId: itemId, quantity: "3.250" }]);
+      const first = await receive(ownerACookie, draft.id, "live-pg-receiving-replay-first");
+      expect(first.status).toBe(201);
+
+      const movementsAfter = await prisma.stockMovement.count();
+      const balancesAfter = await prisma.stockBalance.findMany({
+        where: { tenantId: tenantAId },
+        orderBy: { id: "asc" },
+      });
+      const auditsAfter = await prisma.auditLog.count();
+      const balanceBefore = await rawBalanceText(tenantAId, itemId);
+      const requestId = "live-pg-receiving-replay-second";
+
+      const replay = await receive(ownerACookie, draft.id, requestId);
+      expect(replay.status).toBe(409);
+      expect((replay.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((replay.body as { error: { message: string } }).error.message).toBe(
+        PURCHASE_NOT_EDITABLE_MESSAGE
+      );
+
+      // Nothing further was persisted: no second movement, no balance change, no
+      // additional audit row, and the purchase stays RECEIVED.
+      expect(await prisma.stockMovement.count()).toBe(movementsAfter);
+      expect(
+        await prisma.stockBalance.findMany({
+          where: { tenantId: tenantAId },
+          orderBy: { id: "asc" },
+        })
+      ).toEqual(balancesAfter);
+      expect(await prisma.auditLog.count()).toBe(auditsAfter);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(await rawBalanceText(tenantAId, itemId)).toBe(balanceBefore);
+      expect(await rawLedgerSum(tenantAId, itemId)).toBe("3.250");
+      expect(await purchaseMovements(tenantAId, itemId)).toEqual([
+        { quantity: "3.250", reason: PURCHASE_RECEIVE_MOVEMENT_REASON },
+      ]);
+      expect(await prisma.purchase.findUnique({ where: { id: draft.id } })).toMatchObject({
+        status: "RECEIVED",
+      });
+    }, 30_000);
+
+    it("admits exactly ONE of two concurrent receives of the SAME purchase under a proven header-lock overlap", async () => {
+      const firstItemId = await createItem(ownerACookie, "Live Receiving Race Item A1");
+      const secondItemId = await createItem(ownerACookie, "Live Receiving Race Item A2");
+      const draft = await createDraft(ownerACookie, [
+        { catalogItemId: firstItemId, quantity: "2.000" },
+        { catalogItemId: secondItemId, quantity: "4.000" },
+      ]);
+      const firstRequestId = "live-pg-receiving-race-1";
+      const secondRequestId = "live-pg-receiving-race-2";
+      const movementsBefore = await prisma.stockMovement.count();
+      const auditsBefore = await prisma.auditLog.count();
+
+      // Deterministic overlap: a dedicated transaction holds the purchase
+      // HEADER row lock (`SELECT ... FOR UPDATE`), which is the exact row the
+      // command locks FIRST, so BOTH receives park on that single row before
+      // either can read the status or take an item lock.
+      // `waitForRowLockWaiters` matches the tuple lock on THAT row, so an
+      // unrelated lock waiter can never satisfy it: the interleaving is decided
+      // by the database boundary, never by wall-clock timing.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT "id" FROM "purchase"
+            WHERE "tenant_id" = ${tenantAId}::uuid AND "id" = ${draft.id}::uuid
+            FOR UPDATE
+          `;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+      // The row lock is held now, so the ctid cannot move under the racers.
+      const ctid = await readRowCtid(prisma, "purchase", draft.id);
+
+      const racers = [
+        receive(ownerACookie, draft.id, firstRequestId),
+        receive(ownerACookie, draft.id, secondRequestId),
+      ];
+
+      try {
+        await waitForRowLockWaiters(prisma, "purchase", ctid.page, ctid.tuple, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      // The database guarantees this outcome for EVERY interleaving: the winner
+      // flips the header to RECEIVED inside its transaction, and the loser's
+      // post-lock status read sees the committed RECEIVED and is rejected. The
+      // assertions never depend on WHICH request won, and there is no sleep and
+      // no retry that could hide a double receive.
+      const admitted = responses.filter((response) => response.status === 201);
+      const rejected = responses.filter((response) => response.status === 409);
+      expect(admitted).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0].body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((rejected[0].body as { error: { message: string } }).error.message).toBe(
+        PURCHASE_NOT_EDITABLE_MESSAGE
+      );
+      expect((admitted[0].body as PurchaseDto).status).toBe("RECEIVED");
+
+      // Exactly ONE movement per line — NEVER two sets — and each projection is
+      // exactly its own ledger's signed sum.
+      expect(await purchaseMovements(tenantAId, firstItemId)).toEqual([
+        { quantity: "2.000", reason: PURCHASE_RECEIVE_MOVEMENT_REASON },
+      ]);
+      expect(await purchaseMovements(tenantAId, secondItemId)).toEqual([
+        { quantity: "4.000", reason: PURCHASE_RECEIVE_MOVEMENT_REASON },
+      ]);
+      for (const [itemId, expected] of [
+        [firstItemId, "2.000"],
+        [secondItemId, "4.000"],
+      ] as const) {
+        expect(await rawBalanceText(tenantAId, itemId)).toBe(expected);
+        expect(await rawLedgerSum(tenantAId, itemId)).toBe(await rawBalanceText(tenantAId, itemId));
+      }
+      expect(await prisma.stockMovement.count()).toBe(movementsBefore + 2);
+
+      // Exactly ONE `purchase.received` audit row across BOTH attempts, and the
+      // purchase is RECEIVED.
+      const raceAudits = await prisma.auditLog.findMany({
+        where: { requestId: { in: [firstRequestId, secondRequestId] } },
+      });
+      expect(raceAudits).toHaveLength(1);
+      expect(raceAudits[0]).toMatchObject({
+        action: "purchase.received",
+        targetType: "purchase",
+        targetId: draft.id,
+        tenantId: tenantAId,
+      });
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(await prisma.purchase.findUnique({ where: { id: draft.id } })).toMatchObject({
+        status: "RECEIVED",
+      });
+    }, 60_000);
+
+    it("masks a cross-tenant and an unknown purchase id as one byte-equivalent 404 on receive, persisting nothing", async () => {
+      // Tenant B owns a real draft the masked tenant-A command must never resolve.
+      const foreign = await supertest(serverUrl)
+        .post("/purchases")
+        .set("Cookie", ownerBCookie)
+        .send({ supplierId: supplierBId, lines: [{ catalogItemId: itemBId, quantity: "4.000" }] })
+        .expect(201);
+      const foreignBody = foreign.body as PurchaseDto;
+
+      const movementsBefore = await prisma.stockMovement.count();
+      const balancesBefore = await prisma.stockBalance.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = RECEIVE_NOT_FOUND_REQUEST_ID;
+
+      const foreignResponse = await supertest(serverUrl)
+        .post(`/purchases/${foreignBody.id}/receive`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId);
+      const unknownResponse = await supertest(serverUrl)
+        .post(`/purchases/${randomUUID()}/receive`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId);
+
+      expect(foreignResponse.status).toBe(404);
+      expect(unknownResponse.status).toBe(404);
+      expect((foreignResponse.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect((foreignResponse.body as { error: { message: string } }).error.message).toBe(
+        PURCHASE_NOT_FOUND_MESSAGE
+      );
+      // Byte-equivalence: a foreign tenant UUID is indistinguishable from a
+      // non-existent one, echoed correlation included.
+      expect(foreignResponse.text).toBe(unknownResponse.text);
+      expect(foreignResponse.text).not.toContain(foreignBody.id);
+      expect(foreignResponse.text).not.toContain(tenantBId);
+      expect(foreignResponse.text).not.toContain(supplierBId);
+
+      // Nothing was persisted for EITHER attempt: the foreign draft is still
+      // DRAFT, its item has no movement or projection, and no audit row trailed
+      // the masked commands.
+      expect(await prisma.purchase.findUnique({ where: { id: foreignBody.id } })).toMatchObject({
+        status: "DRAFT",
+      });
+      expect(await purchaseMovements(tenantBId, itemBId)).toEqual([]);
+      expect(await rawBalanceText(tenantBId, itemBId)).toBeNull();
+      expect(await prisma.stockMovement.count()).toBe(movementsBefore);
+      expect(await prisma.stockBalance.count()).toBe(balancesBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+    }, 30_000);
+
+    it("fails the WHOLE receive when any line is not stockable, writing no movement for any line", async () => {
+      const goodItemId = await createItem(ownerACookie, "Live Receiving Gate Good Item");
+      const inactiveItemId = await createItem(ownerACookie, "Live Receiving Gate Inactive Item");
+      await supertest(serverUrl)
+        .post(`/catalog/${inactiveItemId}/deactivate`)
+        .set("Cookie", ownerACookie)
+        .send({})
+        .expect(201);
+      const nonTrackingItemId = await createItem(
+        ownerACookie,
+        "Live Receiving Gate Non-Tracking Item",
+        { tracksStock: false }
+      );
+
+      const scenarios = [
+        {
+          label: "inactive",
+          itemId: inactiveItemId,
+          message: STOCK_ITEM_INACTIVE_MESSAGE,
+        },
+        {
+          label: "non-tracking",
+          itemId: nonTrackingItemId,
+          message: STOCK_ITEM_NOT_TRACKED_MESSAGE,
+        },
+      ];
+
+      for (const scenario of scenarios) {
+        const draft = await createDraft(ownerACookie, [
+          { catalogItemId: goodItemId, quantity: "5.000" },
+          { catalogItemId: scenario.itemId, quantity: "1.000" },
+        ]);
+        const movementsBefore = await prisma.stockMovement.count();
+        const balancesBefore = await prisma.stockBalance.count();
+        const auditsBefore = await prisma.auditLog.count();
+        const requestId = `live-pg-receiving-gate-${scenario.label}`;
+
+        const response = await receive(ownerACookie, draft.id, requestId);
+        expect(response.status, scenario.label).toBe(409);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("CONFLICT");
+        expect(
+          (response.body as { error: { message: string } }).error.message,
+          scenario.label
+        ).toBe(scenario.message);
+
+        // ALL-OR-NOTHING: the purchase is still DRAFT and NO movement was
+        // written for ANY line — including the good one.
+        expect(
+          await prisma.purchase.findUnique({ where: { id: draft.id } }),
+          scenario.label
+        ).toMatchObject({ status: "DRAFT" });
+        expect(await purchaseMovements(tenantAId, scenario.itemId), scenario.label).toEqual([]);
+        expect(await purchaseMovements(tenantAId, goodItemId), scenario.label).toEqual([]);
+        expect(await rawBalanceText(tenantAId, scenario.itemId), scenario.label).toBeNull();
+        expect(await rawBalanceText(tenantAId, goodItemId), scenario.label).toBeNull();
+        expect(await prisma.stockMovement.count()).toBe(movementsBefore);
+        expect(await prisma.stockBalance.count()).toBe(balancesBefore);
+        expect(await prisma.auditLog.count()).toBe(auditsBefore);
+        expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      }
+    }, 30_000);
+
+    it("asserts the applied PURCHASE enum value and rejects a raw delete of a PURCHASE movement", async () => {
+      // The APPLIED enum: `PURCHASE` was added ADDITIVELY, so `ADJUSTMENT`
+      // keeps its original sort position and the new value follows it.
+      const enumRows = await prisma.$queryRaw<{ enumlabel: string }[]>`
+        SELECT e.enumlabel
+        FROM pg_enum AS e
+        JOIN pg_type AS t ON t.oid = e.enumtypid
+        WHERE t.typname = 'stock_movement_type'
+        ORDER BY e.enumsortorder ASC
+      `;
+      expect(enumRows.map((row) => row.enumlabel)).toEqual(["ADJUSTMENT", "PURCHASE"]);
+
+      // A real `PURCHASE` movement, written by the real command.
+      const itemId = await createItem(ownerACookie, "Live Receiving Immutable Item");
+      const draft = await createDraft(ownerACookie, [{ catalogItemId: itemId, quantity: "6.000" }]);
+      const response = await receive(ownerACookie, draft.id, "live-pg-receiving-immutable");
+      expect(response.status).toBe(201);
+      const movementRows = await prisma.$queryRaw<{ id: string }[]>`
+        SELECT "id"::text AS id FROM "stock_movement"
+        WHERE "tenant_id" = ${tenantAId}::uuid AND "catalog_item_id" = ${itemId}::uuid
+          AND "type" = 'PURCHASE'::stock_movement_type
+      `;
+      expect(movementRows).toHaveLength(1);
+      const movementId = movementRows[0].id;
+      const movementBefore = await prisma.stockMovement.findUnique({ where: { id: movementId } });
+      expect(movementBefore).not.toBeNull();
+
+      // The pre-existing no-delete trigger is unchanged and still rejects a raw
+      // delete of the NEW movement type; the row physically survives.
+      await expect(
+        prisma.$executeRaw`DELETE FROM "stock_movement" WHERE "id" = ${movementId}::uuid`
+      ).rejects.toThrow(/cannot be hard-deleted/);
+      expect(await prisma.stockMovement.findUnique({ where: { id: movementId } })).toEqual(
+        movementBefore
+      );
     }, 30_000);
   });
 });

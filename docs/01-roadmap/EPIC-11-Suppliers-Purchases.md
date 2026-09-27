@@ -99,10 +99,9 @@ green.
 - The slice's live-PostgreSQL evidence is recorded as the EPIC-11 CI baseline in
   `docs/10-qa/CI-EVIDENCE.md`.
 
-The epic is **not** closed: [[PUR-001]], [[PUR-002]] and [[PUR-003]] remain
-`planned`, every exit criterion below is still open, and this record keeps
-`status: planned`. The story list below is unchanged; [[SUP-001]] carries its
-own `status: done`.
+The epic is **not** closed: [[PUR-001]] and [[PUR-002]] are implemented on their
+own branches, [[PUR-003]] remains `planned`, every exit criterion below is still
+open, and this record keeps `status: planned`.
 
 ## Scope
 
@@ -218,12 +217,22 @@ own `status: done`.
   `feat/epic-11-purchase-draft` (commits `517ad69`, `59031c3`, `43ac6dd`) with
   its schema gate, HTTP integration suite, route-contract pins and a 7-case
   live-PostgreSQL block; the draft half of the epic is done.
+- 2026-09-26: [[PUR-002 Purchase receiving]] implemented on branch
+  `feat/epic-11-purchase-receiving` (commit `a0d6442` plus the live-PostgreSQL
+  coverage). The slice adds the `purchases.receive` key (completing the
+  [[DEC-016]] total at 43), the additive `PURCHASE` movement type and the
+  explicit `POST /purchases/:id/receive` command with its header-first lock
+  order, all-or-nothing line gate, one-transaction ledger writes and one
+  `purchase.received` audit row. The HTTP integration suite holds 25 purchase
+  tests, the route probe pins the sixth route, and the live-PostgreSQL suite
+  grows to 71/71 with a 6-case receiving block whose concurrent double-receive
+  race admits exactly one `201` under a proven header-row-lock overlap.
 
 This note records implementation progress only. Every epic acceptance and exit
 criterion in this record remains unchecked and the epic `status` stays
-`planned`, because receiving ([[PUR-002 Purchase receiving]]) and the staff
-surface ([[PUR-003 Staff purchases surface]]) are not implemented, so the epic's
-exit criteria are not met.
+`planned`, because the staff surface ([[PUR-003 Staff purchases surface]]) is
+not implemented and the receiving work units are not merged, so the epic's exit
+criteria are not met.
 
 ## Dependencies
 
@@ -334,6 +343,9 @@ fiscal document per [[DEC-018]].
 
 ## Technical Debt
 
-- No debt is created by this epic yet. It inherits [[TD-016]], whose trigger is
-  "the next stock writer added by [[EPIC-11]] or [[EPIC-12]]"; the receiving
-  slice must either satisfy the protocol or resolve that record.
+- No debt is created by this epic. It inherits [[TD-016]], whose trigger is "the
+  next stock writer added by [[EPIC-11]] or [[EPIC-12]]"; the receiving slice
+  ([[PUR-002 Purchase receiving]]) now satisfies the protocol — it acquires the
+  shared advisory lock before touching `stock_balance` — and [[TD-016]] is
+  updated with that call site while staying open, because the protocol remains a
+  convention rather than a database-enforced guarantee.

@@ -13,7 +13,7 @@ related_epics:
 related_stories:
   - CAT-007
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 # TD-016 — Inventory stock serialization depends on every writer acquiring the same advisory lock
@@ -67,13 +67,33 @@ already holds the lock.
 
 ## Why It Is Safe to Defer
 
-- The only stock writer that exists today is `InventoryService.adjust`, and it
-  takes the lock before reading the projection.
+- The stock writers that exist today are `InventoryService.adjust` and the
+  EPIC-11 purchase receive command, and both take the lock before reading the
+  projection.
 - The live-PostgreSQL suite asserts the exact lock key and the projected-equals-
   ledger-sum invariant on the race path, so a regression in the one existing
   writer fails a real test rather than passing unnoticed.
 - No acceptance criterion of EPIC-10 depends on the stronger shape; the current
   lock satisfies the epic's concurrency evidence.
+
+## Status update (2026-09-26)
+
+[[PUR-002 Purchase receiving]] landed as the first new stock writer after the
+adjustment, and it **complies** with the protocol rather than worsening the
+debt: the receive command acquires
+`stockSerializationLockKey(tenantId, catalogItemId)` through the EPIC-10 seam
+(`InventoryRepository.lockItemStock`) for every line, in ascending
+`catalogItemId` order, before reading or writing `stock_balance`, and writes the
+movements and the projection through `createMovement` / `upsertBalance`. Its
+live-PostgreSQL race case holds the purchase header row lock and asserts exactly
+one `201`, one `409`, one movement per line and a projection equal to the
+ledger's signed sum.
+
+The debt itself is unchanged and stays **open**: the protocol is still enforced
+by convention, not by the database. The receiving call site is recorded here so
+the next writer ([[EPIC-12]] POS/sales) inherits the same obligation, and the
+proposed resolution above — a self-enforcing guarded write or row lock — remains
+the trigger for closing it.
 
 ## Risk
 
