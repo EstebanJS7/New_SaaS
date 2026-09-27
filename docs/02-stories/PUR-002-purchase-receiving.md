@@ -255,14 +255,22 @@ non-`DRAFT` purchase, a non-stockable line or a foreign/unknown id — rolls the
 whole transaction back and persists nothing. The command reuses the EPIC-10
 ledger seam and writes no cash, billing, fiscal or payment state.
 
-**Defect found by live evidence and fixed.** The live-PostgreSQL block caught a
-real defect the single-threaded in-memory boundary could not: `lockById`
-compared the `uuid` columns against Prisma-bound `text` parameters, so
-PostgreSQL rejected the statement with
-`42883: operator does not exist: uuid = text` and every receive returned `500`.
-The statement now casts each bound value explicitly (`${tenantId}::uuid`,
-`${id}::uuid`), following the clinical and `manage-holdership` row-lock
-precedent, and the live receiving cases pass.
+**Defects found during the slice and fixed.** Two real defects were caught
+before the slice merged, which is why the receiving path is trustworthy:
+
+- **Double-receive race.** The `DRAFT` gate was read before any lock and the
+  status write was unconditional, so two concurrent receives of the same
+  purchase could apply a second movement set. The command now takes the purchase
+  header row lock first and re-reads the status after the lock, so the loser is
+  the stable `409` and persists nothing.
+- **Broken row lock.** The live-PostgreSQL block caught a defect the
+  single-threaded in-memory boundary could not mask: `lockById` compared the
+  `uuid` columns against Prisma-bound `text` parameters, so PostgreSQL rejected
+  the statement with `42883: operator does not exist: uuid = text` and every
+  receive returned HTTP `500`. The statement now casts each bound value
+  explicitly (`${tenantId}::uuid`, `${id}::uuid`), following the clinical and
+  `manage-holdership` row-lock precedent, and the live receiving cases pass. The
+  in-memory double masked it; the live suite caught it.
 
 ## Verification
 
@@ -293,6 +301,17 @@ pnpm --filter @newsaas/database db:seed && node scripts/ci-seed-counts.mjs
 The live block provisions a fresh disposable database, applies the migration and
 the reference seed itself, uses no injected Prisma error, no mock, no sleep and
 no retry, and rolls every raw-SQL probe back.
+
+**Delivery (merged).** The work units are merged into `main` through pull
+request #71 (`feat(EPIC-11): implement purchase receiving (PUR-002)`) as merge
+commit `8862050` (`8862050c74f4dafa3518d4029c8becb778895979`), merged
+`2026-09-27T04:16:17Z`. The required CI checks are green on the evaluated head
+commit `edfa66c` (`edfa66cbcfbf514f97ed2a0fa657c04b0091ab1e`): run `36293559990`
+concluded `success`, with `Database migrations` and
+`Lint, Typecheck, Test, Build` both `SUCCESS`. This satisfies the Story's
+delivery expectations: the work units are committed, pushed and merged with the
+required checks green, and the merged CI receipt is recorded in
+`docs/10-qa/CI-EVIDENCE.md`.
 
 ## Tests Added
 
@@ -344,6 +363,13 @@ no retry, and rolls every raw-SQL probe back.
   `DROP DEFAULT` for two columns; that drift is repo-wide and pre-existing,
   `migrate status` is green and CI applies migrations rather than diffing.
 - **No staff UI.** The receive affordance belongs to [[PUR-003]].
+- **Two defects were found and fixed inside this slice; they are recorded as
+  fixed, not as open problems.** A double-receive race (the `DRAFT` gate read
+  before any lock, with an unconditional status write) was closed by the header
+  row lock and the post-lock status re-read, and a `uuid`-versus-`text`
+  comparison in `lockById` returned HTTP `500` on every receive until the
+  explicit `::uuid` casts were added. The in-memory double masked the second
+  defect; the live suite caught it. See the implementation summary above.
 
 ## Technical Debt
 
@@ -432,6 +458,9 @@ Done for **implementation, ordinary verification and live-evidence scope**: the
 additive enum migration, the `purchases.receive` seed, the explicit receive
 command, the header-first lock order, the all-or-nothing line gate, the single
 co-committed audit row and the 6-case live-PostgreSQL block are all in place,
-and the checks this environment can run are green. This is **not** a
-production-readiness statement: the work units are not pushed or merged, and
-[[EPIC-11]] remains open for [[PUR-003 Staff purchases surface]].
+and the checks this environment can run are green. The work units are merged
+into `main` through pull request #71 as merge commit `8862050`, with the
+required CI checks green on head `edfa66c` (run `36293559990`;
+`Database migrations` and `Lint, Typecheck, Test, Build` both `SUCCESS`), which
+satisfies the Story's delivery expectations. This is **not** a
+production-readiness statement: [[EPIC-11]] remains open for [[PUR-003]].
