@@ -169,17 +169,38 @@ All notable product changes will be documented here.
     6-case receiving block whose concurrent double-receive race admits exactly
     one `201` under a proven header-row-lock overlap.
 
-  EPIC-11 is **incomplete**. The supplier registry work units are merged into
-  `main` as merge commit `baa66ca` through pull request #68 with the required CI
-  checks green, and that slice's live-PostgreSQL evidence is the merged CI
-  baseline in `docs/10-qa/CI-EVIDENCE.md`. The purchase draft (`PUR-001`) and
-  the receiving command (`PUR-002`) are merged into `main` as merge commits
-  `f214003` and `8862050` through pull requests #70 and #71 with the required CI
-  checks green, and their delivery receipts are recorded in
-  `docs/10-qa/CI-EVIDENCE.md`. The staff surface (`PUR-003`) is pending, and a
-  drift-free `migrate status` for the index Prisma cannot model is still
-  outstanding, so the epic's exit criteria are not met. Nothing here is a
-  production-readiness claim.
+  - Staff purchases surface (PUR-003) — two authenticated Next.js route handlers
+    (`/api/suppliers` and `/api/purchases`) behind a strict
+    `(method, path-shape)` allowlist, with cookie-only forwarding, no
+    synthesized tenant/role/permission header, a query rebuilt from the one
+    allowlisted key, and the uniform `404`/`405`/`400`/`401` rejection contract
+    in the API's own `{ error: { code, message } }` envelope.
+  - Supplier pages (list with an active-only default, read-only detail and a
+    shared create/edit form with absent-versus-null semantics and no `isActive`
+    control) and purchase pages (list, read-only detail, a draft create/edit
+    form over the full line set, explicit cancel and the confirm-guarded receive
+    action), registering `Suppliers` and `Purchases` navigation entries.
+  - Loading, empty, error, success and permission-denied states on every page,
+    pending/success/error mutation feedback, cache invalidation after each
+    accepted mutation, and a receive flow that renders success, the non-draft
+    `409`, the inactive-item `409`, the non-tracking-item `409`, `403`, `404`
+    and a transport error as distinct outcomes with no silent retry.
+  - No API route, schema model, migration, seed entry or permission key changed:
+    the surface consumes the contracts [[SUP-001]], [[PUR-001]] and [[PUR-002]]
+    already shipped.
+
+  EPIC-11 is **done**, and `done` here means **implementation closure only**:
+  all four stories ([[SUP-001]], [[PUR-001]], [[PUR-002]] and [[PUR-003]]) are
+  merged into `main` — merge commits `baa66ca`, `f214003`, `8862050` and
+  `e12ac1f` through pull requests #68, #70, #71 and #73 — with the required CI
+  checks green, and the epic's live-PostgreSQL evidence runs in CI's
+  `Database migrations` job on every pull request, so it is machine-verified
+  rather than local-only. The delivery receipts are recorded in
+  `docs/10-qa/CI-EVIDENCE.md`. This is **never** a production-readiness
+  statement and it approves no release or deployment: [[EPIC-20]] Production
+  Hardening and the open Tech Debt items remain, [[TD-013]] stays open now that
+  its trigger has fired, and [[TD-016]] stays open although the receiving writer
+  complies with its protocol.
 
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,

@@ -947,3 +947,78 @@ the `Lint, Typecheck, Test, Build` job covers the root quality gates.
       surface named.
 - [ ] The local and SUP-001 sections above are unchanged.
 - [ ] No statement claims release, deployment or production readiness.
+
+## EPIC-11 Closure Baseline (CI) — PUR-003 (2026-09-27)
+
+Canonical post-merge CI evidence for the [[PUR-003]] staff purchases surface of
+[[EPIC-11]], captured after pull request #73 merged
+`feat/epic-11-staff-purchases` into `main`. This is the machine-generated
+receipt for the merged slice: the run below was produced by CI on the evaluated
+head commit. It records delivery of the staff surface only; it is **not** a
+production-readiness statement and it approves no release or deployment.
+
+### Delivery
+
+| Field        | Value                                                                  |
+| ------------ | ---------------------------------------------------------------------- |
+| Pull request | #73 — `feat(EPIC-11): implement the staff purchases surface (PUR-003)` |
+| Branch       | `feat/epic-11-staff-purchases` into `main`                             |
+| Merge commit | `e12ac1ffd96928a45a333f0e4722e2486aa16274` (`e12ac1f`, `main`)         |
+| Merged at    | `2026-09-27T08:12:47Z`                                                 |
+
+### Canonical baseline
+
+| Field      | Value                                                           |
+| ---------- | --------------------------------------------------------------- |
+| Workflow   | `.github/workflows/ci.yml` (`CI`)                               |
+| Run        | `36305211468`                                                   |
+| Head SHA   | `ae08e88b5d2a582e00927eb6a0a00fbac1200810` (`ae08e88`, PR head) |
+| Conclusion | `success`                                                       |
+| URL        | https://github.com/EstebanJS7/New_SaaS/actions/runs/36305211468 |
+
+Both required jobs reported `SUCCESS`:
+
+| Job                            | Result    |
+| ------------------------------ | --------- |
+| `Database migrations`          | `SUCCESS` |
+| `Lint, Typecheck, Test, Build` | `SUCCESS` |
+
+### Executed checks
+
+The `Database migrations` job applies every migration to a fresh database, runs
+the idempotent seed probe and the live-PostgreSQL application-path isolation
+suite. The `Lint, Typecheck, Test, Build` job covers the root quality gates.
+Both jobs are required checks, so this run is the merge-blocking gate PR #73
+passed.
+
+### Live-PostgreSQL evidence is machine-verified
+
+The epic's live-PostgreSQL evidence runs in the same `Database migrations` job
+on every pull request, so the receiving coverage is machine-verified rather than
+local-only: the suite stands at **71 cases** and includes the EPIC-11 supplier,
+purchase-draft and purchase-receiving blocks. The earlier EPIC-11 local
+live-PostgreSQL section above remains the historical pre-push record; this run
+is its durable form.
+
+### Scope and standing
+
+- This baseline covers the PUR-003 staff purchases surface only. With it, all
+  four EPIC-11 slices ([[SUP-001]], [[PUR-001]], [[PUR-002]] and [[PUR-003]])
+  are merged with the required checks green.
+- `done` for [[EPIC-11]] means epic implementation closure only; see
+  `docs/01-roadmap/EPIC-11-Suppliers-Purchases.md`. It is **not** a
+  production-readiness statement.
+- No statement here claims release, deployment or production readiness.
+- The canonical baselines above are unchanged by this section.
+
+### Documentation review criteria
+
+- [ ] The pull request, merge commit and merge timestamp match the delivery
+      table.
+- [ ] The head SHA, run, conclusion and both jobs match the baseline table.
+- [ ] The section is presented as the machine-generated receipt for the merged
+      slice.
+- [ ] The live-PostgreSQL suite is stated as running in the same
+      `Database migrations` job, at 71 cases.
+- [ ] No statement claims release, deployment or production readiness.
+- [ ] The existing baselines above are unchanged.
