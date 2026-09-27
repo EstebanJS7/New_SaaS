@@ -822,3 +822,143 @@ stock movement and no balance change.
 Run P3: live-PostgreSQL coverage for the draft boundary (including DEC-019's
 conditional immutability and the duplicate-line unique against the real schema),
 then documentation closure for PUR-001.
+
+---
+
+# PUR-002 Purchase receiving — implementation tracking
+
+## Objective
+
+Implement the explicit receiving command: validate the draft, write the signed
+positive `PURCHASE` movements through the EPIC-10 ledger seam, update the
+balances under the serialization protocol, mark the purchase `RECEIVED` and
+write one audit row, atomically.
+
+## Tasks
+
+- [x] R1: Receiving command — the additive `PURCHASE` enum value with migration
+      `20260926000003_purchase_receiving`, the `purchases.receive` key
+      completing the seed at 43, and `POST /purchases/:id/receive` with the
+      header row lock, the post-lock `DRAFT` gate, the conditional status write
+      backstop, the reused inventory 409 messages, the ascending `catalogItemId`
+      item locks and one `purchase.received` audit row.
+- [x] R3: Live-PostgreSQL coverage for the receiving boundary plus the
+      documentation closure.
+
+## Commits
+
+| Commit    | Work unit                                                |
+| --------- | -------------------------------------------------------- |
+| `a0d6442` | R1 receiving command and enum extension                  |
+| `edfa66c` | R3 live coverage, the `::uuid` fix and the documentation |
+
+## Two defects found and fixed inside this slice
+
+- **Double receive.** The `DRAFT` gate was read before any lock was taken and
+  the status write was unconditional, so two concurrent receives of the SAME
+  purchase could both pass and apply a second movement set — which the
+  engineering rules forbid. Fixed with a `SELECT … FOR UPDATE` header row lock
+  taken first, a post-lock status re-read and a conditional status write as a
+  backstop; the global order is header first, then items ascending.
+- **Every receive returned HTTP 500.** `lockById` compared `uuid` columns
+  against Prisma-bound `text` parameters, so PostgreSQL rejected the statement
+  with `42883: operator does not exist: uuid = text`. The in-memory double
+  masked it and the live suite caught it. Fixed with the explicit `::uuid` casts
+  the repository already uses for row locks.
+
+## Verification evidence (R3)
+
+- `pnpm --filter @newsaas/api test:live-pg` -> **71/71** (was 65), including six
+  receiving cases: the atomic receive, the replay, the concurrent double
+  receive, the byte-equivalent cross-tenant 404, the all-or-nothing line gates
+  and the applied enum with the immutability trigger.
+- `pnpm --filter @newsaas/database test` 268/268;
+  `pnpm --filter @newsaas/api test` 895 passed with 65 skipped; typecheck, lint,
+  `format-check` and `git diff --check` clean; root gates 14/14 · 14/14 · 9/9 ·
+  clean · 15/15.
+- Delivered: pull request #71 merged as `8862050`, CI run `36293559990` green on
+  head `edfa66c`.
+
+---
+
+# PUR-003 Staff purchases surface — implementation tracking
+
+## Objective
+
+Deliver the staff browser surface for suppliers and purchases, with the receive
+flow as its most consequential part.
+
+## Tasks
+
+- [x] S1: Supplier half — the `/api/suppliers` proxy, the client module and the
+      list, detail, create and edit pages, with deactivation as the only
+      removal.
+- [x] S2: Purchase half — the `/api/purchases` proxy, the client module and the
+      list, detail, create and edit pages with full line-set editing, plus the
+      explicit confirmed receive flow with seven distinct outcomes.
+- [x] S3: Documentation closure and the epic closure.
+
+## Commits
+
+| Commit    | Work unit                                        |
+| --------- | ------------------------------------------------ |
+| `57d5494` | S1 supplier proxy                                |
+| `3b147d4` | S1 supplier client module                        |
+| `ee0e9a7` | S1 supplier pages and the navigation entry       |
+| `deb2b4f` | S2 purchases proxy                               |
+| `020f18c` | S2 purchases client module                       |
+| `ae08e88` | S2 purchases pages and the receive flow          |
+| `06fe86a` | S3 closure: PUR-003 done, EPIC-11 done, receipts |
+
+## Verification evidence
+
+- `pnpm --filter @newsaas/web test` -> 60 files / **638 tests** passed, up from
+  489 before this story; typecheck, lint and build clean, and the build emits
+  the new `/api/purchases` and `/app/purchases*` routes.
+- Root gates on the branch: lint 14/14, typecheck 14/14, build 9/9,
+  `format-check` clean, test 15/15.
+- The receive flow renders seven distinct outcomes and neither transition
+  retries silently; a spy test proves a full payload is never logged on success
+  or on conflict.
+- Delivered: pull request #73 merged as `e12ac1f`, CI run `36305211468` green on
+  head `ae08e88`.
+
+## Carried risks, recorded rather than hidden
+
+- The staff proxies are exercised against mocked API envelopes; no live API was
+  run, so the proxy's upstream calls and the pages' rendering rest on the
+  shipped contracts rather than on an end-to-end run.
+- Display names are resolved by reading the supplier and catalog lists, which is
+  heavier on a large tenant and degrades to an id fragment.
+- The three `409` conflicts are distinguished by the API's stable message rather
+  than a machine-readable code.
+
+---
+
+# EPIC-11 closure
+
+- SUP-001 merged as `baa66ca` (PR #68, run `36270774108`).
+- PUR-001 merged as `f214003` (PR #70, run `36277429018`).
+- PUR-002 merged as `8862050` (PR #71, run `36293559990`).
+- PUR-003 merged as `e12ac1f` (PR #73, run `36305211468`).
+- Closure receipts merged as `acd8019` (PR #72); final closure merged as
+  `1dd1fcb` (PR #74).
+- EPIC-11 is `done` in the roadmap and in its own record, with every exit
+  criterion checked against named evidence. `done` means implementation closure
+  of the epic, never production readiness.
+- Still open and declared: TD-013 (its trigger fired; the new proxies follow the
+  documented contract but duplicate the shape classification), TD-016 (the
+  receiving writer complies but the debt stands), purchase reversal (PRD §40),
+  inventory valuation and tax arithmetic, entitlement gating of the purchases
+  surface, a human-readable purchase number, ledger-to-purchase traceability,
+  and live coverage for the staff proxies. EPIC-20 Production Hardening and the
+  remaining open debt items stand above all of it.
+- The native review lifecycle was unavailable in the installed build throughout
+  the epic (reported upstream in issues 4791 and 4947); independent verification
+  and the live suites stood in, and together they found every real defect listed
+  above.
+
+## Next step
+
+None for EPIC-11. The next roadmap epic is EPIC-12 POS/Payments, which depends
+on EPIC-09 and EPIC-10 and now also on the shipped purchase and ledger work.
