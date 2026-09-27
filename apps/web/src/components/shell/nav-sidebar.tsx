@@ -5,13 +5,14 @@ import { Button } from "@newsaas/ui/components/ui/button";
 /**
  * Real staff destinations shipped so far. Business entries land with their
  * epics (Customers in EPIC-04, Patients in EPIC-05, Agenda in EPIC-07, Catalog
- * in EPIC-09); the placeholder labels below remain chrome-only until a later
- * epic supplies a real surface.
+ * in EPIC-09, Suppliers in EPIC-11); the placeholder labels below remain
+ * chrome-only until a later epic supplies a real surface.
  */
 const NAV_LINKS = [
   { href: "/app/customers", label: "Customers" },
   { href: "/app/patients", label: "Patients" },
   { href: "/app/catalog", label: "Catalog" },
+  { href: "/app/suppliers", label: "Suppliers" },
   { href: "/app/agenda", label: "Agenda" },
 ] as const;
 
@@ -32,8 +33,10 @@ const navLinkClassName =
  *
  * Plain `<aside>` composition per design D8; entries are semantic links or
  * inert buttons styled exclusively with semantic tokens. Customers (EPIC-04),
- * Patients (EPIC-05), Catalog (EPIC-09) and Agenda (EPIC-07) are real
- * `next/link` destinations.
+ * Patients (EPIC-05), Catalog (EPIC-09), Suppliers (EPIC-11) and Agenda
+ * (EPIC-07) are real `next/link` destinations, declared and gated exactly like
+ * the shipped entries: a plain link with no client-side permission gate, because
+ * the API is the only authorization authority and answers `403` on its own.
  */
 export function NavSidebar(): JSX.Element {
   return (
