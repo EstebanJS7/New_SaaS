@@ -510,12 +510,13 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     expect(FEATURE_CODE_SEEDS).toContain("purchases");
   });
 
-  it("seeds the purchase permission catalog and decided matrix (EPIC-11 PUR-001)", () => {
+  it("seeds the purchase permission catalog and decided matrix (EPIC-11 PUR-001/PUR-002)", () => {
     const purchasePermissionKeys = [
       "purchases.read",
       "purchases.create",
       "purchases.update",
       "purchases.cancel",
+      "purchases.receive",
     ] as const;
     const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
     for (const key of purchasePermissionKeys) {
@@ -524,16 +525,20 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     }
 
     // Maintainer matrix (DEC-016, 2026-09-26): every operational role reads
-    // purchases; only the owner, the admin and the inventory manager create,
-    // update and cancel them. The fifth key, `purchases.receive`, arrives with
-    // PUR-002 and reaches the DEC-016 total of 43.
-    expect(seededKeys).not.toContain("purchases.receive");
+    // purchases; only the owner, the admin and the inventory manager hold the
+    // four write keys, `purchases.receive` included. These five keys are the
+    // DEC-016 total of 43.
     for (const roleCode of ["OWNER", "ADMIN", "INVENTORY_MANAGER"] as const) {
       expect(ROLE_PERMISSION_MATRIX[roleCode]).toEqual(
         expect.arrayContaining([...purchasePermissionKeys])
       );
     }
-    const purchaseWriteKeys = ["purchases.create", "purchases.update", "purchases.cancel"] as const;
+    const purchaseWriteKeys = [
+      "purchases.create",
+      "purchases.update",
+      "purchases.cancel",
+      "purchases.receive",
+    ] as const;
     for (const roleCode of ["VETERINARIAN", "RECEPTIONIST", "CASHIER"] as const) {
       expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("purchases.read");
       for (const key of purchaseWriteKeys) {
@@ -596,11 +601,10 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // the four catalog.* keys added by EPIC-09 WU2 (the earlier "24" was an
       // arithmetic slip in the EPIC-08 commit; 26 + 2 = 28 was the real sum) +
       // the two inventory.stock.* keys added by EPIC-10 WU1 + the four
-      // suppliers.* keys added by EPIC-11 WU1 + the four purchases.* keys added
-      // by EPIC-11 PUR-001. The fifth purchases key, `purchases.receive`,
-      // arrives with PUR-002 and reaches the DEC-016 total of 43, so the next
-      // slice expects 42 -> 43.
-      permissions: 42,
+      // suppliers.* keys added by EPIC-11 WU1 + the five purchases.* keys added
+      // by EPIC-11 PUR-001/PUR-002. The fifth purchase key, `purchases.receive`,
+      // completes the DEC-016 total of 43.
+      permissions: 43,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

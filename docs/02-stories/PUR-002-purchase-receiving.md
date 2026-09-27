@@ -3,7 +3,7 @@ id: PUR-002
 type: story
 title: Purchase receiving
 epic: EPIC-11
-status: planned
+status: done
 priority: high
 depends_on:
   - EPIC-10
@@ -17,6 +17,9 @@ prd_sections:
   - "27"
   - "28"
   - "29"
+permissions:
+  - purchases.receive
+branch: feat/epic-11-purchase-receiving
 created: 2026-09-26
 updated: 2026-09-26
 ---
@@ -99,47 +102,53 @@ that [[TD-016]] names as the next stock writer.
 
 ## Acceptance Criteria
 
-- [ ] Receiving is one explicit command, never a generic `PATCH status` write,
-      and the only status it produces is `RECEIVED`.
-- [ ] The command validates the purchase is `DRAFT`; a purchase that is already
-      `RECEIVED` or is `CANCELLED` is `409 CONFLICT` and persists nothing.
-- [ ] The command is atomic: stock movements, balance updates, the status change
+- [x] Receiving is one explicit command, never a generic `PATCH status` write,
+      and the only status it produces is `RECEIVED`. It ships as
+      `POST /purchases/:id/receive` behind `purchases.receive`; no `PATCH` and
+      no `DELETE` route exists on the purchase surface.
+- [x] The command validates the purchase is `DRAFT`; a purchase that is already
+      `RECEIVED` or is `CANCELLED` is `409 CONFLICT` and persists nothing. A
+      replay is the same `409` with no idempotent short-circuit ([[DEC-014]]).
+- [x] The command is atomic: stock movements, balance updates, the status change
       and exactly one audit row are co-committed in one transaction, and any
       rejection persists nothing — no movement, no balance change, no status
       change, no audit row.
-- [ ] Each received line creates exactly one signed **positive** `PURCHASE`
+- [x] Each received line creates exactly one signed **positive** `PURCHASE`
       `StockMovement` through the [[EPIC-10]] ledger seam; no balance is mutated
       outside the ledger, and no movement is created unconfirmed.
-- [ ] Every receiving write acquires
+- [x] Every receiving write acquires
       `stockSerializationLockKey(tenantId, catalogItemId)` **before** reading or
       writing `stock_balance` ([[TD-016]]), and the projection equals the
-      ledger's signed sum after the command.
-- [ ] `stock_movement_type` gains `PURCHASE` additively; existing `ADJUSTMENT`
+      ledger's signed sum after the command. The purchase header row lock is
+      taken **first** and the item advisory locks follow in ascending
+      `catalogItemId` order ([[DEC-014]]).
+- [x] `stock_movement_type` gains `PURCHASE` additively; existing `ADJUSTMENT`
       rows and behavior are unchanged, and no existing migration is rewritten.
-- [ ] The receiving command is audited with the actor, the purchase id and
+- [x] The receiving command is audited with the actor, the purchase id and
       stable field names only (PRD §27); no CONFIDENTIAL/RESTRICTED payload is
       logged.
-- [ ] The purchase is resolved in the caller's tenant: a cross-tenant or unknown
+- [x] The purchase is resolved in the caller's tenant: a cross-tenant or unknown
       purchase UUID is one byte-equivalent `404`, and a cross-tenant reference
       is rejected identically and persists nothing.
-- [ ] The route enforces authentication, server-side tenant context and a
+- [x] The route enforces authentication, server-side tenant context and a
       granular permission, re-asserted by the service before data access; a
       missing permission is `403` and persists nothing.
-- [ ] The request body is a strict allowlisted contract that rejects unknown
+- [x] The request body is a strict allowlisted contract that rejects unknown
       keys; `tenantId` is never read from body, query or route; no Prisma model
       crosses the HTTP boundary.
 - [x] Replay behavior, line gates for non-tracking and inactive items, and the
       immutability of a `RECEIVED` purchase are fixed by the accepted and
       binding Decision records [[DEC-014]], [[DEC-012]] and [[DEC-015]]
-      (accepted 2026-09-26); the receive command itself is still not written,
-      and no idempotency or gating semantics are invented.
-- [ ] The new permission key and role matrix are seeded, and the seed-count
-      probe is reconciled.
-- [ ] Tenant isolation tests exist for the receiving path, authorization and
+      (accepted 2026-09-26), and the implemented command follows them with no
+      invented idempotency or gating semantics.
+- [x] The new permission key and role matrix are seeded, and the seed-count
+      probe is reconciled: the seeded permission count moved 42 → 43, the
+      [[DEC-016]] total.
+- [x] Tenant isolation tests exist for the receiving path, authorization and
       validation tests cover the route, and the live-PostgreSQL suite proves
       atomicity, immutability, cross-tenant isolation and the `(tenant, item)`
       serialization race.
-- [ ] Required lint/typecheck/test checks pass.
+- [x] Required lint/typecheck/test checks pass.
 
 ## Domain Invariants
 
@@ -163,33 +172,46 @@ that [[TD-016]] names as the next stock writer.
 ### Added
 
 ```text
-None yet. The route path and permission key are fixed by the accepted Decision
-records and the implementation slice; no route is implemented yet.
+POST /purchases/:id/receive   →   purchases.receive
 ```
+
+One explicit transition command on the existing `apps/api/src/purchases/`
+module. It is the only new route: no `PATCH`, no `DELETE` and no generic status
+write exist anywhere on the surface. The request body is a strict empty contract
+— an absent or empty body is accepted, and any supplied key (including
+`tenantId` or `status`) is rejected as `400 VALIDATION_FAILED`. A successful
+receive returns the received `PurchaseResponse` (`201`); a non-`DRAFT` purchase
+is the stable `409 CONFLICT`.
 
 ### Changed
 
 ```text
-None yet. The existing inventory adjustment route and its behavior are
-unchanged; only the movement-type enum gains a value.
+POST /inventory/stock/adjustments — unchanged.
+stock_movement_type               — gains the additive PURCHASE value.
 ```
+
+The existing inventory adjustment route and its behavior are unchanged; only the
+movement-type enum gains a value.
 
 ## Database
 
 ### Migration
 
-```text
-None yet. An additive enum extension is required; no destructive statement is
-accepted and no existing migration is rewritten.
-```
+`20260926000003_purchase_receiving` — strictly additive: one
+`ALTER TYPE "stock_movement_type" ADD VALUE 'PURCHASE'`. It alters no table, no
+column and no existing row, rewrites no existing migration, and `ADJUSTMENT`
+keeps its position and behavior. PostgreSQL 12+ permits `ALTER TYPE … ADD VALUE`
+inside the migration transaction as long as the new value is not used in the
+same transaction; the statement only adds it, so the plain single-statement form
+applies cleanly on the supported PostgreSQL 16.
 
 ### Models/Tables
 
 - `StockMovement.type` — gains `PURCHASE` (`stock_movement_type`). Quantity
   stays `DECIMAL(10, 3)`, signed, non-zero, immutable, with the no-delete
-  trigger unchanged.
+  trigger unchanged. A receive writes one positive `PURCHASE` movement per line.
 - `StockBalance` — consumed through the existing `(tenant, item)` projection; no
-  schema change expected.
+  schema change. The receive updates it through the ledger seam only.
 - The purchase tables are owned by [[PUR-001 Purchase draft]].
 
 ## UI
@@ -200,43 +222,140 @@ accepted and no existing migration is rewritten.
 
 ## Implementation Summary
 
-_Not implemented. All required Decision records are accepted as of 2026-09-26 —
-[[DEC-012]] purchase aggregate shape and the draft-versus-receive validation
-gate, [[DEC-013]] purchase line cost and tax structure, [[DEC-014]] purchase
-receiving semantics — single-shot transition, all-or-nothing line gates and
-deterministic lock order, [[DEC-015]] purchase cancellation and the correction
-boundary for a received purchase, [[DEC-016]] suppliers/purchases permission
-keys, role matrix and entitlement gating and [[DEC-017]] suppliers/purchases
-audit scope — and the slice awaits implementation authorization._
+The explicit receiving command is implemented on branch
+`feat/epic-11-purchase-receiving`.
+
+**Data and seed.** Migration `20260926000003_purchase_receiving` appends
+`PURCHASE` to `stock_movement_type` additively, and the `purchases.receive` key
+joins `PERMISSION_SEEDS` with the [[DEC-016]] matrix (all six roles read;
+`OWNER`, `ADMIN` and `INVENTORY_MANAGER` receive), moving the seeded permission
+count 42 → 43. `packages/database/src/schema-inventory.test.ts` now pins the
+effective enum literal set `{ADJUSTMENT, PURCHASE}` derived from the creating
+migration plus the additive one, and the schema document.
+
+**Command.** `POST /purchases/:id/receive` behind
+`@RequirePermissions(PURCHASES_PERMISSIONS.receive)`, with the permission
+re-asserted in the service. `PurchasesService.receive` runs one transaction:
+
+1. it row-locks the purchase HEADER for the caller's tenant
+   (`SELECT … FOR UPDATE`) and reads the status AFTER the lock, so a concurrent
+   second receive of the SAME purchase parks on that row and is rejected;
+2. it resolves and gates EVERY line in-tenant (ACTIVE and `tracksStock`),
+   reusing the EPIC-10 `409` messages, before any stock work;
+3. it acquires the ledger's per-`(tenant, item)` advisory locks in ascending
+   `catalogItemId` order through the EPIC-10 seam;
+4. it writes one positive `PURCHASE` movement and one balance projection per
+   line through `createMovement` / `upsertBalance` (never directly), flips the
+   status with a conditional `DRAFT`-only write as a backstop, and appends
+   exactly one `purchase.received` audit row.
+
+The global lock order is header first, then items ascending, for every receive,
+so receives that share items cannot deadlock. A rejection — a replay, a
+non-`DRAFT` purchase, a non-stockable line or a foreign/unknown id — rolls the
+whole transaction back and persists nothing. The command reuses the EPIC-10
+ledger seam and writes no cash, billing, fiscal or payment state.
+
+**Defect found by live evidence and fixed.** The live-PostgreSQL block caught a
+real defect the single-threaded in-memory boundary could not: `lockById`
+compared the `uuid` columns against Prisma-bound `text` parameters, so
+PostgreSQL rejected the statement with
+`42883: operator does not exist: uuid = text` and every receive returned `500`.
+The statement now casts each bound value explicitly (`${tenantId}::uuid`,
+`${id}::uuid`), following the clinical and `manage-holdership` row-lock
+precedent, and the live receiving cases pass.
 
 ## Verification
 
 ```text
-Not run.
+set -a && . ./.env && set +a && export DATABASE_URL_TEST="$(sed -n 's/^DATABASE_URL=//p' .env | cut -d'?' -f1)" &&
+  pnpm --filter @newsaas/api test:live-pg
+  → 1 file / 71 tests passed, including the 6-case
+    `EPIC-11 purchase receiving application-path isolation` block (the suite
+    held 65 before this slice).
+
+pnpm --filter @newsaas/api test
+  → 72 files passed, 1 skipped (73); 895 tests passed, 71 skipped (966).
+
+pnpm --filter @newsaas/database test → 15 files / 268 tests passed.
+
+pnpm --filter @newsaas/api typecheck → clean.
+pnpm --filter @newsaas/api lint → clean.
+pnpm format-check → All matched files use Prettier code style!
+git diff --check → clean.
+
+set -a && . ./.env && set +a && pnpm --filter @newsaas/database db:deploy
+  → `20260926000003_purchase_receiving` applied; a re-run reports no pending
+    migrations.
+pnpm --filter @newsaas/database db:seed && node scripts/ci-seed-counts.mjs
+  → permissions: 43.
 ```
+
+The live block provisions a fresh disposable database, applies the migration and
+the reference seed itself, uses no injected Prisma error, no mock, no sleep and
+no retry, and rolls every raw-SQL probe back.
 
 ## Tests Added
 
-- None yet. Planned: the schema gate for the extended enum; an HTTP integration
-  suite over the real guard chain (receive from `DRAFT`, `409` from `RECEIVED`
-  and from `CANCELLED`, cross-tenant `404`, strict DTO rejects, permission sweep
-  with nothing persisted, and the atomicity assertion that a rejected receive
-  wrote no movement, no balance change and no audit row); and live-PostgreSQL
-  evidence covering atomicity, the immutability trigger, cross-tenant isolation
-  and the concurrent-receive serialization race on the shared
-  `stockSerializationLockKey`, with the projection asserted equal to the
-  ledger's signed sum.
+- `packages/database/src/schema-inventory.test.ts` — the enum gate now pins the
+  effective additive literal set `{ADJUSTMENT, PURCHASE}` (creating migration +
+  additive migration) and the schema enum block, without weakening any other
+  assertion in the file.
+- `apps/api/src/purchases/purchases.integration.test.ts` — **25 tests** over the
+  real guard chain, including the receive cases: permission denial persists
+  nothing; a successful receive returns the received purchase with one positive
+  `PURCHASE` movement and projection per line, the projected balance and exactly
+  one `purchase.received` audit row; a replay, a `CANCELLED` and an
+  already-`RECEIVED` purchase each return the stable `409` and persist nothing;
+  an unknown or foreign id is the shared `404`; an inactive and a non-tracking
+  line each return the reused `409` with nothing persisted (including the good
+  line in a mixed draft); the strict body rejects unknown, `tenantId` and
+  `status` keys; the header row lock is taken before any item lock; the
+  header-race loser returns `409` with no second movement or audit row; and no
+  `PATCH`/`DELETE` route exists.
+- `apps/api/src/rbac/route-contract.probe.test.ts` — the receive route joins the
+  exact survival inventory and `PURCHASES_PERMISSION_BY_ROUTE` with its
+  `purchases.receive` pin.
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — the
+  `EPIC-11 purchase receiving application-path isolation` block, **6 tests**
+  against the booted AppModule and a disposable real PostgreSQL: atomic receive
+  with the projection equal to the ledger's signed sum and one audit row; the
+  replay `409`; two concurrent receives of the SAME purchase under a PROVEN
+  header-row-lock overlap admitting exactly one; the byte-equivalent
+  cross-tenant and unknown `404`; the all-or-nothing line gate with the reused
+  messages; and the applied additive enum plus the no-delete trigger rejecting a
+  raw delete of a `PURCHASE` movement.
 
 ## Known Limitations
 
-- None recorded; the Story is unimplemented.
+- **The in-memory suite cannot prove the concurrent interleaving.** The shared
+  boundary is single-threaded, so the HTTP suite pins the header-lock ordering
+  and the loser's observable outcome; the true race is proven by the
+  live-PostgreSQL block, which holds the purchase header row lock in a dedicated
+  transaction and asserts exactly one `201`, one `409`, one movement per line
+  and exactly one `purchase.received` audit row across both attempts.
+- **The movement `reason` is a fixed literal.** The ledger column is
+  `TEXT NOT NULL` and the command takes no caller reason, so every `PURCHASE`
+  movement records `"Purchase received"`. The ledger row carries no purchase
+  identifier; the co-committed audit row identifies the purchase.
+- **No partial receiving.** PRD §17 defines no partial state, so a receive
+  applies every line or none.
+- **Carried, pre-existing drift.** The purchase migration writes `updated_at`
+  with a `DEFAULT CURRENT_TIMESTAMP`, so `prisma migrate diff` lists a
+  `DROP DEFAULT` for two columns; that drift is repo-wide and pre-existing,
+  `migrate status` is green and CI applies migrations rather than diffing.
+- **No staff UI.** The receive affordance belongs to [[PUR-003]].
 
 ## Technical Debt
 
-- This Story is the trigger [[TD-016]] names. The receiving slice must satisfy
-  the documented protocol or resolve that record; if it satisfies the protocol
-  by convention only, TD-016 stays open and must be updated with the new call
-  site rather than silently closed.
+- **[[TD-016]] stays open.** The receiving writer now complies with the
+  serialization protocol — it acquires
+  `stockSerializationLockKey(tenantId, catalogItemId)` through the EPIC-10 seam
+  before reading or writing `stock_balance` — but the debt is about the protocol
+  being a convention rather than a database-enforced guarantee, and that is
+  unchanged. The record is updated with this call site rather than silently
+  closed.
+- No new debt record is created: the live block now proves the concurrency,
+  atomicity and immutability this Story owns.
 
 ## Decisions / ADRs
 
@@ -293,7 +412,7 @@ Not run.
 
 - `packages/database/prisma/schema.prisma` — the extended `stock_movement_type`
   enum.
-- `packages/database/prisma/migrations/<timestamp>_purchase_receiving/` — the
+- `packages/database/prisma/migrations/20260926000003_purchase_receiving/` — the
   additive enum migration.
 - `packages/database/src/schema-inventory.test.ts` — the enum gate.
 - `apps/api/src/purchases/` — the receiving contract, service transaction,
@@ -309,6 +428,10 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass and the durable
-live-PostgreSQL receiving evidence is recorded; the required Decisions are
-accepted as of 2026-09-26._
+Done for **implementation, ordinary verification and live-evidence scope**: the
+additive enum migration, the `purchases.receive` seed, the explicit receive
+command, the header-first lock order, the all-or-nothing line gate, the single
+co-committed audit row and the 6-case live-PostgreSQL block are all in place,
+and the checks this environment can run are green. This is **not** a
+production-readiness statement: the work units are not pushed or merged, and
+[[EPIC-11]] remains open for [[PUR-003 Staff purchases surface]].

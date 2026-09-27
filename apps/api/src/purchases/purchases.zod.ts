@@ -133,6 +133,19 @@ export const updatePurchaseBody = z
 export type UpdatePurchaseInput = z.infer<typeof updatePurchaseBody>;
 
 /**
+ * Receive payload: the command takes NO body field. `.strict()` on an empty
+ * object still rejects any supplied key — including a foreign `tenantId`, which
+ * is resolved server-side from the request context and is never caller
+ * authority, and `status`, which only the server lifecycle owns: receiving
+ * always produces `RECEIVED`. An absent or empty body is accepted, so the
+ * command reads as the explicit `POST` transition it is rather than as a hidden
+ * body contract.
+ */
+export const receivePurchaseBody = z.object({}).strict();
+
+export type ReceivePurchaseInput = z.infer<typeof receivePurchaseBody>;
+
+/**
  * Purchase list query. The optional `status` narrows the list to one lifecycle
  * value and is applied on top of the implicit tenant predicate; an omitted
  * status applies NO filter (there is deliberately no implicit draft-only

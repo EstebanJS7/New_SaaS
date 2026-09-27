@@ -143,18 +143,42 @@ All notable product changes will be documented here.
     duplicate-line unique, [[DEC-019]]'s conditional immutability, the line-set
     reconciliation, the DRAFT-only `409`, the composite foreign keys and the
     quantity/cost CHECKs).
+  - Explicit purchase receiving (PUR-002) — `POST /purchases/:id/receive` behind
+    the new `purchases.receive` key, the purchase lifecycle's only stock effect.
+    It row-locks the purchase HEADER first and re-reads the status after the
+    lock, resolves and gates every line in-tenant (ACTIVE and `tracksStock`,
+    reusing the inventory `409` messages), acquires the per-`(tenant, item)`
+    advisory locks in ascending `catalogItemId` order, writes one positive
+    `PURCHASE` movement and one balance projection per line through the EPIC-10
+    ledger seam, flips the status and appends exactly one `purchase.received`
+    audit row — all in one transaction, or persists nothing. A replay or any
+    non-`DRAFT` purchase is a stable `409`, a cross-tenant or unknown id the
+    shared `404`, and the body is a strict empty contract.
+  - One additive migration, `20260926000003_purchase_receiving`, appending
+    `PURCHASE` to `stock_movement_type`; existing `ADJUSTMENT` rows, position
+    and behavior are unchanged and no existing migration is rewritten.
+  - `purchases.receive` joins the seed with the decided role matrix (all six
+    roles read; OWNER, ADMIN and INVENTORY_MANAGER receive), completing the
+    [[DEC-016]] total at 43. The route joins the exact route inventory and its
+    per-route permission pin.
+  - `PUR-002`, the `Purchases` module documentation extended with the receiving
+    behaviour, the `Inventory` module documentation updated to read `ADJUSTMENT`
+    and `PURCHASE` as implemented while `SALE`, `TRANSFER_*` and `*_REVERSAL`
+    stay future, and [[TD-016]] updated with the compliant receiving call site
+    (the debt stays open). Live-PostgreSQL coverage grows to 71/71, including a
+    6-case receiving block whose concurrent double-receive race admits exactly
+    one `201` under a proven header-row-lock overlap.
 
   EPIC-11 is **incomplete**. The supplier registry work units are merged into
   `main` as merge commit `baa66ca` through pull request #68 with the required CI
   checks green, and that slice's live-PostgreSQL evidence is the merged CI
-  baseline in `docs/10-qa/CI-EVIDENCE.md`. The purchase draft (`PUR-001`) is
-  implemented on its own branch with its live coverage at 65/65, but it is not
-  merged. Receiving (`PUR-002`, its `PURCHASE` movement type and its ledger
-  integration) and the staff surface (`PUR-003`) are pending, the epic's durable
-  live-PostgreSQL evidence for receiving is owed before it closes, and a
-  drift-free `migrate status` for the index Prisma cannot model is still
-  outstanding, so the epic's exit criteria are not met. Nothing here is merged
-  or production-ready.
+  baseline in `docs/10-qa/CI-EVIDENCE.md`. The purchase draft (`PUR-001`) and
+  purchase receiving (`PUR-002`) are implemented on their own branches with
+  their live coverage at 71/71, but they are not merged. The staff surface
+  (`PUR-003`) is pending, the receiving live-PostgreSQL evidence is local rather
+  than merged, and a drift-free `migrate status` for the index Prisma cannot
+  model is still outstanding, so the epic's exit criteria are not met. Nothing
+  here is merged or production-ready.
 
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,

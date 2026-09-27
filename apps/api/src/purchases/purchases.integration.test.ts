@@ -18,13 +18,21 @@ import {
   seedRoleWithKeys,
   type RbacActor,
 } from "../../test/support/rbac-fixture.js";
+import {
+  STOCK_ITEM_INACTIVE_MESSAGE,
+  STOCK_ITEM_NOT_TRACKED_MESSAGE,
+} from "../inventory/inventory.service.js";
 import { PURCHASES_PERMISSIONS } from "./purchases.permissions.js";
 import {
   PURCHASE_CATALOG_ITEM_NOT_FOUND_MESSAGE,
   PURCHASE_NOT_FOUND_MESSAGE,
   PURCHASE_SUPPLIER_NOT_FOUND_MESSAGE,
 } from "./purchases.repository.js";
-import { PURCHASE_NOT_EDITABLE_MESSAGE } from "./purchases.service.js";
+import {
+  PURCHASE_NOT_EDITABLE_MESSAGE,
+  PURCHASE_RECEIVED_ACTION,
+  PURCHASE_RECEIVE_MOVEMENT_REASON,
+} from "./purchases.service.js";
 import { PURCHASES_DTO_SCHEMA_VERSION } from "./purchases.zod.js";
 
 interface PurchaseLineDto {
@@ -72,6 +80,7 @@ const ALL_PURCHASES_PERMISSIONS: readonly string[] = [
   PURCHASES_PERMISSIONS.create,
   PURCHASES_PERMISSIONS.update,
   PURCHASES_PERMISSIONS.cancel,
+  PURCHASES_PERMISSIONS.receive,
 ];
 
 interface PurchasesTenant {
@@ -95,7 +104,10 @@ interface PurchasesHttpFixture {
   /** Member of A with `purchases.read` only: every write is a 403. */
   readOnly: RbacActor;
   createSupplier(owner: PurchasesTenant, overrides?: { name?: string }): SupplierRow;
-  createItem(owner: PurchasesTenant, overrides?: { name?: string }): CatalogItemRow;
+  createItem(
+    owner: PurchasesTenant,
+    overrides?: { name?: string; tracksStock?: boolean; isActive?: boolean }
+  ): CatalogItemRow;
   /** Fresh purchase (with lines) in the given tenant; call per test for isolation. */
   seedPurchase(owner: PurchasesTenant, options?: SeedPurchaseOptions): PurchaseRow;
 }
@@ -170,8 +182,8 @@ function seedPurchasesHttp(db: IsolationDatabase): PurchasesHttpFixture {
         kind: "SUPPLY",
         name: overrides.name ?? `Item ${randomUUID().slice(0, 8)}`,
         taxRateId: SEEDED_TAX_RATE_IDS.EXEMPT,
-        tracksStock: true,
-        isActive: true,
+        tracksStock: overrides.tracksStock ?? true,
+        isActive: overrides.isActive ?? true,
       },
     });
 
@@ -294,6 +306,12 @@ describe("Purchases HTTP boundary (EPIC-11 PUR-001)", () => {
         label: PURCHASES_PERMISSIONS.cancel,
         method: "post" as const,
         path: `/purchases/${purchase.id}/cancel`,
+        body: undefined,
+      },
+      {
+        label: PURCHASES_PERMISSIONS.receive,
+        method: "post" as const,
+        path: `/purchases/${purchase.id}/receive`,
         body: undefined,
       },
     ];
@@ -825,6 +843,381 @@ describe("Purchases HTTP boundary (EPIC-11 PUR-001)", () => {
     expect(all.text).not.toContain(fixture.b.tenant.id);
   });
 
+  it("receives a DRAFT: one positive PURCHASE movement and projection per line, one audit row", async () => {
+    const supplier = fixture.createSupplier(fixture.a);
+    const first = fixture.createItem(fixture.a);
+    const second = fixture.createItem(fixture.a);
+    const purchase = fixture.seedPurchase(fixture.a, {
+      supplierId: supplier.id,
+      lines: [
+        { catalogItemId: first.id, quantity: "2.500" },
+        { catalogItemId: second.id, quantity: "7.000" },
+      ],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(201);
+
+    const body = response.body as PurchaseDto;
+    expect(Object.keys(body).sort()).toEqual([...PURCHASE_RESPONSE_KEYS].sort());
+    expect(body.status).toBe("RECEIVED");
+    expect(body.lines).toHaveLength(2);
+
+    // Exactly one POSITIVE `PURCHASE` movement per line, through the ledger.
+    const movements = [...booted.db.tables.stockMovements.values()].filter(
+      (row) => row.tenantId === fixture.a.tenant.id
+    );
+    expect(movements).toHaveLength(2);
+    for (const movement of movements) {
+      expect(movement.type).toBe("PURCHASE");
+      expect(Number(movement.quantity)).toBeGreaterThan(0);
+      expect(movement.quantity.startsWith("-")).toBe(false);
+      expect(movement.reason).toBe(PURCHASE_RECEIVE_MOVEMENT_REASON);
+    }
+    const movementByItem = new Map(movements.map((row) => [row.catalogItemId, row]));
+    expect(Number(movementByItem.get(first.id)?.quantity)).toBe(2.5);
+    expect(Number(movementByItem.get(second.id)?.quantity)).toBe(7);
+
+    // The projection equals the ledger's signed sum per item.
+    const balanceByItem = new Map(
+      [...booted.db.tables.stockBalances.values()]
+        .filter((row) => row.tenantId === fixture.a.tenant.id)
+        .map((row) => [row.catalogItemId, row])
+    );
+    expect(balanceByItem.get(first.id)?.quantity).toBeDefined();
+    expect(Number(balanceByItem.get(first.id)?.quantity)).toBe(2.5);
+    expect(Number(balanceByItem.get(second.id)?.quantity)).toBe(7);
+
+    // Exactly ONE audit row for the WHOLE command, naming the status change
+    // only: field names, no identifier and no stored value.
+    const audits = auditsForTarget(booted, purchase.id);
+    expect(audits).toHaveLength(1);
+    expect(audits[0].action).toBe(PURCHASE_RECEIVED_ACTION);
+    expect(audits[0].targetType).toBe("purchase");
+    expect(audits[0].tenantId).toBe(fixture.a.tenant.id);
+    expect(audits[0].metadata.schemaVersion).toBe(PURCHASES_DTO_SCHEMA_VERSION);
+    expect(changedFieldsOf(audits[0])).toEqual(["status"]);
+    const serialized = JSON.stringify(audits[0].metadata);
+    expect(serialized).not.toContain(first.id);
+    expect(serialized).not.toContain("2.500");
+
+    // The persisted status flipped, and the ONLY tables touched are the
+    // aggregate, the audit trail, the ledger and its projection.
+    expect(booted.db.tables.purchases.get(purchase.id)?.status).toBe("RECEIVED");
+    const sizesAfter = tableSizes(booted.db);
+    const changedTables = Object.keys(sizesAfter)
+      .filter((name) => sizesAfter[name] !== sizesBefore[name])
+      .sort();
+    expect(changedTables).toEqual(["audits", "stockBalances", "stockMovements"]);
+  });
+
+  it("takes the purchase header row lock BEFORE any item lock, then reads the status", async () => {
+    const item = fixture.createItem(fixture.a);
+    const purchase = fixture.seedPurchase(fixture.a, {
+      lines: [{ catalogItemId: item.id, quantity: "2.000" }],
+    });
+
+    const boundary = booted.db.prisma;
+    const originalQueryRaw = boundary.$queryRaw;
+    const originalFindFirst = boundary.purchase.findFirst;
+    const calls: string[] = [];
+
+    // Records the SEAM the decision is serialized on. The in-memory boundary
+    // models `SELECT ... FOR UPDATE` as a plain read (a synchronous map cannot
+    // interleave), so this pins the header lock's existence and its ORDER
+    // relative to the post-lock status read and to the per-item advisory locks;
+    // the real interleaving proof is the live-PostgreSQL evidence gate.
+    boundary.$queryRaw = (query, ...values) => {
+      calls.push(typeof query === "string" ? query : query.join(""));
+      return originalQueryRaw(query, ...values);
+    };
+    boundary.purchase.findFirst = (args) => {
+      calls.push("purchase.findFirst");
+      return originalFindFirst(args);
+    };
+
+    try {
+      await supertest(booted.app.getHttpServer())
+        .post(`/purchases/${purchase.id}/receive`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(201);
+    } finally {
+      boundary.$queryRaw = originalQueryRaw;
+      boundary.purchase.findFirst = originalFindFirst;
+    }
+
+    const headerLockIndex = calls.findIndex(
+      (text) => text.includes('"purchase"') && text.includes("FOR UPDATE")
+    );
+    const itemLockIndex = calls.findIndex((text) => text.includes("pg_advisory_xact_lock"));
+    const statusReadIndex = calls.indexOf("purchase.findFirst");
+
+    expect(headerLockIndex).toBeGreaterThan(-1);
+    expect(itemLockIndex).toBeGreaterThan(-1);
+    expect(statusReadIndex).toBeGreaterThan(-1);
+    // Header row lock FIRST, then the authoritative status read, then the item
+    // advisory locks in ascending catalogItemId order: header-first-then-items
+    // is the single global order that keeps two receives sharing items
+    // deadlock-free.
+    expect(headerLockIndex).toBeLessThan(statusReadIndex);
+    expect(statusReadIndex).toBeLessThan(itemLockIndex);
+  });
+
+  it("rejects a receive that loses the header race with 409 and writes no second movement or audit row", async () => {
+    // The in-memory boundary is single-threaded and cannot interleave two
+    // transactions, so the race is modelled by its OBSERVABLE outcome, not by
+    // faking concurrency: a winner receive has ALREADY committed (status
+    // RECEIVED plus its own movement, projection and audit row) before the
+    // loser runs. The loser still reaches the header row lock, then its
+    // post-lock status read sees the committed `RECEIVED` and it is rejected.
+    // The true interleaving proof is the live-PostgreSQL evidence owned by the
+    // next slice.
+    const item = fixture.createItem(fixture.a);
+    const purchase = fixture.seedPurchase(fixture.a, {
+      lines: [{ catalogItemId: item.id, quantity: "2.000" }],
+    });
+
+    await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(201);
+
+    const movementsAfterWinner = booted.db.tables.stockMovements.size;
+    const balancesAfterWinner = [...booted.db.tables.stockBalances.values()].map((row) => ({
+      ...row,
+    }));
+    const auditsAfterWinner = booted.db.tables.audits.size;
+
+    const boundary = booted.db.prisma;
+    const originalQueryRaw = boundary.$queryRaw;
+    let reachedHeaderLock = false;
+    boundary.$queryRaw = (query, ...values) => {
+      const text = typeof query === "string" ? query : query.join("");
+      if (text.includes('"purchase"') && text.includes("FOR UPDATE")) {
+        reachedHeaderLock = true;
+      }
+      return originalQueryRaw(query, ...values);
+    };
+
+    let status = 0;
+    let body: ErrorDto | undefined;
+    try {
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/purchases/${purchase.id}/receive`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(409);
+      status = response.status;
+      body = response.body as ErrorDto;
+    } finally {
+      boundary.$queryRaw = originalQueryRaw;
+    }
+
+    // It reached the serialization point and was rejected with the stable 409.
+    expect(reachedHeaderLock).toBe(true);
+    expect(status).toBe(409);
+    expect(body?.error.code).toBe("CONFLICT");
+    expect(body?.error.message).toBe(PURCHASE_NOT_EDITABLE_MESSAGE);
+
+    // No second movement, no re-projection and no second audit row.
+    expect(booted.db.tables.stockMovements.size).toBe(movementsAfterWinner);
+    expect([...booted.db.tables.stockBalances.values()]).toEqual(balancesAfterWinner);
+    expect(booted.db.tables.audits.size).toBe(auditsAfterWinner);
+    expect(auditsForTarget(booted, purchase.id)).toHaveLength(1);
+  });
+
+  it("rejects a replay of a receive with 409 and persists nothing further", async () => {
+    const item = fixture.createItem(fixture.a);
+    const purchase = fixture.seedPurchase(fixture.a, {
+      lines: [{ catalogItemId: item.id, quantity: "3.250" }],
+    });
+
+    await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(201);
+
+    const movementsAfterFirst = booted.db.tables.stockMovements.size;
+    const balancesAfterFirst = [...booted.db.tables.stockBalances.values()].map((row) => ({
+      ...row,
+    }));
+    const auditsAfterFirst = booted.db.tables.audits.size;
+
+    const replay = await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(409);
+    expect((replay.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((replay.body as ErrorDto).error.message).toBe(PURCHASE_NOT_EDITABLE_MESSAGE);
+
+    // No second movement, no extra audit row and an unchanged projection.
+    expect(booted.db.tables.stockMovements.size).toBe(movementsAfterFirst);
+    expect([...booted.db.tables.stockBalances.values()]).toEqual(balancesAfterFirst);
+    expect(booted.db.tables.audits.size).toBe(auditsAfterFirst);
+    expect(auditsForTarget(booted, purchase.id)).toHaveLength(1);
+  });
+
+  it("rejects a CANCELLED and an already-RECEIVED purchase with 409 and persists nothing", async () => {
+    const item = fixture.createItem(fixture.a);
+
+    for (const status of ["CANCELLED", "RECEIVED"] as const) {
+      const purchase = fixture.seedPurchase(fixture.a, {
+        status,
+        lines: [{ catalogItemId: item.id, quantity: "3.000" }],
+      });
+      const sizesBefore = tableSizes(booted.db);
+
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/purchases/${purchase.id}/receive`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(409);
+      expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+      expect((response.body as ErrorDto).error.message).toBe(PURCHASE_NOT_EDITABLE_MESSAGE);
+
+      expect(tableSizes(booted.db)).toEqual(sizesBefore);
+      expect(booted.db.tables.purchases.get(purchase.id)?.status).toBe(status);
+      expect(auditsForTarget(booted, purchase.id)).toHaveLength(0);
+    }
+  });
+
+  it("masks an unknown and a cross-tenant purchase id as the same 404 on receive", async () => {
+    const foreign = fixture.seedPurchase(fixture.b, {
+      lines: [{ catalogItemId: fixture.createItem(fixture.b).id, quantity: "1.000" }],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.a.actor.cookie,
+      method: "POST",
+      nonexistentUrl: `/purchases/${randomUUID()}/receive`,
+      foreignUrl: `/purchases/${foreign.id}/receive`,
+      forbiddenIdentifiers: [foreign.id, fixture.b.tenant.id, foreign.supplierId],
+    });
+
+    // The foreign draft is untouched: still DRAFT, no movement and no audit row.
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.purchases.get(foreign.id)?.status).toBe("DRAFT");
+    expect(auditsForTarget(booted, foreign.id)).toHaveLength(0);
+  });
+
+  it("rejects an inactive and a non-tracking line with the reused 409 and persists nothing", async () => {
+    const scenarios = [
+      {
+        label: "inactive",
+        item: fixture.createItem(fixture.a, { isActive: false }),
+        message: STOCK_ITEM_INACTIVE_MESSAGE,
+      },
+      {
+        label: "non-tracking",
+        item: fixture.createItem(fixture.a, { tracksStock: false }),
+        message: STOCK_ITEM_NOT_TRACKED_MESSAGE,
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const purchase = fixture.seedPurchase(fixture.a, {
+        lines: [{ catalogItemId: scenario.item.id, quantity: "4.000" }],
+      });
+      const sizesBefore = tableSizes(booted.db);
+
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/purchases/${purchase.id}/receive`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(409);
+      expect((response.body as ErrorDto).error.code, scenario.label).toBe("CONFLICT");
+      expect((response.body as ErrorDto).error.message, scenario.label).toBe(scenario.message);
+
+      // All-or-nothing: no movement, no balance, no status change, no audit row.
+      expect(tableSizes(booted.db)).toEqual(sizesBefore);
+      expect(booted.db.tables.purchases.get(purchase.id)?.status).toBe("DRAFT");
+      expect(auditsForTarget(booted, purchase.id)).toHaveLength(0);
+      expect(
+        [...booted.db.tables.stockMovements.values()].filter(
+          (row) => row.catalogItemId === scenario.item.id
+        )
+      ).toHaveLength(0);
+    }
+  });
+
+  it("fails the WHOLE receive when any line is not stockable, persisting nothing", async () => {
+    const valid = fixture.createItem(fixture.a);
+    const inactive = fixture.createItem(fixture.a, { isActive: false });
+    const purchase = fixture.seedPurchase(fixture.a, {
+      lines: [
+        { catalogItemId: valid.id, quantity: "5.000" },
+        { catalogItemId: inactive.id, quantity: "1.000" },
+      ],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(409);
+    expect((response.body as ErrorDto).error.message).toBe(STOCK_ITEM_INACTIVE_MESSAGE);
+
+    // The valid line acquired no movement either: the command is all-or-nothing.
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(
+      [...booted.db.tables.stockMovements.values()].filter(
+        (row) => row.catalogItemId === valid.id || row.catalogItemId === inactive.id
+      )
+    ).toHaveLength(0);
+    expect(booted.db.tables.purchases.get(purchase.id)?.status).toBe("DRAFT");
+  });
+
+  it("accepts an absent or empty receive body and rejects unknown, tenantId and status keys", async () => {
+    const absentItem = fixture.createItem(fixture.a);
+    const absent = fixture.seedPurchase(fixture.a, {
+      lines: [{ catalogItemId: absentItem.id, quantity: "1.000" }],
+    });
+
+    // No body at all: the command is the explicit POST transition.
+    await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${absent.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(201);
+
+    // An empty JSON object is accepted too.
+    const emptyItem = fixture.createItem(fixture.a);
+    const empty = fixture.seedPurchase(fixture.a, {
+      lines: [{ catalogItemId: emptyItem.id, quantity: "1.000" }],
+    });
+    await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${empty.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({})
+      .expect(201);
+
+    // Any supplied key — a foreign tenant, the server-owned status or any
+    // unknown field — is rejected rather than ignored, and persists nothing.
+    const rejectedItem = fixture.createItem(fixture.a);
+    const rejected = fixture.seedPurchase(fixture.a, {
+      lines: [{ catalogItemId: rejectedItem.id, quantity: "1.000" }],
+    });
+    const sizesBefore = tableSizes(booted.db);
+    for (const body of [
+      { tenantId: randomUUID() },
+      { status: "RECEIVED" },
+      { quantity: "1.000" },
+      { reason: "because" },
+    ]) {
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/purchases/${rejected.id}/receive`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(body)
+        .expect(400);
+      expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    }
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.purchases.get(rejected.id)?.status).toBe("DRAFT");
+    expect(auditsForTarget(booted, rejected.id)).toHaveLength(0);
+  });
+
   it("exposes no PATCH or DELETE route anywhere on the purchase surface", async () => {
     const purchase = fixture.seedPurchase(fixture.a);
     const sizesBefore = tableSizes(booted.db);
@@ -834,7 +1227,6 @@ describe("Purchases HTTP boundary (EPIC-11 PUR-001)", () => {
       ["patch", `/purchases/${purchase.id}`],
       ["delete", "/purchases"],
       ["patch", "/purchases"],
-      ["post", `/purchases/${purchase.id}/receive`],
     ] as const) {
       await supertest(booted.app.getHttpServer())
         [method](path)
@@ -876,11 +1268,12 @@ describe("Purchases HTTP boundary (EPIC-11 PUR-001)", () => {
 
     // The ONLY tables a draft operation may touch: the aggregate and its lines
     // plus the co-committed audit trail. No `stock_movement`, no
-    // `stock_balance`, no cash row, no invoice row and no fiscal row exists or
-    // is written — receiving is PUR-002.
+    // `stock_balance`, no cash row, no invoice row and no fiscal row is written
+    // by a DRAFT operation — the stock effect belongs solely to the explicit
+    // receive command (PUR-002).
     expect(changedTables).toEqual(["audits", "purchaseLines", "purchases"]);
-    expect(sizesAfter.stockMovements).toBe(0);
-    expect(sizesAfter.stockBalances).toBe(0);
+    expect(sizesAfter.stockMovements).toBe(sizesBefore.stockMovements);
+    expect(sizesAfter.stockBalances).toBe(sizesBefore.stockBalances);
 
     // No number is allocated either (DEC-018): the stored header carries no
     // number/code column and the DTO exposes none.

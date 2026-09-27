@@ -1332,12 +1332,15 @@ model CatalogItem {
 // and audit carry stable IDs only.
 // ---------------------------------------------------------------------------
 
-/// Stock movement kind (PRD §16). This slice ships ONLY the standalone signed
-/// adjustment; PURCHASE, SALE, TRANSFER_* and the *_REVERSAL compensations
-/// belong to EPIC-11/EPIC-12 and are added additively then. Evolve additively
-/// only.
+/// Stock movement kind (PRD §16). `ADJUSTMENT` is the standalone signed
+/// adjustment shipped by EPIC-10, and `PURCHASE` is the positive receiving
+/// input the EPIC-11 PUR-002 receive command writes (DEC-014). SALE,
+/// TRANSFER_* and the *_REVERSAL compensations belong to EPIC-12 and later and
+/// are added additively then. Evolve additively only: values are appended,
+/// never reordered or removed.
 enum StockMovementType {
   ADJUSTMENT
+  PURCHASE
 
   @@map("stock_movement_type")
 }

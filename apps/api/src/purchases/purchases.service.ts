@@ -6,6 +6,15 @@ import { Prisma, PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
 import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
+import {
+  InventoryRepository,
+  type InventoryClient,
+  type StockItemRow,
+} from "../inventory/inventory.repository.js";
+import {
+  STOCK_ITEM_INACTIVE_MESSAGE,
+  STOCK_ITEM_NOT_TRACKED_MESSAGE,
+} from "../inventory/inventory.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import type { PurchaseLineResponse, PurchaseResponse } from "./purchases.dto.js";
 import { PURCHASES_PERMISSIONS, type PurchasesPermission } from "./purchases.permissions.js";
@@ -28,12 +37,17 @@ import {
  * handle. Declared structurally (not as `Prisma.TransactionClient`) so the real
  * client and the shared in-memory boundary both satisfy it: the purchase,
  * line, supplier and catalog-item delegates reach the tenant-safe repository
- * seam and `auditLog` the append-only {@link AuditWriter}, so the purchase
- * change and its audit row commit atomically.
+ * seam, the {@link InventoryClient} delegates and raw lock seam reach the
+ * ledger, and `auditLog` the append-only {@link AuditWriter}, so the purchase
+ * change, its ledger effects and its audit row commit atomically.
+ *
+ * An intersection (not an `extends` list): the purchase seam and the inventory
+ * seam both expose a `catalogItem` delegate with different, non-identical
+ * shapes, and only an intersection carries BOTH the purchase `id.in` batched
+ * read and the ledger's `findFirst` item resolution.
  */
-export interface PurchasesWriteTx extends PurchaseTx {
-  auditLog: AuditAppendTx["auditLog"];
-}
+export type PurchasesWriteTx = PurchaseTx &
+  InventoryClient & { auditLog: AuditAppendTx["auditLog"] };
 
 export interface PurchasesPrisma {
   $transaction: <T>(work: (tx: PurchasesWriteTx) => Promise<T>) => Promise<T>;
@@ -47,7 +61,25 @@ export interface PurchasesPrisma {
 export const PURCHASE_CREATED_ACTION = "purchase.created";
 export const PURCHASE_UPDATED_ACTION = "purchase.updated";
 export const PURCHASE_CANCELLED_ACTION = "purchase.cancelled";
+export const PURCHASE_RECEIVED_ACTION = "purchase.received";
 export const PURCHASE_TARGET_TYPE = "purchase";
+
+/**
+ * Stable reason recorded on every `PURCHASE` ledger movement of a receive. The
+ * ledger column is `TEXT NOT NULL` and the command takes no caller reason, so
+ * this constant is the value; it carries no identifier and no quantity — the
+ * co-committed audit row identifies the purchase and the immutable movement
+ * carries the signed amount.
+ */
+export const PURCHASE_RECEIVE_MOVEMENT_REASON = "Purchase received";
+
+/**
+ * Audit field NAMES for a receive (DEC-017). Receiving changes only the
+ * purchase's `status`; the stock effect lives on the co-committed `PURCHASE`
+ * movements, which are their own immutable record, so the purchase-level row
+ * names no line field and carries no value.
+ */
+const PURCHASE_RECEIVE_CHANGED_FIELDS: readonly string[] = ["status"];
 
 /**
  * Stable `409 CONFLICT` message for an edit or cancel against a purchase whose
@@ -145,6 +177,24 @@ function assertDraft(row: PurchaseRow): void {
 }
 
 /**
+ * The RECEIVE-time item gate (DEC-014, DEC-012): only an ACTIVE item that
+ * participates in the ledger may receive a purchase line. Both messages are the
+ * SAME stable `409 CONFLICT` constants the EPIC-10 adjustment path raises, so
+ * the two stock writers report these conditions identically instead of
+ * inventing a second vocabulary; the checks reach no data access, so nothing is
+ * persisted. The order — tracksStock before isActive — mirrors the adjustment
+ * path exactly.
+ */
+function assertStockableItem(item: StockItemRow): void {
+  if (!item.tracksStock) {
+    throw new DomainError("CONFLICT", STOCK_ITEM_NOT_TRACKED_MESSAGE);
+  }
+  if (!item.isActive) {
+    throw new DomainError("CONFLICT", STOCK_ITEM_INACTIVE_MESSAGE);
+  }
+}
+
+/**
  * Purchase application boundary (EPIC-11 PUR-001): the tenant-scoped read
  * surface and the three audited draft mutations (create, update, cancel).
  *
@@ -162,10 +212,12 @@ function assertDraft(row: PurchaseRow): void {
  *   INSIDE the same transaction as the purchase change, carrying stable ids and
  *   field NAMES only. Reads are never audited. No purchase event is emitted:
  *   nothing reacts post-commit.
- * - This boundary is INERT with respect to the rest of the system: a draft
- *   operation performs no stock movement, changes no balance, writes no cash
- *   movement, creates no invoice, calls no fiscal provider and allocates no
- *   number (DEC-014/DEC-018). Receiving is PUR-002.
+ * - This boundary is INERT with respect to the rest of the system for every
+ *   DRAFT operation: a draft create, update or cancel performs no stock
+ *   movement, changes no balance, writes no cash movement, creates no invoice,
+ *   calls no fiscal provider and allocates no number (DEC-014/DEC-018). The ONE
+ *   exception is the explicit `receive` command, which is the purchase's only
+ *   stock effect and writes the ledger through the EPIC-10 seam.
  * - There is NO delete operation anywhere on this boundary: a draft drops a
  *   line through the update command's line-set reconciliation, and a confirmed
  *   purchase is corrected only by the future explicit reversal.
@@ -175,6 +227,7 @@ export class PurchasesService {
   constructor(
     private readonly purchases: PurchaseRepository,
     @Inject(PrismaService) private readonly prisma: PurchasesPrisma,
+    private readonly inventory: InventoryRepository,
     private readonly requestContext: RequestContextService,
     private readonly permissionResolver: PermissionResolver,
     private readonly audit: AuditWriter
@@ -300,6 +353,134 @@ export class PurchasesService {
       );
 
       return updated;
+    });
+
+    return toPurchaseResponse(row);
+  }
+
+  /**
+   * Receives one `DRAFT` purchase of the caller's tenant: the single stock
+   * effect of the purchase lifecycle (DEC-014).
+   *
+   * ONLY a `DRAFT` is receivable. A replay, or any purchase already `RECEIVED`
+   * or `CANCELLED`, is the stable `409 CONFLICT` and persists nothing — a
+   * truthful answer to a replay with NO idempotent short-circuit, because the
+   * command has no replay signal to honor. The shared `404` masks an unknown or
+   * foreign id before any other resolution.
+   *
+   * EVERY line must resolve in-tenant to an ACTIVE item that tracks stock;
+   * otherwise the whole command fails with the SAME stable `409` messages the
+   * adjustment path raises and persists nothing. The item gate runs before any
+   * stock work, so a rejected receive holds no ledger lock.
+   *
+   * SERIALIZATION ORDER is DEC-014: the caller's purchase HEADER row lock comes
+   * FIRST, then the per-`(tenant, item)` advisory locks in ASCENDING
+   * `catalogItemId` order. The header lock is what makes two concurrent receives
+   * of the SAME purchase serialize — the loser blocks there, and its POST-LOCK
+   * status read sees the winner's committed `RECEIVED` and is rejected with the
+   * stable `409` instead of applying a second set of movements. The item locks
+   * are then taken in ascending order before any balance is read or written,
+   * which is what lets two concurrent multi-line receives of the same two items
+   * in OPPOSITE line order complete without deadlocking: every receive takes the
+   * header first and the item locks in the same global order. The true
+   * concurrent-receive race is proven by the live-PostgreSQL evidence owned by
+   * the next slice, not by the single-threaded in-memory suite. Under those
+   * locks each line writes exactly one POSITIVE `PURCHASE` movement, the
+   * projection is read and re-written through the ledger seam (never directly),
+   * the purchase is flipped to `RECEIVED` and exactly ONE audit row is appended —
+   * all inside ONE transaction, so any rejection rolls back the movements, the
+   * projections, the status change and the audit row together. Receiving writes
+   * no cash, invoice, fiscal or payment state and makes no external call.
+   */
+  async receive(id: string): Promise<PurchaseResponse> {
+    const tenantId = await this.requirePermission(PURCHASES_PERMISSIONS.receive);
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      // PRIMARY serialization: row-lock the purchase HEADER before anything
+      // else. A concurrent receive of the same purchase blocks here; once the
+      // winner commits, this transaction's post-lock read below sees `RECEIVED`.
+      // Header first, items ascending second, for EVERY receive, so no cycle.
+      await this.purchases.lockById(id, tx);
+
+      // POST-LOCK authoritative DRAFT gate. An unknown or foreign id resolves
+      // here as the shared `404` (the raw lock matched no row and took no lock);
+      // any non-`DRAFT` purchase — including one a concurrent winner just
+      // committed — is the stable `409` and persists nothing.
+      const locked = await this.purchases.findById(id, tx);
+      assertDraft(locked);
+
+      // Stable ascending order over the line items: the lock order DEC-014
+      // fixes, and the order every pass below follows.
+      const orderedLines = [...locked.lines].sort((left, right) =>
+        left.catalogItemId.localeCompare(right.catalogItemId)
+      );
+
+      // Pass 1 — resolve and gate EVERY line's item IN-TENANT before any stock
+      // work. An inactive or non-tracking item is the reused stable `409`, and
+      // a rejected receive has taken no lock and written nothing.
+      for (const line of orderedLines) {
+        const item = await this.inventory.findItem(line.catalogItemId, tx);
+        assertStockableItem(item);
+      }
+
+      // Pass 2 — acquire the ledger's per-`(tenant, item)` advisory locks,
+      // ASCENDING `catalogItemId`. Transaction-scoped, so a rollback of any
+      // later rejection releases them; deterministic, so concurrent multi-line
+      // receives of the same items in opposite line order cannot deadlock.
+      for (const line of orderedLines) {
+        await this.inventory.lockItemStock(line.catalogItemId, tx);
+      }
+
+      // Pass 3 — one POSITIVE `PURCHASE` movement and one projection upsert per
+      // line, through the SAME ledger seam the adjustment uses. No balance is
+      // written directly and no ledger SQL is duplicated; the projection is
+      // read only after its lock, so the read-modify-write is serialized.
+      for (const line of orderedLines) {
+        const quantity = new Prisma.Decimal(line.quantity);
+
+        await this.inventory.createMovement(
+          {
+            catalogItemId: line.catalogItemId,
+            type: "PURCHASE",
+            quantity,
+            reason: PURCHASE_RECEIVE_MOVEMENT_REASON,
+          },
+          tx
+        );
+
+        const balance = await this.inventory.findBalance(line.catalogItemId, tx);
+        const projected = new Prisma.Decimal(balance?.quantity ?? 0).plus(quantity);
+        await this.inventory.upsertBalance(line.catalogItemId, projected, tx);
+      }
+
+      // BACKSTOP: the header lock already serialized this transition, and this
+      // conditional write is the defence in depth. The write only affects a row
+      // still stored as `DRAFT`; zero rows means the status the lock read is no
+      // longer the status it would write, which is the same `409` as any other
+      // non-`DRAFT` purchase (never a silent no-op and never a second receive).
+      const applied = await this.purchases.receive(id, tx);
+      if (!applied) {
+        throw new DomainError("CONFLICT", PURCHASE_NOT_EDITABLE_MESSAGE);
+      }
+      const received = await this.purchases.findById(id, tx);
+
+      await this.audit.append(
+        {
+          action: PURCHASE_RECEIVED_ACTION,
+          tenantId,
+          actorUserProfileId,
+          targetType: PURCHASE_TARGET_TYPE,
+          targetId: received.id,
+          metadata: {
+            schemaVersion: PURCHASES_DTO_SCHEMA_VERSION,
+            changedFields: [...PURCHASE_RECEIVE_CHANGED_FIELDS],
+          },
+        },
+        tx
+      );
+
+      return received;
     });
 
     return toPurchaseResponse(row);

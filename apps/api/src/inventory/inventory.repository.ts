@@ -15,11 +15,13 @@ import { RequestContextService } from "../context/request-context.service.js";
 export type StockItemKindValue = "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY";
 
 /**
- * Movement kind values pinned by schema enum `stock_movement_type`. This slice
- * ships only `ADJUSTMENT` (W1 decision): the reserved purchase/sale/transfer/
- * reversal values arrive with the epics that own their commands.
+ * Movement kind values pinned by schema enum `stock_movement_type`. EPIC-10
+ * ships the standalone `ADJUSTMENT`; EPIC-11 PUR-002 appends `PURCHASE`, the
+ * positive receiving input the purchase command writes through this same seam
+ * (DEC-014). SALE, TRANSFER_* and the *_REVERSAL compensations arrive with the
+ * epics that own their commands and must be added additively.
  */
-export type StockMovementTypeValue = "ADJUSTMENT";
+export type StockMovementTypeValue = "ADJUSTMENT" | "PURCHASE";
 
 /**
  * Persistence row for a tenant-scoped catalog item as the inventory boundary

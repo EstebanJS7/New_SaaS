@@ -310,7 +310,8 @@ export interface StockMovementRow {
   id: string;
   tenantId: string;
   catalogItemId: string;
-  type: "ADJUSTMENT";
+  /** Ledger kinds shipped so far: EPIC-10 `ADJUSTMENT` and EPIC-11 `PURCHASE`. */
+  type: "ADJUSTMENT" | "PURCHASE";
   quantity: string;
   reason: string;
   reversesMovementId: string | null;
@@ -636,20 +637,19 @@ export interface IsolationDatabase {
   prisma: {
     $transaction: <T>(callback: (tx: IsolationDatabase["prisma"]) => Promise<T>) => Promise<T>;
     /**
-     * Raw-SQL seam for SELECT ... FOR UPDATE row locks (review CRITICAL-2).
-     * The shipped surface issues exactly ONE raw query shape — the tenant-wide
-     * active-membership lock — matched here by its table name; anything else
-     * fails loudly instead of silently returning wrong rows.
+     * Raw-SQL seam for SELECT ... FOR UPDATE row locks and advisory locks
+     * (review CRITICAL-2, extended by EPIC-11 PUR-002). The shipped surface
+     * issues a small, closed set of shapes — the tenant-wide active-membership
+     * lock, the purchase header row lock and `pg_advisory_xact_lock` — matched
+     * here by their text; anything else fails loudly instead of silently
+     * returning wrong rows (or wrong-shaped rows).
      *
      * HONEST LIMITATION (documented in TD-006): a synchronous in-memory map
      * CANNOT prove interleaving/serialization semantics of real READ
      * COMMITTED PostgreSQL; this delegate only proves WHICH rows the decision
      * reads. Live-PG proof remains TD-006's evidence gate.
      */
-    $queryRaw: (
-      query: TemplateStringsArray | string,
-      ...values: unknown[]
-    ) => Promise<{ id: string; role_id: string }[]>;
+    $queryRaw: (query: TemplateStringsArray | string, ...values: unknown[]) => Promise<unknown[]>;
     tenant: {
       create: (args: {
         data: { slug: string; name: string; status?: "ACTIVE" | "SUSPENDED" };
@@ -1726,18 +1726,32 @@ export function createIsolationDatabase(): IsolationDatabase {
       }
     },
     $queryRaw: (query, ...values) => {
-      // Match THE one shipped raw query (all active membership rows for the
-      // tenant). The only bound value is the server-resolved tenant id.
+      // Match THE shipped raw queries (all active membership rows for the
+      // tenant, the EPIC-11 purchase header row lock, and the per-item
+      // advisory locks). Every bound value is server-resolved.
       const text = typeof query === "string" ? query : query.join("");
-      // EPIC-07 scheduling serializes overlap checks with a transaction-scoped
-      // advisory lock. This single-threaded boundary serializes nothing, so the
-      // call must simply succeed; the real interleaving proof is WU5-owned.
+      // EPIC-07 scheduling and EPIC-11 PUR-002 receiving serialize with
+      // transaction-scoped advisory locks. This single-threaded boundary
+      // serializes nothing, so the call must simply succeed; the real
+      // interleaving proof is live-PostgreSQL-owned.
       if (text.includes("pg_advisory_xact_lock")) {
         return Promise.resolve([]);
       }
+      // EPIC-11 PUR-002: the receive command row-locks the purchase header
+      // before reading its status. A synchronous map cannot block, so this
+      // models the lock as a read of the locked row `(tenant_id, id)`; the real
+      // concurrent-receive race is proven against live PostgreSQL.
+      if (text.includes('"purchase"') && text.includes("FOR UPDATE")) {
+        const [tenantId, purchaseId] = values as string[];
+        const header = purchaseTable.get(purchaseId);
+        if (header?.tenantId !== tenantId) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ id: header.id, status: header.status }]);
+      }
       if (!text.includes("tenant_membership") || !text.includes("FOR UPDATE")) {
         throw new Error(
-          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock (got: ${text.slice(0, 60)}...)`
+          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
         );
       }
       const [tenantId] = values as string[];

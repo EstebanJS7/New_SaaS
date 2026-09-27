@@ -162,12 +162,13 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /suppliers/:id",
   "PUT /suppliers/:id",
   "POST /suppliers/:id/deactivate",
-  // EPIC-11 PUR-001 — purchase draft surface (reads + create/update + cancel)
+  // EPIC-11 PUR-001/PUR-002 — purchase draft surface + receive command
   "GET /purchases",
   "POST /purchases",
   "GET /purchases/:id",
   "PUT /purchases/:id",
   "POST /purchases/:id/cancel",
+  "POST /purchases/:id/receive",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -319,14 +320,14 @@ const SUPPLIERS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-11 PUR-001 purchase draft surface. Both reads MUST declare exactly
- * `purchases.read`, and create/update/cancel MUST declare exactly their own
- * write key; a route decorated with another purchase tier (or none) fails by
- * name, which the permission-less 403 sweep cannot catch. There is deliberately
- * NO `PATCH` — the lifecycle is server-owned, and `POST /purchases/:id/cancel`
- * is the only status transition this slice ships — and NO delete route: a draft
- * drops a line through the update command. The map also pins that NO
- * `purchases.receive` route exists here; receiving is PUR-002.
+ * EPIC-11 PUR-001/PUR-002 purchase surface. Both reads MUST declare exactly
+ * `purchases.read`, and create/update/cancel/receive MUST declare exactly their
+ * own write key; a route decorated with another purchase tier (or none) fails
+ * by name, which the permission-less 403 sweep cannot catch. There is
+ * deliberately NO `PATCH` — the lifecycle is server-owned, and
+ * `POST /purchases/:id/cancel` and `POST /purchases/:id/receive` are the only
+ * status transitions — and NO delete route: a draft drops a line through the
+ * update command and a confirmed purchase is immutable.
  */
 const PURCHASES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /purchases": PURCHASES_PERMISSIONS.read,
@@ -334,6 +335,7 @@ const PURCHASES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /purchases": PURCHASES_PERMISSIONS.create,
   "PUT /purchases/:id": PURCHASES_PERMISSIONS.update,
   "POST /purchases/:id/cancel": PURCHASES_PERMISSIONS.cancel,
+  "POST /purchases/:id/receive": PURCHASES_PERMISSIONS.receive,
 };
 
 describe("route-contract probe (deny-by-default)", () => {

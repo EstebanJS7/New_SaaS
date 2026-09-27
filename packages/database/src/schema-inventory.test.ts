@@ -126,14 +126,32 @@ describe("migration · inventory (EPIC-10 WU1 CAT-006)", () => {
     expect(INVENTORY_SQL).toMatch(/CREATE TYPE "stock_movement_type" AS ENUM/);
   });
 
-  it("pins the movement type to ADJUSTMENT only (PRD §16)", () => {
-    // The enum literal is asserted exactly: PURCHASE, SALE, TRANSFER_* and the
-    // *_REVERSAL compensations belong to EPIC-11/EPIC-12 and must not exist yet.
-    const typeValues = /CREATE TYPE "stock_movement_type" AS ENUM \(([^)]*)\)/.exec(
+  it("pins the movement type to the extended additive literal set (PRD §16, DEC-014)", () => {
+    // The inventory migration CREATES the enum holding `ADJUSTMENT`; the
+    // EPIC-11 PUR-002 receiving migration ADDS `PURCHASE` additively. Together
+    // they are the EFFECTIVE literal set — SALE, TRANSFER_* and the *_REVERSAL
+    // compensations still belong to EPIC-12 and later and must not exist yet.
+    const createdMatch = /CREATE TYPE "stock_movement_type" AS ENUM \(([^)]*)\)/.exec(
       INVENTORY_SQL
-    )?.[1];
-    expect(typeValues).toBe("'ADJUSTMENT'");
+    );
+    expect(createdMatch, "the stock_movement_type creation must exist").not.toBeNull();
+    const createdValues = (createdMatch?.[1] ?? "")
+      .split(",")
+      .map((literal) => literal.trim().replaceAll("'", ""));
+
+    const receivingSql = findMigration(MIGRATIONS, "_purchase_receiving").sql;
+    const addedValues = [
+      ...receivingSql.matchAll(/ALTER TYPE "stock_movement_type" ADD VALUE ('[^']*')/g),
+    ].map((match) => match[1].replaceAll("'", ""));
+
+    expect([...createdValues, ...addedValues].sort()).toEqual(["ADJUSTMENT", "PURCHASE"]);
     expect(INVENTORY_SQL).toMatch(/"type" "stock_movement_type" NOT NULL/);
+
+    // The schema document declares the same set and nothing more.
+    const enumBlock = /enum StockMovementType\s*\{([^}]*)\}/.exec(SCHEMA)?.[1] ?? "";
+    expect(enumBlock).toMatch(/\bADJUSTMENT\b/);
+    expect(enumBlock).toMatch(/\bPURCHASE\b/);
+    expect(enumBlock).not.toMatch(/\b(SALE|TRANSFER|REVERSAL)\b/);
   });
 
   it("adds the stock dimension to the catalog and backfills it by kind", () => {
