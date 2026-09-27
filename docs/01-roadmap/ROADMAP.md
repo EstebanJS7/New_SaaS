@@ -1,7 +1,7 @@
 ---
 type: roadmap
 status: active
-updated: 2026-09-25
+updated: 2026-09-27
 ---
 
 # ROADMAP
@@ -19,7 +19,7 @@ updated: 2026-09-25
 | EPIC-08 | Portal                             |    done | EPIC-04, EPIC-05, EPIC-07 |
 | EPIC-09 | Catalog/Taxes                      |    done | EPIC-02                   |
 | EPIC-10 | Inventory                          |    done | EPIC-09                   |
-| EPIC-11 | Suppliers/Purchases                | planned | EPIC-10                   |
+| EPIC-11 | Suppliers/Purchases                |    done | EPIC-10                   |
 | EPIC-12 | POS/Payments                       | planned | EPIC-09, EPIC-10          |
 | EPIC-13 | Cash                               | planned | EPIC-12                   |
 | EPIC-14 | Billing                            | planned | EPIC-12                   |
@@ -73,6 +73,19 @@ exposed a real lost update — fixed by a per-`(tenant, item)` advisory lock —
 now proves exactly one output admitted with the projection equal to the ledger's
 signed sum. It is **never** production readiness: [[EPIC-20]] Production
 Hardening and the open Tech Debt items ([[TD-016]], [[TD-007]]) remain.
+
+[[EPIC-11]] Suppliers/Purchases moved to `done` on 2026-09-27, after its four
+stories merged with the required CI checks green: SUP-001 as PR #68 (merge
+commit `baa66ca`), PUR-001 as PR #70 (`f214003`, CI run `36277429018`), PUR-002
+as PR #71 (`8862050`, CI run `36293559990`) and PUR-003 as PR #73 (`e12ac1f`, CI
+run `36305211468`). `done` means epic implementation closure only: the
+live-PostgreSQL suite is machine-verified in CI's `Database migrations` job on
+every pull request (71 cases, including the EPIC-11 supplier, purchase-draft and
+purchase-receiving blocks), and the delivery receipts are recorded in
+`docs/10-qa/CI-EVIDENCE.md`. It is **never** production readiness: [[EPIC-20]]
+Production Hardening and the open Tech Debt items remain, [[TD-013]] stays open
+now that its trigger has fired, and [[TD-016]] stays open although the receiving
+writer complies with its protocol.
 
 ## Architecture baseline
 

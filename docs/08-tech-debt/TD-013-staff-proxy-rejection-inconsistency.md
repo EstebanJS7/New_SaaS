@@ -6,10 +6,12 @@ status: open
 severity: low
 related_epics:
   - EPIC-09
+  - EPIC-11
 related_stories:
   - CAT-004
+  - PUR-003
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-27
 ---
 
 # TD-013 — Staff proxies reject the same request differently
@@ -89,6 +91,36 @@ path reaches an un-allowlisted route or forwards a cookie it should not.
 
 The next time a staff proxy is added, or the first time a client, test helper or
 monitoring rule needs one uniform rejection contract across the staff surfaces.
+
+## Trigger fired (2026-09-27)
+
+[[EPIC-11]] added the next two staff proxies —
+`apps/web/src/app/api/suppliers/[[...path]]/route.ts` and
+`apps/web/src/app/api/purchases/[[...path]]/route.ts`, both shipped by
+[[PUR-003 Staff purchases surface]]. That is the first half of the trigger.
+
+Both new proxies follow the documented rejection contract instead of reproducing
+a sibling divergence: a known path with a disallowed method answers
+`405 METHOD_NOT_ALLOWED` (no `Allow` header), an unknown path answers
+`404 NOT_FOUND`, a malformed path answers `400 VALIDATION_FAILED`, and a
+credential-less request is refused locally with `401 UNAUTHENTICATED` rather
+than forwarded. All four use the same `{ error: { code, message } }` envelope as
+the sibling proxies, so a client still cannot tell a proxy refusal from an API
+refusal by shape.
+
+What the new slices did **not** do is share the classification. Each handler
+carries its own duplicated path-shape function and its own private rejection
+helpers instead of importing one shared helper, because the shared library this
+record proposes ("Proposed Resolution" §2) was outside the implementing slices'
+edit surfaces. The duplication the debt describes is therefore still present —
+now in five handlers instead of three — and the second half of the trigger ("the
+first time a client, test helper or monitoring rule needs one uniform rejection
+contract across the staff surfaces") has not been reached.
+
+This record stays **open**. A fired trigger is not a resolution: a shared
+helper, the unified rule stated in one place, and a focused test for that helper
+(the "Verification After Resolution" items) all remain outstanding, and the two
+new proxies add call sites rather than removing them.
 
 ## Verification After Resolution
 

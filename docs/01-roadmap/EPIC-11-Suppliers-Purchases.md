@@ -2,7 +2,7 @@
 id: EPIC-11
 type: epic
 title: Suppliers/Purchases
-status: planned
+status: done
 priority: high
 depends_on:
   - EPIC-10
@@ -76,8 +76,9 @@ belong to other epics and are explicitly out of scope here.
 - [[EPIC-10]] is `done` (PR #66, merge commit `ee558a7`, CI run 36249268114), so
   this epic's roadmap dependency is closed.
 
-Everything below is planned and unchecked: no acceptance criterion in this
-record has been implemented.
+At this pre-implementation snapshot everything below was planned and unchecked:
+no acceptance criterion in this record had been implemented. The later sections
+record the implementation and the closure.
 
 ## Progress (2026-09-26)
 
@@ -122,9 +123,10 @@ The purchase slices have since merged as well, both with CI green:
   remain useful as pre-push evidence; the merged evidence is recorded in
   `docs/10-qa/CI-EVIDENCE.md`.
 
-The epic is **not** closed: the [[PUR-003]] staff purchases surface remains
-`planned`, every exit criterion below is still open, and the epic-level durable
-evidence is only partially satisfied, so this record keeps `status: planned`.
+The epic is **closed** as of this slice: the [[PUR-003]] staff purchases surface
+is implemented, merged and covered by CI, all four Stories are `done`, and every
+exit criterion is checked. See "Exit Criteria" for the criterion-to-evidence map
+and the closure note.
 
 ## Scope
 
@@ -186,44 +188,74 @@ evidence is only partially satisfied, so this record keeps `status: planned`.
 
 ## Acceptance Criteria
 
-- [ ] Suppliers and purchases are tenant-scoped private aggregates: every
+- [x] Suppliers and purchases are tenant-scoped private aggregates: every
       private table carries the tenant composite ownership key and a `RESTRICT`
-      tenant FK, and a cross-tenant UUID is one byte-equivalent `404`.
-- [ ] Every protected operation validates authentication, server-side tenant
+      tenant FK, and a cross-tenant UUID is one byte-equivalent `404`. Evidence:
+      the `supplier` and `purchase`/`purchase_line` DDL and their live-PG
+      isolation blocks in [[Suppliers]] and [[Purchases]].
+- [x] Every protected operation validates authentication, server-side tenant
       context, permission/policy and resource tenant ownership before data
-      access; frontend permission checks are UX only.
-- [ ] All external input is validated against a strict allowlisted contract that
+      access; frontend permission checks are UX only. Evidence: the per-route
+      `@RequirePermissions` plus the service re-assertion documented in
+      [[Suppliers]] and [[Purchases]], and the UX-only permission branches of
+      the [[PUR-003]] surface.
+- [x] All external input is validated against a strict allowlisted contract that
       rejects unknown keys; `tenantId` is never read from body, query or route;
-      no Prisma model crosses the HTTP boundary.
-- [ ] The purchase status enum is exactly `DRAFT`, `RECEIVED`, `CANCELLED` (PRD
+      no Prisma model crosses the HTTP boundary. Evidence: the `.strict()` Zod
+      contracts, allowlisted DTO projections and unknown-key rejection sweeps
+      documented in [[Suppliers]] and [[Purchases]], plus the proxies' rebuilt
+      query allowlist in [[PUR-003]].
+- [x] The purchase status enum is exactly `DRAFT`, `RECEIVED`, `CANCELLED` (PRD
       §17), and receiving/cancelling are explicit transition commands, not
-      generic `PATCH status` writes.
-- [ ] Receiving validates `DRAFT`, creates the stock movements, updates
+      generic `PATCH status` writes. Evidence: the `purchase_status` enum, the
+      `POST /purchases/:id/cancel` and `POST /purchases/:id/receive` commands
+      and the absence of any `PATCH`/`DELETE` route in [[Purchases]].
+- [x] Receiving validates `DRAFT`, creates the stock movements, updates
       balances, marks the purchase `RECEIVED` and writes audit **atomically**: a
-      rejection persists nothing.
-- [ ] Every receiving write goes through the EPIC-10 ledger seam and acquires
+      rejection persists nothing. Evidence: the single-transaction receive
+      command in [[Purchases]] and the live-PostgreSQL receiving block.
+- [x] Every receiving write goes through the EPIC-10 ledger seam and acquires
       `stockSerializationLockKey(tenantId, catalogItemId)` before reading or
       writing `stock_balance` ([[TD-016]]); the projection equals the ledger's
-      signed sum after the command.
-- [ ] `stock_movement_type` gains `PURCHASE` additively; existing `ADJUSTMENT`
-      behavior is unchanged.
-- [ ] Purchase receive is audited with stable ids and field names only (PRD
-      §27).
-- [ ] No cash, billing, fiscal, payment, POS or low-stock behavior is introduced
-      by any EPIC-11 slice.
-- [ ] The staff surface implements loading, empty, error, success and
-      permission-denied states using semantic design tokens only.
-- [ ] Tenant isolation tests exist for every new private aggregate;
+      signed sum after the command. Evidence: the `lockItemStock` /
+      `createMovement` / `upsertBalance` seam and the live receiving case
+      asserting the projection equals the signed sum in [[Purchases]].
+- [x] `stock_movement_type` gains `PURCHASE` additively; existing `ADJUSTMENT`
+      behavior is unchanged. Evidence: the additive
+      `20260926000003_purchase_receiving` migration and the enum gate in
+      [[Purchases]].
+- [x] Purchase receive is audited with stable ids and field names only (PRD
+      §27). Evidence: exactly one `purchase.received` audit row per accepted
+      receive, carrying `{ schemaVersion, changedFields }` with no stored value,
+      in [[Purchases]].
+- [x] No cash, billing, fiscal, payment, POS or low-stock behavior is introduced
+      by any EPIC-11 slice. Evidence: the module scope and inertness guarantees
+      in [[Purchases]] and [[Suppliers]] and the "Out of Scope" list above.
+- [x] The staff surface implements loading, empty, error, success and
+      permission-denied states using semantic design tokens only. Evidence: the
+      [[PUR-003]] state-coverage implementation summary and its component tests;
+      every component composes `@newsaas/ui` and semantic Tailwind tokens with
+      no brand literal or injected styling.
+- [x] Tenant isolation tests exist for every new private aggregate;
       authorization and validation tests cover every new route; the receiving
-      transaction has live-PostgreSQL evidence.
+      transaction has live-PostgreSQL evidence. Evidence: the test inventories
+      in [[Suppliers]] and [[Purchases]] and the EPIC-11 live-PostgreSQL blocks
+      inside the 71-case suite.
 - [x] Every open product decision is resolved by an accepted Decision record
       before the dependent schema or contract is written: the eight records
       [[DEC-011]]–[[DEC-018]] were accepted on 2026-09-26 and are binding on the
-      dependent slices; the schema and contracts themselves are not yet written.
-- [ ] Documentation is current, and the lint/typecheck/test/build checks
-      required by the epic are green.
+      dependent slices, and the schema and contracts have since been written
+      against them.
+- [x] Documentation is current, and the lint/typecheck/test/build checks
+      required by the epic are green. Evidence: this record, [[Suppliers]],
+      [[Purchases]], the `docs/05-modules/README.md` index, the changelog, the
+      CI-evidence sections and the roadmap note; `pnpm lint` 14/14,
+      `pnpm typecheck` 14/14, `pnpm build` 9/9, `pnpm test` 15/15 and
+      `pnpm format-check` clean, then green in the merged CI runs.
 
 ## Stories
+
+All four Stories are `done`.
 
 - [[SUP-001 Supplier foundation]] — the tenant-scoped supplier registry.
 - [[PUR-001 Purchase draft]] — the `DRAFT` lifecycle with no stock effect.
@@ -256,12 +288,16 @@ evidence is only partially satisfied, so this record keeps `status: planned`.
 - 2026-09-27: [[PUR-002]] merged into `main` as merge commit `8862050` through
   pull request #71, required CI checks green on head `edfa66c` (run
   `36293559990`).
+- 2026-09-27: [[PUR-003]] implemented on branch `feat/epic-11-staff-purchases` —
+  the two proxies, the client modules, the supplier and purchase pages with
+  their state coverage, and the receive flow with its seven distinct outcomes —
+  then merged into `main` as merge commit `e12ac1f` through pull request #73,
+  required CI checks green on head `ae08e88` (run `36305211468`).
 
-This note records implementation progress only. Every epic acceptance and exit
-criterion in this record remains unchecked and the epic `status` stays
-`planned`, because the staff surface (the [[PUR-003]] staff purchases surface)
-is not implemented and the epic-level durable evidence is only partially
-satisfied, so the epic's exit criteria are not met.
+This note is retained as the slice-by-slice progress record. With the staff
+surface now implemented and merged, every epic acceptance and exit criterion in
+this record is checked against the evidence in "Exit Criteria", and the epic
+`status` is `done`.
 
 ## Dependencies
 
@@ -273,23 +309,68 @@ satisfied, so the epic's exit criteria are not met.
   the `purchases` feature code.
 - [[TD-016]] — the pre-existing serialization debt this epic inherits and must
   not reintroduce; the receiving slice is a named trigger of that record.
+- [[TD-013]] — the staff-proxy rejection contract this epic's staff surface
+  follows; the surface fired that record's trigger and leaves it open.
 
 EPIC-11 is not a dependency of [[EPIC-12]] POS/Payments: the roadmap lists
 EPIC-12 as depending on EPIC-09 and EPIC-10 only.
 
 ## Exit Criteria
 
-- [ ] The implementation work units are committed, pushed and merged with the
-      required CI checks green.
-- [ ] The durable live-PostgreSQL evidence for receiving (atomicity,
+- [x] The implementation work units are committed, pushed and merged with the
+      required CI checks green. Evidence: the four merges — SUP-001 via PR #68
+      (merge commit `baa66ca`), PUR-001 via PR #70 (`f214003`, CI run
+      `36277429018` on head `4442466`), PUR-002 via PR #71 (`8862050`, CI run
+      `36293559990` on head `edfa66c`) and PUR-003 via PR #73 (`e12ac1f`, CI run
+      `36305211468` on head `ae08e88`) — each with `Database migrations` and
+      `Lint, Typecheck, Test, Build` green. The receipts are recorded in
+      `docs/10-qa/CI-EVIDENCE.md`.
+- [x] The durable live-PostgreSQL evidence for receiving (atomicity,
       immutability, cross-tenant isolation and the `(tenant, item)`
       serialization race) passes and is recorded in `docs/10-qa/CI-EVIDENCE.md`.
-- [ ] Each Story's required acceptance criteria are checked and its
+      Evidence: the live-PostgreSQL suite stands at 71 cases, includes the
+      EPIC-11 supplier, purchase-draft and purchase-receiving blocks, and runs
+      in CI's `Database migrations` job on every pull request, so it is
+      machine-verified rather than local-only; the EPIC-11 CI baselines in
+      `docs/10-qa/CI-EVIDENCE.md` record the runs.
+- [x] Each Story's required acceptance criteria are checked and its
       implementation summary, migrations, endpoints and tests are recorded.
-- [ ] Documentation is current: this epic, the module documentation for the new
-      domains, the module index, the changelog and the roadmap note.
-- [ ] Decisions and debt are recorded; no deferred requirement is hidden as
-      scope.
+      Evidence: the `done` records [[SUP-001 Supplier foundation]],
+      [[PUR-001 Purchase draft]], [[PUR-002 Purchase receiving]] and
+      [[PUR-003 Staff purchases surface]]. PUR-003 records that it adds no
+      migration, endpoint or permission key because it consumes the shipped
+      contracts.
+- [x] Documentation is current: this epic, the module documentation for the new
+      domains, the module index, the changelog and the roadmap note. Evidence:
+      this record, [[Suppliers]], [[Purchases]], the `docs/05-modules/README.md`
+      index entries, `docs/09-releases/CHANGELOG.md` and
+      `docs/01-roadmap/ROADMAP.md`.
+- [x] Decisions and debt are recorded; no deferred requirement is hidden as
+      scope. Evidence: the eight accepted Decisions below, [[TD-013]] (open, its
+      trigger now fired) and [[TD-016]] (open, the receiving writer compliant),
+      plus the explicitly deferred items in the closure note below.
+
+`status: done` means epic implementation closure only: the four work units are
+merged as merge commits `baa66ca`, `f214003`, `8862050` and `e12ac1f` through
+pull requests #68, #70, #71 and #73, the required CI checks are green, and the
+live-PostgreSQL evidence is recorded. It is **never** a production-readiness
+statement.
+
+Open debt and deferred work remain and are not resolved by this closure:
+
+- [[TD-013]] stays **open** and its trigger has fired: this epic added the next
+  two staff proxies, which follow the documented rejection contract but
+  duplicate the shape classification instead of sharing a helper because the
+  shared library was outside the implementing slices' edit surfaces.
+- [[TD-016]] stays **open** although the receiving writer complies with its
+  protocol; the protocol is still a convention rather than a database-enforced
+  guarantee.
+- Deferred and outside this epic: purchase reversal (PRD §40, referenced by
+  [[DEC-015]] but not implemented), inventory valuation and tax arithmetic
+  ([[DEC-013]]), entitlement gating of the purchases surface ([[DEC-016]]), a
+  human-readable purchase number ([[DEC-018]]), any traceability from a ledger
+  movement back to its purchase, and live-API coverage for the staff proxies,
+  which are tested against mocked API envelopes rather than a running API.
 
 ## Decisions / ADRs
 
@@ -372,9 +453,16 @@ fiscal document per [[DEC-018]].
 
 ## Technical Debt
 
-- No debt is created by this epic. It inherits [[TD-016]], whose trigger is "the
-  next stock writer added by [[EPIC-11]] or [[EPIC-12]]"; the receiving slice
+- No debt is created by this epic.
+- It inherits [[TD-016]], whose trigger is "the next stock writer added by
+  [[EPIC-11]] or [[EPIC-12]]"; the receiving slice
   ([[PUR-002 Purchase receiving]]) now satisfies the protocol — it acquires the
   shared advisory lock before touching `stock_balance` — and [[TD-016]] is
   updated with that call site while staying open, because the protocol remains a
   convention rather than a database-enforced guarantee.
+- It also fires [[TD-013]]'s trigger: the staff surface added the next two staff
+  proxies ([[PUR-003 Staff purchases surface]]). Both follow the documented
+  rejection contract instead of reproducing a sibling divergence, but they
+  duplicate the handler's shape classification rather than sharing a helper
+  because the shared library was outside the implementing slices' edit surfaces.
+  The record stays **open**; firing a trigger is not resolving it.

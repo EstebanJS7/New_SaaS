@@ -2,7 +2,7 @@
 type: module
 module: purchases
 status: implemented
-updated: 2026-09-26
+updated: 2026-09-27
 ---
 
 # Module — Purchases
@@ -45,7 +45,8 @@ rather than touching `stock_balance` directly.
 - **Low-stock thresholds, ordering suggestions and purchasing reports** —
   [[EPIC-18]].
 - **The staff UI** — [[PUR-003 Staff purchases surface]] owns the browser
-  surface. This module is API-only today.
+  surface, which ships in `apps/web`; see "Staff web surface" below. This module
+  is the API behind it.
 - **Purchase imports** — [[EPIC-19]].
 - **A portal surface.** Portal holders have no purchase access; purchases are a
   staff-only Core capability.
@@ -208,6 +209,70 @@ omitted `status` applies **no** implicit filter, so `?status=DRAFT`,
 `?status=RECEIVED` and `?status=CANCELLED` are all meaningful. An unknown query
 key or a malformed status is `400 VALIDATION_FAILED`, rejected rather than
 ignored.
+
+## Staff web surface
+
+The browser surface ([[PUR-003 Staff purchases surface]]) ships in `apps/web`
+and is transport and presentation only: it holds no purchase rule, no
+authorization authority and no stock arithmetic.
+
+### Transport proxy
+
+`apps/web/src/app/api/purchases/[[...path]]/route.ts` is the only browser-facing
+entry point to this API. A request is forwarded only when its
+`(method, path-shape)` pair is allowlisted:
+
+| Method | Shape                     | Upstream                      |
+| ------ | ------------------------- | ----------------------------- |
+| `GET`  | list                      | `GET /purchases`              |
+| `POST` | list                      | `POST /purchases`             |
+| `GET`  | item (`:uuid`)            | `GET /purchases/:id`          |
+| `PUT`  | item (`:uuid`)            | `PUT /purchases/:id`          |
+| `POST` | cancel (`:uuid/cancel`)   | `POST /purchases/:id/cancel`  |
+| `POST` | receive (`:uuid/receive`) | `POST /purchases/:id/receive` |
+
+`PATCH` and `DELETE` are absent. Only the `GET` list shape accepts a query, and
+only the module's one contract key (`status`, rebuilt from the allowlist); an
+unknown key or a query on any other shape is refused rather than forwarded. The
+rejection contract is uniform and uses the same `{ error: { code, message } }`
+envelope the API emits: `404 NOT_FOUND` for a route the API does not expose,
+`405 METHOD_NOT_ALLOWED` (no `Allow` header) for a known path reached with the
+wrong method, `400 VALIDATION_FAILED` for a malformed path, and
+`401 UNAUTHENTICATED` for a missing staff session. A forwarded response
+preserves the upstream status, body, `content-type` and `x-request-id`, so the
+API's `400`, `403`, `404` and stable `409` reach the browser unchanged.
+
+The proxy performs no authorization and resolves no tenant. Headers cross a
+strict allowlist: only the staff session cookie (read server-side by name) and
+`x-request-id`, plus a JSON `content-type` on a mutating verb. No tenant, role
+or permission header is synthesized and the portal cookie is never forwarded, so
+a cross-tenant id stays the API's own byte-equivalent `404`. A mutating body is
+piped as the caller's raw stream, never buffered.
+
+### Pages
+
+- `/app/purchases` — the list with its lifecycle filter, and loading, both
+  empty, error, permission-denied and success states; the reference opens the
+  detail route and Edit is offered only for a `DRAFT`.
+- `/app/purchases/:id` — the read-only header and full line set, with the
+  explicit cancel and receive actions offered for a `DRAFT` only.
+- `/app/purchases/new` and `/app/purchases/:id/edit` — the shared draft form,
+  which edits the full line set (add, change, remove a line) and never writes
+  `status`.
+- Navigation: `Purchases` is a real `next/link` entry in the staff sidebar, a
+  plain link with no client-side permission gate.
+
+Receiving is guarded by an explicit confirmation, is never retried by the
+surface, and renders seven distinct outcomes: success (the purchase is
+`RECEIVED`), the non-draft `409`, the inactive-item `409`, the non-tracking-item
+`409`, `403` permission denied, `404` not found and a transport error. The three
+`409` conditions share the API's `CONFLICT` code and are rendered apart by the
+API's stable, value-free message. Quantities and unit costs are displayed as the
+API's exact decimal strings and no total is derived. Supplier and catalog-item
+references are resolved read-only through the existing supplier and catalog
+clients and degrade to a short id fragment when a referenced record is
+unreadable. Every accepted mutation updates the detail cache and invalidates the
+list cache. Permission states are UX only; the API is the authority.
 
 ## Validation rules
 
@@ -425,8 +490,11 @@ response as the **caller's own** tenant; a foreign tenant id is never returned.
   `prisma migrate diff` lists a `DROP DEFAULT` for two more columns. That drift
   is repo-wide and pre-existing (22 tables before this module, 24 now);
   `migrate status` is green and CI applies migrations rather than diffing.
-- **No staff UI and no web proxy.** The module is API-only in this slice;
-  [[PUR-003 Staff purchases surface]] owns the browser surface.
+- **The staff surface is tested against mocked API envelopes.** Its route
+  handlers and pages are covered by component and route-handler tests that mock
+  `fetch`; no live API was run for the slice, so a real browser-to-API round
+  trip through `/api/purchases` remains uncovered and Playwright E2E stays
+  deferred ([[TD-007]]).
 - **No purchase delete by design.** The absence of a `DELETE` route is not a
   missing feature: a draft drops a line through the update command, and a
   confirmed or cancelled purchase is corrected only by the future reversal.

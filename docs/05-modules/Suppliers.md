@@ -2,7 +2,7 @@
 type: module
 module: suppliers
 status: implemented
-updated: 2026-09-26
+updated: 2026-09-27
 ---
 
 # Module — Suppliers
@@ -32,7 +32,8 @@ permission in the service before any data access. Data classification: `name` is
   [[EPIC-12]]/[[EPIC-13]]. This module records no owed amount and no payment
   state.
 - **The staff UI** — [[PUR-003 Staff purchases surface]] owns the browser
-  surface. This module is API-only today.
+  surface, which ships in `apps/web`; see "Staff web surface" below. This module
+  is the API behind it.
 - **Supplier or purchase imports** — [[EPIC-19]].
 - **Low-stock or purchasing reports** — [[EPIC-18]].
 - **A portal surface.** Portal holders have no supplier access; suppliers are a
@@ -161,6 +162,68 @@ Prisma model and no internal column is projected.
 `GET /suppliers` applies **no implicit active filter**: an omitted `isActive`
 returns active and inactive suppliers alike, so `isActive=false` stays
 meaningful. The list is ordered by `name` ascending with an id tiebreaker.
+
+## Staff web surface
+
+The browser surface ([[PUR-003 Staff purchases surface]]) ships in `apps/web`
+and is transport and presentation only: it holds no supplier rule and no
+authorization authority.
+
+### Transport proxy
+
+`apps/web/src/app/api/suppliers/[[...path]]/route.ts` is the only browser-facing
+entry point to this API. A request is forwarded only when its
+`(method, path-shape)` pair is allowlisted:
+
+| Method | Shape                  | Upstream                         |
+| ------ | ---------------------- | -------------------------------- |
+| `GET`  | list                   | `GET /suppliers`                 |
+| `POST` | list                   | `POST /suppliers`                |
+| `GET`  | item (`:uuid`)         | `GET /suppliers/:id`             |
+| `PUT`  | item (`:uuid`)         | `PUT /suppliers/:id`             |
+| `POST` | deactivate (`:uuid/…`) | `POST /suppliers/:id/deactivate` |
+
+`PATCH` and `DELETE` are absent, and `isActive` is never a forwarded write field
+— it changes only through the deactivate command. Only the `GET` list shape
+accepts a query, and only the module's one contract key (`isActive`, rebuilt
+from the allowlist); an unknown key or a query on any other shape is refused
+rather than forwarded. The rejection contract is uniform and uses the same
+`{ error: { code, message } }` envelope the API emits: `404 NOT_FOUND` for a
+route the API does not expose, `405 METHOD_NOT_ALLOWED` (no `Allow` header) for
+a known path reached with the wrong method, `400 VALIDATION_FAILED` for a
+malformed path, and `401 UNAUTHENTICATED` for a missing staff session. A
+forwarded response preserves the upstream status, body, `content-type` and
+`x-request-id`, so the API's `400`, `403`, `404` and the value-free `409` reach
+the browser unchanged.
+
+The proxy performs no authorization and resolves no tenant. Headers cross a
+strict allowlist: only the staff session cookie (read server-side by name) and
+`x-request-id`, plus a JSON `content-type` on a mutating verb. No tenant, role
+or permission header is synthesized and the portal cookie is never forwarded, so
+a cross-tenant id stays the API's own byte-equivalent `404`. A mutating body is
+piped as the caller's raw stream, never buffered.
+
+### Pages
+
+- `/app/suppliers` — the list, defaulting to active-only with an explicit
+  include-deactivated toggle, and loading, both empty, error, permission-denied
+  and success states. The name opens the read-only detail route and Edit is a
+  separate destination; removal is the confirm-guarded deactivate command and
+  there is no delete affordance anywhere.
+- `/app/suppliers/:id` — the read-only detail, showing an absent optional field
+  as "Not set" and inventing no value.
+- `/app/suppliers/new` and `/app/suppliers/:id/edit` — the shared create/edit
+  form with absent-versus-null semantics; it offers no `isActive` control, so
+  `suppliers.update` can never change the lifecycle, and a duplicate present
+  `taxId` renders the API's value-free `409` as an identifier conflict on the
+  field.
+- Navigation: `Suppliers` is a real `next/link` entry in the staff sidebar, a
+  plain link with no client-side permission gate.
+
+The CONFIDENTIAL identity and contact fields ([[DEC-011]]) are rendered to the
+authorized staff role the API already answered and are never written to the
+console, error telemetry or analytics. Every accepted mutation invalidates the
+supplier caches. Permission states are UX only; the API is the authority.
 
 ## Validation rules
 
@@ -299,12 +362,15 @@ response as the **caller's own** tenant; a foreign tenant id is never returned.
   model it, so the schema has no `@@unique([tenantId, taxId])`; the applied
   index is now asserted live, and only a live `migrate status`/drift check
   remains owed.
-- **No staff UI and no web proxy.** The module is API-only in this slice;
-  [[PUR-003 Staff purchases surface]] owns the browser surface.
-- **The purchase side of a reference is not testable yet.** No purchase table
-  exists, so only the supplier half of the no-orphan guarantee can be asserted
-  today; the purchase-side half becomes testable with
-  [[PUR-001 Purchase draft]].
+- **The staff surface is tested against mocked API envelopes.** Its route
+  handlers and pages are covered by component and route-handler tests that mock
+  `fetch`; no live API was run for the slice, so a real browser-to-API round
+  trip through `/api/suppliers` remains uncovered and Playwright E2E stays
+  deferred ([[TD-007]]).
+- **The purchase side of a reference is enforced by the purchase module.** The
+  composite `purchase_tenant_id_supplier_id_fkey` documented in [[Purchases]] is
+  the purchase-side half of the no-orphan guarantee, and the purchase slice owns
+  its coverage; this registry owns only its own half.
 
 ## Verification
 
