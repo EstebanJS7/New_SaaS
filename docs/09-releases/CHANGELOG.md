@@ -173,12 +173,13 @@ All notable product changes will be documented here.
   `main` as merge commit `baa66ca` through pull request #68 with the required CI
   checks green, and that slice's live-PostgreSQL evidence is the merged CI
   baseline in `docs/10-qa/CI-EVIDENCE.md`. The purchase draft (`PUR-001`) and
-  purchase receiving (`PUR-002`) are implemented on their own branches with
-  their live coverage at 71/71, but they are not merged. The staff surface
-  (`PUR-003`) is pending, the receiving live-PostgreSQL evidence is local rather
-  than merged, and a drift-free `migrate status` for the index Prisma cannot
-  model is still outstanding, so the epic's exit criteria are not met. Nothing
-  here is merged or production-ready.
+  the receiving command (`PUR-002`) are merged into `main` as merge commits
+  `f214003` and `8862050` through pull requests #70 and #71 with the required CI
+  checks green, and their delivery receipts are recorded in
+  `docs/10-qa/CI-EVIDENCE.md`. The staff surface (`PUR-003`) is pending, and a
+  drift-free `migrate status` for the index Prisma cannot model is still
+  outstanding, so the epic's exit criteria are not met. Nothing here is a
+  production-readiness claim.
 
 - EPIC-06 — Clinical records:
   - Six tenant-scoped, Patient-anchored clinical models (encounter + treatments,

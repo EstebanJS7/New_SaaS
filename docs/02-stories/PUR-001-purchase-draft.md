@@ -292,6 +292,17 @@ The live block rejects every outcome with the database's own rejection and rolls
 every raw-SQL probe back: it uses no injected Prisma error, no mock, no sleep
 and no retry.
 
+**Delivery (merged).** The work units are merged into `main` through pull
+request #70 (`feat(EPIC-11): implement the purchase draft lifecycle (PUR-001)`)
+as merge commit `f214003` (`f2140036fa7f18be9293c21a62bb9e2f7828f759`), merged
+`2026-09-26T22:53:35Z`. The required CI checks are green on the evaluated head
+commit `4442466` (`44424665da95a08d379435add856e6767bbbb9c6`): run `36277429018`
+concluded `success`, with `Database migrations` and
+`Lint, Typecheck, Test, Build` both `SUCCESS`. This satisfies the Story's
+delivery expectations: the work units are committed, pushed and merged with the
+required checks green, and the merged CI receipt is recorded in
+`docs/10-qa/CI-EVIDENCE.md`.
+
 ## Tests Added
 
 - `packages/database/src/schema-purchases.test.ts` — **22 tests**: the additive
@@ -451,7 +462,9 @@ during this Story's implementation using the sibling modules as precedent.
 Done for **implementation, ordinary verification and live-evidence scope**: the
 data foundation, the five draft routes, the line-set reconciliation, the
 conditional immutability, the audit rows and the durable live-PostgreSQL block
-are all in place, and the checks this environment can run are green. This is
-**not** a production-readiness statement: the work units are not pushed or
-merged, and [[EPIC-11]] remains open for [[PUR-002 Purchase receiving]] and
-[[PUR-003 Staff purchases surface]].
+are all in place, and the checks this environment can run are green. The work
+units are merged into `main` through pull request #70 as merge commit `f214003`,
+with the required CI checks green on head `4442466` (run `36277429018`;
+`Database migrations` and `Lint, Typecheck, Test, Build` both `SUCCESS`), which
+satisfies the Story's delivery expectations. This is **not** a
+production-readiness statement: [[EPIC-11]] remains open for [[PUR-003]].

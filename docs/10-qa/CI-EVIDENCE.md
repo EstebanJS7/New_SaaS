@@ -1,7 +1,7 @@
 ---
 type: qa
 status: active
-updated: 2026-09-26
+updated: 2026-09-27
 ---
 
 # CI Evidence
@@ -857,4 +857,93 @@ superseded here without being altered.
 - [ ] [[EPIC-11]] is stated as open, with [[PUR-001]], [[PUR-002]] and
       [[PUR-003]] named.
 - [ ] The local EPIC-11 section above is unchanged.
+- [ ] No statement claims release, deployment or production readiness.
+
+## EPIC-11 Closure Baseline (CI) — PUR-001 and PUR-002 (2026-09-27)
+
+Canonical post-merge CI evidence for the [[PUR-001]] purchase-draft and
+[[PUR-002]] purchase-receiving slices of [[EPIC-11]], captured after pull
+requests #70 and #71 merged their feature branches into `main`. These are the
+machine-generated receipts for the merged slices: each run below was produced by
+CI on the evaluated head commit, and together they **supersede** the
+corresponding local runs as the canonical baseline for the two slices. The local
+runs remain useful as pre-push evidence, and the SUP-001 baseline above is
+unchanged and stays the canonical baseline for that slice.
+
+This entry records delivery of the draft and receiving slices only. It is
+**not** a production-readiness statement and it closes nothing at epic level:
+[[EPIC-11]] remains open, the [[PUR-003]] staff purchases surface remains
+`planned`, and no exit criterion of that epic is checked by this section.
+
+### Delivery
+
+| Slice       | Pull request                                                            | Merge commit                                                   | Merged at              |
+| ----------- | ----------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------- |
+| [[PUR-001]] | #70 — `feat(EPIC-11): implement the purchase draft lifecycle (PUR-001)` | `f2140036fa7f18be9293c21a62bb9e2f7828f759` (`f214003`, `main`) | `2026-09-26T22:53:35Z` |
+| [[PUR-002]] | #71 — `feat(EPIC-11): implement purchase receiving (PUR-002)`           | `8862050c74f4dafa3518d4029c8becb778895979` (`8862050`, `main`) | `2026-09-27T04:16:17Z` |
+
+### Canonical baseline — PUR-001 (run `36277429018`)
+
+| Field      | Value                                                           |
+| ---------- | --------------------------------------------------------------- |
+| Workflow   | `.github/workflows/ci.yml` (`CI`)                               |
+| Run        | `36277429018`                                                   |
+| Head SHA   | `44424665da95a08d379435add856e6767bbbb9c6` (`4442466`, PR head) |
+| Conclusion | `success`                                                       |
+| URL        | https://github.com/EstebanJS7/New_SaaS/actions/runs/36277429018 |
+
+Both required jobs reported `SUCCESS`:
+
+| Job                            | Result    |
+| ------------------------------ | --------- |
+| `Database migrations`          | `SUCCESS` |
+| `Lint, Typecheck, Test, Build` | `SUCCESS` |
+
+### Canonical baseline — PUR-002 (run `36293559990`)
+
+| Field      | Value                                                           |
+| ---------- | --------------------------------------------------------------- |
+| Workflow   | `.github/workflows/ci.yml` (`CI`)                               |
+| Run        | `36293559990`                                                   |
+| Head SHA   | `edfa66cbcfbf514f97ed2a0fa657c04b0091ab1e` (`edfa66c`, PR head) |
+| Conclusion | `success`                                                       |
+| URL        | https://github.com/EstebanJS7/New_SaaS/actions/runs/36293559990 |
+
+Both required jobs reported `SUCCESS`:
+
+| Job                            | Result    |
+| ------------------------------ | --------- |
+| `Database migrations`          | `SUCCESS` |
+| `Lint, Typecheck, Test, Build` | `SUCCESS` |
+
+### Jobs shared by both merges
+
+The same two required jobs ran for both merges — `Database migrations` and
+`Lint, Typecheck, Test, Build` — and both reported `SUCCESS` in each run. The
+`Database migrations` job applies every migration to a fresh database, runs the
+idempotent seed probe and the live-PostgreSQL application-path isolation suite;
+the `Lint, Typecheck, Test, Build` job covers the root quality gates.
+
+### Scope and standing
+
+- This baseline covers the PUR-001 draft and PUR-002 receiving slices only.
+- [[EPIC-11]] is **not** closed: the [[PUR-003]] staff purchases surface remains
+  `planned` and the epic's own exit criteria are still open.
+- The runs above supersede the corresponding local runs as the canonical
+  baseline for the two slices; the local runs remain pre-push evidence, and the
+  SUP-001 baseline above is unchanged.
+- No statement here claims release, deployment or production readiness.
+
+### Documentation review criteria
+
+- [ ] The pull requests, merge commits and merge timestamps match the delivery
+      table.
+- [ ] Each run's head SHA, run, conclusion and both jobs match the baseline
+      tables.
+- [ ] The runs are presented as machine-generated receipts that supersede the
+      local runs, which stay as pre-push evidence.
+- [ ] The same two jobs are noted as running for both merges.
+- [ ] [[EPIC-11]] is stated as open, with the [[PUR-003]] staff purchases
+      surface named.
+- [ ] The local and SUP-001 sections above are unchanged.
 - [ ] No statement claims release, deployment or production readiness.

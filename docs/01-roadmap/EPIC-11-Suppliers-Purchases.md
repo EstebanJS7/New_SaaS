@@ -19,7 +19,7 @@ prd_sections:
   - "40"
   - "41"
 created: 2026-09-26
-updated: 2026-09-26
+updated: 2026-09-27
 ---
 
 # EPIC-11 — Suppliers/Purchases
@@ -99,9 +99,32 @@ green.
 - The slice's live-PostgreSQL evidence is recorded as the EPIC-11 CI baseline in
   `docs/10-qa/CI-EVIDENCE.md`.
 
-The epic is **not** closed: [[PUR-001]] and [[PUR-002]] are implemented on their
-own branches, [[PUR-003]] remains `planned`, every exit criterion below is still
-open, and this record keeps `status: planned`.
+The purchase slices have since merged as well, both with CI green:
+
+- Pull request #70
+  (`feat(EPIC-11): implement the purchase draft lifecycle (PUR-001)`, base
+  `main`) merged `feat/epic-11-purchase-draft` into `main` as merge commit
+  `f214003` (`f2140036fa7f18be9293c21a62bb9e2f7828f759`), merged
+  `2026-09-26T22:53:35Z`.
+- CI run `36277429018` on the evaluated head commit `4442466`
+  (`44424665da95a08d379435add856e6767bbbb9c6`) concluded `success`, with
+  `Database migrations` and `Lint, Typecheck, Test, Build` both `SUCCESS`.
+- Pull request #71 (`feat(EPIC-11): implement purchase receiving (PUR-002)`,
+  base `main`) merged `feat/epic-11-purchase-receiving` into `main` as merge
+  commit `8862050` (`8862050c74f4dafa3518d4029c8becb778895979`), merged
+  `2026-09-27T04:16:17Z`.
+- CI run `36293559990` on the evaluated head commit `edfa66c`
+  (`edfa66cbcfbf514f97ed2a0fa657c04b0091ab1e`) concluded `success`, with
+  `Database migrations` and `Lint, Typecheck, Test, Build` both `SUCCESS`.
+- The same two required jobs ran for both merges. These runs are the
+  machine-generated receipts for the merged slices and supersede the
+  corresponding local runs as the canonical baseline, while the local runs
+  remain useful as pre-push evidence; the merged evidence is recorded in
+  `docs/10-qa/CI-EVIDENCE.md`.
+
+The epic is **not** closed: the [[PUR-003]] staff purchases surface remains
+`planned`, every exit criterion below is still open, and the epic-level durable
+evidence is only partially satisfied, so this record keeps `status: planned`.
 
 ## Scope
 
@@ -227,12 +250,18 @@ open, and this record keeps `status: planned`.
   tests, the route probe pins the sixth route, and the live-PostgreSQL suite
   grows to 71/71 with a 6-case receiving block whose concurrent double-receive
   race admits exactly one `201` under a proven header-row-lock overlap.
+- 2026-09-26: [[PUR-001]] merged into `main` as merge commit `f214003` through
+  pull request #70, required CI checks green on head `4442466` (run
+  `36277429018`).
+- 2026-09-27: [[PUR-002]] merged into `main` as merge commit `8862050` through
+  pull request #71, required CI checks green on head `edfa66c` (run
+  `36293559990`).
 
 This note records implementation progress only. Every epic acceptance and exit
 criterion in this record remains unchecked and the epic `status` stays
-`planned`, because the staff surface ([[PUR-003 Staff purchases surface]]) is
-not implemented and the receiving work units are not merged, so the epic's exit
-criteria are not met.
+`planned`, because the staff surface (the [[PUR-003]] staff purchases surface)
+is not implemented and the epic-level durable evidence is only partially
+satisfied, so the epic's exit criteria are not met.
 
 ## Dependencies
 
