@@ -242,7 +242,7 @@ No existing catalog, inventory, supplier or purchase route is touched.
 
 Planned additive migration `20260927000001_sales`: one enum, two tables, their
 indexes, constraints and the delete-rejection guarantee. It alters no existing
-table and inserts no rows. It is not created by this Story.
+table and inserts no rows. This Story creates it as its first work unit.
 
 ### Models/Tables
 
