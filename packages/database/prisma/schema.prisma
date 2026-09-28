@@ -156,6 +156,8 @@ model Tenant {
   suppliers                   Supplier[]
   purchases                   Purchase[]
   purchaseLines               PurchaseLine[]
+  sales                       Sale[]
+  saleLines                   SaleLine[]
 
   @@map("tenant")
 }
@@ -661,6 +663,10 @@ model Customer {
 
   portalAccess          CustomerPortalAccess[]
   portalBookingRequests PortalBookingRequest[]
+
+  /// EPIC-12 sale back-reference: the draft sales that name this customer
+  /// through the OPTIONAL composite tenant-ownership FK (DEC-028).
+  sales Sale[]
 
   /// Tenant-ownership key: target of the portal composite customer FKs.
   @@unique([tenantId, id])
@@ -1245,6 +1251,9 @@ model TaxRate {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   catalogItems CatalogItem[]
+  /// EPIC-12 sale back-reference: the frozen line snapshots that name this rate
+  /// through the RESTRICT `tax_rate(code)` reference (DEC-021).
+  saleLines SaleLine[]
 
   @@map("tax_rate")
 }
@@ -1304,6 +1313,10 @@ model CatalogItem {
   /// EPIC-11 purchase back-reference: the draft lines that reference this item
   /// through the composite tenant-ownership FK.
   purchaseLines PurchaseLine[]
+
+  /// EPIC-12 sale back-reference: the priced sale lines that reference this item
+  /// through the composite tenant-ownership FK.
+  saleLines SaleLine[]
 
   /// Tenant-ownership key: target of the composite service FK from Appointment
   /// (EPIC-09 WU4) and of the composite item FKs from the EPIC-10 stock ledger,
@@ -1612,6 +1625,168 @@ model PurchaseLine {
   /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
   @@unique([tenantId, id])
   @@map("purchase_line")
+}
+
+// ---------------------------------------------------------------------------
+// Sales (EPIC-12 POS-001 data foundation). Tenant-scoped sale draft aggregate
+// of the Core `sales` domain (PRD §18): one sale carries one currency, an
+// OPTIONAL customer of the same tenant and the priced lines a future invoice
+// consumes as an immutable snapshot. This slice ships the DRAFT half of the
+// lifecycle only — the create/read/update/cancel commands land with the API
+// slice (POS-001 W2) and `DRAFT -> COMPLETED` with POS-003.
+//
+// There is deliberately NO human-readable identifier (DEC-027): the sale is
+// identified by its UUID alone, so no `number`, no sequence and no allocation
+// step exists. There is equally no discount surface (DEC-028): the per-line
+// price override is the only price adjustment, and no percentage, amount or
+// reason column exists. The sale carries no `appointmentId` and no `patientId`,
+// so it never couples the Core sales domain to Scheduling or Clinical
+// (DEC-028), and no `total` column exists because the sale total is the sum of
+// the line totals (DEC-021).
+//
+// Tenant ownership is carried by composite `(tenant_id, id)` keys, so a sale
+// can only reference a customer of the SAME tenant and a line can only
+// reference a sale and a catalog item of the SAME tenant.
+//
+// Immutability is CONDITIONAL on the sale status (DEC-023): the migration
+// rejects DELETE with a `BEFORE DELETE` trigger on each table ONLY while the
+// owning sale is COMPLETED or CANCELLED, so a DRAFT stays fully editable —
+// including dropping a line during the update command's line-set
+// reconciliation — while a settled sale and its lines stay immutable and
+// readable.
+//
+// Data classification: the currency, the status and every line money amount are
+// INTERNAL (PRD §41), and logs and audit carry ids and field names only — never
+// a payload.
+// ---------------------------------------------------------------------------
+
+/// Sale lifecycle (PRD §18, DEC-023), pinned to exactly these three states.
+/// `COMPLETED` is produced only by the POS-003 CompleteSale transaction, and
+/// `CANCELLED` is reachable only from DRAFT through the explicit cancel command.
+/// Values are appended, never reordered or removed. Evolve additively only.
+enum SaleStatus {
+  DRAFT
+  COMPLETED
+  CANCELLED
+
+  @@map("sale_status")
+}
+
+/// Tenant-scoped sale header (PRD §18, DEC-021, DEC-027, DEC-028). `customerId`
+/// is OPTIONAL and resolved through the composite `(tenantId, customerId)` FK,
+/// so a foreign customer is not a representable state (DEC-028); `currency` is
+/// the server-resolved `sales.defaultCurrency` tenant setting and is never read
+/// from the request body (DEC-022).
+///
+/// No number, sequence or formatted identifier column exists (DEC-027): the sale
+/// is identified by its UUID plus its creation date. No discount column exists
+/// and no price adjustment other than the line price override is representable
+/// (DEC-022, DEC-028). No `appointmentId` and no `patientId` column exists
+/// (DEC-028), and no `total` column exists because the total is the sum of the
+/// line totals (DEC-021).
+///
+/// A sale is hard-deletable ONLY while it is DRAFT (DEC-023); the migration
+/// rejects DELETE for a COMPLETED or CANCELLED row. Data classification: the
+/// currency, the status and the line money amounts are INTERNAL (PRD §41); logs
+/// and audit carry ids and field names only.
+model Sale {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId   String     @map("tenant_id") @db.Uuid
+  /// OPTIONAL customer (DEC-028): a walk-in counter sale needs none.
+  customerId String?    @map("customer_id") @db.Uuid
+  /// Single sale currency: an ISO 4217 code resolved server-side from the typed
+  /// `sales.defaultCurrency` tenant setting (DEC-022). No conversion exists.
+  currency   String     @db.VarChar(3)
+  /// PRD §18 lifecycle. Defaults to DRAFT: a new sale is a draft until the
+  /// explicit cancel command (POS-001) or the CompleteSale transaction
+  /// (POS-003) transitions it.
+  status     SaleStatus @default(DRAFT)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// OPTIONAL composite tenant-ownership FK: when a customer is present it must
+  /// be in the SAME tenant (DEC-028).
+  customer Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  lines SaleLine[]
+
+  /// Tenant-ownership key: target of the composite sale FK from `SaleLine`.
+  @@unique([tenantId, id])
+  /// Tenant list lookup: `(tenant_id, status)` serves the status-filtered sale
+  /// list without a second scan (there is no numbering column to sort on).
+  @@index([tenantId, status])
+  @@map("sale")
+}
+
+/// Tenant-scoped sale line (DEC-021, DEC-022). The two decimals carry the
+/// decision's exact scales: money is `Decimal(14, 2)` — the catalog
+/// reference-price scale — and `quantity` is the ledger's `Decimal(10, 3)`.
+/// `unitPrice` is the applied price whether it came from the catalog reference
+/// price or from the operator's override (DEC-022).
+///
+/// The line is the immutable money record: `rateCode`, `unitPrice`, `quantity`,
+/// `lineTotal`, `taxableBase` and `taxAmount` are the frozen snapshot a future
+/// invoice consumes, so a later rate change never rewrites what a past sale
+/// charged (DEC-021). `rateCode` stores the stable `tax_rate.code` value and is
+/// backed by a RESTRICT reference to the global row, so an unknown code is not
+/// representable and a rate a sale used can never be deleted. There is no
+/// tax-rate id, no discount and no document-level arithmetic.
+///
+/// A duplicate `catalogItemId` within one sale is rejected by the tenant-leading
+/// unique key, which is what keeps the update command's line-set reconciliation
+/// deterministic. Both references are composite tenant-ownership FKs, so a line
+/// can only reference a sale and a catalog item of the SAME tenant.
+///
+/// A line is hard-deletable ONLY while its sale is DRAFT (DEC-023); the
+/// migration rejects DELETE when the owning sale is COMPLETED or CANCELLED.
+/// Data classification: the money amounts and the frozen rate code are INTERNAL
+/// (PRD §41); logs and audit carry ids and field names only.
+model SaleLine {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String @map("tenant_id") @db.Uuid
+  saleId        String @map("sale_id") @db.Uuid
+  catalogItemId String @map("catalog_item_id") @db.Uuid
+
+  /// Frozen stable rate code (DEC-021), e.g. `EXEMPT`/`IVA_5`/`IVA_10`. Stored
+  /// as the code rather than a rate id so the snapshot survives independently of
+  /// the referenced row; the migration adds the RESTRICT reference to the global
+  /// `tax_rate(code)` unique column.
+  rateCode String @map("rate_code") @db.VarChar(20)
+
+  /// Applied unit price (DEC-022): tax-included and overridable per line.
+  unitPrice   Decimal @map("unit_price") @db.Decimal(14, 2)
+  /// Strictly positive exact quantity on the ledger's `Decimal(10, 3)` scale;
+  /// the migration adds the `> 0` CHECK (DEC-021).
+  quantity    Decimal @db.Decimal(10, 3)
+  /// Frozen tax-included line total; the migration adds the `>= 0` CHECK.
+  lineTotal   Decimal @map("line_total") @db.Decimal(14, 2)
+  /// Frozen tax-excluded base derived from the rate (DEC-021).
+  taxableBase Decimal @map("taxable_base") @db.Decimal(14, 2)
+  /// Frozen tax amount derived from the rate (DEC-021).
+  taxAmount   Decimal @map("tax_amount") @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the Sale must be in the SAME tenant.
+  sale Sale @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the CatalogItem must be in the SAME tenant.
+  catalogItem CatalogItem @relation(fields: [tenantId, catalogItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// RESTRICT reference to the GLOBAL rate row (DEC-021): an unknown code is
+  /// not representable and a rate a sale used can never be deleted.
+  taxRate TaxRate @relation(fields: [rateCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+
+  /// One line per catalog item inside one sale: the duplicate rejection that
+  /// keeps the line-set reconciliation deterministic.
+  @@unique([tenantId, saleId, catalogItemId])
+  /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
+  @@unique([tenantId, id])
+  @@map("sale_line")
 }
 
 // ---------------------------------------------------------------------------
