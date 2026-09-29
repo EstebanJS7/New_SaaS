@@ -210,7 +210,9 @@ receiving.
       unchanged and no existing migration is rewritten.
 - [ ] The new permission key and role matrix are seeded, and the seed-count
       probe is reconciled: `sales.complete` is held by `OWNER`, `ADMIN` and
-      `CASHIER` within the epic total of 43 → 50 ([[DEC-026]]).
+      `CASHIER`; this Story takes the seeded count **50 → 51** with
+      `sales.complete`, inside the epic's **43 → 51** total ([[DEC-026]] and its
+      2026-09-29 subsequent-scope note).
 - [ ] Tenant isolation tests exist for the completion path, authorization and
       validation tests cover the route, and the live-PostgreSQL suite proves
       atomicity, the signed-negative ledger effect, the CASH payment path, the
@@ -279,7 +281,8 @@ Planned additive migration `20260927000003_sale_completion`: one
 the `payment` table and the tenant-scoped idempotency table. It alters no
 existing table, rewrites no existing migration and — following the EPIC-11
 receiving precedent — only appends the enum value, so the plain single-statement
-form applies on the supported PostgreSQL 16. It is not created by this Story.
+form applies on the supported PostgreSQL 16. This Story creates it as its first
+work unit.
 
 ### Models/Tables
 
@@ -358,7 +361,15 @@ Planned coverage; none of it exists yet.
 
 ## Known Limitations
 
-- None yet; nothing is implemented.
+- The in-memory boundary is single-threaded, so the HTTP suite pins the lock
+  ordering and the loser's observable outcome but cannot prove the true
+  interleaving; the live-PostgreSQL block proves the concurrent double-complete
+  under a held header row lock.
+- A line whose item does not track stock writes no movement and gets no stock
+  validation, following the ledger's own `tracksStock` write-path gate rather
+  than a rule of this command.
+- The operator enters the exact amount that enters the register, so a physical
+  change calculation happens outside the system ([[DEC-029]]).
 - Planned: the shared in-memory boundary is single-threaded, so the HTTP suite
   can pin the lock ordering and the loser's observable outcome but cannot prove
   the true interleaving; the live-PostgreSQL block must prove the concurrent
@@ -401,6 +412,35 @@ Planned coverage; none of it exists yet.
     order and the conditional status write, applied here as the replay backstop.
 - An ADR is not expected: the command preserves the ledger, the transaction
   model and the approved stack.
+
+## Resolutions accepted by the maintainer (2026-09-29)
+
+Three contracts the story and its Decisions left open were confirmed before the
+first write. Each is binding on this slice.
+
+1. **Reference state is validated at completion.** An inactive catalog item or
+   an inactive customer rejects the completion with a stable `409` that persists
+   nothing, mirroring how [[DEC-014]] split the purchase draft from receiving:
+   the draft does not check reference state and the authoritative step does.
+   [[POS-001]] deliberately left this to this Story and recorded it that way.
+   The item's currency is **not** re-validated, because the line was already
+   priced when it joined the sale ([[DEC-022]]).
+2. **Completion recomputes and writes the snapshot.** The `DRAFT` line already
+   persists derived amounts (the POS-001 resolution), but completion re-derives
+   `lineTotal`, `taxableBase` and `taxAmount` from the line's frozen inputs
+   (`unitPrice`, `quantity`, `rateCode` against the global rate) and writes
+   them, because [[DEC-021]] makes completion the step that computes and
+   freezes. A `COMPLETED` sale is never recomputed again.
+3. **A replay answers `200`, a fresh completion answers `201`.** Both return the
+   completed sale; the status distinguishes "just completed" from "already
+   completed" without changing the shape of the body ([[DEC-024]]).
+
+Two further implementation choices recorded with them: the idempotency record's
+result reference is the **sale id**, re-read inside the caller's tenant on
+replay, rather than a stored response snapshot; and the record's `operation`
+token is the stable string `sale.complete`. The idempotency lookup happens
+**after** the header row lock, so a concurrent completion cannot slip between
+the lookup and the write.
 
 ## Resolved by Decision
 
