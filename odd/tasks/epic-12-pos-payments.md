@@ -699,8 +699,26 @@ Also recorded in the story:
 
 - 2026-09-29: branch created from `main` after the stack drained; the three
   resolutions were answered before the first write and are recorded in the story
-  and above.
+  and above. A fourth was added mid-slice when the design exposed that a CASH
+  payment could not pick a session: exactly one `OPEN` session is now required.
+- 2026-09-29: D0 (`78f70f0`, `a44accd`), D1 (`91e712d`), D2 (`441f72b`), D3
+  (`2bb0f6c`) and D4 (`f3668f8`) all landed. Parent-verified evidence: database
+  17 files / 346 tests; API 75 files / 1049 tests with the 36-case sales suite;
+  live suite 99 tests, 0 skipped, with 9 completion cases; typecheck, lint and
+  `format-check` clean; live database showing 25 migrations, 51 permissions, the
+  additive enum, the six payment methods, the two conditional `payment` triggers
+  and the `(tenant_id, operation, key)` unique.
+- 2026-09-29: merged as pull request #80, merge commit `dc7c429`, CI run
+  `36592652167` green on head `f3668f8` on both required checks. POS-003 is
+  `done`; [[TD-016]] carries a dated status update recording the completion
+  command as its third compliant stock writer, and the debt stays open.
+- Fixed inside D2 rather than deferred: D1's additive `SALE` migration
+  invalidated an EPIC-11 live-spec assertion that pinned `stock_movement_type`
+  to exactly `[ADJUSTMENT, PURCHASE]`. The lesson is that an enum probe must be
+  reconciled in the same slice that appends the value.
 
 ## Next step
 
-D1 data layer, then D2 the command, D3 live coverage and D4 closure.
+POS-004 (the staff POS surface consuming the draft, completion and cash routes)
+and then POS-005 (epic closure: module documentation, `CI-EVIDENCE.md`, the
+changelog and the roadmap status).

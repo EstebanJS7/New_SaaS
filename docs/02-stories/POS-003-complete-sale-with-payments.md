@@ -3,7 +3,7 @@ id: POS-003
 type: story
 title: Complete sale with payments
 epic: EPIC-12
-status: in-progress
+status: done
 priority: high
 depends_on:
   - POS-001
@@ -217,8 +217,9 @@ receiving.
       validation tests cover the route, and the live-PostgreSQL suite proves
       atomicity, the signed-negative ledger effect, the CASH payment path, the
       idempotent replay, immutability and the concurrent double-complete race.
-- [ ] Required lint, typecheck, test, integration and build checks pass. The
-      local gates pass; the branch CI receipt is pending.
+- [x] Required lint, typecheck, test, integration and build checks pass, and the
+      merged branch carries its CI receipt (run `36592652167` green on both
+      required checks).
 
 ## Domain Invariants
 
@@ -377,7 +378,10 @@ PRD §19 methods, `payment` with its two conditional triggers and the
 `(tenant_id, operation, key)` unique on `idempotency_record`, and **51** seeded
 permissions with `sales.complete` held by `OWNER`, `ADMIN` and `CASHIER` only.
 
-Not claimed: the branch CI receipt, which does not exist yet.
+Merged as pull request #80 with merge commit `dc7c429` on 2026-09-29, CI run
+[`36592652167`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36592652167)
+green on the evaluated head `f3668f8` with both required checks passing
+(`Database migrations` 1m13s, `Lint, Typecheck, Test, Build` 4m8s).
 
 ## Tests Added
 
@@ -559,13 +563,13 @@ the lookup and the write.
 
 ## Completion Notes
 
-All nineteen behavioral acceptance criteria are checked against local evidence
-and the live-PostgreSQL block; the twentieth stays unchecked because it is the
-branch CI receipt, which cannot exist before the pull request runs. The status
-is therefore `in-progress`, and it flips to `done` in a closure commit after the
-merge. `done` will mean implementation closure only, never production readiness:
-[[TD-016]], [[TD-018]] and [[TD-020]] stay open, and EPIC-20 Production
-Hardening is untouched.
+All twenty acceptance criteria are checked and the story is closed by the
+merged, CI-backed receipt: pull request #80 merged as `dc7c429` with run
+`36592652167` green on both required checks. `done` means **implementation
+closure only, never production readiness**: [[TD-016]] stays open with this
+slice recorded as its third compliant stock writer, [[TD-018]] keeps sale
+reversal and payment refund deferred, [[TD-020]] keeps idempotency retention
+unpurged, and EPIC-20 Production Hardening is untouched.
 
 The one criterion the in-memory suite cannot prove is the true concurrent
 interleaving, because the shared boundary is single-threaded; the live block

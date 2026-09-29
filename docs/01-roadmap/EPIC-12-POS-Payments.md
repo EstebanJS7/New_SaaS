@@ -165,11 +165,14 @@ This section records verified implementation evidence as slices land. The epic's
   implementation closure only, never production readiness. [[POS-002]]'s
   applied-schema invariants were additionally re-proven by the parent's own
   rolled-back SQL probes against the live database, with zero residue.
-- **[[POS-003]] Complete sale with payments — implemented, `in-progress`.**
-  Three commits on `feat/epic-12-sale-completion`: `91e712d` adds the D1 data
-  layer, `441f72b` adds the D2 completion command, and `2bb0f6c` adds the D3
-  live-PostgreSQL coverage. The story is `in-progress` and flips to `done` in a
-  closure commit after its pull request merges and its CI receipt exists.
+- **[[POS-003]] Complete sale with payments — `done`.** Three commits plus the
+  documentation reconciliation on `feat/epic-12-sale-completion`: `91e712d` adds
+  the D1 data layer, `441f72b` adds the D2 completion command, `2bb0f6c` adds
+  the D3 live-PostgreSQL coverage and `f3668f8` reconciles the story. The story
+  closed on its merged, CI-backed receipt: pull request #80 merged into `main`
+  as the merge commit `dc7c429` on 2026-09-29 with CI run `36592652167` green on
+  the evaluated head `f3668f8` on both required checks. `done` means
+  implementation closure only, never production readiness.
 - **D1 evidence.** The additive `20260927000003_sale_completion` migration — the
   `SALE` value on `stock_movement_type`, the `payment_method` enum, the
   `payment` table and the tenant-scoped `idempotency_record` — passes
