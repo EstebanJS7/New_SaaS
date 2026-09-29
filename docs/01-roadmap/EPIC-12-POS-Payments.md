@@ -23,7 +23,7 @@ prd_sections:
   - "40"
   - "41"
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-29
 ---
 
 # EPIC-12 — POS/Payments
@@ -47,12 +47,14 @@ serialization protocol instead of touching balances directly. It also builds on
 and `cash` feature codes (PRD §10).
 
 EPIC-12 is the first Core surface that is also an entitlement capability: the
-already-seeded `sales` feature code gates it through `EntitlementsService.has`,
-as recorded by [[DEC-026]]. It stops at the forward sale path. Session close
-with the expected/counted difference, the six remaining cash movement kinds,
-cash reversals, the full cash UI, invoices, billing, fiscal documents and sale
-reversal or payment refund belong to later epics and are explicitly out of scope
-here.
+already-seeded `sales` feature code gates the sale surface and the
+already-seeded `cash` feature code gates the cash surface, each through
+`EntitlementsService.has`, as recorded by [[DEC-026]] (the `cash` gate is the
+2026-09-29 subsequent-scope clarification). It stops at the forward sale path.
+Session close with the expected/counted difference, the six remaining cash
+movement kinds, cash reversals, the full cash UI, invoices, billing, fiscal
+documents and sale reversal or payment refund belong to later epics and are
+explicitly out of scope here.
 
 ## Current state before implementation (verified 2026-09-27)
 
@@ -131,8 +133,29 @@ This section records verified implementation evidence as slices land. The epic's
   database after `db:deploy` plus `db:seed` reports 23 applied migrations, a
   `permission` count of 47 and the planned enum, columns, foreign keys and
   delete triggers.
-- **[[POS-002]]–[[POS-005]] remain `planned`.** No cash, completion, payment,
-  staff surface or closure work has started.
+- **[[POS-002]] Cash register and session foundation — `in-progress`, pending
+  the branch's CI receipt.** Five commits on `feat/epic-12-cash-foundation`:
+  `edc91b5` tracks the slice and its four resolutions, `7ad99f6` records those
+  resolutions as dated decision notes, `9892fc1` adds the C1 data foundation,
+  `fda5b92` adds the C2 API surface, and `ade5a1a` adds the C3 live-PostgreSQL
+  coverage.
+- **C1 evidence.** The additive `20260927000002_cash_foundation` migration, the
+  three models and the `SALE`-only enum pass
+  `pnpm --filter @newsaas/database test` (17 files / 324 tests, 30 of them the
+  new `schema-cash.test.ts`), and the seed-count probe moves the permission
+  catalog 47 → 50 with the three `cash.*` keys.
+- **C2 evidence.** `pnpm --filter @newsaas/api test` with a schema-less
+  `DATABASE_URL_TEST` passes 75 files / 1026 tests, 17 of them the new
+  `cash.integration.test.ts`, and the route-contract probe pins the four cash
+  routes.
+- **C3 evidence.** `pnpm --filter @newsaas/api test:live-pg` passes 90 tests
+  with 0 skipped, 10 of them the EPIC-12 cash-foundation cases; the live
+  database after `db:deploy` plus `db:seed` reports 24 applied migrations, a
+  `permission` count of 50, the partial unique index
+  `cash_session_one_open_per_register_key`, seven `RESTRICT` foreign keys and
+  three triggers.
+- **[[POS-003]]–[[POS-005]] remain `planned`.** No completion, payment, staff
+  surface or closure work has started.
 - Root `pnpm test` fails in a local environment without `DATABASE_URL_TEST` for
   the pre-existing [[TD-021]] reason; CI is unaffected.
 
@@ -148,7 +171,8 @@ This section records verified implementation evidence as slices land. The epic's
 - The minimum PRD §20 Cash foundation that `CompleteSale` needs: tenant-scoped
   `CashRegister`, `CashSession` and `CashMovement`, a `CashMovementType` enum
   extended additively with `SALE` only, one `OPEN` session per register enforced
-  by a partial unique index, and a minimal session-open command ([[DEC-020]]).
+  by a partial unique index, a minimal register-create command and a minimal
+  session-open command ([[DEC-020]]).
 - An explicit idempotent `CompleteSale` command that atomically validates the
   draft, the totals, the payments and the stock, writes signed negative `SALE`
   stock movements through the EPIC-10 ledger under the `(tenant, item)`
@@ -161,9 +185,11 @@ This section records verified implementation evidence as slices land. The epic's
   and the completion flow with its distinct outcomes, using semantic design
   tokens only.
 - Granular permission keys and a seeded role matrix — `sales.read`,
-  `sales.create`, `sales.update`, `sales.cancel`, `sales.complete`, `cash.read`
-  and `cash.session.open` — with the `sales` entitlement gate on the routes,
-  moving the seeded count 43 → 50 ([[DEC-026]]).
+  `sales.create`, `sales.update`, `sales.cancel`, `sales.complete`, `cash.read`,
+  `cash.register.create` and `cash.session.open` — with the `sales` capability
+  gate on the sale routes and the `cash` capability gate on the cash routes,
+  moving the seeded count 43 → 47 (POS-001) → 50 (POS-002) → 51 (POS-003)
+  ([[DEC-026]]).
 - The additive enum values this epic adds: `SALE` on `stock_movement_type` and
   `SALE` on `cash_movement_type`.
 - Tests: tenant isolation for every new private aggregate, authorization,
@@ -277,11 +303,12 @@ evidence that will close it.
       §20 kinds stay reserved for EPIC-13; the already-seeded
       `cash.session.close` key is consumed by no EPIC-12 route. Evidence to
       produce: the additive enum gate and the route inventory of [[POS-002]].
-- [ ] The minimal session-open command and the cash read routes enforce
-      authentication, server-side tenant context, permission
-      (`cash.session.open` / `cash.read`) and the `sales` entitlement, and no
-      `PATCH` or `DELETE` route exists on cash records. Evidence to produce: the
-      authorization and route-contract pins of [[POS-002]].
+- [ ] The minimal register-create and session-open commands and the cash read
+      routes enforce authentication, server-side tenant context, permission
+      (`cash.register.create` / `cash.session.open` / `cash.read`) and the
+      `cash` capability, and no `PATCH` or `DELETE` route exists on cash
+      records. Evidence to produce: the authorization and route-contract pins of
+      [[POS-002]].
 
 ### POS-003 — Complete sale with payments
 
@@ -365,7 +392,7 @@ evidence that will close it.
   `DRAFT -> CANCELLED` command.
 - [[POS-002]] Cash register and session foundation — the three tenant-scoped
   cash aggregates, the `SALE`-only cash movement enum, the partial unique index
-  and the minimal session-open command.
+  and the minimal register-create and session-open commands.
 - [[POS-003]] Complete sale with payments — the idempotent atomic completion
   command, the ledger writes, the cash movements and the payment rows.
 - [[POS-004]] Staff POS surface — the browser transport, the item search and the
@@ -397,9 +424,9 @@ evidence that will close it.
       [[POS-005]] — is `done` with every required acceptance criterion checked
       and its implementation summary, migrations, endpoints and tests recorded.
 - [ ] CRUD and command coverage is complete for the epic's surface: the sale
-      draft reads and writes, the cancel and complete commands, the cash session
-      open command and the cash reads, with no `PATCH` and no `DELETE` anywhere
-      on the sale, payment or cash records.
+      draft reads and writes, the cancel and complete commands, the register
+      create and cash session open commands and the cash reads, with no `PATCH`
+      and no `DELETE` anywhere on the sale, payment or cash records.
 - [ ] The checks required by the epic — lint, typecheck, unit tests, integration
       tests, build and `format-check` — are green in CI for every merged work
       unit.
@@ -438,8 +465,14 @@ its recommended Option A, and they are binding on the dependent slices:
   code column, item resolution by name through the existing read API, and the
   PRD §18 scanner optimization tracked as unmet.
 - [[DEC-026]] — sales permission keys, role matrix and the entitlement gate:
-  seven new keys moving the seeded count 43 → 50, read-wide writes to the owning
-  roles, and the first entitlement-gated Core surface.
+  eight new keys moving the seeded count 43 → 51 (POS-001 43 → 47, POS-002 47 →
+  50, POS-003 50 → 51), read-wide writes to the owning roles, and the first
+  entitlement-gated Core surface — the `sales` capability on the sale routes and
+  the `cash` capability on the cash routes. The record's accepted seven keys are
+  extended by [[POS-002]]'s `cash.register.create` alongside `cash.read` and
+  `cash.session.open` (2026-09-29, subsequent-scope note), because without
+  register creation no tenant could reach an `OPEN` session and the CASH path
+  was broken.
 - [[DEC-027]] — sale identifier: no human-readable number; the sale is
   identified by its UUID only.
 - [[DEC-028]] — sale scope boundaries: optional customer, no discount, no

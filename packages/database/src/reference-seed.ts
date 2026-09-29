@@ -77,10 +77,20 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  * - EPIC-12 POS-001 adds the `sales` family over the Core sales domain:
  *   `sales.read` mirrors the read-wide catalog shape, and
  *   `sales.create`/`update`/`cancel` are the owning-roles write keys (DEC-026).
- *   They are seeded BEFORE the W2 API surface that consumes them. DEC-026's
- *   seven-key epic total of 50 is completed by POS-002 (`cash.read`,
- *   `cash.session.open`) and POS-003 (`sales.complete`), which this slice must
- *   NOT seed.
+ *   They are seeded BEFORE the W2 API surface that consumes them. The epic's
+ *   eight-key total of 51 is completed by POS-002 (`cash.read`,
+ *   `cash.register.create`, `cash.session.open`) and POS-003
+ *   (`sales.complete`), which this slice must NOT seed.
+ * - EPIC-12 POS-002 adds the `cash` family over the Core cash domain:
+ *   `cash.read` mirrors the read-wide catalog shape, and
+ *   `cash.register.create`/`cash.session.open` are the owning-roles write keys
+ *   (DEC-026 with its 2026-09-29 subsequent-scope note, which adds
+ *   `cash.register.create` as the eighth key and moves the seeded catalog
+ *   47 -> 50). They are seeded BEFORE the cash API surface that consumes them,
+ *   exactly like the sales keys above. The pre-existing `cash.session.close`
+ *   stays reserved for EPIC-13 and is consumed by no EPIC-12 route; the epic
+ *   total of 51 is completed by POS-003's `sales.complete`, which this slice
+ *   must NOT seed.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -134,13 +144,23 @@ export const PERMISSION_SEEDS = [
   { key: "purchases.receive", name: "Receive purchases" },
   // EPIC-12 POS-001 adds the `sales` family (DEC-026): all six roles read
   // sales, and `OWNER`/`ADMIN`/`CASHIER` create, update and cancel them. The
-  // epic reaches its seven-key total of 50 with `cash.read` and
-  // `cash.session.open` (POS-002) and `sales.complete` (POS-003), which are
-  // deliberately NOT seeded by this slice.
+  // epic reaches its eight-key total of 51 with `cash.read`,
+  // `cash.register.create` and `cash.session.open` (POS-002) and
+  // `sales.complete` (POS-003), which are deliberately NOT seeded by this
+  // slice.
   { key: "sales.read", name: "Read sales" },
   { key: "sales.create", name: "Create sales" },
   { key: "sales.update", name: "Update sales" },
   { key: "sales.cancel", name: "Cancel sales" },
+  // EPIC-12 POS-002 adds the `cash` family (DEC-026, and its 2026-09-29
+  // subsequent-scope note that adds `cash.register.create` as the eighth key):
+  // all six roles read cash, and `OWNER`/`ADMIN`/`CASHIER` create registers and
+  // open sessions. `cash.session.close` above stays reserved for EPIC-13 and is
+  // consumed by no EPIC-12 route, and `sales.complete` (POS-003) is deliberately
+  // NOT seeded by this slice.
+  { key: "cash.read", name: "Read cash registers, sessions and movements" },
+  { key: "cash.register.create", name: "Create cash registers" },
+  { key: "cash.session.open", name: "Open cash sessions" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -198,6 +218,9 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.create",
     "sales.update",
     "sales.cancel",
+    "cash.read",
+    "cash.register.create",
+    "cash.session.open",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -247,6 +270,9 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.create",
     "sales.update",
     "sales.cancel",
+    "cash.read",
+    "cash.register.create",
+    "cash.session.open",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
@@ -265,6 +291,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "suppliers.read",
     "purchases.read",
     "sales.read",
+    "cash.read",
   ],
   RECEPTIONIST: [
     "inventory.stock.read",
@@ -284,6 +311,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "suppliers.read",
     "purchases.read",
     "sales.read",
+    "cash.read",
   ],
   CASHIER: [
     "cash.session.close",
@@ -296,6 +324,9 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.create",
     "sales.update",
     "sales.cancel",
+    "cash.read",
+    "cash.register.create",
+    "cash.session.open",
   ],
   // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
   // catalog keys plus the EPIC-10 stock write key; front-desk, veterinary and
@@ -318,6 +349,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "purchases.cancel",
     "purchases.receive",
     "sales.read",
+    "cash.read",
   ],
 };
 

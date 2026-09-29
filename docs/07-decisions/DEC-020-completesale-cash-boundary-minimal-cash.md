@@ -173,3 +173,36 @@ approved model into EPIC-12 because EPIC-13 depends on it and leaves the rest to
 EPIC-13. None of the options extends approved product scope, and the engineering
 rules forbid editing the PRD to normalize an implementation detail, so no PRD
 edit is proposed here.
+
+## Subsequent scope note
+
+**2026-09-29, after this record's acceptance.** The maintainer clarified three
+points of the slice that implements this decision. They are a later
+clarification that does not retroactively change the accepted text above and do
+not amend this record's scope or approval; the accepted `## Decision` text
+stands as written.
+
+- **The session records a required opening float.** `openingAmount` is
+  `DECIMAL(14,2) NOT NULL` on `POST /cash/sessions`, and `0.00` is allowed
+  because a register may open with an empty drawer. This decision requires a
+  CASH sale to increase the register's expected cash, and PRD §20 defines close
+  as the server-computed expected amount compared against the counted amount;
+  without an opening baseline that expectation cannot represent the cash already
+  in the drawer, so the baseline is part of the minimum foundation rather than
+  EPIC-13 surface.
+- **`opened_by` references the tenant membership.** The session stores
+  `opened_by_membership_id`, a composite `RESTRICT` foreign key to
+  `tenant_membership(tenant_id, id)` (that unique key already exists in
+  `packages/database/prisma/schema.prisma`). This decision requires every cash
+  record to belong to exactly one tenant; a global `user_profile` reference
+  could not guarantee that the opener belongs to the session's tenant, while the
+  composite foreign key makes it a database property.
+- **The minimal `POST /cash/registers` belongs to the slice.** This decision's
+  POS-002 share names a session-open command, but the story as originally
+  written exposed only `GET /cash/registers`, `GET /cash/sessions` and
+  `POST /cash/sessions`, so no route could create a `CashRegister`. The chain
+  this decision requires — an `OPEN` session reachable before a CASH sale — was
+  therefore broken for every tenant. A minimal register create, behind the new
+  `cash.register.create` key, is added to the same slice; the resulting
+  permission-key and seeded-count change is recorded in the [[DEC-026]]
+  subsequent-scope note of the same date.

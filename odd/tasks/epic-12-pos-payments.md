@@ -412,3 +412,159 @@ block to `apps/api/test/live-pg-isolation.e2e-spec.ts` (atomic create, the
 byte-equivalent cross-tenant `404`, the composite ownership keys, the
 `DRAFT`-only transition and the delete rejection), run the live suite, then
 reconcile the story and the epic record and open the slice pull request.
+
+**Closed 2026-09-29:** W3 ran (live suite 80/80 with nine sale cases), the docs
+were reconciled (`f21aaad`) and the slice is PR #77 with CI run `36513245839`
+green on both required checks. POS-001 flips to `done` in a closure commit after
+the merge.
+
+---
+
+# POS-002 Cash register and session foundation — implementation tracking
+
+## Objective
+
+Deliver the minimum PRD §20 Cash model that makes PRD §18's `CompleteSale`
+satisfiable: a tenant-scoped `CashRegister`, `CashSession` and `CashMovement`,
+the one-`OPEN`-session-per-register rule enforced by a partial unique index, and
+the session-open command. [[DEC-020]] fixes the boundary; EPIC-13 keeps close,
+the difference, the six other movement kinds, cash reversals and the cash UI.
+
+## Authorization and branch
+
+- The maintainer authorized continuing with POS-002 on 2026-09-29 ("ok
+  continuemos") and answered four blocking questions the story left open.
+- Branch `feat/epic-12-cash-foundation`, stacked on `feat/epic-12-sale-draft`
+  (PR #77, open) because the two slices share `app.module.ts`, the shared
+  in-memory boundary, the route-contract probe and the seed files, so stacking
+  avoids conflicts. PR order: #76, then #77, then this slice.
+- TDD: mode **off** (`openspec/config.yaml` sets `strict_tdd: false`). The gates
+  are the database schema suite, the API suite and the live-PostgreSQL suite.
+
+## Slice-level resolutions accepted by the maintainer (2026-09-29)
+
+1. **Register creation stays in the slice.** The story defined only two reads
+   and the session open, so nothing could create a `CashRegister` and the chain
+   "OPEN session -> CASH sale" was broken for every tenant. A minimal
+   `POST /cash/registers` with a new `cash.register.create` key is added. This
+   is the first EPIC-12 addition to the accepted [[DEC-026]] key set, which
+   moves from **seven keys / 50** to **eight keys / 51**; the record gets a
+   dated subsequent-scope note rather than a retroactive rewrite, following the
+   [[DEC-010]] precedent. Slice arithmetic: POS-001 took 43 -> 47, this slice
+   takes 47 -> 50 (`cash.read`, `cash.session.open`, `cash.register.create`) and
+   POS-003 takes 50 -> 51 (`sales.complete`).
+2. **The cash surface is gated on the `cash` capability**, not on `sales` as the
+   story text said. `cash` is its own seeded capability in PRD §10, exactly as
+   `sales` gates the sale surface; a dated note on [[DEC-026]] records it.
+3. **The session records a required opening float.**
+   `openingAmount Decimal(14,2) NOT NULL` on `POST /cash/sessions`, allowed to
+   be `0.00`. PRD §20 defines close as the server-computed expected amount
+   compared against the counted amount, and without a baseline that expectation
+   cannot represent the cash already in the drawer.
+4. **`opened_by` references the tenant membership.** `opened_by_membership_id`
+   with a composite `RESTRICT` foreign key to `tenant_membership(tenant_id, id)`
+   (that unique key already exists), so the database guarantees the opener
+   belongs to the session's tenant. A global `user_profile` reference could not.
+
+## Binding decisions for this slice
+
+- [[DEC-020]] the three cash entities, `SALE` as the only movement kind, the
+  partial unique index, the session-open command, no Branch dimension, and
+  EPIC-13's reserved scope (close, difference, the other six kinds, reversals,
+  UI).
+- [[DEC-026]] as extended on 2026-09-29: three `cash.*` keys, all six roles
+  read, `OWNER`/`ADMIN`/`CASHIER` write, the surface gated on the `cash`
+  capability, and `cash.session.close` left reserved for EPIC-13.
+- [[DEC-023]] cash reversals stay deferred with sale reversal and payment refund
+  ([[TD-018]]).
+- [[TD-016]] binds stock writers only; this slice writes no stock.
+
+## Tasks
+
+- [ ] C0: Align the documentation with the four accepted resolutions: the
+      POS-002 story, the epic record and dated subsequent-scope notes on
+      [[DEC-020]] and [[DEC-026]].
+- [ ] C1: Data foundation - the `CashMovementType` (`SALE` only) and
+      `CashSessionStatus` enums, the three models with tenant composite
+      ownership keys, the additive migration `20260927000002_cash_foundation`
+      (composite `RESTRICT` foreign keys, the partial unique index on
+      `(tenant_id, register_id) WHERE status = 'OPEN'`, the non-zero amount
+      CHECK and the delete-rejection triggers),
+      `packages/database/src/schema-cash.test.ts`, the three `cash.*` keys with
+      the matrix and the reconciled seed probe (43 -> 47 -> 50).
+- [ ] C2: API surface - `apps/api/src/cash/` (permissions, DTOs, Zod contracts,
+      repository, service, controller, module), the three routes
+      (`GET /cash/registers`, `GET /cash/sessions`, `POST /cash/sessions`) plus
+      `POST /cash/registers`, the `cash` entitlement gate, the co-committed
+      audit rows, the module registration, the in-memory boundary extension, the
+      route-contract probe and the integration suite.
+- [ ] C3: Live-PostgreSQL coverage for the cash foundation (the session open
+      with its audit row, the partial unique index proven by a real concurrent
+      second open, the cross-tenant `404`, the immutability trigger) plus the
+      story and epic reconciliation.
+
+## Route declaration per task
+
+| Task | Route     | Trigger evidence                                                         |
+| ---- | --------- | ------------------------------------------------------------------------ |
+| C0   | delegated | Multi-file write rule: story, epic record and two Decision notes         |
+| C1   | delegated | Multi-file write rule: schema, migration, gate, seeds and probes         |
+| C2   | delegated | Multi-file write rule: a new module with several files, probes and tests |
+| C3   | delegated | Live-suite and documentation surfaces                                    |
+
+## Progress
+
+- 2026-09-29: branch created and stacked on the POS-001 slice; the four blocking
+  questions were answered by the maintainer before the first write and are
+  recorded above.
+- 2026-09-29: C0 closed (`edc91b5`, `7ad99f6`), C1 closed (`9892fc1`), C2 closed
+  (`fda5b92`), C3 closed (`ade5a1a`), docs reconciled (`93aff47`) and the stale
+  seed comments corrected (`512d4e2`). Parent-verified evidence: database 17
+  files / 324 tests; API 75 files / 1026 tests; live suite 90 tests, none
+  skipped, with the ten cash cases; typecheck, lint and `format-check` clean;
+  and the live database showing 24 migrations, 50 permissions, the exact partial
+  index predicate, seven `RESTRICT` foreign keys and three triggers.
+
+## Independent probe evidence (parent-run, 2026-09-29)
+
+The eight-claim verification pass marked the applied-schema invariants
+**UNVERIFIED as stated**, because its boundary allowed only read-only `psql` and
+the claim required rolled-back DML probes. That is a method limit rather than
+missing evidence, but suite evidence is not an independent probe, so the parent
+ran **16 probes of its own SQL** against the live database, every one rolled
+back and each surfacing the real PostgreSQL error:
+
+| Guarantee probed                       | Observed                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Session open with `0.00`               | admitted                                                                                         |
+| Second `OPEN` for the same register    | rejected by `cash_session_one_open_per_register_key`                                             |
+| `CLOSED` sibling for the same register | admitted                                                                                         |
+| Duplicate register name in one tenant  | rejected by `cash_register_tenant_id_name_key`                                                   |
+| Same register name in another tenant   | admitted, so the unique is tenant-scoped                                                         |
+| Session `DELETE`                       | rejected: `a cash session cannot be hard-deleted; sessions are confirmed records`                |
+| Movement `UPDATE`                      | rejected: `a confirmed cash movement is immutable; correct it with a compensating movement`      |
+| Movement `DELETE`                      | rejected: `a confirmed cash movement cannot be deleted; correct it with a compensating movement` |
+| Movement amount `0`                    | rejected by `cash_movement_amount_non_zero`                                                      |
+| Negative `opening_amount`              | rejected by `cash_session_opening_amount_non_negative`                                           |
+| Reserved kind `REFUND`                 | rejected by the `cash_movement_type` enum                                                        |
+| Cross-tenant `register_id`             | rejected by `cash_session_tenant_id_register_id_fkey`                                            |
+| Cross-tenant `opened_by_membership_id` | rejected by `cash_session_tenant_id_opened_by_membership_id_fkey`                                |
+| Cross-tenant movement `session_id`     | rejected by `cash_movement_tenant_id_session_id_fkey`                                            |
+| `SALE` movement insert                 | admitted                                                                                         |
+| Zero residue                           | every table back to its pre-probe count, fixture profile and membership included                 |
+
+An early version of these probes reported three failures that were artefacts of
+the fixture itself: the two tenant variables had resolved to the same row, so a
+"cross-tenant" reference was really same-tenant and the register-name case hit
+the tenant-scoped unique instead of proving scope. Re-running with the tenants
+ordered by `id` produced the table above. The lesson is recorded rather than the
+bad run: a tenancy probe must assert that the two tenants differ before it
+interprets any rejection.
+
+## Next step
+
+Drain the pull-request stack: merge #76 (scope docs) then #77 (POS-001),
+retarget #78 to `main` so its CI runs, and flip POS-001 and POS-002 to `done` in
+closure commits that do not ride the branch whose receipt they cite. POS-003
+("CompleteSale" with payments, the ledger and cash writes, and the idempotency
+record) is the last implementation slice of the epic.

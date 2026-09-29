@@ -117,6 +117,46 @@ const STOCK_ITEM_NOT_TRACKED_MESSAGE = "The catalog item does not track stock.";
  */
 const PURCHASE_RECEIVE_MOVEMENT_REASON = "Purchase received";
 
+/** Server-owned request id pinned on every cash cross-tenant miss. */
+const CASH_NOT_FOUND_REQUEST_ID = "live-pg-cash-not-found-proof";
+
+/**
+ * The two stable `404` wire messages behind the cash aggregates, mirrored as
+ * literals so the live suite asserts the byte-exact bodies the application
+ * emits rather than importing the production constants. The register message
+ * is the one `POST /cash/sessions` renders for a foreign or unknown register.
+ */
+const CASH_REGISTER_NOT_FOUND_MESSAGE = "Cash register was not found.";
+const CASH_SESSION_NOT_FOUND_MESSAGE = "Cash session was not found.";
+
+/**
+ * Stable `409` wire message for a register create whose tenant-scoped name
+ * already exists, mirrored as a literal so the live suite asserts the
+ * byte-exact body the application emits for the real unique index.
+ */
+const CASH_REGISTER_NAME_CONFLICT_MESSAGE =
+  "A cash register with this name already exists in this tenant.";
+
+/**
+ * Stable `409` wire message for a session open against a register that already
+ * has an `OPEN` session, mirrored as a literal so the live suite asserts the
+ * byte-exact body the application emits when the partial unique index rejects a
+ * concurrent second open.
+ */
+const CASH_SESSION_ALREADY_OPEN_MESSAGE = "This cash register already has an open session.";
+
+/**
+ * Exact normalized rendering of the one-OPEN-session partial index predicate
+ * `status = 'OPEN'`, declared as raw SQL in the migration because Prisma cannot
+ * express partial indexes. `normalizeIndexPredicate` strips the parser-added
+ * enclosing parenthesis pair, the parser-added enum cast and formatting
+ * whitespace, so the stored `(status = 'OPEN'::cash_session_status)` becomes
+ * this token string; a plain composite unique index (no predicate) normalizes
+ * to the empty string and can never compare equal. Asserting exact equality
+ * therefore proves the index is PARTIAL and carries no additional boolean term.
+ */
+const CASH_ONE_OPEN_INDEX_PREDICATE = "status='OPEN'";
+
 interface CustomerDto {
   id: string;
   tenantId: string;
@@ -196,6 +236,27 @@ interface SaleDto {
   status: "DRAFT" | "COMPLETED" | "CANCELLED";
   lines: SaleLineDto[];
   total: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Allowlisted cash register projection (EPIC-12 POS-002 contract). */
+interface CashRegisterDto {
+  id: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Allowlisted cash session projection (EPIC-12 POS-002 contract). */
+interface CashSessionDto {
+  id: string;
+  registerId: string;
+  status: "OPEN" | "CLOSED";
+  openedAt: string;
+  openedByMembershipId: string;
+  openingAmount: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -433,6 +494,21 @@ const SALE_LINE_DTO_KEYS = [
   "taxAmount",
   "taxableBase",
   "unitPrice",
+].sort();
+
+/** Exact allowlisted key set of the cash register response DTO. */
+const CASH_REGISTER_DTO_KEYS = ["createdAt", "id", "isActive", "name", "updatedAt"].sort();
+
+/** Exact allowlisted key set of the cash session response DTO. */
+const CASH_SESSION_DTO_KEYS = [
+  "createdAt",
+  "id",
+  "openedAt",
+  "openedByMembershipId",
+  "openingAmount",
+  "registerId",
+  "status",
+  "updatedAt",
 ].sort();
 
 /**
@@ -7133,5 +7209,1263 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
       expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
     }, 60_000);
+  });
+
+  /**
+   * EPIC-12 POS-002 live-PostgreSQL evidence (C3).
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP and the `20260927000002_cash_foundation` migration's real DDL —
+   * what the shared in-memory boundary cannot represent (the POS-002 Story's
+   * Known Limitations say so explicitly: the fake enforces no partial unique
+   * index and no CHECK, so the one-`OPEN` rule MUST be proven against real
+   * PostgreSQL):
+   *   1. a register create over HTTP persists the trimmed name, returns the
+   *      allowlisted projection and co-commits exactly one `cash.register.created`
+   *      audit row carrying field NAMES only;
+   *   2. the per-tenant register-name unique is REAL, proven by a raw duplicate
+   *      insert the applied index rejects by name while the same name in another
+   *      tenant is admitted, and by the HTTP `409` the real index produces;
+   *   3. a session open stores the exact `Decimal(14,2)` float with `OPEN` status,
+   *      resolves the register in-tenant and the opener from the request context,
+   *      and co-commits exactly one `cash.session.opened` audit row;
+   *   4. the one-`OPEN`-session rule is a DATABASE property: the applied partial
+   *      index carries the exact predicate, a raw duplicate is rejected by name,
+   *      a `CLOSED` row is outside the index, and two concurrent opens under a
+   *      proven table-lock overlap resolve to exactly one `201` and one stable
+   *      `409` with one session row and one audit row;
+   *   5. the seven composite `RESTRICT` ownership keys are applied and reject
+   *      cross-tenant register, opener and session references;
+   *   6. confirmed rows are immutable and the money CHECKs are real;
+   *   7. another tenant's register is one byte-equivalent `404` and another
+   *      tenant's session is never observable over HTTP;
+   *   8. the cash surface is INERT: it writes no movement, sale, stock movement
+   *      or balance change;
+   *   9. zero residue: every raw probe rolled back and the fixture counts are
+   *      unchanged.
+   *
+   * Every assertion is deterministic: no injected Prisma error, no mock, no
+   * sleep, no retry, and every raw-SQL mutation runs inside a transaction that
+   * is rolled back, so no probe row ever survives.
+   */
+  describe("EPIC-12 cash foundation application-path isolation", () => {
+    /** Marker error that forces an interactive transaction to roll back. */
+    const CASH_ROLLBACK_SENTINEL = "live-pg-cash-rollback";
+
+    /**
+     * Probe-only fixture register: no HTTP case ever opens a session on it, so
+     * the zero-residue case can prove that every raw session probe rolled back.
+     */
+    let cashRegisterAId: string;
+    /** Tenant B's own register, referenced only by the cross-tenant probes. */
+    let cashRegisterBId: string;
+    /** Tenant B's own committed `OPEN` session, the foreign row to leave intact. */
+    let cashForeignSessionBId: string;
+    /** The two live owners' ACTIVE memberships: the opener the DB stores. */
+    let membershipAId: string;
+    let membershipBId: string;
+
+    /** One register create over REAL HTTP, with an optional pinned request id. */
+    const createRegister = (
+      cookie: string,
+      body: Record<string, unknown>,
+      requestId?: string
+    ): supertest.Test => {
+      const request = supertest(serverUrl).post("/cash/registers").set("Cookie", cookie);
+      return (requestId === undefined ? request : request.set("X-Request-Id", requestId)).send(
+        body
+      );
+    };
+
+    /** One session open over REAL HTTP, with an optional pinned request id. */
+    const openSession = (
+      cookie: string,
+      registerId: string,
+      openingAmount: string,
+      requestId?: string
+    ): supertest.Test => {
+      const request = supertest(serverUrl).post("/cash/sessions").set("Cookie", cookie);
+      return (requestId === undefined ? request : request.set("X-Request-Id", requestId)).send({
+        registerId,
+        openingAmount,
+      });
+    };
+
+    /**
+     * Extracts the database message from Prisma's raw-query error wrapper
+     * (`Raw query failed. Code: `23001`. Message: `...``). The captured text is
+     * the database's own message, so an assertion can compare it EXACTLY instead
+     * of matching a substring of the wrapper.
+     */
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
+      // PostgreSQL renders a `RAISE EXCEPTION` message with a fixed `ERROR: `
+      // severity prefix; stripping it leaves the exact text the trigger raises.
+      return (match ? match[1] : text).replace(/^ERROR: /, "");
+    };
+
+    /** Runs `probe` and returns the exact database message of its rejection. */
+    const captureDatabaseMessage = async (probe: () => Promise<unknown>): Promise<string> => {
+      try {
+        await probe();
+      } catch (error) {
+        return databaseMessage(error);
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `probe` and returns the PostgreSQL SQLSTATE and the exact message
+     * Prisma surfaced for its rejection.
+     *
+     * Prisma wraps a raw `unique_violation` as `P2010` and puts the SERVER's
+     * SQLSTATE in `meta.code` (`23505`) and the server's DETAIL text in
+     * `meta.message`. That DETAIL names the violated KEY COLUMNS exactly
+     * (`Key (tenant_id, name)=(...) already exists.`) but never the index, which
+     * is why the APPLIED index that produced it is identified by catalogue
+     * introspection (its name, its exact key columns and, where it has one, its
+     * exact predicate) rather than by message text.
+     */
+    const captureRawRejection = async (
+      probe: () => Promise<unknown>
+    ): Promise<{ sqlState: string | undefined; message: string }> => {
+      try {
+        await probe();
+      } catch (error) {
+        const candidate = error as { meta?: { code?: unknown; message?: unknown } };
+        return {
+          sqlState: typeof candidate.meta?.code === "string" ? candidate.meta.code : undefined,
+          message:
+            typeof candidate.meta?.message === "string"
+              ? candidate.meta.message
+              : databaseMessage(error),
+        };
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `work` inside an interactive transaction that is ALWAYS rolled back,
+     * so a probe can seed throwaway rows and attempt a mutation without
+     * persisting anything. An assertion failure inside `work` propagates and
+     * fails the case instead of matching the rollback sentinel.
+     */
+    const inRolledBackTransaction = async (
+      work: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<void> => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw new Error(CASH_ROLLBACK_SENTINEL);
+        })
+      ).rejects.toThrow(CASH_ROLLBACK_SENTINEL);
+    };
+
+    /** Raw register insert at the migration's exact shape; returns the id. */
+    const insertRawRegister = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      name: string
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "cash_register" ("id", "tenant_id", "name")
+        VALUES (${id}::uuid, ${tenantId}::uuid, ${name})
+      `;
+      return id;
+    };
+
+    /**
+     * Raw session insert at the migration's exact shape; returns the id. The
+     * opener and the register are caller-supplied so a probe can point at a
+     * FOREIGN row and let the composite keys reject it.
+     */
+    const insertRawSession = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      registerId: string,
+      openedByMembershipId: string,
+      openingAmount: string,
+      status: "OPEN" | "CLOSED" = "OPEN"
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "cash_session" (
+          "id", "tenant_id", "register_id", "status", "opened_by_membership_id",
+          "opening_amount"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid,
+          ${status}::cash_session_status, ${openedByMembershipId}::uuid,
+          ${openingAmount}::decimal
+        )
+      `;
+      return id;
+    };
+
+    /** Raw `SALE` movement insert at the migration's exact shape; returns the id. */
+    const insertRawMovement = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      registerId: string,
+      sessionId: string,
+      amount: string
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "cash_movement" ("id", "tenant_id", "register_id", "session_id", "type", "amount")
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid, ${sessionId}::uuid,
+          'SALE'::cash_movement_type, ${amount}::decimal
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * The STORED `cash_session` columns of one row, read from PostgreSQL at
+     * their OWN exact scales, so the `Decimal(14, 2)` float and the server-owned
+     * opener are asserted against real database state rather than the HTTP
+     * projection alone.
+     */
+    const rawStoredSession = (
+      id: string
+    ): Promise<
+      {
+        tenant_id: string;
+        register_id: string;
+        status: string;
+        opening_amount: string;
+        opened_by_membership_id: string;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "tenant_id"::text AS tenant_id, "register_id"::text AS register_id,
+          "status"::text AS status, "opening_amount"::text AS opening_amount,
+          "opened_by_membership_id"::text AS opened_by_membership_id
+        FROM "cash_session" WHERE "id" = ${id}::uuid
+      `;
+
+    beforeAll(async () => {
+      // The `cash` grant is explicit: plan mappings never grant access, so both
+      // live tenants must hold a direct tenant_entitlement row (DEC-026). `cash`
+      // is its own seeded feature code (PRD §10), not the `sales` capability.
+      const cashFeature = await prisma.featureCode.upsert({
+        where: { code: "cash" },
+        create: { code: "cash" },
+        update: {},
+      });
+      for (const tenantId of [tenantAId, tenantBId]) {
+        await prisma.tenantEntitlement.upsert({
+          where: { tenantId_featureCodeId: { tenantId, featureCodeId: cashFeature.id } },
+          create: { tenantId, featureCodeId: cashFeature.id },
+          update: {},
+        });
+      }
+
+      // The opener of a session is the CALLER'S own ACTIVE membership, so the
+      // block resolves the two live owners' membership ids exactly the way the
+      // guard does: server-side, from the request context, never the body.
+      const ownerA = await prisma.userProfile.findUnique({
+        where: { email: "owner-a@live.test" },
+      });
+      const ownerB = await prisma.userProfile.findUnique({
+        where: { email: "owner-b@live.test" },
+      });
+      if (!ownerA || !ownerB) {
+        throw new Error("The live owner profiles are missing");
+      }
+      const memberships = await prisma.tenantMembership.findMany({
+        where: {
+          status: "ACTIVE",
+          OR: [
+            { tenantId: tenantAId, userProfileId: ownerA.id },
+            { tenantId: tenantBId, userProfileId: ownerB.id },
+          ],
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      const membershipFor = (tenantId: string): string => {
+        const row = memberships.find((membership) => membership.tenantId === tenantId);
+        if (!row) {
+          throw new Error(`No ACTIVE membership resolved for tenant ${tenantId}`);
+        }
+        return row.id;
+      };
+      membershipAId = membershipFor(tenantAId);
+      membershipBId = membershipFor(tenantBId);
+
+      // The probe-only fixture register: no case opens a session on it, so a
+      // surviving session row could only come from a raw probe that failed to
+      // roll back (asserted by the zero-residue case).
+      const registerA = await createRegister(
+        ownerACookie,
+        { name: "Live Cash Probe Drawer A" },
+        "live-pg-cash-fixture-register-a"
+      ).expect(201);
+      cashRegisterAId = (registerA.body as CashRegisterDto).id;
+
+      // Tenant B owns a REAL register and a REAL open session: the cross-tenant
+      // probes below need foreign rows to leave intact.
+      const registerB = await createRegister(
+        ownerBCookie,
+        { name: "Live Cash Foreign Drawer B" },
+        "live-pg-cash-fixture-register-b"
+      ).expect(201);
+      cashRegisterBId = (registerB.body as CashRegisterDto).id;
+      const foreignSession = await openSession(
+        ownerBCookie,
+        cashRegisterBId,
+        "42.50",
+        "live-pg-cash-fixture-session-b"
+      ).expect(201);
+      cashForeignSessionBId = (foreignSession.body as CashSessionDto).id;
+    }, 60_000);
+
+    it("creates a register over real HTTP with its allowlisted projection and exactly one cash.register.created audit row", async () => {
+      const registersBefore = await prisma.cashRegister.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = "live-pg-cash-register-create";
+
+      const created = await createRegister(
+        ownerACookie,
+        { name: "  Live Cash Drawer A  " },
+        requestId
+      ).expect(201);
+      const body = created.body as CashRegisterDto;
+      // The allowlisted projection: no Prisma model and no server-owned tenant
+      // key crosses the boundary, and the name is TRIMMED before it is stored.
+      expect(Object.keys(body).sort()).toEqual(CASH_REGISTER_DTO_KEYS);
+      expect(body.name).toBe("Live Cash Drawer A");
+      expect(body.isActive).toBe(true);
+      expect(Object.keys(body)).not.toContain("tenantId");
+
+      const stored = await prisma.cashRegister.findUnique({ where: { id: body.id } });
+      expect(stored).toMatchObject({
+        tenantId: tenantAId,
+        name: "Live Cash Drawer A",
+        isActive: true,
+      });
+
+      // Exactly ONE co-committed audit row carrying ids and field NAMES only.
+      const audits = await prisma.auditLog.findMany({ where: { requestId } });
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        action: "cash.register.created",
+        targetType: "cash_register",
+        targetId: body.id,
+        tenantId: tenantAId,
+      });
+      const metadata = audits[0].metadata as { schemaVersion: number; changedFields: string[] };
+      expect(metadata.schemaVersion).toBe(1);
+      expect(metadata.changedFields).toEqual(["name"]);
+      const serializedMetadata = JSON.stringify(metadata);
+      expect(serializedMetadata).not.toContain(body.id);
+      expect(serializedMetadata).not.toContain("Live Cash Drawer A");
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(await prisma.cashRegister.count({ where: { tenantId: tenantAId } })).toBe(
+        registersBefore + 1
+      );
+
+      // The validation sweep: every rejected body is a stable 400 that persists
+      // nothing and appends no audit row.
+      const rejected: { label: string; requestId: string; body: Record<string, unknown> }[] = [
+        {
+          label: "empty name",
+          requestId: "live-pg-cash-register-empty",
+          body: { name: "" },
+        },
+        {
+          label: "whitespace-only name",
+          requestId: "live-pg-cash-register-whitespace",
+          body: { name: "   " },
+        },
+        {
+          label: "over-length name",
+          requestId: "live-pg-cash-register-too-long",
+          body: { name: "a".repeat(201) },
+        },
+        {
+          label: "unknown key",
+          requestId: "live-pg-cash-register-unknown-key",
+          body: { name: "Live Invalid Drawer", isActive: false },
+        },
+        {
+          label: "tenantId",
+          requestId: "live-pg-cash-register-tenant-id",
+          body: { name: "Live Invalid Drawer", tenantId: tenantBId },
+        },
+      ];
+      for (const scenario of rejected) {
+        const response = await createRegister(ownerACookie, scenario.body, scenario.requestId);
+        expect(response.status, scenario.label).toBe(400);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe(
+          "VALIDATION_FAILED"
+        );
+        // The rejection is value-free: the caller-supplied tenant id and the
+        // rejected name never echo back.
+        expect(response.text, scenario.label).not.toContain(tenantBId);
+        expect(response.text, scenario.label).not.toContain("Live Invalid Drawer");
+      }
+      expect(await prisma.cashRegister.count({ where: { tenantId: tenantAId } })).toBe(
+        registersBefore + 1
+      );
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(
+        await prisma.auditLog.count({
+          where: { requestId: { in: rejected.map((scenario) => scenario.requestId) } },
+        })
+      ).toBe(0);
+    }, 30_000);
+
+    it("rejects a duplicate register name through the real unique index while admitting the same name in another tenant", async () => {
+      // A unique value for the whole suite: the index forbids a repeat inside
+      // tenant A, so every case owns its own name.
+      const name = "Live Cash Duplicate Drawer";
+      const first = await createRegister(
+        ownerACookie,
+        { name },
+        "live-pg-cash-register-dup-first"
+      ).expect(201);
+      const firstId = (first.body as CashRegisterDto).id;
+
+      // The APPLIED index: UNIQUE on (tenant_id, name) and UNCONDITIONAL — a
+      // partial predicate here would admit a duplicate name for an inactive
+      // register, which the migration does not declare.
+      const indexRows = await prisma.$queryRaw<
+        {
+          is_unique: boolean;
+          is_primary: boolean;
+          key_1: string;
+          key_2: string;
+          predicate: string | null;
+        }[]
+      >`
+        SELECT
+          i.indisunique AS is_unique,
+          i.indisprimary AS is_primary,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        WHERE c.relname = 'cash_register_tenant_id_name_key'
+      `;
+      expect(indexRows).toHaveLength(1);
+      expect(indexRows[0]).toMatchObject({
+        is_unique: true,
+        is_primary: false,
+        key_1: "tenant_id",
+        key_2: "name",
+        predicate: null,
+      });
+
+      // Exactly ONE applied unique index on `cash_register` covers exactly those
+      // two columns in that order, so the DETAIL `(tenant_id, name)` below can
+      // only be `cash_register_tenant_id_name_key`: no other key could have
+      // produced it.
+      const covering = await prisma.$queryRaw<{ relname: string }[]>`
+        SELECT c.relname
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        JOIN pg_class AS t ON t.oid = i.indrelid
+        WHERE t.relname = 'cash_register' AND i.indisunique
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'tenant_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'name'
+      `;
+      expect(covering.map((row) => row.relname)).toEqual(["cash_register_tenant_id_name_key"]);
+
+      // A rolled-back raw duplicate in the SAME tenant is rejected by that
+      // index. Prisma surfaces the server's DETAIL, which names the violated key
+      // columns (`(tenant_id, name)`) rather than the index, so the identity of
+      // the rejecting key is the covering-index assertion above plus this exact
+      // column pair — not a message-shape assumption.
+      await inRolledBackTransaction(async (tx) => {
+        const rejection = await captureRawRejection(() => insertRawRegister(tx, tenantAId, name));
+        expect(rejection.sqlState).toBe("23505");
+        expect(rejection.message).toContain("Key (tenant_id, name)=(");
+        expect(rejection.message).toContain(name);
+        expect(rejection.message).toContain("already exists.");
+      });
+
+      // The SAME name in ANOTHER tenant is a DIFFERENT key, so it is admitted.
+      await inRolledBackTransaction(async (tx) => {
+        const foreignId = await insertRawRegister(tx, tenantBId, name);
+        const stored = await tx.$queryRaw<{ tenant_id: string; name: string }[]>`
+          SELECT "tenant_id"::text AS tenant_id, "name" AS name
+          FROM "cash_register" WHERE "id" = ${foreignId}::uuid
+        `;
+        expect(stored).toEqual([{ tenant_id: tenantBId, name }]);
+      });
+
+      // The HTTP path renders the stable 409 from the REAL index: the service
+      // performs no pre-read, so this `P2002` can only come from PostgreSQL.
+      const registersBefore = await prisma.cashRegister.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count();
+      const duplicateRequestId = "live-pg-cash-register-dup-http";
+      const duplicate = await createRegister(ownerACookie, { name }, duplicateRequestId).expect(
+        409
+      );
+      expect((duplicate.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((duplicate.body as { error: { message: string } }).error.message).toBe(
+        CASH_REGISTER_NAME_CONFLICT_MESSAGE
+      );
+      // Value-free: neither the INTERNAL name nor the tenant id echoes back.
+      expect(duplicate.text).not.toContain(name);
+      expect(duplicate.text).not.toContain(tenantAId);
+
+      // The rejected create persisted nothing and appended no audit row, and
+      // exactly ONE register carries the name in tenant A.
+      expect(await prisma.cashRegister.count({ where: { tenantId: tenantAId } })).toBe(
+        registersBefore
+      );
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId: duplicateRequestId } })).toBe(0);
+      expect(await prisma.cashRegister.count({ where: { tenantId: tenantAId, name } })).toBe(1);
+      expect((await prisma.cashRegister.findUnique({ where: { id: firstId } }))?.name).toBe(name);
+    }, 30_000);
+
+    it("opens sessions over real HTTP at the exact Decimal(14,2) float with the caller's own membership and one cash.session.opened audit row each", async () => {
+      // Dedicated registers: the one-OPEN rule is not part of this case.
+      const zeroRegister = await createRegister(
+        ownerACookie,
+        { name: "Live Cash Zero Drawer" },
+        "live-pg-cash-zero-register"
+      ).expect(201);
+      const floatRegister = await createRegister(
+        ownerACookie,
+        { name: "Live Cash Float Drawer" },
+        "live-pg-cash-float-register"
+      ).expect(201);
+      const zeroRegisterId = (zeroRegister.body as CashRegisterDto).id;
+      const floatRegisterId = (floatRegister.body as CashRegisterDto).id;
+
+      const sessionsBefore = await prisma.cashSession.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count();
+
+      // `0.00` is ALLOWED: a register may open with an empty drawer, and the
+      // value is the baseline the EPIC-13 expected amount will be compared
+      // against.
+      const zeroRequestId = "live-pg-cash-session-open-zero";
+      const zero = await openSession(ownerACookie, zeroRegisterId, "0.00", zeroRequestId).expect(
+        201
+      );
+      const zeroBody = zero.body as CashSessionDto;
+      expect(Object.keys(zeroBody).sort()).toEqual(CASH_SESSION_DTO_KEYS);
+      expect(Object.keys(zeroBody)).not.toContain("tenantId");
+      expect(zeroBody.registerId).toBe(zeroRegisterId);
+      expect(zeroBody.status).toBe("OPEN");
+      expect(zeroBody.openingAmount).toBe("0.00");
+      // The opener is the caller's OWN ACTIVE membership, never the body.
+      expect(zeroBody.openedByMembershipId).toBe(membershipAId);
+
+      const floatRequestId = "live-pg-cash-session-open-nonzero";
+      const float = await openSession(
+        ownerACookie,
+        floatRegisterId,
+        "1500.00",
+        floatRequestId
+      ).expect(201);
+      const floatBody = float.body as CashSessionDto;
+      expect(floatBody.registerId).toBe(floatRegisterId);
+      expect(floatBody.status).toBe("OPEN");
+      expect(floatBody.openingAmount).toBe("1500.00");
+      expect(floatBody.openedByMembershipId).toBe(membershipAId);
+
+      // The REAL stored columns at their own exact scale and tenant: the float
+      // is `Decimal(14, 2)` (never a float), the status is server-owned `OPEN`,
+      // the register was resolved IN-TENANT and the opener is the caller's own
+      // membership in that tenant.
+      expect(await rawStoredSession(zeroBody.id)).toEqual([
+        {
+          tenant_id: tenantAId,
+          register_id: zeroRegisterId,
+          status: "OPEN",
+          opening_amount: "0.00",
+          opened_by_membership_id: membershipAId,
+        },
+      ]);
+      expect(await rawStoredSession(floatBody.id)).toEqual([
+        {
+          tenant_id: tenantAId,
+          register_id: floatRegisterId,
+          status: "OPEN",
+          opening_amount: "1500.00",
+          opened_by_membership_id: membershipAId,
+        },
+      ]);
+      // The opener belongs to the SAME tenant the composite key requires.
+      expect(membershipAId).not.toBe(membershipBId);
+      expect(
+        await prisma.tenantMembership.count({
+          where: { id: membershipAId, tenantId: tenantAId, status: "ACTIVE" },
+        })
+      ).toBe(1);
+
+      // Exactly ONE `cash.session.opened` audit row per pinned request id, and
+      // exactly one for each opened session, carrying field NAMES only.
+      const zeroAudits = await prisma.auditLog.findMany({ where: { requestId: zeroRequestId } });
+      expect(zeroAudits).toHaveLength(1);
+      expect(zeroAudits[0]).toMatchObject({
+        action: "cash.session.opened",
+        targetType: "cash_session",
+        targetId: zeroBody.id,
+        tenantId: tenantAId,
+      });
+      const zeroMetadata = zeroAudits[0].metadata as {
+        schemaVersion: number;
+        changedFields: string[];
+      };
+      expect(zeroMetadata.schemaVersion).toBe(1);
+      expect(zeroMetadata.changedFields).toEqual(["registerId", "openingAmount"]);
+      const zeroSerialized = JSON.stringify(zeroMetadata);
+      expect(zeroSerialized).not.toContain(zeroBody.id);
+      expect(zeroSerialized).not.toContain(zeroRegisterId);
+      expect(zeroSerialized).not.toContain(membershipAId);
+
+      const floatAudits = await prisma.auditLog.findMany({ where: { requestId: floatRequestId } });
+      expect(floatAudits).toHaveLength(1);
+      expect(floatAudits[0]).toMatchObject({
+        action: "cash.session.opened",
+        targetType: "cash_session",
+        targetId: floatBody.id,
+        tenantId: tenantAId,
+      });
+      const floatMetadata = floatAudits[0].metadata as {
+        schemaVersion: number;
+        changedFields: string[];
+      };
+      expect(floatMetadata.schemaVersion).toBe(1);
+      expect(floatMetadata.changedFields).toEqual(["registerId", "openingAmount"]);
+      const floatSerialized = JSON.stringify(floatMetadata);
+      expect(floatSerialized).not.toContain(floatBody.id);
+      expect(floatSerialized).not.toContain(floatRegisterId);
+      expect(floatSerialized).not.toContain("1500.00");
+      expect(floatSerialized).not.toContain(membershipAId);
+
+      for (const sessionId of [zeroBody.id, floatBody.id]) {
+        expect(
+          await prisma.auditLog.count({
+            where: { action: "cash.session.opened", targetId: sessionId },
+          })
+        ).toBe(1);
+      }
+      expect(await prisma.cashSession.count({ where: { tenantId: tenantAId } })).toBe(
+        sessionsBefore + 2
+      );
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 2);
+    }, 30_000);
+
+    it("proves the one-OPEN-session rule with the applied partial index, a raw duplicate and an admitted CLOSED row", async () => {
+      // The APPLIED partial index: UNIQUE on (tenant_id, register_id) with the
+      // EXACT `WHERE status = 'OPEN'` predicate. Exact-equality normalization
+      // proves the index is PARTIAL and carries no extra boolean term, and the
+      // covering-index assertion proves no OTHER unique index can be the one
+      // that rejects a duplicate.
+      const indexRows = await prisma.$queryRaw<
+        {
+          is_unique: boolean;
+          is_primary: boolean;
+          key_1: string;
+          key_2: string;
+          predicate: string | null;
+        }[]
+      >`
+        SELECT
+          i.indisunique AS is_unique,
+          i.indisprimary AS is_primary,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        WHERE c.relname = 'cash_session_one_open_per_register_key'
+      `;
+      expect(indexRows).toHaveLength(1);
+      expect(indexRows[0].is_unique).toBe(true);
+      expect(indexRows[0].is_primary).toBe(false);
+      expect(indexRows[0].key_1).toBe("tenant_id");
+      expect(indexRows[0].key_2).toBe("register_id");
+      expect(normalizeIndexPredicate(indexRows[0].predicate ?? "")).toBe(
+        CASH_ONE_OPEN_INDEX_PREDICATE
+      );
+
+      const covering = await prisma.$queryRaw<{ relname: string }[]>`
+        SELECT c.relname
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        JOIN pg_class AS t ON t.oid = i.indrelid
+        WHERE t.relname = 'cash_session' AND i.indisunique
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'tenant_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'register_id'
+      `;
+      expect(covering.map((row) => row.relname)).toEqual([
+        "cash_session_one_open_per_register_key",
+      ]);
+
+      // A REAL register with a REAL committed OPEN session.
+      const register = await createRegister(
+        ownerACookie,
+        { name: "Live Cash One-Open Drawer" },
+        "live-pg-cash-one-open-register"
+      ).expect(201);
+      const registerId = (register.body as CashRegisterDto).id;
+      const opened = await openSession(
+        ownerACookie,
+        registerId,
+        "100.00",
+        "live-pg-cash-one-open-http"
+      ).expect(201);
+      const openedId = (opened.body as CashSessionDto).id;
+
+      const sessionsBefore = await prisma.cashSession.count({ where: { registerId } });
+      expect(sessionsBefore).toBe(1);
+
+      // A rolled-back raw second OPEN row for the SAME register is rejected by
+      // that index. The DETAIL names the violated key columns
+      // (`(tenant_id, register_id)`) and the covering-index assertion above ties
+      // those columns to `cash_session_one_open_per_register_key` and to no
+      // other applied unique index.
+      await inRolledBackTransaction(async (tx) => {
+        const rejection = await captureRawRejection(() =>
+          insertRawSession(tx, tenantAId, registerId, membershipAId, "250.00")
+        );
+        expect(rejection.sqlState).toBe("23505");
+        expect(rejection.message).toContain("Key (tenant_id, register_id)=(");
+        expect(rejection.message).toContain("already exists.");
+      });
+
+      // A CLOSED row for the SAME register sits OUTSIDE the partial index and is
+      // ADMITTED: any number of closed sessions coexist per register.
+      await inRolledBackTransaction(async (tx) => {
+        const closedId = await insertRawSession(
+          tx,
+          tenantAId,
+          registerId,
+          membershipAId,
+          "0.00",
+          "CLOSED"
+        );
+        const stored = await tx.$queryRaw<{ status: string }[]>`
+          SELECT "status"::text AS status FROM "cash_session" WHERE "id" = ${closedId}::uuid
+        `;
+        expect(stored).toEqual([{ status: "CLOSED" }]);
+      });
+
+      // Every probe rolled back: the register still holds exactly its one OPEN
+      // session and no CLOSED probe row survived.
+      expect(await prisma.cashSession.count({ where: { registerId } })).toBe(1);
+      expect(await prisma.cashSession.count({ where: { registerId, status: "CLOSED" } })).toBe(0);
+      expect(await prisma.cashSession.findUnique({ where: { id: openedId } })).toMatchObject({
+        status: "OPEN",
+        registerId,
+        tenantId: tenantAId,
+      });
+    }, 30_000);
+
+    it("admits exactly ONE of two concurrent opens of the same register under a proven table-lock overlap", async () => {
+      const register = await createRegister(
+        ownerACookie,
+        { name: "Live Cash Race Drawer" },
+        "live-pg-cash-race-register"
+      ).expect(201);
+      const registerId = (register.body as CashRegisterDto).id;
+      const firstRequestId = "live-pg-cash-race-open-1";
+      const secondRequestId = "live-pg-cash-race-open-2";
+      const sessionsBefore = await prisma.cashSession.count({ where: { registerId } });
+      const auditsBefore = await prisma.auditLog.count();
+
+      // Deterministic overlap: a dedicated transaction holds a SHARE table lock
+      // on `cash_session`. SHARE conflicts with the ROW EXCLUSIVE an INSERT
+      // needs, so BOTH opens park on the SAME relation lock — after their
+      // read-only register and membership resolution and BEFORE either can
+      // attempt the row insert. `waitForRelationLockWaiters` matches an
+      // UNGRANTED relation lock on exactly that table, so an unrelated lock
+      // waiter can never satisfy it: the interleaving is decided by the database
+      // boundary, never by wall-clock timing, and an unproven overlap throws.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe('LOCK TABLE "cash_session" IN SHARE MODE');
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+
+      const racers = [
+        openSession(ownerACookie, registerId, "10.00", firstRequestId).then((response) => response),
+        openSession(ownerACookie, registerId, "20.00", secondRequestId).then(
+          (response) => response
+        ),
+      ];
+
+      try {
+        await waitForRelationLockWaiters(prisma, "cash_session", 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      // The database guarantees this outcome for EVERY interleaving: the winner
+      // commits its OPEN row, the loser's concurrent insert of the same key is
+      // refused by the partial unique index and translated to the stable 409.
+      // The assertion never depends on WHICH request won, and there is no sleep
+      // and no retry that could hide a double open.
+      const admitted = responses.filter((response) => response.status === 201);
+      const rejected = responses.filter((response) => response.status === 409);
+      expect(admitted).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0].body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((rejected[0].body as { error: { message: string } }).error.message).toBe(
+        CASH_SESSION_ALREADY_OPEN_MESSAGE
+      );
+      const admittedBody = admitted[0].body as CashSessionDto;
+      expect(admittedBody.status).toBe("OPEN");
+      expect(admittedBody.registerId).toBe(registerId);
+      expect(admittedBody.openedByMembershipId).toBe(membershipAId);
+      expect(["10.00", "20.00"]).toContain(admittedBody.openingAmount);
+
+      // Exactly ONE session row exists for this register, and exactly ONE
+      // `cash.session.opened` audit row across BOTH attempts.
+      expect(await prisma.cashSession.count({ where: { registerId } })).toBe(sessionsBefore + 1);
+      expect(await prisma.cashSession.count({ where: { registerId, status: "OPEN" } })).toBe(1);
+      const raceAudits = await prisma.auditLog.findMany({
+        where: { requestId: { in: [firstRequestId, secondRequestId] } },
+      });
+      expect(raceAudits).toHaveLength(1);
+      expect(raceAudits[0]).toMatchObject({
+        action: "cash.session.opened",
+        targetType: "cash_session",
+        targetId: admittedBody.id,
+        tenantId: tenantAId,
+      });
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+    }, 60_000);
+
+    it("proves the seven composite RESTRICT ownership keys and rejects cross-tenant register, opener and session references", async () => {
+      const sessionsBefore = await prisma.cashSession.count();
+      const movementsBefore = await prisma.cashMovement.count();
+
+      // The seven APPLIED foreign keys across the three cash tables, every one
+      // RESTRICT on delete AND update (`rr`).
+      const fkRows = await prisma.$queryRaw<
+        {
+          conname: string;
+          table_name: string;
+          referenced_table: string;
+          on_delete: string;
+          on_update: string;
+        }[]
+      >`
+        SELECT
+          c.conname,
+          rel.relname AS table_name,
+          frel.relname AS referenced_table,
+          c.confdeltype AS on_delete,
+          c.confupdtype AS on_update
+        FROM pg_constraint AS c
+        JOIN pg_class AS rel ON rel.oid = c.conrelid
+        JOIN pg_class AS frel ON frel.oid = c.confrelid
+        WHERE rel.relname IN ('cash_register', 'cash_session', 'cash_movement')
+          AND c.contype = 'f'
+      `;
+      expect(
+        fkRows
+          .map(
+            (row) =>
+              `${row.conname}:${row.table_name}->${row.referenced_table}:${row.on_delete}${row.on_update}`
+          )
+          .sort()
+      ).toEqual(
+        [
+          "cash_movement_tenant_id_fkey:cash_movement->tenant:rr",
+          "cash_movement_tenant_id_register_id_fkey:cash_movement->cash_register:rr",
+          "cash_movement_tenant_id_session_id_fkey:cash_movement->cash_session:rr",
+          "cash_register_tenant_id_fkey:cash_register->tenant:rr",
+          "cash_session_tenant_id_fkey:cash_session->tenant:rr",
+          "cash_session_tenant_id_opened_by_membership_id_fkey:cash_session->tenant_membership:rr",
+          "cash_session_tenant_id_register_id_fkey:cash_session->cash_register:rr",
+        ].sort()
+      );
+
+      // A tenant-A session whose register belongs to tenant B is rejected by the
+      // composite register key...
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(() =>
+          insertRawSession(tx, tenantAId, cashRegisterBId, membershipAId, "10.00")
+        );
+        expect(message).toContain("cash_session_tenant_id_register_id_fkey");
+      });
+
+      // ...a tenant-A session whose opener is another tenant's membership is
+      // rejected by the composite membership key...
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(() =>
+          insertRawSession(tx, tenantAId, cashRegisterAId, membershipBId, "10.00")
+        );
+        expect(message).toContain("cash_session_tenant_id_opened_by_membership_id_fkey");
+      });
+
+      // ...and a tenant-A movement attached to tenant B's session is rejected by
+      // the composite session key, so a movement can never cross the boundary.
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(() =>
+          insertRawMovement(tx, tenantAId, cashRegisterAId, cashForeignSessionBId, "10.00")
+        );
+        expect(message).toContain("cash_movement_tenant_id_session_id_fkey");
+      });
+
+      // Every probe rolled back: no throwaway session or movement survived.
+      expect(await prisma.cashSession.count()).toBe(sessionsBefore);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+    }, 30_000);
+
+    it("rejects a session DELETE, a movement DELETE and a movement UPDATE at the immutability triggers and enforces the money CHECKs", async () => {
+      // The three APPLIED triggers: an unconditional BEFORE DELETE row trigger on
+      // each table plus the strengthening BEFORE UPDATE row trigger on the
+      // movement. There is no draft state in cash, so there is no conditional
+      // predicate to read — the tgtype bits are the whole contract.
+      const triggers = await prisma.$queryRaw<
+        { tgname: string; tgtype: number; proname: string }[]
+      >`
+        SELECT t.tgname, t.tgtype::int AS tgtype, p.proname
+        FROM pg_trigger AS t
+        JOIN pg_class AS c ON c.oid = t.tgrelid
+        JOIN pg_proc AS p ON p.oid = t.tgfoid
+        WHERE c.relname IN ('cash_session', 'cash_movement') AND NOT t.tgisinternal
+        ORDER BY t.tgname
+      `;
+      expect(triggers.map((row) => row.tgname)).toEqual([
+        "cash_movement_no_delete_trigger",
+        "cash_movement_no_update_trigger",
+        "cash_session_no_delete_trigger",
+      ]);
+      expect(triggers.map((row) => `${row.tgname}:${row.proname}`).sort()).toEqual(
+        [
+          "cash_movement_no_delete_trigger:cash_movement_no_delete",
+          "cash_movement_no_update_trigger:cash_movement_no_update",
+          "cash_session_no_delete_trigger:cash_session_no_delete",
+        ].sort()
+      );
+      const triggerByName = new Map(triggers.map((row) => [row.tgname, row]));
+      for (const tgname of ["cash_session_no_delete_trigger", "cash_movement_no_delete_trigger"]) {
+        const trigger = triggerByName.get(tgname);
+        if (!trigger) {
+          throw new Error(`The ${tgname} trigger is missing`);
+        }
+        expect(trigger.tgtype & 1, tgname).toBe(1); // ROW
+        expect(trigger.tgtype & 2, tgname).toBe(2); // BEFORE
+        expect(trigger.tgtype & 8, tgname).toBe(8); // DELETE
+        expect(trigger.tgtype & 16, tgname).toBe(0); // NOT UPDATE
+      }
+      const updateTrigger = triggerByName.get("cash_movement_no_update_trigger");
+      if (!updateTrigger) {
+        throw new Error("The cash_movement_no_update_trigger trigger is missing");
+      }
+      expect(updateTrigger.tgtype & 1).toBe(1); // ROW
+      expect(updateTrigger.tgtype & 2).toBe(2); // BEFORE
+      expect(updateTrigger.tgtype & 8).toBe(0); // NOT DELETE
+      expect(updateTrigger.tgtype & 16).toBe(16); // UPDATE
+
+      // The trigger FUNCTIONS carry the exact RAISE message and the
+      // `restrict_violation` ERRCODE. They declare no IF predicate: a confirmed
+      // cash record is always immutable.
+      const functions = await prisma.$queryRaw<{ proname: string; prosrc: string }[]>`
+        SELECT p.proname, p.prosrc
+        FROM pg_proc AS p
+        WHERE p.proname IN (
+          'cash_session_no_delete', 'cash_movement_no_delete', 'cash_movement_no_update'
+        )
+      `;
+      const sourceByName = new Map(
+        functions.map((row) => [row.proname, row.prosrc.replace(/\s+/g, " ")])
+      );
+      expect(sourceByName.get("cash_session_no_delete")).toContain(
+        "a cash session cannot be hard-deleted; sessions are confirmed records"
+      );
+      expect(sourceByName.get("cash_movement_no_delete")).toContain(
+        "a confirmed cash movement cannot be deleted; correct it with a compensating movement"
+      );
+      expect(sourceByName.get("cash_movement_no_update")).toContain(
+        "a confirmed cash movement is immutable; correct it with a compensating movement"
+      );
+      for (const proname of [
+        "cash_session_no_delete",
+        "cash_movement_no_delete",
+        "cash_movement_no_update",
+      ]) {
+        expect(sourceByName.get(proname), proname).toContain("ERRCODE = 'restrict_violation'");
+        expect(sourceByName.get(proname), proname).toContain("RAISE EXCEPTION");
+      }
+
+      // The three APPLIED table CHECKs, exactly the migration's set.
+      const checkRows = await prisma.$queryRaw<{ conname: string }[]>`
+        SELECT c.conname
+        FROM pg_constraint AS c
+        JOIN pg_class AS t ON t.oid = c.conrelid
+        WHERE t.relname IN ('cash_register', 'cash_session', 'cash_movement')
+          AND c.contype = 'c'
+      `;
+      expect(checkRows.map((row) => row.conname).sort()).toEqual(
+        [
+          "cash_movement_amount_non_zero",
+          "cash_register_name_length",
+          "cash_session_opening_amount_non_negative",
+        ].sort()
+      );
+
+      // A raw DELETE of a session raises with the EXACT trigger message.
+      await inRolledBackTransaction(async (tx) => {
+        const sessionId = await insertRawSession(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          membershipAId,
+          "10.00"
+        );
+        expect(
+          await captureDatabaseMessage(
+            () => tx.$executeRaw`DELETE FROM "cash_session" WHERE "id" = ${sessionId}::uuid`
+          )
+        ).toBe("a cash session cannot be hard-deleted; sessions are confirmed records");
+      });
+
+      // A raw DELETE of a movement raises too.
+      await inRolledBackTransaction(async (tx) => {
+        const sessionId = await insertRawSession(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          membershipAId,
+          "10.00"
+        );
+        const movementId = await insertRawMovement(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          sessionId,
+          "25.00"
+        );
+        expect(
+          await captureDatabaseMessage(
+            () => tx.$executeRaw`DELETE FROM "cash_movement" WHERE "id" = ${movementId}::uuid`
+          )
+        ).toBe(
+          "a confirmed cash movement cannot be deleted; correct it with a compensating movement"
+        );
+      });
+
+      // The strengthening trigger: a raw UPDATE of a movement is refused as
+      // well, so a confirmed ledger row is immutable rather than merely
+      // undeletable.
+      await inRolledBackTransaction(async (tx) => {
+        const sessionId = await insertRawSession(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          membershipAId,
+          "10.00"
+        );
+        const movementId = await insertRawMovement(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          sessionId,
+          "25.00"
+        );
+        expect(
+          await captureDatabaseMessage(
+            () =>
+              tx.$executeRaw`UPDATE "cash_movement" SET "reason" = 'tamper' WHERE "id" = ${movementId}::uuid`
+          )
+        ).toBe("a confirmed cash movement is immutable; correct it with a compensating movement");
+      });
+
+      // A zero movement is rejected by its OWN CHECK (raw SQL cannot smuggle one
+      // in): `0.000` is stored as `0.00`, which `amount <> 0` refuses.
+      await inRolledBackTransaction(async (tx) => {
+        const sessionId = await insertRawSession(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          membershipAId,
+          "10.00"
+        );
+        const message = await captureDatabaseMessage(() =>
+          insertRawMovement(tx, tenantAId, cashRegisterAId, sessionId, "0.000")
+        );
+        expect(message).toContain("cash_movement_amount_non_zero");
+      });
+
+      // A negative opening float is rejected by its OWN CHECK: `0.00` stays
+      // allowed (the zero-drawer case above) and only a negative value fails.
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(() =>
+          insertRawSession(tx, tenantAId, cashRegisterAId, membershipAId, "-0.01")
+        );
+        expect(message).toContain("cash_session_opening_amount_non_negative");
+      });
+
+      // Every probe rolled back and no movement was ever written.
+      expect(await prisma.cashMovement.count()).toBe(0);
+      expect(await prisma.cashSession.count({ where: { registerId: cashRegisterAId } })).toBe(0);
+    }, 30_000);
+
+    it("masks another tenant's register as one byte-equivalent 404 and never exposes another tenant's session over real HTTP", async () => {
+      const requestId = CASH_NOT_FOUND_REQUEST_ID;
+      const auditsBefore = await prisma.auditLog.count();
+      const foreignRegisterBefore = await prisma.cashRegister.findUnique({
+        where: { id: cashRegisterBId },
+      });
+      expect(foreignRegisterBefore).not.toBeNull();
+      const foreignSessionsBefore = await prisma.cashSession.count({
+        where: { tenantId: tenantBId },
+      });
+
+      // The register IS addressable over HTTP — `POST /cash/sessions` resolves
+      // it in-tenant BEFORE any write — so a foreign register UUID and a
+      // non-existent UUID must be the SAME bytes, echoed correlation included,
+      // and the stable body is the shared register message.
+      const foreign = await openSession(ownerACookie, cashRegisterBId, "10.00", requestId).expect(
+        404
+      );
+      const missing = await openSession(ownerACookie, randomUUID(), "10.00", requestId).expect(404);
+      expect((foreign.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect((foreign.body as { error: { message: string } }).error.message).toBe(
+        CASH_REGISTER_NOT_FOUND_MESSAGE
+      );
+      expect(foreign.text).toBe(missing.text);
+      expect(foreign.text).not.toContain(cashRegisterBId);
+      expect(foreign.text).not.toContain(tenantBId);
+      expect(CASH_REGISTER_NOT_FOUND_MESSAGE).not.toBe(CASH_SESSION_NOT_FOUND_MESSAGE);
+
+      // EPIC-12 deliberately exposes NO session-detail route (the accepted
+      // surface is exactly four routes: GET/POST /cash/registers and
+      // GET/POST /cash/sessions), so a session UUID is not addressable over
+      // HTTP and a byte-equivalent session `404` cannot be produced here. The
+      // tenant-scoped session list is the only HTTP boundary that consumes
+      // session rows, so the equivalent property is proven there: another
+      // tenant's session is NEVER observable, and neither is its tenant id.
+      const allSessions = await supertest(serverUrl)
+        .get("/cash/sessions")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .expect(200);
+      const openSessions = await supertest(serverUrl)
+        .get("/cash/sessions?status=OPEN")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", requestId)
+        .expect(200);
+      for (const list of [allSessions, openSessions]) {
+        const ids = (list.body as CashSessionDto[]).map((row) => row.id);
+        expect(ids).not.toContain(cashForeignSessionBId);
+        expect(list.text).not.toContain(cashForeignSessionBId);
+        expect(list.text).not.toContain(tenantBId);
+        for (const row of list.body as CashSessionDto[]) {
+          expect(Object.keys(row).sort()).toEqual(CASH_SESSION_DTO_KEYS);
+        }
+      }
+
+      // Tenant B's register and session survived every masked attempt unchanged
+      // and no audit row trailed any of them (reads are never audited).
+      expect(await prisma.cashRegister.findUnique({ where: { id: cashRegisterBId } })).toEqual(
+        foreignRegisterBefore
+      );
+      expect(await prisma.cashSession.count({ where: { tenantId: tenantBId } })).toBe(
+        foreignSessionsBefore
+      );
+      expect(
+        await prisma.cashSession.findUnique({ where: { id: cashForeignSessionBId } })
+      ).toMatchObject({ tenantId: tenantBId, status: "OPEN", registerId: cashRegisterBId });
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+    }, 30_000);
+
+    it("writes no cash movement, sale, stock movement or stock balance change anywhere on the cash surface", async () => {
+      const salesBefore = await prisma.sale.count();
+      const saleLinesBefore = await prisma.saleLine.count();
+      const stockMovementsBefore = await prisma.stockMovement.count();
+      const stockBalancesBefore = await prisma.stockBalance.count();
+      const tenantAStockBalancesBefore = await prisma.stockBalance.count({
+        where: { tenantId: tenantAId },
+      });
+      const auditsBefore = await prisma.auditLog.count();
+
+      const register = await createRegister(
+        ownerACookie,
+        { name: "Live Cash Inert Drawer" },
+        "live-pg-cash-inert-register"
+      ).expect(201);
+      const registerId = (register.body as CashRegisterDto).id;
+      const session = await openSession(
+        ownerACookie,
+        registerId,
+        "123.45",
+        "live-pg-cash-inert-session"
+      ).expect(201);
+      const sessionBody = session.body as CashSessionDto;
+      expect(sessionBody.openingAmount).toBe("123.45");
+      expect(sessionBody.status).toBe("OPEN");
+
+      // The two mutations wrote ONLY their own rows and the two co-committed
+      // audit rows — never a movement, a sale, a stock movement or a balance
+      // change, whatever the session status (the ledger write is POS-003's).
+      expect(await prisma.cashMovement.count()).toBe(0);
+      expect(await prisma.cashMovement.count({ where: { tenantId: tenantAId } })).toBe(0);
+      expect(await prisma.sale.count()).toBe(salesBefore);
+      expect(await prisma.saleLine.count()).toBe(saleLinesBefore);
+      expect(await prisma.stockMovement.count()).toBe(stockMovementsBefore);
+      expect(await prisma.stockBalance.count()).toBe(stockBalancesBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 2);
+      // The opening float is a stored column, never a directly mutated balance:
+      // the fixture tenant's projection is byte-for-byte unchanged and no
+      // register balance column exists at all.
+      expect(await prisma.stockBalance.count({ where: { tenantId: tenantAId } })).toBe(
+        tenantAStockBalancesBefore
+      );
+    }, 30_000);
+
+    it("leaves no residue: every raw probe rolled back and the fixture counts are unchanged", async () => {
+      // `cashRegisterAId` is the probe-only fixture register: no HTTP case ever
+      // opens a session on it, so any surviving session row could only come from
+      // a raw probe that failed to roll back.
+      expect(await prisma.cashSession.count({ where: { registerId: cashRegisterAId } })).toBe(0);
+      // The CLOSED probe row and the cross-tenant probe rows are gone too.
+      expect(
+        await prisma.cashSession.count({ where: { tenantId: tenantAId, status: "CLOSED" } })
+      ).toBe(0);
+      // No movement was ever written by this slice, committed or otherwise.
+      expect(await prisma.cashMovement.count()).toBe(0);
+      expect(await prisma.cashMovement.count({ where: { tenantId: tenantAId } })).toBe(0);
+      // The foreign tenant owns exactly its one fixture register and one session.
+      expect(await prisma.cashRegister.count({ where: { tenantId: tenantBId } })).toBe(1);
+      expect(await prisma.cashSession.count({ where: { tenantId: tenantBId } })).toBe(1);
+      expect(
+        await prisma.cashSession.count({ where: { tenantId: tenantBId, status: "CLOSED" } })
+      ).toBe(0);
+      // The rolled-back cross-tenant duplicate-name probe left no second row:
+      // the name exists exactly once, in tenant A only.
+      expect(
+        await prisma.cashRegister.count({ where: { name: "Live Cash Duplicate Drawer" } })
+      ).toBe(1);
+      expect(
+        await prisma.cashRegister.count({
+          where: { name: "Live Cash Duplicate Drawer", tenantId: tenantBId },
+        })
+      ).toBe(0);
+    }, 30_000);
   });
 });
