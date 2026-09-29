@@ -77,10 +77,10 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  * - EPIC-12 POS-001 adds the `sales` family over the Core sales domain:
  *   `sales.read` mirrors the read-wide catalog shape, and
  *   `sales.create`/`update`/`cancel` are the owning-roles write keys (DEC-026).
- *   They are seeded BEFORE the W2 API surface that consumes them. DEC-026's
- *   seven-key epic total of 50 is completed by POS-002 (`cash.read`,
- *   `cash.session.open`) and POS-003 (`sales.complete`), which this slice must
- *   NOT seed.
+ *   They are seeded BEFORE the W2 API surface that consumes them. The epic's
+ *   eight-key total of 51 is completed by POS-002 (`cash.read`,
+ *   `cash.register.create`, `cash.session.open`) and POS-003
+ *   (`sales.complete`), which this slice must NOT seed.
  * - EPIC-12 POS-002 adds the `cash` family over the Core cash domain:
  *   `cash.read` mirrors the read-wide catalog shape, and
  *   `cash.register.create`/`cash.session.open` are the owning-roles write keys
@@ -144,9 +144,10 @@ export const PERMISSION_SEEDS = [
   { key: "purchases.receive", name: "Receive purchases" },
   // EPIC-12 POS-001 adds the `sales` family (DEC-026): all six roles read
   // sales, and `OWNER`/`ADMIN`/`CASHIER` create, update and cancel them. The
-  // epic reaches its seven-key total of 50 with `cash.read` and
-  // `cash.session.open` (POS-002) and `sales.complete` (POS-003), which are
-  // deliberately NOT seeded by this slice.
+  // epic reaches its eight-key total of 51 with `cash.read`,
+  // `cash.register.create` and `cash.session.open` (POS-002) and
+  // `sales.complete` (POS-003), which are deliberately NOT seeded by this
+  // slice.
   { key: "sales.read", name: "Read sales" },
   { key: "sales.create", name: "Create sales" },
   { key: "sales.update", name: "Update sales" },
