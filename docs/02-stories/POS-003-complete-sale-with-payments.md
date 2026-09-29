@@ -3,7 +3,7 @@ id: POS-003
 type: story
 title: Complete sale with payments
 epic: EPIC-12
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - POS-001
@@ -25,7 +25,7 @@ prd_sections:
   - "41"
 permissions:
   - sales.complete
-branch:
+branch: feat/epic-12-sale-completion
 created: 2026-09-27
 updated: 2026-09-27
 ---
@@ -133,45 +133,45 @@ receiving.
 
 ## Acceptance Criteria
 
-- [ ] Completion is one explicit command, never a generic status write, and the
+- [x] Completion is one explicit command, never a generic status write, and the
       only status it produces is `COMPLETED`. It ships as
       `POST /sales/:id/complete` behind `sales.complete`; no `PATCH` and no
       `DELETE` route exists on the sale, payment or cash surface.
-- [ ] The command validates the sale is `DRAFT`; a sale that is already
+- [x] The command validates the sale is `DRAFT`; a sale that is already
       `COMPLETED` or is `CANCELLED` is a stable `409 CONFLICT` that persists
       nothing — except an identical idempotency replay, which returns the prior
       result under the criterion below instead of a conflict.
-- [ ] The command is atomic: stock movements, balance updates, cash movements,
+- [x] The command is atomic: stock movements, balance updates, cash movements,
       the frozen line snapshot, the payment rows, the status change and exactly
       one audit row are co-committed in one transaction, and any rejection
       persists nothing — no movement, no balance change, no cash effect, no
       payment row, no status change and no audit row.
-- [ ] Each completing line creates exactly one signed **negative** `SALE`
+- [x] Each completing line creates exactly one signed **negative** `SALE`
       `StockMovement` through the [[EPIC-10]] ledger seam; no balance is mutated
       outside the ledger and no movement is created unconfirmed.
-- [ ] Every completion stock write acquires
+- [x] Every completion stock write acquires
       `stockSerializationLockKey(tenantId, catalogItemId)` **before** reading or
       writing `stock_balance` ([[TD-016]]), the projection equals the ledger's
       signed sum after the command, and the fixed `BLOCK` policy rejects an
       output that would drive the projection negative. The sale header row lock
       is taken first and the item advisory locks follow in ascending
       `catalogItemId` order.
-- [ ] The sale total is the sum of the frozen line totals and the payments sum
+- [x] The sale total is the sum of the frozen line totals and the payments sum
       to that total exactly; a payment set that does not sum exactly is rejected
       server-side before any write, and money uses `Decimal(14, 2)` with
       quantities at `Decimal(10, 3)` ([[DEC-021]], [[DEC-029]]).
-- [ ] A sale may carry several payments across the six PRD §19 methods (`CASH`,
+- [x] A sale may carry several payments across the six PRD §19 methods (`CASH`,
       `CARD`, `BANK_TRANSFER`, `QR`, `CHECK`, `OTHER`), each recording its
       method and amount; no change, tendered amount, overpayment or customer
       credit is modelled anywhere ([[DEC-029]]).
-- [ ] A CASH payment requires an `OPEN` session resolved server-side inside the
+- [x] A CASH payment requires an `OPEN` session resolved server-side inside the
       same transaction and never from the request body; a CASH payment with no
       `OPEN` session is a stable rejection that persists nothing, and each CASH
       payment writes exactly one `SALE` cash movement whose amount equals the
       CASH payment amount ([[DEC-020]]).
-- [ ] A completed payment is immutable and refunds stay deferred ([[DEC-023]],
+- [x] A completed payment is immutable and refunds stay deferred ([[DEC-023]],
       [[DEC-029]]).
-- [ ] Idempotency uses both mechanisms of [[DEC-024]]: (a) a tenant-scoped
+- [x] Idempotency uses both mechanisms of [[DEC-024]]: (a) a tenant-scoped
       record unique per `(tenant, operation, key)` holding the request
       fingerprint and a reference to the stored result, where the same key with
       the same fingerprint returns the prior result instead of a `409` and never
@@ -181,41 +181,44 @@ receiving.
       write, so a replay without a key is a stable `409` that persists nothing.
       The key scope is the tenant, never global, and the key travels through the
       `Idempotency-Key` header.
-- [ ] Concurrent completion attempts on the same `DRAFT` sale admit exactly one
+- [x] Concurrent completion attempts on the same `DRAFT` sale admit exactly one
       `201`: two attempts carrying _different_ idempotency keys, or none, leave
       the loser with a stable `409` and no second movement, second payment or
       second audit row, while two attempts carrying the _same_ key and the same
       request fingerprint both return the prior result and complete exactly
       once.
-- [ ] A `COMPLETED` sale and its lines and payments are immutable: no `PATCH`,
+- [x] A `COMPLETED` sale and its lines and payments are immutable: no `PATCH`,
       no `DELETE`, no second completion, and a database-level delete rejection
       that keeps the record readable.
-- [ ] The command resolves the sale in the caller's tenant: a cross-tenant or
+- [x] The command resolves the sale in the caller's tenant: a cross-tenant or
       unknown sale UUID is one byte-equivalent `404`, and a foreign reference
       persists nothing.
-- [ ] The route enforces authentication, server-side tenant context and the
+- [x] The route enforces authentication, server-side tenant context and the
       `sales.complete` permission re-asserted by the service before data access,
       plus the `sales` entitlement through `EntitlementsService.has`; a missing
       permission or a tenant without the capability is a stable `403` that
       persists nothing, and the frontend gate is UX only ([[DEC-026]]).
-- [ ] All request bodies are strict allowlisted contracts that reject unknown
+- [x] All request bodies are strict allowlisted contracts that reject unknown
       keys; `tenantId` is never read from body, query or route; no Prisma model
       crosses the HTTP boundary.
-- [ ] Completion is audited with the actor, the sale id and stable field names
+- [x] Completion is audited with the actor, the sale id and stable field names
       only (PRD §27); exactly one audit row is co-committed per accepted
       completion, no CONFIDENTIAL or RESTRICTED payload is logged and no payment
       detail is written into the audit metadata (PRD §41).
-- [ ] `stock_movement_type` gains `SALE` additively and `cash_movement_type`
+- [x] `stock_movement_type` gains `SALE` additively and `cash_movement_type`
       already carries `SALE` from [[POS-002]]; existing values and behavior are
       unchanged and no existing migration is rewritten.
-- [ ] The new permission key and role matrix are seeded, and the seed-count
+- [x] The new permission key and role matrix are seeded, and the seed-count
       probe is reconciled: `sales.complete` is held by `OWNER`, `ADMIN` and
-      `CASHIER` within the epic total of 43 → 50 ([[DEC-026]]).
-- [ ] Tenant isolation tests exist for the completion path, authorization and
+      `CASHIER`; this Story takes the seeded count **50 → 51** with
+      `sales.complete`, inside the epic's **43 → 51** total ([[DEC-026]] and its
+      2026-09-29 subsequent-scope note).
+- [x] Tenant isolation tests exist for the completion path, authorization and
       validation tests cover the route, and the live-PostgreSQL suite proves
       atomicity, the signed-negative ledger effect, the CASH payment path, the
       idempotent replay, immutability and the concurrent double-complete race.
-- [ ] Required lint, typecheck, test, integration and build checks pass.
+- [ ] Required lint, typecheck, test, integration and build checks pass. The
+      local gates pass; the branch CI receipt is pending.
 
 ## Domain Invariants
 
@@ -279,7 +282,8 @@ Planned additive migration `20260927000003_sale_completion`: one
 the `payment` table and the tenant-scoped idempotency table. It alters no
 existing table, rewrites no existing migration and — following the EPIC-11
 receiving precedent — only appends the enum value, so the plain single-statement
-form applies on the supported PostgreSQL 16. It is not created by this Story.
+form applies on the supported PostgreSQL 16. This Story creates it as its first
+work unit.
 
 ### Models/Tables
 
@@ -315,17 +319,69 @@ choice inside approved scope and follows the sibling migration shapes.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented and committed on `feat/epic-12-sale-completion` as three work units.
+
+**D1 — data layer (`91e712d`).** The additive `SALE` value on
+`stock_movement_type`, the `payment_method` enum pinned to the six PRD §19
+methods, the tenant-scoped `payment` table with its positive-amount CHECK and
+the two conditional delete/update triggers that read the owning sale's status,
+and the tenant-scoped `idempotency_record` with its unique
+`(tenant_id, operation, key)`, its 64-character fingerprint and its
+`result_sale_id` reference. The additive migration
+`20260927000003_sale_completion` applies it, `schema-sales.test.ts` and
+`schema-inventory.test.ts` gate it (the latter now derives the effective literal
+set `{ADJUSTMENT, PURCHASE, SALE}` from the creating migration plus both
+additive ones), `schema-clinical.test.ts` tracks the ownership-key inventory 17
+→ 19, and the `sales.complete` key moves the seeded count **50 → 51**.
+
+**D2 — the command (`441f72b`).** `POST /sales/:id/complete` in
+`apps/api/src/sales/`: the entitlement-first gate, one transaction in the order
+this Story fixes — header row lock, idempotency lookup, post-lock `DRAFT` gate,
+in-memory snapshot recomputation, exact payment-sum validation, reference-state
+gates, the server-resolved single open session, `BLOCK`-checked ledger writes
+under ascending per-item advisory locks, the cash movements, the frozen
+snapshot, the payment rows, the conditional status write, the idempotency record
+and exactly one audit row — plus the strict contract, the allowlisted DTO with
+its payments, the two additive `SALE` widenings in the inventory ledger's type
+unions, the cash seams, the in-memory tables, the route pin and a 36-test
+integration suite.
+
+**D3 — live coverage (`2bb0f6c`).** Nine cases in
+`apps/api/test/live-pg-isolation.e2e-spec.ts` proving the atomic completion with
+the projection equal to the ledger's signed sum, the CASH payment path, both
+CASH-session rejections, the idempotent replay, the concurrent
+double-completion, the applied schema claims and the cross-tenant `404`.
+
+The story's stale seed arithmetic was corrected to the accepted [[DEC-026]]
+subsequent-scope note, and [[TD-016]] carries a dated status update recording
+this slice as its third compliant stock writer.
 
 ## Verification
 
+Run by the parent on this branch, with the root env exported and a schema-less
+`DATABASE_URL_TEST` so the live suite is included rather than skipped.
+
 ```text
-Not run.
+pnpm --filter @newsaas/database test          17 files / 346 tests passed
+pnpm --filter @newsaas/api test               75 files / 1049 tests passed
+pnpm --filter @newsaas/api test:live-pg       99 tests passed, 0 skipped
+                                              (9 are the new completion cases)
+pnpm --filter @newsaas/api typecheck          clean
+pnpm --filter @newsaas/api lint               clean
+pnpm format-check                             green repository-wide
 ```
+
+The live database after `db:deploy` + `db:seed` shows **25 migrations applied**,
+`stock_movement_type` = `ADJUSTMENT, PURCHASE, SALE`, `payment_method` = the six
+PRD §19 methods, `payment` with its two conditional triggers and the
+`(tenant_id, operation, key)` unique on `idempotency_record`, and **51** seeded
+permissions with `sales.complete` held by `OWNER`, `ADMIN` and `CASHIER` only.
+
+Not claimed: the branch CI receipt, which does not exist yet.
 
 ## Tests Added
 
-Planned coverage; none of it exists yet.
+Delivered; the counts below are the observed ones.
 
 - `packages/database/src/schema-sales.test.ts` and
   `packages/database/src/schema-inventory.test.ts` — the effective additive enum
@@ -358,7 +414,15 @@ Planned coverage; none of it exists yet.
 
 ## Known Limitations
 
-- None yet; nothing is implemented.
+- The in-memory boundary is single-threaded, so the HTTP suite pins the lock
+  ordering and the loser's observable outcome but cannot prove the true
+  interleaving; the live-PostgreSQL block proves the concurrent double-complete
+  under a held header row lock.
+- A line whose item does not track stock writes no movement and gets no stock
+  validation, following the ledger's own `tracksStock` write-path gate rather
+  than a rule of this command.
+- The operator enters the exact amount that enters the register, so a physical
+  change calculation happens outside the system ([[DEC-029]]).
 - Planned: the shared in-memory boundary is single-threaded, so the HTTP suite
   can pin the lock ordering and the loser's observable outcome but cannot prove
   the true interleaving; the live-PostgreSQL block must prove the concurrent
@@ -368,12 +432,13 @@ Planned coverage; none of it exists yet.
 
 ## Technical Debt
 
-- **[[TD-016]] stays open.** This Story is the next stock writer after EPIC-11
-  receiving: it must acquire
+- **[[TD-016]] stays open and now records this call site.** This Story is the
+  third stock writer after the adjustment and EPIC-11 receiving: it acquires
   `stockSerializationLockKey(tenantId, catalogItemId)` through the EPIC-10 seam
-  before reading or writing `stock_balance`, and the record must be updated with
-  this call site rather than silently closed, because the protocol is still a
-  convention rather than a database-enforced guarantee.
+  before reading or writing `stock_balance`, after the sale header row lock and
+  in ascending `catalogItemId` order. The record carries a dated 2026-09-29
+  status update naming this slice rather than being silently closed, because the
+  protocol is still a convention rather than a database-enforced guarantee.
 - [[TD-018]] records the deferred sale reversal and payment refund
   ([[DEC-023]]); a mis-keyed counter sale cannot be corrected until that slice
   lands.
@@ -401,6 +466,45 @@ Planned coverage; none of it exists yet.
     order and the conditional status write, applied here as the replay backstop.
 - An ADR is not expected: the command preserves the ledger, the transaction
   model and the approved stack.
+
+## Resolutions accepted by the maintainer (2026-09-29)
+
+Four contracts the story and its Decisions left open were confirmed before the
+first write. Each is binding on this slice.
+
+1. **Reference state is validated at completion.** An inactive catalog item or
+   an inactive customer rejects the completion with a stable `409` that persists
+   nothing, mirroring how [[DEC-014]] split the purchase draft from receiving:
+   the draft does not check reference state and the authoritative step does.
+   [[POS-001]] deliberately left this to this Story and recorded it that way.
+   The item's currency is **not** re-validated, because the line was already
+   priced when it joined the sale ([[DEC-022]]).
+2. **Completion recomputes and writes the snapshot.** The `DRAFT` line already
+   persists derived amounts (the POS-001 resolution), but completion re-derives
+   `lineTotal`, `taxableBase` and `taxAmount` from the line's frozen inputs
+   (`unitPrice`, `quantity`, `rateCode` against the global rate) and writes
+   them, because [[DEC-021]] makes completion the step that computes and
+   freezes. A `COMPLETED` sale is never recomputed again.
+3. **A replay answers `200`, a fresh completion answers `201`.** Both return the
+   completed sale; the status distinguishes "just completed" from "already
+   completed" without changing the shape of the body ([[DEC-024]]).
+4. **A CASH payment requires exactly one `OPEN` session in the tenant.** The
+   sale carries no register reference and a tenant may hold several registers,
+   so with more than one `OPEN` session there is no correct register to
+   attribute the cash to; with none there is nowhere to attribute it. Zero open
+   sessions is a stable `409` and more than one is a stable `409` that names the
+   ambiguity, resolved server-side and never from the body ([[DEC-020]]). The
+   movement records the session it used through `cash_movement.session_id`, so
+   the attribution is auditable rather than guessed. EPIC-13's close removes the
+   constraint's practical edge and [[POS-004]] is expected to surface both
+   rejections as distinct outcomes.
+
+Two further implementation choices recorded with them: the idempotency record's
+result reference is the **sale id**, re-read inside the caller's tenant on
+replay, rather than a stored response snapshot; and the record's `operation`
+token is the stable string `sale.complete`. The idempotency lookup happens
+**after** the header row lock, so a concurrent completion cannot slip between
+the lookup and the write.
 
 ## Resolved by Decision
 
@@ -455,8 +559,16 @@ Planned coverage; none of it exists yet.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._ This Story stays
-`planned` while nothing exists; it may not be marked `done` until the additive
-enum migration, the payment and idempotency tables, the explicit completion
-command, the ledger and cash integration, the idempotent replay and the durable
-live-PostgreSQL block are merged with the required CI checks green.
+All nineteen behavioral acceptance criteria are checked against local evidence
+and the live-PostgreSQL block; the twentieth stays unchecked because it is the
+branch CI receipt, which cannot exist before the pull request runs. The status
+is therefore `in-progress`, and it flips to `done` in a closure commit after the
+merge. `done` will mean implementation closure only, never production readiness:
+[[TD-016]], [[TD-018]] and [[TD-020]] stay open, and EPIC-20 Production
+Hardening is untouched.
+
+The one criterion the in-memory suite cannot prove is the true concurrent
+interleaving, because the shared boundary is single-threaded; the live block
+owns it. The header-before-item lock order is pinned by code order rather than
+by an executable probe, because the fake models `SELECT ... FOR UPDATE` as a
+plain read and records no lock ordering.

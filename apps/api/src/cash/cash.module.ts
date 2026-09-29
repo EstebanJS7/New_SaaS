@@ -17,8 +17,11 @@ import { CashService } from "./cash.service.js";
  *
  * Core Business domain: the cash register and session reference no other domain
  * table, so the module provides nothing beyond its own repository and service —
- * no Settings read (cash has no tenant setting in this slice), no cross-module
- * repository seam and no movement writer.
+ * no Settings read (cash has no tenant setting in this slice) and no
+ * cross-module repository seam. It EXPORTS {@link CashRepository} so the sales
+ * module (POS-003) can inject the tenant-safe session-resolution and `SALE`
+ * movement seams into the CompleteSale transaction without importing the
+ * entitlement-gated cash service.
  *
  * Unlike DEC-016's ungated Core precedent (catalog, inventory, purchases), this
  * surface IS entitlement-gated on the seeded `cash` feature code (DEC-026
@@ -33,5 +36,6 @@ import { CashService } from "./cash.service.js";
   imports: [ContextModule, RbacModule, AuditModule, EntitlementsModule],
   controllers: [CashController],
   providers: [CashRepository, CashService],
+  exports: [CashRepository],
 })
 export class CashModule {}

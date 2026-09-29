@@ -1,11 +1,19 @@
-import { Body, Controller, Get, Param, Post, Put, Query } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Post, Put, Query, Res } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
+import type { FastifyReply } from "fastify";
 import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
-import type { SaleResponse } from "./sales.dto.js";
+import type { CompletedSaleResponse, SaleResponse } from "./sales.dto.js";
 import { SALES_PERMISSIONS } from "./sales.permissions.js";
 import { SalesService } from "./sales.service.js";
-import { createSaleBody, saleIdParam, saleListQuery, updateSaleBody } from "./sales.zod.js";
+import {
+  completeSaleBody,
+  createSaleBody,
+  saleIdempotencyKey,
+  saleIdParam,
+  saleListQuery,
+  updateSaleBody,
+} from "./sales.zod.js";
 
 /**
  * Private tenant-scoped sale draft surface (EPIC-12 POS-001).
@@ -16,12 +24,12 @@ import { createSaleBody, saleIdParam, saleListQuery, updateSaleBody } from "./sa
  * in depth. Input is Zod-validated and responses are allowlisted INTERNAL DTOs —
  * no Prisma model crosses the boundary.
  *
- * The surface is EXACTLY five routes: two reads, the draft create, the draft
- * update (which reconciles the whole line set by `catalogItemId`) and the
- * explicit `POST /sales/:id/cancel` transition. There is deliberately NO `PATCH`
- * (status is server-owned) and NO delete route anywhere: a draft drops a line
- * through the update command and a settled sale is immutable (DEC-023).
- * Completion and payment are POS-003 and have no route here.
+ * The surface is EXACTLY six routes: two reads, the draft create, the draft
+ * update (which reconciles the whole line set by `catalogItemId`), the explicit
+ * `POST /sales/:id/cancel` transition and the explicit
+ * `POST /sales/:id/complete` command. There is deliberately NO `PATCH` (status
+ * is server-owned) and NO delete route anywhere: a draft drops a line through
+ * the update command and a settled sale is immutable (DEC-023).
  */
 @Controller("sales")
 export class SalesController {
@@ -79,6 +87,32 @@ export class SalesController {
     const { id } = parseInput(saleIdParam, params, "Invalid sale id.");
     return this.sales.cancel(id);
   }
+
+  /**
+   * Completes a `DRAFT` sale: the explicit `DRAFT` → `COMPLETED` command that
+   * validates, freezes, records payments and writes the stock and cash effects
+   * atomically (POS-003). The body is the strict payment set and the optional
+   * `Idempotency-Key` header is length-bounded before the service runs.
+   *
+   * The HTTP status is DYNAMIC (`@HttpCode` is static): a fresh completion is
+   * `201` and an identical idempotency replay is `200`, with the SAME completed
+   * sale body in both cases (DEC-024, resolution 3 of 2026-09-29).
+   */
+  @Post(":id/complete")
+  @RequirePermissions(SALES_PERMISSIONS.complete)
+  async complete(
+    @Param() params: unknown,
+    @Body() body: unknown,
+    @Headers() headers: unknown,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<CompletedSaleResponse> {
+    const { id } = parseInput(saleIdParam, params, "Invalid sale id.");
+    const input = parseInput(completeSaleBody, body, "Invalid sale completion body.");
+    const idempotencyKey = readIdempotencyKey(headers);
+    const result = await this.sales.complete(id, input, idempotencyKey);
+    reply.status(result.replay ? 200 : 201);
+    return result.sale;
+  }
 }
 
 /** Rejects the whole request with 400 `VALIDATION_FAILED` when invalid. */
@@ -92,4 +126,22 @@ function parseInput<T>(
     throw new DomainError("VALIDATION_FAILED", message);
   }
   return parsed.data;
+}
+
+/**
+ * Reads and length-bounds the optional `Idempotency-Key` header (DEC-024).
+ * Fastify lower-cases incoming header names, so the lookup is on
+ * `idempotency-key`; an absent header yields `undefined`, and a present value
+ * that is not a 1..255 character string is the stable `400 VALIDATION_FAILED`
+ * before the service runs.
+ */
+function readIdempotencyKey(headers: unknown): string | undefined {
+  if (typeof headers !== "object" || headers === null) {
+    return undefined;
+  }
+  const value = (headers as Record<string, unknown>)["idempotency-key"];
+  if (value === undefined) {
+    return undefined;
+  }
+  return parseInput(saleIdempotencyKey, value, "Invalid Idempotency-Key header.");
 }

@@ -165,8 +165,38 @@ This section records verified implementation evidence as slices land. The epic's
   implementation closure only, never production readiness. [[POS-002]]'s
   applied-schema invariants were additionally re-proven by the parent's own
   rolled-back SQL probes against the live database, with zero residue.
-- **[[POS-003]], [[POS-004]] and [[POS-005]] remain `planned`.** No completion,
-  payment, staff surface or closure work has started.
+- **[[POS-003]] Complete sale with payments — implemented, `in-progress`.**
+  Three commits on `feat/epic-12-sale-completion`: `91e712d` adds the D1 data
+  layer, `441f72b` adds the D2 completion command, and `2bb0f6c` adds the D3
+  live-PostgreSQL coverage. The story is `in-progress` and flips to `done` in a
+  closure commit after its pull request merges and its CI receipt exists.
+- **D1 evidence.** The additive `20260927000003_sale_completion` migration — the
+  `SALE` value on `stock_movement_type`, the `payment_method` enum, the
+  `payment` table and the tenant-scoped `idempotency_record` — passes
+  `pnpm --filter @newsaas/database test` (17 files / 346 tests), the effective
+  enum literal set is derived as `{ADJUSTMENT, PURCHASE, SALE}` from the
+  creating migration plus both additive ones, and the seed-count probe moves the
+  catalog 50 → 51 with `sales.complete`.
+- **D2 evidence.** `pnpm --filter @newsaas/api test` with a schema-less
+  `DATABASE_URL_TEST` passes 75 files / 1049 tests, 36 of them the sales suite
+  including the completion cases; the route-contract probe pins
+  `POST /sales/:id/complete` to `sales.complete`; and the two additive `SALE`
+  widenings in the inventory ledger's type unions are the only edits to that
+  module.
+- **D3 evidence.** `pnpm --filter @newsaas/api test:live-pg` passes 99 tests
+  with 0 skipped, 9 of them the completion cases: the atomic completion with the
+  projection equal to the ledger's signed sum, the CASH payment path, both
+  CASH-session rejections, the idempotent replay, the concurrent
+  double-completion, the applied schema claims and the cross-tenant `404`. The
+  live database reports 25 applied migrations, a `permission` count of 51, the
+  additive enum, the two new tables with their constraints and the two
+  conditional `payment` triggers.
+- **[[TD-016]] records this call site without closing it.** The completion
+  command is the third compliant stock writer; the debt stays open because the
+  serialization protocol is still a convention rather than a database-enforced
+  guarantee.
+- **[[POS-004]] and [[POS-005]] remain `planned`.** No staff surface and no epic
+  closure work has started.
 - Root `pnpm test` fails in a local environment without `DATABASE_URL_TEST` for
   the pre-existing [[TD-021]] reason; CI is unaffected.
 

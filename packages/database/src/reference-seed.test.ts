@@ -579,10 +579,11 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
         expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
       }
     }
-    // POS-003 owns `sales.complete`; POS-001 must not seed it. POS-002 owns the
-    // `cash.*` keys, which are seeded by its own slice and asserted in the cash
-    // family test below.
-    expect(seededKeys).not.toContain("sales.complete");
+    // POS-003 owns `sales.complete`. It was deliberately absent while POS-001
+    // shipped and is seeded by the POS-003 slice; its matrix is asserted in the
+    // POS-003 family test below. POS-002 owns the `cash.*` keys, which are
+    // seeded by its own slice and asserted in the cash family test below.
+    expect(seededKeys).toContain("sales.complete");
     // The pre-existing close key stays reserved for EPIC-13 (DEC-026).
     expect(seededKeys).toContain("cash.session.close");
   });
@@ -626,6 +627,31 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     // `cash` capability already exists as a feature code (PRD §10).
     expect(seededKeys).toContain("cash.session.close");
     expect(FEATURE_CODE_SEEDS).toContain("cash");
+  });
+
+  it("seeds the sale completion permission and decided matrix (EPIC-12 POS-003)", () => {
+    const completionPermissionKeys = ["sales.complete"] as const;
+    const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of completionPermissionKeys) {
+      expect(seededKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    // Maintainer matrix (DEC-026 and its 2026-09-29 subsequent-scope note):
+    // completion is the command that writes money, stock and cash, so it
+    // follows the read-wide/write-to-the-owning-roles shape — the owner, the
+    // admin and the cashier hold it, and no other role does. The `sales`
+    // entitlement is the second gate and is asserted in the API slice where the
+    // guard actually runs.
+    for (const roleCode of ["OWNER", "ADMIN", "CASHIER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("sales.complete");
+    }
+    for (const roleCode of ["VETERINARIAN", "RECEPTIONIST", "INVENTORY_MANAGER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain("sales.complete");
+    }
+    // The pre-existing close key stays reserved for EPIC-13: this slice must not
+    // re-scope it.
+    expect(seededKeys).toContain("cash.session.close");
   });
 
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
@@ -687,9 +713,9 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // completed the DEC-016 total of 43, and the four sales.* keys added by
       // EPIC-12 POS-001 moved the seeded catalog to 47. EPIC-12 POS-002 adds
       // `cash.read`, `cash.register.create` and `cash.session.open`, moving it to
-      // 50; the epic total of 51 is completed by POS-003's `sales.complete`,
-      // which this slice does not seed.
-      permissions: 50,
+      // 50; POS-003's `sales.complete` completes the epic's 43 -> 51 total and
+      // moves the probe to 51.
+      permissions: 51,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

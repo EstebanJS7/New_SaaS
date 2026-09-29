@@ -126,11 +126,12 @@ describe("migration · inventory (EPIC-10 WU1 CAT-006)", () => {
     expect(INVENTORY_SQL).toMatch(/CREATE TYPE "stock_movement_type" AS ENUM/);
   });
 
-  it("pins the movement type to the extended additive literal set (PRD §16, DEC-014)", () => {
+  it("pins the movement type to the extended additive literal set (PRD §16, DEC-014, DEC-029)", () => {
     // The inventory migration CREATES the enum holding `ADJUSTMENT`; the
-    // EPIC-11 PUR-002 receiving migration ADDS `PURCHASE` additively. Together
-    // they are the EFFECTIVE literal set — SALE, TRANSFER_* and the *_REVERSAL
-    // compensations still belong to EPIC-12 and later and must not exist yet.
+    // EPIC-11 PUR-002 receiving migration ADDS `PURCHASE` and the EPIC-12
+    // POS-003 sale-completion migration ADDS `SALE`, both additively. Together
+    // they are the EFFECTIVE literal set — TRANSFER_* and the *_REVERSAL
+    // compensations still belong to later slices and must not exist yet.
     const createdMatch = /CREATE TYPE "stock_movement_type" AS ENUM \(([^)]*)\)/.exec(
       INVENTORY_SQL
     );
@@ -139,19 +140,24 @@ describe("migration · inventory (EPIC-10 WU1 CAT-006)", () => {
       .split(",")
       .map((literal) => literal.trim().replaceAll("'", ""));
 
-    const receivingSql = findMigration(MIGRATIONS, "_purchase_receiving").sql;
     const addedValues = [
-      ...receivingSql.matchAll(/ALTER TYPE "stock_movement_type" ADD VALUE ('[^']*')/g),
-    ].map((match) => match[1].replaceAll("'", ""));
+      findMigration(MIGRATIONS, "_purchase_receiving").sql,
+      findMigration(MIGRATIONS, "_sale_completion").sql,
+    ].flatMap((sql) =>
+      [...sql.matchAll(/ALTER TYPE "stock_movement_type" ADD VALUE ('[^']*')/g)].map((match) =>
+        match[1].replaceAll("'", "")
+      )
+    );
 
-    expect([...createdValues, ...addedValues].sort()).toEqual(["ADJUSTMENT", "PURCHASE"]);
+    expect([...createdValues, ...addedValues].sort()).toEqual(["ADJUSTMENT", "PURCHASE", "SALE"]);
     expect(INVENTORY_SQL).toMatch(/"type" "stock_movement_type" NOT NULL/);
 
     // The schema document declares the same set and nothing more.
     const enumBlock = /enum StockMovementType\s*\{([^}]*)\}/.exec(SCHEMA)?.[1] ?? "";
     expect(enumBlock).toMatch(/\bADJUSTMENT\b/);
     expect(enumBlock).toMatch(/\bPURCHASE\b/);
-    expect(enumBlock).not.toMatch(/\b(SALE|TRANSFER|REVERSAL)\b/);
+    expect(enumBlock).toMatch(/\bSALE\b/);
+    expect(enumBlock).not.toMatch(/\b(TRANSFER|REVERSAL)\b/);
   });
 
   it("adds the stock dimension to the catalog and backfills it by kind", () => {

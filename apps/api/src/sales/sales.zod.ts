@@ -135,6 +135,69 @@ export const updateSaleBody = z
 export type UpdateSaleInput = z.infer<typeof updateSaleBody>;
 
 /**
+ * Payment method literals pinned by the schema enum `payment_method` (PRD §19,
+ * DEC-029). Kept as a local literal tuple so the request contract stays
+ * decoupled from the generated client namespace (structural compatibility only).
+ */
+export const PAYMENT_METHOD_VALUES = [
+  "CASH",
+  "CARD",
+  "BANK_TRANSFER",
+  "QR",
+  "CHECK",
+  "OTHER",
+] as const;
+
+/**
+ * Exact POSITIVE payment amount at the `Decimal(14, 2)` column scale: the same
+ * shape as the unit price (up to 12 integer digits, at most 2 decimals), with
+ * the sign disallowed by the pattern so a negative amount never reaches the
+ * column CHECK. A zero amount is rejected by the refine below.
+ */
+const salePaymentAmount = z
+  .string()
+  .regex(
+    SALE_UNIT_PRICE_PATTERN,
+    "Payment amount must be an exact positive decimal string (max 14 digits, 2 decimals)."
+  )
+  .refine((value) => !isZeroQuantity(value), "Payment amount must be greater than zero.");
+
+/**
+ * One submitted payment: its PRD §19 method and its exact positive amount.
+ * `.strict()` rejects unknown keys, so a payment cannot smuggle a server-owned
+ * field (an id, a timestamp, a foreign `tenantId`, a sale id or a derived
+ * value) past the boundary. There is deliberately no tendered amount, change or
+ * refund field (DEC-029).
+ */
+const salePayment = z
+  .object({ method: z.enum(PAYMENT_METHOD_VALUES), amount: salePaymentAmount })
+  .strict();
+
+/**
+ * CompleteSale body (PRD §18/DEC-029): a NON-EMPTY payment set, each entry a
+ * strict `{ method, amount }` pair. `.strict()` rejects unknown keys —
+ * explicitly including `tenantId` (resolved server-side from the request
+ * context and never caller authority), `status` (server-owned lifecycle) and
+ * the sale's id or currency (both come from the addressed sale). The payments
+ * must sum exactly to the sale total; that sum is validated by the service
+ * against the recomputed snapshot before any write, so a mismatch is a `400`
+ * that persists nothing.
+ */
+export const completeSaleBody = z
+  .object({ payments: z.array(salePayment).min(1, "At least one payment is required.") })
+  .strict();
+
+export type CompleteSaleInput = z.infer<typeof completeSaleBody>;
+
+/**
+ * Optional `Idempotency-Key` header value (DEC-024): a non-empty string bounded
+ * to the `VarChar(255)` column width. The header is optional; when absent the
+ * completion still serializes on the header row lock and a replay is a stable
+ * `409`.
+ */
+export const saleIdempotencyKey = z.string().min(1).max(255);
+
+/**
  * Sale list query. The optional `status` narrows the list to one lifecycle value
  * and is applied on top of the implicit tenant predicate; an omitted status
  * applies NO filter (there is deliberately no implicit draft-only default).

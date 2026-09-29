@@ -59,3 +59,29 @@ export interface SaleResponse {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+/** Payment methods pinned by the `payment_method` enum (PRD §19, DEC-029). */
+export type PaymentMethodDto = "CASH" | "CARD" | "BANK_TRANSFER" | "QR" | "CHECK" | "OTHER";
+
+/**
+ * One allowlisted payment of a completed sale: the method and the exact
+ * fixed-scale (2 decimals) amount, and nothing else — no tendered amount, no
+ * change and no refunded amount exist (DEC-029).
+ */
+export interface SalePaymentResponse {
+  readonly id: string;
+  readonly method: PaymentMethodDto;
+  /** Exact fixed-scale (2 decimals) positive literal, e.g. `"1500.00"`. */
+  readonly amount: string;
+}
+
+/**
+ * The completion projection: the completed sale with its allowlisted payments
+ * and the replay discriminant. A fresh completion and an identical replay carry
+ * the SAME shape; the HTTP status (`201` vs `200`) and this flag distinguish
+ * "just completed" from "already completed" (DEC-024).
+ */
+export interface CompletedSaleResponse extends SaleResponse {
+  readonly payments: SalePaymentResponse[];
+  readonly replay: boolean;
+}

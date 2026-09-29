@@ -597,3 +597,110 @@ against a missing base, and GitHub does not allow reopening it; the stack has to
 be recreated. It happened to the `#76 -> #77 -> #78` stack. Drain the stack in
 merge order and delete a base branch only after the last dependent pull request
 has merged.
+
+---
+
+# POS-003 Complete sale with payments — implementation tracking
+
+## Objective
+
+Deliver PRD §18's `CompleteSale`: one explicit, tenant-scoped, atomic and
+idempotent command that validates the draft's totals, its payments and its
+stock, writes one signed negative `SALE` stock movement per line through the
+EPIC-10 ledger under the serialization protocol, writes one `SALE` cash movement
+per CASH payment against the server-resolved `OPEN` session, freezes the line
+snapshot, records the PRD §19 payments, marks the sale `COMPLETED` and audits -
+or persists nothing. This is the epic's only stock writer and the call site
+[[TD-016]] names next.
+
+## Authorization and branch
+
+- The maintainer authorized POS-003 on 2026-09-29 ("continuemos") and answered
+  the three open questions before the first write.
+- Branch `feat/epic-12-sale-completion`, created from `main` at `4f5e012` after
+  #76, #77, #78 and the closure PR #79 merged, so this slice is no longer
+  stacked and its pull request runs CI directly.
+- TDD: mode **off** (`openspec/config.yaml` sets `strict_tdd: false`). The gates
+  are the database suite, the API suite and the live-PostgreSQL suite.
+
+## Slice-level resolutions accepted by the maintainer (2026-09-29)
+
+Also recorded in the story:
+
+1. **Reference state is validated at completion** - an inactive catalog item or
+   an inactive customer is a stable `409` that persists nothing, mirroring
+   [[DEC-014]]'s draft/receive split; the item's currency is not re-validated
+   because the line was already priced ([[DEC-022]]).
+2. **Completion recomputes and writes the snapshot** from the line's frozen
+   inputs, because [[DEC-021]] makes completion the step that computes and
+   freezes; a `COMPLETED` sale is never recomputed.
+3. **A replay answers `200` and a fresh completion `201`**, both returning the
+   completed sale ([[DEC-024]]).
+4. Recorded with them: the idempotency record's result reference is the sale id
+   (re-read in-tenant on replay), the operation token is `sale.complete`, and
+   the idempotency lookup happens **after** the header row lock.
+5. The story's stale seed arithmetic was corrected to the accepted [[DEC-026]]
+   subsequent-scope note: this slice moves the seeded count **50 -> 51** inside
+   the epic's **43 -> 51** total.
+
+## Binding decisions for this slice
+
+- [[DEC-020]] one server-resolved `OPEN` session, one `SALE` cash movement per
+  CASH payment, a CASH payment without a session rejected.
+- [[DEC-021]] tax-included per-line snapshot recomputed and frozen at
+  completion.
+- [[DEC-023]] the only transition is `DRAFT -> COMPLETED`; the result is
+  immutable and reversal stays deferred ([[TD-018]]).
+- [[DEC-024]] the persisted idempotency record plus the header row lock with the
+  conditional `DRAFT`-only transition; [[TD-020]] records the retention limit.
+- [[DEC-026]] `sales.complete` for `OWNER`/`ADMIN`/`CASHIER` and the `sales`
+  entitlement gate.
+- [[DEC-029]] several payments summing exactly to the total, no change, no
+  credit.
+- [[DEC-014]] the header-first lock order and the conditional status write.
+- [[TD-016]] binds this slice: every stock write acquires
+  `stockSerializationLockKey(tenantId, catalogItemId)` before reading or writing
+  `stock_balance`.
+
+## Tasks
+
+- [ ] D1: Data layer - the additive `SALE` value on `stock_movement_type`, the
+      `payment_method` enum, the `payment` table and the tenant-scoped
+      idempotency record, the additive migration
+      `20260927000003_sale_completion`, the schema gate updates
+      (`schema-sales.test.ts`, `schema-inventory.test.ts` whose SALE-absence
+      assertion is now stale, and `schema-clinical.test.ts` for the two new
+      tenant-scoped models), the `sales.complete` key with its matrix and the
+      seed probe 50 -> 51.
+- [ ] D2: API surface - the completion command inside `apps/api/src/sales/`: the
+      strict payment contract, the transaction (header lock, idempotency lookup
+      and record, reference-state gates, ascending per-item advisory locks with
+      the `BLOCK` check, ledger movements and balance projection, cash
+      movements, the recomputed snapshot, the payment rows, the conditional
+      status write and one audit row), the controller route, the DTO, the
+      in-memory boundary tables, the route-contract pin and the integration
+      suite.
+- [ ] D3: Live-PostgreSQL coverage - the atomic completion with the projection
+      equal to the ledger's signed sum, the CASH payment path, the idempotent
+      replay, the applied additive enum, the cross-tenant `404` and two
+      concurrent completions admitting exactly one `201`.
+- [ ] D4: Reconciliation, verification and the pull request.
+
+## Route declaration per task
+
+| Task | Route     | Trigger evidence                                                        |
+| ---- | --------- | ----------------------------------------------------------------------- |
+| D1   | delegated | Multi-file write rule: schema, migration, three gates, seeds and probes |
+| D2   | delegated | Multi-file write rule: an existing module plus tests and probes         |
+| D3   | delegated | Live-suite surface                                                      |
+| D4   | delegated | Documentation surfaces                                                  |
+
+## Progress
+
+- 2026-09-29: branch created from `main` after the stack drained; the three
+  resolutions were answered before the first write and are recorded in the story
+  and above.
+
+## Next step
+
+D1 data layer, then D2 the command, D3 live coverage and D4 closure.
