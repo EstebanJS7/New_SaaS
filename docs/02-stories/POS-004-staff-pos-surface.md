@@ -72,8 +72,9 @@ barcode makes a scanner equivalent to typing ([[DEC-025]]).
   and body.
 - `apps/web/src/app/(app)/app/sales/` — the POS pages: the counter surface, the
   draft detail and the line editor.
-- `apps/web/src/features/sales/` — the client modules, schemas, TanStack Query
-  hooks and the outcome mapping for the completion flow.
+- `apps/web/src/app/(app)/app/sales/` — the client modules, schemas, query
+  helpers and the outcome mapping for the completion flow, colocated with the
+  pages exactly as the EPIC-11 purchases and suppliers surfaces are.
 - The item search over the shipped catalog read API, the reference-price
   pre-fill with the operator override, the optional customer selector and the
   payment capture.
@@ -222,7 +223,7 @@ Not run.
 
 Planned coverage; none of it exists yet.
 
-- `apps/web/src/features/sales/*.test.tsx` — component tests for the state
+- `apps/web/src/app/(app)/app/sales/*.test.tsx` — component tests for the state
   coverage, the reference-price pre-fill with the operator override, the
   optional customer selector, the payment capture and its exact-sum guard, and
   the completion outcome mapping.
@@ -292,7 +293,8 @@ Planned coverage; none of it exists yet.
 - `apps/web/src/app/api/sales/[[...path]]/route.ts` — the sales proxy.
 - `apps/web/src/app/api/cash/[[...path]]/route.ts` — the cash proxy.
 - `apps/web/src/app/(app)/app/sales/` — the POS pages.
-- `apps/web/src/features/sales/` — client modules, schemas and query hooks.
+- `apps/web/src/app/(app)/app/sales/` — client modules, schemas and query
+  helpers, colocated with the pages.
 - `docs/08-tech-debt/TD-019-pos-item-code-identification-deferred.md` — the
   recorded identification gap.
 - `docs/01-roadmap/EPIC-12-POS-Payments.md` — the epic record.

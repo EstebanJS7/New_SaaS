@@ -722,3 +722,52 @@ Also recorded in the story:
 POS-004 (the staff POS surface consuming the draft, completion and cash routes)
 and then POS-005 (epic closure: module documentation, `CI-EVIDENCE.md`, the
 changelog and the roadmap status).
+
+---
+
+# POS-004 Staff POS surface - implementation tracking
+
+## Objective
+
+Deliver the staff browser surface for the counter sale: item search over the
+shipped catalog read API, a local cart with the reference price pre-filled and
+overridable, an optional customer, a payment capture across the six PRD §19
+methods, and a completion flow that reports each distinct outcome honestly. Web
+only: no route, no schema, no seed and no permission key is added.
+
+## Authorization and branch
+
+- The maintainer authorized POS-004 on 2026-09-29 ("cierralo y continuemos") and
+  answered the cart-persistence question before the first write.
+- Branch `feat/epic-12-staff-pos-surface`, created from `main` at `6ca2c2e`
+  after POS-003 closed, so it is not stacked and its pull request runs CI
+  directly.
+- TDD: mode **off**. The gates are the web suite, lint, typecheck and build.
+
+## Slice-level resolutions accepted by the maintainer (2026-09-29)
+
+1. **The cart is local and checkout creates + completes.** The cart lives in the
+   browser while it is built; checkout sends `POST /sales` with the lines and
+   then `POST /sales/:id/complete` with the payments. Nothing is persisted per
+   keystroke, an abandoned cart leaves no orphan draft, and a failed completion
+   leaves a real `DRAFT` that the detail page can reopen and report honestly.
+2. **The planned module path was wrong and is corrected.** The story named
+   `apps/web/src/features/sales/`, which does not exist in this repository; the
+   shipped EPIC-11 convention colocates client modules with their route, so the
+   slice uses `apps/web/src/app/(app)/app/sales/` and the story was corrected
+   accordingly.
+
+## Tasks
+
+- [ ] E1: Transport and client - the sales and cash proxies under
+      `apps/web/src/app/api/**` with the cookie-only forwarding and the
+      allowlisted query/body rebuild, their proxy tests, and the colocated
+      client API and query layer.
+- [ ] E2: Pages and states - the counter surface, the draft detail and the line
+      editor with the six state branches, the completion outcome mapping and the
+      component tests.
+- [ ] E3: Reconciliation, verification and the pull request.
+
+## Next step
+
+E1 transport and client, then E2 pages and states, then E3 closure.
