@@ -338,7 +338,77 @@ the evidence exists.
 - 2026-09-27: branch created and stacked on the docs branch; a read-only scout
   mapped the sibling conventions and surfaced ten gaps, three of which needed
   the maintainer; all three were resolved above before the first write.
+- 2026-09-27: W1 committed as `93f7f57` (tracking as `b80f7e4`). The
+  `SaleStatus` enum, the `Sale`/`SaleLine` models and the additive
+  `20260927000001_sales` migration exist with composite ownership keys,
+  `RESTRICT` foreign keys (tenant, customer, sale, catalog item and the
+  `rate_code -> tax_rate(code)` reference), the quantity and money CHECK
+  constraints and two conditional delete triggers that reject only a `COMPLETED`
+  or `CANCELLED` sale. The schema gate is
+  `packages/database/src/schema-sales.test.ts` (24 tests) and the four `sales.*`
+  keys land with the [[DEC-026]] matrix, moving the seeded count **43 -> 47**;
+  `schema-clinical.test.ts`'s global `@@unique([tenantId, id])` inventory was
+  reconciled 12 -> 14 with the parent's authorization, exactly as SUP-001 did 9
+  -> 10.
+- 2026-09-27: W2 committed as `fd73edc`. The `apps/api/src/sales/` module ships
+  the four permissions, the pure pricing arithmetic, allowlisted DTOs, strict
+  Zod contracts, the tenant-safe repository with the row-lock-first `DRAFT`
+  gates, the service with the entitlement-first gate and one co-committed audit
+  row per mutation, the controller with exactly five routes and no `PATCH` or
+  `DELETE`, the module registration before `PortalModule`, the in-memory sale
+  tables and the route-contract pins.
+
+## Verified evidence (parent-run, not only writer-reported)
+
+- `pnpm --filter @newsaas/database test` -> 16 files / **293 tests passed**.
+- `pnpm --filter @newsaas/api test` -> 73 passed, 1 skipped (74 files); **918
+  passed, 71 skipped** (989 tests); the skipped set is the live-PostgreSQL
+  suite, which auto-skips without `DATABASE_URL_TEST`.
+- `pnpm --filter @newsaas/api lint`, `pnpm --filter @newsaas/api typecheck`,
+  `pnpm --filter @newsaas/database typecheck` and
+  `pnpm --filter @newsaas/api build` all clean; `pnpm format-check` green
+  repository-wide.
+- Parent inspection of the source: exactly five routes (`GET /sales`,
+  `GET /sales/:id`, `POST /sales`, `PUT /sales/:id`, `POST /sales/:id/cancel`)
+  with no `PATCH` and no `DELETE`; no stock, balance, cash, payment, invoice or
+  fiscal write anywhere in the module; the pricing function rounds with
+  `toDecimalPlaces(minorUnit, ROUND_HALF_UP)` and derives
+  `taxAmount = lineTotal - taxableBase`, so the split is exact by construction;
+  `SALES_MINOR_UNITS` holds `PYG -> 0` only and an unsupported currency is a
+  stable `VALIDATION_FAILED`; and all five service methods call
+  `assertSalesEnabled()` before the permission re-assertion.
+
+## Slice-level implementation choices recorded for review
+
+- **A `DRAFT` does not gate on an inactive catalog item.** The draft is inert
+  and the item's state belongs to the completion slice (POS-003), mirroring how
+  [[DEC-014]] split the purchase draft from receiving. No Decision settles the
+  draft-side rule, so none was invented.
+- **An update recomputes with the sale's stored currency**, not a fresh read of
+  `sales.defaultCurrency`, so a later settings change cannot silently re-price
+  an existing draft ([[DEC-022]]: the sale records its currency once).
+- **A line whose item does not resolve to a seeded global rate is a `400`**
+  before any write ([[DEC-021]]), and the `rate_code` foreign key makes an
+  invalid code unrepresentable in real PostgreSQL anyway.
+- **HTTP `@RequirePermissions` runs before the service**, so a tenant lacking
+  both permission and entitlement is rejected `403 FORBIDDEN` at the route
+  layer, exactly as clinical and patients behave; a tenant holding permissions
+  without the capability gets `FEATURE_NOT_ENTITLED`.
+
+## W3 status
+
+W3 cannot run yet: Docker is not available in this WSL distro (`docker` is
+absent, `pg_isready` on `localhost:5433` reports no response and the port is
+refused), so the migration was never applied and the live-PostgreSQL block was
+never run. The composite ownership keys, the composite `RESTRICT` foreign keys,
+the per-item unique, the row lock and the conditional delete triggers are
+currently proven by DDL text and `prisma validate` alone. POS-001 stays
+`planned` with its live criterion unchecked until that evidence exists.
 
 ## Next step
 
-W1 data foundation, then W2 API surface, then W3 live coverage.
+W3 once PostgreSQL can start: apply the migration, add the EPIC-12 sale-draft
+block to `apps/api/test/live-pg-isolation.e2e-spec.ts` (atomic create, the
+byte-equivalent cross-tenant `404`, the composite ownership keys, the
+`DRAFT`-only transition and the delete rejection), run the live suite, then
+reconcile the story and the epic record and open the slice pull request.
