@@ -4,6 +4,7 @@ import { StorageModule } from "@newsaas/storage";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { BrandingModule } from "./branding/branding.module.js";
+import { CashModule } from "./cash/cash.module.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
 import { ClinicalModule } from "./clinical/clinical.module.js";
 import { CommonModule } from "./common/common.module.js";
@@ -68,6 +69,12 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // after Purchases so the dependency direction reads top-down. Registered
     // BEFORE PortalModule, which must stay last.
     SalesModule,
+    // EPIC-12 POS-002 cash: the Core register/session foundation POS-003's
+    // CompleteSale writes its movement against, and the second entitlement-gated
+    // Core surface (DEC-026). It adds no APP_GUARD, so its position is free —
+    // kept after Sales so the dependency direction reads top-down. Registered
+    // BEFORE PortalModule, which must stay last.
+    CashModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.

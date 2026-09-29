@@ -11,6 +11,7 @@ import { INVENTORY_PERMISSIONS } from "../inventory/inventory.permissions.js";
 import { SUPPLIERS_PERMISSIONS } from "../suppliers/suppliers.permissions.js";
 import { PURCHASES_PERMISSIONS } from "../purchases/purchases.permissions.js";
 import { SALES_PERMISSIONS } from "../sales/sales.permissions.js";
+import { CASH_PERMISSIONS } from "../cash/cash.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -176,6 +177,12 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /sales/:id",
   "PUT /sales/:id",
   "POST /sales/:id/cancel",
+  // EPIC-12 POS-002 — cash register/session foundation (no PATCH, no DELETE,
+  // no close: EPIC-13 owns close and the movement write belongs to POS-003)
+  "GET /cash/registers",
+  "POST /cash/registers",
+  "GET /cash/sessions",
+  "POST /cash/sessions",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -360,6 +367,21 @@ const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /sales": SALES_PERMISSIONS.create,
   "PUT /sales/:id": SALES_PERMISSIONS.update,
   "POST /sales/:id/cancel": SALES_PERMISSIONS.cancel,
+};
+
+/**
+ * EPIC-12 POS-002 cash surface. Both reads MUST declare exactly `cash.read`, and
+ * the register create / session open MUST declare exactly their own write key; a
+ * route decorated with another cash tier (or none) fails by name, which the
+ * permission-less 403 sweep cannot catch. There is deliberately NO `PATCH`, NO
+ * `DELETE` and NO close route: session close is EPIC-13 surface (DEC-020), and
+ * the already-seeded `cash.session.close` key is consumed by no route here.
+ */
+const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /cash/registers": CASH_PERMISSIONS.read,
+  "POST /cash/registers": CASH_PERMISSIONS.createRegister,
+  "GET /cash/sessions": CASH_PERMISSIONS.read,
+  "POST /cash/sessions": CASH_PERMISSIONS.openSession,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -582,6 +604,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in SALES_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED SALE ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY cash route to its single intended granular cash.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/cash"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(CASH_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING CASH ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG CASH PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in CASH_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED CASH ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);

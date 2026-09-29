@@ -491,6 +491,100 @@ export interface SaleLineCreateData {
 }
 
 /**
+ * Tenant-scoped cash register as the in-memory boundary stores it (EPIC-12
+ * POS-002). There is no balance column: the register's expected amount is
+ * derived from the immutable movement ledger, and no `branchId` exists
+ * (DEC-020).
+ *
+ * HONEST LIMITATION: this fake enforces no unique index and no composite
+ * foreign key (an in-memory Map cannot), so the per-tenant register-name unique
+ * and the composite tenant-ownership keys are proven by the W1 migration DDL
+ * checks and the live-PostgreSQL gate (C3), not here.
+ */
+export interface CashRegisterRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Tenant-scoped cash session as the in-memory boundary stores it. The status
+ * follows the `cash_session_status` enum; `openingAmount` is an exact
+ * `Decimal(14, 2)` stored as an exact decimal string — never a JavaScript
+ * float.
+ *
+ * HONEST LIMITATION: this fake enforces no unique index and no composite
+ * foreign key, so the partial one-OPEN-session rule
+ * (`cash_session_one_open_per_register_key`), the composite register FK and the
+ * composite membership FK on the opener are proven by the W1 migration DDL
+ * checks and the live-PostgreSQL gate (C3), not here. The service's `P2002` ->
+ * `409` translation is exercised with an injected error instead.
+ */
+export interface CashSessionRow {
+  id: string;
+  tenantId: string;
+  registerId: string;
+  status: "OPEN" | "CLOSED";
+  openedAt: Date;
+  openedByMembershipId: string;
+  openingAmount: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Immutable cash movement row (EPIC-12 POS-002). The table is MODELLED so the
+ * inertness probe can diff it, but nothing in EPIC-12 writes one: POS-003
+ * appends the `SALE` movement inside the CompleteSale transaction and EPIC-13
+ * owns the six remaining kinds.
+ */
+export interface CashMovementRow {
+  id: string;
+  tenantId: string;
+  registerId: string;
+  sessionId: string;
+  type: "SALE";
+  amount: string;
+  reason: string | null;
+  createdAt: Date;
+}
+
+/** Predicate fields the in-memory register reads/writes are allowed to build. */
+export interface CashRegisterWhere {
+  id?: string;
+  tenantId?: string;
+}
+
+/** Predicate fields the in-memory session reads/writes are allowed to build. */
+export interface CashSessionWhere {
+  id?: string;
+  tenantId?: string;
+  status?: CashSessionRow["status"];
+}
+
+/** Ordering clauses the in-memory cash lists accept. */
+export interface CashOrderBy {
+  createdAt?: "asc" | "desc";
+  id?: "asc" | "desc";
+}
+
+/** Register create payload accepted by the in-memory `cashRegister.create`. */
+export interface CashRegisterCreateData {
+  name: string;
+}
+
+/** Session create payload accepted by the in-memory `cashSession.create`. */
+export interface CashSessionCreateData {
+  registerId: string;
+  openedByMembershipId: string;
+  openingAmount: string | { toString(): string };
+  status?: CashSessionRow["status"];
+}
+
+/**
  * Stable ids for the three GLOBAL seeded rates, so HTTP suites can address a
  * rate without a lookup. The codes/names/rates mirror `TAX_RATE_SEEDS` from
  * `@newsaas/database`, which the real seed writes into `tax_rate`.
@@ -1072,6 +1166,43 @@ export interface IsolationDatabase {
         update: Omit<SaleLineCreateData, "catalogItemId">;
       }) => SaleLineRow;
     };
+    cashRegister: {
+      findFirst: (args: { where: CashRegisterWhere }) => CashRegisterRow | null;
+      findMany: (args: {
+        where: CashRegisterWhere;
+        orderBy?: readonly CashOrderBy[];
+      }) => CashRegisterRow[];
+      create: (args: { data: CashRegisterCreateData & { tenantId: string } }) => CashRegisterRow;
+    };
+    cashSession: {
+      findFirst: (args: { where: CashSessionWhere }) => CashSessionRow | null;
+      findMany: (args: {
+        where: CashSessionWhere;
+        orderBy?: readonly CashOrderBy[];
+      }) => CashSessionRow[];
+      create: (args: { data: CashSessionCreateData & { tenantId: string } }) => CashSessionRow;
+    };
+    /**
+     * Movement append/read, mirroring the real delegate so the inertness probe
+     * can diff the table. NOTHING in EPIC-12 calls `create`: POS-003 writes the
+     * `SALE` movement inside the CompleteSale transaction.
+     */
+    cashMovement: {
+      create: (args: {
+        data: {
+          tenantId: string;
+          registerId: string;
+          sessionId: string;
+          type: CashMovementRow["type"];
+          amount: string | { toString(): string };
+          reason?: string | null;
+        };
+      }) => CashMovementRow;
+      findMany: (args: {
+        where: { tenantId: string; registerId?: string; sessionId?: string };
+        orderBy?: readonly CashOrderBy[];
+      }) => CashMovementRow[];
+    };
     stockMovement: {
       /**
        * Ledger append. The ONLY mutation: there is no update and no delete on
@@ -1397,6 +1528,9 @@ export interface IsolationDatabase {
     purchaseLines: Map<string, PurchaseLineRow>;
     sales: Map<string, SaleHeaderRow>;
     saleLines: Map<string, SaleLineRow>;
+    cashRegisters: Map<string, CashRegisterRow>;
+    cashSessions: Map<string, CashSessionRow>;
+    cashMovements: Map<string, CashMovementRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
@@ -1741,6 +1875,31 @@ function linesForSale(saleLineTable: Map<string, SaleLineRow>, saleId: string): 
     });
 }
 
+/**
+ * Ordering for the cash register/session/movement lists: `createdAt` (newest
+ * first on the shipped queries) with `id` as the stable tie-break, mirroring the
+ * repository's declared deterministic order.
+ */
+function orderCashRows<T extends { id: string; createdAt: Date }>(
+  rows: T[],
+  orderBy: readonly CashOrderBy[] | undefined
+): T[] {
+  if (orderBy === undefined) return rows;
+  return [...rows].sort((left, right) => {
+    for (const clause of orderBy) {
+      if (clause.createdAt !== undefined) {
+        const compared = left.createdAt.getTime() - right.createdAt.getTime();
+        if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.id !== undefined) {
+        const compared = left.id.localeCompare(right.id);
+        if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+      }
+    }
+    return 0;
+  });
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -1780,6 +1939,12 @@ export function createIsolationDatabase(): IsolationDatabase {
   const purchaseLineTable = new Map<string, PurchaseLineRow>();
   const saleTable = new Map<string, SaleHeaderRow>();
   const saleLineTable = new Map<string, SaleLineRow>();
+  // EPIC-12 POS-002: the register/session tables the cash surface touches. The
+  // movement table is MODELLED (so the inertness probe can diff it) but nothing
+  // in EPIC-12 writes a row — POS-003 does, and EPIC-13 owns the other kinds.
+  const cashRegisterTable = new Map<string, CashRegisterRow>();
+  const cashSessionTable = new Map<string, CashSessionRow>();
+  const cashMovementTable = new Map<string, CashMovementRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
@@ -1827,6 +1992,9 @@ export function createIsolationDatabase(): IsolationDatabase {
     purchaseLines: purchaseLineTable,
     sales: saleTable,
     saleLines: saleLineTable,
+    cashRegisters: cashRegisterTable,
+    cashSessions: cashSessionTable,
+    cashMovements: cashMovementTable,
     patients: patientTable,
     patientGuardians: patientGuardianTable,
     clinicalEncounters: clinicalEncounterTable,
@@ -2766,6 +2934,97 @@ export function createIsolationDatabase(): IsolationDatabase {
         return created;
       },
     },
+    cashRegister: {
+      findFirst: ({ where }) =>
+        [...cashRegisterTable.values()].find(
+          (candidate) =>
+            (where.id === undefined || candidate.id === where.id) &&
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId)
+        ) ?? null,
+      findMany: ({ where, orderBy }) => {
+        const rows = [...cashRegisterTable.values()].filter(
+          (candidate) =>
+            (where.id === undefined || candidate.id === where.id) &&
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId)
+        );
+        return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
+      },
+      create: ({ data }) => {
+        const now = new Date();
+        const created: CashRegisterRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          name: data.name,
+          // Mirrors the schema default so an omitted flag still lands active.
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        cashRegisterTable.set(created.id, created);
+        return created;
+      },
+    },
+    cashSession: {
+      findFirst: ({ where }) =>
+        [...cashSessionTable.values()].find(
+          (candidate) =>
+            (where.id === undefined || candidate.id === where.id) &&
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.status === undefined || candidate.status === where.status)
+        ) ?? null,
+      findMany: ({ where, orderBy }) => {
+        const rows = [...cashSessionTable.values()].filter(
+          (candidate) =>
+            (where.id === undefined || candidate.id === where.id) &&
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.status === undefined || candidate.status === where.status)
+        );
+        return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
+      },
+      create: ({ data }) => {
+        const now = new Date();
+        const created: CashSessionRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          registerId: data.registerId,
+          // Mirrors the schema default so an omitted status still lands OPEN.
+          status: data.status ?? "OPEN",
+          openedAt: now,
+          openedByMembershipId: data.openedByMembershipId,
+          openingAmount: toDecimalString(data.openingAmount),
+          createdAt: now,
+          updatedAt: now,
+        };
+        cashSessionTable.set(created.id, created);
+        return created;
+      },
+    },
+    cashMovement: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: CashMovementRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          registerId: data.registerId,
+          sessionId: data.sessionId,
+          type: data.type,
+          amount: toDecimalString(data.amount),
+          reason: data.reason ?? null,
+          createdAt: now,
+        };
+        cashMovementTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where, orderBy }) => {
+        const rows = [...cashMovementTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            (where.registerId === undefined || candidate.registerId === where.registerId) &&
+            (where.sessionId === undefined || candidate.sessionId === where.sessionId)
+        );
+        return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
+      },
+    },
     stockMovement: {
       create: ({ data }) => {
         const now = new Date();
@@ -3446,6 +3705,9 @@ export function createIsolationDatabase(): IsolationDatabase {
       purchaseLines: purchaseLineTable,
       sales: saleTable,
       saleLines: saleLineTable,
+      cashRegisters: cashRegisterTable,
+      cashSessions: cashSessionTable,
+      cashMovements: cashMovementTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,
