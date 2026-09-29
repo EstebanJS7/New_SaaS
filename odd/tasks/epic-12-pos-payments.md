@@ -768,6 +768,23 @@ only: no route, no schema, no seed and no permission key is added.
       component tests.
 - [ ] E3: Reconciliation, verification and the pull request.
 
+## Progress
+
+- 2026-09-29: E1 closed (`c296029`): eight new files, 74 tests, the two proxies
+  and the colocated client modules; `pnpm --filter @newsaas/web test` at 64
+  files / 712 tests with typecheck, lint and build clean.
+- 2026-09-29: E2 closed (`9a0bcb3`): 22 files and 83 tests adding the counter
+  surface, the draft detail and line editor, the payment capture with a
+  float-free exact-sum guard, the six state branches, the completion outcome
+  mapping and the navigation entry; the web suite reaches 73 files / 795 tests
+  with typecheck and lint clean.
+- Known limitation recorded rather than hidden: the navigation entitlement gate
+  is dormant because the shell has no browser-side entitlement source and adding
+  one would be a new proxy route; the sibling EPIC-11 surfaces do not gate
+  navigation at all, so this is ahead of the convention, not a regression. The
+  backend `FEATURE_NOT_ENTITLED` remains the authority.
+
 ## Next step
 
-E1 transport and client, then E2 pages and states, then E3 closure.
+E3: reconcile and open the pull request to `main`, then POS-005 (epic closure:
+module documentation, `CI-EVIDENCE.md`, the changelog and the roadmap status).

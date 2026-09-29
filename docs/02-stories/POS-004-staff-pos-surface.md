@@ -3,7 +3,7 @@ id: POS-004
 type: story
 title: Staff POS surface
 epic: EPIC-12
-status: planned
+status: in-progress
 priority: medium
 depends_on:
   - POS-001
@@ -25,9 +25,9 @@ permissions:
   - sales.complete
   - cash.read
   - cash.session.open
-branch:
+branch: feat/epic-12-staff-pos-surface
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-29
 ---
 
 # POS-004 — Staff POS surface
@@ -108,45 +108,46 @@ barcode makes a scanner equivalent to typing ([[DEC-025]]).
 
 ## Acceptance Criteria
 
-- [ ] The POS surface implements loading, empty, error, success,
+- [x] The POS surface implements loading, empty, error, success,
       permission-denied and entitlement-denied states, and each state is covered
       by a test.
-- [ ] The completion flow surfaces each distinct outcome honestly — a `201`
+- [x] The completion flow surfaces each distinct outcome honestly — a `201`
       success, a replay or non-`DRAFT` `409`, a payment-sum rejection, a missing
       `OPEN` session, a `403` and the shared `404` — and never presents an
       unconfirmed local state as a completed sale.
-- [ ] Every component composes shared UI and semantic design tokens only: no
+- [x] Every component composes shared UI and semantic design tokens only: no
       brand literal, no arbitrary color, font or radius, and no injected
       styling.
-- [ ] Item resolution uses the shipped tenant-scoped catalog read API by name;
+- [x] Item resolution uses the shipped tenant-scoped catalog read API by name;
       the input is keyboard-first and tablet/touch-friendly, and a barcode
       scanner behaves exactly like typing. The surface does not present barcode
       scanning as supported, and the deferred gap is recorded as [[TD-019]]
       ([[DEC-025]]).
-- [ ] The line editor pre-fills the item reference price when one exists, allows
+- [x] The line editor pre-fills the item reference price when one exists, allows
       the operator override, records the applied price through the API, and does
       not block the sale of an item with no reference price ([[DEC-022]]).
-- [ ] The customer selector is optional and an empty selection does not block
+- [x] The customer selector is optional and an empty selection does not block
       completion; the surface offers no discount field, no appointment picker
       and no patient picker ([[DEC-028]]).
-- [ ] The payment capture accepts one or several payments across the six PRD §19
+- [x] The payment capture accepts one or several payments across the six PRD §19
       methods, shows the sum against the sale total, and cannot submit a set
       that does not sum exactly; it shows no change and no credit field
       ([[DEC-029]]).
-- [ ] The proxies forward only the staff session cookie, rebuild an allowlisted
+- [x] The proxies forward only the staff session cookie, rebuild an allowlisted
       query and body, reject unknown keys and never treat a client-supplied
       tenant identifier as authority; a rejection is a clean error state rather
       than a silent fallback (PRD §7, PRD §29).
-- [ ] Frontend permission and entitlement checks are UX only; the routes and the
+- [x] Frontend permission and entitlement checks are UX only; the routes and the
       module remain enforced by the backend permission and the `sales`
       entitlement, and the surface adds no route and no new permission key
       ([[DEC-026]]).
-- [ ] No CONFIDENTIAL or RESTRICTED payload is written to browser telemetry or
+- [x] No CONFIDENTIAL or RESTRICTED payload is written to browser telemetry or
       analytics; audit remains server-side with stable ids and field names only
       (PRD §27, PRD §41).
-- [ ] Component and proxy tests pass, and the Story adds no schema, migration,
+- [x] Component and proxy tests pass, and the Story adds no schema, migration,
       seed or backend route change.
-- [ ] Required lint, typecheck, test, integration and build checks pass.
+- [ ] Required lint, typecheck, test, integration and build checks pass. The
+      local gates pass; the branch CI receipt is pending.
 
 ## Domain Invariants
 
@@ -211,7 +212,44 @@ Planned surface, consuming semantic design tokens only:
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented and committed on `feat/epic-12-staff-pos-surface` as two work units.
+No route, schema, migration, seed, permission key or backend file was added.
+
+**E1 — transport and client layer (`c296029`).** The authenticated `/api/sales`
+and `/api/cash` proxies: only the staff session cookie is forwarded, the query
+is rebuilt from an allowlist, the body's top-level key set is checked against
+the shape's contract before forwarding the caller's bytes unchanged, a
+client-supplied tenant identifier can never reach the API, the `Idempotency-Key`
+is forwarded only on the completion call and never generated, and every
+rejection is a clean error state. Plus the colocated client modules
+`sales-api.ts` and `cash-api.ts`: typed helpers for all ten consumed routes,
+wire-scale money rendering with no floats, and the completion-outcome
+classifier. 74 tests.
+
+**E2 — pages and state coverage (`9a0bcb3`).** The counter surface with a local
+cart (name search over the shipped catalog read, reference-price pre-fill and
+operator override, optional non-blocking customer selector), the checkout that
+performs create-then-complete, the payment capture across the six PRD §19
+methods with a float-free exact-sum guard over the wire strings, the draft
+detail page that reopens a sale by id, the six state branches, the completion
+outcome mapping, the navigation entry and 83 component tests.
+
+## Verification
+
+Run by the parent on this branch.
+
+```text
+pnpm --filter @newsaas/web test         73 files / 795 tests passed
+pnpm --filter @newsaas/web typecheck    clean
+pnpm --filter @newsaas/web lint         clean
+pnpm --filter @newsaas/web build        succeeded; /app/sales and
+                                        /app/sales/[id] emitted, with the two
+                                        dynamic proxies, and the build-output
+                                        verification passing
+pnpm format-check                       green repository-wide
+```
+
+Not claimed: the branch CI receipt, which does not exist yet.
 
 ## Verification
 
@@ -221,7 +259,7 @@ Not run.
 
 ## Tests Added
 
-Planned coverage; none of it exists yet.
+Delivered; the counts below are the observed ones.
 
 - `apps/web/src/app/(app)/app/sales/*.test.tsx` — component tests for the state
   coverage, the reference-price pre-fill with the operator override, the
@@ -236,14 +274,33 @@ Planned coverage; none of it exists yet.
 
 ## Known Limitations
 
-- None yet; nothing is implemented.
-- Planned: with the barcode deferred ([[DEC-025]], [[TD-019]]), item
-  identification depends on a name search and is not scanner-reliable.
-- Planned: the surface has no offline mode and no local queue, so a network
-  failure blocks a sale rather than buffering it. That is a deliberate boundary,
-  not a deferred defect.
-- Planned: E2E browser coverage is tracked separately, so this Story plans
-  component and proxy tests rather than a Playwright suite.
+- With the barcode deferred ([[DEC-025]], [[TD-019]]), item identification is a
+  **client-side name substring** over the active catalog page, because the
+  shipped catalog read API exposes no name filter. The surface states that
+  barcode scanning is not supported, and a scanner behaves exactly like typing.
+- **The navigation entitlement gate is dormant.** `NavSidebar` accepts an
+  optional `entitlements` prop and defaults to _unknown = show_; today the shell
+  has no browser-side entitlement source, and adding one would mean a new proxy
+  route, which this Story forbids. The gate is therefore unit-tested but not fed
+  in production, and the backend `FEATURE_NOT_ENTITLED` remains the authority.
+  The sibling EPIC-11 surfaces do not gate their navigation at all, so this is
+  ahead of the convention rather than a regression.
+- **The counter generates no `Idempotency-Key`.** The replay outcome is handled
+  and tested defensively, but it cannot be produced from this UI; a same-key
+  replay would require a client that mints and reuses its own key.
+- The surface has no offline mode and no local queue, so a network failure
+  blocks a sale rather than buffering it. That is a deliberate boundary, not a
+  deferred defect. A transport failure reports the outcome as **unknown**, never
+  as completed.
+- E2E browser coverage is tracked separately, so this Story ships component and
+  proxy tests rather than a Playwright suite.
+- The proxies **buffer** the request body to check its top-level key set, which
+  diverges from the EPIC-11 proxies that stream the body and leave unknown keys
+  to the API's strict schemas. This Story's acceptance criterion asks for the
+  body allowlist explicitly; reverting to the streaming precedent is a small
+  contained change.
+- `cash-api.ts` is colocated under the sales route because no cash route exists
+  yet; EPIC-13 moves it when it builds the cash UI.
 
 ## Technical Debt
 
