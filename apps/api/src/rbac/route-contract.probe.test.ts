@@ -10,6 +10,7 @@ import { CATALOG_PERMISSIONS } from "../catalog/catalog.permissions.js";
 import { INVENTORY_PERMISSIONS } from "../inventory/inventory.permissions.js";
 import { SUPPLIERS_PERMISSIONS } from "../suppliers/suppliers.permissions.js";
 import { PURCHASES_PERMISSIONS } from "../purchases/purchases.permissions.js";
+import { SALES_PERMISSIONS } from "../sales/sales.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -169,6 +170,12 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /purchases/:id",
   "POST /purchases/:id/cancel",
   "POST /purchases/:id/receive",
+  // EPIC-12 POS-001 — sale draft surface + cancel command (no PATCH, no DELETE)
+  "GET /sales",
+  "POST /sales",
+  "GET /sales/:id",
+  "PUT /sales/:id",
+  "POST /sales/:id/cancel",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -336,6 +343,23 @@ const PURCHASES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "PUT /purchases/:id": PURCHASES_PERMISSIONS.update,
   "POST /purchases/:id/cancel": PURCHASES_PERMISSIONS.cancel,
   "POST /purchases/:id/receive": PURCHASES_PERMISSIONS.receive,
+};
+
+/**
+ * EPIC-12 POS-001 sale surface. Both reads MUST declare exactly `sales.read`,
+ * and create/update/cancel MUST declare exactly their own write key; a route
+ * decorated with another sale tier (or none) fails by name, which the
+ * permission-less 403 sweep cannot catch. There is deliberately NO `PATCH` — the
+ * lifecycle is server-owned, and `POST /sales/:id/cancel` is the only status
+ * transition shipped by POS-001 — and NO delete route: a draft drops a line
+ * through the update command and a settled sale is immutable.
+ */
+const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /sales": SALES_PERMISSIONS.read,
+  "GET /sales/:id": SALES_PERMISSIONS.read,
+  "POST /sales": SALES_PERMISSIONS.create,
+  "PUT /sales/:id": SALES_PERMISSIONS.update,
+  "POST /sales/:id/cancel": SALES_PERMISSIONS.cancel,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -530,6 +554,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in PURCHASES_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED PURCHASE ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY sale route to its single intended granular sales.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/sales"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(SALES_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING SALE ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG SALE PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in SALES_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED SALE ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);

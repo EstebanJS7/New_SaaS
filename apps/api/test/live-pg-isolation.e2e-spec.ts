@@ -81,6 +81,27 @@ const PURCHASE_NOT_EDITABLE_MESSAGE = "Only a draft purchase can be changed.";
 /** Stable `404` wire message shared by every purchase verb. */
 const PURCHASE_NOT_FOUND_MESSAGE = "Purchase was not found.";
 
+/** Server-owned request id pinned on every sale cross-tenant miss. */
+const SALE_NOT_FOUND_REQUEST_ID = "live-pg-sale-not-found-proof";
+
+/** Stable `404` wire message shared by every sale verb. */
+const SALE_NOT_FOUND_MESSAGE = "Sale was not found.";
+
+/**
+ * Stable `409` wire message for an edit or cancel against a non-DRAFT sale,
+ * mirrored as a literal so the live suite asserts the byte-exact body the
+ * application emits rather than importing the production constant.
+ */
+const SALE_NOT_EDITABLE_MESSAGE = "Only a draft sale can be changed.";
+
+/**
+ * Stable `400` wire message for an item whose informational
+ * `referencePriceCurrency` differs from the sale currency (DEC-022), mirrored
+ * as a literal so the live suite asserts the byte-exact body.
+ */
+const SALE_CURRENCY_MISMATCH_MESSAGE =
+  "The sale line item currency does not match the sale currency.";
+
 /**
  * The reused inventory `409` wire messages for the two receive-time line
  * gates, mirrored as literals so the live suite asserts the byte-exact bodies
@@ -150,6 +171,31 @@ interface PurchaseDto {
   supplierId: string;
   status: "DRAFT" | "RECEIVED" | "CANCELLED";
   lines: PurchaseLineDto[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Allowlisted sale line projection (EPIC-12 POS-001 contract). */
+interface SaleLineDto {
+  id: string;
+  catalogItemId: string;
+  rateCode: string;
+  unitPrice: string;
+  quantity: string;
+  lineTotal: string;
+  taxableBase: string;
+  taxAmount: string;
+}
+
+/** Allowlisted sale response projection (EPIC-12 POS-001 contract). */
+interface SaleDto {
+  id: string;
+  tenantId: string;
+  customerId: string | null;
+  currency: string;
+  status: "DRAFT" | "COMPLETED" | "CANCELLED";
+  lines: SaleLineDto[];
+  total: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -363,6 +409,31 @@ const PURCHASE_DTO_KEYS = [
 
 /** Exact allowlisted key set of one purchase line projection. */
 const PURCHASE_LINE_DTO_KEYS = ["catalogItemId", "id", "quantity", "unitCost"].sort();
+
+/** Exact allowlisted key set of the sale response DTO (EPIC-12 contract). */
+const SALE_DTO_KEYS = [
+  "createdAt",
+  "currency",
+  "customerId",
+  "id",
+  "lines",
+  "status",
+  "tenantId",
+  "total",
+  "updatedAt",
+].sort();
+
+/** Exact allowlisted key set of one sale line projection. */
+const SALE_LINE_DTO_KEYS = [
+  "catalogItemId",
+  "id",
+  "lineTotal",
+  "quantity",
+  "rateCode",
+  "taxAmount",
+  "taxableBase",
+  "unitPrice",
+].sort();
 
 /**
  * The three GLOBAL platform-seeded rates (PRD §15): stable `code`, display
@@ -6052,5 +6123,1015 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         movementBefore
       );
     }, 30_000);
+  });
+
+  /**
+   * EPIC-12 POS-001 live-PostgreSQL sale-draft evidence (task W3).
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP and the `20260927000001_sales` migration's applied DDL — what the
+   * in-memory boundary cannot represent:
+   *   1. an atomic create persists the sale, its lines and exactly one
+   *      `sale.created` audit row, with the DEC-021 snapshot stored at the real
+   *      column scales;
+   *   2. a create that fails inside the transaction persists no sale, no line
+   *      and no audit row;
+   *   3. a foreign sale UUID is one byte-equivalent `404` on read, update and
+   *      cancel;
+   *   4. the composite tenant-ownership keys, the six RESTRICT foreign keys and
+   *      the `(tenant_id, status)` index are really applied;
+   *   5. the `DRAFT`-only transition is a stable `409` that persists nothing;
+   *   6. the CONDITIONAL delete triggers reject a settled sale and its lines
+   *      while a DRAFT stays fully deletable;
+   *   7. the one-line-per-item unique is real;
+   *   8. the money and quantity CHECKs are real;
+   *   9. the row-lock-first protocol serializes two concurrent cancels of one
+   *      DRAFT into exactly one success and one stable `409`.
+   *
+   * Every assertion is deterministic: no mock, no injected Prisma error, no
+   * sleep, no retry, and every raw-SQL mutation runs inside a transaction that is
+   * rolled back, so no probe row ever survives.
+   */
+  describe("EPIC-12 sale draft application-path isolation", () => {
+    /** Marker error that forces an interactive transaction to roll back. */
+    const SALES_ROLLBACK_SENTINEL = "live-pg-sales-rollback";
+
+    /** Global SEED-owned rates the line snapshots freeze (PRD §15). */
+    let exemptRateId: string;
+    let iva10RateId: string;
+    /** Tenant-scoped customer references for the composite customer FK. */
+    let saleCustomerAId: string;
+    let saleCustomerBId: string;
+    /** Tenant A catalog items covering both rates and both price sources. */
+    let saleItemA1Id: string;
+    let saleItemA2Id: string;
+    let saleItemA3Id: string;
+    /** Tenant A item whose informational reference currency is USD. */
+    let usdItemAId: string;
+    /** Tenant B item, referenced only by tenant B's own sale. */
+    let saleItemBId: string;
+
+    /** One sale create over REAL HTTP, with an optional pinned request id. */
+    const postSale = (
+      cookie: string,
+      body: Record<string, unknown>,
+      requestId?: string
+    ): supertest.Test => {
+      const request = supertest(serverUrl).post("/sales").set("Cookie", cookie);
+      return (requestId === undefined ? request : request.set("X-Request-Id", requestId)).send(
+        body
+      );
+    };
+
+    /**
+     * One ACTIVE tenant catalog item through the REAL catalog command, so the
+     * frozen `rateCode` and the reference-price pair come from stored rows.
+     */
+    const createSaleItem = async (
+      cookie: string,
+      name: string,
+      overrides: Record<string, unknown> = {}
+    ): Promise<string> => {
+      const created = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", cookie)
+        .send({ kind: "SUPPLY", name, taxRateId: exemptRateId, ...overrides })
+        .expect(201);
+      return (created.body as { id: string }).id;
+    };
+
+    /**
+     * Extracts the database message from Prisma's raw-query error wrapper
+     * (`Raw query failed. Code: \`23001\`. Message: \`...\``). The captured text
+     * is the database's own message, so an assertion can compare it EXACTLY
+     * instead of matching a substring of the wrapper.
+     */
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
+      // PostgreSQL renders a `RAISE EXCEPTION` message with a fixed `ERROR: `
+      // severity prefix; stripping it leaves the exact text the trigger raises.
+      return (match ? match[1] : text).replace(/^ERROR: /, "");
+    };
+
+    /** Runs `probe` and returns the exact database message of its rejection. */
+    const captureDatabaseMessage = async (probe: () => Promise<unknown>): Promise<string> => {
+      try {
+        await probe();
+      } catch (error) {
+        return databaseMessage(error);
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `work` inside an interactive transaction that is ALWAYS rolled back,
+     * so a probe can seed throwaway rows and attempt a mutation without
+     * persisting anything. An assertion failure inside `work` propagates and
+     * fails the case instead of matching the rollback sentinel.
+     */
+    const inRolledBackTransaction = async (
+      work: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<void> => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw new Error(SALES_ROLLBACK_SENTINEL);
+        })
+      ).rejects.toThrow(SALES_ROLLBACK_SENTINEL);
+    };
+
+    /** Raw tenant-A `sale` insert with an explicit status; returns the id. */
+    const insertRawSale = async (
+      tx: Prisma.TransactionClient,
+      status: "DRAFT" | "COMPLETED" | "CANCELLED",
+      options: { customerId?: string | null } = {}
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "sale" ("id", "tenant_id", "customer_id", "currency", "status")
+        VALUES (
+          ${id}::uuid, ${tenantAId}::uuid, ${options.customerId ?? null}::uuid, 'PYG',
+          ${status}::sale_status
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * Raw line insert for a tenant-A sale at the migration's exact shape. The
+     * money defaults are independent of `unitPrice`, so a negative-unit-price
+     * probe violates its OWN CHECK and never the non-negative ones.
+     */
+    const insertRawSaleLine = async (
+      tx: Prisma.TransactionClient,
+      saleId: string,
+      catalogItemId: string,
+      overrides: {
+        rateCode?: string;
+        unitPrice?: string;
+        quantity?: string;
+        lineTotal?: string;
+        taxableBase?: string;
+        taxAmount?: string;
+      } = {}
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "sale_line" (
+          "id", "tenant_id", "sale_id", "catalog_item_id", "rate_code",
+          "unit_price", "quantity", "line_total", "taxable_base", "tax_amount"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantAId}::uuid, ${saleId}::uuid, ${catalogItemId}::uuid,
+          ${overrides.rateCode ?? "EXEMPT"},
+          ${overrides.unitPrice ?? "100.00"}::decimal,
+          ${overrides.quantity ?? "1.000"}::decimal,
+          ${overrides.lineTotal ?? "100.00"}::decimal,
+          ${overrides.taxableBase ?? "100.00"}::decimal,
+          ${overrides.taxAmount ?? "0.00"}::decimal
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * The stored `sale_line` columns of one sale, at their OWN exact scales, so
+     * the DEC-021 snapshot is asserted against real PostgreSQL rather than the
+     * HTTP projection alone.
+     */
+    const rawStoredLines = (
+      saleId: string
+    ): Promise<
+      {
+        catalog_item_id: string;
+        rate_code: string;
+        unit_price: string;
+        quantity: string;
+        line_total: string;
+        taxable_base: string;
+        tax_amount: string;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "catalog_item_id"::text AS catalog_item_id, "rate_code" AS rate_code,
+          "unit_price"::text AS unit_price, "quantity"::text AS quantity,
+          "line_total"::text AS line_total, "taxable_base"::text AS taxable_base,
+          "tax_amount"::text AS tax_amount
+        FROM "sale_line" WHERE "sale_id" = ${saleId}::uuid
+        ORDER BY "catalog_item_id"::text ASC
+      `;
+
+    beforeAll(async () => {
+      // The rate rows are SEED-owned, so resolving them proves the reference
+      // seed really ran against this database (PRD §15).
+      const rates = await prisma.taxRate.findMany();
+      const rateIdsByCode = new Map(rates.map((rate) => [rate.code, rate.id]));
+      const requireRate = (code: string): string => {
+        const id = rateIdsByCode.get(code);
+        if (!id) {
+          throw new Error(`Reference seed did not create the global ${code} tax rate`);
+        }
+        return id;
+      };
+      exemptRateId = requireRate("EXEMPT");
+      iva10RateId = requireRate("IVA_10");
+
+      // The `sales` grant is explicit: plan mappings never grant access, so both
+      // live tenants must hold a direct tenant_entitlement row (DEC-026).
+      const salesFeature = await prisma.featureCode.upsert({
+        where: { code: "sales" },
+        create: { code: "sales" },
+        update: {},
+      });
+      for (const tenantId of [tenantAId, tenantBId]) {
+        await prisma.tenantEntitlement.upsert({
+          where: {
+            tenantId_featureCodeId: { tenantId, featureCodeId: salesFeature.id },
+          },
+          create: { tenantId, featureCodeId: salesFeature.id },
+          update: {},
+        });
+      }
+
+      // Every live case owns its own fixture: the development database seeds no
+      // customer and no catalog item, so this block creates what it references.
+      saleCustomerAId = (
+        await prisma.customer.create({
+          data: { tenantId: tenantAId, kind: "INDIVIDUAL", displayName: "Live Sale Customer A" },
+        })
+      ).id;
+      saleCustomerBId = (
+        await prisma.customer.create({
+          data: { tenantId: tenantBId, kind: "INDIVIDUAL", displayName: "Live Sale Customer B" },
+        })
+      ).id;
+
+      saleItemA1Id = await createSaleItem(ownerACookie, "Live Sale Item A1", {
+        taxRateId: iva10RateId,
+        referencePriceAmount: "11000.00",
+        referencePriceCurrency: "PYG",
+      });
+      saleItemA2Id = await createSaleItem(ownerACookie, "Live Sale Item A2", {
+        referencePriceAmount: "1000.00",
+        referencePriceCurrency: "PYG",
+      });
+      // No reference price at all: the operator override is the only price.
+      saleItemA3Id = await createSaleItem(ownerACookie, "Live Sale Item A3", {
+        taxRateId: iva10RateId,
+      });
+      usdItemAId = await createSaleItem(ownerACookie, "Live Sale USD Item A", {
+        referencePriceAmount: "100.00",
+        referencePriceCurrency: "USD",
+      });
+      saleItemBId = await createSaleItem(ownerBCookie, "Live Sale Item B1", {
+        referencePriceAmount: "100.00",
+        referencePriceCurrency: "PYG",
+      });
+    }, 60_000);
+
+    it("creates a sale atomically with its lines, the DEC-021 snapshot and exactly one sale.created audit row", async () => {
+      const movementsBefore = await prisma.stockMovement.count();
+      const balancesBefore = await prisma.stockBalance.count();
+      const salesBefore = await prisma.sale.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = "live-pg-sales-create";
+
+      const created = await postSale(
+        ownerACookie,
+        {
+          customerId: saleCustomerAId,
+          lines: [
+            { catalogItemId: saleItemA1Id, quantity: "1" },
+            { catalogItemId: saleItemA2Id, quantity: "2.500", unitPrice: "100.00" },
+            { catalogItemId: saleItemA3Id, quantity: "1.000", unitPrice: "1000.00" },
+          ],
+        },
+        requestId
+      ).expect(201);
+
+      const body = created.body as SaleDto;
+      expect(Object.keys(body).sort()).toEqual(SALE_DTO_KEYS);
+      expect(body.tenantId).toBe(tenantAId);
+      expect(body.customerId).toBe(saleCustomerAId);
+      // The currency is resolved server-side from `sales.defaultCurrency` and
+      // never read from the body (DEC-022).
+      expect(body.currency).toBe("PYG");
+      expect(body.status).toBe("DRAFT");
+      expect(body.lines).toHaveLength(3);
+      for (const line of body.lines) {
+        expect(Object.keys(line).sort()).toEqual(SALE_LINE_DTO_KEYS);
+      }
+      // The total is the sum of the line totals: there is no total column.
+      expect(body.total).toBe("12250.00");
+
+      // The REAL stored columns at their own exact scales: quantity at
+      // `Decimal(10,3)`, money at `Decimal(14,2)`, with the frozen rate code and
+      // the derived snapshot equal to the DEC-021 rule:
+      //   lineTotal   = round(unitPrice * quantity)
+      //   taxableBase = round(lineTotal / (1 + rate/100))
+      //   taxAmount   = lineTotal - taxableBase
+      const storedByItem = new Map(
+        (await rawStoredLines(body.id)).map((row) => [row.catalog_item_id, row])
+      );
+      expect(storedByItem.size).toBe(3);
+      // IVA_10 reference price 11000.00 x 1.000 = 11000; 11000 / 1.1 = 10000.
+      expect(storedByItem.get(saleItemA1Id)).toEqual({
+        catalog_item_id: saleItemA1Id,
+        rate_code: "IVA_10",
+        unit_price: "11000.00",
+        quantity: "1.000",
+        line_total: "11000.00",
+        taxable_base: "10000.00",
+        tax_amount: "1000.00",
+      });
+      // EXEMPT override 100.00 x 2.500 = 250, base === total, no tax.
+      expect(storedByItem.get(saleItemA2Id)).toEqual({
+        catalog_item_id: saleItemA2Id,
+        rate_code: "EXEMPT",
+        unit_price: "100.00",
+        quantity: "2.500",
+        line_total: "250.00",
+        taxable_base: "250.00",
+        tax_amount: "0.00",
+      });
+      // IVA_10 override 1000.00 x 1.000 = 1000; 1000 / 1.1 = 909.09... rounds
+      // HALF-UP at the PYG minor unit (0 decimals) to 909, tax 91.
+      expect(storedByItem.get(saleItemA3Id)).toEqual({
+        catalog_item_id: saleItemA3Id,
+        rate_code: "IVA_10",
+        unit_price: "1000.00",
+        quantity: "1.000",
+        line_total: "1000.00",
+        taxable_base: "909.00",
+        tax_amount: "91.00",
+      });
+
+      // The header row itself is DRAFT and carries the in-tenant reference.
+      expect(await prisma.sale.findUnique({ where: { id: body.id } })).toMatchObject({
+        tenantId: tenantAId,
+        customerId: saleCustomerAId,
+        currency: "PYG",
+        status: "DRAFT",
+      });
+
+      // Exactly ONE co-committed audit row carrying ids and field NAMES only.
+      const audits = await prisma.auditLog.findMany({ where: { requestId } });
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        action: "sale.created",
+        targetType: "sale",
+        targetId: body.id,
+        tenantId: tenantAId,
+      });
+      const metadata = audits[0].metadata as { schemaVersion: number; changedFields: string[] };
+      expect(metadata.schemaVersion).toBe(1);
+      expect(metadata.changedFields).toEqual(["customerId", "currency", "lines"]);
+      const serializedMetadata = JSON.stringify(metadata);
+      expect(serializedMetadata).not.toContain(saleItemA1Id);
+      expect(serializedMetadata).not.toContain("11000.00");
+      expect(serializedMetadata).not.toContain(saleCustomerAId);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(await prisma.sale.count({ where: { tenantId: tenantAId } })).toBe(salesBefore + 1);
+
+      // The draft path is INERT: no stock movement and no balance row appeared.
+      expect(await prisma.stockMovement.count()).toBe(movementsBefore);
+      expect(await prisma.stockBalance.count()).toBe(balancesBefore);
+    }, 30_000);
+
+    it("persists nothing when a create is rejected inside the transaction", async () => {
+      const salesBefore = await prisma.sale.count({ where: { tenantId: tenantAId } });
+      const linesBefore = await prisma.saleLine.count({ where: { tenantId: tenantAId } });
+      const auditsBefore = await prisma.auditLog.count();
+
+      const scenarios: {
+        label: string;
+        requestId: string;
+        body: Record<string, unknown>;
+        status: number;
+        code: string;
+        message?: string;
+      }[] = [
+        {
+          label: "unknown catalog item",
+          requestId: "live-pg-sales-create-unknown-item",
+          body: { lines: [{ catalogItemId: randomUUID(), quantity: "1" }] },
+          status: 404,
+          code: "NOT_FOUND",
+        },
+        {
+          label: "cross-tenant catalog item",
+          requestId: "live-pg-sales-create-foreign-item",
+          body: { lines: [{ catalogItemId: saleItemBId, quantity: "1" }] },
+          status: 404,
+          code: "NOT_FOUND",
+        },
+        {
+          label: "cross-currency reference price",
+          requestId: "live-pg-sales-create-currency-mismatch",
+          body: { lines: [{ catalogItemId: usdItemAId, quantity: "1" }] },
+          status: 400,
+          code: "VALIDATION_FAILED",
+          message: SALE_CURRENCY_MISMATCH_MESSAGE,
+        },
+      ];
+
+      for (const scenario of scenarios) {
+        const response = await postSale(ownerACookie, scenario.body, scenario.requestId);
+        expect(response.status, scenario.label).toBe(scenario.status);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe(scenario.code);
+        if (scenario.message !== undefined) {
+          expect(
+            (response.body as { error: { message: string } }).error.message,
+            scenario.label
+          ).toBe(scenario.message);
+        }
+        // The rejection is value-free: the foreign item id never leaks.
+        expect(response.text, scenario.label).not.toContain(saleItemBId);
+      }
+
+      // Nothing persisted for ANY rejected attempt: no sale row, no line row and
+      // no audit row trailed the transaction that aborted.
+      expect(await prisma.sale.count({ where: { tenantId: tenantAId } })).toBe(salesBefore);
+      expect(await prisma.saleLine.count({ where: { tenantId: tenantAId } })).toBe(linesBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(
+        await prisma.auditLog.count({
+          where: { requestId: { in: scenarios.map((scenario) => scenario.requestId) } },
+        })
+      ).toBe(0);
+    }, 30_000);
+
+    it("masks another tenant's sale as one byte-equivalent 404 on read, update and cancel", async () => {
+      // Tenant B owns a real draft every masked tenant-A verb must never resolve.
+      const foreign = await postSale(ownerBCookie, {
+        customerId: saleCustomerBId,
+        lines: [{ catalogItemId: saleItemBId, quantity: "1" }],
+      }).expect(201);
+      const foreignBody = foreign.body as SaleDto;
+      expect(foreignBody.tenantId).toBe(tenantBId);
+
+      const requestId = SALE_NOT_FOUND_REQUEST_ID;
+      const auditsBefore = await prisma.auditLog.count();
+      const updateBody = { lines: [{ catalogItemId: saleItemA1Id, quantity: "1" }] };
+
+      const cases = [
+        {
+          label: "GET /sales/:id",
+          request: () =>
+            supertest(serverUrl)
+              .get(`/sales/${foreignBody.id}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", requestId),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .get(`/sales/${randomUUID()}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", requestId),
+        },
+        {
+          label: "PUT /sales/:id",
+          request: () =>
+            supertest(serverUrl)
+              .put(`/sales/${foreignBody.id}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", requestId)
+              .send(updateBody),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .put(`/sales/${randomUUID()}`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", requestId)
+              .send(updateBody),
+        },
+        {
+          label: "POST /sales/:id/cancel",
+          request: () =>
+            supertest(serverUrl)
+              .post(`/sales/${foreignBody.id}/cancel`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", requestId),
+          missingRequest: () =>
+            supertest(serverUrl)
+              .post(`/sales/${randomUUID()}/cancel`)
+              .set("Cookie", ownerACookie)
+              .set("X-Request-Id", requestId),
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await scenario.request().expect(404);
+        const missingResponse = await scenario.missingRequest().expect(404);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe("NOT_FOUND");
+        expect(
+          (response.body as { error: { message: string } }).error.message,
+          scenario.label
+        ).toBe(SALE_NOT_FOUND_MESSAGE);
+        // Byte-equivalence: a foreign tenant UUID is indistinguishable from a
+        // non-existent one, echoed correlation included.
+        expect(response.text, scenario.label).toBe(missingResponse.text);
+        expect(response.text, scenario.label).not.toContain(foreignBody.id);
+        expect(response.text, scenario.label).not.toContain(tenantBId);
+        expect(response.text, scenario.label).not.toContain(saleItemBId);
+      }
+
+      // Tenant B's draft survived every masked attempt unchanged.
+      expect(await prisma.sale.findUnique({ where: { id: foreignBody.id } })).toMatchObject({
+        status: "DRAFT",
+        customerId: saleCustomerBId,
+        currency: "PYG",
+      });
+      const storedLines = await rawStoredLines(foreignBody.id);
+      expect(storedLines).toHaveLength(1);
+      expect(storedLines[0].catalog_item_id).toBe(saleItemBId);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+    }, 30_000);
+
+    it("proves the composite ownership keys, the six RESTRICT foreign keys and the status index against the applied schema", async () => {
+      const salesBefore = await prisma.sale.count();
+      const linesBefore = await prisma.saleLine.count();
+
+      // The APPLIED lifecycle enum: exactly the PRD §18 states, in order.
+      const enumRows = await prisma.$queryRaw<{ enumlabel: string }[]>`
+        SELECT e.enumlabel
+        FROM pg_enum AS e
+        JOIN pg_type AS t ON t.oid = e.enumtypid
+        WHERE t.typname = 'sale_status'
+        ORDER BY e.enumsortorder ASC
+      `;
+      expect(enumRows.map((row) => row.enumlabel)).toEqual(["DRAFT", "COMPLETED", "CANCELLED"]);
+
+      // The six APPLIED foreign keys, every one RESTRICT on delete AND update,
+      // exactly on the tables the migration declares.
+      const fkRows = await prisma.$queryRaw<
+        {
+          conname: string;
+          table_name: string;
+          referenced_table: string;
+          on_delete: string;
+          on_update: string;
+        }[]
+      >`
+        SELECT
+          c.conname,
+          rel.relname AS table_name,
+          frel.relname AS referenced_table,
+          c.confdeltype AS on_delete,
+          c.confupdtype AS on_update
+        FROM pg_constraint AS c
+        JOIN pg_class AS rel ON rel.oid = c.conrelid
+        JOIN pg_class AS frel ON frel.oid = c.confrelid
+        WHERE rel.relname IN ('sale', 'sale_line') AND c.contype = 'f'
+      `;
+      expect(
+        fkRows
+          .map(
+            (row) =>
+              `${row.conname}:${row.table_name}->${row.referenced_table}:${row.on_delete}${row.on_update}`
+          )
+          .sort()
+      ).toEqual(
+        [
+          "sale_line_rate_code_fkey:sale_line->tax_rate:rr",
+          "sale_line_tenant_id_catalog_item_id_fkey:sale_line->catalog_item:rr",
+          "sale_line_tenant_id_fkey:sale_line->tenant:rr",
+          "sale_line_tenant_id_sale_id_fkey:sale_line->sale:rr",
+          "sale_tenant_id_customer_id_fkey:sale->customer:rr",
+          "sale_tenant_id_fkey:sale->tenant:rr",
+        ].sort()
+      );
+
+      // The composite `(tenant_id, id)` ownership keys and the `(tenant_id,
+      // status)` list index are APPLIED with their exact key columns.
+      const indexRows = await prisma.$queryRaw<
+        { relname: string; is_unique: boolean; key_1: string; key_2: string }[]
+      >`
+        SELECT
+          c.relname,
+          i.indisunique AS is_unique,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        WHERE c.relname IN (
+          'sale_tenant_id_id_key',
+          'sale_line_tenant_id_id_key',
+          'sale_tenant_id_status_idx'
+        )
+      `;
+      expect(
+        indexRows.map((row) => `${row.relname}:${row.is_unique}:${row.key_1},${row.key_2}`).sort()
+      ).toEqual(
+        [
+          "sale_line_tenant_id_id_key:true:tenant_id,id",
+          "sale_tenant_id_id_key:true:tenant_id,id",
+          "sale_tenant_id_status_idx:false:tenant_id,status",
+        ].sort()
+      );
+
+      // The composite customer FK rejects a tenant-A sale pointing at a
+      // tenant-B customer...
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(() =>
+          insertRawSale(tx, "DRAFT", { customerId: saleCustomerBId })
+        );
+        expect(message).toContain("sale_tenant_id_customer_id_fkey");
+      });
+
+      // ...a tenant-A line pointing at a tenant-B catalog item is rejected by
+      // the composite catalog-item FK...
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, "DRAFT");
+        const message = await captureDatabaseMessage(() =>
+          insertRawSaleLine(tx, saleId, saleItemBId)
+        );
+        expect(message).toContain("sale_line_tenant_id_catalog_item_id_fkey");
+      });
+
+      // ...and `rate_code` can only name a seeded global rate (DEC-021).
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, "DRAFT");
+        const message = await captureDatabaseMessage(() =>
+          insertRawSaleLine(tx, saleId, saleItemA1Id, { rateCode: "NO_SUCH_RATE" })
+        );
+        expect(message).toContain("sale_line_rate_code_fkey");
+      });
+
+      // Every probe rolled back: no throwaway sale or line survived.
+      expect(await prisma.sale.count()).toBe(salesBefore);
+      expect(await prisma.saleLine.count()).toBe(linesBefore);
+    }, 30_000);
+
+    it("rejects an update and a cancel of a CANCELLED sale with the stable 409 and keeps the row and its lines intact", async () => {
+      const created = await postSale(ownerACookie, {
+        lines: [
+          { catalogItemId: saleItemA1Id, quantity: "1" },
+          { catalogItemId: saleItemA2Id, quantity: "2.500", unitPrice: "100.00" },
+        ],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+
+      const cancelled = await supertest(serverUrl)
+        .post(`/sales/${saleId}/cancel`)
+        .set("Cookie", ownerACookie)
+        .expect(201);
+      expect((cancelled.body as SaleDto).status).toBe("CANCELLED");
+
+      const storedBefore = await prisma.sale.findUnique({ where: { id: saleId } });
+      const linesBefore = await rawStoredLines(saleId);
+      expect(linesBefore).toHaveLength(2);
+      const auditsBefore = await prisma.auditLog.count();
+      const updateRequestId = "live-pg-sales-cancelled-update";
+      const cancelRequestId = "live-pg-sales-cancelled-cancel";
+
+      const update = await supertest(serverUrl)
+        .put(`/sales/${saleId}`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", updateRequestId)
+        .send({ lines: [{ catalogItemId: saleItemA3Id, quantity: "9.000", unitPrice: "1.00" }] })
+        .expect(409);
+      expect((update.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((update.body as { error: { message: string } }).error.message).toBe(
+        SALE_NOT_EDITABLE_MESSAGE
+      );
+
+      const cancel = await supertest(serverUrl)
+        .post(`/sales/${saleId}/cancel`)
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", cancelRequestId)
+        .expect(409);
+      expect((cancel.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((cancel.body as { error: { message: string } }).error.message).toBe(
+        SALE_NOT_EDITABLE_MESSAGE
+      );
+
+      // Nothing was persisted: the stored status and the complete line set are
+      // exactly as the successful cancel left them, and no audit row trailed
+      // either rejected command.
+      expect(await prisma.sale.findUnique({ where: { id: saleId } })).toEqual(storedBefore);
+      expect(await rawStoredLines(saleId)).toEqual(linesBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(
+        await prisma.auditLog.count({
+          where: { requestId: { in: [updateRequestId, cancelRequestId] } },
+        })
+      ).toBe(0);
+    }, 30_000);
+
+    it("rejects deleting a COMPLETED or CANCELLED sale and its lines while a DRAFT deletes", async () => {
+      const salesBefore = await prisma.sale.count();
+      const linesBefore = await prisma.saleLine.count();
+
+      // The migration's two triggers are BEFORE DELETE ROW and never fire on
+      // UPDATE: the DRAFT-conditional shape DEC-023 mandates, NOT the
+      // unconditional shape the catalog/supplier/inventory tables use.
+      const triggers = await prisma.$queryRaw<
+        { tgname: string; proname: string; tgtype: number }[]
+      >`
+        SELECT t.tgname, p.proname, t.tgtype::int AS tgtype
+        FROM pg_trigger AS t
+        JOIN pg_class AS c ON c.oid = t.tgrelid
+        JOIN pg_proc AS p ON p.oid = t.tgfoid
+        WHERE c.relname IN ('sale', 'sale_line') AND NOT t.tgisinternal
+      `;
+      expect(triggers.map((row) => row.tgname).sort()).toEqual(
+        [
+          "sale_line_no_delete_when_completed_or_cancelled_trigger",
+          "sale_no_delete_when_completed_or_cancelled_trigger",
+        ].sort()
+      );
+      for (const trigger of triggers) {
+        expect(trigger.tgtype & 1).toBe(1); // ROW
+        expect(trigger.tgtype & 2).toBe(2); // BEFORE
+        expect(trigger.tgtype & 8).toBe(8); // DELETE
+        expect(trigger.tgtype & 16).toBe(0); // NOT UPDATE
+      }
+
+      // The trigger FUNCTIONS carry the CONDITIONAL predicate: the header reads
+      // its own status and the line reads the OWNING sale's status, and both
+      // raise `restrict_violation` only for a settled sale.
+      const functions = await prisma.$queryRaw<{ proname: string; prosrc: string }[]>`
+        SELECT p.proname, p.prosrc
+        FROM pg_proc AS p
+        WHERE p.proname IN (
+          'sale_no_delete_when_completed_or_cancelled',
+          'sale_line_no_delete_when_completed_or_cancelled'
+        )
+      `;
+      const sourceByName = new Map(
+        functions.map((row) => [row.proname, row.prosrc.replace(/\s+/g, " ")])
+      );
+      const headerSource = sourceByName.get("sale_no_delete_when_completed_or_cancelled");
+      expect(headerSource).toContain(`OLD."status" IN ('COMPLETED', 'CANCELLED')`);
+      expect(headerSource).toContain("ERRCODE = 'restrict_violation'");
+      const lineSource = sourceByName.get("sale_line_no_delete_when_completed_or_cancelled");
+      expect(lineSource).toContain(`parent_status IN ('COMPLETED', 'CANCELLED')`);
+      expect(lineSource).toContain('FROM "sale"');
+      expect(lineSource).toContain("ERRCODE = 'restrict_violation'");
+
+      // A DRAFT is fully editable: its line and then its header both delete.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, "DRAFT");
+        const lineId = await insertRawSaleLine(tx, saleId, saleItemA1Id);
+        expect(await tx.$executeRaw`DELETE FROM "sale_line" WHERE "id" = ${lineId}::uuid`).toBe(1);
+        expect(await tx.$executeRaw`DELETE FROM "sale" WHERE "id" = ${saleId}::uuid`).toBe(1);
+      });
+
+      for (const status of ["COMPLETED", "CANCELLED"] as const) {
+        // The header trigger refuses the DELETE with its EXACT message.
+        await inRolledBackTransaction(async (tx) => {
+          const saleId = await insertRawSale(tx, status);
+          expect(
+            await captureDatabaseMessage(
+              () => tx.$executeRaw`DELETE FROM "sale" WHERE "id" = ${saleId}::uuid`
+            )
+          ).toBe("a completed or cancelled sale cannot be deleted");
+        });
+
+        // The line trigger reads the OWNING sale's status.
+        await inRolledBackTransaction(async (tx) => {
+          const saleId = await insertRawSale(tx, status);
+          const lineId = await insertRawSaleLine(tx, saleId, saleItemA1Id);
+          expect(
+            await captureDatabaseMessage(
+              () => tx.$executeRaw`DELETE FROM "sale_line" WHERE "id" = ${lineId}::uuid`
+            )
+          ).toBe("a line of a completed or cancelled sale cannot be deleted");
+        });
+      }
+
+      // Every probe rolled back: no throwaway sale or line survived.
+      expect(await prisma.sale.count()).toBe(salesBefore);
+      expect(await prisma.saleLine.count()).toBe(linesBefore);
+    }, 30_000);
+
+    it("rejects a second line for the same catalog item through the applied unique index", async () => {
+      // The APPLIED index: UNIQUE on (tenant_id, sale_id, catalog_item_id),
+      // non-partial and not the primary key.
+      const indexRows = await prisma.$queryRaw<
+        {
+          is_unique: boolean;
+          is_primary: boolean;
+          key_1: string | null;
+          key_2: string | null;
+          key_3: string | null;
+          predicate: string | null;
+        }[]
+      >`
+        SELECT
+          i.indisunique AS is_unique,
+          i.indisprimary AS is_primary,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_indexdef(i.indexrelid, 3, true) AS key_3,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = 'sale_line_tenant_id_sale_id_catalog_item_id_key'
+      `;
+      expect(indexRows).toHaveLength(1);
+      expect(indexRows[0].is_unique).toBe(true);
+      expect(indexRows[0].is_primary).toBe(false);
+      expect(indexRows[0].key_1).toBe("tenant_id");
+      expect(indexRows[0].key_2).toBe("sale_id");
+      expect(indexRows[0].key_3).toBe("catalog_item_id");
+      // UNCONDITIONAL by design: a duplicate inside a draft is never valid,
+      // whatever the sale status.
+      expect(indexRows[0].predicate).toBeNull();
+
+      // Exactly ONE unique index on `sale_line` covers those three columns in
+      // that order, so the violation below can only be this key.
+      const covering = await prisma.$queryRaw<{ relname: string }[]>`
+        SELECT c.relname
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        JOIN pg_class AS t ON t.oid = i.indrelid
+        WHERE t.relname = 'sale_line' AND i.indisunique
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'tenant_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'sale_id'
+          AND pg_get_indexdef(i.indexrelid, 3, true) = 'catalog_item_id'
+      `;
+      expect(covering.map((row) => row.relname)).toEqual([
+        "sale_line_tenant_id_sale_id_catalog_item_id_key",
+      ]);
+
+      // A REAL draft with one line, then a raw duplicate of that same key. The
+      // HTTP path cannot produce this violation because the request contract
+      // rejects a duplicate item in the payload, so the proof is explicit.
+      const created = await postSale(ownerACookie, {
+        lines: [{ catalogItemId: saleItemA1Id, quantity: "1" }],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      expect(await prisma.saleLine.count({ where: { saleId } })).toBe(1);
+
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(() =>
+          insertRawSaleLine(tx, saleId, saleItemA1Id, { quantity: "5.000" })
+        );
+        // Prisma surfaces PostgreSQL's `unique_violation` DETAIL, which names
+        // the violated key columns exactly.
+        expect(message).toContain("Key (tenant_id, sale_id, catalog_item_id)=");
+        expect(message).toContain("already exists.");
+      });
+
+      // The rejection persisted nothing: the sale still holds one line.
+      expect(await prisma.saleLine.count({ where: { saleId } })).toBe(1);
+
+      // The request contract refuses the same payload first with a stable 400,
+      // so the unique key is never the first line of defence.
+      const duplicate = await postSale(ownerACookie, {
+        lines: [
+          { catalogItemId: saleItemA1Id, quantity: "1" },
+          { catalogItemId: saleItemA1Id, quantity: "2" },
+        ],
+      });
+      expect(duplicate.status).toBe(400);
+      expect((duplicate.body as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+      expect(await prisma.saleLine.count({ where: { saleId } })).toBe(1);
+    }, 30_000);
+
+    it("rejects a non-positive quantity and a negative unit price at the applied CHECK constraints", async () => {
+      // The five APPLIED line CHECKs.
+      const checkRows = await prisma.$queryRaw<{ conname: string }[]>`
+        SELECT c.conname
+        FROM pg_constraint AS c
+        JOIN pg_class AS t ON t.oid = c.conrelid
+        WHERE t.relname = 'sale_line' AND c.contype = 'c'
+      `;
+      expect(checkRows.map((row) => row.conname).sort()).toEqual(
+        [
+          "sale_line_line_total_non_negative",
+          "sale_line_quantity_positive",
+          "sale_line_tax_amount_non_negative",
+          "sale_line_taxable_base_non_negative",
+          "sale_line_unit_price_non_negative",
+        ].sort()
+      );
+
+      const linesBefore = await prisma.saleLine.count();
+
+      for (const quantity of ["0.000", "-1.000"]) {
+        await inRolledBackTransaction(async (tx) => {
+          const saleId = await insertRawSale(tx, "DRAFT");
+          const message = await captureDatabaseMessage(() =>
+            insertRawSaleLine(tx, saleId, saleItemA1Id, { quantity })
+          );
+          expect(message, quantity).toContain("sale_line_quantity_positive");
+        });
+      }
+
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, "DRAFT");
+        const message = await captureDatabaseMessage(() =>
+          insertRawSaleLine(tx, saleId, saleItemA1Id, { unitPrice: "-1.00" })
+        );
+        expect(message).toContain("sale_line_unit_price_non_negative");
+      });
+
+      // Every probe rolled back: no rejected line survived.
+      expect(await prisma.saleLine.count()).toBe(linesBefore);
+    }, 30_000);
+
+    it("serializes two concurrent cancels of the SAME draft into exactly one success and one stable 409", async () => {
+      const created = await postSale(ownerACookie, {
+        lines: [
+          { catalogItemId: saleItemA1Id, quantity: "1" },
+          { catalogItemId: saleItemA2Id, quantity: "2.500", unitPrice: "100.00" },
+        ],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      const lineSetBefore = await rawStoredLines(saleId);
+      expect(lineSetBefore).toHaveLength(2);
+      const firstRequestId = "live-pg-sales-race-1";
+      const secondRequestId = "live-pg-sales-race-2";
+      const auditsBefore = await prisma.auditLog.count();
+
+      // Deterministic overlap: a dedicated transaction holds the sale HEADER row
+      // lock (`SELECT ... FOR UPDATE`), which is the exact row `lockById` locks
+      // FIRST, so BOTH cancels park on that single row before either can read
+      // the status. `waitForRowLockWaiters` matches the tuple lock on THAT row,
+      // so an unrelated lock waiter can never satisfy it: the interleaving is
+      // decided by the database boundary, never by wall-clock timing.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT "id" FROM "sale"
+            WHERE "tenant_id" = ${tenantAId}::uuid AND "id" = ${saleId}::uuid
+            FOR UPDATE
+          `;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+      // The row lock is held now, so the ctid cannot move under the racers.
+      const ctid = await readRowCtid(prisma, "sale", saleId);
+
+      const racers = [
+        supertest(serverUrl)
+          .post(`/sales/${saleId}/cancel`)
+          .set("Cookie", ownerACookie)
+          .set("X-Request-Id", firstRequestId)
+          .then((response) => response),
+        supertest(serverUrl)
+          .post(`/sales/${saleId}/cancel`)
+          .set("Cookie", ownerACookie)
+          .set("X-Request-Id", secondRequestId)
+          .then((response) => response),
+      ];
+
+      try {
+        await waitForRowLockWaiters(prisma, "sale", ctid.page, ctid.tuple, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      // The database guarantees this outcome for EVERY interleaving: the winner
+      // commits CANCELLED inside its transaction, and the loser's post-lock
+      // status read sees the committed status and is rejected by the DRAFT gate.
+      const admitted = responses.filter((response) => response.status === 201);
+      const rejected = responses.filter((response) => response.status === 409);
+      expect(admitted).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((admitted[0].body as SaleDto).status).toBe("CANCELLED");
+      expect((rejected[0].body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((rejected[0].body as { error: { message: string } }).error.message).toBe(
+        SALE_NOT_EDITABLE_MESSAGE
+      );
+
+      // Exactly ONE application of the transition: the stored status is
+      // CANCELLED, the line set is COMPLETE (cancel never touched it, so there
+      // is no partial or lost line), and exactly ONE `sale.cancelled` audit row
+      // exists across BOTH attempts.
+      expect(await prisma.sale.findUnique({ where: { id: saleId } })).toMatchObject({
+        status: "CANCELLED",
+      });
+      expect(await rawStoredLines(saleId)).toEqual(lineSetBefore);
+      const raceAudits = await prisma.auditLog.findMany({
+        where: { requestId: { in: [firstRequestId, secondRequestId] } },
+      });
+      expect(raceAudits).toHaveLength(1);
+      expect(raceAudits[0]).toMatchObject({
+        action: "sale.cancelled",
+        targetType: "sale",
+        targetId: saleId,
+        tenantId: tenantAId,
+      });
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+    }, 60_000);
   });
 });

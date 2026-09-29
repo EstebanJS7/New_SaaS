@@ -414,6 +414,82 @@ export interface PurchaseLineCreateData {
   unitCost?: string | { toString(): string } | null;
 }
 
+/** Lifecycle values pinned by schema enum `sale_status` (PRD §18). */
+export type SaleStatusRow = "DRAFT" | "COMPLETED" | "CANCELLED";
+
+/**
+ * Tenant-scoped sale HEADER as the in-memory boundary stores it (EPIC-12
+ * POS-001). Lines live in {@link SaleLineRow} and are assembled onto the read
+ * model by the delegates, mirroring the real `include: { lines: true }` read.
+ * There is deliberately no number, discount, appointment, patient or total field
+ * (DEC-021/DEC-027/DEC-028).
+ *
+ * HONEST LIMITATION: this fake cannot enforce the composite foreign keys or the
+ * unique indexes of the `sale`/`sale_line` pair (an in-memory Map cannot), so the
+ * composite ownership keys, the same-tenant customer/catalog-item references and
+ * the one-line-per-item unique are proven by the W1 migration DDL checks and the
+ * live-PostgreSQL gate, not here.
+ */
+export interface SaleHeaderRow {
+  id: string;
+  tenantId: string;
+  customerId: string | null;
+  currency: string;
+  status: SaleStatusRow;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Tenant-scoped sale line row. `quantity` is a strictly positive exact
+ * `Decimal(10, 3)` and the four money amounts are exact `Decimal(14, 2)`, all
+ * stored as exact decimal strings — never JavaScript floats. The row is the
+ * frozen snapshot (DEC-021) recomputed on every draft write.
+ */
+export interface SaleLineRow {
+  id: string;
+  tenantId: string;
+  saleId: string;
+  catalogItemId: string;
+  rateCode: string;
+  unitPrice: string;
+  quantity: string;
+  lineTotal: string;
+  taxableBase: string;
+  taxAmount: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Sale read model WITH its line set (the `include: { lines: true }` shape). */
+export interface SaleRow extends SaleHeaderRow {
+  lines: SaleLineRow[];
+}
+
+/** Predicate fields the in-memory sale reads/writes are allowed to build. */
+export interface SaleWhere {
+  id?: string;
+  tenantId?: string;
+  status?: SaleStatusRow;
+}
+
+/** Ordering clauses the in-memory sale list accepts. */
+export interface SaleOrderBy {
+  createdAt?: "asc" | "desc";
+  id?: "asc" | "desc";
+}
+
+/** Nested line create payload accepted by the in-memory `sale.create`. */
+export interface SaleLineCreateData {
+  catalogItemId: string;
+  rateCode: string;
+  unitPrice: string | { toString(): string };
+  quantity: string | { toString(): string };
+  lineTotal: string | { toString(): string };
+  taxableBase: string | { toString(): string };
+  taxAmount: string | { toString(): string };
+}
+
 /**
  * Stable ids for the three GLOBAL seeded rates, so HTTP suites can address a
  * rate without a lookup. The codes/names/rates mirror `TAX_RATE_SEEDS` from
@@ -957,6 +1033,45 @@ export interface IsolationDatabase {
         };
       }) => PurchaseLineRow;
     };
+    sale: {
+      /** Reads assemble the line set, mirroring `include: { lines: true }`. */
+      findFirst: (args: { where: SaleWhere; include?: { lines?: true } }) => SaleRow | null;
+      findMany: (args: {
+        where: SaleWhere;
+        include?: { lines?: true };
+        orderBy?: readonly SaleOrderBy[];
+      }) => SaleRow[];
+      /** Nested line create; the fake fills tenant/sale ids from the header. */
+      create: (args: {
+        data: {
+          tenantId: string;
+          customerId?: string | null;
+          currency: string;
+          status?: SaleStatusRow;
+          lines: { create: readonly SaleLineCreateData[] };
+        };
+      }) => SaleRow;
+      updateMany: (args: {
+        where: SaleWhere;
+        data: { customerId?: string | null; status?: SaleStatusRow };
+      }) => { count: number };
+    };
+    saleLine: {
+      deleteMany: (args: {
+        where: { tenantId: string; saleId: string; catalogItemId: { notIn: string[] } };
+      }) => { count: number };
+      upsert: (args: {
+        where: {
+          tenantId_saleId_catalogItemId: {
+            tenantId: string;
+            saleId: string;
+            catalogItemId: string;
+          };
+        };
+        create: SaleLineCreateData & { tenantId: string; saleId: string };
+        update: Omit<SaleLineCreateData, "catalogItemId">;
+      }) => SaleLineRow;
+    };
     stockMovement: {
       /**
        * Ledger append. The ONLY mutation: there is no update and no delete on
@@ -1280,6 +1395,8 @@ export interface IsolationDatabase {
     suppliers: Map<string, SupplierRow>;
     purchases: Map<string, PurchaseHeaderRow>;
     purchaseLines: Map<string, PurchaseLineRow>;
+    sales: Map<string, SaleHeaderRow>;
+    saleLines: Map<string, SaleLineRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
@@ -1585,6 +1702,45 @@ function linesForPurchase(
     });
 }
 
+/**
+ * Ordering for the sale list: `createdAt` (newest first on the shipped query)
+ * with `id` as the stable tie-break, mirroring the repository's declared
+ * deterministic order.
+ */
+function orderSales(
+  rows: SaleHeaderRow[],
+  orderBy: readonly SaleOrderBy[] | undefined
+): SaleHeaderRow[] {
+  if (orderBy === undefined) return rows;
+  return [...rows].sort((left, right) => {
+    for (const clause of orderBy) {
+      if (clause.createdAt !== undefined) {
+        const compared = left.createdAt.getTime() - right.createdAt.getTime();
+        if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.id !== undefined) {
+        const compared = left.id.localeCompare(right.id);
+        if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+      }
+    }
+    return 0;
+  });
+}
+
+/**
+ * A sale's related lines in insertion order, `id` as the tie-break — the shape
+ * the repository's `include: { lines: true }` read assembles onto the aggregate.
+ */
+function linesForSale(saleLineTable: Map<string, SaleLineRow>, saleId: string): SaleLineRow[] {
+  return [...saleLineTable.values()]
+    .filter((line) => line.saleId === saleId)
+    .sort((left, right) => {
+      const byCreated = left.createdAt.getTime() - right.createdAt.getTime();
+      if (byCreated !== 0) return byCreated;
+      return left.id.localeCompare(right.id);
+    });
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -1622,6 +1778,8 @@ export function createIsolationDatabase(): IsolationDatabase {
   const supplierTable = new Map<string, SupplierRow>();
   const purchaseTable = new Map<string, PurchaseHeaderRow>();
   const purchaseLineTable = new Map<string, PurchaseLineRow>();
+  const saleTable = new Map<string, SaleHeaderRow>();
+  const saleLineTable = new Map<string, SaleLineRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
@@ -1667,6 +1825,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     suppliers: supplierTable,
     purchases: purchaseTable,
     purchaseLines: purchaseLineTable,
+    sales: saleTable,
+    saleLines: saleLineTable,
     patients: patientTable,
     patientGuardians: patientGuardianTable,
     clinicalEncounters: clinicalEncounterTable,
@@ -1749,9 +1909,21 @@ export function createIsolationDatabase(): IsolationDatabase {
         }
         return Promise.resolve([{ id: header.id, status: header.status }]);
       }
+      // EPIC-12 POS-001: the sale update and cancel commands row-lock the sale
+      // header before their post-lock status read. Same modelling as the
+      // purchase lock above; the real interleaving is proven against live
+      // PostgreSQL.
+      if (text.includes('"sale"') && text.includes("FOR UPDATE")) {
+        const [tenantId, saleId] = values as string[];
+        const header = saleTable.get(saleId);
+        if (header?.tenantId !== tenantId) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ id: header.id, status: header.status }]);
+      }
       if (!text.includes("tenant_membership") || !text.includes("FOR UPDATE")) {
         throw new Error(
-          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
+          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock, the sale header FOR UPDATE lock and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
         );
       }
       const [tenantId] = values as string[];
@@ -2468,6 +2640,132 @@ export function createIsolationDatabase(): IsolationDatabase {
         return created;
       },
     },
+    sale: {
+      findFirst: ({ where, include }) => {
+        const header =
+          [...saleTable.values()].find(
+            (candidate) =>
+              (where.id === undefined || candidate.id === where.id) &&
+              (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+              (where.status === undefined || candidate.status === where.status)
+          ) ?? null;
+        if (!header) return null;
+        return include?.lines
+          ? { ...header, lines: linesForSale(saleLineTable, header.id) }
+          : { ...header, lines: [] };
+      },
+      findMany: ({ where, include, orderBy }) => {
+        const headers = [...saleTable.values()].filter(
+          (candidate) =>
+            (where.id === undefined || candidate.id === where.id) &&
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.status === undefined || candidate.status === where.status)
+        );
+        const ordered = orderBy === undefined ? headers : orderSales(headers, orderBy);
+        return ordered.map((header) =>
+          include?.lines
+            ? { ...header, lines: linesForSale(saleLineTable, header.id) }
+            : { ...header, lines: [] }
+        );
+      },
+      create: ({ data }) => {
+        const now = new Date();
+        const created: SaleHeaderRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          customerId: data.customerId ?? null,
+          currency: data.currency,
+          // Mirrors the schema default so an omitted status still lands DRAFT.
+          status: data.status ?? "DRAFT",
+          createdAt: now,
+          updatedAt: now,
+        };
+        saleTable.set(created.id, created);
+        // Nested create: the line inherits the header's tenant and sale id,
+        // exactly as Prisma fills them from the parent relation.
+        for (const line of data.lines.create) {
+          const lineNow = new Date();
+          const createdLine: SaleLineRow = {
+            id: randomUUID(),
+            tenantId: created.tenantId,
+            saleId: created.id,
+            catalogItemId: line.catalogItemId,
+            rateCode: line.rateCode,
+            unitPrice: toDecimalString(line.unitPrice),
+            quantity: toDecimalString(line.quantity),
+            lineTotal: toDecimalString(line.lineTotal),
+            taxableBase: toDecimalString(line.taxableBase),
+            taxAmount: toDecimalString(line.taxAmount),
+            createdAt: lineNow,
+            updatedAt: lineNow,
+          };
+          saleLineTable.set(createdLine.id, createdLine);
+        }
+        return { ...created, lines: linesForSale(saleLineTable, created.id) };
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const candidate of saleTable.values()) {
+          if (where.id !== undefined && candidate.id !== where.id) continue;
+          if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) continue;
+          if (where.status !== undefined && candidate.status !== where.status) continue;
+          if (data.customerId !== undefined) candidate.customerId = data.customerId;
+          if (data.status !== undefined) candidate.status = data.status;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
+    saleLine: {
+      deleteMany: ({ where }) => {
+        let count = 0;
+        for (const [id, line] of saleLineTable) {
+          if (line.tenantId !== where.tenantId) continue;
+          if (line.saleId !== where.saleId) continue;
+          if (where.catalogItemId.notIn.includes(line.catalogItemId)) continue;
+          saleLineTable.delete(id);
+          count += 1;
+        }
+        return { count };
+      },
+      upsert: ({ where, create, update }) => {
+        const key = where.tenantId_saleId_catalogItemId;
+        const existing = [...saleLineTable.values()].find(
+          (line) =>
+            line.tenantId === key.tenantId &&
+            line.saleId === key.saleId &&
+            line.catalogItemId === key.catalogItemId
+        );
+        const now = new Date();
+        if (existing) {
+          existing.rateCode = update.rateCode;
+          existing.unitPrice = toDecimalString(update.unitPrice);
+          existing.quantity = toDecimalString(update.quantity);
+          existing.lineTotal = toDecimalString(update.lineTotal);
+          existing.taxableBase = toDecimalString(update.taxableBase);
+          existing.taxAmount = toDecimalString(update.taxAmount);
+          existing.updatedAt = now;
+          return existing;
+        }
+        const created: SaleLineRow = {
+          id: randomUUID(),
+          tenantId: create.tenantId,
+          saleId: create.saleId,
+          catalogItemId: create.catalogItemId,
+          rateCode: create.rateCode,
+          unitPrice: toDecimalString(create.unitPrice),
+          quantity: toDecimalString(create.quantity),
+          lineTotal: toDecimalString(create.lineTotal),
+          taxableBase: toDecimalString(create.taxableBase),
+          taxAmount: toDecimalString(create.taxAmount),
+          createdAt: now,
+          updatedAt: now,
+        };
+        saleLineTable.set(created.id, created);
+        return created;
+      },
+    },
     stockMovement: {
       create: ({ data }) => {
         const now = new Date();
@@ -3146,6 +3444,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       suppliers: supplierTable,
       purchases: purchaseTable,
       purchaseLines: purchaseLineTable,
+      sales: saleTable,
+      saleLines: saleLineTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,

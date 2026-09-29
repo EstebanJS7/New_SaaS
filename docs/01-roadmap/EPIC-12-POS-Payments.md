@@ -109,6 +109,33 @@ implemented EPIC-12 behavior.
   records [[DEC-020]]–[[DEC-029]] accepted on 2026-09-27 (see "Decisions /
   ADRs"), while the implementation still does not exist.
 
+## Progress
+
+This section records verified implementation evidence as slices land. The epic's
+`status` stays `planned` until its Exit Criteria are met.
+
+- **[[POS-001]] Sale draft and line pricing — `in-progress`, pending the
+  branch's CI receipt.** Five commits on `feat/epic-12-sale-draft`: `b80f7e4`
+  records the slice and its three resolved contracts in
+  `odd/tasks/epic-12-pos-payments.md`, `93f7f57` adds the W1 data foundation,
+  `fd73edc` adds the W2 API surface, `6ac1825` records the W1/W2 evidence and
+  the W3 blocker, and `d4a1e58` adds the W3 live-PostgreSQL coverage.
+- **W1 evidence.** The additive `20260927000001_sales` migration plus the
+  `Sale`/`SaleLine` models pass `pnpm --filter @newsaas/database test` (16 files
+  / 293 tests), and the seed-count probe moves the permission catalog 43 → 47
+  with the four `sales.*` keys.
+- **W2 evidence.** `pnpm --filter @newsaas/api test` with `DATABASE_URL_TEST`
+  exported passes 74 files / 998 tests, the live suite included.
+- **W3 evidence.** `pnpm --filter @newsaas/api test:live-pg` passes 80 tests
+  with 0 skipped, 9 of them the new EPIC-12 sale-draft isolation cases; the live
+  database after `db:deploy` plus `db:seed` reports 23 applied migrations, a
+  `permission` count of 47 and the planned enum, columns, foreign keys and
+  delete triggers.
+- **[[POS-002]]–[[POS-005]] remain `planned`.** No cash, completion, payment,
+  staff surface or closure work has started.
+- Root `pnpm test` fails in a local environment without `DATABASE_URL_TEST` for
+  the pre-existing [[TD-021]] reason; CI is unaffected.
+
 ## Scope
 
 - A tenant-scoped `Sale` aggregate with a `sale_status` enum pinned to `DRAFT`,
@@ -439,5 +466,9 @@ architecture change that the PRD §43 complexity budget would gate.
   `severity: low`. Created by this epic.
 - [[TD-020]] — idempotency key retention ([[DEC-024]]), `severity: low`. Created
   by this epic.
+- [[TD-021]] — the live-PostgreSQL test environment contract: Turbo 2's strict
+  env mode plus `turbo.json`'s `globalEnv` omission of `DATABASE_URL_TEST` makes
+  root `pnpm test` fail without it, `severity: low`. Pre-existing and not
+  introduced by this epic; discovered while verifying [[POS-001]].
 - No other debt is planned. If a slice ships a shortcut it must create a debt
   record rather than hide it.

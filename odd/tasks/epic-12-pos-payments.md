@@ -224,6 +224,191 @@ dependent schema or contract is written.
 
 ## Next step
 
-Maintainer decision: authorize the first implementation slice, [[POS-001 Sale
-  draft and line pricing]], now that DEC-020 through DEC-029 are binding.
-Push and pull request remain the maintainer's decision; nothing has been pushed.
+The maintainer authorized the first implementation slice on 2026-09-27; its
+record follows.
+
+---
+
+# POS-001 Sale draft and line pricing — implementation tracking
+
+## Objective
+
+Deliver the `DRAFT` half of the sale lifecycle: a tenant-scoped sale with one
+currency, an optional in-tenant customer and one or more priced lines, each
+carrying the tax and price snapshot [[DEC-021]] fixes; the operator's price
+override with the catalog reference price as a suggestion ([[DEC-022]]); and the
+`DRAFT -> CANCELLED` command ([[DEC-023]]). The slice writes no stock, cash,
+payment, invoice or fiscal state.
+
+## Authorization and branch
+
+- The maintainer authorized starting POS-001 on 2026-09-27 ("ok arrancalo").
+- Branch `feat/epic-12-sale-draft`, stacked on `docs/epic-12-scope-prep` (PR
+  #76, still open), because the epic record and the ten Decisions it is bound by
+  live on that branch. It gets retargeted or rebased onto `main` once PR #76
+  merges.
+- Delivery: work-unit commits on the feature branch; push, PR and merge remain
+  the maintainer's decisions.
+- TDD: mode **off** (`openspec/config.yaml` sets `strict_tdd: false` and no
+  session configuration enables it). The runner is `pnpm test`; the slice's real
+  gates are the database schema suite, the API integration suite and the live
+  PostgreSQL suite.
+
+## Slice-level resolutions accepted by the maintainer (2026-09-27)
+
+The exploration found three contracts the accepted Decisions left open. All
+three were confirmed with the maintainer before any code was written.
+
+1. **Currency minor units.** [[DEC-021]] requires half-up rounding "at the
+   currency's minor unit" but no currency-to-exponent source exists, and
+   `salesSettingsSchema.defaultCurrency` accepts any three-letter code.
+   Decision: a single exponent map in the sales domain with **PYG -> 0 as the
+   only supported entry**; a tenant whose `defaultCurrency` is not in the map
+   fails with a stable `400 VALIDATION_FAILED` instead of rounding silently with
+   the wrong exponent. Extending it later is one entry.
+2. **When the snapshot is computed.** [[DEC-021]]'s Decision text gives the
+   computation to CompleteSale, while POS-001 requires the draft line to persist
+   the snapshot. Decision: the `DRAFT` line persists the inputs
+   (`catalogItemId`, `rateCode`, `unitPrice`, `quantity`) plus the derived
+   amounts (`taxableBase`, `taxAmount`, `lineTotal`), recomputed on **every**
+   write of the draft, because the operator must see line and sale totals while
+   building the cart; CompleteSale (POS-003) recomputes and freezes them, and a
+   `COMPLETED` sale is never recomputed again. [[DEC-021]] is unchanged: the
+   completed sale is still what the invoice consumes, and "immutable" applies to
+   `COMPLETED`, not to an editable draft.
+3. **Entitlement and permission order.** [[DEC-026]] requires both on every
+   route and fixes neither the order nor read gating. Decision: the `sales`
+   entitlement is asserted first (`403 FEATURE_NOT_ENTITLED`) and the granular
+   permission second (`403 FORBIDDEN`), over the **whole** surface including
+   reads, exactly as the clinical and patients modules do.
+
+## Binding decisions for this slice
+
+- [[DEC-021]] tax-included prices, per-line snapshot, half-up per line, money
+  `Decimal(14,2)`, quantities `Decimal(10,3)`, sale total = sum of line totals.
+- [[DEC-022]] reference price as suggestion, operator override, sale currency
+  from `sales.defaultCurrency` server-side, cross-currency item rejected, no
+  conversion.
+- [[DEC-023]] only `DRAFT -> COMPLETED` (POS-003) and `DRAFT -> CANCELLED`; no
+  `PATCH`, no `DELETE`; reversal deferred ([[TD-018]]).
+- [[DEC-026]] `sales.read`, `sales.create`, `sales.update`, `sales.cancel` with
+  the role matrix and the `sales` entitlement gate. This slice moves the seeded
+  permission count **43 -> 47**; the epic reaches 50 with `cash.read`,
+  `cash.session.open` (POS-002) and `sales.complete` (POS-003).
+- [[DEC-027]] no number, no sequence.
+- [[DEC-028]] optional customer, no discount, no appointment or patient link.
+- [[TD-016]] binds stock writers only; this slice writes no stock and is not a
+  call site.
+
+## Tasks
+
+- [ ] W1: Data foundation — the `SaleStatus` enum, the `Sale` and `SaleLine`
+      models with tenant composite ownership keys, the additive migration
+      `20260927000001_sales` (RESTRICT foreign keys, CHECK constraints, the
+      conditional delete-rejection trigger),
+      `packages/database/src/schema-sales.test.ts`, the four `sales.*`
+      permission keys with the [[DEC-026]] matrix and the reconciled seed-count
+      probe.
+- [ ] W2: API surface — `apps/api/src/sales/` (permissions, DTOs, Zod contracts,
+      repository, the pricing and minor-unit arithmetic, service, controller,
+      module), the five routes, the `sales` entitlement gate, the co-committed
+      audit rows, the `SalesModule` registration, the shared in-memory boundary
+      extension, the route-contract probe and the integration suite.
+- [ ] W3: Live-PostgreSQL coverage for the sale boundary (atomic create, the
+      byte-equivalent cross-tenant `404`, the composite ownership keys, the
+      `DRAFT`-only transition, the delete rejection) plus the story and epic
+      reconciliation.
+
+## Route declaration per task
+
+| Task | Route     | Trigger evidence                                                         |
+| ---- | --------- | ------------------------------------------------------------------------ |
+| W1   | delegated | Multi-file write rule: schema, migration, schema gate, seeds and probes  |
+| W2   | delegated | Multi-file write rule: a new module with several files, probes and tests |
+| W3   | delegated | Live-suite and documentation surfaces                                    |
+
+## Acceptance criteria
+
+Inherited verbatim from [[POS-001]]; the eighteen criteria that require
+implemented behavior are what this slice must close. Nothing is checked until
+the evidence exists.
+
+## Progress
+
+- 2026-09-27: branch created and stacked on the docs branch; a read-only scout
+  mapped the sibling conventions and surfaced ten gaps, three of which needed
+  the maintainer; all three were resolved above before the first write.
+- 2026-09-27: W1 committed as `93f7f57` (tracking as `b80f7e4`). The
+  `SaleStatus` enum, the `Sale`/`SaleLine` models and the additive
+  `20260927000001_sales` migration exist with composite ownership keys,
+  `RESTRICT` foreign keys (tenant, customer, sale, catalog item and the
+  `rate_code -> tax_rate(code)` reference), the quantity and money CHECK
+  constraints and two conditional delete triggers that reject only a `COMPLETED`
+  or `CANCELLED` sale. The schema gate is
+  `packages/database/src/schema-sales.test.ts` (24 tests) and the four `sales.*`
+  keys land with the [[DEC-026]] matrix, moving the seeded count **43 -> 47**;
+  `schema-clinical.test.ts`'s global `@@unique([tenantId, id])` inventory was
+  reconciled 12 -> 14 with the parent's authorization, exactly as SUP-001 did 9
+  -> 10.
+- 2026-09-27: W2 committed as `fd73edc`. The `apps/api/src/sales/` module ships
+  the four permissions, the pure pricing arithmetic, allowlisted DTOs, strict
+  Zod contracts, the tenant-safe repository with the row-lock-first `DRAFT`
+  gates, the service with the entitlement-first gate and one co-committed audit
+  row per mutation, the controller with exactly five routes and no `PATCH` or
+  `DELETE`, the module registration before `PortalModule`, the in-memory sale
+  tables and the route-contract pins.
+
+## Verified evidence (parent-run, not only writer-reported)
+
+- `pnpm --filter @newsaas/database test` -> 16 files / **293 tests passed**.
+- `pnpm --filter @newsaas/api test` -> 73 passed, 1 skipped (74 files); **918
+  passed, 71 skipped** (989 tests); the skipped set is the live-PostgreSQL
+  suite, which auto-skips without `DATABASE_URL_TEST`.
+- `pnpm --filter @newsaas/api lint`, `pnpm --filter @newsaas/api typecheck`,
+  `pnpm --filter @newsaas/database typecheck` and
+  `pnpm --filter @newsaas/api build` all clean; `pnpm format-check` green
+  repository-wide.
+- Parent inspection of the source: exactly five routes (`GET /sales`,
+  `GET /sales/:id`, `POST /sales`, `PUT /sales/:id`, `POST /sales/:id/cancel`)
+  with no `PATCH` and no `DELETE`; no stock, balance, cash, payment, invoice or
+  fiscal write anywhere in the module; the pricing function rounds with
+  `toDecimalPlaces(minorUnit, ROUND_HALF_UP)` and derives
+  `taxAmount = lineTotal - taxableBase`, so the split is exact by construction;
+  `SALES_MINOR_UNITS` holds `PYG -> 0` only and an unsupported currency is a
+  stable `VALIDATION_FAILED`; and all five service methods call
+  `assertSalesEnabled()` before the permission re-assertion.
+
+## Slice-level implementation choices recorded for review
+
+- **A `DRAFT` does not gate on an inactive catalog item.** The draft is inert
+  and the item's state belongs to the completion slice (POS-003), mirroring how
+  [[DEC-014]] split the purchase draft from receiving. No Decision settles the
+  draft-side rule, so none was invented.
+- **An update recomputes with the sale's stored currency**, not a fresh read of
+  `sales.defaultCurrency`, so a later settings change cannot silently re-price
+  an existing draft ([[DEC-022]]: the sale records its currency once).
+- **A line whose item does not resolve to a seeded global rate is a `400`**
+  before any write ([[DEC-021]]), and the `rate_code` foreign key makes an
+  invalid code unrepresentable in real PostgreSQL anyway.
+- **HTTP `@RequirePermissions` runs before the service**, so a tenant lacking
+  both permission and entitlement is rejected `403 FORBIDDEN` at the route
+  layer, exactly as clinical and patients behave; a tenant holding permissions
+  without the capability gets `FEATURE_NOT_ENTITLED`.
+
+## W3 status
+
+W3 cannot run yet: Docker is not available in this WSL distro (`docker` is
+absent, `pg_isready` on `localhost:5433` reports no response and the port is
+refused), so the migration was never applied and the live-PostgreSQL block was
+never run. The composite ownership keys, the composite `RESTRICT` foreign keys,
+the per-item unique, the row lock and the conditional delete triggers are
+currently proven by DDL text and `prisma validate` alone. POS-001 stays
+`planned` with its live criterion unchecked until that evidence exists.
+
+## Next step
+
+W3 once PostgreSQL can start: apply the migration, add the EPIC-12 sale-draft
+block to `apps/api/test/live-pg-isolation.e2e-spec.ts` (atomic create, the
+byte-equivalent cross-tenant `404`, the composite ownership keys, the
+`DRAFT`-only transition and the delete rejection), run the live suite, then
+reconcile the story and the epic record and open the slice pull request.
