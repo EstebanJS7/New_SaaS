@@ -179,3 +179,30 @@ that existing intent to a new surface and, for the first time, activates the
 already-seeded `sales` capability. It adds no product scope and the engineering
 rules forbid editing the PRD to normalize an implementation detail, so no PRD
 edit is proposed here.
+
+## Subsequent scope note
+
+**2026-09-29, after this record's acceptance.** The maintainer clarified three
+points about the slice that implements this decision. This note extends the
+accepted decision and does not rewrite it: the accepted `## Decision` text, its
+seven-key set and its 43 -> 50 count stay recorded as decided, and the
+clarifications below are what the implementing slices follow from this date.
+
+- **`cash.register.create` is an eighth key.** The cash slice needs a minimal
+  `POST /cash/registers`; without it no tenant could create a `CashRegister`, so
+  the chain "OPEN session -> CASH sale" that [[DEC-020]] requires was
+  unreachable. The key is seeded into `PERMISSION_SEEDS` and wired into
+  `ROLE_PERMISSION_MATRIX` for `OWNER`, `ADMIN` and `CASHIER`, following the
+  same read-wide/write-to-the-owning-roles shape as the other write keys.
+- **The seeded count moves on this schedule.** 43 -> 47 with POS-001's four
+  `sales.*` keys (`sales.read`, `sales.create`, `sales.update`, `sales.cancel`),
+  47 -> 50 with POS-002's `cash.read`, `cash.register.create` and
+  `cash.session.open`, and 50 -> 51 with POS-003's `sales.complete`. The epic
+  total is therefore 43 -> 51 rather than this record's 43 -> 50, and the
+  seed-count probe is reconciled in the same work unit as each key set.
+- **The cash surface is gated on the `cash` capability, not on `sales`.** `cash`
+  is its own seeded feature code in PRD §10, exactly as `sales` gates the sale
+  surface, so each surface is gated on its own capability through
+  `EntitlementsService.has`. The sale routes stay gated on `sales`; only the
+  cash routes change to `cash`. The UI gate remains UX only and the backend
+  permission and entitlement checks remain mandatory.

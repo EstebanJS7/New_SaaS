@@ -19,10 +19,11 @@ prd_sections:
   - "41"
 permissions:
   - cash.read
+  - cash.register.create
   - cash.session.open
-branch:
+branch: feat/epic-12-cash-foundation
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-29
 ---
 
 # POS-002 — Cash register and session foundation
@@ -32,9 +33,10 @@ updated: 2026-09-27
 Deliver the minimum PRD §20 Cash model that makes PRD §18's `CompleteSale`
 satisfiable: a tenant-scoped `CashRegister`, `CashSession` and `CashMovement`,
 the one-`OPEN`-session-per-register rule enforced in the database by a partial
-unique index, and a minimal session-open command. [[DEC-020]] fixes this
-boundary deliberately: EPIC-13 Cash depends on EPIC-12, so a CASH sale cannot
-create its cash movement if the foundation ships only in the later epic.
+unique index, and the minimal register-create and session-open commands.
+[[DEC-020]] fixes this boundary deliberately: EPIC-13 Cash depends on EPIC-12,
+so a CASH sale cannot create its cash movement if the foundation ships only in
+the later epic.
 
 The cash movement type is extended additively with `SALE` only. The six
 remaining PRD §20 kinds — `REFUND`, `INCOME`, `EXPENSE`, `WITHDRAWAL`, `DEPOSIT`
@@ -68,19 +70,23 @@ difference, cash reversals and the full cash UI are out of scope.
   session status enum carrying `OPEN` and `CLOSED`, the tenant composite
   ownership keys, the `RESTRICT` references, the immutability guarantee for a
   confirmed movement and the partial unique index on
-  `(tenant, register) WHERE status = 'OPEN'`.
+  `(tenant, register) WHERE status = 'OPEN'`. `CashRegister` carries the columns
+  the create command needs (`name`, `is_active`) and `CashSession` carries the
+  required `opening_amount` (`DECIMAL(14,2)`, `NOT NULL`, `0.00` allowed) and
+  `opened_by_membership_id` with its composite `RESTRICT` foreign key to
+  `tenant_membership(tenant_id, id)`.
 - A planned additive migration under `packages/database/prisma/migrations/`,
   plus a `packages/database/src/schema-cash.test.ts` gate.
 - `apps/api/src/cash/` — the permission contract, allowlisted DTOs, strict Zod
-  contracts, the tenant-safe repository, the session-open command, the read
-  routes, the service, the controller and the module, plus its registration in
-  `apps/api/src/app.module.ts` and the corresponding tables in the suite's
-  shared in-memory boundary.
+  contracts, the tenant-safe repository, the register-create and session-open
+  commands, the read routes, the service, the controller and the module, plus
+  its registration in `apps/api/src/app.module.ts` and the corresponding tables
+  in the suite's shared in-memory boundary.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — the new routes and their
   per-route permission pins.
-- `packages/database/src/reference-seed.ts` — the `cash.read` and
-  `cash.session.open` keys and their role matrix, with the reconciled seed-count
-  probe.
+- `packages/database/src/reference-seed.ts` — the `cash.read`,
+  `cash.register.create` and `cash.session.open` keys and their role matrix,
+  with the reconciled seed-count probe moving the catalog 47 → 50.
 - Tenant isolation, authorization, validation and concurrency tests over the
   real guard chain, plus durable live-PostgreSQL coverage proving the partial
   unique index against real PostgreSQL.
@@ -114,24 +120,40 @@ difference, cash reversals and the full cash UI are out of scope.
 
 - [ ] `CashRegister`, `CashSession` and `CashMovement` are tenant-scoped with
       tenant composite ownership keys and `RESTRICT` tenant foreign keys; a
-      cross-tenant or unknown UUID is one byte-equivalent `404`.
+      cross-tenant or unknown UUID is one byte-equivalent `404`. `CashSession`
+      records the opener as `opened_by_membership_id`, a composite `RESTRICT`
+      foreign key to `tenant_membership(tenant_id, id)`, so the database
+      guarantees the opener belongs to the session's tenant rather than relying
+      on a global `user_profile` reference.
 - [ ] "Only one OPEN session per register" is enforced in the database by a
       partial unique index, not by application convention, so a concurrent
       second open is rejected by the database rather than by a service check.
 - [ ] `CashMovementType` gains `SALE` additively only; the six remaining PRD §20
       kinds are absent from the applied enum and stay reserved for EPIC-13, and
       no existing enum value is reordered or removed ([[DEC-020]]).
-- [ ] The session-open command is the only write route; the cash surface exposes
-      no `PATCH` and no `DELETE` route, and a confirmed movement is immutable at
-      the database level.
+- [ ] The session-open command and the register-create command are the only
+      write routes; the cash surface exposes no `PATCH` and no `DELETE` route,
+      and a confirmed movement is immutable at the database level.
+- [ ] A tenant can create an in-tenant `CashRegister`; the name is a validated,
+      non-empty bounded value, and a cross-tenant or unknown id is the shared
+      `404` rather than a distinct error. The create command resolves the
+      caller's tenant server-side and never reads `tenantId` from body, query or
+      route.
+- [ ] `POST /cash/sessions` requires an opening float: `opening_amount` is money
+      at `Decimal(14, 2)`, `NOT NULL`, and `0.00` is allowed because a register
+      may open with an empty drawer; a negative value is rejected as a
+      validation error that persists nothing. The float is the baseline PRD
+      §20's server-computed expected amount at close is compared against.
 - [ ] The session-open command resolves the caller's tenant server-side and
       never reads `tenantId` from body, query or route; the register is resolved
       in-tenant and a foreign or unknown register id is the shared `404`.
 - [ ] Every cash route enforces authentication, server-side tenant context and a
       granular permission re-asserted by the service before data access, plus
-      the `sales` entitlement through `EntitlementsService.has`; a missing
-      permission or a tenant without the capability is a stable `403` that
-      persists nothing, and the frontend gate is UX only ([[DEC-026]]).
+      the `cash` capability through `EntitlementsService.has(tenantId, "cash")`;
+      a missing permission or a tenant without the capability is a stable `403`
+      that persists nothing, and the frontend gate is UX only ([[DEC-026]]).
+      `cash` is its own seeded feature code (PRD §10), exactly as `sales` gates
+      the sale surface.
 - [ ] All request bodies are strict allowlisted contracts that reject unknown
       keys; `tenantId` is never read from body, query or route; no Prisma model
       crosses the HTTP boundary.
@@ -146,10 +168,14 @@ difference, cash reversals and the full cash UI are out of scope.
 - [ ] This Story writes no stock movement, touches no `StockBalance`, creates no
       sale and creates no payment, and the already-seeded `cash.session.close`
       key is consumed by no route.
-- [ ] The new permission keys and role matrix are seeded, and the seed-count
-      probe is reconciled: `cash.read` is held by all six roles and
-      `cash.session.open` by `OWNER`, `ADMIN` and `CASHIER`, within the epic
-      total of 43 → 50 ([[DEC-026]]).
+- [ ] The three new permission keys and role matrix are seeded, and the
+      seed-count probe is reconciled: `cash.read` is held by all six roles and
+      `cash.register.create` and `cash.session.open` by `OWNER`, `ADMIN` and
+      `CASHIER`. Slice arithmetic: POS-001 took the seeded count 43 → 47 with
+      its four `sales.*` keys, this Story takes it 47 → 50 with `cash.read`,
+      `cash.register.create` and `cash.session.open`, and [[POS-003]] takes it
+      50 → 51 with `sales.complete`, within the epic's **43 → 51** total
+      ([[DEC-026]]).
 - [ ] Tenant isolation tests exist for the three new private aggregates,
       authorization and validation tests cover every new route, and durable
       live-PostgreSQL evidence proves the partial unique index, the
@@ -177,15 +203,16 @@ difference, cash reversals and the full cash UI are out of scope.
 
 ### Added
 
-Planned routes behind the two granular permissions. The surface is the session
-open command and the two reads; there is deliberately **no** `PATCH` and **no**
-`DELETE`, and no close route.
+Planned routes behind the three granular permissions. The surface is four
+routes: two reads, the register create and the session open. There is
+deliberately **no** `PATCH` and **no** `DELETE`, and no close route.
 
-| Route                 | Permission          | Planned contract                                                                                       |
-| --------------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `GET /cash/registers` | `cash.read`         | The caller tenant's registers, newest first with an id tiebreaker.                                     |
-| `GET /cash/sessions`  | `cash.read`         | The caller tenant's sessions with their register and status; optional `status` filter, no default.     |
-| `POST /cash/sessions` | `cash.session.open` | Open one session for an in-tenant register (`201`); a second open for that register is a stable `409`. |
+| Route                  | Permission             | Planned contract                                                                                                                       |
+| ---------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /cash/registers`  | `cash.read`            | The caller tenant's registers, newest first with an id tiebreaker.                                                                     |
+| `GET /cash/sessions`   | `cash.read`            | The caller tenant's sessions with their register and status; optional `status` filter, no default.                                     |
+| `POST /cash/registers` | `cash.register.create` | Create an in-tenant register (`201`); the name is validated non-empty and bounded.                                                     |
+| `POST /cash/sessions`  | `cash.session.open`    | Open one session for an in-tenant register with the required opening float (`201`); a second open for that register is a stable `409`. |
 
 The reserved `cash.session.close` command belongs to EPIC-13 and is not
 implemented by this Story.
@@ -212,26 +239,33 @@ and inserts no rows. It is not created by this Story.
 ### Models/Tables
 
 - `CashRegister` (table `cash_register`) — tenant-scoped register. Planned
-  columns: `id` (`UUID` PK), `tenant_id` (`UUID NOT NULL`), `name`, `is_active`,
-  timestamps. There is deliberately no `branch_id` ([[DEC-020]]).
+  columns: `id` (`UUID` PK), `tenant_id` (`UUID NOT NULL`), `name` (`VARCHAR`,
+  non-empty and bounded), `is_active` (`BOOLEAN NOT NULL DEFAULT true`),
+  timestamps, plus the tenant-scoped list index on `(tenant_id, name)` that the
+  sibling registries (`supplier`, `catalog_item`) use; the sibling precedent is
+  a list index rather than a name uniqueness constraint. There is deliberately
+  no `branch_id` ([[DEC-020]]).
 - `CashSession` (table `cash_session`) — tenant-scoped session. Planned columns:
   `id`, `tenant_id`, `register_id`, `status` (`OPEN` | `CLOSED`), `opened_at`,
-  `opened_by`, timestamps. The partial unique index enforces at most one `OPEN`
-  row per `(tenant, register)`.
+  `opening_amount` (`DECIMAL(14,2) NOT NULL`, `0.00` allowed, the required
+  opening float), `opened_by_membership_id` (composite `RESTRICT` to
+  `tenant_membership(tenant_id, id)`), timestamps. The partial unique index
+  enforces at most one `OPEN` row per `(tenant, register)`.
 - `CashMovement` (table `cash_movement`) — immutable movement. Planned columns:
   `id`, `tenant_id`, `register_id`, `session_id`, `type` (`cash_movement_type`,
   `SALE` only), `amount` (`DECIMAL(14,2)`), `reason`, `created_at`.
 
-| Guarantee                | Planned shape                                                                     |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| Movement enum            | `cash_movement_type` with `SALE` only; the six others reserved for EPIC-13        |
-| Session status           | `cash_session_status` pinned to `OPEN`, `CLOSED`                                  |
-| Tenant scope             | `RESTRICT` tenant FKs on all three tables                                         |
-| Ownership is composite   | `(tenant_id, id)` unique on each table                                            |
-| Same-tenant references   | Composite FKs to `cash_register(tenant_id, id)` and `cash_session(tenant_id, id)` |
-| One OPEN session         | Partial unique index on `(tenant_id, register_id) WHERE status = 'OPEN'`          |
-| Immutable confirmed rows | A `BEFORE DELETE` trigger rejecting a hard delete of a session or a movement      |
-| Non-zero money           | `CHECK (amount <> 0)` on the movement                                             |
+| Guarantee                | Planned shape                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| Movement enum            | `cash_movement_type` with `SALE` only; the six others reserved for EPIC-13             |
+| Session status           | `cash_session_status` pinned to `OPEN`, `CLOSED`                                       |
+| Tenant scope             | `RESTRICT` tenant FKs on all three tables                                              |
+| Ownership is composite   | `(tenant_id, id)` unique on each table                                                 |
+| Same-tenant references   | Composite FKs to `cash_register(tenant_id, id)` and `cash_session(tenant_id, id)`      |
+| Same-tenant opener       | Composite `RESTRICT` FK `opened_by_membership_id` → `tenant_membership(tenant_id, id)` |
+| One OPEN session         | Partial unique index on `(tenant_id, register_id) WHERE status = 'OPEN'`               |
+| Immutable confirmed rows | A `BEFORE DELETE` trigger rejecting a hard delete of a session or a movement           |
+| Non-zero money           | `CHECK (amount <> 0)` on the movement                                                  |
 
 The exact index and constraint list is a slice-level implementation choice
 inside approved scope and follows the sibling migration shapes.
@@ -260,16 +294,17 @@ Planned coverage; none of it exists yet.
 - `packages/database/src/schema-cash.test.ts` — the additive enum literal
   `{SALE}` and the absence of the six reserved kinds, the session status enum,
   the three tables, the composite ownership keys, the `RESTRICT` tenant and
-  register/session foreign keys, the partial unique index definition, the
+  register/session foreign keys, the composite membership FK on the opener, the
+  required `opening_amount` column, the partial unique index definition, the
   non-zero amount `CHECK` and the delete-rejection trigger.
 - `apps/api/src/cash/cash.integration.test.ts` — the read and write permission
-  sweeps that persist nothing on denial, the `sales` entitlement `403`, the
-  session open, the second-open `409`, the list and detail reads, the invalid
-  body sweeps, the co-committed audit row with field names only, the
-  byte-equivalent cross-tenant `404`, and the proof that no sale, stock, payment
-  or close state is touched.
-- `apps/api/src/rbac/route-contract.probe.test.ts` — the three cash routes in
-  the deny-by-default survival inventory and their per-route permission pins.
+  sweeps that persist nothing on denial, the `cash` entitlement `403`, the
+  register create, the session open, the second-open `409`, the list and detail
+  reads, the invalid body sweeps, the co-committed audit row with field names
+  only, the byte-equivalent cross-tenant `404`, and the proof that no sale,
+  stock, payment or close state is touched.
+- `apps/api/src/rbac/route-contract.probe.test.ts` — the four cash routes in the
+  deny-by-default survival inventory and their per-route permission pins.
 - `apps/api/test/live-pg-isolation.e2e-spec.ts` — an EPIC-12 cash-foundation
   block against the booted AppModule and a disposable real PostgreSQL: the
   session open with its audit row, the partial unique index proven by a raw
@@ -302,10 +337,14 @@ Planned coverage; none of it exists yet.
 - Accepted Decision records govern this Story (accepted 2026-09-27):
   - [[DEC-020]] — the `CompleteSale` cash boundary and the minimal Cash
     foundation: which cash entities, movement kinds, invariants and commands
-    belong to EPIC-12 and which stay with EPIC-13.
+    belong to EPIC-12 and which stay with EPIC-13. A dated subsequent-scope note
+    of 2026-09-29 records the required opening float, the membership reference
+    and the minimal register creation.
   - [[DEC-026]] — sales permission keys, role matrix and the entitlement gate;
-    this Story owns `cash.read` and `cash.session.open` and leaves the seeded
-    `cash.session.close` reserved.
+    this Story owns `cash.read`, `cash.register.create` and `cash.session.open`
+    and leaves the seeded `cash.session.close` reserved. A dated
+    subsequent-scope note of 2026-09-29 records the eighth key and the `cash`
+    capability gate.
   - [[DEC-023]] — the deferred correction boundary; cash reversals wait with
     sale reversal and payment refund.
 - An ADR is not expected: the cash foundation introduces no architecture change
@@ -321,11 +360,41 @@ Planned coverage; none of it exists yet.
   partial unique index rather than by application convention.
 - **The Branch dimension** — [[DEC-020]]: no Branch, consistent with the
   tenant-wide stock decision.
-- **Permission keys and entitlement gate** — [[DEC-026]]: `cash.read` and
-  `cash.session.open` with their role matrix and the `sales` entitlement.
+- **Permission keys and entitlement gate** — [[DEC-026]]: `cash.read`,
+  `cash.register.create` and `cash.session.open` with their role matrix, and the
+  `cash` capability gate through `EntitlementsService.has(tenantId, "cash")`.
 - **The exact index and constraint list** — an implementation choice inside
   approved scope, decided during the slice using the sibling migrations as
   precedent.
+
+### Subsequent-scope resolutions (2026-09-29)
+
+The maintainer answered four questions this Story left open on 2026-09-29, after
+[[DEC-020]] and [[DEC-026]] were accepted. They extend the accepted records
+through dated subsequent-scope notes rather than rewriting them, and the
+sections above are aligned with them:
+
+1. **Register creation stays in the slice.** The Story had defined only the two
+   reads and the session open, so no route could create a `CashRegister` and the
+   chain "OPEN session → CASH sale" that [[DEC-020]] requires was broken for
+   every tenant. A minimal `POST /cash/registers` behind the new
+   `cash.register.create` key is added. Consequence for [[DEC-026]]: its key set
+   moves from seven keys / seeded count 50 to eight keys / 51.
+2. **The cash surface is gated on the `cash` capability, not on `sales`.**
+   `cash` is its own seeded feature code (PRD §10), exactly as `sales` gates the
+   sale surface. This replaces the story's earlier `sales` gate wording and does
+   not change [[DEC-020]]'s cash boundary.
+3. **The session records a required opening float.** `opening_amount` is
+   `DECIMAL(14,2) NOT NULL` and `0.00` is allowed, because PRD §20 defines close
+   as the server-computed expected amount compared against the counted amount
+   and without a baseline that expectation cannot represent the cash already in
+   the drawer.
+4. **`opened_by` references the tenant membership.** `opened_by_membership_id`
+   with a composite `RESTRICT` foreign key to `tenant_membership(tenant_id, id)`
+   (that unique key already exists at
+   `packages/database/prisma/schema.prisma:211`), so the database guarantees the
+   opener belongs to the session's tenant; a global `user_profile` reference
+   could not.
 
 ## Files / Modules
 
@@ -341,7 +410,7 @@ Planned coverage; none of it exists yet.
   in-memory boundary.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — the route and permission
   pins.
-- `packages/database/src/reference-seed.ts` — the two `cash.*` permission keys
+- `packages/database/src/reference-seed.ts` — the three `cash.*` permission keys
   and the role matrix.
 - `apps/api/test/live-pg-isolation.e2e-spec.ts` — the planned live-PostgreSQL
   block.
