@@ -95,6 +95,28 @@ the next writer ([[EPIC-12]] POS/sales) inherits the same obligation, and the
 proposed resolution above — a self-enforcing guarded write or row lock — remains
 the trigger for closing it.
 
+## Status update (2026-09-29)
+
+[[POS-003 Complete sale with payments]] landed as the next stock writer after
+receiving, and it **complies** with the protocol too. The completion command
+acquires `stockSerializationLockKey(tenantId, catalogItemId)` through the same
+EPIC-10 seam (`InventoryRepository.lockItemStock`) for every tracking line,
+**before** reading or writing `stock_balance`, and it orders the item locks in
+ascending `catalogItemId` after taking the sale header row lock first, so its
+lock order cannot deadlock against receiving or adjustment. It evaluates the
+fixed `BLOCK` policy against the locked projection and writes exactly one signed
+negative `SALE` `StockMovement` plus the absolute projection through
+`createMovement` / `upsertBalance`. Its live-PostgreSQL block asserts the
+projection equals the ledger's signed sum for every item, and its concurrent
+double-completion case admits exactly one `201` with one movement set.
+
+This makes three compliant writers today — `InventoryService.adjust`, EPIC-11
+receiving and EPIC-12 sale completion — and the debt stays **open** for the same
+reason as before: the guarantee is still a convention rather than a database-
+enforced property, the `upsertBalance` seam still cannot tell whether its caller
+holds the lock, and no schema object rejects an unlocked write. Reversal, which
+PRD §40 requires and [[TD-018]] tracks, will add the next writer.
+
 ## Risk
 
 - [[EPIC-11]] and [[EPIC-12]] add new writers (purchase receiving, sale
