@@ -415,7 +415,7 @@ Planned coverage; none of it exists yet.
 
 ## Resolutions accepted by the maintainer (2026-09-29)
 
-Three contracts the story and its Decisions left open were confirmed before the
+Four contracts the story and its Decisions left open were confirmed before the
 first write. Each is binding on this slice.
 
 1. **Reference state is validated at completion.** An inactive catalog item or
@@ -434,6 +434,16 @@ first write. Each is binding on this slice.
 3. **A replay answers `200`, a fresh completion answers `201`.** Both return the
    completed sale; the status distinguishes "just completed" from "already
    completed" without changing the shape of the body ([[DEC-024]]).
+4. **A CASH payment requires exactly one `OPEN` session in the tenant.** The
+   sale carries no register reference and a tenant may hold several registers,
+   so with more than one `OPEN` session there is no correct register to
+   attribute the cash to; with none there is nowhere to attribute it. Zero open
+   sessions is a stable `409` and more than one is a stable `409` that names the
+   ambiguity, resolved server-side and never from the body ([[DEC-020]]). The
+   movement records the session it used through `cash_movement.session_id`, so
+   the attribution is auditable rather than guessed. EPIC-13's close removes the
+   constraint's practical edge and [[POS-004]] is expected to surface both
+   rejections as distinct outcomes.
 
 Two further implementation choices recorded with them: the idempotency record's
 result reference is the **sale id**, re-read inside the caller's tenant on
