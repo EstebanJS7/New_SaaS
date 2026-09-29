@@ -158,6 +158,9 @@ model Tenant {
   purchaseLines               PurchaseLine[]
   sales                       Sale[]
   saleLines                   SaleLine[]
+  cashRegisters               CashRegister[]
+  cashSessions                CashSession[]
+  cashMovements               CashMovement[]
 
   @@map("tenant")
 }
@@ -204,6 +207,11 @@ model TenantMembership {
 
   /// Appointments where this membership is the assigned professional.
   appointments Appointment[]
+
+  /// Cash sessions this membership opened (EPIC-12 POS-002). The session
+  /// references the membership through the composite `(tenantId, id)` key, so
+  /// the opener belongs to the session's tenant by construction.
+  openedCashSessions CashSession[]
 
   /// One membership per (tenant, profile).
   @@unique([tenantId, userProfileId])
@@ -1787,6 +1795,229 @@ model SaleLine {
   /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
   @@unique([tenantId, id])
   @@map("sale_line")
+}
+
+// ---------------------------------------------------------------------------
+// Cash (EPIC-12 POS-002 data foundation, DEC-020, DEC-026).
+//
+// The minimum PRD §20 Cash model that makes PRD §18's CompleteSale
+// satisfiable: a tenant-scoped `CashRegister`, `CashSession` and
+// `CashMovement`. DEC-020 fixes this boundary deliberately — EPIC-13 Cash
+// depends on EPIC-12, so a CASH sale could not create its cash movement if the
+// foundation shipped only in the later epic.
+//
+// The movement enum is additive: `SALE` is the only kind EPIC-12 writes, and
+// `REFUND`, `INCOME`, `EXPENSE`, `WITHDRAWAL`, `DEPOSIT` and `ADJUSTMENT` stay
+// reserved for EPIC-13 under the same additive discipline `StockMovementType`
+// already documents. Session close, the expected/counted difference, cash
+// reversals and the full cash UI are out of scope for this slice.
+//
+// "Only one OPEN session per register" is a DATABASE property, not an
+// application convention: it is carried by the partial unique index
+// `cash_session_one_open_per_register_key` on (tenant_id, register_id)
+// WHERE status = 'OPEN', declared as raw SQL in the migration because Prisma
+// cannot express partial indexes. The supplier tax-id key is the precedent for
+// that mechanism.
+//
+// Tenant ownership is carried by composite `(tenant_id, id)` keys on all three
+// tables, so a session can only reference a register of the SAME tenant and a
+// movement can only reference a register and a session of the SAME tenant. The
+// session's opener is `openedByMembershipId`, a composite `RESTRICT`
+// reference to `tenant_membership(tenant_id, id)`, so the database guarantees
+// the opener belongs to the session's tenant rather than relying on a global
+// `user_profile` reference (the 2026-09-29 DEC-020 subsequent-scope note).
+//
+// There is deliberately no `branchId` anywhere (DEC-020): cash stays
+// tenant-wide, consistent with the tenant-wide stock decision.
+//
+// Immutability: the migration adds an unconditional `BEFORE DELETE` trigger on
+// `cash_session` and on `cash_movement` — there is no draft state in cash, so
+// every session and every movement is a confirmed record — plus a `BEFORE
+// UPDATE` trigger on `cash_movement`, so a confirmed movement is immutable
+// rather than merely undeletable.
+//
+// Data classification: register names, session statuses, cash amounts and free
+// text reasons are INTERNAL (PRD §41); logs and audit carry ids and field names
+// only — never a payload.
+// ---------------------------------------------------------------------------
+
+/// Cash movement kind (PRD §20, DEC-020), pinned to exactly one value for this
+/// epic: `SALE`. It is the only kind EPIC-12 writes — POS-003 appends it inside
+/// the CompleteSale transaction — while `REFUND`, `INCOME`, `EXPENSE`,
+/// `WITHDRAWAL`, `DEPOSIT` and `ADJUSTMENT` stay reserved for EPIC-13, which
+/// owns their commands. Values are appended, never reordered or removed.
+/// Evolve additively only.
+enum CashMovementType {
+  SALE
+
+  @@map("cash_movement_type")
+}
+
+/// Cash session lifecycle (PRD §20), pinned to exactly these two states. A
+/// session is created `OPEN` by the session-open command and reaches `CLOSED`
+/// only through the EPIC-13 close command, which this slice does not ship.
+/// Values are appended, never reordered or removed. Evolve additively only.
+enum CashSessionStatus {
+  OPEN
+  CLOSED
+
+  @@map("cash_session_status")
+}
+
+/// Tenant-scoped cash register (PRD §20, DEC-020). The register is the drawer a
+/// session is opened against and the unit the one-`OPEN`-session rule is scoped
+/// to; it carries no balance column, because the register's expected amount is
+/// derived from the immutable movement ledger rather than mutated directly.
+///
+/// `name` is required, non-empty and bounded to 1..200 characters by the column
+/// and the migration CHECK, matching the W2 DTO bound. The per-tenant unique
+/// name (`@@unique([tenantId, name])`) is a slice-level choice: a registry whose
+/// two registers shared one name would make the drawer ambiguous to the
+/// operator, so the database rejects it. The sibling registries (`supplier`,
+/// `catalog_item`) carry a list index instead because their names are not
+/// operator-facing identities the way a drawer is.
+///
+/// There is no `branchId` (DEC-020): the register is tenant-wide. Nothing in
+/// EPIC-12 hard-deletes a register; removal is deactivation through
+/// `isActive`, so historical sessions and movements keep their reference. Data
+/// classification: the name is INTERNAL (PRD §41); logs and audit carry ids and
+/// field names only.
+model CashRegister {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String  @map("tenant_id") @db.Uuid
+  /// Operator-facing drawer name: required, non-empty and bounded to 1..200.
+  name     String  @db.VarChar(200)
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Sessions opened against this drawer.
+  sessions  CashSession[]
+  /// Movements recorded against this drawer (written by POS-003, not here).
+  movements CashMovement[]
+
+  /// Tenant-ownership key: target of the composite register FK from
+  /// `CashSession` and `CashMovement`.
+  @@unique([tenantId, id])
+  /// One register name per tenant: an ambiguous drawer is not a valid state.
+  @@unique([tenantId, name])
+  @@map("cash_register")
+}
+
+/// Tenant-scoped cash session (PRD §20, DEC-020). "Only one OPEN session per
+/// register" is a DATABASE property carried by the partial unique index
+/// `cash_session_one_open_per_register_key` on (tenant_id, register_id) WHERE
+/// status = 'OPEN', which lives in the migration because Prisma cannot express
+/// a partial index; the `@@index([tenantId, status])` below is only the list
+/// lookup and enforces nothing.
+///
+/// `openingAmount` is the required opening float (the 2026-09-29 DEC-020
+/// subsequent-scope note): `Decimal(14, 2)`, `NOT NULL`, and `0.00` is allowed
+/// because a register may open with an empty drawer. It is the baseline PRD
+/// §20's server-computed expected amount at close is compared against, so it is
+/// part of the minimum foundation rather than EPIC-13 surface; the migration
+/// rejects a negative value.
+///
+/// `openedByMembershipId` is a composite `RESTRICT` reference to
+/// `tenant_membership(tenant_id, id)`, so the opener is guaranteed to belong to
+/// the session's tenant and can never be hard-deleted out from under the
+/// session.
+///
+/// A session is never hard-deletable: the migration adds an unconditional
+/// `BEFORE DELETE` trigger, because there is no draft state in cash. Data
+/// classification: the status and the amount are INTERNAL (PRD §41); logs and
+/// audit carry ids and field names only.
+model CashSession {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId   String            @map("tenant_id") @db.Uuid
+  registerId String            @map("register_id") @db.Uuid
+  /// PRD §20 lifecycle. Defaults to OPEN: a session is created open. `CLOSED`
+  /// is reachable only through the EPIC-13 close command.
+  status     CashSessionStatus @default(OPEN)
+
+  openedAt             DateTime @default(now()) @map("opened_at") @db.Timestamptz(3)
+  /// The opener, resolved server-side from the authenticated request context.
+  openedByMembershipId String   @map("opened_by_membership_id") @db.Uuid
+  /// Required opening float: `0.00` allowed, negative rejected by the CHECK.
+  openingAmount        Decimal  @map("opening_amount") @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the register must be in the SAME tenant.
+  register           CashRegister     @relation(fields: [tenantId, registerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the opener must be a membership of the
+  /// SAME tenant (the 2026-09-29 subsequent-scope note).
+  openedByMembership TenantMembership @relation(fields: [tenantId, openedByMembershipId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Movements recorded inside this session (written by POS-003, not here).
+  movements CashMovement[]
+
+  /// Tenant-ownership key: target of the composite session FK from
+  /// `CashMovement`.
+  @@unique([tenantId, id])
+  /// Tenant list lookup: `(tenant_id, status)` serves the status-filtered
+  /// session list without a second scan.
+  @@index([tenantId, status])
+  @@map("cash_session")
+}
+
+/// Immutable cash movement (PRD §20, DEC-020). This is the ledger entry that
+/// makes the register's expected amount derivable: no cash balance is ever
+/// mutated directly, every amount change is a new movement.
+///
+/// NOTHING in EPIC-12 writes a movement — POS-003 does, inside the CompleteSale
+/// transaction, resolving the `OPEN` session server-side. The slice ships the
+/// table and the immutability guarantee so the write path lands on a schema that
+/// cannot be bypassed.
+///
+/// `type` is `SALE` only for this epic (the six remaining PRD §20 kinds are
+/// reserved for EPIC-13). `amount` is `Decimal(14, 2)` and the migration rejects
+/// a zero amount (`amount <> 0`); the SIGN is owned by the movement kind rather
+/// than by the caller, so the column never encodes the direction twice. `reason`
+/// is OPTIONAL free text: the only kind this epic writes is `SALE`, which is
+/// self-describing, while the kinds that need an explanation (INCOME, EXPENSE,
+/// ADJUSTMENT) arrive with EPIC-13; a bound is in place so the field cannot
+/// become an unbounded log.
+///
+/// A confirmed movement is IMMUTABLE: the migration rejects any UPDATE with a
+/// `BEFORE UPDATE` trigger and any DELETE with an unconditional `BEFORE DELETE`
+/// trigger. An incorrect movement is corrected by a compensating movement, never
+/// by an edit or a delete (PRD §20, PRD §40). Data classification: the type, the
+/// amount and the reason are INTERNAL (PRD §41); logs and audit carry ids and
+/// field names only.
+model CashMovement {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId   String           @map("tenant_id") @db.Uuid
+  registerId String           @map("register_id") @db.Uuid
+  sessionId  String           @map("session_id") @db.Uuid
+  /// PRD §20 kind. `SALE` is the only value this epic writes (DEC-020).
+  type       CashMovementType
+  /// Exact money on the reference scale. Non-zero (CHECK) and sign-owned by
+  /// the kind, never by the caller.
+  amount     Decimal          @map("amount") @db.Decimal(14, 2)
+  /// OPTIONAL free-text explanation, bounded; the `SALE` kind needs none.
+  reason     String?          @db.VarChar(500)
+
+  /// Append-only rows are written once — no `updatedAt` by design.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the register must be in the SAME tenant.
+  register CashRegister @relation(fields: [tenantId, registerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the session must be in the SAME tenant.
+  session  CashSession  @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
+  @@unique([tenantId, id])
+  @@map("cash_movement")
 }
 
 // ---------------------------------------------------------------------------

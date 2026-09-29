@@ -337,6 +337,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "suppliers.read",
       "purchases.read",
       "sales.read",
+      "cash.read",
     ]);
     for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
       for (const key of [
@@ -578,14 +579,53 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
         expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
       }
     }
-    // POS-002 owns `cash.read`/`cash.session.open` and POS-003 owns
-    // `sales.complete`; POS-001 must not seed them, so the DEC-026 epic total
-    // of 50 is not reached by this slice.
+    // POS-003 owns `sales.complete`; POS-001 must not seed it. POS-002 owns the
+    // `cash.*` keys, which are seeded by its own slice and asserted in the cash
+    // family test below.
     expect(seededKeys).not.toContain("sales.complete");
-    expect(seededKeys).not.toContain("cash.read");
-    expect(seededKeys).not.toContain("cash.session.open");
     // The pre-existing close key stays reserved for EPIC-13 (DEC-026).
     expect(seededKeys).toContain("cash.session.close");
+  });
+
+  it("seeds the cash permission catalog and decided matrix (EPIC-12 POS-002)", () => {
+    const cashPermissionKeys = ["cash.read", "cash.register.create", "cash.session.open"] as const;
+    const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of cashPermissionKeys) {
+      expect(seededKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    // Maintainer matrix (DEC-026 and its 2026-09-29 subsequent-scope note): all
+    // six roles read cash — the DEC-016 read-wide shape — and only the owner,
+    // the admin and the cashier create registers and open sessions. The cash
+    // surface is ALSO gated on the `cash` entitlement rather than on `sales`;
+    // that second gate is asserted in the API slice where the guard actually
+    // runs.
+    for (const roleCode of [
+      "OWNER",
+      "ADMIN",
+      "VETERINARIAN",
+      "RECEPTIONIST",
+      "CASHIER",
+      "INVENTORY_MANAGER",
+    ] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("cash.read");
+    }
+    for (const roleCode of ["OWNER", "ADMIN", "CASHIER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toEqual(
+        expect.arrayContaining(["cash.register.create", "cash.session.open"])
+      );
+    }
+    const cashWriteKeys = ["cash.register.create", "cash.session.open"] as const;
+    for (const roleCode of ["VETERINARIAN", "RECEPTIONIST", "INVENTORY_MANAGER"] as const) {
+      for (const key of cashWriteKeys) {
+        expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(key);
+      }
+    }
+    // EPIC-13 keeps the close command: this slice must not re-scope it, and the
+    // `cash` capability already exists as a feature code (PRD §10).
+    expect(seededKeys).toContain("cash.session.close");
+    expect(FEATURE_CODE_SEEDS).toContain("cash");
   });
 
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
@@ -645,10 +685,11 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // suppliers.* keys added by EPIC-11 WU1 + the five purchases.* keys added
       // by EPIC-11 PUR-001/PUR-002. The fifth purchase key, `purchases.receive`,
       // completed the DEC-016 total of 43, and the four sales.* keys added by
-      // EPIC-12 POS-001 move the seeded catalog to 47. The epic's DEC-026 total
-      // of 50 is completed by POS-002 (`cash.read`, `cash.session.open`) and
-      // POS-003 (`sales.complete`), which this slice does not seed.
-      permissions: 47,
+      // EPIC-12 POS-001 moved the seeded catalog to 47. EPIC-12 POS-002 adds
+      // `cash.read`, `cash.register.create` and `cash.session.open`, moving it to
+      // 50; the epic total of 51 is completed by POS-003's `sales.complete`,
+      // which this slice does not seed.
+      permissions: 50,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,
