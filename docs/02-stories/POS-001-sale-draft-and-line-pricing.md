@@ -3,7 +3,7 @@ id: POS-001
 type: story
 title: Sale draft and line pricing
 epic: EPIC-12
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - EPIC-09
@@ -24,7 +24,7 @@ permissions:
   - sales.create
   - sales.update
   - sales.cancel
-branch:
+branch: feat/epic-12-sale-draft
 created: 2026-09-27
 updated: 2026-09-27
 ---
@@ -61,9 +61,9 @@ effect. A draft is inert until [[POS-003]] completes it.
   `referencePriceAmount Decimal(14, 2)` plus `referencePriceCurrency VarChar(3)`
   and expressly left its tax interpretation and POS use to a dedicated decision;
   [[DEC-021]] and [[DEC-022]] close both.
-- No sale model, route, permission or seed exists today; this Story establishes
-  the sale aggregate and the tenant-safe read/write seam that [[POS-003]]
-  completes.
+- No sale model, route, permission or seed existed when this Story was written;
+  this Story establishes the sale aggregate and the tenant-safe read/write seam
+  that [[POS-003]] completes.
 - The engineering rules prefer explicit command endpoints over
   `PATCH status=...`, so `CANCELLED` is a command rather than a status write.
 
@@ -74,8 +74,8 @@ effect. A draft is inert until [[POS-003]] completes it.
   composite ownership keys, the `RESTRICT` references to the tenant, the
   optional customer and the catalog item, the `CHECK` constraints for money and
   quantity, and the delete-rejection guarantee for a `COMPLETED` sale.
-- A planned additive migration under `packages/database/prisma/migrations/`,
-  plus a `packages/database/src/schema-sales.test.ts` gate.
+- The additive migration under `packages/database/prisma/migrations/`, plus a
+  `packages/database/src/schema-sales.test.ts` gate.
 - `apps/api/src/sales/` — the permission contract, allowlisted DTOs, strict Zod
   contracts, the tenant-safe repository, the tax and pricing arithmetic, the
   service, the controller and the module, plus its registration in
@@ -128,64 +128,114 @@ effect. A draft is inert until [[POS-003]] completes it.
 
 ## Acceptance Criteria
 
-- [ ] The sale status enum is exactly `DRAFT`, `COMPLETED`, `CANCELLED` (PRD
+- [x] The sale status enum is exactly `DRAFT`, `COMPLETED`, `CANCELLED` (PRD
       §18); no other state is representable and there is no partial or held
-      state.
-- [ ] A sale is tenant-scoped with a tenant composite ownership key and a
+      state. Evidence: the enum cases of `schema-sales.test.ts`, over the
+      migration artifact and the Prisma model, plus the applied-enum case of the
+      live-PostgreSQL block.
+- [x] A sale is tenant-scoped with a tenant composite ownership key and a
       `RESTRICT` tenant foreign key; a cross-tenant or unknown sale UUID is one
-      byte-equivalent `404`.
-- [ ] The optional `customerId` and every referenced catalog item are resolved
+      byte-equivalent `404`. Evidence: the tenant-scope case of
+      `schema-sales.test.ts`, the shared-`404` cases of
+      `sales.integration.test.ts`, and the cross-tenant `404` case of the
+      live-PostgreSQL block.
+- [x] The optional `customerId` and every referenced catalog item are resolved
       in the caller's tenant; a foreign or unknown reference is rejected with
-      the same shared `404` and persists nothing.
-- [ ] Only a `DRAFT` sale is mutable: editing or cancelling a `COMPLETED` sale
-      is a stable `409 CONFLICT` that persists nothing.
-- [ ] Cancel is an explicit `DRAFT`-guarded command, never a generic
+      the same shared `404` and persists nothing. Evidence: the
+      optional-customer and foreign-customer cases of
+      `sales.integration.test.ts`, plus the rejected-create case of the
+      live-PostgreSQL block, which asserts nothing persisted.
+- [x] Only a `DRAFT` sale is mutable: editing or cancelling a `COMPLETED` sale
+      is a stable `409 CONFLICT` that persists nothing. Evidence: the `409`
+      update/cancel cases of `sales.integration.test.ts` and the live-PostgreSQL
+      case that rejects a `CANCELLED` update and cancel while keeping the row
+      and its lines intact.
+- [x] Cancel is an explicit `DRAFT`-guarded command, never a generic
       `PATCH status` write; there is no `PATCH` and no `DELETE` route anywhere
       on the sale surface, and cancellation never deletes a sale or a line.
-- [ ] Each line stores the immutable snapshot `rateCode`, `unitPrice`,
+      Evidence: the five-route inventory and the per-route permission pins of
+      `route-contract.probe.test.ts`, the no-`PATCH`/no-`DELETE` case of
+      `sales.integration.test.ts`, and the per-status delete-trigger case of the
+      live-PostgreSQL block.
+- [x] Each line stores the immutable snapshot `rateCode`, `unitPrice`,
       `quantity`, `lineTotal`, `taxableBase` and `taxAmount` with explicit
       `Decimal` precision, computed tax-included with half-up rounding at the
-      currency's minor unit ([[DEC-021]]).
-- [ ] Money is `Decimal(14, 2)` and quantities are `Decimal(10, 3)`; the sale
+      currency's minor unit ([[DEC-021]]). Evidence: the snapshot-scale cases of
+      `schema-sales.test.ts` and the half-up arithmetic case of
+      `sales.integration.test.ts`, which keeps `base + tax === total`.
+- [x] Money is `Decimal(14, 2)` and quantities are `Decimal(10, 3)`; the sale
       total is the sum of the line totals, no floating-point arithmetic is used,
       and an unknown or missing rate code is rejected before any write
-      ([[DEC-021]]).
-- [ ] The unit price is overridable per line, an item with no reference price
+      ([[DEC-021]]). Evidence: the single `ROUND_HALF_UP` rounding site in
+      `apps/api/src/sales/sales.pricing.ts` over `Prisma.Decimal`, the
+      unresolved-rate and total-sum cases of `sales.integration.test.ts`, and
+      the five applied line `CHECK`s of the live-PostgreSQL block.
+- [x] The unit price is overridable per line, an item with no reference price
       can still be sold with a manually entered price, and the applied price is
-      what the line snapshot records ([[DEC-022]]).
-- [ ] The sale currency is read server-side from the `sales.defaultCurrency`
+      what the line snapshot records ([[DEC-022]]). Evidence: the price-override
+      and no-reference-price case of `sales.integration.test.ts`.
+- [x] The sale currency is read server-side from the `sales.defaultCurrency`
       tenant setting through the typed settings service and never from the
       request body; an item whose `referencePriceCurrency` differs from the sale
       currency cannot join the sale and returns a stable error, with no
-      conversion anywhere ([[DEC-022]]).
-- [ ] A sale carries no discount field, no discount permission, no
-      `appointmentId` and no `patientId` ([[DEC-028]]).
-- [ ] A sale carries no `number`, `sequence` or formatted identifier column
-      ([[DEC-027]]).
-- [ ] Every route enforces authentication, server-side tenant context and a
+      conversion anywhere ([[DEC-022]]). Evidence: the currency-resolution,
+      unsupported-currency and cross-currency-rejection cases of
+      `sales.integration.test.ts`, plus the strict create contract in
+      `apps/api/src/sales/sales.zod.ts`.
+- [x] A sale carries no discount field, no discount permission, no
+      `appointmentId` and no `patientId` ([[DEC-028]]). Evidence: the header
+      absence case of `schema-sales.test.ts`.
+- [x] A sale carries no `number`, `sequence` or formatted identifier column
+      ([[DEC-027]]). Evidence: the same header absence case of
+      `schema-sales.test.ts` and the verified applied-column inspection of the
+      migrated live database.
+- [x] Every route enforces authentication, server-side tenant context and a
       granular permission re-asserted by the service before data access, plus
       the `sales` entitlement through `EntitlementsService.has`; a missing
       permission or a tenant without the capability is a stable `403` that
       persists nothing, and the frontend gate is UX only ([[DEC-026]]).
-- [ ] All request bodies are strict allowlisted contracts that reject unknown
+      Evidence: the read, write and entitlement `403` sweeps of
+      `sales.integration.test.ts`, the entitlement-first gate of
+      `apps/api/src/sales/sales.service.ts`, and the permission pins of
+      `route-contract.probe.test.ts`.
+- [x] All request bodies are strict allowlisted contracts that reject unknown
       keys; `tenantId` is never read from body, query or route; no Prisma model
-      crosses the HTTP boundary.
-- [ ] Every accepted mutation co-commits exactly one audit row carrying the
+      crosses the HTTP boundary. Evidence: the strict Zod contracts of
+      `apps/api/src/sales/sales.zod.ts`, the invalid create and update/query
+      sweeps of `sales.integration.test.ts`, and its DTO case that returns the
+      stored snapshot without exposing a Prisma model.
+- [x] Every accepted mutation co-commits exactly one audit row carrying the
       actor, the sale id, stable field names and
       `{ schemaVersion, changedFields     }` with no stored value; no
       CONFIDENTIAL or RESTRICTED payload is logged, and reads are not audited
-      (PRD §27, PRD §41).
-- [ ] The draft path is inert: it performs no stock movement, balance change,
-      cash movement, invoice, payment or fiscal operation.
-- [ ] The new permission keys and role matrix are seeded, and the seed-count
+      (PRD §27, PRD §41). Evidence: the create and cancel audit cases of
+      `sales.integration.test.ts`, and the live-PostgreSQL create and concurrent
+      cancel cases, each asserting exactly one `sale.created` or cancel audit
+      row.
+- [x] The draft path is inert: it performs no stock movement, balance change,
+      cash movement, invoice, payment or fiscal operation. Evidence: the INERT
+      case of `sales.integration.test.ts`.
+- [x] The new permission keys and role matrix are seeded, and the seed-count
       probe is reconciled: the seeded permission count moves 43 → 50 across the
       epic, with this Story contributing `sales.read`, `sales.create`,
-      `sales.update` and `sales.cancel` ([[DEC-026]]).
-- [ ] Tenant isolation tests exist for the sale aggregate, authorization and
+      `sales.update` and `sales.cancel` ([[DEC-026]]). Evidence: the four keys
+      and their role matrix in `packages/database/src/reference-seed.ts` and the
+      reconciled probe in `reference-seed.test.ts`. **Reading flagged for
+      review:** this Story moves the seeded count **43 → 47**; the epic's
+      DEC-026 total of **50** arrives with [[POS-002]] (`cash.read`,
+      `cash.session.open`) and [[POS-003]] (`sales.complete`).
+- [x] Tenant isolation tests exist for the sale aggregate, authorization and
       validation tests cover every new route, and durable live-PostgreSQL
       evidence proves the atomic create, the byte-equivalent cross-tenant `404`
-      and the composite ownership keys.
-- [ ] Required lint, typecheck, test, integration and build checks pass.
+      and the composite ownership keys. Evidence: `sales.integration.test.ts`
+      (22 tests), the route-contract pins, and the 9-case EPIC-12 block of
+      `apps/api/test/live-pg-isolation.e2e-spec.ts`.
+- [x] Required lint, typecheck, test, integration and build checks pass.
+      Evidence: `pnpm lint` 14/14, `pnpm typecheck` 14/14, `pnpm build` 9/9, the
+      database suite (16 files / 293 tests) and the API suite (74 files / 998
+      tests with `DATABASE_URL_TEST` exported) locally. **The CI receipt for
+      this branch is still pending**, and root `pnpm test` without
+      `DATABASE_URL_TEST` fails for the pre-existing [[TD-021]] reason.
 
 ## Domain Invariants
 
@@ -211,12 +261,12 @@ effect. A draft is inert until [[POS-003]] completes it.
 
 ### Added
 
-Planned unprefixed routes behind the four granular permissions. The surface is
-exactly two reads, the draft create, the draft line-set update and the explicit
-cancel. There is deliberately **no** `PATCH` (status is server-owned) and **no**
+Unprefixed routes behind the four granular permissions. The surface is exactly
+two reads, the draft create, the draft line-set update and the explicit cancel.
+There is deliberately **no** `PATCH` (status is server-owned) and **no**
 `DELETE`. Completion is [[POS-003]].
 
-| Route                    | Permission     | Planned contract                                                                                                                        |
+| Route                    | Permission     | Contract                                                                                                                                |
 | ------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /sales`             | `sales.read`   | The caller tenant's sales with their lines, newest first with an id tiebreaker; optional `status` filter, no implicit default.          |
 | `GET /sales/:id`         | `sales.read`   | One sale; a foreign or unknown UUID is the same byte-equivalent `404`.                                                                  |
@@ -240,27 +290,27 @@ No existing catalog, inventory, supplier or purchase route is touched.
 
 ### Migration
 
-Planned additive migration `20260927000001_sales`: one enum, two tables, their
-indexes, constraints and the delete-rejection guarantee. It alters no existing
-table and inserts no rows. This Story creates it as its first work unit.
+Additive migration `20260927000001_sales`: one enum, two tables, their indexes,
+constraints and the delete-rejection guarantee. It alters no existing table and
+inserts no rows. This Story created it as its first work unit, and it is applied
+to the live database (23 migrations, `migrate status` up to date).
 
 ### Models/Tables
 
-- `Sale` (table `sale`) — tenant-scoped draft header. Planned columns: `id`
-  (`UUID` PK), `tenant_id` (`UUID NOT NULL`), `customer_id` (`UUID NULL`),
-  `currency` (`VarChar(3) NOT NULL`), `status`
-  (`sale_status NOT NULL DEFAULT 'DRAFT'`), `created_at`, `updated_at`. There is
-  deliberately no `number`, no `discount`, no `appointment_id`, no `patient_id`
-  and no `total` column: the total is the sum of the line totals ([[DEC-021]],
-  [[DEC-027]], [[DEC-028]]).
-- `SaleLine` (table `sale_line`) — tenant-scoped child. Planned columns: `id`,
+- `Sale` (table `sale`) — tenant-scoped draft header. Columns: `id` (`UUID` PK),
+  `tenant_id` (`UUID NOT NULL`), `customer_id` (`UUID NULL`), `currency`
+  (`VarChar(3) NOT NULL`), `status` (`sale_status NOT NULL DEFAULT 'DRAFT'`),
+  `created_at`, `updated_at`. There is deliberately no `number`, no `discount`,
+  no `appointment_id`, no `patient_id` and no `total` column: the total is the
+  sum of the line totals ([[DEC-021]], [[DEC-027]], [[DEC-028]]).
+- `SaleLine` (table `sale_line`) — tenant-scoped child. Columns: `id`,
   `tenant_id`, `sale_id`, `catalog_item_id`, `rate_code`, `unit_price`
   (`DECIMAL(14,2)`), `quantity` (`DECIMAL(10,3)`), `line_total`
   (`DECIMAL(14,2)`), `taxable_base` (`DECIMAL(14,2)`), `tax_amount`
   (`DECIMAL(14,2)`), timestamps. There is no tax rate column beyond the frozen
   `rate_code` and no derived document-level arithmetic.
 
-| Guarantee                | Planned shape                                                                                                                 |
+| Guarantee                | Applied shape                                                                                                                 |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | Status enum              | `sale_status` pinned to `DRAFT`, `COMPLETED`, `CANCELLED`                                                                     |
 | Tenant scope             | `sale_tenant_id_fkey` and `sale_line_tenant_id_fkey` — `RESTRICT` tenant FKs on delete and update                             |
@@ -284,55 +334,119 @@ inside approved scope and follows the sibling migration shapes.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented and committed on `feat/epic-12-sale-draft` as three work units.
+
+**W1 — data foundation.** The `SaleStatus` enum pinned to `DRAFT`, `COMPLETED`
+and `CANCELLED`, the `Sale` and `SaleLine` models, and the additive migration
+`20260927000001_sales`: two tables, the composite tenant-ownership keys, the
+`RESTRICT` foreign keys, the one-line-per-item unique, the status lookup index,
+the five money and quantity `CHECK`s and the two status-conditional delete
+triggers. The line's `rate_code` carries a slice-level `RESTRICT` reference to
+the global `tax_rate(code)` unique column, which is what makes an invalid frozen
+code unrepresentable rather than merely validated in application code. The
+schema gate `packages/database/src/schema-sales.test.ts` pins all of it,
+including the [[DEC-027]]/[[DEC-028]] absences. `reference-seed.ts` gains
+`sales.read`, `sales.create`, `sales.update` and `sales.cancel` with their role
+matrix and the seed-count probe moves the catalog 43 → 47; the clinical schema
+probe reconciles its composite-ownership count from 12 to 14 for the two new
+models.
+
+**W2 — API surface.** `apps/api/src/sales/` holds the permission contract, the
+single rounding site of the pricing arithmetic, the allowlisted DTOs, the strict
+Zod contracts, the tenant-safe repository with the row-lock-first `DRAFT` gate,
+the entitlement-first service that re-asserts the granular permission before any
+data access, and the controller's five routes: `GET /sales`, `GET /sales/:id`,
+`POST /sales`, `PUT /sales/:id` and `POST /sales/:id/cancel`. `SalesModule` is
+registered in `apps/api/src/app.module.ts`, and the shared in-memory boundary
+models the two new tables. There is deliberately no `PATCH` and no `DELETE`.
+
+**W3 — live coverage.** The EPIC-12 block of
+`apps/api/test/live-pg-isolation.e2e-spec.ts` proves the same behavior against
+the booted `AppModule` and a disposable real PostgreSQL: the atomic create with
+the [[DEC-021]] snapshot and exactly one audit row, a rejected create that
+persists nothing, the byte-equivalent cross-tenant `404`, the applied enum, the
+six `RESTRICT` foreign keys, the ownership uniques and the status index plus
+three rolled-back FK probes, the `DRAFT`-only `409`, the per-status delete
+triggers, the one-line-per-item unique, the five `CHECK`s and two concurrent
+cancels of the same draft resolving to exactly one `201` and one `409` with no
+lost line set and exactly one audit row.
 
 ## Verification
 
+Run on 2026-09-27 on `feat/epic-12-sale-draft`. `DATABASE_URL_TEST` must be
+schema-less: with the Prisma-style `DATABASE_URL` from `.env` and no
+`DATABASE_URL_TEST`, the API suite falls back to the Prisma URL and fails for
+the pre-existing [[TD-021]] reason instead.
+
 ```text
-Not run.
+pnpm --filter @newsaas/database test                          -> 16 files / 293 tests passed
+pnpm --filter @newsaas/api test (DATABASE_URL_TEST exported)  -> 74 files passed / 998 tests passed, live suite included
+pnpm --filter @newsaas/api test:live-pg                       -> 80 tests passed, 0 skipped; 9 are the EPIC-12 sale-draft cases
+pnpm lint                                                     -> 14/14 successful
+pnpm typecheck                                                -> 14/14 successful
+pnpm build                                                    -> 9/9 successful
+pnpm format-check                                             -> green repository-wide
+pnpm --filter @newsaas/api test (no DATABASE_URL_TEST)        -> 1 file failed / 918 passed / 80 skipped  (pre-existing, [[TD-021]])
 ```
+
+Live database state after `db:deploy` plus `db:seed`: 23 migrations applied and
+`migrate status` reports "Database schema is up to date!"; `permission` count
+**47**; `sale_status` exactly `DRAFT, COMPLETED, CANCELLED`; the `sale` columns
+`id, tenant_id, customer_id, currency, status, created_at, updated_at` (no
+`number`, no `total`, no discount, no appointment and no patient); and **6**
+foreign keys plus **2** delete triggers across `sale`/`sale_line`.
 
 ## Tests Added
 
-Planned coverage; none of it exists yet.
-
-- `packages/database/src/schema-sales.test.ts` — the additive migration's enum
-  literal, the two tables, the columns, the composite ownership keys, the
-  `RESTRICT` tenant/customer/sale/catalog-item foreign keys, the quantity and
-  money `CHECK`s, the delete-rejection guarantee for a `COMPLETED` sale, and the
-  [[DEC-027]]/[[DEC-028]] absence of a number, discount, appointment or patient
-  column.
-- `apps/api/src/sales/sales.integration.test.ts` — the read and write permission
-  sweeps that persist nothing on denial, the `sales` entitlement `403`, draft
-  create, line-set update, cancel and list, the `DRAFT`-only `409`, the invalid
-  create/update sweeps, the tax and rounding cases, the price-override case, the
-  currency-resolution case with the cross-currency rejection, the optional
-  customer resolution, the co-committed audit rows with field names only, the
-  cross-tenant `404`, and the proof that the draft path is inert.
+- `packages/database/src/schema-sales.test.ts` — **24 tests** over the migration
+  artifact (the enum, the two tables, the columns and scales, the composite
+  ownership keys, the `RESTRICT` foreign keys including
+  `rate_code -> tax_rate(code)`, the uniques, the status index, the five
+  `CHECK`s and the two status-conditional delete triggers) and over the Prisma
+  models, including the [[DEC-027]]/[[DEC-028]] absences.
+- `apps/api/src/sales/sales.integration.test.ts` — **22 tests**: the read, write
+  and entitlement `403` sweeps that persist nothing on denial, draft create with
+  its co-committed audit row, the line-set reconciliation, the optional and
+  foreign customer, cancel, the `DRAFT`-only `409`, the invalid create and
+  update/query sweeps, the half-up tax arithmetic, the price override, the
+  currency resolution and cross-currency rejection, list ordering, the
+  cross-tenant `404`, the no-`PATCH`/no-`DELETE` inventory and the INERT draft
+  proof.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — the five sale routes in the
   deny-by-default survival inventory and their per-route permission pins.
-- `apps/api/test/live-pg-isolation.e2e-spec.ts` — an EPIC-12 sale-draft block
-  against the booted AppModule and a disposable real PostgreSQL: the atomic
-  create, the byte-equivalent cross-tenant `404`, the composite ownership keys,
-  the `DRAFT`-only transition and the delete-rejection guarantee.
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — **9 new cases** inside the
+  `EPIC-12 sale draft application-path isolation` block, against the booted
+  `AppModule` and a disposable real PostgreSQL; the file now holds **80 tests**.
 
 ## Known Limitations
 
-- None yet; nothing is implemented.
-- Planned: the in-memory boundary cannot enforce the composite foreign keys or
-  the unique constraints, so the live-PostgreSQL block must prove them against
-  real PostgreSQL as the EPIC-11 slices did.
+- The shared in-memory boundary cannot enforce the composite foreign keys or the
+  uniques; the live-PostgreSQL block is what proves them against real
+  PostgreSQL, so an in-memory pass alone is not evidence for those guarantees.
+- A `DRAFT` does not gate on an inactive catalog item. That decision belongs to
+  [[POS-003]], mirroring how [[DEC-012]] and [[DEC-014]] split the purchase
+  draft gate from receiving: the draft stays inert and the completion command is
+  where item state must matter.
+- An update recomputes with the sale's stored currency rather than a fresh
+  settings read ([[DEC-022]]): the currency is fixed at create time, so a later
+  `sales.defaultCurrency` change never reinterprets an existing draft.
 
 ## Technical Debt
 
+- [[TD-021]] records the pre-existing live-PostgreSQL environment defect:
+  `pnpm test` at the root fails without `DATABASE_URL_TEST` because Turbo 2's
+  strict env mode plus `turbo.json`'s `globalEnv` omit the variable, so the live
+  spec falls back to the Prisma-style `DATABASE_URL`. It reproduces at
+  `fd73edc`, before this Story's live coverage, and no fix was applied here
+  because it is outside the Story's scope.
 - [[TD-019]] records the deferred barcode/SKU identification ([[DEC-025]]); this
   Story resolves items by name because the catalog has no code column.
 - [[TD-018]] records the deferred sale reversal and payment refund
   ([[DEC-023]]); this Story ships the `DRAFT -> CANCELLED` command only.
 - [[TD-016]] binds only the stock writers; this Story writes no stock and is not
   a call site.
-- No new debt record is planned: the arithmetic, pricing and tenant-isolation
-  risks this Story owns are covered by its own gates rather than deferred.
+- The arithmetic, pricing and tenant-isolation risks this Story owns are covered
+  by its own gates rather than deferred.
 
 ## Decisions / ADRs
 
@@ -377,25 +491,28 @@ Planned coverage; none of it exists yet.
 
 - `packages/database/prisma/schema.prisma` — the `SaleStatus` enum and the
   `Sale`/`SaleLine` models.
-- `packages/database/prisma/migrations/20260927000001_sales/` — the planned
-  additive migration.
-- `packages/database/src/schema-sales.test.ts` — the planned schema gate.
+- `packages/database/prisma/migrations/20260927000001_sales/` — the additive
+  migration.
+- `packages/database/src/schema-sales.test.ts` — the schema gate.
 - `apps/api/src/sales/` — permissions, DTOs, Zod contracts, repository, tax and
   pricing arithmetic, service, controller and module.
-- `apps/api/src/app.module.ts` — the planned `SalesModule` registration.
+- `apps/api/src/app.module.ts` — the `SalesModule` registration.
 - `apps/api/test/support/in-memory-database.ts` — the sale tables in the shared
   in-memory boundary.
 - `apps/api/src/rbac/route-contract.probe.test.ts` — the route and permission
   pins.
 - `packages/database/src/reference-seed.ts` — the four `sales.*` permission keys
   and the role matrix.
-- `apps/api/test/live-pg-isolation.e2e-spec.ts` — the planned live-PostgreSQL
-  block.
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — the live-PostgreSQL block.
 - `docs/01-roadmap/EPIC-12-POS-Payments.md` — the epic record.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._ This Story stays
-`planned` while nothing exists; it may not be marked `done` until the schema,
-the routes, the seed and the live-PostgreSQL evidence are merged with the
-required CI checks green.
+Implemented and committed on `feat/epic-12-sale-draft`. The local gates pass —
+lint, typecheck, the database suite, the API suite with `DATABASE_URL_TEST`, the
+live-PostgreSQL block, build and `format-check` — and every acceptance criterion
+is closed by local evidence. The only remaining gate is this branch's CI
+receipt, which has not run yet, so `status` is `in-progress` and not `done`.
+Root `pnpm test` currently fails in a local environment without
+`DATABASE_URL_TEST` for the pre-existing [[TD-021]] reason; CI sets schema-less
+URLs for both variables and is unaffected.
