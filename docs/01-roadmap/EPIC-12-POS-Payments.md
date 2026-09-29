@@ -198,8 +198,18 @@ This section records verified implementation evidence as slices land. The epic's
   command is the third compliant stock writer; the debt stays open because the
   serialization protocol is still a convention rather than a database-enforced
   guarantee.
-- **[[POS-004]] and [[POS-005]] remain `planned`.** No staff surface and no epic
-  closure work has started.
+- **[[POS-004]] Staff POS surface — implemented, `in-progress`.** Two commits on
+  `feat/epic-12-staff-pos-surface`: `c296029` adds the E1 transport and client
+  layer (the `/api/sales` and `/api/cash` proxies and the colocated client
+  modules, 74 tests) and `9a0bcb3` adds the E2 pages and state coverage (the
+  counter surface, the draft detail, the payment capture with a float-free
+  exact-sum guard, the six state branches, the completion outcome mapping, the
+  navigation entry and 83 component tests). Web-only: no route, schema,
+  migration, seed or permission key. `pnpm --filter @newsaas/web test` passes 73
+  files / 795 tests, and typecheck, lint and build are clean. The story flips to
+  `done` after its pull request merges with a CI receipt.
+- **[[POS-005]] remains `planned`.** No module documentation, `CI-EVIDENCE.md`
+  entry, changelog entry or roadmap status update has landed.
 - Root `pnpm test` fails in a local environment without `DATABASE_URL_TEST` for
   the pre-existing [[TD-021]] reason; CI is unaffected.
 

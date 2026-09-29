@@ -722,3 +722,69 @@ Also recorded in the story:
 POS-004 (the staff POS surface consuming the draft, completion and cash routes)
 and then POS-005 (epic closure: module documentation, `CI-EVIDENCE.md`, the
 changelog and the roadmap status).
+
+---
+
+# POS-004 Staff POS surface - implementation tracking
+
+## Objective
+
+Deliver the staff browser surface for the counter sale: item search over the
+shipped catalog read API, a local cart with the reference price pre-filled and
+overridable, an optional customer, a payment capture across the six PRD §19
+methods, and a completion flow that reports each distinct outcome honestly. Web
+only: no route, no schema, no seed and no permission key is added.
+
+## Authorization and branch
+
+- The maintainer authorized POS-004 on 2026-09-29 ("cierralo y continuemos") and
+  answered the cart-persistence question before the first write.
+- Branch `feat/epic-12-staff-pos-surface`, created from `main` at `6ca2c2e`
+  after POS-003 closed, so it is not stacked and its pull request runs CI
+  directly.
+- TDD: mode **off**. The gates are the web suite, lint, typecheck and build.
+
+## Slice-level resolutions accepted by the maintainer (2026-09-29)
+
+1. **The cart is local and checkout creates + completes.** The cart lives in the
+   browser while it is built; checkout sends `POST /sales` with the lines and
+   then `POST /sales/:id/complete` with the payments. Nothing is persisted per
+   keystroke, an abandoned cart leaves no orphan draft, and a failed completion
+   leaves a real `DRAFT` that the detail page can reopen and report honestly.
+2. **The planned module path was wrong and is corrected.** The story named
+   `apps/web/src/features/sales/`, which does not exist in this repository; the
+   shipped EPIC-11 convention colocates client modules with their route, so the
+   slice uses `apps/web/src/app/(app)/app/sales/` and the story was corrected
+   accordingly.
+
+## Tasks
+
+- [ ] E1: Transport and client - the sales and cash proxies under
+      `apps/web/src/app/api/**` with the cookie-only forwarding and the
+      allowlisted query/body rebuild, their proxy tests, and the colocated
+      client API and query layer.
+- [ ] E2: Pages and states - the counter surface, the draft detail and the line
+      editor with the six state branches, the completion outcome mapping and the
+      component tests.
+- [ ] E3: Reconciliation, verification and the pull request.
+
+## Progress
+
+- 2026-09-29: E1 closed (`c296029`): eight new files, 74 tests, the two proxies
+  and the colocated client modules; `pnpm --filter @newsaas/web test` at 64
+  files / 712 tests with typecheck, lint and build clean.
+- 2026-09-29: E2 closed (`9a0bcb3`): 22 files and 83 tests adding the counter
+  surface, the draft detail and line editor, the payment capture with a
+  float-free exact-sum guard, the six state branches, the completion outcome
+  mapping and the navigation entry; the web suite reaches 73 files / 795 tests
+  with typecheck and lint clean.
+- Known limitation recorded rather than hidden: the navigation entitlement gate
+  is dormant because the shell has no browser-side entitlement source and adding
+  one would be a new proxy route; the sibling EPIC-11 surfaces do not gate
+  navigation at all, so this is ahead of the convention, not a regression. The
+  backend `FEATURE_NOT_ENTITLED` remains the authority.
+
+## Next step
+
+E3: reconcile and open the pull request to `main`, then POS-005 (epic closure:
+module documentation, `CI-EVIDENCE.md`, the changelog and the roadmap status).
