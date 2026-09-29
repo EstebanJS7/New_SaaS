@@ -84,6 +84,9 @@ const PURCHASE_NOT_FOUND_MESSAGE = "Purchase was not found.";
 /** Server-owned request id pinned on every sale cross-tenant miss. */
 const SALE_NOT_FOUND_REQUEST_ID = "live-pg-sale-not-found-proof";
 
+/** Server-owned request id pinned on every completion cross-tenant miss. */
+const COMPLETION_NOT_FOUND_REQUEST_ID = "live-pg-completion-not-found-proof";
+
 /** Stable `404` wire message shared by every sale verb. */
 const SALE_NOT_FOUND_MESSAGE = "Sale was not found.";
 
@@ -117,6 +120,13 @@ const STOCK_ITEM_NOT_TRACKED_MESSAGE = "The catalog item does not track stock.";
  */
 const PURCHASE_RECEIVE_MOVEMENT_REASON = "Purchase received";
 
+/**
+ * Fixed reason recorded on every `SALE` ledger movement of a completion: the
+ * ledger column is `TEXT NOT NULL` and the completion command takes no caller
+ * reason, so this literal is the value.
+ */
+const SALE_COMPLETION_MOVEMENT_REASON = "Sale completed";
+
 /** Server-owned request id pinned on every cash cross-tenant miss. */
 const CASH_NOT_FOUND_REQUEST_ID = "live-pg-cash-not-found-proof";
 
@@ -144,6 +154,24 @@ const CASH_REGISTER_NAME_CONFLICT_MESSAGE =
  * concurrent second open.
  */
 const CASH_SESSION_ALREADY_OPEN_MESSAGE = "This cash register already has an open session.";
+
+/**
+ * The two stable `409` wire messages behind the completion's CASH-session
+ * resolution (DEC-020, resolution 4 of 2026-09-29), mirrored as literals so the
+ * live suite asserts the byte-exact bodies the application emits for the real
+ * `cash_session` rows. They are DIFFERENT messages, so the absence of a session
+ * and the ambiguity of several are separable over the wire.
+ */
+const SALE_CASH_SESSION_REQUIRED_MESSAGE = "A cash payment requires an open cash session.";
+const SALE_CASH_SESSIONS_AMBIGUOUS_MESSAGE = "More than one cash session is open for this tenant.";
+
+/**
+ * Stable `409` wire message for the same idempotency key used with a DIFFERENT
+ * request body (DEC-024), mirrored as a literal so the live suite asserts the
+ * byte-exact body the application emits for the real replay key.
+ */
+const SALE_IDEMPOTENCY_KEY_CONFLICT_MESSAGE =
+  "The idempotency key was already used for a different request.";
 
 /**
  * Exact normalized rendering of the one-OPEN-session partial index predicate
@@ -238,6 +266,27 @@ interface SaleDto {
   total: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Payment method literals pinned by the `payment_method` enum (PRD §19). */
+type SalePaymentMethodDto = "CASH" | "CARD" | "BANK_TRANSFER" | "QR" | "CHECK" | "OTHER";
+
+/** Allowlisted payment projection (EPIC-12 POS-003 contract). */
+interface SalePaymentDto {
+  id: string;
+  method: SalePaymentMethodDto;
+  amount: string;
+}
+
+/**
+ * Allowlisted completed-sale projection (EPIC-12 POS-003 contract): the sale
+ * projection plus its payments and the replay discriminant. A fresh completion
+ * and an identical replay carry the same shape and differ only by `replay` and
+ * the HTTP status (`201` versus `200`).
+ */
+interface CompletedSaleDto extends SaleDto {
+  payments: SalePaymentDto[];
+  replay: boolean;
 }
 
 /** Allowlisted cash register projection (EPIC-12 POS-002 contract). */
@@ -495,6 +544,12 @@ const SALE_LINE_DTO_KEYS = [
   "taxableBase",
   "unitPrice",
 ].sort();
+
+/** Exact allowlisted key set of the completed-sale response DTO (POS-003). */
+const COMPLETED_SALE_DTO_KEYS = [...SALE_DTO_KEYS, "payments", "replay"].sort();
+
+/** Exact allowlisted key set of one payment projection. */
+const SALE_PAYMENT_DTO_KEYS = ["amount", "id", "method"].sort();
 
 /** Exact allowlisted key set of the cash register response DTO. */
 const CASH_REGISTER_DTO_KEYS = ["createdAt", "id", "isActive", "name", "updatedAt"].sort();
@@ -8469,6 +8524,1518 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           where: { name: "Live Cash Duplicate Drawer", tenantId: tenantBId },
         })
       ).toBe(0);
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-12 POS-003 live-PostgreSQL evidence (D3).
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP and the `20260927000003_sale_completion` migration's applied DDL —
+   * what the shared in-memory boundary cannot represent:
+   *   1. the atomic completion: the returned completed sale with its payments,
+   *      exactly one signed negative `SALE` movement per tracking line and NONE
+   *      for a non-tracking line, the projection equal to the ledger's signed
+   *      sum, the RECOMPUTED and frozen DEC-021 snapshot over a deliberately
+   *      perturbed stored line, the `Decimal(14,2)` payment rows and exactly one
+   *      `sale.completed` audit row carrying field NAMES only;
+   *   2. the CASH payment path: exactly one `SALE` cash movement against the
+   *      tenant's ONLY open session, and NONE when every payment is non-CASH;
+   *   3. the two CASH-session rejections over HTTP (the absence, then the
+   *      ambiguity on a second register), each persisting nothing;
+   *   4. the idempotent replay: `200` with the same completed sale and no second
+   *      effect, the same key with a different payment set a stable `409`, and a
+   *      keyless replay the `DRAFT`-only `409`;
+   *   5. the concurrent double completion: exactly one `201` and one stable
+   *      `409` under a PROVEN header-row-lock overlap, with exactly one set of
+   *      movements, payments and audit rows across both attempts;
+   *   6. the applied schema claims: the effective `stock_movement_type` and
+   *      `payment_method` label sets, the `payment` amount CHECK, the two
+   *      CONDITIONAL `payment` triggers over a COMPLETED/CANCELLED sale while a
+   *      DRAFT sale's payment stays reconcilable, and the
+   *      `(tenant_id, operation, key)` unique with its tenant-scoped key;
+   *   7. the byte-equivalent cross-tenant `404`, with the foreign sale and the
+   *      audit count unchanged;
+   *   8. zero residue: every raw probe rolled back and the fixture counts
+   *      unchanged.
+   *
+   * The block owns a DEDICATED tenant, because the completion resolves the
+   * tenant's SINGLE open cash session (DEC-020, resolution 4 of 2026-09-29) and
+   * the earlier EPIC-12 cash block deliberately leaves several `OPEN` sessions
+   * in tenant A — every CASH completion there would be unconditionally
+   * ambiguous. This tenant starts with NO session at all, so the CASH cases
+   * evolve the `OPEN` set themselves: the absence first, then exactly one
+   * session, then the second register that makes it ambiguous.
+   *
+   * Every assertion is deterministic: no mock, no injected Prisma error, no
+   * sleep and no retry, and every raw-SQL mutation runs inside an interactive
+   * transaction that is always rolled back.
+   */
+  describe("EPIC-12 sale completion application-path isolation", () => {
+    /** Marker error that forces an interactive transaction to roll back. */
+    const SALE_COMPLETION_ROLLBACK_SENTINEL = "live-pg-sale-completion-rollback";
+
+    /** The dedicated tenant that owns every completion fixture of this block. */
+    let completionTenantId: string;
+    let completionCookie: string;
+    /** Global SEED-owned rates the line snapshots freeze (PRD §15). */
+    let exemptRateId: string;
+    let iva10RateId: string;
+    /** Tenant items: two stock-tracking (EXEMPT / IVA_10) and one non-tracking. */
+    let trackedExemptItemId: string;
+    let trackedTaxedItemId: string;
+    let nonTrackingItemId: string;
+    /** Probe-only item: no HTTP completion ever references it. */
+    let probeItemId: string;
+    /** The two registers the CASH cases evolve: one session, then two. */
+    let firstRegisterId: string;
+    let secondRegisterId: string;
+    /** Probe-only register: no case ever opens a session on it. */
+    let probeRegisterId: string;
+    /** Probe-only DRAFT sale: the raw DRAFT-payment trigger probe target. */
+    let probeSaleId: string;
+    /** Tenant A item funding the foreign draft of the cross-tenant case. */
+    let foreignItemAId: string;
+    /** Tenant A's real draft that the completion tenant must never resolve. */
+    let foreignSaleAId: string;
+
+    /** One ACTIVE tenant item through the REAL catalog command. */
+    const createItem = async (
+      cookie: string,
+      name: string,
+      overrides: Record<string, unknown> = {}
+    ): Promise<string> => {
+      const created = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", cookie)
+        .send({ kind: "SUPPLY", name, taxRateId: exemptRateId, ...overrides })
+        .expect(201);
+      return (created.body as { id: string }).id;
+    };
+
+    /**
+     * One signed adjustment through the REAL inventory command: the funding path
+     * that gives a tracking line a projection the completion's fixed `BLOCK`
+     * policy can subtract from. It runs BEFORE a case captures its counts, so
+     * every delta below is the completion's own effect.
+     */
+    const fund = (cookie: string, catalogItemId: string, quantity: string, requestId: string) =>
+      supertest(serverUrl)
+        .post("/inventory/stock/adjustments")
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .send({ catalogItemId, quantity, reason: "Live completion funding" });
+
+    /** One cash register over REAL HTTP. */
+    const createRegister = async (cookie: string, name: string): Promise<string> => {
+      const created = await supertest(serverUrl)
+        .post("/cash/registers")
+        .set("Cookie", cookie)
+        .send({ name })
+        .expect(201);
+      return (created.body as CashRegisterDto).id;
+    };
+
+    /**
+     * One cash session open over REAL HTTP, with a pinned request id. The
+     * opening float is a fixed `0.00`: this block asserts the CASH MOVEMENT
+     * amount a completion writes, never the drawer's opening balance, so the two
+     * are deliberately independent.
+     */
+    const openSession = (cookie: string, registerId: string, requestId: string) =>
+      supertest(serverUrl)
+        .post("/cash/sessions")
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .send({ registerId, openingAmount: "0.00" });
+
+    /** One sale create over REAL HTTP. */
+    const postSale = (cookie: string, body: Record<string, unknown>) =>
+      supertest(serverUrl).post("/sales").set("Cookie", cookie).send(body);
+
+    /**
+     * The explicit completion command over REAL HTTP, with an optional pinned
+     * request id and an optional `Idempotency-Key` header (DEC-024).
+     */
+    const complete = (
+      cookie: string,
+      saleId: string,
+      payments: { method: string; amount: string }[],
+      options: { requestId?: string; idempotencyKey?: string } = {}
+    ) => {
+      let request = supertest(serverUrl).post(`/sales/${saleId}/complete`).set("Cookie", cookie);
+      if (options.requestId !== undefined) {
+        request = request.set("X-Request-Id", options.requestId);
+      }
+      if (options.idempotencyKey !== undefined) {
+        request = request.set("Idempotency-Key", options.idempotencyKey);
+      }
+      return request.send({ payments }).then((response) => response);
+    };
+
+    /**
+     * Extracts the database message from Prisma's raw-query error wrapper
+     * (`Raw query failed. Code: `23001`. Message: `...``). The captured text is
+     * the database's own message, so an assertion can compare it EXACTLY instead
+     * of matching a substring of the wrapper.
+     */
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
+      // PostgreSQL renders a `RAISE EXCEPTION` message with a fixed `ERROR: `
+      // severity prefix; stripping it leaves the exact text the trigger raises.
+      return (match ? match[1] : text).replace(/^ERROR: /, "");
+    };
+
+    /** Runs `probe` and returns the exact database message of its rejection. */
+    const captureDatabaseMessage = async (probe: () => Promise<unknown>): Promise<string> => {
+      try {
+        await probe();
+      } catch (error) {
+        return databaseMessage(error);
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `probe` and returns the PostgreSQL SQLSTATE and the exact message
+     * Prisma surfaced for its rejection. Prisma wraps a raw `unique_violation`
+     * as `P2010` and puts the SERVER's SQLSTATE in `meta.code` (`23505`) and the
+     * server's DETAIL text (which names the violated KEY COLUMNS) in
+     * `meta.message` — never the index name, which is why the rejecting index is
+     * identified by catalogue introspection instead of by message text.
+     */
+    const captureRawRejection = async (
+      probe: () => Promise<unknown>
+    ): Promise<{ sqlState: string | undefined; message: string }> => {
+      try {
+        await probe();
+      } catch (error) {
+        const candidate = error as { meta?: { code?: unknown; message?: unknown } };
+        return {
+          sqlState: typeof candidate.meta?.code === "string" ? candidate.meta.code : undefined,
+          message:
+            typeof candidate.meta?.message === "string"
+              ? candidate.meta.message
+              : databaseMessage(error),
+        };
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `work` inside an interactive transaction that is ALWAYS rolled back,
+     * so a probe can seed throwaway rows and attempt a mutation without
+     * persisting anything. An assertion failure inside `work` propagates and
+     * fails the case instead of matching the rollback sentinel.
+     */
+    const inRolledBackTransaction = async (
+      work: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<void> => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw new Error(SALE_COMPLETION_ROLLBACK_SENTINEL);
+        })
+      ).rejects.toThrow(SALE_COMPLETION_ROLLBACK_SENTINEL);
+    };
+
+    /** Raw sale row at the migration's exact shape; returns the id. */
+    const insertRawSale = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      status: "DRAFT" | "COMPLETED" | "CANCELLED"
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+        VALUES (${id}::uuid, ${tenantId}::uuid, 'PYG', ${status}::sale_status)
+      `;
+      return id;
+    };
+
+    /** Raw payment row at the migration's exact shape; returns the id. */
+    const insertRawPayment = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      saleId: string,
+      method: string,
+      amount: string
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "payment" ("id", "tenant_id", "sale_id", "method", "amount")
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${saleId}::uuid,
+          ${method}::payment_method, ${amount}::decimal
+        )
+      `;
+      return id;
+    };
+
+    /** Raw idempotency row at the migration's exact shape. */
+    const insertRawIdempotencyRecord = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      key: string,
+      fingerprint: string,
+      resultSaleId: string
+    ): Promise<void> => {
+      await tx.$executeRaw`
+        INSERT INTO "idempotency_record" (
+          "tenant_id", "operation", "key", "fingerprint", "result_sale_id"
+        )
+        VALUES (
+          ${tenantId}::uuid, 'sale.complete', ${key}, ${fingerprint}, ${resultSaleId}::uuid
+        )
+      `;
+    };
+
+    /** Raw `DECIMAL(10,3)` projection text, or `null` when the item has no row. */
+    const rawBalanceText = async (
+      tenantId: string,
+      catalogItemId: string
+    ): Promise<string | null> => {
+      const rows = await prisma.$queryRaw<{ quantity: string }[]>`
+        SELECT "quantity"::text AS quantity FROM "stock_balance"
+        WHERE "tenant_id" = ${tenantId}::uuid AND "catalog_item_id" = ${catalogItemId}::uuid
+      `;
+      return rows[0]?.quantity ?? null;
+    };
+
+    /** Raw SIGNED sum of one item's movements at the projection's exact scale. */
+    const rawLedgerSum = async (tenantId: string, catalogItemId: string): Promise<string> => {
+      const rows = await prisma.$queryRaw<{ total: string }[]>`
+        SELECT COALESCE(sum("quantity"), 0)::numeric(10,3)::text AS total
+        FROM "stock_movement"
+        WHERE "tenant_id" = ${tenantId}::uuid AND "catalog_item_id" = ${catalogItemId}::uuid
+      `;
+      return rows[0]?.total ?? "0.000";
+    };
+
+    /** Raw `SALE` movements of one item, at the column's exact scale. */
+    const saleMovements = async (
+      tenantId: string,
+      catalogItemId: string
+    ): Promise<{ quantity: string; reason: string }[]> => {
+      return prisma.$queryRaw<{ quantity: string; reason: string }[]>`
+        SELECT "quantity"::text AS quantity, "reason" AS reason
+        FROM "stock_movement"
+        WHERE "tenant_id" = ${tenantId}::uuid AND "catalog_item_id" = ${catalogItemId}::uuid
+          AND "type" = 'SALE'::stock_movement_type
+        ORDER BY "created_at" ASC, "id" ASC
+      `;
+    };
+
+    /**
+     * The stored `sale_line` columns of one sale, at their OWN exact scales, so
+     * the frozen DEC-021 snapshot is asserted against real PostgreSQL rather
+     * than the HTTP projection alone.
+     */
+    const rawStoredLines = (
+      saleId: string
+    ): Promise<
+      {
+        catalog_item_id: string;
+        rate_code: string;
+        unit_price: string;
+        quantity: string;
+        line_total: string;
+        taxable_base: string;
+        tax_amount: string;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "catalog_item_id"::text AS catalog_item_id, "rate_code" AS rate_code,
+          "unit_price"::text AS unit_price, "quantity"::text AS quantity,
+          "line_total"::text AS line_total, "taxable_base"::text AS taxable_base,
+          "tax_amount"::text AS tax_amount
+        FROM "sale_line" WHERE "sale_id" = ${saleId}::uuid
+        ORDER BY "catalog_item_id"::text ASC
+      `;
+
+    /**
+     * The stored `payment` rows of one sale, read from PostgreSQL at the
+     * column's own exact scale, so the amounts are asserted against real
+     * `Decimal(14,2)` state rather than the HTTP projection alone.
+     */
+    const rawPayments = (
+      saleId: string
+    ): Promise<{ tenant_id: string; sale_id: string; method: string; amount: string }[]> =>
+      prisma.$queryRaw`
+        SELECT
+          "tenant_id"::text AS tenant_id, "sale_id"::text AS sale_id,
+          "method"::text AS method, "amount"::text AS amount
+        FROM "payment"
+        WHERE "sale_id" = ${saleId}::uuid
+        ORDER BY "amount" ASC
+      `;
+
+    /** Every stored `cash_movement` of one tenant at the columns' exact shapes. */
+    const rawCashMovements = (
+      tenantId: string
+    ): Promise<
+      {
+        tenant_id: string;
+        register_id: string;
+        session_id: string;
+        type: string;
+        amount: string;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "tenant_id"::text AS tenant_id, "register_id"::text AS register_id,
+          "session_id"::text AS session_id, "type"::text AS type,
+          "amount"::text AS amount
+        FROM "cash_movement"
+        WHERE "tenant_id" = ${tenantId}::uuid
+        ORDER BY "created_at" ASC, "id" ASC
+      `;
+
+    /**
+     * Every table a completion can write, counted so a rejected attempt can
+     * assert that NOTHING was persisted for ANY of them. The counts are GLOBAL:
+     * a row written anywhere would fail the comparison.
+     */
+    const readResidue = async () => ({
+      stockMovements: await prisma.stockMovement.count(),
+      stockBalances: await prisma.stockBalance.count(),
+      cashMovements: await prisma.cashMovement.count(),
+      payments: await prisma.payment.count(),
+      idempotencyRecords: await prisma.idempotencyRecord.count(),
+      audits: await prisma.auditLog.count(),
+    });
+
+    beforeAll(async () => {
+      // The `sales` and `cash` grants are explicit (DEC-026): plan mappings
+      // never grant access, so the dedicated tenant must hold both direct
+      // tenant_entitlement rows before any route is reachable.
+      const completionTenant = await prisma.tenant.create({
+        data: { slug: "live-completion", name: "Tenant Completion" },
+      });
+      completionTenantId = completionTenant.id;
+
+      const ownerRole = await prisma.role.findUnique({ where: { code: "OWNER" } });
+      if (!ownerRole) {
+        throw new Error("Reference seed did not create OWNER role");
+      }
+      const completionOwner = await prisma.userProfile.create({
+        data: {
+          email: "owner-completion@live.test",
+          displayName: "Owner Completion",
+          status: "active",
+        },
+      });
+      await prisma.tenantMembership.create({
+        data: {
+          tenantId: completionTenant.id,
+          userProfileId: completionOwner.id,
+          roleId: ownerRole.id,
+          status: "ACTIVE",
+        },
+      });
+      const session = await app.get(SessionService).issue(completionOwner.id);
+      completionCookie = `${STAFF_SESSION_COOKIE}=${session.token}`;
+
+      for (const code of ["sales", "cash"]) {
+        const feature = await prisma.featureCode.upsert({
+          where: { code },
+          create: { code },
+          update: {},
+        });
+        await prisma.tenantEntitlement.upsert({
+          where: {
+            tenantId_featureCodeId: { tenantId: completionTenant.id, featureCodeId: feature.id },
+          },
+          create: { tenantId: completionTenant.id, featureCodeId: feature.id },
+          update: {},
+        });
+      }
+
+      // The rate rows are SEED-owned, so resolving them proves the reference
+      // seed really ran against this database (PRD §15).
+      const rates = await prisma.taxRate.findMany();
+      const rateIdsByCode = new Map(rates.map((rate) => [rate.code, rate.id]));
+      const requireRate = (code: string): string => {
+        const id = rateIdsByCode.get(code);
+        if (!id) {
+          throw new Error(`Reference seed did not create the global ${code} tax rate`);
+        }
+        return id;
+      };
+      exemptRateId = requireRate("EXEMPT");
+      iva10RateId = requireRate("IVA_10");
+
+      // Every case owns its fixtures: the development database seeds no catalog
+      // item, no register and no customer, so this block creates what it
+      // references.
+      trackedExemptItemId = await createItem(completionCookie, "Live Completion Exempt Item", {
+        referencePriceAmount: "1000.00",
+        referencePriceCurrency: "PYG",
+      });
+      trackedTaxedItemId = await createItem(completionCookie, "Live Completion Taxed Item", {
+        taxRateId: iva10RateId,
+        referencePriceAmount: "1100.00",
+        referencePriceCurrency: "PYG",
+      });
+      nonTrackingItemId = await createItem(completionCookie, "Live Completion Non-Tracking Item", {
+        tracksStock: false,
+        referencePriceAmount: "500.00",
+        referencePriceCurrency: "PYG",
+      });
+      probeItemId = await createItem(completionCookie, "Live Completion Probe Item", {
+        referencePriceAmount: "100.00",
+        referencePriceCurrency: "PYG",
+      });
+      foreignItemAId = await createItem(ownerACookie, "Live Completion Foreign Item A", {
+        referencePriceAmount: "1000.00",
+        referencePriceCurrency: "PYG",
+      });
+
+      // The two registers the CASH cases evolve, plus the probe-only register
+      // that never carries a session.
+      firstRegisterId = await createRegister(completionCookie, "Live Completion Drawer One");
+      secondRegisterId = await createRegister(completionCookie, "Live Completion Drawer Two");
+      probeRegisterId = await createRegister(completionCookie, "Live Completion Probe Drawer");
+
+      // The probe-only DRAFT: the raw DRAFT-payment trigger probes target it, so
+      // its `DRAFT` status and ZERO payment rows are evidence that those probes
+      // rolled back.
+      const probeSale = await postSale(completionCookie, {
+        lines: [{ catalogItemId: probeItemId, quantity: "1.000" }],
+      }).expect(201);
+      probeSaleId = (probeSale.body as SaleDto).id;
+
+      // The dedicated tenant starts with NO cash session at all: the CASH cases
+      // evolve the `OPEN` set from zero, so the absence and the ambiguity are
+      // both observable without touching another block's fixtures.
+      expect(await prisma.cashSession.count({ where: { tenantId: completionTenantId } })).toBe(0);
+    }, 60_000);
+
+    it("completes a draft atomically: negative SALE movements, ledger-equal projection, the recomputed DEC-021 snapshot, the payments and one sale.completed audit row", async () => {
+      // Funding FIRST, so every count below is captured after the funding rows
+      // exist and the deltas are the completion's own effect.
+      await fund(
+        completionCookie,
+        trackedExemptItemId,
+        "10.000",
+        "live-pg-completion-fund-atomic-1"
+      ).expect(201);
+      await fund(
+        completionCookie,
+        trackedTaxedItemId,
+        "10.000",
+        "live-pg-completion-fund-atomic-2"
+      ).expect(201);
+
+      const created = await postSale(completionCookie, {
+        lines: [
+          { catalogItemId: trackedExemptItemId, quantity: "2.000" },
+          { catalogItemId: trackedTaxedItemId, quantity: "1.000" },
+          { catalogItemId: nonTrackingItemId, quantity: "3.000" },
+        ],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      expect((created.body as SaleDto).status).toBe("DRAFT");
+      expect((created.body as SaleDto).total).toBe("4600.00");
+
+      // The create path already froze these values, so the stored snapshot is
+      // DELIBERATELY perturbed: the completion must RECOMPUTE it from the frozen
+      // inputs (`unitPrice`, `quantity`, `rateCode`) instead of trusting the
+      // stored columns, and its payment-sum gate runs against the recomputed
+      // total, so a stored-only snapshot could not pass it either.
+      const tampered = await prisma.$executeRaw`
+        UPDATE "sale_line"
+        SET "line_total" = '1.00', "taxable_base" = '1.00', "tax_amount" = '0.00'
+        WHERE "sale_id" = ${saleId}::uuid
+      `;
+      expect(tampered).toBe(3);
+
+      const residueBefore = await readResidue();
+      const requestId = "live-pg-completion-atomic";
+
+      const response = await complete(
+        completionCookie,
+        saleId,
+        [
+          { method: "CARD", amount: "3000.00" },
+          { method: "QR", amount: "1600.00" },
+        ],
+        { requestId }
+      );
+      expect(response.status).toBe(201);
+      const body = response.body as CompletedSaleDto;
+      expect(Object.keys(body).sort()).toEqual(COMPLETED_SALE_DTO_KEYS);
+      expect(body.tenantId).toBe(completionTenantId);
+      expect(body.customerId).toBeNull();
+      expect(body.currency).toBe("PYG");
+      expect(body.status).toBe("COMPLETED");
+      expect(body.replay).toBe(false);
+      expect(body.lines).toHaveLength(3);
+      for (const line of body.lines) {
+        expect(Object.keys(line).sort()).toEqual(SALE_LINE_DTO_KEYS);
+      }
+      expect(body.total).toBe("4600.00");
+      expect(body.payments).toHaveLength(2);
+      for (const payment of body.payments) {
+        expect(Object.keys(payment).sort()).toEqual(SALE_PAYMENT_DTO_KEYS);
+      }
+      expect(body.payments.map((payment) => `${payment.method}:${payment.amount}`).sort()).toEqual(
+        ["CARD:3000.00", "QR:1600.00"].sort()
+      );
+      // No Prisma column name crosses the HTTP boundary.
+      expect(response.text).not.toContain("payment_method");
+      expect(response.text).not.toContain("tenant_id");
+      expect(response.text).not.toContain("sale_id");
+
+      // Exactly ONE signed NEGATIVE `SALE` movement per TRACKING line, at the
+      // ledger's own scale, and NONE for the non-tracking line.
+      expect(await saleMovements(completionTenantId, trackedExemptItemId)).toEqual([
+        { quantity: "-2.000", reason: SALE_COMPLETION_MOVEMENT_REASON },
+      ]);
+      expect(await saleMovements(completionTenantId, trackedTaxedItemId)).toEqual([
+        { quantity: "-1.000", reason: SALE_COMPLETION_MOVEMENT_REASON },
+      ]);
+      expect(await saleMovements(completionTenantId, nonTrackingItemId)).toEqual([]);
+      // The movement TYPE itself is the additive enum value, read from the
+      // stored column rather than inferred from the response: the funding rows
+      // carry `ADJUSTMENT`, so the probe is scoped to the completion's OWN
+      // movements by their fixed reason.
+      const types = await prisma.$queryRaw<{ type: string }[]>`
+        SELECT DISTINCT "type"::text AS type FROM "stock_movement"
+        WHERE "tenant_id" = ${completionTenantId}::uuid
+          AND "catalog_item_id" IN (${trackedExemptItemId}::uuid, ${trackedTaxedItemId}::uuid)
+          AND "reason" = ${SALE_COMPLETION_MOVEMENT_REASON}
+      `;
+      expect(types).toEqual([{ type: "SALE" }]);
+
+      // The projection equals the ledger's SIGNED sum for each tracking item
+      // (10 - 2 and 10 - 1) and there is ONE row per `(tenant, item)`; the
+      // non-tracking item has no projection and no ledger row at all.
+      for (const [itemId, expected] of [
+        [trackedExemptItemId, "8.000"],
+        [trackedTaxedItemId, "9.000"],
+      ] as const) {
+        expect(await rawBalanceText(completionTenantId, itemId)).toBe(expected);
+        expect(await rawLedgerSum(completionTenantId, itemId)).toBe(
+          await rawBalanceText(completionTenantId, itemId)
+        );
+        expect(
+          await prisma.stockBalance.count({
+            where: { tenantId: completionTenantId, catalogItemId: itemId },
+          })
+        ).toBe(1);
+      }
+      expect(await rawBalanceText(completionTenantId, nonTrackingItemId)).toBeNull();
+      expect(await rawLedgerSum(completionTenantId, nonTrackingItemId)).toBe("0.000");
+      expect(
+        await prisma.stockBalance.count({
+          where: { tenantId: completionTenantId, catalogItemId: nonTrackingItemId },
+        })
+      ).toBe(0);
+
+      // The RECOMPUTED and FROZEN DEC-021 snapshot over the real columns: the
+      // perturbed values are GONE and every line carries
+      //   lineTotal   = round(unitPrice * quantity)
+      //   taxableBase = round(lineTotal / (1 + rate/100))
+      //   taxAmount   = lineTotal - taxableBase
+      // at the PYG minor unit (0 decimals), with `base + tax === total`.
+      const storedByItem = new Map(
+        (await rawStoredLines(saleId)).map((row) => [row.catalog_item_id, row])
+      );
+      expect(storedByItem.size).toBe(3);
+      expect(storedByItem.get(trackedExemptItemId)).toEqual({
+        catalog_item_id: trackedExemptItemId,
+        rate_code: "EXEMPT",
+        unit_price: "1000.00",
+        quantity: "2.000",
+        line_total: "2000.00",
+        taxable_base: "2000.00",
+        tax_amount: "0.00",
+      });
+      expect(storedByItem.get(trackedTaxedItemId)).toEqual({
+        catalog_item_id: trackedTaxedItemId,
+        rate_code: "IVA_10",
+        unit_price: "1100.00",
+        quantity: "1.000",
+        line_total: "1100.00",
+        taxable_base: "1000.00",
+        tax_amount: "100.00",
+      });
+      expect(storedByItem.get(nonTrackingItemId)).toEqual({
+        catalog_item_id: nonTrackingItemId,
+        rate_code: "EXEMPT",
+        unit_price: "500.00",
+        quantity: "3.000",
+        line_total: "1500.00",
+        taxable_base: "1500.00",
+        tax_amount: "0.00",
+      });
+
+      // The payment rows are REAL `Decimal(14,2)` rows of THIS sale, in the
+      // caller's tenant.
+      expect(await rawPayments(saleId)).toEqual([
+        { tenant_id: completionTenantId, sale_id: saleId, method: "QR", amount: "1600.00" },
+        { tenant_id: completionTenantId, sale_id: saleId, method: "CARD", amount: "3000.00" },
+      ]);
+
+      // Exactly ONE co-committed `sale.completed` audit row, carrying ids and
+      // field NAMES only: no payment METHOD and no AMOUNT reaches the trail.
+      const audits = await prisma.auditLog.findMany({ where: { requestId } });
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        action: "sale.completed",
+        targetType: "sale",
+        targetId: saleId,
+        tenantId: completionTenantId,
+      });
+      const metadata = audits[0].metadata as { schemaVersion: number; changedFields: string[] };
+      expect(Object.keys(metadata).sort()).toEqual(["changedFields", "schemaVersion"]);
+      expect(metadata.schemaVersion).toBe(1);
+      expect(metadata.changedFields).toEqual(["status", "lines", "payments"]);
+      const serializedMetadata = JSON.stringify(metadata);
+      for (const method of ["CASH", "CARD", "BANK_TRANSFER", "QR", "CHECK", "OTHER"]) {
+        expect(serializedMetadata, method).not.toContain(method);
+      }
+      for (const amount of ["3000.00", "1600.00", "4600.00", "2000.00", "1100.00", "1500.00"]) {
+        expect(serializedMetadata, amount).not.toContain(amount);
+      }
+      expect(serializedMetadata).not.toContain(saleId);
+      expect(serializedMetadata).not.toContain(trackedExemptItemId);
+
+      // The command's complete durable effect above the pre-command counts: two
+      // movements, two payment rows and exactly ONE audit row — and NO cash
+      // movement and NO idempotency record, because every payment was non-CASH
+      // and no key was supplied. Both tracking items were ALREADY funded, so
+      // their projection row existed and the completion UPDATED it in place
+      // rather than inserting one: the balance delta is ZERO, and the
+      // read-modify-write is proven by the exact projections asserted above.
+      const residueAfter = await readResidue();
+      expect(residueAfter.stockMovements).toBe(residueBefore.stockMovements + 2);
+      expect(residueAfter.stockBalances).toBe(residueBefore.stockBalances);
+      expect(residueAfter.payments).toBe(residueBefore.payments + 2);
+      expect(residueAfter.audits).toBe(residueBefore.audits + 1);
+      expect(residueAfter.cashMovements).toBe(residueBefore.cashMovements);
+      expect(residueAfter.idempotencyRecords).toBe(residueBefore.idempotencyRecords);
+      expect(await prisma.sale.findUnique({ where: { id: saleId } })).toMatchObject({
+        tenantId: completionTenantId,
+        status: "COMPLETED",
+        currency: "PYG",
+      });
+    }, 30_000);
+
+    it("rejects a CASH completion with NO open session with the stable 409 naming the absence and persists nothing", async () => {
+      // The dedicated tenant holds no session at all yet: the zero-session
+      // precondition is read from the REAL table, never assumed.
+      expect(await prisma.cashSession.count({ where: { tenantId: completionTenantId } })).toBe(0);
+
+      await fund(
+        completionCookie,
+        trackedExemptItemId,
+        "5.000",
+        "live-pg-completion-fund-no-session"
+      ).expect(201);
+      const created = await postSale(completionCookie, {
+        lines: [{ catalogItemId: trackedExemptItemId, quantity: "1.000" }],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      expect((created.body as SaleDto).total).toBe("1000.00");
+
+      const balanceBefore = await rawBalanceText(completionTenantId, trackedExemptItemId);
+      expect(balanceBefore).not.toBeNull();
+      const movementsBefore = await saleMovements(completionTenantId, trackedExemptItemId);
+      const residueBefore = await readResidue();
+      const requestId = "live-pg-completion-no-session";
+
+      const response = await complete(
+        completionCookie,
+        saleId,
+        [{ method: "CASH", amount: "1000.00" }],
+        { requestId }
+      );
+      expect(response.status).toBe(409);
+      expect((response.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((response.body as { error: { message: string } }).error.message).toBe(
+        SALE_CASH_SESSION_REQUIRED_MESSAGE
+      );
+      // A DIFFERENT message from the ambiguity below: the two outcomes are
+      // separable over the wire.
+      expect(SALE_CASH_SESSION_REQUIRED_MESSAGE).not.toBe(SALE_CASH_SESSIONS_AMBIGUOUS_MESSAGE);
+
+      // Zero cash movements, zero payments, zero balance change, the sale still
+      // DRAFT and NOT ONE audit row.
+      expect(await prisma.sale.findUnique({ where: { id: saleId } })).toMatchObject({
+        status: "DRAFT",
+      });
+      expect(await prisma.payment.count({ where: { saleId } })).toBe(0);
+      expect(await rawCashMovements(completionTenantId)).toEqual([]);
+      expect(await saleMovements(completionTenantId, trackedExemptItemId)).toEqual(movementsBefore);
+      expect(await rawBalanceText(completionTenantId, trackedExemptItemId)).toBe(balanceBefore);
+      expect(await readResidue()).toEqual(residueBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+    }, 30_000);
+
+    it("writes exactly one SALE cash movement against the tenant's only open session, and none for an all-non-CASH payment set", async () => {
+      await fund(
+        completionCookie,
+        trackedExemptItemId,
+        "5.000",
+        "live-pg-completion-fund-cash"
+      ).expect(201);
+
+      // Exactly ONE open session, opened over REAL HTTP with a pinned request
+      // id: the server-side resolution has a single drawer to attribute to.
+      const opened = await openSession(
+        completionCookie,
+        firstRegisterId,
+        "live-pg-completion-session-1"
+      ).expect(201);
+      const session = opened.body as CashSessionDto;
+      expect(Object.keys(session).sort()).toEqual(CASH_SESSION_DTO_KEYS);
+      expect(session.status).toBe("OPEN");
+      expect(session.registerId).toBe(firstRegisterId);
+      const openSessions = await prisma.cashSession.findMany({
+        where: { tenantId: completionTenantId, status: "OPEN" },
+      });
+      expect(openSessions).toHaveLength(1);
+      expect(openSessions[0].id).toBe(session.id);
+      expect(openSessions[0].registerId).toBe(firstRegisterId);
+
+      const created = await postSale(completionCookie, {
+        lines: [{ catalogItemId: trackedExemptItemId, quantity: "2.500" }],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      expect((created.body as SaleDto).total).toBe("2500.00");
+
+      const response = await complete(
+        completionCookie,
+        saleId,
+        [
+          { method: "CASH", amount: "1600.00" },
+          { method: "CARD", amount: "900.00" },
+        ],
+        { requestId: "live-pg-completion-cash" }
+      );
+      expect(response.status).toBe(201);
+      const body = response.body as CompletedSaleDto;
+      expect(body.status).toBe("COMPLETED");
+      expect(body.total).toBe("2500.00");
+      expect(body.payments.map((payment) => `${payment.method}:${payment.amount}`).sort()).toEqual(
+        ["CASH:1600.00", "CARD:900.00"].sort()
+      );
+
+      // Exactly ONE `SALE` cash movement — for the CASH payment ONLY — and its
+      // stored `session_id`/`register_id` are the tenant's ONLY open session and
+      // its register, resolved server-side from the real `cash_session` row.
+      expect(await rawCashMovements(completionTenantId)).toEqual([
+        {
+          tenant_id: completionTenantId,
+          register_id: firstRegisterId,
+          session_id: session.id,
+          type: "SALE",
+          amount: "1600.00",
+        },
+      ]);
+      expect(
+        await prisma.cashSession.count({
+          where: { tenantId: completionTenantId, status: "OPEN", id: session.id },
+        })
+      ).toBe(1);
+      // The CASH amount is the payment row's own amount, not the sale total.
+      expect(await prisma.payment.count({ where: { saleId } })).toBe(2);
+
+      // A completion whose payments are ALL non-CASH writes NO cash movement.
+      // The line is non-tracking, so this case depends on no stock projection.
+      const cashMovementsBefore = await prisma.cashMovement.count();
+      const second = await postSale(completionCookie, {
+        lines: [{ catalogItemId: nonTrackingItemId, quantity: "1.000" }],
+      }).expect(201);
+      const secondSaleId = (second.body as SaleDto).id;
+      expect((second.body as SaleDto).total).toBe("500.00");
+      const secondResponse = await complete(
+        completionCookie,
+        secondSaleId,
+        [
+          { method: "CARD", amount: "300.00" },
+          { method: "QR", amount: "200.00" },
+        ],
+        { requestId: "live-pg-completion-non-cash" }
+      );
+      expect(secondResponse.status).toBe(201);
+      expect((secondResponse.body as CompletedSaleDto).status).toBe("COMPLETED");
+      expect((secondResponse.body as CompletedSaleDto).payments).toHaveLength(2);
+      expect(await prisma.cashMovement.count()).toBe(cashMovementsBefore);
+      expect(await rawCashMovements(completionTenantId)).toHaveLength(1);
+      // The non-tracking line wrote no stock movement either.
+      expect(await saleMovements(completionTenantId, nonTrackingItemId)).toEqual([]);
+    }, 30_000);
+
+    it("rejects a CASH completion with a SECOND open session on a second register as the distinct ambiguity 409 and persists nothing", async () => {
+      // A second `OPEN` session on a SECOND register: the sale carries no
+      // register reference, so the tenant no longer has one drawer to attribute
+      // the cash to and the completion is the AMBIGUITY `409`.
+      const second = await openSession(
+        completionCookie,
+        secondRegisterId,
+        "live-pg-completion-session-2"
+      ).expect(201);
+      const secondSession = second.body as CashSessionDto;
+      expect(secondSession.status).toBe("OPEN");
+      expect(secondSession.registerId).toBe(secondRegisterId);
+      expect(
+        await prisma.cashSession.count({ where: { tenantId: completionTenantId, status: "OPEN" } })
+      ).toBe(2);
+
+      await fund(
+        completionCookie,
+        trackedTaxedItemId,
+        "4.000",
+        "live-pg-completion-fund-ambiguous"
+      ).expect(201);
+      const created = await postSale(completionCookie, {
+        lines: [{ catalogItemId: trackedTaxedItemId, quantity: "1.000" }],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      expect((created.body as SaleDto).total).toBe("1100.00");
+
+      const balanceBefore = await rawBalanceText(completionTenantId, trackedTaxedItemId);
+      expect(balanceBefore).not.toBeNull();
+      const movementsBefore = await saleMovements(completionTenantId, trackedTaxedItemId);
+      const residueBefore = await readResidue();
+      const requestId = "live-pg-completion-ambiguous";
+
+      const response = await complete(
+        completionCookie,
+        saleId,
+        [{ method: "CASH", amount: "1100.00" }],
+        { requestId }
+      );
+      expect(response.status).toBe(409);
+      expect((response.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((response.body as { error: { message: string } }).error.message).toBe(
+        SALE_CASH_SESSIONS_AMBIGUOUS_MESSAGE
+      );
+
+      // Zero cash movements, zero payments, zero balance change, the sale still
+      // DRAFT and NOT ONE audit row.
+      expect(await prisma.sale.findUnique({ where: { id: saleId } })).toMatchObject({
+        status: "DRAFT",
+      });
+      expect(await prisma.payment.count({ where: { saleId } })).toBe(0);
+      expect(await rawCashMovements(completionTenantId)).toHaveLength(1);
+      expect(await saleMovements(completionTenantId, trackedTaxedItemId)).toEqual(movementsBefore);
+      expect(await rawBalanceText(completionTenantId, trackedTaxedItemId)).toBe(balanceBefore);
+      expect(await readResidue()).toEqual(residueBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+    }, 30_000);
+
+    it("returns the prior completed sale for an identical keyed replay, and the two stable 409s for a different payment set and a keyless replay", async () => {
+      await fund(
+        completionCookie,
+        trackedExemptItemId,
+        "3.000",
+        "live-pg-completion-fund-replay"
+      ).expect(201);
+      const created = await postSale(completionCookie, {
+        lines: [{ catalogItemId: trackedExemptItemId, quantity: "1.000" }],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      const idempotencyKey = "live-pg-completion-replay-key";
+      const payments = [{ method: "CARD", amount: "1000.00" }];
+
+      const first = await complete(completionCookie, saleId, payments, {
+        requestId: "live-pg-completion-replay-first",
+        idempotencyKey,
+      });
+      expect(first.status).toBe(201);
+      const firstBody = first.body as CompletedSaleDto;
+      expect(firstBody.status).toBe("COMPLETED");
+      expect(firstBody.replay).toBe(false);
+      expect(Object.keys(firstBody).sort()).toEqual(COMPLETED_SALE_DTO_KEYS);
+
+      // The keyed completion stored exactly ONE record for the real replay key:
+      // the tenant-scoped `(tenant_id, operation, key)` row with a 64-character
+      // SHA-256 fingerprint and the sale it produced.
+      const records = await prisma.idempotencyRecord.findMany({
+        where: { tenantId: completionTenantId, operation: "sale.complete", key: idempotencyKey },
+      });
+      expect(records).toHaveLength(1);
+      expect(records[0].resultSaleId).toBe(saleId);
+      expect(records[0].fingerprint).toMatch(/^[0-9a-f]{64}$/);
+
+      const residueAfterFirst = await readResidue();
+
+      // The SAME key with the SAME body is the stored prior result: `200` with
+      // the SAME completed sale, distinguished only by the `replay` flag.
+      const replay = await complete(completionCookie, saleId, payments, {
+        requestId: "live-pg-completion-replay-second",
+        idempotencyKey,
+      });
+      expect(replay.status).toBe(200);
+      expect(replay.body).toEqual({ ...firstBody, replay: true });
+      // The replay wrote NOTHING: no second movement, payment or audit row.
+      expect(await readResidue()).toEqual(residueAfterFirst);
+      expect(
+        await prisma.auditLog.count({ where: { action: "sale.completed", targetId: saleId } })
+      ).toBe(1);
+
+      // The SAME key with a DIFFERENT payment set (same total, DIFFERENT
+      // fingerprint) is the stable conflict and persists nothing.
+      const conflictRequestId = "live-pg-completion-replay-conflict";
+      const conflict = await complete(
+        completionCookie,
+        saleId,
+        [{ method: "QR", amount: "1000.00" }],
+        { requestId: conflictRequestId, idempotencyKey }
+      );
+      expect(conflict.status).toBe(409);
+      expect((conflict.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((conflict.body as { error: { message: string } }).error.message).toBe(
+        SALE_IDEMPOTENCY_KEY_CONFLICT_MESSAGE
+      );
+      expect(await readResidue()).toEqual(residueAfterFirst);
+      expect(await prisma.auditLog.count({ where: { requestId: conflictRequestId } })).toBe(0);
+
+      // A replay WITHOUT a key is the `DRAFT`-only `409`: idempotency is the
+      // caller's opt-in, never a default of the command.
+      const keylessRequestId = "live-pg-completion-replay-keyless";
+      const keyless = await complete(completionCookie, saleId, payments, {
+        requestId: keylessRequestId,
+      });
+      expect(keyless.status).toBe(409);
+      expect((keyless.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((keyless.body as { error: { message: string } }).error.message).toBe(
+        SALE_NOT_EDITABLE_MESSAGE
+      );
+      expect(await readResidue()).toEqual(residueAfterFirst);
+      expect(await prisma.auditLog.count({ where: { requestId: keylessRequestId } })).toBe(0);
+      expect(await prisma.payment.count({ where: { saleId } })).toBe(1);
+    }, 30_000);
+
+    it("admits exactly ONE of two concurrent keyed completions of the SAME draft under a proven header-row-lock overlap", async () => {
+      await fund(
+        completionCookie,
+        trackedExemptItemId,
+        "6.000",
+        "live-pg-completion-fund-race-1"
+      ).expect(201);
+      await fund(
+        completionCookie,
+        trackedTaxedItemId,
+        "6.000",
+        "live-pg-completion-fund-race-2"
+      ).expect(201);
+      const created = await postSale(completionCookie, {
+        lines: [
+          { catalogItemId: trackedExemptItemId, quantity: "1.000" },
+          { catalogItemId: trackedTaxedItemId, quantity: "1.000" },
+        ],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      expect((created.body as SaleDto).total).toBe("2100.00");
+
+      const firstRequestId = "live-pg-completion-race-1";
+      const secondRequestId = "live-pg-completion-race-2";
+      const payments = [{ method: "CARD", amount: "2100.00" }];
+      const movementsBefore = {
+        exempt: await saleMovements(completionTenantId, trackedExemptItemId),
+        taxed: await saleMovements(completionTenantId, trackedTaxedItemId),
+      };
+      const residueBefore = await readResidue();
+
+      // Deterministic overlap: a dedicated transaction holds the sale HEADER
+      // row lock (`SELECT ... FOR UPDATE`), which is the exact row the command
+      // locks FIRST, so BOTH completions park on that single row before either
+      // can read the idempotency record, the status or an item. The FOR UPDATE
+      // header lock is a ROW lock, so the barrier is the tuple-lock waiter count
+      // `waitForRowLockWaiters` over the row's `(relation, page, tuple)`: a
+      // waiter registers a `tuple` lock on THAT exact tuple while it blocks, so
+      // an unrelated lock waiter (a relation, advisory or other-row lock) can
+      // never satisfy it. The interleaving is decided by the database boundary,
+      // never by wall-clock timing, and an unproven overlap throws.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT "id" FROM "sale"
+            WHERE "tenant_id" = ${completionTenantId}::uuid AND "id" = ${saleId}::uuid
+            FOR UPDATE
+          `;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+      // The row lock is held now, so the ctid cannot move under the racers.
+      const ctid = await readRowCtid(prisma, "sale", saleId);
+
+      const racers = [
+        complete(completionCookie, saleId, payments, {
+          requestId: firstRequestId,
+          idempotencyKey: "live-pg-completion-race-key-1",
+        }),
+        complete(completionCookie, saleId, payments, {
+          requestId: secondRequestId,
+          idempotencyKey: "live-pg-completion-race-key-2",
+        }),
+      ];
+
+      try {
+        await waitForRowLockWaiters(prisma, "sale", ctid.page, ctid.tuple, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      // The database guarantees this outcome for EVERY interleaving: the winner
+      // commits `COMPLETED` inside its transaction, and the loser's post-lock
+      // read sees the committed status and is rejected by the `DRAFT` gate. The
+      // assertions never depend on WHICH request won, and there is no sleep and
+      // no retry that could hide a double completion.
+      const admitted = responses.filter((response) => response.status === 201);
+      const rejected = responses.filter((response) => response.status === 409);
+      expect(admitted).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0].body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((rejected[0].body as { error: { message: string } }).error.message).toBe(
+        SALE_NOT_EDITABLE_MESSAGE
+      );
+      expect((admitted[0].body as CompletedSaleDto).status).toBe("COMPLETED");
+      expect((admitted[0].body as CompletedSaleDto).replay).toBe(false);
+      expect((admitted[0].body as CompletedSaleDto).payments).toHaveLength(1);
+
+      // Exactly ONE movement per line — NEVER two sets — and each projection is
+      // exactly its own ledger's signed sum.
+      expect(await saleMovements(completionTenantId, trackedExemptItemId)).toEqual([
+        ...movementsBefore.exempt,
+        { quantity: "-1.000", reason: SALE_COMPLETION_MOVEMENT_REASON },
+      ]);
+      expect(await saleMovements(completionTenantId, trackedTaxedItemId)).toEqual([
+        ...movementsBefore.taxed,
+        { quantity: "-1.000", reason: SALE_COMPLETION_MOVEMENT_REASON },
+      ]);
+      for (const itemId of [trackedExemptItemId, trackedTaxedItemId]) {
+        expect(await rawLedgerSum(completionTenantId, itemId)).toBe(
+          await rawBalanceText(completionTenantId, itemId)
+        );
+      }
+
+      // Exactly ONE set of effects across BOTH attempts: two movements, the ONE
+      // submitted payment, ONE audit row and exactly ONE idempotency record (the
+      // loser rolled its own back). Both items were already funded, so the
+      // completion UPDATED the existing projection rows in place: the balance
+      // delta is ZERO and the exact projections are asserted against the ledger
+      // sum above.
+      const residueAfter = await readResidue();
+      expect(residueAfter.stockMovements).toBe(residueBefore.stockMovements + 2);
+      expect(residueAfter.stockBalances).toBe(residueBefore.stockBalances);
+      expect(residueAfter.payments).toBe(residueBefore.payments + 1);
+      expect(residueAfter.audits).toBe(residueBefore.audits + 1);
+      expect(residueAfter.idempotencyRecords).toBe(residueBefore.idempotencyRecords + 1);
+      expect(residueAfter.cashMovements).toBe(residueBefore.cashMovements);
+      expect(await prisma.payment.count({ where: { saleId } })).toBe(1);
+      expect(
+        await prisma.idempotencyRecord.count({
+          where: {
+            tenantId: completionTenantId,
+            operation: "sale.complete",
+            key: { in: ["live-pg-completion-race-key-1", "live-pg-completion-race-key-2"] },
+          },
+        })
+      ).toBe(1);
+
+      const raceAudits = await prisma.auditLog.findMany({
+        where: { requestId: { in: [firstRequestId, secondRequestId] } },
+      });
+      expect(raceAudits).toHaveLength(1);
+      expect(raceAudits[0]).toMatchObject({
+        action: "sale.completed",
+        targetType: "sale",
+        targetId: saleId,
+        tenantId: completionTenantId,
+      });
+      expect(await prisma.sale.findUnique({ where: { id: saleId } })).toMatchObject({
+        status: "COMPLETED",
+      });
+    }, 60_000);
+
+    it("proves the applied enum labels, the payment CHECK, the two CONDITIONAL payment triggers and the (tenant_id, operation, key) unique", async () => {
+      const paymentsBefore = await prisma.payment.count();
+      const recordsBefore = await prisma.idempotencyRecord.count();
+
+      // The EFFECTIVE `stock_movement_type` label set: POS-003 appended `SALE`
+      // ADDITIVELY after ADJUSTMENT and PURCHASE, so both keep their original
+      // sort positions; the reserved TRANSFER_* and *_REVERSAL compensations
+      // stay absent.
+      const movementEnum = await prisma.$queryRaw<{ enumlabel: string }[]>`
+        SELECT e.enumlabel
+        FROM pg_enum AS e
+        JOIN pg_type AS t ON t.oid = e.enumtypid
+        WHERE t.typname = 'stock_movement_type'
+        ORDER BY e.enumsortorder ASC
+      `;
+      expect(movementEnum.map((row) => row.enumlabel)).toEqual(["ADJUSTMENT", "PURCHASE", "SALE"]);
+
+      // The APPLIED `payment_method` labels: exactly the six PRD §19 values, in
+      // the migration's order.
+      const methodEnum = await prisma.$queryRaw<{ enumlabel: string }[]>`
+        SELECT e.enumlabel
+        FROM pg_enum AS e
+        JOIN pg_type AS t ON t.oid = e.enumtypid
+        WHERE t.typname = 'payment_method'
+        ORDER BY e.enumsortorder ASC
+      `;
+      expect(methodEnum.map((row) => row.enumlabel)).toEqual([
+        "CASH",
+        "CARD",
+        "BANK_TRANSFER",
+        "QR",
+        "CHECK",
+        "OTHER",
+      ]);
+
+      // The `payment` table carries exactly the ONE positive-amount CHECK.
+      const checkRows = await prisma.$queryRaw<{ conname: string }[]>`
+        SELECT c.conname
+        FROM pg_constraint AS c
+        JOIN pg_class AS t ON t.oid = c.conrelid
+        WHERE t.relname = 'payment' AND c.contype = 'c'
+      `;
+      expect(checkRows.map((row) => row.conname)).toEqual(["payment_amount_positive"]);
+
+      // A zero and a negative amount are both rejected by that CHECK from raw
+      // SQL, so the application is never the first line of defence.
+      for (const amount of ["0.000", "-1.00"]) {
+        await inRolledBackTransaction(async (tx) => {
+          const saleId = await insertRawSale(tx, completionTenantId, "DRAFT");
+          const message = await captureDatabaseMessage(() =>
+            insertRawPayment(tx, completionTenantId, saleId, "CARD", amount)
+          );
+          expect(message, amount).toContain("payment_amount_positive");
+        });
+      }
+
+      // The two APPLIED triggers: a `BEFORE DELETE ROW` and a `BEFORE UPDATE
+      // ROW` trigger, each on its OWN event, and no third trigger on the table.
+      const triggers = await prisma.$queryRaw<{ tgname: string; tgtype: number }[]>`
+        SELECT t.tgname, t.tgtype::int AS tgtype
+        FROM pg_trigger AS t
+        JOIN pg_class AS c ON c.oid = t.tgrelid
+        WHERE c.relname = 'payment' AND NOT t.tgisinternal
+      `;
+      expect(triggers.map((row) => row.tgname).sort()).toEqual(
+        [
+          "payment_no_delete_when_completed_or_cancelled_trigger",
+          "payment_no_update_when_completed_or_cancelled_trigger",
+        ].sort()
+      );
+      const triggerByName = new Map(triggers.map((row) => [row.tgname, row]));
+      const deleteTrigger = triggerByName.get(
+        "payment_no_delete_when_completed_or_cancelled_trigger"
+      );
+      const updateTrigger = triggerByName.get(
+        "payment_no_update_when_completed_or_cancelled_trigger"
+      );
+      if (!deleteTrigger || !updateTrigger) {
+        throw new Error("The two conditional payment triggers are missing");
+      }
+      expect(deleteTrigger.tgtype & 1).toBe(1); // ROW
+      expect(deleteTrigger.tgtype & 2).toBe(2); // BEFORE
+      expect(deleteTrigger.tgtype & 8).toBe(8); // DELETE
+      expect(deleteTrigger.tgtype & 16).toBe(0); // NOT UPDATE
+      expect(updateTrigger.tgtype & 1).toBe(1); // ROW
+      expect(updateTrigger.tgtype & 2).toBe(2); // BEFORE
+      expect(updateTrigger.tgtype & 8).toBe(0); // NOT DELETE
+      expect(updateTrigger.tgtype & 16).toBe(16); // UPDATE
+
+      // The trigger FUNCTIONS carry the CONDITIONAL predicate: each reads its
+      // OWNING sale's status in the same tenant and raises `restrict_violation`
+      // only for a settled sale. This is deliberately NOT the unconditional
+      // shape the cash and sale tables use elsewhere.
+      const functions = await prisma.$queryRaw<{ proname: string; prosrc: string }[]>`
+        SELECT p.proname, p.prosrc
+        FROM pg_proc AS p
+        WHERE p.proname IN (
+          'payment_no_delete_when_completed_or_cancelled',
+          'payment_no_update_when_completed_or_cancelled'
+        )
+      `;
+      const sourceByName = new Map(
+        functions.map((row) => [row.proname, row.prosrc.replace(/\s+/g, " ")])
+      );
+      for (const [proname, message] of [
+        [
+          "payment_no_delete_when_completed_or_cancelled",
+          "a payment of a completed or cancelled sale cannot be deleted",
+        ],
+        [
+          "payment_no_update_when_completed_or_cancelled",
+          "a payment of a completed or cancelled sale is immutable",
+        ],
+      ] as const) {
+        const source = sourceByName.get(proname);
+        expect(source, proname).toContain('OLD."sale_id"');
+        expect(source, proname).toContain('OLD."tenant_id"');
+        expect(source, proname).toContain("IN ('COMPLETED', 'CANCELLED')");
+        expect(source, proname).toContain("ERRCODE = 'restrict_violation'");
+        expect(source, proname).toContain(message);
+      }
+
+      // A raw DELETE and a raw UPDATE of a payment whose sale is COMPLETED or
+      // CANCELLED are both refused with the EXACT trigger message, so a
+      // confirmed payment is immutable rather than merely undeletable.
+      for (const status of ["COMPLETED", "CANCELLED"] as const) {
+        await inRolledBackTransaction(async (tx) => {
+          const saleId = await insertRawSale(tx, completionTenantId, status);
+          const paymentId = await insertRawPayment(tx, completionTenantId, saleId, "CARD", "10.00");
+          expect(
+            await captureDatabaseMessage(
+              () => tx.$executeRaw`DELETE FROM "payment" WHERE "id" = ${paymentId}::uuid`
+            )
+          ).toBe("a payment of a completed or cancelled sale cannot be deleted");
+        });
+
+        await inRolledBackTransaction(async (tx) => {
+          const saleId = await insertRawSale(tx, completionTenantId, status);
+          const paymentId = await insertRawPayment(tx, completionTenantId, saleId, "CARD", "10.00");
+          expect(
+            await captureDatabaseMessage(
+              () =>
+                tx.$executeRaw`UPDATE "payment" SET "amount" = '1.00' WHERE "id" = ${paymentId}::uuid`
+            )
+          ).toBe("a payment of a completed or cancelled sale is immutable");
+        });
+      }
+
+      // A DRAFT sale's payment stays fully RECONCILABLE: the SAME update and the
+      // SAME delete both succeed on the block's probe-only draft, which is what
+      // makes the trigger CONDITIONAL on the owning sale's status.
+      await inRolledBackTransaction(async (tx) => {
+        const paymentId = await insertRawPayment(
+          tx,
+          completionTenantId,
+          probeSaleId,
+          "CARD",
+          "10.00"
+        );
+        expect(
+          await tx.$executeRaw`UPDATE "payment" SET "amount" = '1.00' WHERE "id" = ${paymentId}::uuid`
+        ).toBe(1);
+        expect(await tx.$executeRaw`DELETE FROM "payment" WHERE "id" = ${paymentId}::uuid`).toBe(1);
+      });
+
+      // The APPLIED replay key: UNIQUE on (tenant_id, operation, key) and
+      // UNCONDITIONAL, with a covering-index assertion proving no OTHER unique
+      // index covers those three columns in that order.
+      const indexRows = await prisma.$queryRaw<
+        {
+          is_unique: boolean;
+          is_primary: boolean;
+          key_1: string;
+          key_2: string;
+          key_3: string;
+          predicate: string | null;
+        }[]
+      >`
+        SELECT
+          i.indisunique AS is_unique,
+          i.indisprimary AS is_primary,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_indexdef(i.indexrelid, 3, true) AS key_3,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        WHERE c.relname = 'idempotency_record_tenant_id_operation_key_key'
+      `;
+      expect(indexRows).toHaveLength(1);
+      expect(indexRows[0]).toMatchObject({
+        is_unique: true,
+        is_primary: false,
+        key_1: "tenant_id",
+        key_2: "operation",
+        key_3: "key",
+        predicate: null,
+      });
+
+      const covering = await prisma.$queryRaw<{ relname: string }[]>`
+        SELECT c.relname
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        JOIN pg_class AS t ON t.oid = i.indrelid
+        WHERE t.relname = 'idempotency_record' AND i.indisunique
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'tenant_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'operation'
+          AND pg_get_indexdef(i.indexrelid, 3, true) = 'key'
+      `;
+      expect(covering.map((row) => row.relname)).toEqual([
+        "idempotency_record_tenant_id_operation_key_key",
+      ]);
+
+      const probeKey = "live-pg-completion-raw-probe-key";
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, completionTenantId, "COMPLETED");
+        await insertRawIdempotencyRecord(tx, completionTenantId, probeKey, "a".repeat(64), saleId);
+        const rejection = await captureRawRejection(() =>
+          insertRawIdempotencyRecord(tx, completionTenantId, probeKey, "b".repeat(64), saleId)
+        );
+        expect(rejection.sqlState).toBe("23505");
+        expect(rejection.message).toContain("Key (tenant_id, operation, key)=(");
+        expect(rejection.message).toContain("already exists.");
+      });
+
+      // The SAME key in ANOTHER tenant is a DIFFERENT record: the key scope is
+      // the tenant, never global.
+      await inRolledBackTransaction(async (tx) => {
+        const tenantASale = await insertRawSale(tx, tenantAId, "COMPLETED");
+        await insertRawIdempotencyRecord(tx, tenantAId, probeKey, "c".repeat(64), tenantASale);
+        const stored = await tx.$queryRaw<{ tenant_id: string; key: string }[]>`
+          SELECT "tenant_id"::text AS tenant_id, "key" AS key
+          FROM "idempotency_record"
+          WHERE "operation" = 'sale.complete' AND "key" = ${probeKey}
+        `;
+        expect(stored).toEqual([{ tenant_id: tenantAId, key: probeKey }]);
+      });
+
+      // Every probe rolled back: no probe payment row and no probe idempotency
+      // record survived.
+      expect(await prisma.payment.count()).toBe(paymentsBefore);
+      expect(await prisma.idempotencyRecord.count()).toBe(recordsBefore);
+    }, 30_000);
+
+    it("masks another tenant's sale as one byte-equivalent 404 on complete, leaving the foreign draft and the audit count unchanged", async () => {
+      // Tenant A owns a REAL draft the completion tenant must never resolve.
+      const foreign = await postSale(ownerACookie, {
+        lines: [{ catalogItemId: foreignItemAId, quantity: "1.000" }],
+      }).expect(201);
+      const foreignBody = foreign.body as SaleDto;
+      expect(foreignBody.tenantId).toBe(tenantAId);
+      expect(foreignBody.status).toBe("DRAFT");
+      foreignSaleAId = foreignBody.id;
+
+      const residueBefore = await readResidue();
+      const payments = [{ method: "CARD", amount: "1000.00" }];
+
+      const foreignResponse = await complete(completionCookie, foreignBody.id, payments, {
+        requestId: COMPLETION_NOT_FOUND_REQUEST_ID,
+      });
+      const missingResponse = await complete(completionCookie, randomUUID(), payments, {
+        requestId: COMPLETION_NOT_FOUND_REQUEST_ID,
+      });
+
+      expect(foreignResponse.status).toBe(404);
+      expect(missingResponse.status).toBe(404);
+      expect((foreignResponse.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect((foreignResponse.body as { error: { message: string } }).error.message).toBe(
+        SALE_NOT_FOUND_MESSAGE
+      );
+      // Byte-equivalence: a foreign tenant UUID is indistinguishable from a
+      // non-existent one, echoed correlation included.
+      expect(foreignResponse.text).toBe(missingResponse.text);
+      expect(foreignResponse.text).not.toContain(foreignBody.id);
+      expect(foreignResponse.text).not.toContain(tenantAId);
+      expect(foreignResponse.text).not.toContain(foreignItemAId);
+
+      // The foreign draft survived with its own line set, no payment row, no
+      // movement and no audit row trailing either masked attempt.
+      expect(await prisma.sale.findUnique({ where: { id: foreignBody.id } })).toMatchObject({
+        tenantId: tenantAId,
+        status: "DRAFT",
+        currency: "PYG",
+      });
+      expect(await prisma.saleLine.count({ where: { saleId: foreignBody.id } })).toBe(1);
+      expect(await prisma.payment.count({ where: { saleId: foreignBody.id } })).toBe(0);
+      expect(await saleMovements(tenantAId, foreignItemAId)).toEqual([]);
+      expect(await rawBalanceText(tenantAId, foreignItemAId)).toBeNull();
+      expect(await readResidue()).toEqual(residueBefore);
+      expect(
+        await prisma.auditLog.count({ where: { requestId: COMPLETION_NOT_FOUND_REQUEST_ID } })
+      ).toBe(0);
+    }, 30_000);
+
+    it("leaves no residue: every raw probe rolled back and the fixture counts unchanged", async () => {
+      // The probe-only item is never referenced by an HTTP completion, so any
+      // movement or projection on it could only come from a raw probe that
+      // failed to roll back.
+      expect(
+        await prisma.stockMovement.count({
+          where: { tenantId: completionTenantId, catalogItemId: probeItemId },
+        })
+      ).toBe(0);
+      expect(
+        await prisma.stockBalance.count({
+          where: { tenantId: completionTenantId, catalogItemId: probeItemId },
+        })
+      ).toBe(0);
+      // The probe-only register never carried a session or a movement...
+      expect(await prisma.cashSession.count({ where: { registerId: probeRegisterId } })).toBe(0);
+      expect(await prisma.cashMovement.count({ where: { registerId: probeRegisterId } })).toBe(0);
+      // ...and the probe-only draft is still an untaken draft: the raw
+      // DRAFT-payment probes deleted their throwaway payment and rolled back.
+      expect(await prisma.sale.findUnique({ where: { id: probeSaleId } })).toMatchObject({
+        tenantId: completionTenantId,
+        status: "DRAFT",
+      });
+      expect(await prisma.payment.count({ where: { saleId: probeSaleId } })).toBe(0);
+      // A payment row is only ever written by a completion, which commits its
+      // status flip in the SAME transaction, so every stored payment belongs to
+      // a COMPLETED sale — the raw DRAFT-payment probe left nothing.
+      const draftPayments = await prisma.$queryRaw<{ count: number }[]>`
+        SELECT count(*)::int AS count
+        FROM "payment" AS p
+        JOIN "sale" AS s ON s."tenant_id" = p."tenant_id" AND s."id" = p."sale_id"
+        WHERE s."status" <> 'COMPLETED'
+      `;
+      expect(draftPayments[0]?.count).toBe(0);
+      // The raw idempotency probes rolled back, and every stored record still
+      // points at the COMPLETED `sale.complete` result it produced.
+      expect(
+        await prisma.idempotencyRecord.count({ where: { key: "live-pg-completion-raw-probe-key" } })
+      ).toBe(0);
+      const inconsistentRecords = await prisma.$queryRaw<{ count: number }[]>`
+        SELECT count(*)::int AS count
+        FROM "idempotency_record" AS r
+        JOIN "sale" AS s ON s."tenant_id" = r."tenant_id" AND s."id" = r."result_sale_id"
+        WHERE r."operation" <> 'sale.complete' OR s."status" <> 'COMPLETED'
+      `;
+      expect(inconsistentRecords[0]?.count).toBe(0);
+      // The fixture counts asserted when the block started are unchanged: the
+      // dedicated tenant opened exactly the two fixture sessions of the CASH
+      // cases and owns its three fixture registers, no more and no fewer.
+      expect(await prisma.cashSession.count({ where: { tenantId: completionTenantId } })).toBe(2);
+      expect(
+        await prisma.cashSession.count({ where: { tenantId: completionTenantId, status: "OPEN" } })
+      ).toBe(2);
+      expect(await prisma.cashRegister.count({ where: { tenantId: completionTenantId } })).toBe(3);
+      expect(await prisma.cashMovement.count({ where: { tenantId: completionTenantId } })).toBe(1);
+      // The tenant's ledger and its projection are still in agreement for every
+      // item the block ever funded, and the non-tracking item still has none.
+      for (const itemId of [trackedExemptItemId, trackedTaxedItemId]) {
+        expect(await rawLedgerSum(completionTenantId, itemId)).toBe(
+          await rawBalanceText(completionTenantId, itemId)
+        );
+      }
+      expect(await rawBalanceText(completionTenantId, nonTrackingItemId)).toBeNull();
+      // The foreign tenant's draft of the cross-tenant case is still an untaken,
+      // unpaid draft: neither masked attempt resolved or mutated it.
+      expect(await prisma.sale.findUnique({ where: { id: foreignSaleAId } })).toMatchObject({
+        tenantId: tenantAId,
+        status: "DRAFT",
+      });
+      expect(await prisma.payment.count({ where: { saleId: foreignSaleAId } })).toBe(0);
+      expect(await saleMovements(tenantAId, foreignItemAId)).toEqual([]);
     }, 30_000);
   });
 });
