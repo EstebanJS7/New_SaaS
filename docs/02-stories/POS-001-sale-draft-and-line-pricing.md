@@ -3,7 +3,7 @@ id: POS-001
 type: story
 title: Sale draft and line pricing
 epic: EPIC-12
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-09
@@ -26,7 +26,7 @@ permissions:
   - sales.cancel
 branch: feat/epic-12-sale-draft
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-29
 ---
 
 # POS-001 — Sale draft and line pricing
@@ -233,8 +233,8 @@ effect. A draft is inert until [[POS-003]] completes it.
 - [x] Required lint, typecheck, test, integration and build checks pass.
       Evidence: `pnpm lint` 14/14, `pnpm typecheck` 14/14, `pnpm build` 9/9, the
       database suite (16 files / 293 tests) and the API suite (74 files / 998
-      tests with `DATABASE_URL_TEST` exported) locally. **The CI receipt for
-      this branch is still pending**, and root `pnpm test` without
+      tests with `DATABASE_URL_TEST` exported) locally, with the branch's CI
+      receipt green (run `36513245839`), and root `pnpm test` without
       `DATABASE_URL_TEST` fails for the pre-existing [[TD-021]] reason.
 
 ## Domain Invariants
@@ -389,6 +389,10 @@ pnpm format-check                                             -> green repositor
 pnpm --filter @newsaas/api test (no DATABASE_URL_TEST)        -> 1 file failed / 918 passed / 80 skipped  (pre-existing, [[TD-021]])
 ```
 
+Merged into `main` as PR #77 (`6ef1896`) on 2026-09-29, with CI run
+`36513245839` green on the evaluated head `f21aaad`: both required checks passed
+(`Database migrations` and `Lint, Typecheck, Test, Build`).
+
 Live database state after `db:deploy` plus `db:seed`: 23 migrations applied and
 `migrate status` reports "Database schema is up to date!"; `permission` count
 **47**; `sale_status` exactly `DRAFT, COMPLETED, CANCELLED`; the `sale` columns
@@ -508,11 +512,19 @@ foreign keys plus **2** delete triggers across `sale`/`sale_line`.
 
 ## Completion Notes
 
-Implemented and committed on `feat/epic-12-sale-draft`. The local gates pass —
-lint, typecheck, the database suite, the API suite with `DATABASE_URL_TEST`, the
-live-PostgreSQL block, build and `format-check` — and every acceptance criterion
-is closed by local evidence. The only remaining gate is this branch's CI
-receipt, which has not run yet, so `status` is `in-progress` and not `done`.
+Closed 2026-09-29. Implemented and committed on `feat/epic-12-sale-draft`, then
+merged into `main` as PR #77 (`6ef1896`) with CI run `36513245839` green on the
+evaluated head `f21aaad`, both required checks passing. Every acceptance
+criterion is checked, the local gates passed — lint, typecheck, the database
+suite, the API suite with `DATABASE_URL_TEST`, the live-PostgreSQL block, build
+and `format-check` — and the branch's CI receipt now exists, so `status` is
+`done`.
+
+`done` means implementation closure only: the Story's acceptance criteria are
+backed by its own gates and its merge receipt, and it is never production
+readiness. Production readiness is a separate release decision that no Story
+status can assert.
+
 Root `pnpm test` currently fails in a local environment without
 `DATABASE_URL_TEST` for the pre-existing [[TD-021]] reason; CI sets schema-less
 URLs for both variables and is unaffected.

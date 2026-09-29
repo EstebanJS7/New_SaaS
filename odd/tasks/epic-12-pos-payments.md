@@ -568,3 +568,32 @@ retarget #78 to `main` so its CI runs, and flip POS-001 and POS-002 to `done` in
 closure commits that do not ride the branch whose receipt they cite. POS-003
 ("CompleteSale" with payments, the ledger and cash writes, and the idempotency
 record) is the last implementation slice of the epic.
+
+---
+
+# EPIC-12 closure block (2026-09-29)
+
+The scope-preparation slice and the first two implementation slices are merged
+into `main`:
+
+- PR #76 — epic scope documentation — merge commit `14f23bc`.
+- PR #77 — POS-001 sale draft and line pricing — merge commit `6ef1896`; POS-001
+  is `done`.
+- PR #78 — POS-002 cash register and session foundation — merge commit
+  `0d583e6`; POS-002 is `done`.
+- CI runs `36513245839` (PR #77, evaluated head `f21aaad`) and `36521067733` (PR
+  #78, evaluated head `3d141c2`), both green on both required checks.
+
+The epic stays `planned`: [[POS-003]], [[POS-004]] and [[POS-005]] are still
+`planned`. Next step is POS-003 — "CompleteSale" with multiple payments across
+the PRD §19 methods, the `SALE` stock and cash movements written through their
+respective ledgers, and the persisted idempotency record.
+
+## Lesson: drain the pull-request stack before deleting a base branch
+
+Merging a pull request with `--delete-branch` while another open pull request
+still has that branch as its base leaves the second pull request **closed**
+against a missing base, and GitHub does not allow reopening it; the stack has to
+be recreated. It happened to the `#76 -> #77 -> #78` stack. Drain the stack in
+merge order and delete a base branch only after the last dependent pull request
+has merged.

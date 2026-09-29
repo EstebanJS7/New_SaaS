@@ -116,12 +116,12 @@ implemented EPIC-12 behavior.
 This section records verified implementation evidence as slices land. The epic's
 `status` stays `planned` until its Exit Criteria are met.
 
-- **[[POS-001]] Sale draft and line pricing — `in-progress`, pending the
-  branch's CI receipt.** Five commits on `feat/epic-12-sale-draft`: `b80f7e4`
-  records the slice and its three resolved contracts in
-  `odd/tasks/epic-12-pos-payments.md`, `93f7f57` adds the W1 data foundation,
-  `fd73edc` adds the W2 API surface, `6ac1825` records the W1/W2 evidence and
-  the W3 blocker, and `d4a1e58` adds the W3 live-PostgreSQL coverage.
+- **[[POS-001]] Sale draft and line pricing — `done`.** Five commits on
+  `feat/epic-12-sale-draft`: `b80f7e4` records the slice and its three resolved
+  contracts in `odd/tasks/epic-12-pos-payments.md`, `93f7f57` adds the W1 data
+  foundation, `fd73edc` adds the W2 API surface, `6ac1825` records the W1/W2
+  evidence and the W3 blocker, and `d4a1e58` adds the W3 live-PostgreSQL
+  coverage.
 - **W1 evidence.** The additive `20260927000001_sales` migration plus the
   `Sale`/`SaleLine` models pass `pnpm --filter @newsaas/database test` (16 files
   / 293 tests), and the seed-count probe moves the permission catalog 43 → 47
@@ -133,12 +133,11 @@ This section records verified implementation evidence as slices land. The epic's
   database after `db:deploy` plus `db:seed` reports 23 applied migrations, a
   `permission` count of 47 and the planned enum, columns, foreign keys and
   delete triggers.
-- **[[POS-002]] Cash register and session foundation — `in-progress`, pending
-  the branch's CI receipt.** Five commits on `feat/epic-12-cash-foundation`:
-  `edc91b5` tracks the slice and its four resolutions, `7ad99f6` records those
-  resolutions as dated decision notes, `9892fc1` adds the C1 data foundation,
-  `fda5b92` adds the C2 API surface, and `ade5a1a` adds the C3 live-PostgreSQL
-  coverage.
+- **[[POS-002]] Cash register and session foundation — `done`.** Five commits on
+  `feat/epic-12-cash-foundation`: `edc91b5` tracks the slice and its four
+  resolutions, `7ad99f6` records those resolutions as dated decision notes,
+  `9892fc1` adds the C1 data foundation, `fda5b92` adds the C2 API surface, and
+  `ade5a1a` adds the C3 live-PostgreSQL coverage.
 - **C1 evidence.** The additive `20260927000002_cash_foundation` migration, the
   three models and the `SALE`-only enum pass
   `pnpm --filter @newsaas/database test` (17 files / 324 tests, 30 of them the
@@ -154,8 +153,20 @@ This section records verified implementation evidence as slices land. The epic's
   `permission` count of 50, the partial unique index
   `cash_session_one_open_per_register_key`, seven `RESTRICT` foreign keys and
   three triggers.
-- **[[POS-003]]–[[POS-005]] remain `planned`.** No completion, payment, staff
-  surface or closure work has started.
+- **Merged, in order.** PR #76 (epic scope documentation) merged into `main` as
+  the merge commit `14f23bc` on 2026-09-29 with CI run `36498156543` green on
+  head `72fb85f`; PR #77 (POS-001 sale draft) merged as `6ef1896` on 2026-09-29
+  with CI run `36513245839` green on the evaluated head `f21aaad`; and PR #78
+  (POS-002 cash foundation) merged as `0d583e6` on 2026-09-29 with CI run
+  `36521067733` green on the evaluated head `3d141c2`.
+- **[[POS-001]] and [[POS-002]] are `done`.** Each Story closed on its merged,
+  CI-backed receipt: every acceptance criterion is checked, the local gates
+  passed and the branch's CI run is green on both required checks. `done` means
+  implementation closure only, never production readiness. [[POS-002]]'s
+  applied-schema invariants were additionally re-proven by the parent's own
+  rolled-back SQL probes against the live database, with zero residue.
+- **[[POS-003]], [[POS-004]] and [[POS-005]] remain `planned`.** No completion,
+  payment, staff surface or closure work has started.
 - Root `pnpm test` fails in a local environment without `DATABASE_URL_TEST` for
   the pre-existing [[TD-021]] reason; CI is unaffected.
 

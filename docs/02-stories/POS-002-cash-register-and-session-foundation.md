@@ -3,7 +3,7 @@ id: POS-002
 type: story
 title: Cash register and session foundation
 epic: EPIC-12
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-02
@@ -244,9 +244,9 @@ difference, cash reversals and the full cash UI are out of scope.
       package, `pnpm build` clean, `pnpm format-check` green repository-wide,
       the database suite (17 files / 324 tests) and the API suite (75 files /
       1026 tests with a schema-less `DATABASE_URL_TEST`), plus `test:live-pg`
-      (90 tests, 0 skipped). **The CI receipt for this branch is still
-      pending**, and root `pnpm test` without `DATABASE_URL_TEST` fails for the
-      pre-existing [[TD-021]] reason.
+      (90 tests, 0 skipped), with the branch's CI receipt green (run
+      `36521067733`), and root `pnpm test` without `DATABASE_URL_TEST` fails for
+      the pre-existing [[TD-021]] reason.
 
 ## Domain Invariants
 
@@ -421,6 +421,10 @@ pnpm format-check                                                       -> green
 pnpm --filter @newsaas/api test (no DATABASE_URL_TEST)                  -> fails for the pre-existing [[TD-021]] reason
 ```
 
+Merged into `main` as PR #78 (`0d583e6`) on 2026-09-29, with CI run
+`36521067733` green on the evaluated head `3d141c2`: both required checks passed
+(`Database migrations` 1m21s and `Lint, Typecheck, Test, Build` 4m6s).
+
 Live database after `db:deploy` plus `db:seed`: 24 migrations applied; the
 `permission` count **50**; the partial unique index
 `cash_session_one_open_per_register_key` with predicate
@@ -592,11 +596,27 @@ sections above are aligned with them:
 
 ## Completion Notes
 
-Implemented and committed on `feat/epic-12-cash-foundation`. The local gates
-pass — lint, typecheck, the database suite, the API suite with a schema-less
-`DATABASE_URL_TEST`, the live-PostgreSQL block, build and `format-check` — and
-every acceptance criterion is closed by local evidence. The only remaining gate
-is this branch's CI receipt, which has not run yet, so `status` is `in-progress`
-and not `done`. Root `pnpm test` currently fails in a local environment without
+Closed 2026-09-29. Implemented and committed on `feat/epic-12-cash-foundation`,
+then merged into `main` as PR #78 (`0d583e6`) with CI run `36521067733` green on
+the evaluated head `3d141c2`, both required checks passing. Every acceptance
+criterion is checked, the local gates passed — lint, typecheck, the database
+suite, the API suite with a schema-less `DATABASE_URL_TEST`, the live-PostgreSQL
+block, build and `format-check` — and the branch's CI receipt now exists, so
+`status` is `done`.
+
+The applied-schema invariants this Story claims were additionally re-proven by
+the parent's own rolled-back SQL probes against the live database: the second
+`OPEN` session for a register rejected by
+`cash_session_one_open_per_register_key` with a `CLOSED` sibling admitted, the
+tenant-scoped register-name unique, the three immutability triggers with their
+exact messages, the two money `CHECK`s, the cross-tenant references and the
+`SALE`-only movement enum, all with zero residue afterwards.
+
+`done` means implementation closure only: the Story's acceptance criteria are
+backed by its own gates, its merge receipt and those probes, and it is never
+production readiness. Production readiness is a separate release decision that
+no Story status can assert.
+
+Root `pnpm test` currently fails in a local environment without
 `DATABASE_URL_TEST` for the pre-existing [[TD-021]] reason; CI sets schema-less
 URLs for both variables and is unaffected.
