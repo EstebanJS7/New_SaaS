@@ -2,7 +2,7 @@
 id: EPIC-12
 type: epic
 title: POS/Payments
-status: planned
+status: done
 priority: high
 depends_on:
   - EPIC-09
@@ -114,7 +114,9 @@ implemented EPIC-12 behavior.
 ## Progress
 
 This section records verified implementation evidence as slices land. The epic's
-`status` stays `planned` until its Exit Criteria are met.
+`status` is `done` since 2026-09-29: its Exit Criteria are met and every
+acceptance criterion is checked. `done` means implementation closure only, never
+production readiness.
 
 - **[[POS-001]] Sale draft and line pricing — `done`.** Five commits on
   `feat/epic-12-sale-draft`: `b80f7e4` records the slice and its three resolved
@@ -208,8 +210,17 @@ This section records verified implementation evidence as slices land. The epic's
   migration, seed or permission key. `pnpm --filter @newsaas/web test` passes 73
   files / 795 tests, and typecheck, lint and build are clean. The story flips to
   `done` after its pull request merges with a CI receipt.
-- **[[POS-005]] remains `planned`.** No module documentation, `CI-EVIDENCE.md`
-  entry, changelog entry or roadmap status update has landed.
+- **[[POS-004]] Staff POS surface — `done`.** Merged as pull request #82, merge
+  commit `62002d8`, CI run `36625254435` green on head `88922da` on both
+  required checks.
+- **[[POS-005]] Epic closure — `done`.** This closure branch adds the
+  implemented-behavior documentation for [[Sales]] and [[Cash]] with their
+  `docs/05-modules/README.md` index entries, the EPIC-12 `CI-EVIDENCE.md` entry,
+  the changelog entry and the roadmap status update.
+- **EPIC-12 is `done`.** All five Stories closed with merged, CI-backed receipts
+  and every Exit Criterion is checked. Open debt stays visible: [[TD-016]],
+  [[TD-017]], [[TD-018]], [[TD-019]], [[TD-020]] and [[TD-021]], with EPIC-20
+  Production Hardening untouched above all of it.
 - Root `pnpm test` fails in a local environment without `DATABASE_URL_TEST` for
   the pre-existing [[TD-021]] reason; CI is unaffected.
 
@@ -319,45 +330,45 @@ evidence that will close it.
 
 ### POS-001 — Sale draft and line pricing
 
-- [ ] A `DRAFT` sale with priced lines is tenant-scoped with a tenant composite
+- [x] A `DRAFT` sale with priced lines is tenant-scoped with a tenant composite
       ownership key and a `RESTRICT` tenant foreign key, and a cross-tenant or
       unknown sale UUID is one byte-equivalent `404`. Evidence to produce: the
       cross-tenant block of the [[POS-001]] live-PostgreSQL case and the shared
       `404` assertion in its integration suite.
-- [ ] The sale status enum is exactly `DRAFT`, `COMPLETED`, `CANCELLED`; there
+- [x] The sale status enum is exactly `DRAFT`, `COMPLETED`, `CANCELLED`; there
       is no `PATCH` and no `DELETE` route on the sale surface, and `CANCELLED`
       is reachable only through an explicit `DRAFT`-guarded cancel command.
       Evidence to produce: the enum gate and the route-inventory probe in
       [[POS-001]].
-- [ ] Each line carries the immutable snapshot `rateCode`, `unitPrice`,
+- [x] Each line carries the immutable snapshot `rateCode`, `unitPrice`,
       `quantity`, `lineTotal`, `taxableBase` and `taxAmount`, tax-included with
       half-up per-line rounding, money at `Decimal(14, 2)` and quantities at
       `Decimal(10, 3)`. Evidence to produce: the arithmetic unit cases pinning
       `EXEMPT`, `IVA_5` and `IVA_10` in [[POS-001]].
-- [ ] The unit price is overridable per line and the sale currency is resolved
+- [x] The unit price is overridable per line and the sale currency is resolved
       server-side from `sales.defaultCurrency`, never from the request body; an
       item whose reference currency differs from the sale currency is a stable
       error and no conversion occurs. Evidence to produce: the pricing and
       currency cases of [[POS-001]].
-- [ ] `customerId` is optional and resolved in-tenant, and the aggregate carries
+- [x] `customerId` is optional and resolved in-tenant, and the aggregate carries
       no discount, no `appointmentId` and no `patientId`. Evidence to produce:
       the absence assertions and the optional-customer case of [[POS-001]].
 
 ### POS-002 — Cash register and session foundation
 
-- [ ] `CashRegister`, `CashSession` and `CashMovement` are tenant-scoped with
+- [x] `CashRegister`, `CashSession` and `CashMovement` are tenant-scoped with
       tenant composite ownership keys, and a cross-tenant or unknown id is one
       byte-equivalent `404`. Evidence to produce: the isolation block of
       [[POS-002]].
-- [ ] "Only one OPEN session per register" is enforced in the database by a
+- [x] "Only one OPEN session per register" is enforced in the database by a
       partial unique index, not by application convention, and a concurrent
       second open is rejected by the database. Evidence to produce: the
       concurrent open case of [[POS-002]].
-- [ ] `CashMovementType` gains `SALE` additively only, and the six remaining PRD
+- [x] `CashMovementType` gains `SALE` additively only, and the six remaining PRD
       §20 kinds stay reserved for EPIC-13; the already-seeded
       `cash.session.close` key is consumed by no EPIC-12 route. Evidence to
       produce: the additive enum gate and the route inventory of [[POS-002]].
-- [ ] The minimal register-create and session-open commands and the cash read
+- [x] The minimal register-create and session-open commands and the cash read
       routes enforce authentication, server-side tenant context, permission
       (`cash.register.create` / `cash.session.open` / `cash.read`) and the
       `cash` capability, and no `PATCH` or `DELETE` route exists on cash
@@ -366,27 +377,27 @@ evidence that will close it.
 
 ### POS-003 — Complete sale with payments
 
-- [ ] Completion is one explicit command, never a generic status write, and it
+- [x] Completion is one explicit command, never a generic status write, and it
       is atomic: the stock movements, the balance updates, the cash movements,
       the frozen line snapshot, the status change, the payment rows and exactly
       one audit row are co-committed, and any rejection persists nothing.
       Evidence to produce: the durable live-PostgreSQL completion block of
       [[POS-003]].
-- [ ] Every completion stock write goes through the [[EPIC-10]] ledger seam and
+- [x] Every completion stock write goes through the [[EPIC-10]] ledger seam and
       acquires `stockSerializationLockKey(tenantId, catalogItemId)` before
       reading or writing `stock_balance` under the fixed `BLOCK` policy, and the
       projection equals the ledger's signed sum afterwards. Evidence to produce:
       the projection-equals-signed-sum assertion and the [[TD-016]] compliance
       note of [[POS-003]].
-- [ ] Payments across the six PRD §19 methods sum to the sale total exactly,
+- [x] Payments across the six PRD §19 methods sum to the sale total exactly,
       each at `Decimal(14, 2)`, with no change, tendered amount, overpayment or
       customer credit modelled, and a payment set that does not sum exactly is
       rejected. Evidence to produce: the payment-sum cases of [[POS-003]].
-- [ ] A CASH payment requires an `OPEN` session resolved server-side inside the
+- [x] A CASH payment requires an `OPEN` session resolved server-side inside the
       same transaction and never from the request body, and writes one `SALE`
       cash movement whose amount equals the CASH payment amount. Evidence to
       produce: the CASH path of the [[POS-003]] live-PostgreSQL block.
-- [ ] Idempotency uses both mechanisms of [[DEC-024]]: a tenant-scoped
+- [x] Idempotency uses both mechanisms of [[DEC-024]]: a tenant-scoped
       idempotency record unique per `(tenant, operation, key)` with a request
       fingerprint and a result reference, and a conditional
       `WHERE status =     'DRAFT'` transition guarded by a
@@ -395,46 +406,46 @@ evidence that will close it.
       request is a stable conflict, and a replay without a key is a stable `409`
       that persists nothing. Evidence to produce: the replay and concurrent
       double-complete cases of [[POS-003]].
-- [ ] A `COMPLETED` sale and its lines and payments are immutable: no `PATCH`,
+- [x] A `COMPLETED` sale and its lines and payments are immutable: no `PATCH`,
       no `DELETE`, no second completion, and a database-level delete rejection.
       Evidence to produce: the delete-rejection and second-completion cases of
       [[POS-003]].
 
 ### POS-004 — Staff POS surface
 
-- [ ] The POS surface implements loading, empty, error, success,
+- [x] The POS surface implements loading, empty, error, success,
       permission-denied and entitlement-denied states, and every component
       composes shared UI with semantic design tokens only — no brand literal and
       no injected styling. Evidence to produce: the state-coverage component
       tests of [[POS-004]].
-- [ ] Item resolution uses the shipped tenant-scoped catalog read API by name,
+- [x] Item resolution uses the shipped tenant-scoped catalog read API by name,
       and the input is keyboard-first and tablet/touch-friendly; a scanner
       behaves exactly like typing and the deferred barcode is not presented as
       supported ([[DEC-025]]). Evidence to produce: the item-resolution cases of
       [[POS-004]].
-- [ ] The browsers transport layer forwards only the staff session cookie, uses
+- [x] The browsers transport layer forwards only the staff session cookie, uses
       an allowlisted query and body rebuild, and never treats a client-supplied
       tenant identifier as authority. Evidence to produce: the proxy tests of
       [[POS-004]].
-- [ ] Frontend permission and entitlement checks are UX only, and the backend
+- [x] Frontend permission and entitlement checks are UX only, and the backend
       checks remain mandatory; the surface adds no route, no schema change and
       no new permission key. Evidence to produce: the UX-only branch assertions
       and the route-inventory diff of [[POS-004]].
 
 ### POS-005 — Epic closure and evidence
 
-- [ ] Module documentation for the new domains is merged, including the sales
+- [x] Module documentation for the new domains is merged, including the sales
       documentation at the path `docs/05-modules/Sales.md` and the cash
       documentation covering the minimal foundation. Evidence to produce: the
       merged documents and their `docs/05-modules/README.md` index entries.
-- [ ] Durable live-PostgreSQL evidence exists for the completion transaction,
+- [x] Durable live-PostgreSQL evidence exists for the completion transaction,
       the CASH payment path and the concurrent double-complete, and is recorded
       in `docs/10-qa/CI-EVIDENCE.md`. Evidence to produce: the recorded
       live-PostgreSQL runs of [[POS-003]].
-- [ ] [[TD-018]], [[TD-019]] and [[TD-020]] exist as `open` records with their
+- [x] [[TD-018]], [[TD-019]] and [[TD-020]] exist as `open` records with their
       triggers, and [[TD-016]]'s compliance call site is recorded without
       closing it. Evidence to produce: the four debt records.
-- [ ] The changelog entry and the roadmap status update for EPIC-12 land in a
+- [x] The changelog entry and the roadmap status update for EPIC-12 land in a
       closure branch after the feature branch merges, not on the feature branch
       whose receipt they cite. Evidence to produce: the closure branch and its
       separate merge.
@@ -474,23 +485,23 @@ evidence that will close it.
 
 ## Exit Criteria
 
-- [ ] Every Story — [[POS-001]], [[POS-002]], [[POS-003]], [[POS-004]],
+- [x] Every Story — [[POS-001]], [[POS-002]], [[POS-003]], [[POS-004]],
       [[POS-005]] — is `done` with every required acceptance criterion checked
       and its implementation summary, migrations, endpoints and tests recorded.
-- [ ] CRUD and command coverage is complete for the epic's surface: the sale
+- [x] CRUD and command coverage is complete for the epic's surface: the sale
       draft reads and writes, the cancel and complete commands, the register
       create and cash session open commands and the cash reads, with no `PATCH`
       and no `DELETE` anywhere on the sale, payment or cash records.
-- [ ] The checks required by the epic — lint, typecheck, unit tests, integration
+- [x] The checks required by the epic — lint, typecheck, unit tests, integration
       tests, build and `format-check` — are green in CI for every merged work
       unit.
-- [ ] Durable live-PostgreSQL evidence exists for the `CompleteSale`
+- [x] Durable live-PostgreSQL evidence exists for the `CompleteSale`
       transaction, the CASH payment path and the concurrent double-complete, and
       is recorded in `docs/10-qa/CI-EVIDENCE.md`.
-- [ ] Module documentation for the new domains is merged: the sales module
+- [x] Module documentation for the new domains is merged: the sales module
       document and the cash documentation for the minimal foundation, with their
       `docs/05-modules/README.md` index entries.
-- [ ] The generated scope notes for [[TD-018]], [[TD-019]] and [[TD-020]] exist
+- [x] The generated scope notes for [[TD-018]], [[TD-019]] and [[TD-020]] exist
       as `open` records, and the [[TD-016]] obligation on this epic is recorded.
 
 ## Decisions / ADRs

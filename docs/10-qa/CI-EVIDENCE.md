@@ -1022,3 +1022,20 @@ is its durable form.
       `Database migrations` job, at 71 cases.
 - [ ] No statement claims release, deployment or production readiness.
 - [ ] The existing baselines above are unchanged.
+
+## EPIC-12 POS/Payments
+
+| Slice                        | Pull request | Merge commit | CI run                                                                           | Checks                                                           |
+| ---------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Scope and Decisions          | #76          | `14f23bc`    | [`36498156543`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36498156543) | both `SUCCESS`                                                   |
+| POS-001 sale draft           | #77          | `6ef1896`    | [`36513245839`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36513245839) | `Database migrations` 1m7s, `Lint, Typecheck, Test, Build` 3m19s |
+| POS-002 cash foundation      | #78          | `0d583e6`    | [`36521067733`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36521067733) | 1m21s / 4m6s                                                     |
+| POS-003 complete sale        | #80          | `dc7c429`    | [`36592652167`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36592652167) | 1m13s / 4m8s                                                     |
+| POS-004 staff POS surface    | #82          | `62002d8`    | [`36625254435`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36625254435) | 1m7s / 3m30s                                                     |
+| POS-003 and POS-004 closures | #81          | `6ca2c2e`    | [`36606000067`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36606000067) | 1m14s / 2m57s                                                    |
+
+The live-PostgreSQL suite runs inside the `Lint, Typecheck, Test, Build` job and
+grew from 71 to **99 cases** across the epic, including the EPIC-12 sale-draft,
+sale-completion and cash-foundation blocks. This section is the
+machine-generated receipt for the merged slices and is **not** a
+production-readiness statement.
