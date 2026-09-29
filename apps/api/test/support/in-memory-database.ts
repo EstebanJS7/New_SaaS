@@ -310,8 +310,11 @@ export interface StockMovementRow {
   id: string;
   tenantId: string;
   catalogItemId: string;
-  /** Ledger kinds shipped so far: EPIC-10 `ADJUSTMENT` and EPIC-11 `PURCHASE`. */
-  type: "ADJUSTMENT" | "PURCHASE";
+  /**
+   * Ledger kinds shipped so far: EPIC-10 `ADJUSTMENT`, EPIC-11 `PURCHASE` and
+   * EPIC-12 POS-003 `SALE` (the signed negative output a completion writes).
+   */
+  type: "ADJUSTMENT" | "PURCHASE" | "SALE";
   quantity: string;
   reason: string;
   reversesMovementId: string | null;
@@ -488,6 +491,53 @@ export interface SaleLineCreateData {
   lineTotal: string | { toString(): string };
   taxableBase: string | { toString(): string };
   taxAmount: string | { toString(): string };
+}
+
+/** Payment method values pinned by the `payment_method` enum (PRD §19, DEC-029). */
+export type PaymentMethodRow = "CASH" | "CARD" | "BANK_TRANSFER" | "QR" | "CHECK" | "OTHER";
+
+/**
+ * Tenant-scoped payment row written by the POS-003 completion transaction (PRD
+ * §19, DEC-029). `amount` is an exact positive `Decimal(14, 2)` stored as an
+ * exact decimal string — never a JavaScript float. There is deliberately no
+ * tendered amount, change or refunded amount.
+ *
+ * HONEST LIMITATION: this fake enforces no unique index and no composite foreign
+ * key (an in-memory Map cannot), so the `(tenant_id, id)` ownership key, the
+ * composite sale FK and the positive-amount CHECK are proven by the W1
+ * migration DDL checks and the live-PostgreSQL gate, not here.
+ */
+export interface PaymentRow {
+  id: string;
+  tenantId: string;
+  saleId: string;
+  method: PaymentMethodRow;
+  amount: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Tenant-scoped idempotency record written by the POS-003 completion transaction
+ * (DEC-024). It exists so an identical replay returns the prior result instead
+ * of a `409`; `resultSaleId` references the completed sale rather than a stored
+ * response snapshot, and `operation` is the stable `sale.complete` token.
+ *
+ * HONEST LIMITATION: this fake enforces no unique index (an in-memory Map
+ * cannot), so the `(tenant_id, operation, key)` uniqueness and the composite
+ * result-sale FK are proven by the W1 migration DDL checks and the
+ * live-PostgreSQL gate. The service's replay short-circuit is exercised through
+ * the pre-insert lookup, and its `P2002` -> replay recovery is exercised with an
+ * injected error.
+ */
+export interface IdempotencyRecordRow {
+  id: string;
+  tenantId: string;
+  operation: string;
+  key: string;
+  fingerprint: string;
+  resultSaleId: string;
+  createdAt: Date;
 }
 
 /**
@@ -1014,8 +1064,11 @@ export interface IsolationDatabase {
     taxRate: {
       /** GLOBAL catalog read: NO tenant predicate (EPIC-09 WU2). */
       findMany: (args?: { orderBy?: { code?: "asc" | "desc" } }) => TaxRateRow[];
-      /** Global rate lookup by id (the write path's FK validation seam). */
-      findFirst: (args: { where: { id: string } }) => TaxRateRow | null;
+      /**
+       * Global rate lookup by id (the write path's FK validation seam) or by the
+       * frozen stable `code` (the POS-003 completion snapshot recompute).
+       */
+      findFirst: (args: { where: { id?: string; code?: string } }) => TaxRateRow | null;
     };
     catalogItem: {
       findMany: (args: {
@@ -1165,6 +1218,47 @@ export interface IsolationDatabase {
         create: SaleLineCreateData & { tenantId: string; saleId: string };
         update: Omit<SaleLineCreateData, "catalogItemId">;
       }) => SaleLineRow;
+      /**
+       * Completion snapshot write (POS-003): updates the three derived amounts
+       * on the line matching `(tenantId, saleId, catalogItemId)` and returns the
+       * affected-row count, mirroring the real tenant-scoped `updateMany`.
+       */
+      updateMany: (args: {
+        where: { tenantId: string; saleId: string; catalogItemId: string };
+        data: {
+          lineTotal: string | { toString(): string };
+          taxableBase: string | { toString(): string };
+          taxAmount: string | { toString(): string };
+        };
+      }) => { count: number };
+    };
+    payment: {
+      create: (args: {
+        data: {
+          tenantId: string;
+          saleId: string;
+          method: PaymentMethodRow;
+          amount: string | { toString(): string };
+        };
+      }) => PaymentRow;
+      findMany: (args: {
+        where: { tenantId: string; saleId: string };
+        orderBy?: readonly CashOrderBy[];
+      }) => PaymentRow[];
+    };
+    idempotencyRecord: {
+      findFirst: (args: {
+        where: { tenantId: string; operation: string; key: string };
+      }) => IdempotencyRecordRow | null;
+      create: (args: {
+        data: {
+          tenantId: string;
+          operation: string;
+          key: string;
+          fingerprint: string;
+          resultSaleId: string;
+        };
+      }) => IdempotencyRecordRow;
     };
     cashRegister: {
       findFirst: (args: { where: CashRegisterWhere }) => CashRegisterRow | null;
@@ -1528,6 +1622,8 @@ export interface IsolationDatabase {
     purchaseLines: Map<string, PurchaseLineRow>;
     sales: Map<string, SaleHeaderRow>;
     saleLines: Map<string, SaleLineRow>;
+    payments: Map<string, PaymentRow>;
+    idempotencyRecords: Map<string, IdempotencyRecordRow>;
     cashRegisters: Map<string, CashRegisterRow>;
     cashSessions: Map<string, CashSessionRow>;
     cashMovements: Map<string, CashMovementRow>;
@@ -1939,6 +2035,11 @@ export function createIsolationDatabase(): IsolationDatabase {
   const purchaseLineTable = new Map<string, PurchaseLineRow>();
   const saleTable = new Map<string, SaleHeaderRow>();
   const saleLineTable = new Map<string, SaleLineRow>();
+  // EPIC-12 POS-003: the completion transaction's two new tables. Present so the
+  // completion tests can read them and the draft-path inertness probe can diff
+  // them; nothing else writes a row.
+  const paymentTable = new Map<string, PaymentRow>();
+  const idempotencyRecordTable = new Map<string, IdempotencyRecordRow>();
   // EPIC-12 POS-002: the register/session tables the cash surface touches. The
   // movement table is MODELLED (so the inertness probe can diff it) but nothing
   // in EPIC-12 writes a row — POS-003 does, and EPIC-13 owns the other kinds.
@@ -1992,6 +2093,8 @@ export function createIsolationDatabase(): IsolationDatabase {
     purchaseLines: purchaseLineTable,
     sales: saleTable,
     saleLines: saleLineTable,
+    payments: paymentTable,
+    idempotencyRecords: idempotencyRecordTable,
     cashRegisters: cashRegisterTable,
     cashSessions: cashSessionTable,
     cashMovements: cashMovementTable,
@@ -2556,7 +2659,15 @@ export function createIsolationDatabase(): IsolationDatabase {
         }
         return rows;
       },
-      findFirst: ({ where }) => taxRateTable.get(where.id) ?? null,
+      findFirst: ({ where }) => {
+        if (where.id !== undefined) {
+          return taxRateTable.get(where.id) ?? null;
+        }
+        if (where.code !== undefined) {
+          return [...taxRateTable.values()].find((rate) => rate.code === where.code) ?? null;
+        }
+        return null;
+      },
     },
     catalogItem: {
       findMany: ({ where, orderBy }) => {
@@ -2931,6 +3042,64 @@ export function createIsolationDatabase(): IsolationDatabase {
           updatedAt: now,
         };
         saleLineTable.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const line of saleLineTable.values()) {
+          if (line.tenantId !== where.tenantId) continue;
+          if (line.saleId !== where.saleId) continue;
+          if (line.catalogItemId !== where.catalogItemId) continue;
+          line.lineTotal = toDecimalString(data.lineTotal);
+          line.taxableBase = toDecimalString(data.taxableBase);
+          line.taxAmount = toDecimalString(data.taxAmount);
+          line.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
+    payment: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: PaymentRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          saleId: data.saleId,
+          method: data.method,
+          amount: toDecimalString(data.amount),
+          createdAt: now,
+          updatedAt: now,
+        };
+        paymentTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where, orderBy }) => {
+        const rows = [...paymentTable.values()].filter(
+          (candidate) => candidate.tenantId === where.tenantId && candidate.saleId === where.saleId
+        );
+        return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
+      },
+    },
+    idempotencyRecord: {
+      findFirst: ({ where }) =>
+        [...idempotencyRecordTable.values()].find(
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            candidate.operation === where.operation &&
+            candidate.key === where.key
+        ) ?? null,
+      create: ({ data }) => {
+        const created: IdempotencyRecordRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          operation: data.operation,
+          key: data.key,
+          fingerprint: data.fingerprint,
+          resultSaleId: data.resultSaleId,
+          createdAt: new Date(),
+        };
+        idempotencyRecordTable.set(created.id, created);
         return created;
       },
     },
@@ -3705,6 +3874,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       purchaseLines: purchaseLineTable,
       sales: saleTable,
       saleLines: saleLineTable,
+      payments: paymentTable,
+      idempotencyRecords: idempotencyRecordTable,
       cashRegisters: cashRegisterTable,
       cashSessions: cashSessionTable,
       cashMovements: cashMovementTable,

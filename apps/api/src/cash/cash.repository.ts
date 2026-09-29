@@ -140,6 +140,58 @@ export interface CashMembershipLookup {
 }
 
 /**
+ * Cash movement kind values pinned by schema enum `cash_movement_type`. EPIC-12
+ * POS-002 ships the standalone `SALE`; EPIC-13 appends the six remaining PRD §20
+ * kinds additively (DEC-020). Kept as a local literal union so this boundary
+ * stays decoupled from the generated client namespace.
+ */
+export type CashMovementTypeValue = "SALE";
+
+/**
+ * Immutable cash movement row (PRD §20, DEC-020). `amount` is an exact
+ * `Decimal(14, 2)` — `Prisma.Decimal` at runtime, a plain exact string in the
+ * in-memory fake — and is NEVER coerced to a JavaScript float. The `reason` is
+ * optional free text; the `SALE` kind is self-describing and ships none.
+ * Nothing in POS-002 writes one: POS-003 appends the `SALE` movement inside the
+ * CompleteSale transaction. There is deliberately no `updatedAt` — the row is
+ * append-only by design.
+ */
+export interface CashMovementRow {
+  id: string;
+  tenantId: string;
+  registerId: string;
+  sessionId: string;
+  type: CashMovementTypeValue;
+  amount: Prisma.Decimal | string;
+  reason: string | null;
+  createdAt: Date;
+}
+
+/**
+ * Write payload for {@link CashRepository.createSaleMovement}. There is
+ * deliberately NO `tenantId` and NO `type` field: tenant identity comes from the
+ * request context and the kind is owned by the command (`SALE`), not by a
+ * caller argument. The session and register are the server-resolved pair.
+ */
+export interface CashMovementCreateData {
+  readonly registerId: string;
+  readonly sessionId: string;
+  readonly amount: Prisma.Decimal | string;
+}
+
+/**
+ * Structural contract for the movement delegate. `create` is the ONLY mutation
+ * this boundary exposes: a movement is append-only and immutable (no update, no
+ * delete), matching the schema's immutability triggers. EPIC-12 writes no row
+ * through it; POS-003 appends the `SALE` movement inside its transaction.
+ */
+export interface CashMovementDelegate {
+  create: (args: {
+    data: CashMovementCreateData & { tenantId: string; type: CashMovementTypeValue };
+  }) => Promise<CashMovementRow>;
+}
+
+/**
  * The delegate set this repository touches. Doubles as the optional transaction
  * seam: the audited service passes its open transaction handle here so the cash
  * change and its audit row co-commit.
@@ -147,6 +199,7 @@ export interface CashMembershipLookup {
 export interface CashTx {
   cashRegister: CashRegisterDelegate;
   cashSession: CashSessionDelegate;
+  cashMovement: CashMovementDelegate;
   tenantMembership: CashMembershipLookup;
 }
 
@@ -155,6 +208,23 @@ export const CASH_REGISTER_NOT_FOUND_MESSAGE = "Cash register was not found.";
 
 /** Single stable message behind every cash-session 404. */
 export const CASH_SESSION_NOT_FOUND_MESSAGE = "Cash session was not found.";
+
+/**
+ * Stable `409 CONFLICT` message for a CASH payment with NO open session: the
+ * request is well formed, but the tenant has nowhere to attribute the cash, so
+ * completion persists nothing (DEC-020, resolution 4 of 2026-09-29).
+ */
+export const CASH_SESSION_REQUIRED_MESSAGE = "A cash payment requires an open cash session.";
+
+/**
+ * Stable `409 CONFLICT` message for a CASH payment with MORE THAN ONE open
+ * session: the sale carries no register reference, so there is no correct
+ * drawer to attribute the cash to and completion persists nothing (DEC-020,
+ * resolution 4 of 2026-09-29). A distinct message from
+ * {@link CASH_SESSION_REQUIRED_MESSAGE} so the two outcomes are separable.
+ */
+export const CASH_SESSIONS_AMBIGUOUS_MESSAGE =
+  "More than one cash session is open for this tenant.";
 
 /**
  * Stable `403 FORBIDDEN` message for a request whose own ACTIVE membership
@@ -182,11 +252,11 @@ export const CASH_MEMBERSHIP_NOT_RESOLVED_MESSAGE =
  * the request context, so `opened_by_membership_id` can never be supplied by a
  * caller.
  *
- * There is deliberately NO delete method, no status update and no movement write
- * of any kind anywhere on this repository: nothing in EPIC-12 writes a
- * `cash_movement` row (POS-003 does, inside the CompleteSale transaction), a
- * session close is EPIC-13 surface, and no method takes a caller-supplied tenant
- * id.
+ * There is deliberately NO delete method and no status update anywhere on this
+ * repository: a session close is EPIC-13 surface. The one movement write is
+ * {@link createSaleMovement}, the append-only `SALE` row POS-003 co-commits
+ * inside the CompleteSale transaction; EPIC-13 owns the six remaining kinds.
+ * No method takes a caller-supplied tenant id.
  */
 @Injectable()
 export class CashRepository {
@@ -325,5 +395,55 @@ export class CashRepository {
       throw new DomainError("FORBIDDEN", CASH_MEMBERSHIP_NOT_RESOLVED_MESSAGE);
     }
     return membership.id;
+  }
+
+  /**
+   * Resolves the caller tenant's SINGLE open cash session for a completion that
+   * needs somewhere to attribute its CASH movements (DEC-020, resolution 4 of
+   * 2026-09-29). The sale carries no register reference and a tenant may hold
+   * several registers, so the rule is EXACTLY one `OPEN` session in the tenant:
+   * zero rows is {@link CASH_SESSION_REQUIRED_MESSAGE} and more than one is
+   * {@link CASH_SESSIONS_AMBIGUOUS_MESSAGE}, both stable `409 CONFLICT`. The
+   * session is resolved server-side from the tenant context — never from the
+   * body — and the deterministic `(createdAt, id)` ordering keeps the lookup
+   * stable, though the result is rejected when it is not unique.
+   */
+  async resolveSingleOpenSession(tx?: CashTx): Promise<CashSessionRow> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const sessions = await client.cashSession.findMany({
+      where: { tenantId, status: "OPEN" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    if (sessions.length === 0) {
+      throw new DomainError("CONFLICT", CASH_SESSION_REQUIRED_MESSAGE);
+    }
+    if (sessions.length > 1) {
+      throw new DomainError("CONFLICT", CASH_SESSIONS_AMBIGUOUS_MESSAGE);
+    }
+    return sessions[0];
+  }
+
+  /**
+   * Appends one immutable `SALE` cash movement in the CALLER'S active tenant
+   * (DEC-020). `tenantId` is resolved from the request context and the kind is
+   * fixed to `SALE`, so neither can be re-scoped or re-typed by an argument.
+   * The register and session are the server-resolved pair the caller already
+   * proved is in-tenant, and the amount is the exact CASH payment amount. This
+   * is the only movement write in EPIC-12; POS-003 performs it inside its
+   * CompleteSale transaction.
+   */
+  async createSaleMovement(data: CashMovementCreateData, tx?: CashTx): Promise<CashMovementRow> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashMovement.create({
+      data: {
+        registerId: data.registerId,
+        sessionId: data.sessionId,
+        type: "SALE",
+        amount: data.amount,
+        tenantId,
+      },
+    });
   }
 }

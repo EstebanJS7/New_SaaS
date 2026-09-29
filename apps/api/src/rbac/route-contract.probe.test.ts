@@ -171,12 +171,14 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /purchases/:id",
   "POST /purchases/:id/cancel",
   "POST /purchases/:id/receive",
-  // EPIC-12 POS-001 — sale draft surface + cancel command (no PATCH, no DELETE)
+  // EPIC-12 POS-001/POS-003 — sale draft surface, cancel command and the
+  // explicit completion command (no PATCH, no DELETE)
   "GET /sales",
   "POST /sales",
   "GET /sales/:id",
   "PUT /sales/:id",
   "POST /sales/:id/cancel",
+  "POST /sales/:id/complete",
   // EPIC-12 POS-002 — cash register/session foundation (no PATCH, no DELETE,
   // no close: EPIC-13 owns close and the movement write belongs to POS-003)
   "GET /cash/registers",
@@ -353,13 +355,14 @@ const PURCHASES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-12 POS-001 sale surface. Both reads MUST declare exactly `sales.read`,
- * and create/update/cancel MUST declare exactly their own write key; a route
- * decorated with another sale tier (or none) fails by name, which the
- * permission-less 403 sweep cannot catch. There is deliberately NO `PATCH` — the
- * lifecycle is server-owned, and `POST /sales/:id/cancel` is the only status
- * transition shipped by POS-001 — and NO delete route: a draft drops a line
- * through the update command and a settled sale is immutable.
+ * EPIC-12 POS-001/POS-003 sale surface. Both reads MUST declare exactly
+ * `sales.read`, and create/update/cancel/complete MUST declare exactly their own
+ * write key; a route decorated with another sale tier (or none) fails by name,
+ * which the permission-less 403 sweep cannot catch. There is deliberately NO
+ * `PATCH` — the lifecycle is server-owned, and `POST /sales/:id/cancel` and
+ * `POST /sales/:id/complete` are the only status transitions — and NO delete
+ * route: a draft drops a line through the update command and a settled sale is
+ * immutable.
  */
 const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /sales": SALES_PERMISSIONS.read,
@@ -367,6 +370,7 @@ const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /sales": SALES_PERMISSIONS.create,
   "PUT /sales/:id": SALES_PERMISSIONS.update,
   "POST /sales/:id/cancel": SALES_PERMISSIONS.cancel,
+  "POST /sales/:id/complete": SALES_PERMISSIONS.complete,
 };
 
 /**

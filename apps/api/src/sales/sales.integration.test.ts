@@ -19,11 +19,22 @@ import {
   seedRoleWithKeys,
   type RbacActor,
 } from "../../test/support/rbac-fixture.js";
+import {
+  CASH_SESSION_REQUIRED_MESSAGE,
+  CASH_SESSIONS_AMBIGUOUS_MESSAGE,
+} from "../cash/cash.repository.js";
+import {
+  INSUFFICIENT_STOCK_MESSAGE,
+  STOCK_ITEM_INACTIVE_MESSAGE,
+} from "../inventory/inventory.service.js";
 import { SALES_PERMISSIONS } from "./sales.permissions.js";
 import { SALE_CUSTOMER_NOT_FOUND_MESSAGE, SALE_NOT_FOUND_MESSAGE } from "./sales.repository.js";
 import {
   SALE_CURRENCY_MISMATCH_MESSAGE,
+  SALE_CUSTOMER_INACTIVE_MESSAGE,
+  SALE_IDEMPOTENCY_KEY_CONFLICT_MESSAGE,
   SALE_NOT_EDITABLE_MESSAGE,
+  SALE_PAYMENT_TOTAL_MISMATCH_MESSAGE,
   SALE_TAX_RATE_NOT_FOUND_MESSAGE,
   SALE_UNIT_PRICE_REQUIRED_MESSAGE,
   SALES_FEATURE_NOT_ENTITLED_MESSAGE,
@@ -88,6 +99,7 @@ const ALL_SALES_PERMISSIONS: readonly string[] = [
   SALES_PERMISSIONS.create,
   SALES_PERMISSIONS.update,
   SALES_PERMISSIONS.cancel,
+  SALES_PERMISSIONS.complete,
 ];
 
 interface SalesTenant {
@@ -300,6 +312,135 @@ function tableSizes(db: IsolationDatabase): Record<string, number> {
 /** Exact minor-unit integer of a fixed-scale (2 decimals) PYG money string. */
 function minorUnits(value: string): bigint {
   return BigInt(value.replace(".", ""));
+}
+
+/** Allowlisted payment projection of a completed sale. */
+interface PaymentDto {
+  id: string;
+  method: string;
+  amount: string;
+}
+
+/** The completion body: the sale projection plus payments and the replay flag. */
+interface CompletedSaleDto extends SaleDto {
+  payments: PaymentDto[];
+  replay: boolean;
+}
+
+const COMPLETED_SALE_RESPONSE_KEYS: readonly string[] = [
+  ...SALE_RESPONSE_KEYS,
+  "payments",
+  "replay",
+];
+
+const PAYMENT_RESPONSE_KEYS: readonly string[] = ["id", "method", "amount"];
+
+/** One completion payment entry; `extra` breaks exactly one rule. */
+function payment(
+  method: string,
+  amount: unknown,
+  extra: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return { method, amount, ...extra };
+}
+
+/** The strict completion body. */
+function completionBody(payments: readonly Record<string, unknown>[]): Record<string, unknown> {
+  return { payments };
+}
+
+/**
+ * One seed line for a completion fixture. The derived amounts are deliberately
+ * zeroed: completion must RECOMPUTE and freeze them from `unitPrice`,
+ * `quantity` and `rateCode`, never trust a stored draft value.
+ */
+function completionLine(
+  catalogItemId: string,
+  quantity: string,
+  rateCode: string,
+  unitPrice: string
+): {
+  catalogItemId: string;
+  rateCode: string;
+  unitPrice: string;
+  quantity: string;
+  lineTotal: string;
+  taxableBase: string;
+  taxAmount: string;
+} {
+  return {
+    catalogItemId,
+    rateCode,
+    unitPrice,
+    quantity,
+    lineTotal: "0.00",
+    taxableBase: "0.00",
+    taxAmount: "0.00",
+  };
+}
+
+/**
+ * A DEDICATED completion tenant so session-count-sensitive cases never observe a
+ * register/session another test created. Holds `sales.read` + `sales.complete`
+ * and (unless `entitled` is false) the `sales` entitlement.
+ */
+function createCompletionActor(db: IsolationDatabase, label: string, entitled = true): SalesTenant {
+  const suffix = randomUUID().slice(0, 8);
+  const tenant = db.prisma.tenant.create({
+    data: { slug: `complete-${label}-${suffix}`, name: `Complete ${label}` },
+  });
+  const role = seedRoleWithKeys(db, `COMPLETE_${label}_${suffix}`, `Complete ${label} (fixture)`, [
+    SALES_PERMISSIONS.read,
+    SALES_PERMISSIONS.complete,
+  ]);
+  const actor = seedRbacActor(db, {
+    email: `complete-${label}-${suffix}@isolation.test`,
+    tenantId: tenant.id,
+    roleId: role.role.id,
+  });
+  if (entitled) {
+    const feature = db.prisma.featureCode.findUnique({ where: { code: "sales" } });
+    if (!feature) {
+      throw new Error("The sales feature code was not seeded before the completion fixture.");
+    }
+    db.prisma.tenantEntitlement.create({
+      data: { tenantId: tenant.id, featureCodeId: feature.id },
+    });
+  }
+  return { tenant, actor };
+}
+
+/** Opens one cash session against a fresh register for the given tenant. */
+function openCashSession(
+  db: IsolationDatabase,
+  owner: SalesTenant
+): { registerId: string; sessionId: string } {
+  const register = db.prisma.cashRegister.create({
+    data: { tenantId: owner.tenant.id, name: `Register ${randomUUID().slice(0, 8)}` },
+  });
+  const session = db.prisma.cashSession.create({
+    data: {
+      tenantId: owner.tenant.id,
+      registerId: register.id,
+      openedByMembershipId: owner.actor.membership?.id ?? randomUUID(),
+      openingAmount: "0.00",
+    },
+  });
+  return { registerId: register.id, sessionId: session.id };
+}
+
+/** Seeds one absolute stock-balance projection row for the tenant/item pair. */
+function seedBalance(
+  db: IsolationDatabase,
+  tenantId: string,
+  catalogItemId: string,
+  quantity: string
+): void {
+  db.prisma.stockBalance.upsert({
+    where: { tenantId_catalogItemId: { tenantId, catalogItemId } },
+    create: { tenantId, catalogItemId, quantity },
+    update: { quantity },
+  });
 }
 
 /**
@@ -1005,5 +1146,444 @@ describe("Sales HTTP boundary (EPIC-12 POS-001)", () => {
       .map((row: SaleLineRow) => row.id);
     expect(body.lines.map((row) => row.id).sort()).toEqual(lineIds.sort());
     expect(Object.keys(body).sort()).toEqual([...SALE_RESPONSE_KEYS].sort());
+  });
+
+  it("denies completion without sales.complete or the sales entitlement, persisting nothing", async () => {
+    const item = fixture.createItem(fixture.a, { referencePriceAmount: "1000.00" });
+    const sale = fixture.seedSale(fixture.a, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBefore = tableSizes(booted.db);
+    const body = completionBody([payment("CARD", "1000.00")]);
+
+    for (const actor of [fixture.readOnly, fixture.noPermission]) {
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/sales/${sale.id}/complete`)
+        .set("Cookie", actor.cookie)
+        .send(body)
+        .expect(403);
+      expect((response.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    }
+
+    // A tenant WITHOUT the `sales` entitlement is FEATURE_NOT_ENTITLED, not a
+    // permission failure (DEC-026).
+    const entitled = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", fixture.c.actor.cookie)
+      .send(body)
+      .expect(403);
+    expect((entitled.body as ErrorDto).error.code).toBe("FEATURE_NOT_ENTITLED");
+    expect((entitled.body as ErrorDto).error.message).toBe(SALES_FEATURE_NOT_ENTITLED_MESSAGE);
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  it("completes a DRAFT atomically: negative SALE movements, cash movement, frozen snapshot, payments and one audit row", async () => {
+    const owner = createCompletionActor(booted.db, "success");
+    const exemptItem = fixture.createItem(owner, {
+      taxRateId: SEEDED_TAX_RATE_IDS.EXEMPT,
+      referencePriceAmount: "1000.00",
+      referencePriceCurrency: "PYG",
+    });
+    const taxedItem = fixture.createItem(owner, {
+      taxRateId: SEEDED_TAX_RATE_IDS.IVA_10,
+      referencePriceAmount: "1100.00",
+      referencePriceCurrency: "PYG",
+    });
+    seedBalance(booted.db, owner.tenant.id, exemptItem.id, "5.000");
+    seedBalance(booted.db, owner.tenant.id, taxedItem.id, "3.000");
+    const cash = openCashSession(booted.db, owner);
+    const sale = fixture.seedSale(owner, {
+      lines: [
+        completionLine(exemptItem.id, "2.000", "EXEMPT", "1000.00"),
+        completionLine(taxedItem.id, "1.000", "IVA_10", "1100.00"),
+      ],
+    });
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(completionBody([payment("CASH", "1600.00"), payment("CARD", "1500.00")]))
+      .expect(201);
+
+    const completed = response.body as CompletedSaleDto;
+    expect(Object.keys(completed).sort()).toEqual([...COMPLETED_SALE_RESPONSE_KEYS].sort());
+    expect(completed.status).toBe("COMPLETED");
+    expect(completed.replay).toBe(false);
+    expect(completed.total).toBe("3100.00");
+    expect(completed.payments).toHaveLength(2);
+    for (const projection of completed.payments) {
+      expect(Object.keys(projection).sort()).toEqual([...PAYMENT_RESPONSE_KEYS].sort());
+    }
+
+    // The snapshot is RECOMPUTED from the frozen inputs and frozen in place.
+    const exemptLine = completed.lines.find((row) => row.catalogItemId === exemptItem.id);
+    expect(exemptLine?.lineTotal).toBe("2000.00");
+    const taxedLine = completed.lines.find((row) => row.catalogItemId === taxedItem.id);
+    expect(taxedLine?.lineTotal).toBe("1100.00");
+    expect(taxedLine?.taxableBase).toBe("1000.00");
+    expect(taxedLine?.taxAmount).toBe("100.00");
+
+    // Exactly one signed NEGATIVE `SALE` movement per line, and the projection
+    // is the ledger's signed sum (5 - 2 and 3 - 1).
+    const movements = [...booted.db.tables.stockMovements.values()].filter(
+      (row) => row.tenantId === owner.tenant.id && row.type === "SALE"
+    );
+    expect(movements).toHaveLength(2);
+    expect(Number(movements.find((row) => row.catalogItemId === exemptItem.id)?.quantity)).toBe(-2);
+    expect(Number(movements.find((row) => row.catalogItemId === taxedItem.id)?.quantity)).toBe(-1);
+    const balances = [...booted.db.tables.stockBalances.values()];
+    expect(Number(balances.find((row) => row.catalogItemId === exemptItem.id)?.quantity)).toBe(3);
+    expect(Number(balances.find((row) => row.catalogItemId === taxedItem.id)?.quantity)).toBe(2);
+
+    // Exactly one `SALE` cash movement for the single CASH payment, against the
+    // server-resolved session and its register.
+    const cashMovements = [...booted.db.tables.cashMovements.values()].filter(
+      (row) => row.tenantId === owner.tenant.id
+    );
+    expect(cashMovements).toHaveLength(1);
+    expect(cashMovements[0].type).toBe("SALE");
+    expect(cashMovements[0].amount).toBe("1600.00");
+    expect(cashMovements[0].sessionId).toBe(cash.sessionId);
+    expect(cashMovements[0].registerId).toBe(cash.registerId);
+
+    // One payment row per submitted payment.
+    const paymentRows = [...booted.db.tables.payments.values()].filter(
+      (row) => row.saleId === sale.id
+    );
+    expect(paymentRows).toHaveLength(2);
+    expect(paymentRows.map((row) => row.amount).sort()).toEqual(["1500.00", "1600.00"]);
+
+    // Exactly one audit row, field NAMES only and no payment detail.
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+    const audits = auditsForTarget(booted, sale.id).filter(
+      (row) => row.action === "sale.completed"
+    );
+    expect(audits).toHaveLength(1);
+    expect(audits[0].targetType).toBe("sale");
+    expect(audits[0].tenantId).toBe(owner.tenant.id);
+    expect(changedFieldsOf(audits[0])).toEqual(["status", "lines", "payments"]);
+    const serializedMeta = JSON.stringify(audits[0].metadata);
+    expect(serializedMeta).not.toContain("CASH");
+    expect(serializedMeta).not.toContain("1600.00");
+  });
+
+  it("returns the prior completed sale for an identical keyed replay without a second completion", async () => {
+    const owner = createCompletionActor(booted.db, "replay-key");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    seedBalance(booted.db, owner.tenant.id, item.id, "5.000");
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const body = completionBody([payment("CARD", "1000.00")]);
+
+    const first = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .set("Idempotency-Key", "replay-key-1")
+      .send(body)
+      .expect(201);
+    expect((first.body as CompletedSaleDto).replay).toBe(false);
+
+    const sizesAfterFirst = tableSizes(booted.db);
+    const replay = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .set("Idempotency-Key", "replay-key-1")
+      .send(body)
+      .expect(200);
+
+    const replayed = replay.body as CompletedSaleDto;
+    expect(replayed.id).toBe(sale.id);
+    expect(replayed.status).toBe("COMPLETED");
+    expect(replayed.replay).toBe(true);
+    expect(Object.keys(replayed).sort()).toEqual([...COMPLETED_SALE_RESPONSE_KEYS].sort());
+    expect(replayed.payments).toHaveLength(1);
+    // The replay writes NOTHING: no second movement, payment or audit row.
+    expect(tableSizes(booted.db)).toEqual(sizesAfterFirst);
+    expect(
+      [...booted.db.tables.stockMovements.values()].filter(
+        (row) => row.tenantId === owner.tenant.id && row.type === "SALE"
+      )
+    ).toHaveLength(1);
+  });
+
+  it("rejects a keyless replay with the DRAFT-only 409 and persists nothing", async () => {
+    const owner = createCompletionActor(booted.db, "replay-keyless");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    seedBalance(booted.db, owner.tenant.id, item.id, "5.000");
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const body = completionBody([payment("CARD", "1000.00")]);
+
+    await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(body)
+      .expect(201);
+
+    const sizesAfterFirst = tableSizes(booted.db);
+    const replay = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(body)
+      .expect(409);
+    expect((replay.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((replay.body as ErrorDto).error.message).toBe(SALE_NOT_EDITABLE_MESSAGE);
+    expect(tableSizes(booted.db)).toEqual(sizesAfterFirst);
+  });
+
+  it("rejects the same idempotency key with a different fingerprint as a stable conflict", async () => {
+    const owner = createCompletionActor(booted.db, "replay-conflict");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    seedBalance(booted.db, owner.tenant.id, item.id, "5.000");
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+
+    await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .set("Idempotency-Key", "replay-conflict-1")
+      .send(completionBody([payment("CARD", "1000.00")]))
+      .expect(201);
+
+    const sizesAfterFirst = tableSizes(booted.db);
+    // Same key, same total, DIFFERENT payment set => different fingerprint.
+    const conflict = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .set("Idempotency-Key", "replay-conflict-1")
+      .send(completionBody([payment("CASH", "1000.00")]))
+      .expect(409);
+    expect((conflict.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((conflict.body as ErrorDto).error.message).toBe(SALE_IDEMPOTENCY_KEY_CONFLICT_MESSAGE);
+    expect(tableSizes(booted.db)).toEqual(sizesAfterFirst);
+  });
+
+  it("rejects a payment set that does not sum exactly to the total and persists nothing", async () => {
+    const owner = createCompletionActor(booted.db, "sum");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(completionBody([payment("CARD", "900.00")]))
+      .expect(400);
+    expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    expect((response.body as ErrorDto).error.message).toBe(SALE_PAYMENT_TOTAL_MISMATCH_MESSAGE);
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.sales.get(sale.id)?.status).toBe("DRAFT");
+  });
+
+  it("rejects a CASH payment with no open session", async () => {
+    const owner = createCompletionActor(booted.db, "no-session");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(completionBody([payment("CASH", "1000.00")]))
+      .expect(409);
+    expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((response.body as ErrorDto).error.message).toBe(CASH_SESSION_REQUIRED_MESSAGE);
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  it("rejects a CASH payment with more than one open session as ambiguous", async () => {
+    const owner = createCompletionActor(booted.db, "two-sessions");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    openCashSession(booted.db, owner);
+    openCashSession(booted.db, owner);
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(completionBody([payment("CASH", "1000.00")]))
+      .expect(409);
+    expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((response.body as ErrorDto).error.message).toBe(CASH_SESSIONS_AMBIGUOUS_MESSAGE);
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  it("rejects an inactive line item and an inactive customer as reference-state 409s", async () => {
+    const owner = createCompletionActor(booted.db, "references");
+    const inactiveItem = fixture.createItem(owner, {
+      referencePriceAmount: "1000.00",
+      isActive: false,
+    });
+    const itemSale = fixture.seedSale(owner, {
+      lines: [completionLine(inactiveItem.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const itemResponse = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${itemSale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(completionBody([payment("CARD", "1000.00")]))
+      .expect(409);
+    expect((itemResponse.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((itemResponse.body as ErrorDto).error.message).toBe(STOCK_ITEM_INACTIVE_MESSAGE);
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+
+    const activeItem = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    const customer = fixture.createCustomer(owner);
+    booted.db.prisma.customer.updateMany({
+      where: { id: customer.id, tenantId: owner.tenant.id },
+      data: { isActive: false },
+    });
+    const customerSale = fixture.seedSale(owner, {
+      customerId: customer.id,
+      lines: [completionLine(activeItem.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBeforeCustomer = tableSizes(booted.db);
+
+    const customerResponse = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${customerSale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(completionBody([payment("CARD", "1000.00")]))
+      .expect(409);
+    expect((customerResponse.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((customerResponse.body as ErrorDto).error.message).toBe(SALE_CUSTOMER_INACTIVE_MESSAGE);
+    expect(tableSizes(booted.db)).toEqual(sizesBeforeCustomer);
+  });
+
+  it("rejects an output that would drive the projection negative and persists nothing", async () => {
+    const owner = createCompletionActor(booted.db, "bloc");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    seedBalance(booted.db, owner.tenant.id, item.id, "1.000");
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "2.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(completionBody([payment("CARD", "2000.00")]))
+      .expect(409);
+    expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((response.body as ErrorDto).error.message).toBe(INSUFFICIENT_STOCK_MESSAGE);
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(
+      Number(
+        [...booted.db.tables.stockBalances.values()].find((row) => row.catalogItemId === item.id)
+          ?.quantity
+      )
+    ).toBe(1);
+  });
+
+  it("rejects a non-DRAFT sale with the stable 409 and persists nothing", async () => {
+    const owner = createCompletionActor(booted.db, "non-draft");
+    for (const status of ["COMPLETED", "CANCELLED"] as const) {
+      const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+      const sale = fixture.seedSale(owner, {
+        status,
+        lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+      });
+      const sizesBefore = tableSizes(booted.db);
+
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/sales/${sale.id}/complete`)
+        .set("Cookie", owner.actor.cookie)
+        .send(completionBody([payment("CARD", "1000.00")]))
+        .expect(409);
+      expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+      expect((response.body as ErrorDto).error.message).toBe(SALE_NOT_EDITABLE_MESSAGE);
+      expect(tableSizes(booted.db)).toEqual(sizesBefore);
+      expect(booted.db.tables.sales.get(sale.id)?.status).toBe(status);
+    }
+  });
+
+  it("masks an unknown sale as the shared 404 and persists nothing", async () => {
+    const owner = createCompletionActor(booted.db, "missing-sale");
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${randomUUID()}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(completionBody([payment("CARD", "1000.00")]))
+      .expect(404);
+    expect((response.body as ErrorDto).error.code).toBe("NOT_FOUND");
+    expect((response.body as ErrorDto).error.message).toBe(SALE_NOT_FOUND_MESSAGE);
+  });
+
+  it("rejects every invalid completion body and an over-long Idempotency-Key, persisting nothing", async () => {
+    const owner = createCompletionActor(booted.db, "strict");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const rejected: [string, Record<string, unknown>][] = [
+      ["missing payments", {}],
+      ["empty payments", completionBody([])],
+      ["unknown method", completionBody([payment("CRYPTO", "1000.00")])],
+      ["zero amount", completionBody([payment("CARD", "0")])],
+      ["negative amount", completionBody([payment("CARD", "-1.00")])],
+      ["float amount", completionBody([payment("CARD", 1000.5)])],
+      ["missing amount", { payments: [{ method: "CARD" }] }],
+      [
+        "payment unknown key",
+        completionBody([payment("CARD", "1000.00", { tendered: "2000.00" })]),
+      ],
+      ["payment saleId", completionBody([payment("CARD", "1000.00", { saleId: randomUUID() })])],
+      ["tenantId", { ...completionBody([payment("CARD", "1000.00")]), tenantId: randomUUID() }],
+      ["status", { ...completionBody([payment("CARD", "1000.00")]), status: "COMPLETED" }],
+    ];
+    for (const [label, body] of rejected) {
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/sales/${sale.id}/complete`)
+        .set("Cookie", owner.actor.cookie)
+        .send(body)
+        .expect(400);
+      expect((response.body as ErrorDto).error.code, label).toBe("VALIDATION_FAILED");
+    }
+
+    // The `Idempotency-Key` header is length-bounded to 1..255.
+    const longKey = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .set("Idempotency-Key", "x".repeat(256))
+      .send(completionBody([payment("CARD", "1000.00")]))
+      .expect(400);
+    expect((longKey.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  it("exposes no PATCH or DELETE route on the completion path", async () => {
+    const owner = createCompletionActor(booted.db, "no-verbs");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    for (const [method, path] of [
+      ["patch", `/sales/${sale.id}/complete`],
+      ["delete", `/sales/${sale.id}/complete`],
+      ["put", `/sales/${sale.id}/complete`],
+    ] as const) {
+      await supertest(booted.app.getHttpServer())
+        [method](path)
+        .set("Cookie", owner.actor.cookie)
+        .expect(404);
+    }
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
   });
 });

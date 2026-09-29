@@ -6166,6 +6166,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     it("asserts the applied PURCHASE enum value and rejects a raw delete of a PURCHASE movement", async () => {
       // The APPLIED enum: `PURCHASE` was added ADDITIVELY, so `ADJUSTMENT`
       // keeps its original sort position and the new value follows it.
+      // EPIC-12 POS-003 appended `SALE` the same way, so the effective set is
+      // ADJUSTMENT, PURCHASE, SALE; the reserved TRANSFER_* and *_REVERSAL
+      // compensations stay absent.
       const enumRows = await prisma.$queryRaw<{ enumlabel: string }[]>`
         SELECT e.enumlabel
         FROM pg_enum AS e
@@ -6173,7 +6176,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         WHERE t.typname = 'stock_movement_type'
         ORDER BY e.enumsortorder ASC
       `;
-      expect(enumRows.map((row) => row.enumlabel)).toEqual(["ADJUSTMENT", "PURCHASE"]);
+      expect(enumRows.map((row) => row.enumlabel)).toEqual(["ADJUSTMENT", "PURCHASE", "SALE"]);
 
       // A real `PURCHASE` movement, written by the real command.
       const itemId = await createItem(ownerACookie, "Live Receiving Immutable Item");

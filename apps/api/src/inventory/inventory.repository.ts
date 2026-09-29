@@ -18,10 +18,12 @@ export type StockItemKindValue = "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY"
  * Movement kind values pinned by schema enum `stock_movement_type`. EPIC-10
  * ships the standalone `ADJUSTMENT`; EPIC-11 PUR-002 appends `PURCHASE`, the
  * positive receiving input the purchase command writes through this same seam
- * (DEC-014). SALE, TRANSFER_* and the *_REVERSAL compensations arrive with the
- * epics that own their commands and must be added additively.
+ * (DEC-014); EPIC-12 POS-003 appends `SALE`, the signed negative output the
+ * CompleteSale command writes through it. TRANSFER_* and the *_REVERSAL
+ * compensations arrive with the epics that own their commands and must be
+ * added additively.
  */
-export type StockMovementTypeValue = "ADJUSTMENT" | "PURCHASE";
+export type StockMovementTypeValue = "ADJUSTMENT" | "PURCHASE" | "SALE";
 
 /**
  * Persistence row for a tenant-scoped catalog item as the inventory boundary

@@ -136,12 +136,23 @@ export interface SaleDelegate {
 }
 
 /**
- * Structural contract for the line delegate. It exposes EXACTLY the two
- * mutations draft reconciliation needs — delete the lines absent from the
- * submitted set and upsert each submitted line on the
- * `(tenantId, saleId, catalogItemId)` unique — and NO delete of a sale. Line
- * deletes are reachable only while the sale is DRAFT, which the service asserts
- * and the conditional migration trigger enforces.
+ * The three frozen money amounts a completion recomputes and writes onto a line
+ * (resolutions 2 of 2026-09-29, DEC-021). `rateCode`, `unitPrice` and `quantity`
+ * are the ALREADY-frozen inputs and are not rewritten; only the derived snapshot
+ * moves.
+ */
+export interface SaleLineSnapshotData {
+  readonly lineTotal: string;
+  readonly taxableBase: string;
+  readonly taxAmount: string;
+}
+
+/**
+ * Structural contract for the line delegate. It exposes the two draft
+ * mutations and the completion snapshot write, and NO delete of a sale. The
+ * snapshot `updateMany` is tenant-scoped on `(tenantId, saleId, catalogItemId)`,
+ * so a completion can never rewrite another tenant's or another sale's line,
+ * and zero matched rows is the caller's signal that the line set moved.
  */
 export interface SaleLineDelegate {
   deleteMany: (args: {
@@ -158,14 +169,23 @@ export interface SaleLineDelegate {
     create: SaleLineWriteData & { tenantId: string; saleId: string };
     update: Omit<SaleLineWriteData, "catalogItemId">;
   }) => Promise<SaleLineRow>;
+  updateMany: (args: {
+    where: { tenantId: string; saleId: string; catalogItemId: string };
+    data: SaleLineSnapshotData;
+  }) => Promise<{ count: number }>;
 }
 
 /**
- * Structural contract for the in-tenant customer reference check. Only the id
- * is needed: the sale stores the reference, not a copy of the customer.
+ * Structural contract for the in-tenant customer reference check. `isActive` is
+ * carried because the completion command validates reference state (resolution 1
+ * of 2026-09-29): an inactive customer rejects a completion with a stable `409`,
+ * while an unknown or foreign one is the shared `404`. Only the id and the flag
+ * are needed: the sale stores the reference, not a copy of the customer.
  */
 export interface SaleCustomerLookup {
-  findFirst: (args: { where: { id: string; tenantId: string } }) => Promise<{ id: string } | null>;
+  findFirst: (args: {
+    where: { id: string; tenantId: string };
+  }) => Promise<{ id: string; isActive: boolean } | null>;
 }
 
 /**
@@ -186,7 +206,101 @@ export interface SaleTaxRateRow {
  * the frozen `code` and `rate` the line snapshot stores (DEC-021).
  */
 export interface SaleTaxRateDelegate {
-  findFirst: (args: { where: { id: string } }) => Promise<SaleTaxRateRow | null>;
+  findFirst: (args: { where: { id?: string; code?: string } }) => Promise<SaleTaxRateRow | null>;
+}
+
+/**
+ * Payment method values pinned by schema enum `payment_method` (PRD §19). Kept
+ * as a local literal union so this boundary stays decoupled from the generated
+ * client namespace (structural compatibility only).
+ */
+export type PaymentMethodValue = "CASH" | "CARD" | "BANK_TRANSFER" | "QR" | "CHECK" | "OTHER";
+
+/**
+ * Persistence row for one tenant-scoped payment as the read boundary sees it
+ * (PRD §19, DEC-029). `amount` is an exact `Decimal(14, 2)` — `Prisma.Decimal`
+ * at runtime, a plain exact string in the in-memory fake — and is NEVER coerced
+ * to a JavaScript float. There is deliberately no tendered amount, change or
+ * refunded amount (DEC-029).
+ */
+export interface PaymentRow {
+  id: string;
+  tenantId: string;
+  saleId: string;
+  method: PaymentMethodValue;
+  amount: Prisma.Decimal | string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Write payload for {@link SaleRepository.createPayments}. There is deliberately
+ * NO `tenantId` and NO `saleId`: both are resolved by the inserting method, so a
+ * caller argument cannot re-scope a payment. The amount is already an exact
+ * fixed-scale string validated by the request contract.
+ */
+export interface PaymentWriteData {
+  readonly method: PaymentMethodValue;
+  readonly amount: string;
+}
+
+/**
+ * Structural contract for the payment delegate. `create` is the ONLY mutation
+ * and `findMany` the only read: a completed payment is immutable (no update, no
+ * delete), matching the migration's confirmation-time triggers. Nothing in
+ * POS-001 writes one; the completion transaction is the single write path.
+ */
+export interface PaymentDelegate {
+  create: (args: {
+    data: { tenantId: string; saleId: string; method: PaymentMethodValue; amount: string };
+  }) => Promise<PaymentRow>;
+  findMany: (args: {
+    where: { tenantId: string; saleId: string };
+    orderBy?: readonly { createdAt?: "asc" | "desc"; id?: "asc" | "desc" }[];
+  }) => Promise<PaymentRow[]>;
+}
+
+/**
+ * Persistence row for the tenant-scoped idempotency record (DEC-024). One row
+ * per accepted command execution, unique per `(tenant, operation, key)`. The
+ * result reference is the sale id, re-read inside the caller's tenant on replay
+ * rather than storing a response snapshot (2026-09-29 resolution note).
+ */
+export interface IdempotencyRecordRow {
+  id: string;
+  tenantId: string;
+  operation: string;
+  key: string;
+  fingerprint: string;
+  resultSaleId: string;
+  createdAt: Date;
+}
+
+/**
+ * Write payload for {@link SaleRepository.createIdempotencyRecord}. There is
+ * deliberately NO `tenantId`: tenant identity comes from the request context, so
+ * a caller argument cannot re-scope the record. The operation token, key and
+ * fingerprint are all supplied by the completion command.
+ */
+export interface IdempotencyRecordCreateData {
+  readonly operation: string;
+  readonly key: string;
+  readonly fingerprint: string;
+  readonly resultSaleId: string;
+}
+
+/**
+ * Structural contract for the idempotency delegate. `create` is the only
+ * mutation — the row is append-only (no update, no delete; PRD §41) — and
+ * `findFirst` resolves the `(tenant, operation, key)` replay key.
+ */
+export interface IdempotencyRecordDelegate {
+  findFirst: (args: {
+    where: { tenantId: string; operation: string; key: string };
+  }) => Promise<IdempotencyRecordRow | null>;
+  create: (args: {
+    data: IdempotencyRecordCreateData & { tenantId: string };
+  }) => Promise<IdempotencyRecordRow>;
 }
 
 /**
@@ -195,7 +309,8 @@ export interface SaleTaxRateDelegate {
  * change and its audit row co-commit. Extends the raw seam because the update
  * and cancel commands row-lock the sale header through it. `catalogItem` is
  * carried so the same transaction handle also satisfies the locally-provided
- * {@link CatalogRepository} the service resolves items through.
+ * {@link CatalogRepository} the service resolves items through, and `payment`
+ * and `idempotencyRecord` carry the POS-003 completion writes.
  */
 export interface SaleTx extends SaleRawClient {
   sale: SaleDelegate;
@@ -203,6 +318,8 @@ export interface SaleTx extends SaleRawClient {
   customer: SaleCustomerLookup;
   catalogItem: CatalogItemDelegate;
   taxRate: SaleTaxRateDelegate;
+  payment: PaymentDelegate;
+  idempotencyRecord: IdempotencyRecordDelegate;
 }
 
 /** Single stable message behind every sale 404 — byte-equivalence by construction. */
@@ -264,6 +381,33 @@ export class SaleRepository {
   async findTaxRate(taxRateId: string, tx?: SaleTx): Promise<SaleTaxRateRow | null> {
     const client = tx ?? this.prisma;
     return client.taxRate.findFirst({ where: { id: taxRateId } });
+  }
+
+  /**
+   * Resolves the line's FROZEN `rateCode` against the GLOBAL rate row so the
+   * completion transaction can recompute the derived amounts from the already
+   * frozen inputs (DEC-021). Like {@link findTaxRate} there is no tenant
+   * predicate: `tax_rate` is shared reference data.
+   */
+  async findTaxRateByCode(code: string, tx?: SaleTx): Promise<SaleTaxRateRow | null> {
+    const client = tx ?? this.prisma;
+    return client.taxRate.findFirst({ where: { code } });
+  }
+
+  /**
+   * Resolves an OPTIONAL customer reference of the caller's active tenant for
+   * the completion reference-state gate (resolution 1 of 2026-09-29). Unlike
+   * {@link assertCustomerExists} it returns the row (or `null`) instead of
+   * throwing, so the completion command can distinguish an unknown or foreign
+   * reference (the shared customer `404`) from an inactive one (a stable `409`).
+   */
+  async findCustomerReference(
+    id: string,
+    tx?: SaleTx
+  ): Promise<{ id: string; isActive: boolean } | null> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.customer.findFirst({ where: { id, tenantId } });
   }
 
   /**
@@ -451,6 +595,130 @@ export class SaleRepository {
       WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid
       FOR UPDATE
     `;
+  }
+
+  /**
+   * The payments of one sale in the CALLER'S active tenant, in stable
+   * chronological order with the `id` tiebreaker. The tenant predicate rides
+   * along in the same WHERE clause, so a completion response can only ever
+   * project payments of the sale whose header the caller already resolved.
+   */
+  async listPayments(saleId: string, tx?: SaleTx): Promise<PaymentRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.payment.findMany({
+      where: { tenantId, saleId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+  }
+
+  /**
+   * Writes one payment row per submitted payment in the CALLER'S active tenant
+   * (DEC-029). `tenantId` and `saleId` are resolved here, so even a rogue
+   * property on a payment cannot re-scope the row. Payments are only written by
+   * the completion transaction; no other path reaches this method.
+   */
+  async createPayments(
+    saleId: string,
+    payments: readonly PaymentWriteData[],
+    tx?: SaleTx
+  ): Promise<PaymentRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const created: PaymentRow[] = [];
+    for (const payment of payments) {
+      created.push(
+        await client.payment.create({
+          data: { tenantId, saleId, method: payment.method, amount: payment.amount },
+        })
+      );
+    }
+    return created;
+  }
+
+  /**
+   * Freezes the recomputed derived snapshot onto each line, keyed on
+   * `(tenantId, saleId, catalogItemId)` — the schema's tenant-leading unique.
+   * The `rateCode`, `unitPrice` and `quantity` are NOT rewritten: they were
+   * already frozen when the line joined the draft (resolution 2 of 2026-09-29),
+   * and completion only re-derives and writes `lineTotal`, `taxableBase` and
+   * `taxAmount`. A `COMPLETED` sale is never recomputed again.
+   */
+  async freezeLines(
+    saleId: string,
+    lines: readonly { catalogItemId: string; snapshot: SaleLineSnapshotData }[],
+    tx?: SaleTx
+  ): Promise<void> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    for (const line of lines) {
+      await client.saleLine.updateMany({
+        where: { tenantId, saleId, catalogItemId: line.catalogItemId },
+        data: line.snapshot,
+      });
+    }
+  }
+
+  /**
+   * Applies the `DRAFT` → `COMPLETED` transition of one sale of the caller's
+   * active tenant.
+   *
+   * This write is the BACKSTOP of the completion serialization, not its primary
+   * mechanism: {@link lockById}'s header row lock is what makes a concurrent
+   * second completion observe the committed status. The write is still
+   * conditional on the STORED status being `DRAFT`, so if that status were ever
+   * not `DRAFT` the statement affects zero rows and returns `false`, which the
+   * service maps to the same stable `409 CONFLICT` as any other non-`DRAFT`
+   * sale. `COMPLETED` is the ONLY status this method can produce.
+   */
+  async complete(id: string, tx?: SaleTx): Promise<boolean> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const result = await client.sale.updateMany({
+      where: { id, tenantId, status: "DRAFT" },
+      data: { status: "COMPLETED" },
+    });
+    return result.count > 0;
+  }
+
+  /**
+   * The idempotency record of one `(tenant, operation, key)` replay key in the
+   * CALLER'S active tenant (DEC-024), or `null` when the operation has not run
+   * with that key yet. The tenant predicate is part of the predicate, so the key
+   * scope is the tenant and never global.
+   */
+  async findIdempotencyRecord(
+    operation: string,
+    key: string,
+    tx?: SaleTx
+  ): Promise<IdempotencyRecordRow | null> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.idempotencyRecord.findFirst({ where: { tenantId, operation, key } });
+  }
+
+  /**
+   * Appends the `(tenant, operation, key)` idempotency record that makes an
+   * identical replay return the prior result instead of a `409` (DEC-024).
+   * `tenantId` is resolved from the request context and placed LAST, so a rogue
+   * property cannot re-scope the row. The record is append-only: there is no
+   * update and no delete (PRD §41).
+   */
+  async createIdempotencyRecord(
+    data: IdempotencyRecordCreateData,
+    tx?: SaleTx
+  ): Promise<IdempotencyRecordRow> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.idempotencyRecord.create({
+      data: {
+        operation: data.operation,
+        key: data.key,
+        fingerprint: data.fingerprint,
+        resultSaleId: data.resultSaleId,
+        tenantId,
+      },
+    });
   }
 
   /**
