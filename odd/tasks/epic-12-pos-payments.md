@@ -517,8 +517,54 @@ the difference, the six other movement kinds, cash reversals and the cash UI.
 - 2026-09-29: branch created and stacked on the POS-001 slice; the four blocking
   questions were answered by the maintainer before the first write and are
   recorded above.
+- 2026-09-29: C0 closed (`edc91b5`, `7ad99f6`), C1 closed (`9892fc1`), C2 closed
+  (`fda5b92`), C3 closed (`ade5a1a`), docs reconciled (`93aff47`) and the stale
+  seed comments corrected (`512d4e2`). Parent-verified evidence: database 17
+  files / 324 tests; API 75 files / 1026 tests; live suite 90 tests, none
+  skipped, with the ten cash cases; typecheck, lint and `format-check` clean;
+  and the live database showing 24 migrations, 50 permissions, the exact partial
+  index predicate, seven `RESTRICT` foreign keys and three triggers.
+
+## Independent probe evidence (parent-run, 2026-09-29)
+
+The eight-claim verification pass marked the applied-schema invariants
+**UNVERIFIED as stated**, because its boundary allowed only read-only `psql` and
+the claim required rolled-back DML probes. That is a method limit rather than
+missing evidence, but suite evidence is not an independent probe, so the parent
+ran **16 probes of its own SQL** against the live database, every one rolled
+back and each surfacing the real PostgreSQL error:
+
+| Guarantee probed                       | Observed                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Session open with `0.00`               | admitted                                                                                         |
+| Second `OPEN` for the same register    | rejected by `cash_session_one_open_per_register_key`                                             |
+| `CLOSED` sibling for the same register | admitted                                                                                         |
+| Duplicate register name in one tenant  | rejected by `cash_register_tenant_id_name_key`                                                   |
+| Same register name in another tenant   | admitted, so the unique is tenant-scoped                                                         |
+| Session `DELETE`                       | rejected: `a cash session cannot be hard-deleted; sessions are confirmed records`                |
+| Movement `UPDATE`                      | rejected: `a confirmed cash movement is immutable; correct it with a compensating movement`      |
+| Movement `DELETE`                      | rejected: `a confirmed cash movement cannot be deleted; correct it with a compensating movement` |
+| Movement amount `0`                    | rejected by `cash_movement_amount_non_zero`                                                      |
+| Negative `opening_amount`              | rejected by `cash_session_opening_amount_non_negative`                                           |
+| Reserved kind `REFUND`                 | rejected by the `cash_movement_type` enum                                                        |
+| Cross-tenant `register_id`             | rejected by `cash_session_tenant_id_register_id_fkey`                                            |
+| Cross-tenant `opened_by_membership_id` | rejected by `cash_session_tenant_id_opened_by_membership_id_fkey`                                |
+| Cross-tenant movement `session_id`     | rejected by `cash_movement_tenant_id_session_id_fkey`                                            |
+| `SALE` movement insert                 | admitted                                                                                         |
+| Zero residue                           | every table back to its pre-probe count, fixture profile and membership included                 |
+
+An early version of these probes reported three failures that were artefacts of
+the fixture itself: the two tenant variables had resolved to the same row, so a
+"cross-tenant" reference was really same-tenant and the register-name case hit
+the tenant-scoped unique instead of proving scope. Re-running with the tenants
+ordered by `id` produced the table above. The lesson is recorded rather than the
+bad run: a tenancy probe must assert that the two tenants differ before it
+interprets any rejection.
 
 ## Next step
 
-C0 documentation alignment, then C1 data foundation, C2 API surface and C3 live
-coverage, mirroring the POS-001 work units.
+Drain the pull-request stack: merge #76 (scope docs) then #77 (POS-001),
+retarget #78 to `main` so its CI runs, and flip POS-001 and POS-002 to `done` in
+closure commits that do not ride the branch whose receipt they cite. POS-003
+("CompleteSale" with payments, the ledger and cash writes, and the idempotency
+record) is the last implementation slice of the epic.
