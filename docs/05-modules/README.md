@@ -80,3 +80,10 @@ Module docs describe current implemented behavior, not speculative backlog.
 
 Use `../_templates/MODULE.md`. Style reference: [[Branding]],
 [[Api-Contract-Baseline]].
+
+Implemented (EPIC-12):
+
+```text
+Sales.md
+Cash.md
+```

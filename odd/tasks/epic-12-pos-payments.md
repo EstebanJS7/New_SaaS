@@ -784,7 +784,19 @@ only: no route, no schema, no seed and no permission key is added.
   navigation at all, so this is ahead of the convention, not a regression. The
   backend `FEATURE_NOT_ENTITLED` remains the authority.
 
+## Closure
+
+- 2026-09-29: E3 closed (`88922da`); POS-004 merged as pull request #82, merge
+  commit `62002d8`, CI run `36625254435` green on head `88922da`. The story is
+  `done`.
+- 2026-09-29: POS-005 closed on the `docs/epic-12-closure` branch: the
+  implemented-behavior documents [[Sales]] and [[Cash]] with their module index
+  entries, the EPIC-12 `CI-EVIDENCE.md` section, the changelog entry and the
+  roadmap status update. EPIC-12 is `done`, with [[TD-016]], [[TD-017]],
+  [[TD-018]], [[TD-019]], [[TD-020]] and [[TD-021]] open and EPIC-20 above them.
+
 ## Next step
 
-E3: reconcile and open the pull request to `main`, then POS-005 (epic closure:
-module documentation, `CI-EVIDENCE.md`, the changelog and the roadmap status).
+EPIC-13 Cash (session close, the expected/counted difference, the six remaining
+movement kinds, cash reversals and the cash UI), which depends on the foundation
+this epic shipped.

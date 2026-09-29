@@ -3,7 +3,7 @@ id: POS-004
 type: story
 title: Staff POS surface
 epic: EPIC-12
-status: in-progress
+status: done
 priority: medium
 depends_on:
   - POS-001
@@ -249,7 +249,10 @@ pnpm --filter @newsaas/web build        succeeded; /app/sales and
 pnpm format-check                       green repository-wide
 ```
 
-Not claimed: the branch CI receipt, which does not exist yet.
+Merged as pull request #82 with merge commit `62002d8` on 2026-09-29, CI run
+[`36625254435`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36625254435)
+green on the evaluated head `88922da` with both required checks passing
+(`Database migrations` 1m7s, `Lint, Typecheck, Test, Build` 3m30s).
 
 ## Verification
 
@@ -358,7 +361,12 @@ Delivered; the counts below are the observed ones.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._ This Story stays
-`planned` while nothing exists; it may not be marked `done` until the proxies,
-the pages, the state coverage and the client tests are merged with the required
-CI checks green.
+Closed on 2026-09-29 by the merged, CI-backed receipt: all twelve acceptance
+criteria are checked, the local gates passed and pull request #82 merged as
+`62002d8` with run `36625254435` green on both required checks. `done` means
+**implementation closure only, never production readiness**.
+
+The recorded limitations stay open and visible: the dormant navigation
+entitlement gate, the absent `Idempotency-Key`, the client-side name search that
+[[TD-019]] tracks, the buffered proxy body and the deliberate absence of offline
+mode. CI checks green.

@@ -6,6 +6,31 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-12 — POS and payments:
+  - The `Sale` aggregate with a `sale_status` enum pinned to `DRAFT`,
+    `COMPLETED` and `CANCELLED`, priced lines that freeze their tax-included
+    snapshot (`rate_code`, `unit_price`, `quantity`, `line_total`,
+    `taxable_base`, `tax_amount`) and a fixed-scale money discipline with no
+    stored total column.
+  - The draft lifecycle with an explicit cancel, and the atomic idempotent
+    `CompleteSale` command: it validates the totals, the payments and the stock,
+    writes signed negative `SALE` movements through the inventory ledger under
+    its `(tenant, item)` serialization protocol, writes one `SALE` cash movement
+    per CASH payment, records the PRD §19 payments, marks the sale `COMPLETED`
+    and audits — or persists nothing. An identical replay returns the prior
+    result (`200`) instead of a conflict.
+  - The minimal Cash foundation the sale needs: tenant-scoped registers,
+    sessions with a required opening amount and immutable movements, with the
+    one-`OPEN`-session-per-register rule enforced by a database partial unique
+    index.
+  - The staff POS surface: proxies that forward only the staff session cookie, a
+    counter with a local cart, reference-price pre-fill with an operator
+    override, an optional customer, a payment capture across the six methods
+    with an exact-sum guard, and the draft detail and completion flows.
+  - Five new permission keys (`sales.read`, `sales.create`, `sales.update`,
+    `sales.cancel`, `sales.complete`) plus three for cash (`cash.read`,
+    `cash.register.create`, `cash.session.open`), moving the seeded catalog from
+    43 to 51, with the sales and cash surfaces gated on their own capabilities.
 - EPIC-09 — Catalog and taxes:
   - Tenant-scoped `CatalogItem` aggregate over `PRODUCT`, `SERVICE`,
     `MEDICATION` and `SUPPLY`, with deactivation as the only removal (a

@@ -20,7 +20,7 @@ updated: 2026-09-27
 | EPIC-09 | Catalog/Taxes                      |    done | EPIC-02                   |
 | EPIC-10 | Inventory                          |    done | EPIC-09                   |
 | EPIC-11 | Suppliers/Purchases                |    done | EPIC-10                   |
-| EPIC-12 | POS/Payments                       | planned | EPIC-09, EPIC-10          |
+| EPIC-12 | POS/Payments                       |    done | EPIC-09, EPIC-10          |
 | EPIC-13 | Cash                               | planned | EPIC-12                   |
 | EPIC-14 | Billing                            | planned | EPIC-12                   |
 | EPIC-15 | Fiscal Abstraction                 | planned | EPIC-14                   |
@@ -90,3 +90,15 @@ writer complies with its protocol.
 ## Architecture baseline
 
 Architecture freeze: PRD v1.3. Structural changes require an accepted ADR.
+
+[[EPIC-12]] POS/Payments moved to `done` on 2026-09-29 after its five Stories
+merged with the required CI checks green: the scope and Decisions as PR #76
+(`14f23bc`), POS-001 as PR #77 (`6ef1896`, run `36513245839`), POS-002 as PR #78
+(`0d583e6`, run `36521067733`), POS-003 as PR #80 (`dc7c429`, run `36592652167`)
+and POS-004 as PR #82 (`62002d8`, run `36625254435`), with their closures as PR
+#79 and PR #81. Every Story closed on the local gates plus a merged CI receipt,
+and the suite grew to 99 live-PostgreSQL cases running in CI. `done` means epic
+implementation closure only: it is **not** a production-readiness statement. The
+open debt ([[TD-016]], [[TD-017]], [[TD-018]], [[TD-019]], [[TD-020]],
+[[TD-021]]) and [[EPIC-20]] Production Hardening remain, and a completed sale
+still cannot be reversed or refunded until the slice [[TD-018]] tracks lands.

@@ -3,7 +3,7 @@ id: POS-005
 type: story
 title: Epic closure and evidence
 epic: EPIC-12
-status: planned
+status: done
 priority: low
 depends_on:
   - POS-001
@@ -12,9 +12,9 @@ depends_on:
   - POS-004
 prd_sections: []
 permissions: []
-branch:
+branch: docs/epic-12-closure
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-29
 ---
 
 # POS-005 — Epic closure and evidence
@@ -86,34 +86,34 @@ split from the slices it describes.
 
 ## Acceptance Criteria
 
-- [ ] All four implementation Stories — [[POS-001]], [[POS-002]], [[POS-003]],
+- [x] All four implementation Stories — [[POS-001]], [[POS-002]], [[POS-003]],
       [[POS-004]] — are `done` with every required acceptance criterion checked
       and each criterion naming its evidence.
-- [ ] Module documentation for the new domains is merged: the sales module
+- [x] Module documentation for the new domains is merged: the sales module
       document at the path `docs/05-modules/Sales.md` and the cash documentation
       covering the minimal foundation, each indexed in
       `docs/05-modules/README.md`.
-- [ ] The durable live-PostgreSQL evidence for the completion transaction, the
+- [x] The durable live-PostgreSQL evidence for the completion transaction, the
       CASH payment path and the concurrent double-complete is recorded in
       `docs/10-qa/CI-EVIDENCE.md`, and the recorded runs are the merged CI runs
       rather than local-only runs.
-- [ ] [[TD-018]], [[TD-019]] and [[TD-020]] exist as `open` records with their
+- [x] [[TD-018]], [[TD-019]] and [[TD-020]] exist as `open` records with their
       severity, related epics and stories, triggers and
       verification-after-resolution items.
-- [ ] [[TD-016]] carries the EPIC-12 compliance call site and stays `open`;
+- [x] [[TD-016]] carries the EPIC-12 compliance call site and stays `open`;
       closing the epic does not close the debt.
-- [ ] The changelog entry in `docs/09-releases/CHANGELOG.md` records the product
+- [x] The changelog entry in `docs/09-releases/CHANGELOG.md` records the product
       change, and the roadmap in `docs/01-roadmap/ROADMAP.md` reflects EPIC-12's
       real status.
-- [ ] The changelog and roadmap updates land on a closure branch merged after
+- [x] The changelog and roadmap updates land on a closure branch merged after
       the feature branches, so the closure text and the receipts it cites are
       separate merges.
-- [ ] The [[EPIC-12]] record's exit criteria are checked against evidence with a
+- [x] The [[EPIC-12]] record's exit criteria are checked against evidence with a
       criterion-to-evidence map, and the record states plainly what remains open
       rather than presenting closure as production readiness.
-- [ ] This Story adds no source, schema, migration, seed, route, test or UI
+- [x] This Story adds no source, schema, migration, seed, route, test or UI
       change; it changes documentation only.
-- [ ] Required lint, format and build checks pass on the closure change.
+- [x] Required lint, format and build checks pass on the closure change.
 
 ## Domain Invariants
 
