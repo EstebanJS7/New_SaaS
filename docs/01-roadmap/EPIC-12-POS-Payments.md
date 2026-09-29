@@ -133,8 +133,29 @@ This section records verified implementation evidence as slices land. The epic's
   database after `db:deploy` plus `db:seed` reports 23 applied migrations, a
   `permission` count of 47 and the planned enum, columns, foreign keys and
   delete triggers.
-- **[[POS-002]]–[[POS-005]] remain `planned`.** No cash, completion, payment,
-  staff surface or closure work has started.
+- **[[POS-002]] Cash register and session foundation — `in-progress`, pending
+  the branch's CI receipt.** Five commits on `feat/epic-12-cash-foundation`:
+  `edc91b5` tracks the slice and its four resolutions, `7ad99f6` records those
+  resolutions as dated decision notes, `9892fc1` adds the C1 data foundation,
+  `fda5b92` adds the C2 API surface, and `ade5a1a` adds the C3 live-PostgreSQL
+  coverage.
+- **C1 evidence.** The additive `20260927000002_cash_foundation` migration, the
+  three models and the `SALE`-only enum pass
+  `pnpm --filter @newsaas/database test` (17 files / 324 tests, 30 of them the
+  new `schema-cash.test.ts`), and the seed-count probe moves the permission
+  catalog 47 → 50 with the three `cash.*` keys.
+- **C2 evidence.** `pnpm --filter @newsaas/api test` with a schema-less
+  `DATABASE_URL_TEST` passes 75 files / 1026 tests, 17 of them the new
+  `cash.integration.test.ts`, and the route-contract probe pins the four cash
+  routes.
+- **C3 evidence.** `pnpm --filter @newsaas/api test:live-pg` passes 90 tests
+  with 0 skipped, 10 of them the EPIC-12 cash-foundation cases; the live
+  database after `db:deploy` plus `db:seed` reports 24 applied migrations, a
+  `permission` count of 50, the partial unique index
+  `cash_session_one_open_per_register_key`, seven `RESTRICT` foreign keys and
+  three triggers.
+- **[[POS-003]]–[[POS-005]] remain `planned`.** No completion, payment, staff
+  surface or closure work has started.
 - Root `pnpm test` fails in a local environment without `DATABASE_URL_TEST` for
   the pre-existing [[TD-021]] reason; CI is unaffected.
 
