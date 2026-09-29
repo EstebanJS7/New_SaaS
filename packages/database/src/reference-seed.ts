@@ -88,9 +88,12 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   `cash.register.create` as the eighth key and moves the seeded catalog
  *   47 -> 50). They are seeded BEFORE the cash API surface that consumes them,
  *   exactly like the sales keys above. The pre-existing `cash.session.close`
- *   stays reserved for EPIC-13 and is consumed by no EPIC-12 route; the epic
- *   total of 51 is completed by POS-003's `sales.complete`, which this slice
- *   must NOT seed.
+ *   stays reserved for EPIC-13 and is consumed by no EPIC-12 route.
+ * - EPIC-12 POS-003 adds `sales.complete`, the epic's eighth and final key:
+ *   completing a sale is the command that writes money, stock and cash, so
+ *   `OWNER`/`ADMIN`/`CASHIER` hold it and no other role does (DEC-026 and its
+ *   2026-09-29 subsequent-scope note, which moves the seeded catalog
+ *   50 -> 51 and the epic's total 43 -> 51).
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -146,8 +149,7 @@ export const PERMISSION_SEEDS = [
   // sales, and `OWNER`/`ADMIN`/`CASHIER` create, update and cancel them. The
   // epic reaches its eight-key total of 51 with `cash.read`,
   // `cash.register.create` and `cash.session.open` (POS-002) and
-  // `sales.complete` (POS-003), which are deliberately NOT seeded by this
-  // slice.
+  // `sales.complete` (POS-003).
   { key: "sales.read", name: "Read sales" },
   { key: "sales.create", name: "Create sales" },
   { key: "sales.update", name: "Update sales" },
@@ -156,11 +158,15 @@ export const PERMISSION_SEEDS = [
   // subsequent-scope note that adds `cash.register.create` as the eighth key):
   // all six roles read cash, and `OWNER`/`ADMIN`/`CASHIER` create registers and
   // open sessions. `cash.session.close` above stays reserved for EPIC-13 and is
-  // consumed by no EPIC-12 route, and `sales.complete` (POS-003) is deliberately
-  // NOT seeded by this slice.
+  // consumed by no EPIC-12 route.
   { key: "cash.read", name: "Read cash registers, sessions and movements" },
   { key: "cash.register.create", name: "Create cash registers" },
   { key: "cash.session.open", name: "Open cash sessions" },
+  // EPIC-12 POS-003 adds the epic's eighth and final key (DEC-026 and its
+  // 2026-09-29 subsequent-scope note, which moves the seeded catalog 50 -> 51):
+  // completing a sale writes money, stock and cash, so `OWNER`/`ADMIN`/`CASHIER`
+  // hold it and no other role does.
+  { key: "sales.complete", name: "Complete sales" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -221,6 +227,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.read",
     "cash.register.create",
     "cash.session.open",
+    "sales.complete",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -273,6 +280,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.read",
     "cash.register.create",
     "cash.session.open",
+    "sales.complete",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
@@ -327,6 +335,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.read",
     "cash.register.create",
     "cash.session.open",
+    "sales.complete",
   ],
   // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
   // catalog keys plus the EPIC-10 stock write key; front-desk, veterinary and

@@ -161,6 +161,8 @@ model Tenant {
   cashRegisters               CashRegister[]
   cashSessions                CashSession[]
   cashMovements               CashMovement[]
+  payments                    Payment[]
+  idempotencyRecords          IdempotencyRecord[]
 
   @@map("tenant")
 }
@@ -1354,14 +1356,17 @@ model CatalogItem {
 // ---------------------------------------------------------------------------
 
 /// Stock movement kind (PRD §16). `ADJUSTMENT` is the standalone signed
-/// adjustment shipped by EPIC-10, and `PURCHASE` is the positive receiving
-/// input the EPIC-11 PUR-002 receive command writes (DEC-014). SALE,
-/// TRANSFER_* and the *_REVERSAL compensations belong to EPIC-12 and later and
-/// are added additively then. Evolve additively only: values are appended,
-/// never reordered or removed.
+/// adjustment shipped by EPIC-10, `PURCHASE` is the positive receiving input
+/// the EPIC-11 PUR-002 receive command writes (DEC-014), and `SALE` is the
+/// signed negative output the EPIC-12 POS-003 CompleteSale command writes — one
+/// movement per completing line. The effective set is therefore `ADJUSTMENT`,
+/// `PURCHASE` and `SALE`; `TRANSFER_*` and the `*_REVERSAL` compensations stay
+/// reserved for later slices and are added additively then. Evolve additively
+/// only: values are appended, never reordered or removed.
 enum StockMovementType {
   ADJUSTMENT
   PURCHASE
+  SALE
 
   @@map("stock_movement_type")
 }
@@ -1720,6 +1725,12 @@ model Sale {
   customer Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   lines SaleLine[]
+  /// Payments written by the POS-003 completion transaction (PRD §19,
+  /// DEC-029). A DRAFT sale carries none, so completion is the single write
+  /// path.
+  payments Payment[]
+  /// Idempotency records whose stored result is this sale (DEC-024).
+  idempotencyRecords IdempotencyRecord[]
 
   /// Tenant-ownership key: target of the composite sale FK from `SaleLine`.
   @@unique([tenantId, id])
@@ -1795,6 +1806,134 @@ model SaleLine {
   /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
   @@unique([tenantId, id])
   @@map("sale_line")
+}
+
+// ---------------------------------------------------------------------------
+// Sale completion (EPIC-12 POS-003 data foundation, DEC-024, DEC-029).
+//
+// The two additive tables PRD §18's CompleteSale command needs and that the
+// POS-001 draft foundation deliberately omitted: `Payment` (PRD §19) and
+// `IdempotencyRecord` (DEC-024). Both are tenant-scoped children of the sale
+// and are written ONLY by the completion transaction — this slice ships the
+// persistence surface, not the writer.
+//
+// Tenant ownership is carried by the composite `(tenant_id, id)` key on both
+// tables, so a payment can only reference a sale of the SAME tenant and an
+// idempotency record can only store a result sale of the SAME tenant:
+//   * `payment(tenant_id, sale_id) -> sale(tenant_id, id)`
+//   * `idempotency_record(tenant_id, result_sale_id) -> sale(tenant_id, id)`
+//
+// Immutability is CONDITIONAL on the owning sale's status (DEC-023), exactly
+// like `sale_line`: a `BEFORE DELETE` and a `BEFORE UPDATE` trigger on `payment`
+// raise `restrict_violation` ONLY while the owning sale is COMPLETED or
+// CANCELLED, so a draft's payments stay reconcilable while a confirmed payment
+// is immutable rather than merely undeletable. There is deliberately NO delete
+// trigger on `idempotency_record`: nothing purges it and PRD §41 forbids an
+// automatic destructive retention policy before one is approved (TD-020).
+//
+// Data classification: payment amounts and the idempotency operation token, key
+// and fingerprint are INTERNAL (PRD §41); logs and audit carry ids and field
+// names only — never a payload.
+// ---------------------------------------------------------------------------
+
+/// PRD §19 payment method, pinned to exactly the six values the PRD lists, in
+/// its order (DEC-029): `CASH`, `CARD`, `BANK_TRANSFER`, `QR`, `CHECK` and
+/// `OTHER`. A sale may carry several payments across these methods and no
+/// seventh tender kind exists; a new kind is an appended value rather than a
+/// redefinition. Evolve additively only: values are appended, never reordered
+/// or removed.
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  QR
+  CHECK
+  OTHER
+
+  @@map("payment_method")
+}
+
+/// Tenant-scoped payment attached to exactly one sale (PRD §19, DEC-029). A
+/// payment exists only on the CompleteSale command: a DRAFT sale carries none,
+/// so the completion transaction is the single write path.
+///
+/// `amount` is `Decimal(14, 2)` — the same money scale as `sale_line` — and the
+/// migration rejects a non-positive value. There is deliberately NO
+/// `tenderedAmount`, no `change`, no `refundedAmount` and no customer-credit
+/// column (DEC-029): the operator enters the exact amount that enters the
+/// register, the payments must sum to the sale total exactly, and a refund is
+/// the deferred compensating operation of DEC-023 rather than a mutable field.
+///
+/// A payment is immutable exactly while its sale is confirmed: the migration
+/// rejects DELETE and UPDATE while the owning sale is COMPLETED or CANCELLED
+/// (DEC-023). Data classification: the method and the amount are INTERNAL
+/// (PRD §41); logs and audit carry ids and field names only.
+model Payment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String        @map("tenant_id") @db.Uuid
+  saleId   String        @map("sale_id") @db.Uuid
+  /// PRD §19 method: one of the six literals above (DEC-029).
+  method   PaymentMethod
+  /// Exact money on the reference scale; the migration rejects `amount <= 0`.
+  amount   Decimal       @map("amount") @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the Sale must be in the SAME tenant.
+  sale   Sale   @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Tenant-ownership key: target of the composite sale FK.
+  @@unique([tenantId, id])
+  @@map("payment")
+}
+
+/// Tenant-scoped idempotency record for sensitive commands (DEC-024). One row
+/// per accepted command execution, unique per `(tenant, operation, key)`: the
+/// same key with the same request fingerprint returns the stored result, and
+/// the same key with a different fingerprint is a stable conflict. The key
+/// scope is the tenant, never global, and the key travels through the
+/// `Idempotency-Key` header.
+///
+/// `resultSaleId` is the sale-specific result reference for today's single
+/// `sale.complete` operation — the completed sale is re-read inside the
+/// caller's tenant on replay rather than a response snapshot being stored. A
+/// later epic can generalize the result reference additively without changing
+/// this contract.
+///
+/// Nothing purges this table and the migration declares no delete trigger:
+/// PRD §41 forbids an automatic destructive retention policy before one is
+/// approved, so the rows accumulate until an approved policy exists (TD-020).
+/// Data classification: the operation token, the key and the fingerprint are
+/// INTERNAL (PRD §41); logs and audit carry ids and field names only.
+model IdempotencyRecord {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  /// Stable command token, for example `sale.complete`.
+  operation   String @db.VarChar(64)
+  /// Caller-supplied `Idempotency-Key` header value.
+  key         String @db.VarChar(255)
+  /// SHA-256 hex of the canonical request body, so an identical replay is
+  /// distinguishable from a conflicting same-key request.
+  fingerprint String @db.VarChar(64)
+  /// The stored result reference: the sale the operation produced.
+  resultSaleId String @map("result_sale_id") @db.Uuid
+
+  /// Append-only row: written once when the operation is accepted.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the result Sale must be in the SAME tenant.
+  resultSale Sale @relation(fields: [tenantId, resultSaleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// One record per (tenant, operation, key): the replay key.
+  @@unique([tenantId, operation, key])
+  /// Tenant-ownership key: target of the composite result-sale FK.
+  @@unique([tenantId, id])
+  @@map("idempotency_record")
 }
 
 // ---------------------------------------------------------------------------

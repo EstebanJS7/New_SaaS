@@ -25,6 +25,7 @@ import { findMigration, loadMigrations, loadPrismaSchema } from "./schema-files.
 const SCHEMA = loadPrismaSchema();
 const MIGRATIONS = loadMigrations();
 const SALES_SQL = findMigration(MIGRATIONS, "_sales").sql;
+const SALE_COMPLETION_SQL = findMigration(MIGRATIONS, "_sale_completion").sql;
 
 /** Model block from `model <name>` to the closing brace. */
 function modelBlock(model: string): string {
@@ -91,6 +92,53 @@ function functionBody(name: string): string {
   expect(start, `function ${name} must exist`).toBeGreaterThan(-1);
 
   const rest = SALES_SQL.slice(start + marker.length);
+  const end = rest.indexOf("$$ LANGUAGE plpgsql;");
+  expect(end, `function ${name} must close with a plpgsql language clause`).toBeGreaterThan(-1);
+  return rest.slice(0, end);
+}
+
+/** Enum literals from `enum <name>` to the closing brace. */
+function enumLiterals(name: string): string[] {
+  const start = SCHEMA.indexOf(`enum ${name} `);
+  expect(start, `enum ${name} must exist`).toBeGreaterThan(-1);
+
+  const block = SCHEMA.slice(SCHEMA.indexOf("{", start) + 1, SCHEMA.indexOf("}", start));
+  return block
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("///") && !line.startsWith("@@"));
+}
+
+/**
+ * Single `CREATE TABLE` block from the POS-003 completion migration, ending at
+ * the next DDL statement.
+ */
+function completionTableBlock(table: string): string {
+  const start = SALE_COMPLETION_SQL.indexOf(`CREATE TABLE "${table}"`);
+  expect(start, `CREATE TABLE "${table}" must exist`).toBeGreaterThan(-1);
+
+  const rest = SALE_COMPLETION_SQL.slice(start);
+  const boundaries = [
+    rest.indexOf("CREATE TYPE", 1),
+    rest.indexOf("CREATE TABLE", 1),
+    rest.indexOf("ALTER TABLE", 1),
+    rest.indexOf("CREATE UNIQUE INDEX", 1),
+    rest.indexOf("CREATE INDEX", 1),
+    rest.indexOf("CREATE OR REPLACE FUNCTION", 1),
+  ].filter((index) => index > -1);
+
+  const block = rest.slice(0, boundaries.length > 0 ? Math.min(...boundaries) : rest.length);
+  expect(block, `CREATE TABLE "${table}" block must not be empty`).not.toBe("");
+  return block;
+}
+
+/** Body of one function declaration in the POS-003 completion migration. */
+function completionFunctionBody(name: string): string {
+  const marker = `CREATE OR REPLACE FUNCTION "${name}"()`;
+  const start = SALE_COMPLETION_SQL.indexOf(marker);
+  expect(start, `function ${name} must exist`).toBeGreaterThan(-1);
+
+  const rest = SALE_COMPLETION_SQL.slice(start + marker.length);
   const end = rest.indexOf("$$ LANGUAGE plpgsql;");
   expect(end, `function ${name} must close with a plpgsql language clause`).toBeGreaterThan(-1);
   return rest.slice(0, end);
@@ -454,5 +502,305 @@ describe("schema · sales (EPIC-12 POS-001)", () => {
     const lineDoc = modelDocComment("SaleLine");
     expect(lineDoc).toMatch(/money amounts and the frozen rate code are INTERNAL/);
     expect(lineDoc).toMatch(/logs\s+and audit carry ids and field names only/i);
+  });
+});
+
+describe("migration · sale completion (EPIC-12 POS-003)", () => {
+  it("appends the additive SALE movement kind and leaves the existing values alone", () => {
+    expect(SALE_COMPLETION_SQL).toMatch(/ALTER TYPE "stock_movement_type" ADD VALUE 'SALE';/);
+
+    // Exactly one value is appended: the effective set grows, nothing is
+    // reordered, renamed or removed (DEC-029, PRD §16).
+    const addedValues = [
+      ...SALE_COMPLETION_SQL.matchAll(/ALTER TYPE "stock_movement_type" ADD VALUE ('[^']*')/g),
+    ].map((match) => match[1]);
+    expect(addedValues).toEqual(["'SALE'"]);
+    expect(SALE_COMPLETION_SQL).not.toMatch(/ALTER TYPE "stock_movement_type" (DROP|RENAME)/);
+  });
+
+  it("creates only the payment and idempotency_record tables", () => {
+    const createdTables = [...SALE_COMPLETION_SQL.matchAll(/CREATE TABLE "([a-z_]+)"/g)].map(
+      ([, table]) => table
+    );
+    expect(new Set(createdTables)).toEqual(new Set(["payment", "idempotency_record"]));
+  });
+
+  it("pins the payment method enum to exactly the six PRD §19 literals in order (DEC-029)", () => {
+    const typeValues = /CREATE TYPE "payment_method" AS ENUM \(([^)]*)\)/.exec(
+      SALE_COMPLETION_SQL
+    )?.[1];
+    // Asserted exactly: an added tender kind is a scope change, not a detail.
+    expect(typeValues).toBe("'CASH', 'CARD', 'BANK_TRANSFER', 'QR', 'CHECK', 'OTHER'");
+  });
+
+  it("declares the DEC-029 payment shape with no change, tender or credit column", () => {
+    const block = completionTableBlock("payment");
+
+    expect(block).toMatch(/"id" UUID NOT NULL DEFAULT gen_random_uuid\(\)/);
+    expect(block).toMatch(/"tenant_id" UUID NOT NULL/);
+    expect(block).toMatch(/"sale_id" UUID NOT NULL/);
+    expect(block).toMatch(/"method" "payment_method" NOT NULL/);
+    // Money on the sale-line reference scale, never a new precision.
+    expect(block).toMatch(/"amount" DECIMAL\(14,2\) NOT NULL/);
+    expect(block).toMatch(/"created_at" TIMESTAMPTZ\(3\) NOT NULL DEFAULT CURRENT_TIMESTAMP/);
+    expect(block).toMatch(/"updated_at" TIMESTAMPTZ\(3\) NOT NULL DEFAULT CURRENT_TIMESTAMP/);
+
+    // DEC-029: the exact-amount tender rule models no second money quantity and
+    // no customer credit, so none of these columns may appear.
+    expect(block).not.toMatch(
+      /"(tendered_amount|change|change_amount|refunded_amount|credit|credit_amount|overpayment)"/i
+    );
+  });
+
+  it("declares the DEC-024 idempotency shape with the fingerprint and result reference", () => {
+    const block = completionTableBlock("idempotency_record");
+
+    expect(block).toMatch(/"id" UUID NOT NULL DEFAULT gen_random_uuid\(\)/);
+    expect(block).toMatch(/"tenant_id" UUID NOT NULL/);
+    expect(block).toMatch(/"operation" VARCHAR\(64\) NOT NULL/);
+    expect(block).toMatch(/"key" VARCHAR\(255\) NOT NULL/);
+    expect(block).toMatch(/"fingerprint" VARCHAR\(64\) NOT NULL/);
+    expect(block).toMatch(/"result_sale_id" UUID NOT NULL/);
+    expect(block).toMatch(/"created_at" TIMESTAMPTZ\(3\) NOT NULL DEFAULT CURRENT_TIMESTAMP/);
+    // Append-only row: nothing legitimately edits it, so it carries no
+    // updated_at.
+    expect(block).not.toMatch(/"updated_at"/);
+  });
+
+  it("rejects a non-positive payment amount and blank idempotency columns in the database", () => {
+    expect(SALE_COMPLETION_SQL).toMatch(
+      /CONSTRAINT "payment_amount_positive" CHECK \("amount" > 0\)/
+    );
+    expect(SALE_COMPLETION_SQL).toMatch(
+      /CONSTRAINT "idempotency_record_operation_length" CHECK \(char_length\("operation"\) BETWEEN 1 AND 64\)/
+    );
+    expect(SALE_COMPLETION_SQL).toMatch(
+      /CONSTRAINT "idempotency_record_key_length" CHECK \(char_length\("key"\) BETWEEN 1 AND 255\)/
+    );
+    // No floating point anywhere in the completion DDL: exact decimals only.
+    expect(SALE_COMPLETION_SQL).not.toMatch(/\b(DOUBLE|REAL|FLOAT)\b/i);
+  });
+
+  it("scopes both tables to their tenant with RESTRICT and the composite ownership keys", () => {
+    for (const table of ["payment", "idempotency_record"]) {
+      expect(SALE_COMPLETION_SQL).toMatch(
+        new RegExp(
+          `ALTER TABLE "${table}" ADD CONSTRAINT "${table}_tenant_id_fkey"\\s+FOREIGN KEY \\("tenant_id"\\) REFERENCES "tenant"\\("id"\\)\\s+ON DELETE RESTRICT ON UPDATE RESTRICT`
+        )
+      );
+      expect(SALE_COMPLETION_SQL).toMatch(
+        new RegExp(
+          `CREATE UNIQUE INDEX "${table}_tenant_id_id_key" ON "${table}"\\("tenant_id", "id"\\)`
+        )
+      );
+    }
+  });
+
+  it("links each row to its own tenant's sale through a composite RESTRICT FK", () => {
+    expect(SALE_COMPLETION_SQL).toMatch(
+      /ALTER TABLE "payment" ADD CONSTRAINT "payment_tenant_id_sale_id_fkey"\s+FOREIGN KEY \("tenant_id", "sale_id"\) REFERENCES "sale"\("tenant_id", "id"\)\s+ON DELETE RESTRICT ON UPDATE RESTRICT/
+    );
+    expect(SALE_COMPLETION_SQL).toMatch(
+      /ALTER TABLE "idempotency_record" ADD CONSTRAINT "idempotency_record_tenant_id_result_sale_id_fkey"\s+FOREIGN KEY \("tenant_id", "result_sale_id"\) REFERENCES "sale"\("tenant_id", "id"\)\s+ON DELETE RESTRICT ON UPDATE RESTRICT/
+    );
+    // Never CASCADE: a payment or a record is removed explicitly, never
+    // implicitly, and a tenant or sale can never drag them along.
+    expect(SALE_COMPLETION_SQL).not.toMatch(/ON DELETE CASCADE/);
+  });
+
+  it("makes the idempotency key unique per (tenant, operation, key)", () => {
+    // tenant_id leads the key, so the key scope is the tenant, never global.
+    expect(SALE_COMPLETION_SQL).toMatch(
+      /CREATE UNIQUE INDEX "idempotency_record_tenant_id_operation_key_key"\s+ON "idempotency_record"\("tenant_id", "operation", "key"\)/
+    );
+  });
+
+  it("makes the payment delete AND update CONDITIONAL on the OWNING sale status", () => {
+    // DDL-text inspection only, exactly like the `sale_line` gates: the
+    // predicate and the guarded raise are asserted as text and nothing is
+    // executed here. An unconditional `restrict_violation` (the cash shape)
+    // would fail these assertions and contradict DEC-023.
+    for (const [name, operation, returned] of [
+      ["payment_no_delete_when_completed_or_cancelled", "DELETE", "OLD"],
+      ["payment_no_update_when_completed_or_cancelled", "UPDATE", "NEW"],
+    ] as const) {
+      const body = completionFunctionBody(name);
+
+      expect(body).toMatch(/SELECT "status" INTO parent_status/);
+      expect(body).toMatch(/FROM "sale"/);
+      expect(body).toMatch(/WHERE "tenant_id" = OLD\."tenant_id" AND "id" = OLD\."sale_id"/);
+      expect(body).toMatch(/IF parent_status IN \('COMPLETED', 'CANCELLED'\) THEN/);
+
+      const beforeRaise = body.slice(0, body.indexOf("RAISE EXCEPTION"));
+      expect(beforeRaise).toMatch(/parent_status IN \('COMPLETED', 'CANCELLED'\)/);
+      expect(body).not.toMatch(/BEGIN\s+RAISE EXCEPTION/);
+      expect(body).toMatch(/ERRCODE = 'restrict_violation'/);
+      expect(body).toMatch(new RegExp(`RETURN ${returned};`));
+
+      expect(SALE_COMPLETION_SQL).toMatch(
+        new RegExp(
+          `CREATE TRIGGER "${name}_trigger"\\s+BEFORE ${operation} ON "payment"\\s+FOR EACH ROW EXECUTE FUNCTION "${name}"\\(\\)`
+        )
+      );
+    }
+  });
+
+  it("declares no delete or update trigger on the idempotency record (TD-020)", () => {
+    // Nothing purges this table and PRD §41 forbids an automatic destructive
+    // retention policy, so no trigger may block the approved policy later.
+    expect(SALE_COMPLETION_SQL).not.toMatch(
+      /CREATE TRIGGER "[^"]+"\s+BEFORE (DELETE|UPDATE|INSERT) ON "idempotency_record"/
+    );
+    expect(SALE_COMPLETION_SQL).toMatch(/TD-020/);
+  });
+
+  it("is additive: no pre-existing table is altered, no row is inserted, nothing is dropped", () => {
+    const alteredTables = [...SALE_COMPLETION_SQL.matchAll(/ALTER TABLE "([a-z_]+)"/g)].map(
+      ([, table]) => table
+    );
+    expect(alteredTables.length).toBeGreaterThan(0);
+    // The only ALTER TABLE targets the two new tables; the single pre-existing
+    // object touched is the additive `stock_movement_type` value above.
+    expect(new Set(alteredTables)).toEqual(new Set(["payment", "idempotency_record"]));
+
+    expect(SALE_COMPLETION_SQL).not.toMatch(/\bINSERT\b/i);
+    expect(SALE_COMPLETION_SQL).not.toMatch(/\bDROP\b/i);
+    expect(SALE_COMPLETION_SQL).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(SALE_COMPLETION_SQL).not.toMatch(/\bTRUNCATE\b/i);
+    expect(SALE_COMPLETION_SQL).not.toMatch(/\bUPDATE\s+[^\s]+\s+SET\b/i);
+  });
+
+  it("classifies the payment and idempotency fields in the applied artifact", () => {
+    expect(SALE_COMPLETION_SQL).toMatch(/INTERNAL \(PRD §41\)/);
+    expect(SALE_COMPLETION_SQL).toMatch(/logs and audit carry ids and field names/);
+  });
+});
+
+describe("schema · sale completion (EPIC-12 POS-003)", () => {
+  it("declares both models, the payment enum and their table mappings", () => {
+    expect(SCHEMA).toMatch(/model Payment\b/);
+    expect(SCHEMA).toMatch(/model IdempotencyRecord\b/);
+    expect(SCHEMA).toMatch(/enum PaymentMethod\b/);
+    expect(SCHEMA).toMatch(/@@map\("payment"\)/);
+    expect(SCHEMA).toMatch(/@@map\("idempotency_record"\)/);
+    expect(SCHEMA).toMatch(/@@map\("payment_method"\)/);
+  });
+
+  it("appends SALE to StockMovementType and documents the effective set", () => {
+    expect(enumLiterals("StockMovementType")).toEqual(["ADJUSTMENT", "PURCHASE", "SALE"]);
+
+    const doc = docCommentAbove("enum StockMovementType ");
+    expect(doc).toMatch(/`SALE` is the\s+signed negative output/);
+    expect(doc).toMatch(/`TRANSFER_\*` and the `\*_REVERSAL` compensations stay\s+reserved/);
+    expect(doc).toMatch(/values are appended, never reordered or removed/);
+  });
+
+  it("pins the payment method enum to the six PRD §19 literals and documents the decision", () => {
+    expect(enumLiterals("PaymentMethod")).toEqual([
+      "CASH",
+      "CARD",
+      "BANK_TRANSFER",
+      "QR",
+      "CHECK",
+      "OTHER",
+    ]);
+
+    const doc = docCommentAbove("enum PaymentMethod ");
+    expect(doc).toMatch(/PRD §19/);
+    expect(doc).toMatch(/DEC-029/);
+    expect(doc).toMatch(/values are appended, never reordered\s+or removed/);
+  });
+
+  it("maps the DEC-029 payment fields and the composite tenant-ownership keys", () => {
+    const payment = modelBlock("Payment");
+
+    expect(payment).toMatch(
+      /id\s+String\s+@id\s+@default\(dbgenerated\("gen_random_uuid\(\)"\)\)\s+@db\.Uuid/
+    );
+    expect(payment).toMatch(/tenantId\s+String\s+@map\("tenant_id"\)\s+@db\.Uuid/);
+    expect(payment).toMatch(/saleId\s+String\s+@map\("sale_id"\)\s+@db\.Uuid/);
+    expect(payment).toMatch(/method\s+PaymentMethod/);
+    expect(payment).toMatch(/amount\s+Decimal\s+@map\("amount"\)\s+@db\.Decimal\(14, 2\)/);
+    expect(payment).toMatch(
+      /createdAt\s+DateTime\s+@default\(now\(\)\)\s+@map\("created_at"\)\s+@db\.Timestamptz\(3\)/
+    );
+    expect(payment).toMatch(
+      /updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)\s+@db\.Timestamptz\(3\)/
+    );
+
+    // DEC-029: no tender, change, refund or credit field is modelled. Asserted
+    // on field declarations, so doc-comment prose is not mistaken for a column.
+    expect(payment).not.toMatch(
+      /^\s*(tenderedAmount|tendered|change|changeAmount|refundedAmount|credit|creditAmount|overpayment)\s+(String|Decimal|Int|BigInt|Float|Boolean)\b/im
+    );
+    expect(payment).not.toMatch(/\bFloat\b/);
+
+    expect(payment).toMatch(
+      /tenant\s+Tenant\s+@relation\(fields: \[tenantId\], references: \[id\], onDelete: Restrict, onUpdate: Restrict\)/
+    );
+    expect(payment).toMatch(
+      /sale\s+Sale\s+@relation\(fields: \[tenantId, saleId\], references: \[tenantId, id\], onDelete: Restrict, onUpdate: Restrict\)/
+    );
+    expect(payment).toMatch(/@@unique\(\[tenantId, id\]\)/);
+
+    const doc = modelDocComment("Payment");
+    expect(doc).toMatch(/NO\s+`tenderedAmount`, no `change`, no `refundedAmount`/);
+    expect(doc).toMatch(/DEC-029/);
+  });
+
+  it("maps the DEC-024 idempotency record with its unique replay key", () => {
+    const record = modelBlock("IdempotencyRecord");
+
+    expect(record).toMatch(/id\s+String\s+@id\s+@default\(dbgenerated\("gen_random_uuid\(\)"\)\)/);
+    expect(record).toMatch(/tenantId\s+String\s+@map\("tenant_id"\)/);
+    expect(record).toMatch(/operation\s+String\s+@db\.VarChar\(64\)/);
+    expect(record).toMatch(/key\s+String\s+@db\.VarChar\(255\)/);
+    expect(record).toMatch(/fingerprint\s+String\s+@db\.VarChar\(64\)/);
+    expect(record).toMatch(/resultSaleId\s+String\s+@map\("result_sale_id"\)\s+@db\.Uuid/);
+    expect(record).toMatch(/createdAt\s+DateTime\s+@default\(now\(\)\)\s+@map\("created_at"\)/);
+    // Append-only: nothing legitimately edits a record, so no updatedAt.
+    expect(record).not.toMatch(/updatedAt/);
+
+    expect(record).toMatch(
+      /tenant\s+Tenant\s+@relation\(fields: \[tenantId\], references: \[id\], onDelete: Restrict, onUpdate: Restrict\)/
+    );
+    expect(record).toMatch(
+      /resultSale\s+Sale\s+@relation\(fields: \[tenantId, resultSaleId\], references: \[tenantId, id\], onDelete: Restrict, onUpdate: Restrict\)/
+    );
+    expect(record).toMatch(/@@unique\(\[tenantId, operation, key\]\)/);
+    expect(record).toMatch(/@@unique\(\[tenantId, id\]\)/);
+
+    const doc = modelDocComment("IdempotencyRecord");
+    expect(doc).toMatch(/DEC-024/);
+    expect(doc).toMatch(/`resultSaleId` is the sale-specific result reference/);
+    expect(doc).toMatch(/TD-020/);
+  });
+
+  it("exposes the Tenant and Sale sides of the completion relations", () => {
+    const tenant = modelBlock("Tenant");
+    expect(tenant).toMatch(/payments\s+Payment\[\]/);
+    expect(tenant).toMatch(/idempotencyRecords\s+IdempotencyRecord\[\]/);
+
+    const sale = modelBlock("Sale");
+    expect(sale).toMatch(/payments\s+Payment\[\]/);
+    expect(sale).toMatch(/idempotencyRecords\s+IdempotencyRecord\[\]/);
+  });
+
+  it("references only composite keys the referenced tables actually declare", () => {
+    // PostgreSQL accepts a composite FK only when the target columns carry a
+    // unique index; the sale ownership key is the prerequisite both composite
+    // completion FKs target and it must already exist.
+    expect(modelBlock("Sale")).toMatch(/@@unique\(\[tenantId, id\]\)/);
+    expect(modelBlock("Sale")).toMatch(/@@map\("sale"\)/);
+  });
+
+  it("documents the data classification in both model doc comments", () => {
+    const paymentDoc = modelDocComment("Payment");
+    expect(paymentDoc).toMatch(/method and the amount are INTERNAL/);
+    expect(paymentDoc).toMatch(/logs and audit carry ids and field names only/i);
+
+    const recordDoc = modelDocComment("IdempotencyRecord");
+    expect(recordDoc).toMatch(/operation token, the key and the fingerprint are\s+INTERNAL/);
+    expect(recordDoc).toMatch(/logs and audit carry ids and field names only/i);
   });
 });
