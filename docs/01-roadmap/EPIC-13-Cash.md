@@ -92,6 +92,22 @@ implemented EPIC-13 behavior.
   API tests and 110 live tests. The Story stays `review`, not `done`, until a CI
   receipt exists.
 
+## Progress
+
+- **[[CASH-003]] Cash session close — `review`.** Local implementation and
+  verification are complete on the same branch as `03e4d22`: the pure
+  `cash.expected-amount.ts` helper (the single DEC-030 sign map and the expected
+  / difference arithmetic, with 15 unit tests), `POST /cash/sessions/:id/close`
+  behind the already-seeded `cash.session.close` (row lock, `OPEN` gate,
+  conditional write, one `cash.session.closed` audit row) and the session DTO
+  now carrying the three close amounts (`null` while `OPEN`). Verification
+  passed locally: database suite (17 files / 361 tests), API suite (76 files /
+  1104 tests), API live-PostgreSQL suite (119 tests), typecheck, lint,
+  `format-check` and `git diff --check`. The Story stays `review`, not `done`,
+  until a CI receipt exists. No migration and no permission seed change were
+  needed: CASH-001 already added the close columns and `cash.session.close` has
+  been seeded on OWNER/ADMIN/CASHIER since EPIC-01, so the catalog stays at 52.
+
 ## Scope
 
 - Add the remaining PRD §20 cash movement kinds additively: `REFUND`, `INCOME`,
@@ -186,19 +202,23 @@ planned evidence that will close it.
 
 ### CASH-003 — Cash session close
 
-- [ ] `POST /cash/sessions/:id/close` computes expected server-side from
+- [x] `POST /cash/sessions/:id/close` computes expected server-side from
       `opening_amount` and movements, accepts the counted amount, stores
-      expected/counted/difference and writes exactly one audit row. Evidence to
-      produce: integration and live-PostgreSQL close cases.
-- [ ] Close serializes with sale completion and manual movement writers through
+      expected/counted/difference and writes exactly one audit row. Evidence:
+      the mixed-kind and zero-movement cases of the API and live-PostgreSQL
+      suites.
+- [x] Close serializes with sale completion and manual movement writers through
       a session row lock, an `OPEN` state gate and a conditional close update.
-      Evidence to produce: durable live-PostgreSQL race coverage.
-- [ ] A session can close with zero movements, and `CLOSED` sessions cannot be
-      closed again, reopened or receive later movements. Evidence to produce:
-      state-transition and trigger tests.
-- [ ] Close enforces authentication, tenant context, `cash.session.close`, the
-      `cash` capability and byte-equivalent cross-tenant `404`s. Evidence to
-      produce: authorization and tenant-isolation suites.
+      Evidence: the live concurrency case proving one `201` and one stable `409`
+      under a real `cash_session` row-lock overlap.
+- [x] A session can close with zero movements, and `CLOSED` sessions cannot be
+      closed again, reopened or receive later movements. Evidence: the
+      zero-movement close, the second-close `409`, the movement-create `409` and
+      the raw-insert trigger probe.
+- [x] Close enforces authentication, tenant context, `cash.session.close`, the
+      `cash` capability and byte-equivalent cross-tenant `404`s. Evidence: the
+      authorization sweeps and the live byte-equivalent session `404`, the first
+      session-addressed route.
 
 ### CASH-004 — Staff Cash surface
 

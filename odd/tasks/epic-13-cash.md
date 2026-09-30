@@ -93,6 +93,11 @@ planned CASH stories before any implementation.
   suite 110 tests, API suite 1071 tests.
 - CASH-002 review outcome: approved and acknowledged
   (`review-d726ed07cc0e7124`); the remaining findings were informational only.
+- CASH-003 delivery (`03e4d22`): `cash.expected-amount.ts` with its 15 unit
+  tests, the close command in the cash module, the DTO extension and the live
+  close block. Verification: database 17 files / 361 tests; API 76 files / 1104
+  tests; API live suite 119 tests; typecheck, lint, format-check and
+  `git diff --check` green.
 - CASH-003 slice-level resolutions (verified before implementation, 2026-09-30):
   `cash.session.close` is ALREADY seeded on OWNER/ADMIN/CASHIER since EPIC-01,
   so the seeded catalog stays at 52 and only the role-matrix/probe assertions
