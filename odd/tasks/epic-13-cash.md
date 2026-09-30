@@ -104,6 +104,9 @@ planned CASH stories before any implementation.
   insert helper in the live spec, the reused opening-amount pattern name in the
   close body, and the deliberate non-idempotent retry semantics the DEC-036
   terminal state requires.
+- CASH-004 verification: web suite 81 files / 939 tests; API suite 76 files /
+  1107 tests; API live suite 119 tests; typecheck, lint, build, format-check and
+  `git diff --check` green after fixing one lint error in the movement panel.
 - CASH-004 slice-level resolutions (verified before implementation, 2026-09-30):
   the epic's approved scope already lists "the movement list" for the staff Cash
   UI, but EPIC-12 shipped no movement read route (`GET /cash/registers` and

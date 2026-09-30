@@ -108,6 +108,21 @@ implemented EPIC-13 behavior.
   needed: CASH-001 already added the close columns and `cash.session.close` has
   been seeded on OWNER/ADMIN/CASHIER since EPIC-01, so the catalog stays at 52.
 
+## Progress
+
+- **[[CASH-004]] Staff Cash surface — `review`.** Local implementation and
+  verification are complete on the same branch: `9796aa2` adds the
+  `GET /cash/movements` read the movement list needs (the epic scope already
+  listed the movement list, but no read route existed), `f81cf5b` extends the
+  `/api/cash` proxy to seven routes and moves the Cash client into the
+  Cash-owned route directory (a repository search proved no POS module imported
+  it), and `2b0e3e9` adds the `/app/cash` workspace with its register, session,
+  movement and close panels, the full state coverage and the gated navigation
+  entry. Verification passed locally: web suite (81 files / 939 tests), API
+  suite (76 files / 1107 tests), API live-PostgreSQL suite (119 tests),
+  typecheck, lint, build, `format-check` and `git diff --check`. The Story stays
+  `review`, not `done`, until a CI receipt exists.
+
 ## Scope
 
 - Add the remaining PRD §20 cash movement kinds additively: `REFUND`, `INCOME`,
@@ -222,22 +237,27 @@ planned evidence that will close it.
 
 ### CASH-004 — Staff Cash surface
 
-- [ ] Staff can list and create registers, list and open sessions, create manual
+- [x] Staff can list and create registers, list and open sessions, create manual
       movements and close a session with the expected/counted comparison.
-      Evidence to produce: web component and route tests.
-- [ ] The UI covers loading, empty, error, success, permission-denied and
+      Evidence: the four panels of the `/app/cash` page and their tests.
+- [x] The UI covers loading, empty, error, success, permission-denied and
       entitlement-denied states, and backend authorization remains the
-      authority. Evidence to produce: state-coverage tests.
-- [ ] The Cash client module is moved out of the sales route into the Cash-owned
+      authority. Evidence: the state-branch coverage listed in the Story.
+- [x] The Cash client module is moved out of the sales route into the Cash-owned
       surface, and the sales POS imports the new location without changing sale
-      behavior. Evidence to produce: client tests and POS regression coverage.
-- [ ] The navigation entry is gated behind the `cash` capability as far as the
+      behavior. Evidence: the move plus a repository search proving the module
+      had no consumer outside its own test, so no POS import existed to update.
+- [x] The navigation entry is gated behind the `cash` capability as far as the
       existing shell can support, with documented limitations if browser-side
-      entitlement data is still unavailable. Evidence to produce: navigation and
-      limitation notes.
-- [ ] Reusable UI uses semantic design tokens only, with no Veterinary-specific
-      brand literal. Evidence to produce: component review and tests where
-      applicable.
+      entitlement data is still unavailable. Evidence: the `requiredFeature`
+      declaration, its visibility tests and the recorded dormant-gate
+      limitation.
+- [x] Reusable UI uses semantic design tokens only, with no Veterinary-specific
+      brand literal. Evidence: the shared control classes and the `@newsaas/ui`
+      primitives.
+- [x] The movement list the Staff surface needs is served by a tenant-scoped
+      read behind the existing `cash.read` permission. Evidence: the
+      `GET /cash/movements` integration and live cases.
 
 ### CASH-005 — Epic closure and evidence
 
