@@ -11,6 +11,7 @@ import type {
 import { CASH_PERMISSIONS } from "./cash.permissions.js";
 import { CashService } from "./cash.service.js";
 import {
+  cashMovementListQuery,
   cashSessionIdParam,
   cashSessionListQuery,
   closeCashSessionBody,
@@ -28,7 +29,7 @@ import {
  * in depth. Input is Zod-validated and responses are allowlisted INTERNAL DTOs —
  * no Prisma model crosses the boundary.
  *
- * The surface is EXACTLY six routes: two reads, the minimal register create,
+ * The surface is EXACTLY seven routes: three reads, the minimal register create,
  * the session open, the EPIC-13 standalone movement command and the EPIC-13
  * close command. There is deliberately NO `PATCH` and NO `DELETE`, and no
  * reopen: session close is a one-way command whose `CLOSED` state is terminal
@@ -64,6 +65,18 @@ export class CashController {
   async listSessions(@Query() query: unknown): Promise<CashSessionResponse[]> {
     const filters = parseInput(cashSessionListQuery, query, "Invalid cash session filters.");
     return this.cash.listSessions(filters);
+  }
+
+  /**
+   * Lists the caller tenant's immutable movements, newest first. The optional
+   * `sessionId` filter narrows the list to one session and is applied on top of
+   * the tenant predicate; an unknown query key is the stable `400`.
+   */
+  @Get("movements")
+  @RequirePermissions(CASH_PERMISSIONS.read)
+  async listMovements(@Query() query: unknown): Promise<CashMovementResponse[]> {
+    const filters = parseInput(cashMovementListQuery, query, "Invalid cash movement filters.");
+    return this.cash.listMovements(filters);
   }
 
   /**

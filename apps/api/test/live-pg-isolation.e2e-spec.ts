@@ -11271,6 +11271,81 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(await prisma.auditLog.count({ where: { requestId } })).toBe(1);
     }, 30_000);
 
+    it("reads the movements this block committed, newest-first, narrowed by sessionId and never across tenants", async () => {
+      const movementsBefore = await prisma.cashMovement.count({
+        where: { tenantId: movementTenantId },
+      });
+      const auditsBefore = await prisma.auditLog.count();
+      // The block committed its whole ledger by this point; a read adds nothing.
+      expect(movementsBefore).toBe(CASH_MOVEMENT_COMMITTED_COUNT);
+
+      const listMovements = (cookie: string, query = ""): supertest.Test =>
+        supertest(serverUrl)
+          .get(`/cash/movements${query}`)
+          .set("Cookie", cookie)
+          .set("X-Request-Id", "live-pg-movement-read");
+
+      // The tenant's OWN committed ledger over REAL HTTP, through the
+      // allowlisted DTO only: ONE movement shape, and never a `tenantId`.
+      const listed = await listMovements(movementCookie).expect(200);
+      const movements = listed.body as CashMovementDto[];
+      expect(movements).toHaveLength(CASH_MOVEMENT_COMMITTED_COUNT);
+      for (const movement of movements) {
+        expect(Object.keys(movement).sort()).toEqual(CASH_MOVEMENT_DTO_KEYS);
+        expect(Object.keys(movement)).not.toContain("tenantId");
+        expect(movement.registerId).toBe(movementRegisterId);
+        expect(movement.sessionId).toBe(movementSessionId);
+      }
+      expect(listed.text).not.toContain("tenant_id");
+
+      // Newest first by `createdAt` with `id` ascending as the tiebreaker,
+      // matching the register and session list convention.
+      for (let index = 1; index < movements.length; index += 1) {
+        const previous = movements[index - 1];
+        const current = movements[index];
+        const byCreatedAt = previous.createdAt.localeCompare(current.createdAt);
+        expect(
+          byCreatedAt > 0 || (byCreatedAt === 0 && previous.id.localeCompare(current.id) <= 0),
+          `${previous.id} before ${current.id}`
+        ).toBe(true);
+      }
+
+      // The optional `sessionId` filter narrows to that session: every committed
+      // row lives on the fixture session, so the narrowed list is the same set.
+      const narrowed = await listMovements(
+        movementCookie,
+        `?sessionId=${movementSessionId}`
+      ).expect(200);
+      expect((narrowed.body as CashMovementDto[]).map((movement) => movement.id)).toEqual(
+        movements.map((movement) => movement.id)
+      );
+
+      // ... and a FOREIGN session id narrows to NOTHING rather than widening
+      // past the tenant predicate: this tenant can never read another's ledger.
+      const foreignNarrowed = await listMovements(
+        movementCookie,
+        `?sessionId=${foreignMovementSessionId}`
+      ).expect(200);
+      expect(foreignNarrowed.body).toEqual([]);
+
+      // The foreign tenant's own read is disjoint from this block's rows.
+      const foreignListed = await supertest(serverUrl)
+        .get("/cash/movements")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", "live-pg-movement-read-foreign")
+        .expect(200);
+      const ownIds = new Set(movements.map((movement) => movement.id));
+      for (const foreignMovement of foreignListed.body as CashMovementDto[]) {
+        expect(ownIds.has(foreignMovement.id)).toBe(false);
+      }
+
+      // A read is never audited and writes no movement.
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.cashMovement.count({ where: { tenantId: movementTenantId } })).toBe(
+        movementsBefore
+      );
+    }, 30_000);
+
     it("leaves no residue: every raw probe rolled back and the fixture counts unchanged", async () => {
       // The probe-only register carried the raw exclusivity probes: any
       // surviving session or movement there could only come from a probe that

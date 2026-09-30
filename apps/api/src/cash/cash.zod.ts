@@ -120,6 +120,18 @@ export const cashSessionListQuery = z
 export type CashSessionListFiltersInput = z.infer<typeof cashSessionListQuery>;
 
 /**
+ * Movement list query (EPIC-13 CASH-004). The optional `sessionId` narrows the
+ * list to ONE session's immutable ledger and is applied on top of the implicit
+ * tenant predicate, so a foreign session id can only ever narrow the result to
+ * nothing; an omitted session applies NO filter. `.strict()` rejects unknown
+ * query keys instead of ignoring them, mirroring the session list filters so a
+ * caller cannot smuggle a tenant, register or type predicate.
+ */
+export const cashMovementListQuery = z.object({ sessionId: z.string().uuid().optional() }).strict();
+
+export type CashMovementListFiltersInput = z.infer<typeof cashMovementListQuery>;
+
+/**
  * Movement kinds the standalone command accepts (PRD §20, DEC-020/DEC-033).
  * `SALE` is deliberately ABSENT: a `SALE` movement is written only by sale
  * completion (POS-003), so a caller cannot forge one through this command. The

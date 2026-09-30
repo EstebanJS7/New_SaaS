@@ -91,6 +91,16 @@ export interface CashSessionListFilters {
   status?: CashSessionStatusValue;
 }
 
+/**
+ * Supported read filters for {@link CashRepository.listMovements}. The optional
+ * `sessionId` narrows the ledger to ONE session; there is deliberately no
+ * status, type or date filter, so the movement list stays the smallest read the
+ * staff surface needs (EPIC-13 CASH-004).
+ */
+export interface CashMovementListFilters {
+  sessionId?: string;
+}
+
 /** Predicate fields the tenant-scoped register queries are allowed to build. */
 export interface CashRegisterWhere {
   id?: string;
@@ -282,12 +292,14 @@ export interface CashMovementDelegate {
   }) => Promise<CashMovementRow>;
   findUnique: (args: { where: { id: string } }) => Promise<CashMovementRow | null>;
   /**
-   * The immutable movements of ONE session in the caller's tenant, in stable
-   * chronological order. Read by the close command to compute the expected
-   * amount over the frozen ledger (DEC-030/DEC-035); nothing mutates a row.
+   * The immutable movements of the caller's tenant, in stable order. The close
+   * command reads ONE session's ledger to compute the expected amount over the
+   * frozen ledger (DEC-030/DEC-035), and the EPIC-13 CASH-004 read lists the
+   * tenant's whole ledger with an optional `sessionId` narrowing; nothing
+   * mutates a row.
    */
   findMany: (args: {
-    where: { tenantId: string; sessionId: string };
+    where: { tenantId: string; sessionId?: string };
     orderBy?: readonly CashOrderBy[];
   }) => Promise<CashMovementRow[]>;
 }
@@ -504,6 +516,31 @@ export class CashRepository {
       WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid
       FOR UPDATE
     `;
+  }
+
+  /**
+   * The caller's active-tenant movements, newest first with the same `id`
+   * tiebreaker as the register and session lists. The optional `sessionId`
+   * filter is applied on top of the implicit tenant predicate, so a FOREIGN
+   * session id can only ever narrow the result to nothing; it can never widen it
+   * past the tenant. An omitted filter adds NO predicate.
+   *
+   * This is the movement list read of EPIC-13 CASH-004. It is a pure read: no
+   * audit row is appended and no row is mutated.
+   */
+  async listMovements(
+    filters: CashMovementListFilters = {},
+    tx?: CashTx
+  ): Promise<CashMovementRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashMovement.findMany({
+      where: {
+        tenantId,
+        ...(filters.sessionId !== undefined ? { sessionId: filters.sessionId } : {}),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    });
   }
 
   /**

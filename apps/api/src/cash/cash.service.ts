@@ -19,6 +19,7 @@ import { CASH_PERMISSIONS, type CashPermission } from "./cash.permissions.js";
 import {
   CashRepository,
   type CashMovementDirectionValue,
+  type CashMovementListFilters,
   type CashMovementRow,
   type CashMovementTypeValue,
   type CashRegisterRow,
@@ -476,6 +477,20 @@ export class CashService {
     await this.requirePermission(CASH_PERMISSIONS.read);
     const rows = await this.cash.listSessions(filters);
     return rows.map(toCashSessionResponse);
+  }
+
+  /**
+   * The caller tenant's immutable movements, newest first, optionally narrowed
+   * to ONE session (EPIC-13 CASH-004). The `sessionId` filter is applied on top
+   * of the tenant predicate, so a foreign session id narrows to nothing rather
+   * than widening across the boundary. This is a pure read: no audit row is
+   * appended and no state is written.
+   */
+  async listMovements(filters: CashMovementListFilters = {}): Promise<CashMovementResponse[]> {
+    await this.assertCashEnabled();
+    await this.requirePermission(CASH_PERMISSIONS.read);
+    const rows = await this.cash.listMovements(filters);
+    return rows.map(toCashMovementResponse);
   }
 
   /**

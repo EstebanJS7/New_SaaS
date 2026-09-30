@@ -185,7 +185,9 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /cash/sessions",
   "POST /cash/sessions",
   // EPIC-13 CASH-002 — standalone cash movement command (six non-sale kinds;
-  // SALE is rejected by the request contract)
+  // SALE is rejected by the request contract). EPIC-13 CASH-004 adds the
+  // movement list read the staff Cash surface needs (no write affordance).
+  "GET /cash/movements",
   "POST /cash/movements",
   // EPIC-13 CASH-003 — explicit session close command (expected/counted
   // difference + terminal CLOSED; no reopen, no PATCH, no DELETE)
@@ -379,21 +381,23 @@ const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-12 POS-002 cash surface, extended by EPIC-13 CASH-002 and CASH-003. Both
- * reads MUST declare exactly `cash.read`, and the register create / session open
- * / movement create / session close MUST declare exactly their own write key; a
- * route decorated with another cash tier (or none) fails by name, which the
- * permission-less 403 sweep cannot catch. There is deliberately NO `PATCH` and
- * NO `DELETE`, and no reopen route: session close is the one-way command that
- * consumes the pre-existing `cash.session.close` key, and `CLOSED` is terminal
- * (DEC-036). The `SALE` movement kind is never accepted by the movement command;
- * POS-003 owns it.
+ * EPIC-12 POS-002 cash surface, extended by EPIC-13 CASH-002, CASH-003 and
+ * CASH-004. The three reads (registers, sessions, movements) MUST declare
+ * exactly `cash.read`, and the register create / session open / movement create
+ * / session close MUST declare exactly their own write key; a route decorated
+ * with another cash tier (or none) fails by name, which the permission-less 403
+ * sweep cannot catch. There is deliberately NO `PATCH` and NO `DELETE`, and no
+ * reopen route: session close is the one-way command that consumes the
+ * pre-existing `cash.session.close` key, and `CLOSED` is terminal (DEC-036). The
+ * `SALE` movement kind is never accepted by the movement command; POS-003 owns
+ * it. The movement list is a READ only: the ledger itself stays append-only.
  */
 const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /cash/registers": CASH_PERMISSIONS.read,
   "POST /cash/registers": CASH_PERMISSIONS.createRegister,
   "GET /cash/sessions": CASH_PERMISSIONS.read,
   "POST /cash/sessions": CASH_PERMISSIONS.openSession,
+  "GET /cash/movements": CASH_PERMISSIONS.read,
   "POST /cash/movements": CASH_PERMISSIONS.createMovement,
   "POST /cash/sessions/:id/close": CASH_PERMISSIONS.closeSession,
 };
