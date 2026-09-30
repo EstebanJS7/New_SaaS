@@ -104,6 +104,14 @@ planned CASH stories before any implementation.
   insert helper in the live spec, the reused opening-amount pattern name in the
   close body, and the deliberate non-idempotent retry semantics the DEC-036
   terminal state requires.
+- CASH-004 slice-level resolutions (verified before implementation, 2026-09-30):
+  the epic's approved scope already lists "the movement list" for the staff Cash
+  UI, but EPIC-12 shipped no movement read route (`GET /cash/registers` and
+  `GET /cash/sessions` only) and CASH-002 added only the create, so CASH-004
+  adds the minimal `GET /cash/movements` read behind the existing `cash.read`
+  permission — no new permission, no new capability and no product scope change.
+  Also verified: `apps/web/src/app/(app)/app/sales/cash-api.ts` has NO consumer
+  outside its own test, so the planned move changes no POS behavior.
 - CASH-003 slice-level resolutions (verified before implementation, 2026-09-30):
   `cash.session.close` is ALREADY seeded on OWNER/ADMIN/CASHIER since EPIC-01,
   so the seeded catalog stays at 52 and only the role-matrix/probe assertions
