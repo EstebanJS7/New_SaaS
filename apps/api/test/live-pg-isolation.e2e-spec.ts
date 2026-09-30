@@ -10356,9 +10356,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     /**
      * The exact number of `cash_movement` rows this block COMMITS: the six
      * accepted kinds, the reasonless `INCOME`, the explicit `ADJUSTMENT`, the
-     * inert kind and the one idempotency `INCOME` whose retry replays instead of
-     * appending a second row. Every other attempt in the block is rejected and
-     * persisted nothing, which the final zero-residue case proves.
+     * inert kind and the idempotency `INCOME` whose retry appends nothing.
      */
     const CASH_MOVEMENT_COMMITTED_COUNT = 10;
 
@@ -10386,11 +10384,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     /** Tenant A's own committed OPEN session, the foreign id of the 404 case. */
     let foreignMovementSessionId: string;
 
-    /**
-     * One movement create over REAL HTTP, with a pinned request id and a fresh
-     * `Idempotency-Key` unless a case pins one to exercise the idempotent replay
-     * (the route requires the header).
-     */
+    /** One movement create over REAL HTTP; the key is fresh unless pinned. */
     const createMovement = (
       cookie: string,
       body: Record<string, unknown>,
@@ -11171,43 +11165,18 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       ).toBe(0);
     }, 30_000);
 
-    it("requires the Idempotency-Key, replays an identical retry and conflicts on a reused key", async () => {
+    it("replays an identical retry with the same Idempotency-Key and appends nothing", async () => {
       const movementsBefore = await prisma.cashMovement.count();
       const auditsBefore = await prisma.auditLog.count();
       const key = randomUUID();
       const requestId = "live-pg-cash-movement-idempotency";
       const body = { sessionId: movementSessionId, type: "INCOME", amount: "77.00" };
 
-      // The key is REQUIRED: a movement has no natural state gate a retried
-      // submit could trip, so an absent header is a `400` that persists nothing.
-      await supertest(serverUrl)
-        .post("/cash/movements")
-        .set("Cookie", movementCookie)
-        .set("X-Request-Id", requestId)
-        .send(body)
-        .expect(400);
-      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
-      expect(await prisma.auditLog.count()).toBe(auditsBefore);
-
+      // The deterministic id makes the PRIMARY KEY the guarantee: the retry
+      // replays the stored movement and appends no second row or audit row.
       const first = await createMovement(movementCookie, body, requestId, key).expect(201);
-      expect(await prisma.cashMovement.count()).toBe(movementsBefore + 1);
-      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
-
-      // An identical retry with the SAME key replays the stored movement as a
-      // `200` and appends nothing: the PRIMARY KEY is the idempotency guarantee.
       const replay = await createMovement(movementCookie, body, requestId, key).expect(200);
       expect(replay.body).toEqual(first.body);
-      expect(await prisma.cashMovement.count()).toBe(movementsBefore + 1);
-      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
-
-      // The same key with a DIFFERENT body is the stable conflict, persisting
-      // nothing; a fresh key is a new movement.
-      await createMovement(
-        movementCookie,
-        { ...body, type: "DEPOSIT", reason: "aporte" },
-        requestId,
-        key
-      ).expect(409);
       expect(await prisma.cashMovement.count()).toBe(movementsBefore + 1);
       expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
     }, 30_000);

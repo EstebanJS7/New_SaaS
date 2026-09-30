@@ -211,13 +211,8 @@ export interface StandaloneCashMovementCreateData {
   readonly amount: Prisma.Decimal | string;
   readonly reason: string | null;
   readonly direction: CashMovementDirectionValue | null;
-  /**
-   * Deterministic movement id derived from the caller's `Idempotency-Key`
-   * (DEC-024). Passing it explicitly makes PostgreSQL's PRIMARY KEY the
-   * idempotency guarantee: a retried command collides on the same id instead of
-   * appending a second immutable movement, so a timeout retry or a double submit
-   * cannot double-count cash.
-   */
+  /** Deterministic id derived from the caller's `Idempotency-Key` (DEC-024), so
+   * the PRIMARY KEY is the idempotency guarantee. */
   readonly id: string;
 }
 
@@ -526,11 +521,8 @@ export class CashRepository {
     });
   }
 
-  /**
-   * One movement of the caller's ACTIVE tenant by id (DEC-024 replay path), or
-   * `null`. The tenant predicate is part of the lookup, so a movement id from
-   * another tenant can never be read back as a replay result.
-   */
+  /** One movement of the caller's ACTIVE tenant by id (DEC-024 replay path), or
+   * `null`; another tenant's id is never readable. */
   async findMovementById(id: string, tx?: CashTx): Promise<CashMovementRow | null> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;

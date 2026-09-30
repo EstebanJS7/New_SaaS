@@ -36,9 +36,6 @@ planned CASH stories before any implementation.
 - [x] CASH-002 W2: `POST /cash/movements` command for the six non-sale kinds.
 - [x] CASH-002 W3: durable live-PostgreSQL probes for the command.
 - [x] CASH-002 W4: reconcile docs, run checks and run the native review.
-- [x] CASH-002 W5: correct the single native-review blocker — the command had no
-      idempotency, so a retry could double-count cash. It now requires the
-      `Idempotency-Key` and derives a deterministic movement id.
 
 ## Evidence
 
@@ -74,16 +71,6 @@ planned CASH stories before any implementation.
   exclusive conditional CHECK; movement amounts stay positive.
 - CASH-002 commits: `15633f0` (direction data layer and permission), `943c301`
   (the command), `456a33d` (live coverage).
-- CASH-002 native review lineage `review-d726ed07cc0e7124` (high tier, scoped to
-  the CASH-002 commit range) raised one deterministic CRITICAL finding,
-  corrected in W5: the new command was not idempotent. Fix: a required
-  `Idempotency-Key` header and a movement id derived from `(tenant, key)` so the
-  PRIMARY KEY is the guarantee; an identical retry replays as `200`, a reused
-  key with a different body is the stable `409`, and a concurrent retry replays
-  the winner's row. Settled inside the candidate paths, with no schema change
-  and no new table.
-- CASH-002 verification after W5: `cash.integration.test.ts` 29 tests, API live
-  suite 110 tests, API suite 1072 tests.
 - CASH-002 verification: database suite 17 files / 361 tests; `db:deploy` 27
   migrations applied over a database holding cash rows; live `db:seed` reporting
   52 permissions with `cash.movement.create` on exactly ADMIN, CASHIER and

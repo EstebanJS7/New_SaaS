@@ -89,22 +89,13 @@ export class CashController {
     @Res({ passthrough: true }) reply: FastifyReply
   ): Promise<CashMovementResponse> {
     const input = parseInput(createCashMovementBody, body, "Invalid cash movement create body.");
-    // The key is read here and REQUIRED by the service AFTER its entitlement,
-    // permission and session guards, so a missing key can never mask a `403` or
-    // the shared session `404` with a `400`. A fresh create is `201` and an
-    // identical replay is `200` with the SAME movement body.
     const result = await this.cash.createMovement(input, readIdempotencyKey(headers));
     reply.status(result.replay ? 200 : 201);
     return result.movement;
   }
 }
 
-/**
- * Reads the `Idempotency-Key` header as the RAW value. Fastify lower-cases
- * incoming header names, so the lookup is on `idempotency-key`. The value is
- * validated and required by the service, after its guards, so a malformed or
- * absent key cannot turn a `403` or the shared session `404` into a `400`.
- */
+/** The RAW `Idempotency-Key` header; the service validates it after its guards. */
 function readIdempotencyKey(headers: unknown): unknown {
   if (typeof headers !== "object" || headers === null) {
     return undefined;

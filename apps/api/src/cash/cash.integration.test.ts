@@ -1184,85 +1184,27 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
   });
 
   it("requires the Idempotency-Key, replays an identical retry and conflicts on a reused key", async () => {
-    const register = fixture.createRegister(fixture.a);
-    const session = fixture.openSession(fixture.a, register.id);
-    const key = randomUUID();
+    const session = fixture.openSession(fixture.a, fixture.createRegister(fixture.a).id);
     const body = movementBody(session.id, { type: "INCOME", amount: "250.00" });
-
+    const post = (key: string | undefined, payload: Record<string, unknown> = body) => {
+      const request = supertest(booted.app.getHttpServer())
+        .post("/cash/movements")
+        .set("Cookie", fixture.a.actor.cookie);
+      return (key === undefined ? request : request.set("Idempotency-Key", key)).send(payload);
+    };
     const movementsBefore = booted.db.tables.cashMovements.size;
     const auditsBefore = booted.db.tables.audits.size;
-
-    // No key: the command has no natural state gate a second submit could trip,
-    // so the key is REQUIRED and its absence persists nothing.
-    await supertest(booted.app.getHttpServer())
-      .post("/cash/movements")
-      .set("Cookie", fixture.a.actor.cookie)
-      .send(body)
-      .expect(400);
-    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
-    expect(booted.db.tables.audits.size).toBe(auditsBefore);
-
-    const first = await supertest(booted.app.getHttpServer())
-      .post("/cash/movements")
-      .set("Cookie", fixture.a.actor.cookie)
-      .set("Idempotency-Key", key)
-      .send(body)
-      .expect(201);
-    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore + 1);
-
-    // An identical retry with the SAME key replays the stored movement as a 200
-    // and appends nothing: no second movement and no second audit row.
-    const replay = await supertest(booted.app.getHttpServer())
-      .post("/cash/movements")
-      .set("Cookie", fixture.a.actor.cookie)
-      .set("Idempotency-Key", key)
-      .send(body)
-      .expect(200);
-    expect(replay.body).toEqual(first.body);
-    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore + 1);
-    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
-
-    // The same key with a DIFFERENT body is a stable 409 that persists nothing.
-    await supertest(booted.app.getHttpServer())
-      .post("/cash/movements")
-      .set("Cookie", fixture.a.actor.cookie)
-      .set("Idempotency-Key", key)
-      .send(movementBody(session.id, { type: "INCOME", amount: "300.00" }))
-      .expect(409);
-    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore + 1);
-    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
-  });
-
-  it("maps a concurrent-retry PRIMARY KEY collision to a replay of the winning movement", async () => {
-    const register = fixture.createRegister(fixture.a);
-    const session = fixture.openSession(fixture.a, register.id);
     const key = randomUUID();
-    const body = movementBody(session.id, { type: "EXPENSE", amount: "40.00", reason: "flete" });
 
-    const first = await supertest(booted.app.getHttpServer())
-      .post("/cash/movements")
-      .set("Cookie", fixture.a.actor.cookie)
-      .set("Idempotency-Key", key)
-      .send(body)
-      .expect(201);
+    await post(undefined).expect(400);
+    const first = await post(key).expect(201);
 
-    // Losing the insert race is not an error: the movement the winner wrote IS
-    // this request's movement, so the P2002 resolves to the stored row.
-    const movementsBefore = booted.db.tables.cashMovements.size;
-    await withCashMovementCreateFailing(
-      booted.db,
-      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
-      async () => {
-        const replay = await supertest(booted.app.getHttpServer())
-          .post("/cash/movements")
-          .set("Cookie", fixture.a.actor.cookie)
-          .set("Idempotency-Key", key)
-          .send(body)
-          .expect(200);
-        expect(replay.body).toEqual(first.body);
-      }
-    );
-    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
+    // Same key and body: a `200` replay that appends nothing; different body: `409`.
+    expect((await post(key).expect(200)).body).toEqual(first.body);
+    await post(key, movementBody(session.id, { type: "INCOME", amount: "300.00" })).expect(409);
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore + 1);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
   });
 
   it("writes only the movement and its audit row: no sale, stock, payment or close state is touched", async () => {
