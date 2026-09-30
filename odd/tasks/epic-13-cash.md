@@ -98,6 +98,12 @@ planned CASH stories before any implementation.
   close block. Verification: database 17 files / 361 tests; API 76 files / 1104
   tests; API live suite 119 tests; typecheck, lint, format-check and
   `git diff --check` green.
+- CASH-003 native review: `review-24ef69934fe4e591` (high tier, scoped to the
+  CASH-003 commit range) approved and acknowledged on the first pass, with no
+  correction requested. Informational findings only: a duplicated raw movement
+  insert helper in the live spec, the reused opening-amount pattern name in the
+  close body, and the deliberate non-idempotent retry semantics the DEC-036
+  terminal state requires.
 - CASH-003 slice-level resolutions (verified before implementation, 2026-09-30):
   `cash.session.close` is ALREADY seeded on OWNER/ADMIN/CASHIER since EPIC-01,
   so the seeded catalog stays at 52 and only the role-matrix/probe assertions
