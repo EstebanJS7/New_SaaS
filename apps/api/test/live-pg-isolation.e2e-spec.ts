@@ -7462,20 +7462,24 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       return id;
     };
 
-    /** Raw `SALE` movement insert at the migration's exact shape; returns the id. */
+    /** Raw movement insert at the migration's exact shape; returns the id. */
     const insertRawMovement = async (
       tx: Prisma.TransactionClient,
       tenantId: string,
       registerId: string,
       sessionId: string,
-      amount: string
+      amount: string,
+      type = "SALE",
+      reason: string | null = null
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "cash_movement" ("id", "tenant_id", "register_id", "session_id", "type", "amount")
+        INSERT INTO "cash_movement" (
+          "id", "tenant_id", "register_id", "session_id", "type", "amount", "reason"
+        )
         VALUES (
           ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid, ${sessionId}::uuid,
-          'SALE'::cash_movement_type, ${amount}::decimal
+          ${type}::cash_movement_type, ${amount}::decimal, ${reason}
         )
       `;
       return id;
@@ -8208,12 +8212,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       `;
       expect(triggers.map((row) => row.tgname)).toEqual([
         "cash_movement_no_delete_trigger",
+        "cash_movement_no_insert_into_closed_session_trigger",
         "cash_movement_no_update_trigger",
         "cash_session_no_delete_trigger",
       ]);
       expect(triggers.map((row) => `${row.tgname}:${row.proname}`).sort()).toEqual(
         [
           "cash_movement_no_delete_trigger:cash_movement_no_delete",
+          "cash_movement_no_insert_into_closed_session_trigger:cash_movement_no_insert_into_closed_session",
           "cash_movement_no_update_trigger:cash_movement_no_update",
           "cash_session_no_delete_trigger:cash_session_no_delete",
         ].sort()
@@ -8229,6 +8235,20 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         expect(trigger.tgtype & 8, tgname).toBe(8); // DELETE
         expect(trigger.tgtype & 16, tgname).toBe(0); // NOT UPDATE
       }
+      const insertTrigger = triggerByName.get(
+        "cash_movement_no_insert_into_closed_session_trigger"
+      );
+      if (!insertTrigger) {
+        throw new Error(
+          "The cash_movement_no_insert_into_closed_session_trigger trigger is missing"
+        );
+      }
+      expect(insertTrigger.tgtype & 1).toBe(1); // ROW
+      expect(insertTrigger.tgtype & 2).toBe(2); // BEFORE
+      expect(insertTrigger.tgtype & 4).toBe(4); // INSERT
+      expect(insertTrigger.tgtype & 8).toBe(0); // NOT DELETE
+      expect(insertTrigger.tgtype & 16).toBe(0); // NOT UPDATE
+
       const updateTrigger = triggerByName.get("cash_movement_no_update_trigger");
       if (!updateTrigger) {
         throw new Error("The cash_movement_no_update_trigger trigger is missing");
@@ -8245,7 +8265,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         SELECT p.proname, p.prosrc
         FROM pg_proc AS p
         WHERE p.proname IN (
-          'cash_session_no_delete', 'cash_movement_no_delete', 'cash_movement_no_update'
+          'cash_session_no_delete', 'cash_movement_no_delete', 'cash_movement_no_update',
+          'cash_movement_no_insert_into_closed_session'
         )
       `;
       const sourceByName = new Map(
@@ -8260,10 +8281,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(sourceByName.get("cash_movement_no_update")).toContain(
         "a confirmed cash movement is immutable; correct it with a compensating movement"
       );
+      expect(sourceByName.get("cash_movement_no_insert_into_closed_session")).toContain(
+        "a cash movement cannot be inserted into a closed session"
+      );
       for (const proname of [
         "cash_session_no_delete",
         "cash_movement_no_delete",
         "cash_movement_no_update",
+        "cash_movement_no_insert_into_closed_session",
       ]) {
         expect(sourceByName.get(proname), proname).toContain("ERRCODE = 'restrict_violation'");
         expect(sourceByName.get(proname), proname).toContain("RAISE EXCEPTION");
@@ -8280,6 +8305,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(checkRows.map((row) => row.conname).sort()).toEqual(
         [
           "cash_movement_amount_non_zero",
+          "cash_movement_reason_required",
           "cash_register_name_length",
           "cash_session_opening_amount_non_negative",
         ].sort()
@@ -8378,6 +8404,127 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
 
       // Every probe rolled back and no movement was ever written.
+      expect(await prisma.cashMovement.count()).toBe(0);
+      expect(await prisma.cashSession.count({ where: { registerId: cashRegisterAId } })).toBe(0);
+    }, 30_000);
+
+    it("applies the EPIC-13 CASH-001 enum, close columns, reason CHECK and closed-session guard", async () => {
+      const enumRows = await prisma.$queryRaw<{ label: string }[]>`
+        SELECT enumlabel AS label
+        FROM pg_enum
+        WHERE enumtypid = 'cash_movement_type'::regtype
+        ORDER BY enumsortorder
+      `;
+      expect(enumRows.map((row) => row.label)).toEqual([
+        "SALE",
+        "REFUND",
+        "INCOME",
+        "EXPENSE",
+        "WITHDRAWAL",
+        "DEPOSIT",
+        "ADJUSTMENT",
+      ]);
+
+      const closeColumns = await prisma.$queryRaw<
+        {
+          column_name: string;
+          is_nullable: string;
+          numeric_precision: number;
+          numeric_scale: number;
+        }[]
+      >`
+        SELECT column_name, is_nullable, numeric_precision, numeric_scale
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'cash_session'
+          AND column_name IN ('expected_amount', 'counted_amount', 'difference_amount')
+        ORDER BY column_name
+      `;
+      expect(
+        closeColumns.map(
+          (row) =>
+            `${row.column_name}:${row.is_nullable}:${row.numeric_precision}:${row.numeric_scale}`
+        )
+      ).toEqual([
+        "counted_amount:YES:14:2",
+        "difference_amount:YES:14:2",
+        "expected_amount:YES:14:2",
+      ]);
+
+      await inRolledBackTransaction(async (tx) => {
+        const openSessionId = await insertRawSession(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          membershipAId,
+          "10.00"
+        );
+        await expect(
+          insertRawMovement(tx, tenantAId, cashRegisterAId, openSessionId, "5.00", "SALE")
+        ).resolves.toEqual(expect.any(String));
+        await expect(
+          insertRawMovement(tx, tenantAId, cashRegisterAId, openSessionId, "5.00", "INCOME")
+        ).resolves.toEqual(expect.any(String));
+      });
+
+      for (const type of ["REFUND", "EXPENSE", "WITHDRAWAL", "DEPOSIT", "ADJUSTMENT"]) {
+        await inRolledBackTransaction(async (tx) => {
+          const openSessionId = await insertRawSession(
+            tx,
+            tenantAId,
+            cashRegisterAId,
+            membershipAId,
+            "10.00"
+          );
+          const nullReasonMessage = await captureDatabaseMessage(() =>
+            insertRawMovement(tx, tenantAId, cashRegisterAId, openSessionId, "5.00", type)
+          );
+          expect(nullReasonMessage).toContain("cash_movement_reason_required");
+        });
+
+        await inRolledBackTransaction(async (tx) => {
+          const openSessionId = await insertRawSession(
+            tx,
+            tenantAId,
+            cashRegisterAId,
+            membershipAId,
+            "10.00"
+          );
+          const blankReasonMessage = await captureDatabaseMessage(() =>
+            insertRawMovement(tx, tenantAId, cashRegisterAId, openSessionId, "5.00", type, "   ")
+          );
+          expect(blankReasonMessage).toContain("cash_movement_reason_required");
+        });
+
+        await inRolledBackTransaction(async (tx) => {
+          const openSessionId = await insertRawSession(
+            tx,
+            tenantAId,
+            cashRegisterAId,
+            membershipAId,
+            "10.00"
+          );
+          await expect(
+            insertRawMovement(tx, tenantAId, cashRegisterAId, openSessionId, "5.00", type, "ok")
+          ).resolves.toEqual(expect.any(String));
+        });
+      }
+
+      await inRolledBackTransaction(async (tx) => {
+        const closedSessionId = await insertRawSession(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          membershipAId,
+          "10.00",
+          "CLOSED"
+        );
+        const closedMessage = await captureDatabaseMessage(() =>
+          insertRawMovement(tx, tenantAId, cashRegisterAId, closedSessionId, "5.00", "INCOME", "ok")
+        );
+        expect(closedMessage).toBe("a cash movement cannot be inserted into a closed session");
+      });
+
       expect(await prisma.cashMovement.count()).toBe(0);
       expect(await prisma.cashSession.count({ where: { registerId: cashRegisterAId } })).toBe(0);
     }, 30_000);
