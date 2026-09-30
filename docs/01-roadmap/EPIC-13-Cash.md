@@ -71,6 +71,18 @@ implemented EPIC-13 behavior.
   working tree. Verification passed locally: database suite (17 files / 352
   tests), `db:deploy`, `db:live-verify`, API live-PostgreSQL suite (100 tests),
   typecheck, lint, build, `format-check` and `git diff --check`. The Story stays
+  `review`, not `done`, until a CI receipt exists. Commits: `f74bce1` (scope
+  docs) and `e72f38f` (CASH-001).
+- **[[CASH-002]] Cash movement commands — `review`.** Local implementation and
+  verification are complete on the same branch: `15633f0` adds the
+  `cash_movement_direction` enum, the nullable `direction` column, the exclusive
+  `cash_movement_direction_required` CHECK and the `cash.movement.create` seed
+  (catalog 51 → 52); `943c301` adds `POST /cash/movements`; `456a33d` adds the
+  live-PostgreSQL block and reconciles the applied-schema assertions.
+  Verification passed locally: database suite (17 files / 361 tests),
+  `db:deploy` (27 migrations), a live `db:seed` reporting 52 permissions, API
+  suite (75 files / 1069 tests), API live-PostgreSQL suite (109 tests),
+  typecheck, lint, `format-check` and `git diff --check`. The Story stays
   `review`, not `done`, until a CI receipt exists.
 
 ## Scope
@@ -146,19 +158,20 @@ planned evidence that will close it.
 
 ### CASH-002 — Cash movement commands
 
-- [ ] The six non-sale movement kinds can be created through explicit cash
+- [x] The six non-sale movement kinds can be created through explicit cash
       commands against an `OPEN` in-tenant session, behind
-      `cash.movement.create` and the `cash` capability. Evidence to produce: API
-      integration and route permission pins.
-- [ ] The API never accepts tenant authority from body, query or route; foreign
-      session/register ids are byte-equivalent `404`s. Evidence to produce:
+      `cash.movement.create` and the `cash` capability. Evidence: the six-kind
+      API integration and live-PostgreSQL cases plus the route permission pin.
+- [x] The API never accepts tenant authority from body, query or route; foreign
+      session/register ids are byte-equivalent `404`s. Evidence: the
       tenant-isolation integration and live-PostgreSQL cases.
-- [ ] Movement amounts stay positive, `ADJUSTMENT` carries an explicit
-      direction, and the expected-amount sign map follows [[DEC-030]]. Evidence
-      to produce: calculation unit cases shared with close.
-- [ ] Accepted movements are immutable and audited; rejected validation,
+- [x] Movement amounts stay positive, `ADJUSTMENT` carries an explicit
+      direction, and the expected-amount sign map follows [[DEC-030]]. Evidence:
+      the exclusive `cash_movement_direction_required` CHECK, the request
+      contract and the rolled-back live probes.
+- [x] Accepted movements are immutable and audited; rejected validation,
       permission, capability and closed-session attempts persist nothing.
-      Evidence to produce: audit and no-residue tests.
+      Evidence: the audit and no-residue cases of both suites.
 
 ### CASH-003 — Cash session close
 

@@ -30,12 +30,12 @@ planned CASH stories before any implementation.
       tests.
 - [x] CASH-001 W3: add durable live-PostgreSQL applied-schema probes.
 - [x] CASH-001 W4: reconcile story/epic docs and run required checks.
-- [ ] CASH-002 W1: `cash_movement_direction` + `direction` column on
+- [x] CASH-002 W1: `cash_movement_direction` + `direction` column on
       `cash_movement` with the EXCLUSIVE conditional CHECK, and the
       `cash.movement.create` permission seed (51 → 52).
-- [ ] CASH-002 W2: `POST /cash/movements` command for the six non-sale kinds.
-- [ ] CASH-002 W3: durable live-PostgreSQL probes for the command.
-- [ ] CASH-002 W4: reconcile docs, run checks and run the native review.
+- [x] CASH-002 W2: `POST /cash/movements` command for the six non-sale kinds.
+- [x] CASH-002 W3: durable live-PostgreSQL probes for the command.
+- [x] CASH-002 W4: reconcile docs, run checks and run the native review.
 
 ## Evidence
 
@@ -69,3 +69,11 @@ planned CASH stories before any implementation.
   column backed by a `cash_movement_direction` enum (`INCREASE`/`DECREASE`),
   required exactly for `ADJUSTMENT` and forbidden for every other kind by an
   exclusive conditional CHECK; movement amounts stay positive.
+- CASH-002 commits: `15633f0` (direction data layer and permission), `943c301`
+  (the command), `456a33d` (live coverage).
+- CASH-002 verification: database suite 17 files / 361 tests; `db:deploy` 27
+  migrations applied over a database holding cash rows; live `db:seed` reporting
+  52 permissions with `cash.movement.create` on exactly ADMIN, CASHIER and
+  OWNER; API suite 75 files / 1069 tests; API live-PostgreSQL suite 109 tests;
+  typecheck, lint, format-check and `git diff --check` green. One lint error in
+  the new integration case was fixed before the commit.
