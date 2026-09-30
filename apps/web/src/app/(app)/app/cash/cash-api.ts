@@ -1,27 +1,38 @@
 "use client";
 
 /**
- * Staff POS cash client (EPIC-12 POS-004 E1). Every call goes through the
- * authenticated web proxy at `/api/cash`, which resolves the tenant from the
- * server-side session cookie — the browser never supplies a tenant id, and this
- * client is never an authorization authority. The session opener is likewise
- * server-resolved: no helper here sends an opener, a status or a register
- * balance, because none of them is caller-owned.
+ * Staff cash client. Every call goes through the authenticated web proxy at
+ * `/api/cash`, which resolves the tenant from the server-side session cookie —
+ * the browser never supplies a tenant id, and this client is never an
+ * authorization authority. The session opener and a movement's register are
+ * likewise server-resolved: no helper here sends an opener, a status, a register
+ * balance or a movement `registerId`, because none of them is caller-owned.
  *
- * Data classification (PRD §41): the register name, the session status and the
- * opening amount are INTERNAL. This module sends and returns those fields and
- * deliberately writes none of them anywhere else: no console call, no error
+ * Data classification (PRD §41): the register name, the session status, the
+ * opening/expected/counted/difference amounts and the movement type, amount,
+ * reason and direction are INTERNAL. This module sends and returns those fields
+ * and deliberately writes none of them anywhere else: no console call, no error
  * telemetry and no analytics event takes a cash payload, and only the API's own
  * stable, value-free error copy is surfaced.
  *
- * This is the EPIC-12 slice of the cash surface: the register list, the register
- * create, the session list and the session open. Session close, the
- * expected/counted difference, the remaining movement kinds and the cash
- * reversal belong to EPIC-13 (DEC-020) and have no helper here.
+ * This module is the WHOLE staff cash surface: the register list and create, the
+ * session list and open, the immutable movement list and create, and the session
+ * close. No helper offers a status write, a delete or a reopen — a closed
+ * session is terminal (DEC-036) — and cash reversal is deliberately absent
+ * because a later epic owns it. Every state change is one of the API's explicit
+ * commands, never a generic patch.
  *
- * Money never becomes a JavaScript number. `openingAmount` arrives as an exact
- * fixed-scale decimal string and is rendered by the sibling
- * `formatWireAmount` in `./sales-api`, which groups digits textually.
+ * Money never becomes a JavaScript number. Every amount (`openingAmount`,
+ * `amount`, `countedAmount` and the three close-result amounts) arrives as an
+ * exact fixed-scale decimal string and is rendered by the sales surface's
+ * `formatWireAmount` (`../sales/sales-api`), which groups digits textually; this
+ * module never parses one into a float.
+ *
+ * The movement create is the ONE command whose idempotency key is caller-owned:
+ * {@link createMovement} REQUIRES it and forwards it verbatim, so a caller that
+ * retries reuses the same key and the API replays the stored movement instead of
+ * writing a second one. This module never mints a key silently, because a key the
+ * caller cannot reproduce cannot serve a retry (DEC-024).
  *
  * Like the EPIC-11 sibling clients, this module declares its own
  * `ApiRequestError` so it stays independently testable: a cash refusal is
@@ -110,6 +121,89 @@ export interface CashSessionFilters {
   readonly status?: CashSessionStatus;
 }
 
+/**
+ * Movement kinds the standalone create command accepts (PRD §20, DEC-020/033).
+ * `SALE` is deliberately ABSENT: a sale-generated movement is written only by
+ * sale completion, so this client cannot forge one.
+ */
+export type CashMovementType =
+  "REFUND" | "INCOME" | "EXPENSE" | "WITHDRAWAL" | "DEPOSIT" | "ADJUSTMENT";
+
+/** Runtime mirror of the movement-kind union, pinned so the enum cannot drift. */
+export const CASH_MOVEMENT_TYPES = [
+  "REFUND",
+  "INCOME",
+  "EXPENSE",
+  "WITHDRAWAL",
+  "DEPOSIT",
+  "ADJUSTMENT",
+] as const satisfies readonly CashMovementType[];
+
+/**
+ * Explicit `ADJUSTMENT` sign (DEC-030). Every other kind owns its own sign, so a
+ * direction is only ever sent for an `ADJUSTMENT`.
+ */
+export type CashMovementDirection = "INCREASE" | "DECREASE";
+
+/** Runtime mirror of the direction union, pinned so the enum cannot drift. */
+export const CASH_MOVEMENT_DIRECTIONS = [
+  "INCREASE",
+  "DECREASE",
+] as const satisfies readonly CashMovementDirection[];
+
+/**
+ * One allowlisted immutable movement. `amount` is always POSITIVE and exact
+ * fixed-scale (2 decimals) — the type owns the sign (DEC-030) — and `direction`
+ * is non-null exactly for an `ADJUSTMENT`. The ledger entry is immutable, so
+ * there is no `updatedAt` and no edit or delete helper anywhere.
+ */
+export interface CashMovement {
+  readonly id: string;
+  readonly registerId: string;
+  readonly sessionId: string;
+  readonly type: CashMovementType;
+  readonly direction: CashMovementDirection | null;
+  /** Exact fixed-scale (2 decimals) POSITIVE literal, e.g. `"1500.00"`. */
+  readonly amount: string;
+  readonly reason: string | null;
+  readonly createdAt: string;
+}
+
+/**
+ * Movement-create payload. `sessionId` names the in-tenant `OPEN` session the
+ * movement belongs to; `registerId` is DERIVED from it server-side and is never
+ * sent. `reason` is required for every kind but `INCOME` and `direction` is
+ * required exactly for `ADJUSTMENT` (DEC-030/032) — the API's cross-field rules
+ * remain their only validator, so this payload does not re-implement them.
+ */
+export interface CreateCashMovementInput {
+  readonly sessionId: string;
+  readonly type: CashMovementType;
+  /** Exact fixed-scale (2 decimals) POSITIVE literal; the literal zero is refused. */
+  readonly amount: string;
+  readonly reason?: string;
+  readonly direction?: CashMovementDirection;
+}
+
+/**
+ * Movement list filters; the only field is optional and server-applied. An
+ * omitted `sessionId` applies NO filter, so the ledger read returns every
+ * movement of the caller tenant, newest first.
+ */
+export interface CashMovementFilters {
+  readonly sessionId?: string;
+}
+
+/**
+ * Session-close payload: the operator's physical count as an exact fixed-scale
+ * (2 decimals) non-negative decimal string. The expected amount, the difference
+ * and the resulting `CLOSED` status are all computed server-side and are never
+ * sent (DEC-031/036).
+ */
+export interface CloseCashSessionInput {
+  readonly countedAmount: string;
+}
+
 interface ApiErrorEnvelope {
   readonly error: {
     readonly code?: string;
@@ -152,10 +246,14 @@ async function getJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(
+  path: string,
+  body: unknown,
+  extraHeaders: Readonly<Record<string, string>> = {}
+): Promise<T> {
   const response = await fetch(`/api/cash${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -194,12 +292,51 @@ export function listCashSessions(filters: CashSessionFilters = {}): Promise<Cash
 /**
  * Opens one session for an in-tenant register with the required opening float.
  * A register may hold at most one `OPEN` session (the partial unique index), so a
- * second open is the stable `409` — there is no close helper in this slice, and
- * the surface must not present this outcome as a retryable failure of the same
- * intent.
+ * second open is the stable `409` — the surface must not present this outcome as
+ * a retryable failure of the same intent; the way out of it is the explicit
+ * {@link closeSession} command, not a retry of the open.
  */
 export function openCashSession(input: OpenCashSessionInput): Promise<CashSession> {
   return postJson("/sessions", input);
+}
+
+/**
+ * Lists the caller tenant's immutable movements, newest first. An omitted
+ * `sessionId` applies NO filter (the API returns the whole tenant ledger); a
+ * foreign session id can only ever narrow the result to nothing, because the
+ * filter is applied on top of the server-resolved tenant predicate.
+ */
+export function listMovements(filters: CashMovementFilters = {}): Promise<CashMovement[]> {
+  const params = new URLSearchParams();
+  if (filters.sessionId !== undefined) params.set("sessionId", filters.sessionId);
+  const query = params.toString();
+  return getJson(`/movements${query.length > 0 ? `?${query}` : ""}`);
+}
+
+/**
+ * Creates one immutable standalone movement against an in-tenant `OPEN` session.
+ *
+ * `idempotencyKey` is REQUIRED and caller-owned: the API derives the movement's
+ * identity from it, forwards it verbatim, and replays the stored movement for an
+ * identical retry (DEC-024). This helper never mints one, so the caller decides
+ * whether a retry reuses the key or is a new intent; the API answers its own
+ * stable `400` when the key is missing.
+ */
+export function createMovement(
+  input: CreateCashMovementInput,
+  idempotencyKey: string
+): Promise<CashMovement> {
+  return postJson("/movements", input, { "Idempotency-Key": idempotencyKey });
+}
+
+/**
+ * Closes one in-tenant `OPEN` session against the operator's physical count. The
+ * server computes the expected amount and the difference and writes the three
+ * close amounts (DEC-031). `CLOSED` is terminal, so there is no reopen and a
+ * second close is the stable `409` — never a replayed success.
+ */
+export function closeSession(id: string, input: CloseCashSessionInput): Promise<CashSession> {
+  return postJson(`/sessions/${id}/close`, input);
 }
 
 /**
@@ -212,6 +349,10 @@ export const CASH_FEATURE_NOT_ENTITLED_MESSAGE = "Cash features are not enabled 
 export const CASH_REGISTER_NAME_CONFLICT_MESSAGE =
   "A cash register with this name already exists in this tenant.";
 export const CASH_SESSION_ALREADY_OPEN_MESSAGE = "This cash register already has an open session.";
+export const CASH_SESSION_NOT_OPEN_MESSAGE = "This cash session is not open.";
+export const CASH_IDEMPOTENCY_KEY_REQUIRED_MESSAGE = "An Idempotency-Key header is required.";
+export const CASH_IDEMPOTENCY_KEY_CONFLICT_MESSAGE =
+  "The Idempotency-Key was already used for a different request.";
 export const CASH_REGISTER_NOT_FOUND_MESSAGE = "Cash register was not found.";
 export const CASH_SESSION_NOT_FOUND_MESSAGE = "Cash session was not found.";
 
@@ -263,6 +404,26 @@ export function isCashRegisterNameConflict(error: Error): boolean {
  */
 export function isCashSessionAlreadyOpen(error: Error): boolean {
   return error instanceof ApiRequestError && error.message === CASH_SESSION_ALREADY_OPEN_MESSAGE;
+}
+
+/**
+ * True when a movement create or a session close was refused because the target
+ * session is not `OPEN`. `CLOSED` is terminal (DEC-036), so this is a real state
+ * of the tenant, not a malformed request and not a retryable failure.
+ */
+export function isCashSessionNotOpen(error: Error): boolean {
+  return error instanceof ApiRequestError && error.message === CASH_SESSION_NOT_OPEN_MESSAGE;
+}
+
+/**
+ * True when the movement create reused an `Idempotency-Key` for a DIFFERENT
+ * request. The caller owns the key, so this is a caller mistake to surface, not
+ * a reason to mint a new key and duplicate the movement (DEC-024).
+ */
+export function isCashIdempotencyKeyConflict(error: Error): boolean {
+  return (
+    error instanceof ApiRequestError && error.message === CASH_IDEMPOTENCY_KEY_CONFLICT_MESSAGE
+  );
 }
 
 /**
