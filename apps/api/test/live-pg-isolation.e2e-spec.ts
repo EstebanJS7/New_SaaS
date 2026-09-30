@@ -10355,11 +10355,12 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
     /**
      * The exact number of `cash_movement` rows this block COMMITS: the six
-     * accepted kinds, the reasonless `INCOME`, the explicit `ADJUSTMENT` and the
-     * inert kind. Every other attempt in the block is rejected and persisted
-     * nothing, which the final zero-residue case proves.
+     * accepted kinds, the reasonless `INCOME`, the explicit `ADJUSTMENT`, the
+     * inert kind and the one idempotency `INCOME` whose retry replays instead of
+     * appending a second row. Every other attempt in the block is rejected and
+     * persisted nothing, which the final zero-residue case proves.
      */
-    const CASH_MOVEMENT_COMMITTED_COUNT = 9;
+    const CASH_MOVEMENT_COMMITTED_COUNT = 10;
 
     /**
      * Stable `409` wire message for a standalone movement against a session that
@@ -10385,16 +10386,22 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     /** Tenant A's own committed OPEN session, the foreign id of the 404 case. */
     let foreignMovementSessionId: string;
 
-    /** One movement create over REAL HTTP, with a pinned request id. */
+    /**
+     * One movement create over REAL HTTP, with a pinned request id and a fresh
+     * `Idempotency-Key` unless a case pins one to exercise the idempotent replay
+     * (the route requires the header).
+     */
     const createMovement = (
       cookie: string,
       body: Record<string, unknown>,
-      requestId: string
+      requestId: string,
+      idempotencyKey: string = randomUUID()
     ): supertest.Test =>
       supertest(serverUrl)
         .post("/cash/movements")
         .set("Cookie", cookie)
         .set("X-Request-Id", requestId)
+        .set("Idempotency-Key", idempotencyKey)
         .send(body);
 
     /**
@@ -11162,6 +11169,47 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(
         await prisma.cashMovement.count({ where: { registerId: movementProbeRegisterId } })
       ).toBe(0);
+    }, 30_000);
+
+    it("requires the Idempotency-Key, replays an identical retry and conflicts on a reused key", async () => {
+      const movementsBefore = await prisma.cashMovement.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const key = randomUUID();
+      const requestId = "live-pg-cash-movement-idempotency";
+      const body = { sessionId: movementSessionId, type: "INCOME", amount: "77.00" };
+
+      // The key is REQUIRED: a movement has no natural state gate a retried
+      // submit could trip, so an absent header is a `400` that persists nothing.
+      await supertest(serverUrl)
+        .post("/cash/movements")
+        .set("Cookie", movementCookie)
+        .set("X-Request-Id", requestId)
+        .send(body)
+        .expect(400);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+
+      const first = await createMovement(movementCookie, body, requestId, key).expect(201);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore + 1);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+
+      // An identical retry with the SAME key replays the stored movement as a
+      // `200` and appends nothing: the PRIMARY KEY is the idempotency guarantee.
+      const replay = await createMovement(movementCookie, body, requestId, key).expect(200);
+      expect(replay.body).toEqual(first.body);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore + 1);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+
+      // The same key with a DIFFERENT body is the stable conflict, persisting
+      // nothing; a fresh key is a new movement.
+      await createMovement(
+        movementCookie,
+        { ...body, type: "DEPOSIT", reason: "aporte" },
+        requestId,
+        key
+      ).expect(409);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore + 1);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
     }, 30_000);
 
     it("stays inert: a movement writes no sale, sale line, stock movement or stock balance row", async () => {

@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Post, Query, Res } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { DomainError } from "@newsaas/shared";
 import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
@@ -82,10 +83,33 @@ export class CashController {
    */
   @Post("movements")
   @RequirePermissions(CASH_PERMISSIONS.createMovement)
-  async createMovement(@Body() body: unknown): Promise<CashMovementResponse> {
+  async createMovement(
+    @Body() body: unknown,
+    @Headers() headers: unknown,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<CashMovementResponse> {
     const input = parseInput(createCashMovementBody, body, "Invalid cash movement create body.");
-    return this.cash.createMovement(input);
+    // The key is read here and REQUIRED by the service AFTER its entitlement,
+    // permission and session guards, so a missing key can never mask a `403` or
+    // the shared session `404` with a `400`. A fresh create is `201` and an
+    // identical replay is `200` with the SAME movement body.
+    const result = await this.cash.createMovement(input, readIdempotencyKey(headers));
+    reply.status(result.replay ? 200 : 201);
+    return result.movement;
   }
+}
+
+/**
+ * Reads the `Idempotency-Key` header as the RAW value. Fastify lower-cases
+ * incoming header names, so the lookup is on `idempotency-key`. The value is
+ * validated and required by the service, after its guards, so a malformed or
+ * absent key cannot turn a `403` or the shared session `404` into a `400`.
+ */
+function readIdempotencyKey(headers: unknown): unknown {
+  if (typeof headers !== "object" || headers === null) {
+    return undefined;
+  }
+  return (headers as Record<string, unknown>)["idempotency-key"];
 }
 
 /** Rejects the whole request with 400 `VALIDATION_FAILED` when invalid. */

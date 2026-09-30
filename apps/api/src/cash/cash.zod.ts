@@ -224,3 +224,17 @@ export const createCashMovementBody = z
   });
 
 export type CreateCashMovementInput = z.infer<typeof createCashMovementBody>;
+
+/**
+ * The `Idempotency-Key` header value required by `POST /cash/movements`
+ * (DEC-024): trimmed, non-empty and bounded to the `idempotency_record.key`
+ * column's 255-character maximum. A movement is an immutable financial ledger
+ * entry with no natural state gate a second submit could trip, so the command
+ * REQUIRES the key: without it a retry after a timeout would append a second
+ * movement and double-count cash.
+ */
+export const cashMovementIdempotencyKey = z
+  .string()
+  .trim()
+  .min(1, "An Idempotency-Key is required.")
+  .max(255, "An Idempotency-Key must be at most 255 characters.");

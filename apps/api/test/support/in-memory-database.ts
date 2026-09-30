@@ -1297,8 +1297,10 @@ export interface IsolationDatabase {
           amount: string | { toString(): string };
           reason?: string | null;
           direction?: CashMovementRow["direction"];
+          id?: string;
         };
       }) => CashMovementRow;
+      findUnique: (args: { where: { id: string } }) => CashMovementRow | null;
       findMany: (args: {
         where: { tenantId: string; registerId?: string; sessionId?: string };
         orderBy?: readonly CashOrderBy[];
@@ -3179,7 +3181,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       create: ({ data }) => {
         const now = new Date();
         const created: CashMovementRow = {
-          id: randomUUID(),
+          id: data.id ?? randomUUID(),
           tenantId: data.tenantId,
           registerId: data.registerId,
           sessionId: data.sessionId,
@@ -3192,6 +3194,7 @@ export function createIsolationDatabase(): IsolationDatabase {
         cashMovementTable.set(created.id, created);
         return created;
       },
+      findUnique: ({ where }) => cashMovementTable.get(where.id) ?? null,
       findMany: ({ where, orderBy }) => {
         const rows = [...cashMovementTable.values()].filter(
           (candidate) =>

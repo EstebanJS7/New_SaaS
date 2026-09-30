@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { createHash } from "node:crypto";
 // Value imports (not `import type`): `PrismaService` is the DI token and
 // `Prisma` provides the exact `Decimal` used to render the fixed-scale
 // projection.
@@ -27,6 +28,7 @@ import {
 import {
   CASH_DTO_SCHEMA_VERSION,
   CASH_MOVEMENT_REASON_REQUIRED_TYPES,
+  cashMovementIdempotencyKey,
   type CreateCashMovementInput,
   type CreateCashRegisterInput,
   type OpenCashSessionInput,
@@ -89,6 +91,79 @@ export const CASH_SESSION_ALREADY_OPEN_MESSAGE = "This cash register already has
  * mask a real session) and never a `400` malformed input.
  */
 export const CASH_SESSION_NOT_OPEN_MESSAGE = "This cash session is not open.";
+
+/**
+ * Stable `409 CONFLICT` message for a retried command whose `Idempotency-Key`
+ * was already used by a DIFFERENT movement request (DEC-024). The key is
+ * tenant-scoped; the same key with the same request replays the stored movement
+ * instead of conflicting.
+ */
+export const CASH_IDEMPOTENCY_KEY_CONFLICT_MESSAGE =
+  "The Idempotency-Key was already used for a different request.";
+
+/**
+ * Stable `400 VALIDATION_FAILED` message for a movement command with no usable
+ * `Idempotency-Key`. The key is required on this route because a movement has no
+ * natural state gate a retried submit could trip.
+ */
+export const CASH_IDEMPOTENCY_KEY_REQUIRED_MESSAGE = "An Idempotency-Key header is required.";
+
+/**
+ * Namespace for the deterministic movement id, so the UUIDs this command mints
+ * can never collide with a `gen_random_uuid()` row or with another purpose.
+ */
+const CASH_MOVEMENT_ID_NAMESPACE = "cash-movement-idempotency";
+
+/**
+ * Deterministic movement UUID derived from `(tenant, namespace, key)` ONLY.
+ * Deriving the id — rather than storing a separate idempotency mapping — makes
+ * the movement's own PRIMARY KEY the idempotency guarantee: a retry with the
+ * same key collides with the row the first attempt wrote, which is a replay when
+ * the stored movement matches the request and a stable `409` when it does not.
+ * The key is tenant-scoped, so the same key in another tenant is a different id.
+ * The version/variant nibbles are the RFC 4122 ones, so PostgreSQL accepts the
+ * value in a `UUID` column.
+ */
+function movementIdempotencyId(tenantId: string, idempotencyKey: string): string {
+  const canonical = JSON.stringify({
+    tenantId,
+    namespace: CASH_MOVEMENT_ID_NAMESPACE,
+    key: idempotencyKey,
+  });
+  const hex = createHash("sha256").update(canonical).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * True when the stored movement IS the request the caller is retrying: the
+ * canonical comparison that separates an idempotent replay from a reused key
+ * carrying a different request (DEC-024). `registerId` is excluded because it is
+ * derived from the session, not supplied.
+ */
+function movementMatchesRequest(
+  prior: CashMovementRow,
+  input: CreateCashMovementInput,
+  amount: string
+): boolean {
+  return (
+    prior.type === input.type &&
+    decimalToScaleString(prior.amount, CASH_MONEY_SCALE) === amount &&
+    prior.reason === (input.reason ?? null) &&
+    prior.direction === (input.direction ?? null) &&
+    prior.sessionId === input.sessionId
+  );
+}
+
+/**
+ * True for the PRIMARY KEY collision of the deterministic movement id: the
+ * concurrent-retry case, where another transaction wrote the same movement
+ * first and this one must replay it rather than fail.
+ */
+function isMovementIdConflict(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002"
+  );
+}
 
 /**
  * Audit action code for the standalone movement command. The repository's
@@ -565,7 +640,10 @@ export class CashService {
    * operation is INERT with respect to Sales, stock and payments: it writes
    * exactly one `cash_movement` row and one audit row, and nothing else.
    */
-  async createMovement(input: CreateCashMovementInput): Promise<CashMovementResponse> {
+  async createMovement(
+    input: CreateCashMovementInput,
+    idempotencyKeyHeader: unknown
+  ): Promise<{ movement: CashMovementResponse; replay: boolean }> {
     const tenantId = await this.assertCashEnabled();
     await this.requirePermission(CASH_PERMISSIONS.createMovement);
     const actorUserProfileId = this.requestContext.requireUserProfileId();
@@ -578,16 +656,46 @@ export class CashService {
     // Exact `Decimal` normalization at the column scale — never a float.
     const amount = decimalToScaleString(input.amount, CASH_MONEY_SCALE);
 
+    // The movement id is DERIVED from the caller's key, so PostgreSQL's PRIMARY
+    // KEY enforces idempotency even under a concurrent double submit: the second
+    // insert collides instead of appending a second immutable movement. It is
+    // assigned inside the transaction because the key is validated there too.
+    let movementId: string | null = null;
+
     try {
       const row = await this.prisma.$transaction(async (tx) => {
         // Tenant-safe resolution: a foreign or unknown session is the shared 404.
         const session = await this.cash.findSessionById(input.sessionId, tx);
+
+        // Required, but validated AFTER the resource resolved, exactly like the
+        // body: a movement has no natural state gate a retried submit could
+        // trip, so the key is mandatory (DEC-024), yet its absence must not turn
+        // the shared session `404` into a `400`.
+        const parsedKey = cashMovementIdempotencyKey.safeParse(idempotencyKeyHeader);
+        if (!parsedKey.success) {
+          throw new DomainError("VALIDATION_FAILED", CASH_IDEMPOTENCY_KEY_REQUIRED_MESSAGE);
+        }
+        movementId = movementIdempotencyId(tenantId, parsedKey.data);
+
+        // A retry is recognized BEFORE the state gate: the original command may
+        // legitimately have closed nothing, and replaying its stored result is
+        // the whole point of the key. A same-key request whose stored movement
+        // differs is a stable conflict (DEC-024).
+        const prior = await this.cash.findMovementById(movementId, tx);
+        if (prior !== null) {
+          if (!movementMatchesRequest(prior, input, amount)) {
+            throw new DomainError("CONFLICT", CASH_IDEMPOTENCY_KEY_CONFLICT_MESSAGE);
+          }
+          return { movement: toCashMovementResponse(prior), replay: true };
+        }
+
         if (session.status !== "OPEN") {
           throw new DomainError("CONFLICT", CASH_SESSION_NOT_OPEN_MESSAGE);
         }
 
         const created = await this.cash.createMovement(
           {
+            id: movementId,
             registerId: session.registerId,
             sessionId: session.id,
             type: input.type,
@@ -613,16 +721,27 @@ export class CashService {
           tx
         );
 
-        return created;
+        return { movement: toCashMovementResponse(created), replay: false };
       });
 
-      return toCashMovementResponse(row);
+      return row;
     } catch (error) {
+      // A CONCURRENT retry lost the PRIMARY KEY race: its movement is the one
+      // the winner wrote, so the loser replays that stored result instead of
+      // surfacing a database error. Anything else propagates unchanged and the
+      // rollback leaves the state untouched.
+      if (movementId !== null && isMovementIdConflict(error)) {
+        const prior = await this.cash.findMovementById(movementId);
+        if (prior !== null) {
+          if (!movementMatchesRequest(prior, input, amount)) {
+            throw new DomainError("CONFLICT", CASH_IDEMPOTENCY_KEY_CONFLICT_MESSAGE);
+          }
+          return { movement: toCashMovementResponse(prior), replay: true };
+        }
+      }
       // The closed-session INSERT trigger refused the row (a session closed
       // between the in-transaction read and the insert): surface the same
       // stable 409 instead of leaking the raw database error as an INTERNAL 500.
-      // Anything else (the shared 404, the 409 pre-check, an audit failure)
-      // propagates unchanged, and the rollback leaves the state untouched.
       if (isCashMovementIntoClosedSession(error)) {
         throw new DomainError("CONFLICT", CASH_SESSION_NOT_OPEN_MESSAGE);
       }

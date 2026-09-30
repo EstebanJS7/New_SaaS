@@ -82,8 +82,11 @@ implemented EPIC-13 behavior.
   Verification passed locally: database suite (17 files / 361 tests),
   `db:deploy` (27 migrations), a live `db:seed` reporting 52 permissions, API
   suite (75 files / 1069 tests), API live-PostgreSQL suite (109 tests),
-  typecheck, lint, `format-check` and `git diff --check`. The Story stays
-  `review`, not `done`, until a CI receipt exists.
+  typecheck, lint, `format-check` and `git diff --check`, plus the idempotency
+  correction the native review required: the command now takes a required
+  `Idempotency-Key`, replays an identical retry and conflicts on a reused key
+  with a different request, which moved the suites to 1072 API tests and 110
+  live tests. The Story stays `review`, not `done`, until a CI receipt exists.
 
 ## Scope
 
