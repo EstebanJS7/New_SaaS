@@ -180,11 +180,15 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /sales/:id/cancel",
   "POST /sales/:id/complete",
   // EPIC-12 POS-002 — cash register/session foundation (no PATCH, no DELETE,
-  // no close: EPIC-13 owns close and the movement write belongs to POS-003)
+  // no close: EPIC-13 CASH-003 owns close and POS-003 owns the sale-generated
+  // SALE movement)
   "GET /cash/registers",
   "POST /cash/registers",
   "GET /cash/sessions",
   "POST /cash/sessions",
+  // EPIC-13 CASH-002 — standalone cash movement command (six non-sale kinds;
+  // SALE is rejected by the request contract)
+  "POST /cash/movements",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -374,18 +378,21 @@ const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-12 POS-002 cash surface. Both reads MUST declare exactly `cash.read`, and
- * the register create / session open MUST declare exactly their own write key; a
- * route decorated with another cash tier (or none) fails by name, which the
- * permission-less 403 sweep cannot catch. There is deliberately NO `PATCH`, NO
- * `DELETE` and NO close route: session close is EPIC-13 surface (DEC-020), and
- * the already-seeded `cash.session.close` key is consumed by no route here.
+ * EPIC-12 POS-002 cash surface, extended by EPIC-13 CASH-002. Both reads MUST
+ * declare exactly `cash.read`, and the register create / session open / movement
+ * create MUST declare exactly their own write key; a route decorated with
+ * another cash tier (or none) fails by name, which the permission-less 403 sweep
+ * cannot catch. There is deliberately NO `PATCH`, NO `DELETE` and NO close route:
+ * session close is EPIC-13 CASH-003 surface (DEC-020), and the already-seeded
+ * `cash.session.close` key is consumed by no route here. The `SALE` movement kind
+ * is never accepted by the movement command; POS-003 owns it.
  */
 const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /cash/registers": CASH_PERMISSIONS.read,
   "POST /cash/registers": CASH_PERMISSIONS.createRegister,
   "GET /cash/sessions": CASH_PERMISSIONS.read,
   "POST /cash/sessions": CASH_PERMISSIONS.openSession,
+  "POST /cash/movements": CASH_PERMISSIONS.createMovement,
 };
 
 describe("route-contract probe (deny-by-default)", () => {

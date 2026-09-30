@@ -90,3 +90,137 @@ export const cashSessionListQuery = z
   .strict();
 
 export type CashSessionListFiltersInput = z.infer<typeof cashSessionListQuery>;
+
+/**
+ * Movement kinds the standalone command accepts (PRD §20, DEC-020/DEC-033).
+ * `SALE` is deliberately ABSENT: a `SALE` movement is written only by sale
+ * completion (POS-003), so a caller cannot forge one through this command. The
+ * tuple mirrors the `cash_movement_type` enum minus `SALE`.
+ */
+export const CASH_MOVEMENT_COMMAND_TYPES = [
+  "REFUND",
+  "INCOME",
+  "EXPENSE",
+  "WITHDRAWAL",
+  "DEPOSIT",
+  "ADJUSTMENT",
+] as const;
+
+/**
+ * The command kinds whose reason is MANDATORY (DEC-032). `INCOME` is the only
+ * accepted kind that may omit a reason, mirroring the `cash_movement_reason_required`
+ * database CHECK and the service's defense-in-depth re-check.
+ */
+export const CASH_MOVEMENT_REASON_REQUIRED_TYPES = [
+  "REFUND",
+  "EXPENSE",
+  "WITHDRAWAL",
+  "DEPOSIT",
+  "ADJUSTMENT",
+] as const;
+
+/**
+ * Explicit `ADJUSTMENT` sign (DEC-030), pinned to the `cash_movement_direction`
+ * enum. Required EXACTLY for `ADJUSTMENT` and forbidden for every other kind.
+ */
+export const CASH_MOVEMENT_DIRECTION_VALUES = ["INCREASE", "DECREASE"] as const;
+
+/**
+ * The `cash_movement.reason` column upper bound (`VARCHAR(500)` plus the
+ * migration CHECK). The DTO mirrors the column exactly so Node and PostgreSQL
+ * reject the same reasons.
+ */
+export const CASH_MOVEMENT_REASON_MAX_LENGTH = 500;
+
+/**
+ * Exact POSITIVE money at the `Decimal(14, 2)` column scale: up to 12 integer
+ * digits and at most 2 decimals, with NO sign. The `amount <> 0` database CHECK
+ * and DEC-030's positive-amount convention are mirrored here: the literal zero
+ * is rejected by {@link isZeroMovementAmount} and a negative or non-decimal
+ * literal by this pattern, both with the stable `400 VALIDATION_FAILED` BEFORE
+ * any write reaches the database.
+ */
+export const CASH_MOVEMENT_AMOUNT_PATTERN = /^\d{1,12}(\.\d{1,2})?$/;
+
+/** True when the literal is arithmetically zero in any accepted spelling (`"0"`, `"0.00"`). */
+function isZeroMovementAmount(value: string): boolean {
+  return /^0*(\.0*)?$/.test(value);
+}
+
+const cashMovementAmount = z
+  .string()
+  .regex(
+    CASH_MOVEMENT_AMOUNT_PATTERN,
+    "The movement amount must be an exact positive decimal string (max 14 digits, 2 decimals)."
+  )
+  .refine(
+    (value) => !isZeroMovementAmount(value),
+    "The movement amount must be greater than zero."
+  );
+
+/**
+ * Movement reason: trimmed, non-empty and bounded to the column's 500-character
+ * maximum. The trim runs before the length checks, so a whitespace-only reason
+ * is rejected as empty rather than stored.
+ */
+const cashMovementReason = z
+  .string()
+  .trim()
+  .min(1, "A cash movement reason is required.")
+  .max(
+    CASH_MOVEMENT_REASON_MAX_LENGTH,
+    `A cash movement reason must be at most ${CASH_MOVEMENT_REASON_MAX_LENGTH} characters.`
+  );
+
+/**
+ * Create payload for `POST /cash/movements`. `.strict()` rejects unknown keys,
+ * explicitly including `tenantId` (resolved server-side from the request
+ * context, never caller authority), `registerId` (derived from the resolved
+ * session, never supplied), `id` and `createdAt` (server-owned).
+ *
+ * The cross-field rules that a per-field schema cannot express live in the
+ * `superRefine`: `reason` is required for every kind but `INCOME` (DEC-032) and
+ * `direction` is required EXACTLY for `ADJUSTMENT` (DEC-030). `type` is a closed
+ * enum that excludes `SALE`, so a sale-generated movement cannot be forged here
+ * (DEC-020/DEC-033). These two rules are re-asserted in the service as defense
+ * in depth, because the in-memory test boundary cannot enforce the database
+ * CHECK constraints that back them.
+ */
+export const createCashMovementBody = z
+  .object({
+    sessionId: z.string().uuid(),
+    type: z.enum(CASH_MOVEMENT_COMMAND_TYPES),
+    amount: cashMovementAmount,
+    reason: cashMovementReason.optional(),
+    direction: z.enum(CASH_MOVEMENT_DIRECTION_VALUES).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const reasonRequired = (CASH_MOVEMENT_REASON_REQUIRED_TYPES as readonly string[]).includes(
+      value.type
+    );
+    if (reasonRequired && value.reason === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason"],
+        message: "A cash movement reason is required for this movement kind.",
+      });
+    }
+    if (value.type === "ADJUSTMENT") {
+      if (value.direction === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["direction"],
+          message: "An adjustment direction is required.",
+        });
+      }
+    } else if (value.direction !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["direction"],
+        message: "A direction is only allowed for an ADJUSTMENT movement.",
+      });
+    }
+  });
+
+export type CreateCashMovementInput = z.infer<typeof createCashMovementBody>;

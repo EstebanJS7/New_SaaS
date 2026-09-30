@@ -141,20 +141,33 @@ export interface CashMembershipLookup {
 
 /**
  * Cash movement kind values pinned by schema enum `cash_movement_type`. EPIC-12
- * POS-002 ships the standalone `SALE`; EPIC-13 appends the six remaining PRD §20
- * kinds additively (DEC-020). Kept as a local literal union so this boundary
- * stays decoupled from the generated client namespace.
+ * POS-002 ships the standalone `SALE`; EPIC-13 CASH-002 appends the six
+ * remaining PRD §20 kinds the standalone command can create (DEC-020). Kept as
+ * a local literal union so this boundary stays decoupled from the generated
+ * client namespace.
  */
-export type CashMovementTypeValue = "SALE";
+export type CashMovementTypeValue =
+  "SALE" | "REFUND" | "INCOME" | "EXPENSE" | "WITHDRAWAL" | "DEPOSIT" | "ADJUSTMENT";
+
+/**
+ * Explicit sign of an `ADJUSTMENT` pinned by schema enum
+ * `cash_movement_direction` (DEC-030). Required exactly for `ADJUSTMENT` and
+ * `null` for every type-owned kind, a rule the migration's exclusive
+ * `cash_movement_direction_required` CHECK enforces.
+ */
+export type CashMovementDirectionValue = "INCREASE" | "DECREASE";
 
 /**
  * Immutable cash movement row (PRD §20, DEC-020). `amount` is an exact
  * `Decimal(14, 2)` — `Prisma.Decimal` at runtime, a plain exact string in the
- * in-memory fake — and is NEVER coerced to a JavaScript float. The `reason` is
- * optional free text; the `SALE` kind is self-describing and ships none.
- * Nothing in POS-002 writes one: POS-003 appends the `SALE` movement inside the
- * CompleteSale transaction. There is deliberately no `updatedAt` — the row is
- * append-only by design.
+ * in-memory fake — and is NEVER coerced to a JavaScript float; it stays
+ * POSITIVE for every kind because the type owns the sign (DEC-030). The
+ * `reason` is optional free text (`SALE` and `INCOME` may omit it; every other
+ * kind requires it per DEC-032). `direction` is non-null exactly for an
+ * `ADJUSTMENT`. Nothing in POS-002 writes one: POS-003 appends the `SALE`
+ * movement inside the CompleteSale transaction and CASH-002 appends the six
+ * standalone kinds through {@link CashRepository.createMovement}. There is
+ * deliberately no `updatedAt` — the row is append-only by design.
  */
 export interface CashMovementRow {
   id: string;
@@ -162,6 +175,7 @@ export interface CashMovementRow {
   registerId: string;
   sessionId: string;
   type: CashMovementTypeValue;
+  direction: CashMovementDirectionValue | null;
   amount: Prisma.Decimal | string;
   reason: string | null;
   createdAt: Date;
@@ -172,18 +186,39 @@ export interface CashMovementRow {
  * deliberately NO `tenantId` and NO `type` field: tenant identity comes from the
  * request context and the kind is owned by the command (`SALE`), not by a
  * caller argument. The session and register are the server-resolved pair.
+ * `reason` and `direction` are optional here and default to `null` on the row.
  */
 export interface CashMovementCreateData {
   readonly registerId: string;
   readonly sessionId: string;
   readonly amount: Prisma.Decimal | string;
+  readonly reason?: string | null;
+  readonly direction?: CashMovementDirectionValue | null;
+}
+
+/**
+ * Write payload for {@link CashRepository.createMovement}, the EPIC-13 CASH-002
+ * standalone command. There is deliberately NO `tenantId` field (resolved from
+ * the request context): the kind, the amount, the required/optional reason and
+ * the `ADJUSTMENT`-only direction are all already validated by the request
+ * contract before they reach this seam. The register and session are the
+ * server-resolved in-tenant pair, so a caller argument cannot re-scope them.
+ */
+export interface StandaloneCashMovementCreateData {
+  readonly registerId: string;
+  readonly sessionId: string;
+  readonly type: CashMovementTypeValue;
+  readonly amount: Prisma.Decimal | string;
+  readonly reason: string | null;
+  readonly direction: CashMovementDirectionValue | null;
 }
 
 /**
  * Structural contract for the movement delegate. `create` is the ONLY mutation
  * this boundary exposes: a movement is append-only and immutable (no update, no
- * delete), matching the schema's immutability triggers. EPIC-12 writes no row
- * through it; POS-003 appends the `SALE` movement inside its transaction.
+ * delete), matching the schema's immutability triggers. POS-003 appends the
+ * `SALE` movement inside its transaction and CASH-002 appends the six standalone
+ * kinds through {@link CashRepository.createMovement}.
  */
 export interface CashMovementDelegate {
   create: (args: {
@@ -253,10 +288,11 @@ export const CASH_MEMBERSHIP_NOT_RESOLVED_MESSAGE =
  * caller.
  *
  * There is deliberately NO delete method and no status update anywhere on this
- * repository: a session close is EPIC-13 surface. The one movement write is
- * {@link createSaleMovement}, the append-only `SALE` row POS-003 co-commits
- * inside the CompleteSale transaction; EPIC-13 owns the six remaining kinds.
- * No method takes a caller-supplied tenant id.
+ * repository: a session close is EPIC-13 surface. The movement writes are
+ * {@link createSaleMovement} (the append-only `SALE` row POS-003 co-commits
+ * inside the CompleteSale transaction) and {@link createMovement} (the six
+ * standalone kinds CASH-002 co-commits with its audit row). No method takes a
+ * caller-supplied tenant id.
  */
 @Injectable()
 export class CashRepository {
@@ -442,6 +478,35 @@ export class CashRepository {
         sessionId: data.sessionId,
         type: "SALE",
         amount: data.amount,
+        tenantId,
+      },
+    });
+  }
+
+  /**
+   * Appends one immutable standalone cash movement in the CALLER'S active tenant
+   * (EPIC-13 CASH-002). `tenantId` is resolved from the request context and
+   * placed LAST in the payload, so even a rogue property on `data` cannot
+   * re-scope the insert. The kind, the amount, the reason and the
+   * `ADJUSTMENT`-only direction are the already-validated command values; the
+   * register and session are the server-resolved in-tenant pair, so a caller
+   * argument can neither re-scope nor smuggle a different drawer. The database's
+   * reason CHECK and exclusive `direction` CHECK remain the backstops.
+   */
+  async createMovement(
+    data: StandaloneCashMovementCreateData,
+    tx?: CashTx
+  ): Promise<CashMovementRow> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashMovement.create({
+      data: {
+        registerId: data.registerId,
+        sessionId: data.sessionId,
+        type: data.type,
+        amount: data.amount,
+        reason: data.reason,
+        direction: data.direction,
         tenantId,
       },
     });

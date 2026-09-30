@@ -2,10 +2,19 @@ import { Body, Controller, Get, Post, Query } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
-import type { CashRegisterResponse, CashSessionResponse } from "./cash.dto.js";
+import type {
+  CashMovementResponse,
+  CashRegisterResponse,
+  CashSessionResponse,
+} from "./cash.dto.js";
 import { CASH_PERMISSIONS } from "./cash.permissions.js";
 import { CashService } from "./cash.service.js";
-import { cashSessionListQuery, createCashRegisterBody, openCashSessionBody } from "./cash.zod.js";
+import {
+  cashSessionListQuery,
+  createCashMovementBody,
+  createCashRegisterBody,
+  openCashSessionBody,
+} from "./cash.zod.js";
 
 /**
  * Private tenant-scoped cash surface (EPIC-12 POS-002).
@@ -16,12 +25,12 @@ import { cashSessionListQuery, createCashRegisterBody, openCashSessionBody } fro
  * in depth. Input is Zod-validated and responses are allowlisted INTERNAL DTOs —
  * no Prisma model crosses the boundary.
  *
- * The surface is EXACTLY four routes: two reads, the minimal register create
- * and the session open. There is deliberately NO `PATCH`, NO `DELETE` and NO
- * close route anywhere: session close, the expected/counted difference, the six
- * remaining movement kinds, cash reversals and the full cash UI belong to
- * EPIC-13 (DEC-020), and nothing here writes a `cash_movement` row (POS-003
- * owns the CompleteSale movement write).
+ * The surface is EXACTLY five routes: two reads, the minimal register create,
+ * the session open and the EPIC-13 standalone movement command. There is
+ * deliberately NO `PATCH`, NO `DELETE` and NO close route anywhere: session
+ * close, the expected/counted difference, cash reversals and the full cash UI
+ * belong to EPIC-13/EPIC-14 (DEC-020). The `SALE` movement kind is never
+ * accepted here — POS-003 owns it inside the CompleteSale transaction.
  */
 @Controller("cash")
 export class CashController {
@@ -63,6 +72,19 @@ export class CashController {
   async openSession(@Body() body: unknown): Promise<CashSessionResponse> {
     const input = parseInput(openCashSessionBody, body, "Invalid cash session open body.");
     return this.cash.openSession(input);
+  }
+
+  /**
+   * Creates one immutable standalone cash movement against an in-tenant `OPEN`
+   * session; the movement and its audit row co-commit. The `registerId` is
+   * derived server-side from the resolved session, the amount is stored
+   * positive and the move is limited to the six non-sale kinds (DEC-020/030/032).
+   */
+  @Post("movements")
+  @RequirePermissions(CASH_PERMISSIONS.createMovement)
+  async createMovement(@Body() body: unknown): Promise<CashMovementResponse> {
+    const input = parseInput(createCashMovementBody, body, "Invalid cash movement create body.");
+    return this.cash.createMovement(input);
   }
 }
 

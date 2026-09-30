@@ -8,10 +8,17 @@ import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.j
 import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
-import type { CashRegisterResponse, CashSessionResponse } from "./cash.dto.js";
+import type {
+  CashMovementResponse,
+  CashRegisterResponse,
+  CashSessionResponse,
+} from "./cash.dto.js";
 import { CASH_PERMISSIONS, type CashPermission } from "./cash.permissions.js";
 import {
   CashRepository,
+  type CashMovementDirectionValue,
+  type CashMovementRow,
+  type CashMovementTypeValue,
   type CashRegisterRow,
   type CashSessionListFilters,
   type CashSessionRow,
@@ -19,6 +26,8 @@ import {
 } from "./cash.repository.js";
 import {
   CASH_DTO_SCHEMA_VERSION,
+  CASH_MOVEMENT_REASON_REQUIRED_TYPES,
+  type CreateCashMovementInput,
   type CreateCashRegisterInput,
   type OpenCashSessionInput,
 } from "./cash.zod.js";
@@ -26,10 +35,10 @@ import {
 /**
  * Everything the audited cash mutation closure needs from its transaction
  * handle. Declared structurally (not as `Prisma.TransactionClient`) so the real
- * client and the shared in-memory boundary both satisfy it: the register and
- * session delegates reach the tenant-safe repository seam and `auditLog` the
- * append-only {@link AuditWriter}, so the cash change and its audit row commit
- * atomically.
+ * client and the shared in-memory boundary both satisfy it: the register,
+ * session and movement delegates reach the tenant-safe repository seam and
+ * `auditLog` the append-only {@link AuditWriter}, so the cash change and its
+ * audit row commit atomically.
  */
 export type CashWriteTx = CashTx & { auditLog: AuditAppendTx["auditLog"] };
 
@@ -38,7 +47,7 @@ export interface CashPrisma {
 }
 
 /**
- * Audit action codes for the two cash mutations. The repository's established
+ * Audit action codes for the three cash mutations. The repository's established
  * shape is `<singular_entity_snake>.<past_verb>`, so `targetType` matches the
  * entity the row was written for. Reads are never audited.
  */
@@ -71,6 +80,70 @@ export const CASH_REGISTER_NAME_CONFLICT_MESSAGE =
  * by application convention.
  */
 export const CASH_SESSION_ALREADY_OPEN_MESSAGE = "This cash register already has an open session.";
+
+/**
+ * Stable `409 CONFLICT` message for a standalone movement targeting a session
+ * that is not `OPEN`. The request is well formed and the session exists IN the
+ * caller's tenant — its own lifecycle forbids the command, so this is `409` (the
+ * scheduling/appointment illegal-state convention), never a `404` (which would
+ * mask a real session) and never a `400` malformed input.
+ */
+export const CASH_SESSION_NOT_OPEN_MESSAGE = "This cash session is not open.";
+
+/**
+ * Audit action code for the standalone movement command. The repository's
+ * established shape is `<singular_entity_snake>.<past_verb>`, so `targetType`
+ * matches the ledger entity the row was written for.
+ */
+export const CASH_MOVEMENT_CREATED_ACTION = "cash.movement.created";
+export const CASH_MOVEMENT_TARGET_TYPE = "cash_movement";
+
+/**
+ * Exact trigger function/constraint behind the closed-session INSERT guard:
+ * `cash_movement_no_insert_into_closed_session` in the
+ * `20260930000001_cash_data_foundation` migration. It raises SQLSTATE
+ * `restrict_violation` (`23001`) with the message below.
+ */
+const CASH_MOVEMENT_CLOSED_SESSION_FUNCTION = "cash_movement_no_insert_into_closed_session";
+const CASH_MOVEMENT_CLOSED_SESSION_SQLSTATE = "23001";
+const CASH_MOVEMENT_CLOSED_SESSION_DETAIL =
+  "a cash movement cannot be inserted into a closed session";
+
+/**
+ * Strings Prisma can surface for a server-side rejection, checked shape-agnostically:
+ * the client-wrapped `code`, the wrapper `message`, and the server's SQLSTATE
+ * and message carried in `meta`. Mirrors the unique-target matcher's tolerance
+ * for provider/engine-dependent error shapes.
+ */
+function closedSessionTriggerSignals(error: unknown): string[] {
+  if (typeof error !== "object" || error === null) {
+    return [];
+  }
+  const candidate = error as {
+    code?: unknown;
+    message?: unknown;
+    meta?: { code?: unknown; message?: unknown };
+  };
+  return [candidate.code, candidate.message, candidate.meta?.code, candidate.meta?.message].filter(
+    (signal): signal is string => typeof signal === "string"
+  );
+}
+
+/**
+ * True only for the closed-session INSERT trigger rejection, so the stable `409`
+ * is surfaced instead of leaking the raw database error as an INTERNAL `500`.
+ * The service pre-checks the session status inside the transaction; this
+ * translation is the CONCURRENCY backstop for a session that closes between the
+ * read and the insert, when only PostgreSQL can refuse the row.
+ */
+function isCashMovementIntoClosedSession(error: unknown): boolean {
+  return closedSessionTriggerSignals(error).some(
+    (signal) =>
+      signal.includes(CASH_MOVEMENT_CLOSED_SESSION_FUNCTION) ||
+      signal.includes(CASH_MOVEMENT_CLOSED_SESSION_SQLSTATE) ||
+      signal.includes(CASH_MOVEMENT_CLOSED_SESSION_DETAIL)
+  );
+}
 
 /**
  * Exact unique index behind the per-tenant register name rule:
@@ -222,8 +295,78 @@ function toCashSessionResponse(row: CashSessionRow): CashSessionResponse {
 }
 
 /**
- * Cash application boundary (EPIC-12 POS-002): the tenant-scoped read surface
- * and the two audited mutations (register create, session open).
+ * Maps one immutable movement row to its allowlisted INTERNAL DTO. The `amount`
+ * is projected at the column scale and keeps its POSITIVE sign (the type owns
+ * the sign, DEC-030); `direction` is `null` for every type-owned kind.
+ */
+function toCashMovementResponse(row: CashMovementRow): CashMovementResponse {
+  return {
+    id: row.id,
+    registerId: row.registerId,
+    sessionId: row.sessionId,
+    type: row.type as CashMovementResponse["type"],
+    direction: row.direction,
+    amount: decimalToScaleString(row.amount, CASH_MONEY_SCALE),
+    reason: row.reason,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Audit field NAMES for a movement create, in payload order. `changedFields`
+ * carries NAMES only: the session id, the amount and the operator's reason text
+ * are INTERNAL and never enter the trail. `registerId` is absent because it is
+ * derived server-side from the resolved session, not a supplied field.
+ */
+function cashMovementChangedFields(input: CreateCashMovementInput): string[] {
+  const fields = ["sessionId", "type", "amount"];
+  if (input.reason !== undefined) {
+    fields.push("reason");
+  }
+  if (input.direction !== undefined) {
+    fields.push("direction");
+  }
+  return fields;
+}
+
+/**
+ * The command's reason rule, re-asserted in the service (DEC-032): every kind
+ * but `INCOME` requires a non-blank reason. The request contract and the
+ * database CHECK already enforce it; this guard keeps a direct service caller
+ * from bypassing both.
+ */
+function assertMovementReason(type: CashMovementTypeValue, reason: string | null): void {
+  const required = (CASH_MOVEMENT_REASON_REQUIRED_TYPES as readonly string[]).includes(type);
+  if (required && (reason === null || reason.trim().length === 0)) {
+    throw new DomainError("VALIDATION_FAILED", "A cash movement reason is required.");
+  }
+}
+
+/**
+ * The command's direction rule, re-asserted in the service (DEC-030): a
+ * direction is required EXACTLY for `ADJUSTMENT` and forbidden for every other
+ * kind. The request contract and the exclusive database CHECK already enforce
+ * it; this guard keeps a direct service caller from bypassing both.
+ */
+function assertMovementDirection(
+  type: CashMovementTypeValue,
+  direction: CashMovementDirectionValue | null
+): void {
+  if (type === "ADJUSTMENT" && direction === null) {
+    throw new DomainError("VALIDATION_FAILED", "An adjustment direction is required.");
+  }
+  if (type !== "ADJUSTMENT" && direction !== null) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      "A direction is only allowed for an ADJUSTMENT movement."
+    );
+  }
+}
+
+/**
+ * Cash application boundary (EPIC-12 POS-002, extended by EPIC-13 CASH-002): the
+ * tenant-scoped read surface and the three audited mutations (register create,
+ * session open, standalone movement create).
  *
  * - The `cash` entitlement is asserted FIRST (`403 FEATURE_NOT_ENTITLED`) and
  *   the route-level permission is RE-ASSERTED SECOND (`403 FORBIDDEN`), on EVERY
@@ -244,10 +387,11 @@ function toCashSessionResponse(row: CashSessionRow): CashSessionResponse {
  * - Every mutation appends exactly ONE audit row through {@link AuditWriter},
  *   INSIDE the same transaction as the cash change, carrying stable ids and field
  *   NAMES only. Reads are never audited. No cash event is emitted.
- * - This boundary is INERT with respect to the ledger and the rest of the
- *   system: nothing here writes a `cash_movement` row, closes a session,
- *   writes a sale, a payment or a stock movement, changes a balance or creates
- *   an invoice (POS-003 owns the movement write, EPIC-13 owns close).
+ * - This boundary is INERT with respect to the rest of the system: a movement
+ *   create writes exactly one `cash_movement` row and one audit row, and nothing
+ *   else — no session close, no sale, no payment, no stock movement, no balance
+ *   change and no invoice (POS-003 owns the sale-generated `SALE` movement,
+ *   CASH-003 owns close).
  * - There is NO delete operation, NO `PATCH` and NO status transition anywhere on
  *   this boundary.
  */
@@ -393,6 +537,94 @@ export class CashService {
       // the state untouched.
       if (isCashSessionAlreadyOpen(error)) {
         throw new DomainError("CONFLICT", CASH_SESSION_ALREADY_OPEN_MESSAGE);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Creates one immutable standalone cash movement (EPIC-13 CASH-002) and
+   * co-commits its single audit row.
+   *
+   * The session is resolved IN-TENANT inside the transaction BEFORE any write,
+   * so a foreign or unknown `sessionId` collapses to the shared session `404`
+   * and the rollback leaves no movement and no audit row behind — the same
+   * byte-equivalent masking the sibling session-open route applies to a missing
+   * register. The `registerId` is derived from the resolved session row and is
+   * NEVER read from the request, so the caller cannot attribute cash to a
+   * different drawer.
+   *
+   * The reason rule (DEC-032) and the `ADJUSTMENT`-only direction rule
+   * (DEC-030) are re-asserted here as defense in depth because the in-memory
+   * test boundary cannot enforce the database CHECKs that back them. A session
+   * that is not `OPEN` is the stable `409 CONFLICT`, and the database's
+   * closed-session INSERT trigger is translated to the same `409` so a session
+   * that closes mid-command cannot leak a raw database error as a `500`.
+   *
+   * The movement is created POSITIVE — the type owns the sign — and the whole
+   * operation is INERT with respect to Sales, stock and payments: it writes
+   * exactly one `cash_movement` row and one audit row, and nothing else.
+   */
+  async createMovement(input: CreateCashMovementInput): Promise<CashMovementResponse> {
+    const tenantId = await this.assertCashEnabled();
+    await this.requirePermission(CASH_PERMISSIONS.createMovement);
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+
+    const reason = input.reason ?? null;
+    const direction = input.direction ?? null;
+    assertMovementReason(input.type, reason);
+    assertMovementDirection(input.type, direction);
+
+    // Exact `Decimal` normalization at the column scale — never a float.
+    const amount = decimalToScaleString(input.amount, CASH_MONEY_SCALE);
+
+    try {
+      const row = await this.prisma.$transaction(async (tx) => {
+        // Tenant-safe resolution: a foreign or unknown session is the shared 404.
+        const session = await this.cash.findSessionById(input.sessionId, tx);
+        if (session.status !== "OPEN") {
+          throw new DomainError("CONFLICT", CASH_SESSION_NOT_OPEN_MESSAGE);
+        }
+
+        const created = await this.cash.createMovement(
+          {
+            registerId: session.registerId,
+            sessionId: session.id,
+            type: input.type,
+            amount,
+            reason,
+            direction,
+          },
+          tx
+        );
+
+        await this.audit.append(
+          {
+            action: CASH_MOVEMENT_CREATED_ACTION,
+            tenantId,
+            actorUserProfileId,
+            targetType: CASH_MOVEMENT_TARGET_TYPE,
+            targetId: created.id,
+            metadata: {
+              schemaVersion: CASH_DTO_SCHEMA_VERSION,
+              changedFields: cashMovementChangedFields(input),
+            },
+          },
+          tx
+        );
+
+        return created;
+      });
+
+      return toCashMovementResponse(row);
+    } catch (error) {
+      // The closed-session INSERT trigger refused the row (a session closed
+      // between the in-transaction read and the insert): surface the same
+      // stable 409 instead of leaking the raw database error as an INTERNAL 500.
+      // Anything else (the shared 404, the 409 pre-check, an audit failure)
+      // propagates unchanged, and the rollback leaves the state untouched.
+      if (isCashMovementIntoClosedSession(error)) {
+        throw new DomainError("CONFLICT", CASH_SESSION_NOT_OPEN_MESSAGE);
       }
       throw error;
     }

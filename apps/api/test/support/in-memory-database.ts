@@ -586,17 +586,22 @@ export interface CashSessionRow {
 }
 
 /**
- * Immutable cash movement row (EPIC-12 POS-002). The table is MODELLED so the
- * inertness probe can diff it, but nothing in EPIC-12 writes one: POS-003
- * appends the `SALE` movement inside the CompleteSale transaction and EPIC-13
- * owns the six remaining kinds.
+ * Immutable cash movement row as the in-memory boundary stores it (EPIC-12
+ * POS-002, extended by EPIC-13 CASH-002). The table is MODELLED so the inertness
+ * probe can diff it: POS-003 appends the `SALE` movement inside the CompleteSale
+ * transaction and the CASH-002 command appends the six standalone kinds.
+ * `direction` is non-null exactly for an `ADJUSTMENT` — the fake stores the
+ * value it is given and, like every other CHECK constraint, does NOT enforce the
+ * database's exclusive `cash_movement_direction_required` rule, which is why the
+ * request contract and the service re-assert it.
  */
 export interface CashMovementRow {
   id: string;
   tenantId: string;
   registerId: string;
   sessionId: string;
-  type: "SALE";
+  type: "SALE" | "REFUND" | "INCOME" | "EXPENSE" | "WITHDRAWAL" | "DEPOSIT" | "ADJUSTMENT";
+  direction: "INCREASE" | "DECREASE" | null;
   amount: string;
   reason: string | null;
   createdAt: Date;
@@ -1278,8 +1283,9 @@ export interface IsolationDatabase {
     };
     /**
      * Movement append/read, mirroring the real delegate so the inertness probe
-     * can diff the table. NOTHING in EPIC-12 calls `create`: POS-003 writes the
-     * `SALE` movement inside the CompleteSale transaction.
+     * can diff the table. POS-003 writes the `SALE` movement inside the
+     * CompleteSale transaction and the CASH-002 command appends the six
+     * standalone kinds.
      */
     cashMovement: {
       create: (args: {
@@ -1290,6 +1296,7 @@ export interface IsolationDatabase {
           type: CashMovementRow["type"];
           amount: string | { toString(): string };
           reason?: string | null;
+          direction?: CashMovementRow["direction"];
         };
       }) => CashMovementRow;
       findMany: (args: {
@@ -3177,6 +3184,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           registerId: data.registerId,
           sessionId: data.sessionId,
           type: data.type,
+          direction: data.direction ?? null,
           amount: toDecimalString(data.amount),
           reason: data.reason ?? null,
           createdAt: now,
