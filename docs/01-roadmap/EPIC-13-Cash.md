@@ -82,8 +82,15 @@ implemented EPIC-13 behavior.
   Verification passed locally: database suite (17 files / 361 tests),
   `db:deploy` (27 migrations), a live `db:seed` reporting 52 permissions, API
   suite (75 files / 1069 tests), API live-PostgreSQL suite (109 tests),
-  typecheck, lint, `format-check` and `git diff --check`. The Story stays
-  `review`, not `done`, until a CI receipt exists.
+  typecheck, lint, `format-check` and `git diff --check`. The native high-tier
+  review of the CASH-002 range then raised one deterministic CRITICAL finding:
+  the new command accepted no idempotency key, so a retry could double-count
+  cash. The bounded correction makes the route REQUIRE the `Idempotency-Key` and
+  derive the movement id from `(tenant, key)`, so the PRIMARY KEY is the
+  guarantee — an identical replay returns `200`, a reused key with a different
+  request returns the stable `409` — with no schema change. Suites moved to 1071
+  API tests and 110 live tests. The Story stays `review`, not `done`, until a CI
+  receipt exists.
 
 ## Scope
 
@@ -172,6 +179,10 @@ planned evidence that will close it.
 - [x] Accepted movements are immutable and audited; rejected validation,
       permission, capability and closed-session attempts persist nothing.
       Evidence: the audit and no-residue cases of both suites.
+- [x] The command is idempotent: a required `Idempotency-Key`, an identical
+      retry replayed as a `200`, and a stable `409` for a reused key with a
+      different request ([[DEC-024]]). Evidence: the integration case and the
+      live replay case.
 
 ### CASH-003 — Cash session close
 

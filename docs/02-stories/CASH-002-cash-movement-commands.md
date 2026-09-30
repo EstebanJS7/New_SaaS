@@ -85,6 +85,11 @@ link to Sales or Payments.
 - [x] Accepted movements are immutable and write exactly one audit row with no
       CONFIDENTIAL/RESTRICTED payload logging. Evidence: the live audit
       assertion over `cash.movement.created` carrying field NAMES only.
+- [x] The command is idempotent under the [[DEC-024]] rule: the
+      `Idempotency-Key` is required, an identical retry replays the stored
+      movement as a `200` and appends nothing, and the same key with a different
+      request is a stable `409`. Evidence: the replay, conflict and missing-key
+      case of `cash.integration.test.ts` plus the live replay case.
 - [x] Tenant isolation is enforced when applicable. Evidence: the
       byte-equivalent foreign/unknown session `404` case over real HTTP.
 - [x] Backend authorization is enforced when applicable. Evidence: the
@@ -110,16 +115,17 @@ link to Sales or Payments.
 
 ### Added
 
-| Route                  | Permission             | Contract                                                                                                                                                                                                                                                                                     |
-| ---------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /cash/movements` | `cash.movement.create` | Create one standalone non-sale movement (`201`). The body accepts `sessionId`, `type` (the six non-sale kinds), a positive `amount`, an optional `reason` and an ADJUSTMENT-only `direction`; the register is derived server-side and the response is an allowlisted DTO with no `tenantId`. |
+| Route                  | Permission             | Contract                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /cash/movements` | `cash.movement.create` | Create one standalone non-sale movement (`201`), or replay it (`200`) when the required `Idempotency-Key` repeats an identical request. The body accepts `sessionId`, `type` (the six non-sale kinds), a positive `amount`, an optional `reason` and an ADJUSTMENT-only `direction`; the register is derived server-side and the response is an allowlisted DTO with no `tenantId`. |
 
-Rejections are stable: `400` for an unknown key, `SALE`, a non-positive or
-non-decimal amount, a missing required reason, a missing `ADJUSTMENT` direction
-or a direction on another kind; `403` for a missing permission or a tenant
-without the `cash` capability; the shared byte-equivalent `404` for a foreign or
-unknown session; and `409` for a session that is not `OPEN`, including a session
-that closes concurrently and is refused by the database trigger.
+Rejections are stable: `400` for a missing `Idempotency-Key`, an unknown body
+key, `SALE`, a non-positive or non-decimal amount, a missing required reason, a
+missing `ADJUSTMENT` direction or a direction on another kind; `403` for a
+missing permission or a tenant without the `cash` capability; the shared
+byte-equivalent `404` for a foreign or unknown session; and `409` for a session
+that is not `OPEN`, including a session that closes concurrently and is refused
+by the database trigger.
 
 ### Changed
 
@@ -173,6 +179,19 @@ translated to the same stable `409`, one immutable movement row with a positive
 amount, one co-committed `cash.movement.created` audit row carrying field NAMES
 only, and an allowlisted response DTO.
 
+**W4 — idempotency correction (`0bd3c21`, shrunk in `145e0a1`).** The native
+high-tier review raised one deterministic CRITICAL finding: the command accepted
+no idempotency key, so a retry after a timeout or a double submit would append a
+second immutable movement and double-count cash. The route now REQUIRES the
+`Idempotency-Key` header and derives the movement id deterministically from
+`(tenant, key)` plus a fixed namespace, so the movement's own PRIMARY KEY is the
+guarantee: an identical retry replays the stored movement as a `200`, a reused
+key with a different body is the stable `409` of [[DEC-024]], and a concurrent
+retry loses the insert race and replays the winner's row rather than failing.
+The key is validated after the tenant guards and the session resolution, like
+the body, so a missing key can never mask a `403` or the shared session `404`.
+No schema change and no new table were needed.
+
 **W3 — live coverage (`456a33d`).** The
 `EPIC-13 cash movement command application-path isolation` block in
 `apps/api/test/live-pg-isolation.e2e-spec.ts`, plus the reconciliation of the
@@ -189,8 +208,9 @@ pnpm --filter @newsaas/database exec vitest run src/schema-cash.test.ts src/refe
 pnpm --filter @newsaas/database test                                                            -> passed, 17 files / 361 tests
 set -a && source .env && set +a && pnpm --filter @newsaas/database db:deploy                    -> passed, 27 migrations applied, including 20260930000002 on a database that already held cash rows
 set -a && source .env && set +a && pnpm --filter @newsaas/database db:seed                      -> passed; live catalog 52 permissions, cash.movement.create held by exactly ADMIN, CASHIER and OWNER
-pnpm --filter @newsaas/api test                                                                  -> passed, 75 files / 1069 tests
-pnpm --filter @newsaas/api test:live-pg                                                          -> passed, 109 tests
+pnpm --filter @newsaas/api test                                                                  -> passed, 75 files / 1071 tests
+pnpm --filter @newsaas/api exec vitest run --config vitest.config.ts src/cash/cash.integration.test.ts -> passed, 28 tests
+pnpm --filter @newsaas/api test:live-pg                                                          -> passed, 110 tests
 pnpm typecheck                                                                                   -> passed
 pnpm lint                                                                                        -> passed
 pnpm format-check                                                                                -> passed
@@ -203,7 +223,7 @@ rule requires, and the now-unused type import was removed.
 
 ## Tests Added
 
-- `apps/api/src/cash/cash.integration.test.ts` — **27 tests**, 10 of them new:
+- `apps/api/src/cash/cash.integration.test.ts` — **28 tests**, 11 of them new:
   each accepted kind with its co-committed audit row, the reason rules including
   INCOME without a reason, the direction exclusivity and the `SALE` rejection,
   the amount guard, the masked foreign/unknown session `404`, the closed-session
@@ -217,11 +237,13 @@ rule requires, and the now-unused type import was removed.
   schema-level enum and field.
 - `packages/database/src/reference-seed.test.ts` — **27 tests**; the pinned
   count moves 51 → 52 and a new case pins the key and its role matrix.
-- `apps/api/test/live-pg-isolation.e2e-spec.ts` — **109 tests**, 9 of them the
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — **110 tests**, 10 of them the
   new EPIC-13 movement-command block.
 
 ## Known Limitations
 
+- The command requires an `Idempotency-Key`; a caller that omits it gets a `400`
+  rather than an unprotected create.
 - The command ships no UI; [[CASH-004]] owns the staff surface.
 - `SALE` movements cannot be created through this command by design; they remain
   the sale-completion write path ([[DEC-020]], [[DEC-033]]).
@@ -239,6 +261,9 @@ rule requires, and the now-unused type import was removed.
   and the dedicated `ADJUSTMENT` direction.
 - [[DEC-032]] — reason requirement: mandatory for every kind but `INCOME`.
 - [[DEC-033]] — correction boundary: standalone cash movements only.
+- [[DEC-024]] — the idempotency rule this command adopts: a required
+  `Idempotency-Key`, an identical replay, and a stable conflict for the same key
+  with a different request.
 - [[DEC-034]] — permission key and role matrix.
 
 ## Files / Modules
@@ -257,5 +282,6 @@ rule requires, and the now-unused type import was removed.
 ## Completion Notes
 
 Local implementation and verification are complete on
-`feat/epic-13-cash-data-foundation`. Status is `review`; `done` remains reserved
-for merged, CI-backed closure.
+`feat/epic-13-cash-data-foundation`, and the native high-tier review approved
+the candidate after one bounded correction. Status is `review`; `done` remains
+reserved for merged, CI-backed closure.
