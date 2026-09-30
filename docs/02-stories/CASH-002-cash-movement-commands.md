@@ -3,7 +3,7 @@ id: CASH-002
 type: story
 title: Cash movement commands
 epic: EPIC-13
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - CASH-001
@@ -18,7 +18,7 @@ prd_sections:
 permissions:
   - cash.read
   - cash.movement.create
-branch:
+branch: feat/epic-13-cash-data-foundation
 created: 2026-09-30
 updated: 2026-09-30
 ---

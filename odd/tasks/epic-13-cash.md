@@ -30,6 +30,12 @@ planned CASH stories before any implementation.
       tests.
 - [x] CASH-001 W3: add durable live-PostgreSQL applied-schema probes.
 - [x] CASH-001 W4: reconcile story/epic docs and run required checks.
+- [ ] CASH-002 W1: `cash_movement_direction` + `direction` column on
+      `cash_movement` with the EXCLUSIVE conditional CHECK, and the
+      `cash.movement.create` permission seed (51 → 52).
+- [ ] CASH-002 W2: `POST /cash/movements` command for the six non-sale kinds.
+- [ ] CASH-002 W3: durable live-PostgreSQL probes for the command.
+- [ ] CASH-002 W4: reconcile docs, run checks and run the native review.
 
 ## Evidence
 
@@ -52,3 +58,14 @@ planned CASH stories before any implementation.
   `pnpm --filter @newsaas/database test` (17 files / 352 tests),
   `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm format-check` and
   `git diff --check`.
+- CASH-001 native review: lineage `review-b32aa574e15849f6` approved and
+  acknowledged after one bounded correction (INCOME keeps its optional reason;
+  the closed-session guard locks the session row with `FOR UPDATE`).
+- CASH-001 commits on `feat/epic-13-cash-data-foundation`: `f74bce1` (EPIC-13
+  scope decisions and planned stories) and `e72f38f` (CASH-001 data foundation
+  extension).
+- CASH-002 slice-level resolution (maintainer decision, 2026-09-30): the
+  `ADJUSTMENT` direction is stored in a dedicated `cash_movement.direction`
+  column backed by a `cash_movement_direction` enum (`INCREASE`/`DECREASE`),
+  required exactly for `ADJUSTMENT` and forbidden for every other kind by an
+  exclusive conditional CHECK; movement amounts stay positive.

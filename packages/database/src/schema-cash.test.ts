@@ -28,6 +28,7 @@ const SCHEMA = loadPrismaSchema();
 const MIGRATIONS = loadMigrations();
 const CASH_SQL = findMigration(MIGRATIONS, "_cash_foundation").sql;
 const CASH_EXTENSION_SQL = findMigration(MIGRATIONS, "_cash_data_foundation").sql;
+const CASH_COMMANDS_SQL = findMigration(MIGRATIONS, "_cash_movement_commands").sql;
 
 /** The three EPIC-12 cash tables, in migration order. */
 const CASH_TABLES = ["cash_register", "cash_session", "cash_movement"] as const;
@@ -407,6 +408,71 @@ describe("migration · cash data foundation extension (EPIC-13 CASH-001)", () =>
   });
 });
 
+describe("migration · cash movement commands (EPIC-13 CASH-002)", () => {
+  it("creates the direction enum with exactly INCREASE and DECREASE", () => {
+    const typeValues = /CREATE TYPE "cash_movement_direction" AS ENUM \(([^)]*)\)/.exec(
+      CASH_COMMANDS_SQL
+    )?.[1];
+    expect(typeValues).toBe("'INCREASE', 'DECREASE'");
+    expect(CASH_COMMANDS_SQL).not.toMatch(/CREATE TYPE "cash_movement_type"/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/DROP TYPE/);
+  });
+
+  it("adds the nullable direction column to cash_movement", () => {
+    expect(CASH_COMMANDS_SQL).toMatch(
+      /ALTER TABLE "cash_movement" ADD COLUMN "direction" "cash_movement_direction"/
+    );
+    // Required exactly for ADJUSTMENT and NULL for every other kind: the
+    // exclusivity is the CHECK's job, so the column itself must stay nullable
+    // and must never be defaulted.
+    expect(CASH_COMMANDS_SQL).not.toMatch(/"direction" "cash_movement_direction" NOT NULL/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/"direction"[^\n]*DEFAULT/);
+  });
+
+  it("carries the EXCLUSIVE direction CHECK with the exact DEC-030 predicate", () => {
+    // The predicate is asserted character by character: it must DEMAND a
+    // direction for ADJUSTMENT and FORBID one for every other kind, so a row can
+    // satisfy neither both halves nor a third state. `type` is compared as TEXT
+    // because the six EPIC-13 enum values were appended in the previous
+    // migration's transaction and are unsafe as enum literals in this one.
+    expect(CASH_COMMANDS_SQL).toMatch(
+      /CONSTRAINT "cash_movement_direction_required"\s+CHECK \(\("type"::text = 'ADJUSTMENT' AND "direction" IS NOT NULL\) OR \("type"::text <> 'ADJUSTMENT' AND "direction" IS NULL\)\)/
+    );
+    expect(CASH_COMMANDS_SQL).not.toMatch(/'ADJUSTMENT'::cash_movement_type/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/"type"\s*=\s*'ADJUSTMENT'/);
+  });
+
+  it("never uses floating point for the cash movement direction surface", () => {
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\b(DOUBLE|REAL|FLOAT)\b/i);
+  });
+
+  it("is additive: it alters only cash_movement and writes nothing", () => {
+    const alteredTables = [...CASH_COMMANDS_SQL.matchAll(/ALTER TABLE "([a-z_]+)"/g)].map(
+      ([, table]) => table
+    );
+    expect(new Set(alteredTables)).toEqual(new Set(["cash_movement"]));
+
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bINSERT\b/i);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bDROP\b/i);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bTRUNCATE\b/i);
+    // No data mutation: the only UPDATE tokens would be trigger declarations, and
+    // this slice declares none.
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bUPDATE\s+[^\s]+\s+SET\b/i);
+    // The EPIC-12 and CASH-001 guarantees are not recreated here.
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_session_one_open_per_register_key/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_movement_reason_required/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_movement_no_delete_trigger/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_movement_no_update_trigger/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_movement_no_insert_into_closed_session/);
+  });
+
+  it("classifies the direction field in the applied artifact", () => {
+    expect(CASH_COMMANDS_SQL).toMatch(/INTERNAL \(PRD §41\)/);
+    expect(CASH_COMMANDS_SQL).toMatch(/audit carry ids and field names only/);
+  });
+});
+
 describe("schema · cash foundation (EPIC-12 POS-002)", () => {
   it("declares the three models, the two enums and their table mappings", () => {
     expect(SCHEMA).toMatch(/model CashRegister\b/);
@@ -605,5 +671,34 @@ describe("schema · cash foundation (EPIC-12 POS-002)", () => {
         /logs and\s+audit carry ids and\s+field\s+names\s+only/
       );
     }
+  });
+});
+
+describe("schema · cash movement commands (EPIC-13 CASH-002)", () => {
+  it("pins the movement direction enum, its mapping and its DEC-030 contract", () => {
+    expect(SCHEMA).toMatch(/enum CashMovementDirection\b/);
+    expect(SCHEMA).toMatch(/@@map\("cash_movement_direction"\)/);
+    // Asserted exactly: a third literal (or a reordered one) is a scope change.
+    expect(enumLiterals("CashMovementDirection")).toEqual(["INCREASE", "DECREASE"]);
+
+    const doc = docCommentAbove("enum CashMovementDirection ");
+    expect(doc).toMatch(/DEC-030/);
+    expect(doc).toMatch(/required EXACTLY for `ADJUSTMENT`/);
+    expect(doc).toMatch(/NULL for every other kind/);
+    expect(doc).toMatch(/`amount` stays positive/);
+  });
+
+  it("declares direction as an optional enum on CashMovement without modelling the CHECK", () => {
+    const movement = modelBlock("CashMovement");
+    expect(movement).toMatch(/direction\s+CashMovementDirection\?/);
+    // The exclusivity is a raw-SQL CHECK, so Prisma must NOT model it: the field
+    // is a plain optional enum, with no default and no uniqueness of its own.
+    expect(movement).not.toMatch(/direction[^\n]*@default/);
+    expect(movement).not.toMatch(/direction[^\n]*@unique/);
+
+    const fieldDoc = docCommentAbove("direction  CashMovementDirection?");
+    expect(fieldDoc).toMatch(/DEC-030/);
+    expect(fieldDoc).toMatch(/REQUIRED exactly for/);
+    expect(fieldDoc).toMatch(/`amount` stays positive/);
   });
 });

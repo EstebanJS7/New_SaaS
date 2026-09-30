@@ -1998,6 +1998,20 @@ enum CashMovementType {
   @@map("cash_movement_type")
 }
 
+/// Cash movement direction (PRD §20, DEC-030): the explicit sign of an
+/// `ADJUSTMENT`, the only movement kind whose increase/decrease the type cannot
+/// carry — SALE/INCOME/DEPOSIT add and REFUND/EXPENSE/WITHDRAWAL subtract. It is
+/// required EXACTLY for `ADJUSTMENT` and NULL for every other kind, enforced by
+/// the `cash_movement_direction_required` CHECK in the migration, and the stored
+/// `amount` stays positive for every kind because the type owns the sign.
+/// Values are appended, never reordered or removed. Evolve additively only.
+enum CashMovementDirection {
+  INCREASE
+  DECREASE
+
+  @@map("cash_movement_direction")
+}
+
 /// Cash session lifecycle (PRD §20), pinned to exactly these two states. A
 /// session is created `OPEN` by the session-open command and reaches `CLOSED`
 /// only through the EPIC-13 close command, which this slice does not ship.
@@ -2138,6 +2152,11 @@ model CashSession {
 /// corrective movement kinds so they explain themselves; a bound is in place so
 /// the field cannot become an unbounded log.
 ///
+/// `direction` is the one exception the type-owned sign convention needs
+/// (DEC-030): it is REQUIRED exactly for `ADJUSTMENT`, NULL for every other
+/// kind, and the exclusive CHECK in the migration enforces both halves while
+/// the stored `amount` stays positive.
+///
 /// A confirmed movement is IMMUTABLE: the migration rejects any UPDATE with a
 /// `BEFORE UPDATE` trigger and any DELETE with an unconditional `BEFORE DELETE`
 /// trigger. An incorrect movement is corrected by a compensating movement, never
@@ -2152,6 +2171,11 @@ model CashMovement {
   sessionId  String           @map("session_id") @db.Uuid
   /// PRD §20 kind. `SALE` is sale-generated; manual/corrective values require a reason.
   type       CashMovementType
+  /// Explicit direction of an `ADJUSTMENT` (DEC-030), REQUIRED exactly for
+  /// `ADJUSTMENT` and NULL for every other kind, whose sign the type owns.
+  /// Prisma cannot express the exclusive CHECK, so it lives in the migration as
+  /// `cash_movement_direction_required`; the `amount` stays positive regardless.
+  direction  CashMovementDirection?
   /// Exact money on the reference scale. Non-zero (CHECK) and sign-owned by
   /// the kind, never by the caller.
   amount     Decimal          @map("amount") @db.Decimal(14, 2)
