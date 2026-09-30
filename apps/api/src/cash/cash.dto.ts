@@ -52,6 +52,12 @@ export interface CashRegisterResponse {
  * server-side from the authenticated request context, never caller input
  * (DEC-020 subsequent-scope note of 2026-09-29). `openingAmount` is the required
  * opening float, exact fixed-scale (2 decimals).
+ *
+ * The three close-result amounts (DEC-031) are `null` while the session is
+ * `OPEN` and populated exactly once, by the close command. `differenceAmount`
+ * is `countedAmount - expectedAmount` and is legitimately NEGATIVE when the
+ * drawer is short. Like every other projection here there is deliberately NO
+ * `tenantId` key.
  */
 export interface CashSessionResponse {
   readonly id: string;
@@ -61,6 +67,12 @@ export interface CashSessionResponse {
   readonly openedByMembershipId: string;
   /** Exact fixed-scale (2 decimals) non-negative literal, e.g. `"0.00"`. */
   readonly openingAmount: string;
+  /** Server-computed expected amount; `null` until the session is closed. */
+  readonly expectedAmount: string | null;
+  /** Operator-counted amount; `null` until the session is closed. */
+  readonly countedAmount: string | null;
+  /** `countedAmount - expectedAmount`, MAY be negative; `null` until closed. */
+  readonly differenceAmount: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

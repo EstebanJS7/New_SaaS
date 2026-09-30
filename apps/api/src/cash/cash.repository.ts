@@ -43,6 +43,22 @@ export interface CashSessionRow {
   openedAt: Date;
   openedByMembershipId: string;
   openingAmount: Prisma.Decimal | string;
+  /**
+   * Server-computed expected amount, written ONLY by the close command and
+   * `null` while the session is `OPEN` (DEC-031). Exact `Decimal(14, 2)`.
+   */
+  expectedAmount: Prisma.Decimal | string | null;
+  /**
+   * Operator-counted amount, written ONLY by the close command and `null`
+   * while the session is `OPEN` (DEC-031). Exact `Decimal(14, 2)`.
+   */
+  countedAmount: Prisma.Decimal | string | null;
+  /**
+   * `countedAmount - expectedAmount`, written ONLY by the close command and
+   * `null` while the session is `OPEN` (DEC-031). Exact `Decimal(14, 2)` and
+   * legitimately NEGATIVE when the drawer is short.
+   */
+  differenceAmount: Prisma.Decimal | string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -112,9 +128,34 @@ export interface CashRegisterDelegate {
 }
 
 /**
+ * The three close-result amounts written by {@link CashRepository.close}, all
+ * already exact fixed-scale strings computed by the expected-amount helper.
+ * There is deliberately NO `status` field: the transition to `CLOSED` is owned
+ * by the close method, so a caller cannot write the amounts without closing.
+ */
+export interface CashSessionCloseData {
+  readonly expectedAmount: string;
+  readonly countedAmount: string;
+  readonly differenceAmount: string;
+}
+
+/**
+ * Raw-SQL seam for the transaction-scoped cash session row lock. Declared
+ * structurally (the sale/purchase raw-seam convention) so the generated client
+ * and the shared in-memory boundary both satisfy it. The in-memory boundary
+ * models `SELECT ... FOR UPDATE` as a plain read because a synchronous map
+ * cannot interleave, so the real serialization proof stays live-PostgreSQL-owned.
+ */
+export interface CashRawClient {
+  $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>;
+}
+
+/**
  * Structural contract for the session delegate. The generated client and the
  * in-memory test fake both satisfy it. There is deliberately NO delete and NO
- * status update: a session is a confirmed record and close is EPIC-13 surface.
+ * unconditional status update: a session is a confirmed record, and its ONLY
+ * status transition is the conditional `OPEN` -> `CLOSED` write of
+ * {@link CashRepository.close}, which requires the stored status to be `OPEN`.
  */
 export interface CashSessionDelegate {
   findFirst: (args: { where: CashSessionWhere }) => Promise<CashSessionRow | null>;
@@ -125,6 +166,14 @@ export interface CashSessionDelegate {
   create: (args: {
     data: CashSessionCreateData & { tenantId: string; status: CashSessionStatusValue };
   }) => Promise<CashSessionRow>;
+  /**
+   * Conditional close write: `where` carries the STORED `status` (`OPEN`), so a
+   * lost race matches zero rows and the caller maps it to the stable `409`.
+   */
+  updateMany: (args: {
+    where: CashSessionWhere;
+    data: CashSessionCloseData & { status: CashSessionStatusValue };
+  }) => Promise<{ count: number }>;
 }
 
 /**
@@ -232,6 +281,15 @@ export interface CashMovementDelegate {
     };
   }) => Promise<CashMovementRow>;
   findUnique: (args: { where: { id: string } }) => Promise<CashMovementRow | null>;
+  /**
+   * The immutable movements of ONE session in the caller's tenant, in stable
+   * chronological order. Read by the close command to compute the expected
+   * amount over the frozen ledger (DEC-030/DEC-035); nothing mutates a row.
+   */
+  findMany: (args: {
+    where: { tenantId: string; sessionId: string };
+    orderBy?: readonly CashOrderBy[];
+  }) => Promise<CashMovementRow[]>;
 }
 
 /**
@@ -239,7 +297,7 @@ export interface CashMovementDelegate {
  * seam: the audited service passes its open transaction handle here so the cash
  * change and its audit row co-commit.
  */
-export interface CashTx {
+export interface CashTx extends CashRawClient {
   cashRegister: CashRegisterDelegate;
   cashSession: CashSessionDelegate;
   cashMovement: CashMovementDelegate;
@@ -295,12 +353,13 @@ export const CASH_MEMBERSHIP_NOT_RESOLVED_MESSAGE =
  * the request context, so `opened_by_membership_id` can never be supplied by a
  * caller.
  *
- * There is deliberately NO delete method and no status update anywhere on this
- * repository: a session close is EPIC-13 surface. The movement writes are
- * {@link createSaleMovement} (the append-only `SALE` row POS-003 co-commits
- * inside the CompleteSale transaction) and {@link createMovement} (the six
- * standalone kinds CASH-002 co-commits with its audit row). No method takes a
- * caller-supplied tenant id.
+ * There is deliberately NO delete method and no UNCONDITIONAL status update
+ * anywhere on this repository: a session close is the single explicit,
+ * conditional `OPEN` -> `CLOSED` transition of {@link close}. The movement
+ * writes are {@link createSaleMovement} (the append-only `SALE` row POS-003
+ * co-commits inside the CompleteSale transaction) and {@link createMovement}
+ * (the six standalone kinds CASH-002 co-commits with its audit row). No method
+ * takes a caller-supplied tenant id.
  */
 @Injectable()
 export class CashRepository {
@@ -413,6 +472,83 @@ export class CashRepository {
       },
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
     });
+  }
+
+  /**
+   * Row-locks one session of the caller's active tenant, identified by the
+   * `(tenant_id, id)` pair, for the rest of the caller's open transaction
+   * (DEC-035).
+   *
+   * This is the PRIMARY serialization of the close command: the transaction
+   * takes the session lock BEFORE its post-lock status read, so two concurrent
+   * closes of the SAME session serialize here — the loser blocks on this row
+   * lock and its post-lock read then sees the winner's committed `CLOSED` — and
+   * it is the same lock the migration's movement-insert trigger takes, so a
+   * movement writer cannot interleave with a close (DEC-035). The lock is
+   * transaction-scoped, so a rolled-back command leaves nothing locked.
+   *
+   * A zero-row match (unknown or foreign id, which by construction takes no
+   * lock) is not an error here: the caller's subsequent tenant-scoped read is
+   * what renders the shared byte-equivalent `404`. The in-memory boundary models
+   * this as a plain read; the real interleaving is proven by the live-PostgreSQL
+   * evidence owned by the next slice.
+   */
+  async lockById(id: string, tx?: CashTx): Promise<void> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    // Explicit `::uuid` casts (the sale/purchase row-lock precedent): Prisma
+    // binds template values as `text`, so comparing them directly against the
+    // `uuid` columns fails with `42883: operator does not exist: uuid = text`.
+    await client.$queryRaw`
+      SELECT "id" FROM "cash_session"
+      WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid
+      FOR UPDATE
+    `;
+  }
+
+  /**
+   * The immutable movements of ONE session in the CALLER'S active tenant, in
+   * stable chronological order with the `id` tiebreaker. The tenant predicate
+   * rides along in the same WHERE clause, so a close can only ever compute the
+   * expected amount over movements of the session its own tenant just resolved.
+   * A session with zero movements returns an empty array — a valid close input
+   * (DEC-036).
+   */
+  async listSessionMovements(sessionId: string, tx?: CashTx): Promise<CashMovementRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashMovement.findMany({
+      where: { tenantId, sessionId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+  }
+
+  /**
+   * Applies the conditional `OPEN` -> `CLOSED` transition of one session of the
+   * caller's active tenant, writing the three server-derived close amounts.
+   *
+   * This write is the BACKSTOP of the close serialization, not its primary
+   * mechanism: {@link lockById}'s row lock is what makes a concurrent second
+   * close observe the committed status. The write is still conditional on the
+   * STORED status being `OPEN`, so if that status were ever not `OPEN` the
+   * statement affects zero rows and returns `false`, which the service maps to
+   * the same stable `409 CONFLICT` as any other non-`OPEN` session. `CLOSED` is
+   * the ONLY status this method can produce and the close amounts are written
+   * exactly once, in the same statement.
+   */
+  async close(id: string, amounts: CashSessionCloseData, tx?: CashTx): Promise<boolean> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const result = await client.cashSession.updateMany({
+      where: { id, tenantId, status: "OPEN" },
+      data: {
+        status: "CLOSED",
+        expectedAmount: amounts.expectedAmount,
+        countedAmount: amounts.countedAmount,
+        differenceAmount: amounts.differenceAmount,
+      },
+    });
+    return result.count > 0;
   }
 
   /**

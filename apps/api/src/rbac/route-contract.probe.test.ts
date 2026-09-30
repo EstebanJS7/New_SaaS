@@ -179,9 +179,7 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /sales/:id",
   "POST /sales/:id/cancel",
   "POST /sales/:id/complete",
-  // EPIC-12 POS-002 — cash register/session foundation (no PATCH, no DELETE,
-  // no close: EPIC-13 CASH-003 owns close and POS-003 owns the sale-generated
-  // SALE movement)
+  // EPIC-12 POS-002 — cash register/session foundation (no PATCH, no DELETE)
   "GET /cash/registers",
   "POST /cash/registers",
   "GET /cash/sessions",
@@ -189,6 +187,9 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // EPIC-13 CASH-002 — standalone cash movement command (six non-sale kinds;
   // SALE is rejected by the request contract)
   "POST /cash/movements",
+  // EPIC-13 CASH-003 — explicit session close command (expected/counted
+  // difference + terminal CLOSED; no reopen, no PATCH, no DELETE)
+  "POST /cash/sessions/:id/close",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -378,14 +379,15 @@ const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-12 POS-002 cash surface, extended by EPIC-13 CASH-002. Both reads MUST
- * declare exactly `cash.read`, and the register create / session open / movement
- * create MUST declare exactly their own write key; a route decorated with
- * another cash tier (or none) fails by name, which the permission-less 403 sweep
- * cannot catch. There is deliberately NO `PATCH`, NO `DELETE` and NO close route:
- * session close is EPIC-13 CASH-003 surface (DEC-020), and the already-seeded
- * `cash.session.close` key is consumed by no route here. The `SALE` movement kind
- * is never accepted by the movement command; POS-003 owns it.
+ * EPIC-12 POS-002 cash surface, extended by EPIC-13 CASH-002 and CASH-003. Both
+ * reads MUST declare exactly `cash.read`, and the register create / session open
+ * / movement create / session close MUST declare exactly their own write key; a
+ * route decorated with another cash tier (or none) fails by name, which the
+ * permission-less 403 sweep cannot catch. There is deliberately NO `PATCH` and
+ * NO `DELETE`, and no reopen route: session close is the one-way command that
+ * consumes the pre-existing `cash.session.close` key, and `CLOSED` is terminal
+ * (DEC-036). The `SALE` movement kind is never accepted by the movement command;
+ * POS-003 owns it.
  */
 const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /cash/registers": CASH_PERMISSIONS.read,
@@ -393,6 +395,7 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /cash/sessions": CASH_PERMISSIONS.read,
   "POST /cash/sessions": CASH_PERMISSIONS.openSession,
   "POST /cash/movements": CASH_PERMISSIONS.createMovement,
+  "POST /cash/sessions/:id/close": CASH_PERMISSIONS.closeSession,
 };
 
 describe("route-contract probe (deny-by-default)", () => {

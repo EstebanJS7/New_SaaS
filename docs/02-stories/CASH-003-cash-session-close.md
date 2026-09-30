@@ -3,7 +3,7 @@ id: CASH-003
 type: story
 title: Cash session close
 epic: EPIC-13
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - CASH-001
@@ -19,7 +19,7 @@ prd_sections:
 permissions:
   - cash.read
   - cash.session.close
-branch:
+branch: feat/epic-13-cash-data-foundation
 created: 2026-09-30
 updated: 2026-09-30
 ---

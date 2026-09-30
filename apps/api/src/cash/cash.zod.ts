@@ -79,6 +79,34 @@ export const openCashSessionBody = z
 export type OpenCashSessionInput = z.infer<typeof openCashSessionBody>;
 
 /**
+ * Close payload for `POST /cash/sessions/:id/close` (EPIC-13 CASH-003).
+ * `.strict()` rejects unknown keys, explicitly including `tenantId`
+ * (server-resolved), `status` (server-owned: the command writes `CLOSED`), the
+ * server-computed `expectedAmount`/`differenceAmount` and any idempotency key
+ * (DEC-036: a second close is the stable `409`, never a replay).
+ *
+ * `countedAmount` is the operator's physical count, exact NON-NEGATIVE money at
+ * the `Decimal(14, 2)` column scale; `0.00` is accepted because a drawer may be
+ * counted empty. It reuses the opening-amount pattern, so both amounts accept
+ * and reject exactly the same literals.
+ */
+export const closeCashSessionBody = z
+  .object({
+    countedAmount: z
+      .string()
+      .regex(
+        CASH_OPENING_AMOUNT_PATTERN,
+        "The counted amount must be an exact non-negative decimal string (max 14 digits, 2 decimals)."
+      ),
+  })
+  .strict();
+
+export type CloseCashSessionInput = z.infer<typeof closeCashSessionBody>;
+
+/** Session-addressed path parameter; a non-UUID is `400 VALIDATION_FAILED`. */
+export const cashSessionIdParam = z.object({ id: z.string().uuid() });
+
+/**
  * Session list query. The optional `status` narrows the list to one lifecycle
  * value and is applied on top of the implicit tenant predicate; an omitted
  * status applies NO filter (there is deliberately no implicit open-only

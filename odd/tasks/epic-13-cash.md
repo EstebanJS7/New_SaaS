@@ -40,6 +40,11 @@ planned CASH stories before any implementation.
       idempotency, so a retry could double-count cash. It now requires the
       `Idempotency-Key` and derives a deterministic movement id, inside the
       frozen 200-line correction budget.
+- [ ] CASH-003 W1: the expected-amount helper and the
+      `POST /cash/sessions/:id/close` command (row lock, OPEN gate, conditional
+      write, audit).
+- [ ] CASH-003 W2: durable live-PostgreSQL coverage for close.
+- [ ] CASH-003 W3: reconcile docs, run checks and run the native review.
 
 ## Evidence
 
@@ -86,6 +91,14 @@ planned CASH stories before any implementation.
   approved after targeted validation.
 - CASH-002 verification after W5: `cash.integration.test.ts` 28 tests, API live
   suite 110 tests, API suite 1071 tests.
+- CASH-002 review outcome: approved and acknowledged
+  (`review-d726ed07cc0e7124`); the remaining findings were informational only.
+- CASH-003 slice-level resolutions (verified before implementation, 2026-09-30):
+  `cash.session.close` is ALREADY seeded on OWNER/ADMIN/CASHIER since EPIC-01,
+  so the seeded catalog stays at 52 and only the role-matrix/probe assertions
+  need no change; `POST` commands in this repo return `201` by convention (the
+  purchase receive and session open precedents), so the close returns `201`; and
+  per DEC-036 a second close is the stable `409`, never a replay.
 - CASH-002 verification: database suite 17 files / 361 tests; `db:deploy` 27
   migrations applied over a database holding cash rows; live `db:seed` reporting
   52 permissions with `cash.movement.create` on exactly ADMIN, CASHIER and

@@ -14,6 +14,7 @@ import type {
   CashRegisterResponse,
   CashSessionResponse,
 } from "./cash.dto.js";
+import { CASH_MONEY_SCALE, computeCashCloseAmounts } from "./cash.expected-amount.js";
 import { CASH_PERMISSIONS, type CashPermission } from "./cash.permissions.js";
 import {
   CashRepository,
@@ -29,6 +30,7 @@ import {
   CASH_DTO_SCHEMA_VERSION,
   CASH_MOVEMENT_REASON_REQUIRED_TYPES,
   cashMovementIdempotencyKey,
+  type CloseCashSessionInput,
   type CreateCashMovementInput,
   type CreateCashRegisterInput,
   type OpenCashSessionInput,
@@ -55,6 +57,7 @@ export interface CashPrisma {
  */
 export const CASH_REGISTER_CREATED_ACTION = "cash.register.created";
 export const CASH_SESSION_OPENED_ACTION = "cash.session.opened";
+export const CASH_SESSION_CLOSED_ACTION = "cash.session.closed";
 export const CASH_REGISTER_TARGET_TYPE = "cash_register";
 export const CASH_SESSION_TARGET_TYPE = "cash_session";
 
@@ -287,12 +290,31 @@ const CASH_REGISTER_CREATE_CHANGED_FIELDS: readonly string[] = ["name"];
  */
 const CASH_SESSION_OPEN_CHANGED_FIELDS: readonly string[] = ["registerId", "openingAmount"];
 
-/** Fixed scale of the opening amount in digits after the point (`Decimal(14, 2)`). */
-const CASH_MONEY_SCALE = 2;
+/**
+ * Audit field NAMES for a session close, in write order. `changedFields`
+ * carries NAMES only: the counted amount is INTERNAL and the
+ * expected/difference amounts are server-computed, so no stored value is copied
+ * into the trail (PRD §27/§41). The audit row's `actorUserProfileId` is the
+ * actor who closed the session; the session id is the row's `targetId`.
+ */
+const CASH_SESSION_CLOSE_CHANGED_FIELDS: readonly string[] = [
+  "status",
+  "expectedAmount",
+  "countedAmount",
+  "differenceAmount",
+];
 
 /** Exact `Decimal` → fixed-scale string projection (never a JavaScript float). */
 function decimalToScaleString(value: Prisma.Decimal | string, scale: number): string {
   return new Prisma.Decimal(value).toFixed(scale);
+}
+
+/** Nullable variant for the close-result amounts, `null` while the session is `OPEN`. */
+function nullableDecimalToScaleString(
+  value: Prisma.Decimal | string | null,
+  scale: number
+): string | null {
+  return value === null ? null : decimalToScaleString(value, scale);
 }
 
 /** Maps one register row to its allowlisted INTERNAL response DTO. */
@@ -315,6 +337,9 @@ function toCashSessionResponse(row: CashSessionRow): CashSessionResponse {
     openedAt: row.openedAt.toISOString(),
     openedByMembershipId: row.openedByMembershipId,
     openingAmount: decimalToScaleString(row.openingAmount, CASH_MONEY_SCALE),
+    expectedAmount: nullableDecimalToScaleString(row.expectedAmount, CASH_MONEY_SCALE),
+    countedAmount: nullableDecimalToScaleString(row.countedAmount, CASH_MONEY_SCALE),
+    differenceAmount: nullableDecimalToScaleString(row.differenceAmount, CASH_MONEY_SCALE),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -390,9 +415,9 @@ function assertMovementDirection(
 }
 
 /**
- * Cash application boundary (EPIC-12 POS-002, extended by EPIC-13 CASH-002): the
- * tenant-scoped read surface and the three audited mutations (register create,
- * session open, standalone movement create).
+ * Cash application boundary (EPIC-12 POS-002, extended by EPIC-13 CASH-002 and
+ * CASH-003): the tenant-scoped read surface and the four audited mutations
+ * (register create, session open, standalone movement create, session close).
  *
  * - The `cash` entitlement is asserted FIRST (`403 FEATURE_NOT_ENTITLED`) and
  *   the route-level permission is RE-ASSERTED SECOND (`403 FORBIDDEN`), on EVERY
@@ -416,10 +441,12 @@ function assertMovementDirection(
  * - This boundary is INERT with respect to the rest of the system: a movement
  *   create writes exactly one `cash_movement` row and one audit row, and nothing
  *   else — no session close, no sale, no payment, no stock movement, no balance
- *   change and no invoice (POS-003 owns the sale-generated `SALE` movement,
- *   CASH-003 owns close).
- * - There is NO delete operation, NO `PATCH` and NO status transition anywhere on
- *   this boundary.
+ *   change and no invoice (POS-003 owns the sale-generated `SALE` movement),
+ *   while a session close writes exactly the session's three close-result
+ *   amounts and one audit row (CASH-003).
+ * - There is NO delete operation and NO `PATCH` anywhere on this boundary. The
+ *   ONLY status transition is the explicit close command, whose `OPEN` ->
+ *   `CLOSED` move is terminal and never replayed (DEC-036).
  */
 @Injectable()
 export class CashService {
@@ -690,6 +717,94 @@ export class CashService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Closes one in-tenant `OPEN` session (EPIC-13 CASH-003) and co-commits its
+   * single audit row (DEC-031/DEC-035/DEC-036).
+   *
+   * ORDER (the sale update/cancel precedent applied to the drawer): the `cash`
+   * entitlement and the `cash.session.close` permission are asserted FIRST,
+   * outside the transaction, so a denial reaches no data access. Inside ONE
+   * `$transaction` the command then:
+   *
+   * 1. row-locks the session (`SELECT ... FOR UPDATE`);
+   * 2. re-reads the session tenant-scoped — a foreign or unknown id is the
+   *    shared byte-equivalent session `404`;
+   * 3. applies the post-lock `OPEN` gate — any other status is the stable `409`
+   *    and persists nothing (`CLOSED` is terminal, never replayed, DEC-036);
+   * 4. reads the session's immutable movements and computes `expectedAmount`
+   *    server-side from the opening amount plus the DEC-030 sign map (zero
+   *    movements closes at the opening amount);
+   * 5. performs the conditional `WHERE status = 'OPEN'` write as the backstop —
+   *    a lost race affects zero rows and is the same stable `409`;
+   * 6. appends exactly ONE audit row, then re-reads and returns the closed DTO.
+   *
+   * The counted amount is the ONLY caller input; the expected amount and the
+   * difference (`counted - expected`, which may be negative) are derived here.
+   * A rejection rolls the whole transaction back, so no close amount and no
+   * audit row is persisted.
+   */
+  async closeSession(id: string, input: CloseCashSessionInput): Promise<CashSessionResponse> {
+    const tenantId = await this.assertCashEnabled();
+    await this.requirePermission(CASH_PERMISSIONS.closeSession);
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+
+    const countedAmount = decimalToScaleString(input.countedAmount, CASH_MONEY_SCALE);
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      // PRIMARY serialization: row-lock the session before anything else, so
+      // two concurrent closes serialize here and the loser's post-lock read
+      // sees the winner's committed `CLOSED`. The same lock orders a concurrent
+      // movement writer (the migration's insert trigger takes it too).
+      await this.cash.lockById(id, tx);
+      const session = await this.cash.findSessionById(id, tx);
+
+      if (session.status !== "OPEN") {
+        throw new DomainError("CONFLICT", CASH_SESSION_NOT_OPEN_MESSAGE);
+      }
+
+      const movements = await this.cash.listSessionMovements(session.id, tx);
+      const { expectedAmount, differenceAmount } = computeCashCloseAmounts({
+        openingAmount: session.openingAmount,
+        countedAmount,
+        movements,
+      });
+
+      // The conditional write is the backstop: zero affected rows means the
+      // session was closed by the winner of the race, so the same stable 409.
+      const applied = await this.cash.close(
+        session.id,
+        {
+          expectedAmount: decimalToScaleString(expectedAmount, CASH_MONEY_SCALE),
+          countedAmount,
+          differenceAmount: decimalToScaleString(differenceAmount, CASH_MONEY_SCALE),
+        },
+        tx
+      );
+      if (!applied) {
+        throw new DomainError("CONFLICT", CASH_SESSION_NOT_OPEN_MESSAGE);
+      }
+
+      await this.audit.append(
+        {
+          action: CASH_SESSION_CLOSED_ACTION,
+          tenantId,
+          actorUserProfileId,
+          targetType: CASH_SESSION_TARGET_TYPE,
+          targetId: session.id,
+          metadata: {
+            schemaVersion: CASH_DTO_SCHEMA_VERSION,
+            changedFields: [...CASH_SESSION_CLOSE_CHANGED_FIELDS],
+          },
+        },
+        tx
+      );
+
+      return this.cash.findSessionById(session.id, tx);
+    });
+
+    return toCashSessionResponse(row);
   }
 
   /**

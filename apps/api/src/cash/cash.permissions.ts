@@ -16,14 +16,16 @@
  * (`403 FORBIDDEN`). The UI gate is UX only; both backend checks are mandatory.
  *
  * EPIC-13 CASH-002 consumes the seeded `cash.movement.create` key (DEC-034) for
- * the standalone non-sale movement command. The already-seeded
- * `cash.session.close` key stays reserved for CASH-003 and is consumed by no
- * route yet.
+ * the standalone non-sale movement command, and CASH-003 consumes the
+ * pre-existing `cash.session.close` key (seeded since EPIC-01 and already held
+ * by `OWNER`/`ADMIN`/`CASHIER`) for the close command. The seed and its pinned
+ * count are untouched by either story.
  */
 export const CASH_PERMISSIONS = Object.freeze({
   read: "cash.read",
   createRegister: "cash.register.create",
   openSession: "cash.session.open",
+  closeSession: "cash.session.close",
   createMovement: "cash.movement.create",
 } as const);
 

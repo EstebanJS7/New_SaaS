@@ -581,6 +581,12 @@ export interface CashSessionRow {
   openedAt: Date;
   openedByMembershipId: string;
   openingAmount: string;
+  /** Server-computed expected amount; `null` while the session is `OPEN` (DEC-031). */
+  expectedAmount: string | null;
+  /** Operator-counted amount; `null` while the session is `OPEN` (DEC-031). */
+  countedAmount: string | null;
+  /** `countedAmount - expectedAmount`, may be negative; `null` while `OPEN` (DEC-031). */
+  differenceAmount: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1280,6 +1286,20 @@ export interface IsolationDatabase {
         orderBy?: readonly CashOrderBy[];
       }) => CashSessionRow[];
       create: (args: { data: CashSessionCreateData & { tenantId: string } }) => CashSessionRow;
+      /**
+       * Conditional close write (EPIC-13 CASH-003): matches the STORED `status`
+       * in `where`, writes `CLOSED` plus the three close amounts and reports how
+       * many rows it touched, so the service's lost-race `409` is exercisable.
+       */
+      updateMany: (args: {
+        where: CashSessionWhere;
+        data: {
+          status?: CashSessionRow["status"];
+          expectedAmount?: string | { toString(): string };
+          countedAmount?: string | { toString(): string };
+          differenceAmount?: string | { toString(): string };
+        };
+      }) => { count: number };
     };
     /**
      * Movement append/read, mirroring the real delegate so the inertness probe
@@ -2201,9 +2221,21 @@ export function createIsolationDatabase(): IsolationDatabase {
         }
         return Promise.resolve([{ id: header.id, status: header.status }]);
       }
+      // EPIC-13 CASH-003: the close command row-locks the session before its
+      // post-lock status read. A synchronous map cannot block, so this models
+      // the lock as a read of the locked row `(tenant_id, id)`; the real
+      // close/movement interleaving is proven against live PostgreSQL.
+      if (text.includes('"cash_session"') && text.includes("FOR UPDATE")) {
+        const [tenantId, sessionId] = values as string[];
+        const session = cashSessionTable.get(sessionId);
+        if (session?.tenantId !== tenantId) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ id: session.id, status: session.status }]);
+      }
       if (!text.includes("tenant_membership") || !text.includes("FOR UPDATE")) {
         throw new Error(
-          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock, the sale header FOR UPDATE lock and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
+          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock, the sale header FOR UPDATE lock, the cash session FOR UPDATE lock and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
         );
       }
       const [tenantId] = values as string[];
@@ -3170,11 +3202,39 @@ export function createIsolationDatabase(): IsolationDatabase {
           openedAt: now,
           openedByMembershipId: data.openedByMembershipId,
           openingAmount: toDecimalString(data.openingAmount),
+          // Close results are written only by the close command (DEC-031).
+          expectedAmount: null,
+          countedAmount: null,
+          differenceAmount: null,
           createdAt: now,
           updatedAt: now,
         };
         cashSessionTable.set(created.id, created);
         return created;
+      },
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const row of cashSessionTable.values()) {
+          if (
+            (where.id === undefined || row.id === where.id) &&
+            (where.tenantId === undefined || row.tenantId === where.tenantId) &&
+            (where.status === undefined || row.status === where.status)
+          ) {
+            if (data.status !== undefined) row.status = data.status;
+            if (data.expectedAmount !== undefined) {
+              row.expectedAmount = toDecimalString(data.expectedAmount);
+            }
+            if (data.countedAmount !== undefined) {
+              row.countedAmount = toDecimalString(data.countedAmount);
+            }
+            if (data.differenceAmount !== undefined) {
+              row.differenceAmount = toDecimalString(data.differenceAmount);
+            }
+            row.updatedAt = new Date();
+            count += 1;
+          }
+        }
+        return { count };
       },
     },
     cashMovement: {
