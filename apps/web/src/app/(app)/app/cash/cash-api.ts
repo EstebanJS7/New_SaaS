@@ -83,6 +83,18 @@ export interface CashSession {
   readonly openedByMembershipId: string;
   /** Exact fixed-scale (2 decimals) non-negative literal, e.g. `"0.00"`. */
   readonly openingAmount: string;
+  /**
+   * Server-computed expected drawer amount at close, exact at scale 2. `null`
+   * while the session is `OPEN`: the close command is the only writer, so an
+   * open session has nothing to report (DEC-031).
+   */
+  readonly expectedAmount: string | null;
+  /** The operator's counted amount at close, `null` while `OPEN`. */
+  readonly countedAmount: string | null;
+  /** `countedAmount - expectedAmount`, `null` while `OPEN`; NEGATIVE when the
+   * drawer is short, so the UI must render the sign rather than assume a
+   * magnitude. */
+  readonly differenceAmount: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

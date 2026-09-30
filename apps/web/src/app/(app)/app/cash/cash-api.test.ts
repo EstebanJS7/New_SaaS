@@ -49,6 +49,9 @@ const SESSION: CashSession = {
   openedAt: "2026-09-27T08:00:00.000Z",
   openedByMembershipId: MEMBERSHIP_ID,
   openingAmount: "500000.00",
+  expectedAmount: null,
+  countedAmount: null,
+  differenceAmount: null,
   createdAt: "2026-09-27T08:00:00.000Z",
   updatedAt: "2026-09-27T08:00:00.000Z",
 };
