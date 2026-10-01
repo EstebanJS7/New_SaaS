@@ -1074,3 +1074,46 @@ Local evidence recorded before the merge and re-run after the final correction:
 
 This section is the machine-generated receipt for the merged slice and is
 **not** a production-readiness statement.
+
+## EPIC-14 Billing
+
+| Slice                               | Pull request | Merge commit | CI run                                                                           | Checks                                                                          |
+| ----------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Scope, plans and accepted decisions | #86          | `15dc434`    | [`36873574529`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36873574529) | `Database migrations` 1m14s, `Lint, Typecheck, Test, Build` 4m21s               |
+| BILL-001 invoice data foundation    | #87          | `fc60d11`    | [`36885623341`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36885623341) | `Database migrations` 1m7s, `Lint, Typecheck, Test, Build` 4m25s on merged main |
+
+The scope records landed first because CI's required checks only run for pull
+requests targeting the default branch: #86 merged as `15dc434` and #87 as
+`fc60d11`, in that order. #87's own receipt before the merge was run
+[`36873584746`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36873584746)
+at head `17ebae5`; both runs are green on both required checks.
+
+Local evidence recorded before the merge, and reproduced by the `migrations` job
+on a fresh database:
+
+- the additive migration `20261001000001_billing_invoice_foundation` was applied
+  as the **28th** migration, with `db:deploy` reporting `28 migrations found`
+  and `db:live-verify` printing `LIVE MIGRATION VERIFICATION PASSED`;
+- database suite **18 files / 400 tests**, adding `schema-billing.test.ts` with
+  **38 tests** over the enum, the three table shapes, the fifteen CHECKs, the
+  partial unique index, the eight RESTRICT foreign keys and the five triggers;
+- API live-PostgreSQL suite **135 cases**, of which the new
+  `EPIC-14 billing application-path isolation` block is **15**, covering the
+  applied schema and, inside rolled-back transactions, the numbering
+  biconditional, the cancelled-invoice requirements, a cancellation releasing
+  its sale, the `DRAFT -> CONFIRMED -> CANCELLED` path, the rejected transitions
+  and the single-statement counter allocation;
+- a live `db:seed` run twice with the count-equality probe reported identical
+  counts with a `permission` total of **56** and `rolePermissions: 187`;
+- `pnpm typecheck`, `pnpm lint`, `pnpm format-check` and `git diff --check`
+  green (14/14 tasks each).
+
+The RDD native review of the slice closed **approved** (lineage
+`review-b65dbcee62dc6d5b`, four lenses, 3200 changed lines) after one bounded
+195-line correction: the header guard originally made `CONFIRMED -> CANCELLED`
+impossible, which two independent lenses raised as a BLOCKER while every local
+gate was green. [[TD-023]] records the transition-only guard that the correction
+left behind.
+
+This section is the machine-generated receipt for the merged slice and is
+**not** a production-readiness statement.

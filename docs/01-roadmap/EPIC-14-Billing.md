@@ -101,10 +101,12 @@ implemented EPIC-14 behavior.
 
 ## Progress
 
-- **[[BILL-001]] Invoice data foundation — `review`.** Local implementation and
-  verification are complete on `feat/epic-14-billing-invoice-foundation`:
-  `b1d5278` adds the `InvoiceStatus` / `Invoice` / `InvoiceLine` /
-  `InvoiceNumberSequence` schema, the additive
+- **[[BILL-001]] Invoice data foundation — `done`.** Merged as pull request #87
+  (`fc60d11`) after the scope records merged as pull request #86 (`15dc434`),
+  with run `36885623341` green on both required checks on the merged `main`.
+  Local implementation and verification are complete on
+  `feat/epic-14-billing-invoice-foundation`: `b1d5278` adds the `InvoiceStatus`
+  / `Invoice` / `InvoiceLine` / `InvoiceNumberSequence` schema, the additive
   `20261001000001_billing_invoice_foundation` migration and
   `schema-billing.test.ts` (38 tests); `64371f3` seeds the four `billing.*` keys
   and their role-matrix rows (catalog 52 → 56); `dc9309c` adds the
@@ -132,8 +134,8 @@ implemented EPIC-14 behavior.
   fresh database and the live-PostgreSQL suite at **135 passed** — and
   `Lint, Typecheck, Test, Build` pass in 4m18s. The scope records this slice
   rests on are pull request #86 (`type:docs`), which must merge first because
-  CI's required checks only run for pull requests targeting `main`. The Story
-  moves to `done` when #87 merges.
+  CI's required checks only run for pull requests targeting `main`. The Story is
+  `done`; the epic stays `planned` until [[BILL-002]] through [[BILL-005]] land.
 
 ## Scope
 
@@ -195,31 +197,33 @@ planned evidence that will close it.
 
 ### BILL-001 — Invoice data foundation
 
-- [ ] `Invoice`, `InvoiceLine` and `invoice_number_sequence` exist as
+- [x] `Invoice`, `InvoiceLine` and `invoice_number_sequence` exist as
       tenant-scoped tables with `@@unique([tenantId, id])` ownership keys,
       RESTRICT tenant FKs and composite `(tenant_id, sale_id)` /
       `(tenant_id, invoice_id)` FKs. Evidence: the additive migration,
       `schema-billing.test.ts` and the live-PostgreSQL `information_schema`
       probe.
-- [ ] `InvoiceStatus` contains exactly `DRAFT`, `CONFIRMED` and `CANCELLED`, and
-      `UNIQUE (tenant_id, sale_id)` makes one sale produce at most one invoice.
-      Evidence: the schema test and the live rejection probe for a second
-      invoice on the same sale.
-- [ ] `number` is `NULL` while `DRAFT` and required once `CONFIRMED` or
-      `CANCELLED`, with `UNIQUE (tenant_id, series, number)` and a positive
-      check. Evidence: the conditional CHECK plus live insert probes for each
-      branch.
-- [ ] Database triggers reject updating or deleting a non-`DRAFT` invoice,
-      reject any update of an `InvoiceLine` snapshot amount, and reject changing
-      an allocated number. Evidence: `schema-billing.test.ts` and the
-      live-PostgreSQL trigger probes.
-- [ ] The `billing.*` permission family is seeded and wired into the role
+- [x] `InvoiceStatus` contains exactly `DRAFT`, `CONFIRMED` and `CANCELLED`, and
+      the PARTIAL `UNIQUE (tenant_id, sale_id) WHERE status <> 'CANCELLED'`
+      makes one sale produce at most one **live** invoice while a cancelled one
+      releases its sale. Evidence: the schema test and the live rejection probe
+      for a second invoice on the same sale.
+- [x] `number` and `confirmed_at` are present or absent together, so a draft
+      cancelled before confirmation keeps a NULL number while a confirmed
+      invoice keeps its number permanently, with
+      `UNIQUE (tenant_id, series, number)` and a positive check. Evidence: the
+      conditional CHECK plus live insert probes for each branch.
+- [x] Database triggers reject every DELETE of a non-`DRAFT` invoice and every
+      UPDATE except the three permitted transitions, reject any update of an
+      `InvoiceLine` snapshot amount, and reject changing an allocated number.
+      Evidence: `schema-billing.test.ts` and the live-PostgreSQL trigger probes.
+- [x] The `billing.*` permission family is seeded and wired into the role
       matrix, and the seed-count probe is reconciled in the same work unit.
       Evidence: the seed diff, the updated probe count and the role-matrix
       assertion.
-- [ ] `fiscal.invoice.issue` is still seeded and still consumed by no route.
+- [x] `fiscal.invoice.issue` is still seeded and still consumed by no route.
       Evidence: the route-contract probe and a repository search.
-- [ ] New invoice fields are classified: customer-linked invoice references are
+- [x] New invoice fields are classified: customer-linked invoice references are
       CONFIDENTIAL, money and status fields are INTERNAL (PRD §41). Evidence:
       the classification notes in the models and the story record.
 

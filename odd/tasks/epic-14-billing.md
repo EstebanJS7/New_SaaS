@@ -253,6 +253,23 @@ as subsequent scope notes on the accepted records, not applied silently:
   units, so it moves to `done` when #87 merges, together with the QA evidence
   entry.
 
+### BILL-001 — merged and closed
+
+- Pull request **#86** merged as `15dc434` and pull request **#87** merged as
+  `fc60d11`, in that order.
+- The merged-receipt gate is run `36885623341` on `main` at `fc60d11`: both
+  required checks `success` (`Database migrations` 15:38:07Z to 15:39:14Z,
+  `Lint, Typecheck, Test, Build` 15:38:07Z to 15:42:32Z), with all 28 migrations
+  applied to a fresh database.
+- [[BILL-001]] moved to `done` with its acceptance criteria checked, and its
+  three pre-implementation wordings were corrected while ticking them: the
+  one-invoice rule is the partial index, the number rule is the biconditional,
+  and the trigger rule is the transition allow-list.
+- `docs/10-qa/CI-EVIDENCE.md` gained the EPIC-14 section with both runs, the
+  local evidence and the review outcome.
+- The epic stays `planned`: [[BILL-002]] through [[BILL-005]] remain, and
+  [[TD-023]] stays open for BILL-003.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
