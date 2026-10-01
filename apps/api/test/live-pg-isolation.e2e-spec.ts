@@ -12525,4 +12525,1236 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       );
     }, 30_000);
   });
+
+  /**
+   * EPIC-14 BILL-001 live-PostgreSQL evidence (W3).
+   *
+   * BILL-001 ships NO API surface: the invoice aggregate has no route,
+   * controller, service or DTO yet (BILL-002/BILL-003 own those), so every
+   * fixture and every probe in this block is a DIRECT database statement at
+   * `20261001000001_billing_invoice_foundation`'s exact shape. Nothing here is a
+   * service-path test and nothing weakens an application guard — there is no
+   * application path to exercise, so the DDL itself is the object under test.
+   *
+   * The block proves what the shared in-memory boundary cannot: the applied
+   * enum, the three table shapes and their exact scales, the fifteen CHECK
+   * constraints by their stored definitions, the PARTIAL live-invoice unique
+   * index and the plain allocation key, the eight composite RESTRICT foreign
+   * keys, and the five immutability triggers with their timing and their
+   * status-transition predicates; then the behaviour those constraints carry —
+   * the numbering biconditional, the cancelled-invoice requirements, a
+   * cancellation releasing its sale for a corrected replacement, the header
+   * trigger whose allow-list admits exactly `DRAFT -> CONFIRMED`,
+   * `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED`, the unconditional line
+   * snapshot triggers, and the single-statement counter allocation.
+   *
+   * Every raw mutation runs inside an interactive transaction that is ALWAYS
+   * rolled back, so no probe row ever survives; the last case asserts that as a
+   * count invariant rather than trusting the probes.
+   */
+  describe("EPIC-14 billing application-path isolation", () => {
+    /** Marker error that forces an interactive transaction to roll back. */
+    const BILLING_ROLLBACK_SENTINEL = "live-pg-billing-rollback";
+
+    /**
+     * Exact normalized rendering of the partial index predicate
+     * `status <> 'CANCELLED'`, declared as raw SQL because Prisma cannot express
+     * partial indexes. `normalizeIndexPredicate` strips the parser-added
+     * enclosing parenthesis pair and the parser-added enum cast, so the stored
+     * `(status <> 'CANCELLED'::invoice_status)` becomes this token string; a
+     * plain composite unique index (no predicate) normalizes to the empty string
+     * and can never compare equal. Exact equality therefore proves the index is
+     * PARTIAL, carries no additional boolean term, and keeps the `<>` direction
+     * (an equality would have pinned every cancelled invoice into one row).
+     */
+    const INVOICE_LIVE_SALE_INDEX_PREDICATE = "status<>'CANCELLED'";
+
+    /**
+     * The exact fifteen applied CHECK constraint names of the three invoice
+     * tables. A closed set, so a dropped or renamed predicate fails here rather
+     * than passing vacuously.
+     */
+    const INVOICE_CHECK_NAMES = [
+      "invoice_number_iff_confirmed",
+      "invoice_number_positive",
+      "invoice_series_not_blank",
+      "invoice_draft_not_confirmed",
+      "invoice_confirmed_requires_timestamp",
+      "invoice_cancelled_at_matches_status",
+      "invoice_cancel_reason_present",
+      "invoice_line_quantity_positive",
+      "invoice_line_unit_price_non_negative",
+      "invoice_line_line_total_non_negative",
+      "invoice_line_taxable_base_non_negative",
+      "invoice_line_tax_amount_non_negative",
+      "invoice_line_position_non_negative",
+      "invoice_line_description_not_blank",
+      "invoice_number_sequence_next_value_positive",
+    ].sort();
+
+    /**
+     * The APPLIED `pg_get_constraintdef` of each of those CHECKs, normalized by
+     * the same helper the index predicates use. Asserting exact equality — never
+     * a substring — proves each predicate's whole boolean shape survives: a
+     * dropped disjunct, a flipped comparison or an added permissive term is a
+     * non-whitespace token difference.
+     */
+    const INVOICE_CHECK_DEFINITIONS: Record<string, string> = {
+      invoice_cancel_reason_present:
+        "CHECK(((status<>'CANCELLED')OR((cancel_reasonISNOTNULL)AND(length(btrim((cancel_reason)::text))>0))))",
+      invoice_cancelled_at_matches_status: "CHECK(((status='CANCELLED')=(cancelled_atISNOTNULL)))",
+      invoice_confirmed_requires_timestamp:
+        "CHECK(((status<>'CONFIRMED')OR(confirmed_atISNOTNULL)))",
+      invoice_draft_not_confirmed: "CHECK(((status<>'DRAFT')OR(confirmed_atISNULL)))",
+      invoice_number_iff_confirmed: "CHECK(((numberISNULL)=(confirmed_atISNULL)))",
+      invoice_number_positive: "CHECK(((numberISNULL)OR(number>0)))",
+      invoice_series_not_blank: "CHECK((length(btrim((series)::text))>0))",
+      invoice_line_description_not_blank: "CHECK((length(btrim((description)::text))>0))",
+      invoice_line_line_total_non_negative: "CHECK((line_total>=(0)::numeric))",
+      invoice_line_position_non_negative: 'CHECK(("position">=0))',
+      invoice_line_quantity_positive: "CHECK((quantity>(0)::numeric))",
+      invoice_line_tax_amount_non_negative: "CHECK((tax_amount>=(0)::numeric))",
+      invoice_line_taxable_base_non_negative: "CHECK((taxable_base>=(0)::numeric))",
+      invoice_line_unit_price_non_negative: "CHECK((unit_price>=(0)::numeric))",
+      invoice_number_sequence_next_value_positive: "CHECK((next_value>=1))",
+    };
+
+    /** Global seeded rate the fixture line freezes (PRD §15). */
+    let billingTaxRateId: string;
+    /** Tenant A catalog item referenced by the fixture line and the probes. */
+    let billingItemAId: string;
+    /** Tenant A COMPLETED sale: the committed target of the fixture invoice. */
+    let billingSaleAId: string;
+    /** Tenant A live DRAFT invoice: the committed row the partial index guards. */
+    let billingInvoiceAId: string;
+    /** Tenant A frozen line of that fixture invoice. */
+    let billingLineAId: string;
+    /** Tenant A `(series 'A')` counter, the baseline the probes must leave alone. */
+    let billingSequenceAId: string;
+
+    /**
+     * Extracts the database message from Prisma's raw-query error wrapper
+     * (`Raw query failed. Code: `23001`. Message: `...``). The captured text is
+     * the database's own message, so an assertion can compare it EXACTLY instead
+     * of matching a substring of the wrapper.
+     */
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
+      // PostgreSQL renders a `RAISE EXCEPTION` message with a fixed `ERROR: `
+      // severity prefix; stripping it leaves the exact text the trigger raises.
+      return (match ? match[1] : text).replace(/^ERROR: /, "");
+    };
+
+    /** Runs `probe` and returns the exact database message of its rejection. */
+    const captureDatabaseMessage = async (probe: () => Promise<unknown>): Promise<string> => {
+      try {
+        await probe();
+      } catch (error) {
+        return databaseMessage(error);
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `probe` and returns the PostgreSQL SQLSTATE and the exact message
+     * Prisma surfaced for its rejection.
+     *
+     * Prisma wraps a raw `unique_violation` and puts the SERVER's SQLSTATE in
+     * `meta.code` and the server's DETAIL text in `meta.message`. That DETAIL
+     * names the violated KEY COLUMNS exactly (`Key (tenant_id, sale_id)=(...)
+     * already exists.`) but never the index, which is why the applied index that
+     * produced it is identified by catalogue introspection (its name, its exact
+     * key columns and its exact predicate) rather than by message text.
+     */
+    const captureRawRejection = async (
+      probe: () => Promise<unknown>
+    ): Promise<{ sqlState: string | undefined; message: string }> => {
+      try {
+        await probe();
+      } catch (error) {
+        const candidate = error as { meta?: { code?: unknown; message?: unknown } };
+        return {
+          sqlState: typeof candidate.meta?.code === "string" ? candidate.meta.code : undefined,
+          message:
+            typeof candidate.meta?.message === "string"
+              ? candidate.meta.message
+              : databaseMessage(error),
+        };
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `work` inside an interactive transaction that is ALWAYS rolled back,
+     * so a probe can seed throwaway rows and attempt a mutation without
+     * persisting anything. An assertion failure inside `work` propagates and
+     * fails the case instead of matching the rollback sentinel.
+     */
+    const inRolledBackTransaction = async (
+      work: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<void> => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw new Error(BILLING_ROLLBACK_SENTINEL);
+        })
+      ).rejects.toThrow(BILLING_ROLLBACK_SENTINEL);
+    };
+
+    /**
+     * Raw sale insert at the migration's exact shape; returns the id. The tenant
+     * and the status are caller-supplied: the status matters for the FK RESTRICT
+     * probe, which needs a sale whose own conditional delete trigger ADMITS the
+     * delete so the foreign key is provably what refuses it.
+     */
+    const insertRawSale = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      status: "DRAFT" | "COMPLETED" | "CANCELLED" = "COMPLETED"
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+        VALUES (${id}::uuid, ${tenantId}::uuid, 'PYG', ${status}::sale_status)
+      `;
+      return id;
+    };
+
+    /** Raw catalog-item insert at the migration's exact shape; returns the id. */
+    const insertRawCatalogItem = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      name: string,
+      taxRateId: string
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "catalog_item" ("id", "tenant_id", "kind", "name", "tax_rate_id")
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, 'SUPPLY'::catalog_item_kind, ${name},
+          ${taxRateId}::uuid
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * Raw invoice insert at the migration's exact shape; returns the id. Every
+     * nullable confirmation/cancellation column is caller-supplied so a probe
+     * can violate exactly ONE CHECK: an omitted value stays NULL instead of
+     * inheriting a default the biconditional would also accept.
+     */
+    const insertRawInvoice = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      saleId: string,
+      options: {
+        customerId?: string | null;
+        currency?: string;
+        status?: "DRAFT" | "CONFIRMED" | "CANCELLED";
+        series?: string;
+        number?: number | null;
+        confirmedAt?: Date | null;
+        cancelledAt?: Date | null;
+        cancelReason?: string | null;
+      } = {}
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "invoice" (
+          "id", "tenant_id", "sale_id", "customer_id", "currency", "status",
+          "series", "number", "confirmed_at", "cancelled_at", "cancel_reason"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${saleId}::uuid,
+          ${options.customerId ?? null}::uuid, ${options.currency ?? "PYG"},
+          ${options.status ?? "DRAFT"}::invoice_status, ${options.series ?? "A"},
+          ${options.number ?? null}::int, ${options.confirmedAt ?? null}::timestamptz,
+          ${options.cancelledAt ?? null}::timestamptz, ${options.cancelReason ?? null}
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * Raw line insert for a tenant-A invoice at the migration's exact shape. The
+     * money defaults are independent of `unitPrice`, so a negative-unit-price
+     * probe violates its OWN CHECK and never the non-negative siblings.
+     */
+    const insertRawInvoiceLine = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      invoiceId: string,
+      catalogItemId: string,
+      overrides: {
+        position?: number;
+        description?: string;
+        rateCode?: string;
+        unitPrice?: string;
+        quantity?: string;
+        lineTotal?: string;
+        taxableBase?: string;
+        taxAmount?: string;
+      } = {}
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "invoice_line" (
+          "id", "tenant_id", "invoice_id", "catalog_item_id", "position",
+          "description", "rate_code", "unit_price", "quantity", "line_total",
+          "taxable_base", "tax_amount"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${invoiceId}::uuid, ${catalogItemId}::uuid,
+          ${overrides.position ?? 0}, ${overrides.description ?? "Live billing line"},
+          ${overrides.rateCode ?? "EXEMPT"}, ${overrides.unitPrice ?? "100.00"}::decimal,
+          ${overrides.quantity ?? "1.000"}::decimal,
+          ${overrides.lineTotal ?? "100.00"}::decimal,
+          ${overrides.taxableBase ?? "100.00"}::decimal,
+          ${overrides.taxAmount ?? "0.00"}::decimal
+        )
+      `;
+      return id;
+    };
+
+    /** Raw counter insert at the migration's exact shape; returns the id. */
+    const insertRawSequence = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      series: string,
+      nextValue: number
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "invoice_number_sequence" ("id", "tenant_id", "series", "next_value")
+        VALUES (${id}::uuid, ${tenantId}::uuid, ${series}, ${nextValue})
+      `;
+      return id;
+    };
+
+    beforeAll(async () => {
+      // The rate rows are SEED-owned, so resolving EXEMPT proves the reference
+      // seed really ran against this database (PRD §15).
+      const exemptRate = await prisma.taxRate.findUnique({ where: { code: "EXEMPT" } });
+      if (!exemptRate) {
+        throw new Error("Reference seed did not create the global EXEMPT tax rate");
+      }
+      billingTaxRateId = exemptRate.id;
+
+      // Committed fixtures, all written by DIRECT insert because BILL-001 has no
+      // invoice path: one catalog item, one completed sale, its one live DRAFT
+      // invoice, the invoice's single frozen line, and the per-(tenant, series)
+      // counter. They give the residue case a non-trivial baseline AND give the
+      // partial index a COMMITTED live row to refuse a second one against.
+      billingItemAId = await insertRawCatalogItem(
+        prisma,
+        tenantAId,
+        "Live Billing Item A",
+        billingTaxRateId
+      );
+      billingSaleAId = await insertRawSale(prisma, tenantAId, "COMPLETED");
+      billingInvoiceAId = await insertRawInvoice(prisma, tenantAId, billingSaleAId);
+      billingLineAId = await insertRawInvoiceLine(
+        prisma,
+        tenantAId,
+        billingInvoiceAId,
+        billingItemAId
+      );
+      billingSequenceAId = await insertRawSequence(prisma, tenantAId, "A", 1);
+    }, 60_000);
+
+    it("orders the applied invoice_status enum exactly DRAFT, CONFIRMED, CANCELLED", async () => {
+      const enumRows = await prisma.$queryRaw<{ enumlabel: string; enumsortorder: number }[]>`
+        SELECT e.enumlabel, e.enumsortorder
+        FROM pg_enum AS e
+        JOIN pg_type AS t ON t.oid = e.enumtypid
+        WHERE t.typname = 'invoice_status'
+        ORDER BY e.enumsortorder ASC
+      `;
+      // Order matters: the sort order is the lifecycle order, and a reordered
+      // or extended type would change a comparison the CHECKs rely on.
+      expect(enumRows.map((row) => row.enumlabel)).toEqual(["DRAFT", "CONFIRMED", "CANCELLED"]);
+      expect(enumRows.map((row) => row.enumsortorder)).toEqual([1, 2, 3]);
+    }, 30_000);
+
+    it("proves the applied invoice, invoice_line and invoice_number_sequence column shapes", async () => {
+      const columnRows = await prisma.$queryRaw<
+        {
+          table_name: string;
+          column_name: string;
+          is_nullable: string;
+          data_type: string;
+          udt_name: string;
+          numeric_precision: number | null;
+          numeric_scale: number | null;
+        }[]
+      >`
+        SELECT
+          table_name, column_name, is_nullable, data_type, udt_name,
+          numeric_precision, numeric_scale
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ('invoice', 'invoice_line', 'invoice_number_sequence')
+        ORDER BY table_name ASC, ordinal_position ASC
+      `;
+
+      const invoiceColumns = columnRows.filter((row) => row.table_name === "invoice");
+      const lineColumns = columnRows.filter((row) => row.table_name === "invoice_line");
+      const sequenceColumns = columnRows.filter(
+        (row) => row.table_name === "invoice_number_sequence"
+      );
+
+      // Exact column SETS, in creation order: an added column is a schema change
+      // the probe must catch, and a missing one breaks the insert shapes below.
+      expect(invoiceColumns.map((row) => row.column_name)).toEqual([
+        "id",
+        "tenant_id",
+        "sale_id",
+        "customer_id",
+        "currency",
+        "status",
+        "series",
+        "number",
+        "confirmed_at",
+        "cancelled_at",
+        "cancel_reason",
+        "created_at",
+        "updated_at",
+      ]);
+      expect(lineColumns.map((row) => row.column_name)).toEqual([
+        "id",
+        "tenant_id",
+        "invoice_id",
+        "catalog_item_id",
+        "position",
+        "description",
+        "rate_code",
+        "unit_price",
+        "quantity",
+        "line_total",
+        "taxable_base",
+        "tax_amount",
+        "created_at",
+      ]);
+      // The append-only snapshot has NO `updated_at` by design, and the counter
+      // has one because it is meant to be advanced.
+      expect(sequenceColumns.map((row) => row.column_name)).toEqual([
+        "id",
+        "tenant_id",
+        "series",
+        "next_value",
+        "created_at",
+        "updated_at",
+      ]);
+
+      const nullability = new Map(invoiceColumns.map((row) => [row.column_name, row.is_nullable]));
+      // OPTIONAL customer (DEC-028) and the whole NUMBERING/CANCELLATION
+      // evidence group is nullable in `DRAFT`.
+      for (const column of [
+        "customer_id",
+        "number",
+        "confirmed_at",
+        "cancelled_at",
+        "cancel_reason",
+      ]) {
+        expect(nullability.get(column), column).toBe("YES");
+      }
+      // The source sale, the inherited currency, the lifecycle status and the
+      // numbering series are all NOT NULL.
+      for (const column of ["sale_id", "currency", "status", "series"]) {
+        expect(nullability.get(column), column).toBe("NO");
+      }
+
+      const lineByColumn = new Map(lineColumns.map((row) => [row.column_name, row]));
+      const precisionOf = (column: string): string => {
+        const row = lineByColumn.get(column);
+        if (!row) {
+          throw new Error(`invoice_line.${column} is missing`);
+        }
+        return `${row.data_type}:${row.numeric_precision}:${row.numeric_scale}`;
+      };
+      // The frozen money keeps the SALE scale and the quantity keeps the ledger
+      // scale: the snapshot invents no new precision.
+      expect(["unit_price", "line_total", "taxable_base", "tax_amount"].map(precisionOf)).toEqual([
+        "numeric:14:2",
+        "numeric:14:2",
+        "numeric:14:2",
+        "numeric:14:2",
+      ]);
+      expect(precisionOf("quantity")).toBe("numeric:10:3");
+      // `position` and `next_value` are plain integers, not numerics.
+      expect(
+        `${lineByColumn.get("position")?.data_type}:${lineByColumn.get("position")?.udt_name}`
+      ).toBe("integer:int4");
+      const sequenceByColumn = new Map(sequenceColumns.map((row) => [row.column_name, row]));
+      expect(
+        `${sequenceByColumn.get("next_value")?.data_type}:${sequenceByColumn.get("next_value")?.udt_name}`
+      ).toBe("integer:int4");
+      // No invoice money column can be a float.
+      expect(
+        columnRows.filter((row) => ["double precision", "real"].includes(row.data_type))
+      ).toEqual([]);
+    }, 30_000);
+
+    it("proves the fifteen applied invoice CHECK constraints by their exact definitions", async () => {
+      const checkRows = await prisma.$queryRaw<{ conname: string; definition: string }[]>`
+        SELECT c.conname, pg_get_constraintdef(c.oid) AS definition
+        FROM pg_constraint AS c
+        JOIN pg_class AS t ON t.oid = c.conrelid
+        WHERE t.relname IN ('invoice', 'invoice_line', 'invoice_number_sequence')
+          AND c.contype = 'c'
+      `;
+
+      expect(checkRows.map((row) => row.conname).sort()).toEqual(INVOICE_CHECK_NAMES);
+      const definitionByName = new Map(
+        checkRows.map((row) => [row.conname, normalizeIndexPredicate(row.definition)])
+      );
+      for (const conname of INVOICE_CHECK_NAMES) {
+        expect(definitionByName.get(conname), conname).toBe(INVOICE_CHECK_DEFINITIONS[conname]);
+      }
+    }, 30_000);
+
+    it("proves the partial live-invoice unique index, the allocation key and the ownership keys", async () => {
+      const indexRows = await prisma.$queryRaw<
+        {
+          table_name: string;
+          relname: string;
+          is_unique: boolean;
+          is_primary: boolean;
+          key_1: string | null;
+          key_2: string | null;
+          key_3: string | null;
+          predicate: string | null;
+        }[]
+      >`
+        SELECT
+          t.relname AS table_name, c.relname, i.indisunique AS is_unique,
+          i.indisprimary AS is_primary,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          NULLIF(pg_get_indexdef(i.indexrelid, 2, true), '') AS key_2,
+          NULLIF(pg_get_indexdef(i.indexrelid, 3, true), '') AS key_3,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        JOIN pg_class AS t ON t.oid = i.indrelid
+        WHERE t.relname IN ('invoice', 'invoice_line', 'invoice_number_sequence')
+          AND NOT i.indisprimary
+      `;
+
+      // The COMPLETE applied index set of the three tables, so an added,
+      // dropped or re-keyed index cannot hide behind a subset assertion.
+      expect(
+        indexRows
+          .map((row) => {
+            const keys = [row.key_1, row.key_2, row.key_3]
+              .filter((key): key is string => key !== null)
+              .join(",");
+            const predicate =
+              row.predicate === null ? "<none>" : normalizeIndexPredicate(row.predicate);
+            return `${row.relname}:${row.is_unique}:${keys}:${predicate}`;
+          })
+          .sort()
+      ).toEqual(
+        [
+          "invoice_line_tenant_id_id_key:true:tenant_id,id:<none>",
+          'invoice_line_tenant_id_invoice_id_position_key:true:tenant_id,invoice_id,"position":<none>',
+          "invoice_number_sequence_tenant_id_id_key:true:tenant_id,id:<none>",
+          "invoice_number_sequence_tenant_id_series_key:true:tenant_id,series:<none>",
+          "invoice_tenant_id_id_key:true:tenant_id,id:<none>",
+          "invoice_tenant_id_sale_id_key:true:tenant_id,sale_id:status<>'CANCELLED'",
+          "invoice_tenant_id_series_number_key:true:tenant_id,series,number:<none>",
+          "invoice_tenant_id_status_idx:false:tenant_id,status:<none>",
+        ].sort()
+      );
+
+      // The partial index itself: UNIQUE on exactly (tenant_id, sale_id) AND
+      // carrying the exact `status <> 'CANCELLED'` predicate.
+      const liveSaleKey = indexRows.find((row) => row.relname === "invoice_tenant_id_sale_id_key");
+      expect(liveSaleKey).toMatchObject({
+        table_name: "invoice",
+        is_unique: true,
+        is_primary: false,
+        key_1: "tenant_id",
+        key_2: "sale_id",
+        key_3: null,
+      });
+      expect(normalizeIndexPredicate(liveSaleKey?.predicate ?? "")).toBe(
+        INVOICE_LIVE_SALE_INDEX_PREDICATE
+      );
+
+      // The allocation key is a PLAIN unconditional unique index (DEC-039): a
+      // number once handed out can never be handed out again.
+      const seriesNumberKey = indexRows.find(
+        (row) => row.relname === "invoice_tenant_id_series_number_key"
+      );
+      expect(seriesNumberKey).toMatchObject({
+        table_name: "invoice",
+        is_unique: true,
+        key_1: "tenant_id",
+        key_2: "series",
+        key_3: "number",
+        predicate: null,
+      });
+
+      // All three tables carry their `_tenant_id_id_key` ownership key.
+      for (const table of ["invoice", "invoice_line", "invoice_number_sequence"]) {
+        const ownershipKey = indexRows.find((row) => row.relname === `${table}_tenant_id_id_key`);
+        expect(ownershipKey, table).toMatchObject({
+          table_name: table,
+          is_unique: true,
+          key_1: "tenant_id",
+          key_2: "id",
+          key_3: null,
+          predicate: null,
+        });
+      }
+
+      // Exactly ONE applied unique index on `invoice` covers (tenant_id, sale_id)
+      // in that order, so a duplicate DETAIL naming those columns can only come
+      // from `invoice_tenant_id_sale_id_key`.
+      const covering = await prisma.$queryRaw<{ relname: string }[]>`
+        SELECT c.relname
+        FROM pg_index AS i
+        JOIN pg_class AS c ON c.oid = i.indexrelid
+        JOIN pg_class AS t ON t.oid = i.indrelid
+        WHERE t.relname = 'invoice' AND i.indisunique
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'tenant_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'sale_id'
+      `;
+      expect(covering.map((row) => row.relname)).toEqual(["invoice_tenant_id_sale_id_key"]);
+    }, 30_000);
+
+    it("proves the eight composite RESTRICT foreign keys and that no CASCADE applies", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+      const linesBefore = await prisma.invoiceLine.count();
+
+      // The eight APPLIED foreign keys across the three invoice tables, every one
+      // RESTRICT on delete AND update (`rr`).
+      const fkRows = await prisma.$queryRaw<
+        {
+          conname: string;
+          table_name: string;
+          referenced_table: string;
+          on_delete: string;
+          on_update: string;
+        }[]
+      >`
+        SELECT
+          c.conname,
+          rel.relname AS table_name,
+          frel.relname AS referenced_table,
+          c.confdeltype AS on_delete,
+          c.confupdtype AS on_update
+        FROM pg_constraint AS c
+        JOIN pg_class AS rel ON rel.oid = c.conrelid
+        JOIN pg_class AS frel ON frel.oid = c.confrelid
+        WHERE rel.relname IN ('invoice', 'invoice_line', 'invoice_number_sequence')
+          AND c.contype = 'f'
+      `;
+      expect(
+        fkRows
+          .map(
+            (row) =>
+              `${row.conname}:${row.table_name}->${row.referenced_table}:${row.on_delete}${row.on_update}`
+          )
+          .sort()
+      ).toEqual(
+        [
+          "invoice_line_rate_code_fkey:invoice_line->tax_rate:rr",
+          "invoice_line_tenant_id_catalog_item_id_fkey:invoice_line->catalog_item:rr",
+          "invoice_line_tenant_id_fkey:invoice_line->tenant:rr",
+          "invoice_line_tenant_id_invoice_id_fkey:invoice_line->invoice:rr",
+          "invoice_number_sequence_tenant_id_fkey:invoice_number_sequence->tenant:rr",
+          "invoice_tenant_id_customer_id_fkey:invoice->customer:rr",
+          "invoice_tenant_id_fkey:invoice->tenant:rr",
+          "invoice_tenant_id_sale_id_fkey:invoice->sale:rr",
+        ].sort()
+      );
+      // Never CASCADE: no tenant, sale, customer, invoice or catalog item
+      // deletion may destroy a financial document implicitly.
+      expect(fkRows.filter((row) => row.on_delete === "c" || row.on_update === "c")).toEqual([]);
+
+      // A tenant-A invoice whose sale belongs to tenant B is rejected by the
+      // COMPOSITE sale key, so a foreign sale is not a representable state...
+      await inRolledBackTransaction(async (tx) => {
+        const foreignSaleId = await insertRawSale(tx, tenantBId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoice(tx, tenantAId, foreignSaleId)
+        );
+        expect(message).toContain("invoice_tenant_id_sale_id_fkey");
+      });
+
+      // ...a tenant-A line pointing at a tenant-B catalog item is rejected by
+      // the composite catalog-item key...
+      await inRolledBackTransaction(async (tx) => {
+        const foreignItemId = await insertRawCatalogItem(
+          tx,
+          tenantBId,
+          "Live Billing Foreign Item B",
+          billingTaxRateId
+        );
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoiceLine(tx, tenantAId, invoiceId, foreignItemId)
+        );
+        expect(message).toContain("invoice_line_tenant_id_catalog_item_id_fkey");
+      });
+
+      // ...and `rate_code` can only name a seeded GLOBAL rate (DEC-021).
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoiceLine(tx, tenantAId, invoiceId, billingItemAId, {
+            rateCode: "NO_SUCH_RATE",
+          })
+        );
+        expect(message).toContain("invoice_line_rate_code_fkey");
+      });
+
+      // RESTRICT is BEHAVIOURAL, not merely declarative. The probe sale is a
+      // DRAFT, so its own conditional delete trigger ADMITS the delete and the
+      // foreign key is provably what refuses it.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId, "DRAFT");
+        await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`DELETE FROM "sale" WHERE "id" = ${saleId}::uuid`
+        );
+        expect(message).toContain("invoice_tenant_id_sale_id_fkey");
+      });
+
+      // A DRAFT invoice passes its own delete guard, so the line's composite FK
+      // is what prevents the header from being deleted out from under its
+      // frozen snapshot.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await insertRawInvoiceLine(tx, tenantAId, invoiceId, billingItemAId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`DELETE FROM "invoice" WHERE "id" = ${invoiceId}::uuid`
+        );
+        expect(message).toContain("invoice_line_tenant_id_invoice_id_fkey");
+      });
+
+      // Every probe rolled back: no throwaway invoice or line survived.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+      expect(await prisma.invoiceLine.count()).toBe(linesBefore);
+    }, 30_000);
+
+    it("proves the five immutability triggers, their conditional predicates and the counter's absent trigger", async () => {
+      // The APPLIED triggers with their timing and events. `tgtype` 11 is
+      // ROW|BEFORE|DELETE (1|2|8) and 19 is ROW|BEFORE|UPDATE (1|2|16), so the
+      // exact values below pin both the timing and the event of every trigger.
+      const triggers = await prisma.$queryRaw<
+        { table_name: string; tgname: string; tgtype: number; proname: string }[]
+      >`
+        SELECT c.relname AS table_name, t.tgname, t.tgtype::int AS tgtype, p.proname
+        FROM pg_trigger AS t
+        JOIN pg_class AS c ON c.oid = t.tgrelid
+        JOIN pg_proc AS p ON p.oid = t.tgfoid
+        WHERE c.relname IN ('invoice', 'invoice_line', 'invoice_number_sequence')
+          AND NOT t.tgisinternal
+        ORDER BY t.tgname
+      `;
+      expect(
+        triggers.map((row) => `${row.table_name}:${row.tgname}:${row.proname}:${row.tgtype}`).sort()
+      ).toEqual(
+        [
+          "invoice:invoice_no_delete_when_not_draft_trigger:invoice_no_delete_when_not_draft:11",
+          "invoice:invoice_no_update_unless_permitted_transition_trigger:invoice_no_update_unless_permitted_transition:19",
+          "invoice:invoice_number_never_reallocated_trigger:invoice_number_never_reallocated:19",
+          "invoice_line:invoice_line_no_delete_trigger:invoice_line_no_delete:11",
+          "invoice_line:invoice_line_no_update_trigger:invoice_line_no_update:19",
+        ].sort()
+      );
+
+      // `invoice_number_sequence` is MEANT to be updated by the allocation, so it
+      // carries NO trigger at all: a counter that could not advance could not
+      // allocate.
+      expect(triggers.filter((row) => row.table_name === "invoice_number_sequence")).toEqual([]);
+
+      // The trigger FUNCTIONS carry the CONDITIONAL predicate for the header and
+      // the UNCONDITIONAL raise for the snapshot. The conditional guard is
+      // asserted on `prosrc`, so a name-only check cannot hide an unconditional
+      // body that would block the `DRAFT -> CONFIRMED` transition itself.
+      const functions = await prisma.$queryRaw<{ proname: string; prosrc: string }[]>`
+        SELECT p.proname, p.prosrc
+        FROM pg_proc AS p
+        WHERE p.proname IN (
+          'invoice_no_delete_when_not_draft', 'invoice_no_update_unless_permitted_transition',
+          'invoice_number_never_reallocated', 'invoice_line_no_update',
+          'invoice_line_no_delete'
+        )
+      `;
+      const sourceByName = new Map(
+        functions.map((row) => [row.proname, row.prosrc.replace(/\s+/g, " ")])
+      );
+
+      const deleteSource = sourceByName.get("invoice_no_delete_when_not_draft");
+      expect(deleteSource).toContain(`IF OLD."status" <> 'DRAFT' THEN`);
+      expect(deleteSource).toContain("RETURN OLD;");
+      expect(deleteSource).toContain("ERRCODE = 'restrict_violation'");
+      expect(deleteSource).not.toMatch(/BEGIN RAISE EXCEPTION/);
+
+      const updateSource = sourceByName.get("invoice_no_update_unless_permitted_transition");
+      // The guard rejects everything but the three legitimate transitions: a
+      // cancelled row is terminal, a draft is immutable from creation, and the
+      // transition allow-list is the only way through.
+      expect(updateSource).toContain(`IF OLD."status" = 'CANCELLED' THEN`);
+      expect(updateSource).toContain(`IF OLD."status" = 'DRAFT' AND NEW."status" = 'DRAFT' THEN`);
+      expect(updateSource).toContain(
+        `(OLD."status" = 'DRAFT' AND NEW."status" IN ('CONFIRMED', 'CANCELLED'))`
+      );
+      expect(updateSource).toContain(
+        `OR (OLD."status" = 'CONFIRMED' AND NEW."status" = 'CANCELLED')`
+      );
+      expect(updateSource).toContain("RETURN NEW;");
+      expect(updateSource).toContain("ERRCODE = 'restrict_violation'");
+      expect(updateSource).not.toMatch(/BEGIN RAISE EXCEPTION/);
+
+      const reallocationSource = sourceByName.get("invoice_number_never_reallocated");
+      expect(reallocationSource).toContain(
+        'OLD."number" IS NOT NULL AND NEW."number" IS DISTINCT FROM OLD."number"'
+      );
+      expect(reallocationSource).toContain("RETURN NEW;");
+      expect(reallocationSource).toContain("ERRCODE = 'restrict_violation'");
+
+      // The two line functions raise straight after `BEGIN`: there is no draft
+      // state and no edit path, so no predicate gates them.
+      for (const proname of ["invoice_line_no_update", "invoice_line_no_delete"]) {
+        const source = sourceByName.get(proname);
+        expect(source, proname).toMatch(/BEGIN RAISE EXCEPTION/);
+        expect(source, proname).toContain("ERRCODE = 'restrict_violation'");
+        expect(source, proname).not.toContain("IF OLD");
+      }
+    }, 30_000);
+
+    it("rejects a numbered draft and an unnumbered confirmation at invoice_number_iff_confirmed", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+
+      // A numbered DRAFT: the number has no confirmation to accompany it.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoice(tx, tenantAId, saleId, { status: "DRAFT", number: 1 })
+        );
+        expect(message).toContain("invoice_number_iff_confirmed");
+      });
+
+      // A CONFIRMED invoice carrying its timestamp but NO number: the other
+      // direction of the same biconditional.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoice(tx, tenantAId, saleId, {
+            status: "CONFIRMED",
+            confirmedAt: new Date(),
+          })
+        );
+        expect(message).toContain("invoice_number_iff_confirmed");
+      });
+
+      // Every probe rolled back: no rejected invoice survived.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+    }, 30_000);
+
+    it("rejects a CANCELLED insert without a reason or without its timestamp", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+
+      // Cancelled with its timestamp but NO reason at all.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoice(tx, tenantAId, saleId, {
+            status: "CANCELLED",
+            cancelledAt: new Date(),
+          })
+        );
+        expect(message).toContain("invoice_cancel_reason_present");
+      });
+
+      // Cancelled with a WHITESPACE-ONLY reason: `btrim` is what refuses it, so
+      // the reason is genuinely explanatory rather than merely present.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoice(tx, tenantAId, saleId, {
+            status: "CANCELLED",
+            cancelledAt: new Date(),
+            cancelReason: "   ",
+          })
+        );
+        expect(message).toContain("invoice_cancel_reason_present");
+      });
+
+      // Cancelled with a reason but NO timestamp: the status/timestamp equality
+      // is what refuses it.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoice(tx, tenantAId, saleId, {
+            status: "CANCELLED",
+            cancelReason: "Duplicated document",
+          })
+        );
+        expect(message).toContain("invoice_cancelled_at_matches_status");
+      });
+
+      // Every probe rolled back: no rejected invoice survived.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+    }, 30_000);
+
+    it("rejects a second live invoice for one sale while admitting a cancelled one and its replacement", async () => {
+      // Against a COMMITTED live invoice, a second live row for the same sale
+      // cannot be inserted: the uniqueness is a real index property, not an
+      // in-transaction artefact.
+      await inRolledBackTransaction(async (tx) => {
+        const rejection = await captureRawRejection(() =>
+          insertRawInvoice(tx, tenantAId, billingSaleAId)
+        );
+        expect(rejection.sqlState).toBe("23505");
+        expect(rejection.message).toContain("Key (tenant_id, sale_id)=(");
+        expect(rejection.message).toContain("already exists.");
+      });
+
+      // BOTH halves on ONE sale, with the rejection LAST because a rejected
+      // statement aborts its transaction. The CANCELLED invoice falls OUTSIDE
+      // the partial index, the replacement live invoice for the SAME sale is
+      // admitted, and a SECOND live invoice for that sale is then refused.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const cancelledId = await insertRawInvoice(tx, tenantAId, saleId, {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+          cancelReason: "Duplicated document",
+        });
+        const replacementId = await insertRawInvoice(tx, tenantAId, saleId);
+        const stored = await tx.$queryRaw<{ id: string; status: string }[]>`
+          SELECT "id"::text AS id, "status"::text AS status
+          FROM "invoice" WHERE "sale_id" = ${saleId}::uuid
+          ORDER BY "status"::text ASC
+        `;
+        expect(stored).toEqual([
+          { id: cancelledId, status: "CANCELLED" },
+          { id: replacementId, status: "DRAFT" },
+        ]);
+
+        const rejection = await captureRawRejection(() => insertRawInvoice(tx, tenantAId, saleId));
+        expect(rejection.sqlState).toBe("23505");
+        expect(rejection.message).toContain("Key (tenant_id, sale_id)=(");
+        expect(rejection.message).toContain("already exists.");
+      });
+
+      // Nothing survived: the committed fixture sale still carries exactly its
+      // one live invoice and no cancelled sibling.
+      expect(await prisma.invoice.count({ where: { saleId: billingSaleAId } })).toBe(1);
+      expect(
+        await prisma.invoice.count({ where: { saleId: billingSaleAId, status: "CANCELLED" } })
+      ).toBe(0);
+    }, 30_000);
+
+    it("admits the DRAFT to CONFIRMED transition, rejects later updates and never reallocates a number", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+
+      // The transition itself SUCCEEDS, which is the whole point of the
+      // CONDITIONAL trigger: the row is still `DRAFT` when the guard reads OLD,
+      // so the update that allocates the number and writes `updated_at` passes.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const updated = await tx.$executeRaw`
+          UPDATE "invoice"
+          SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+              "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(updated).toBe(1);
+        const stored = await tx.$queryRaw<
+          { status: string; number: number; confirmed_at: Date | null }[]
+        >`
+          SELECT "status"::text AS status, "number", "confirmed_at"
+          FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(stored).toHaveLength(1);
+        expect(stored[0]?.status).toBe("CONFIRMED");
+        expect(stored[0]?.number).toBe(1);
+        expect(stored[0]?.confirmed_at).toBeInstanceOf(Date);
+      });
+
+      // A FURTHER update of the now-CONFIRMED invoice is rejected: an issued
+      // invoice may only be cancelled, never re-confirmed or edited, so the
+      // lifecycle is one-way at the database.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await tx.$executeRaw`
+          UPDATE "invoice" SET "status" = 'CONFIRMED', "number" = 1,
+            "confirmed_at" = now(), "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        const message = await captureDatabaseMessage(
+          () =>
+            tx.$executeRaw`UPDATE "invoice" SET "cancel_reason" = 'tamper' WHERE "id" = ${invoiceId}::uuid`
+        );
+        expect(message).toBe("an issued invoice is immutable; only cancellation is permitted");
+      });
+
+      // A CANCELLED invoice is terminal: the guard refuses any update of it.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId, {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+          cancelReason: "Duplicated document",
+        });
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`UPDATE "invoice" SET "series" = 'B' WHERE "id" = ${invoiceId}::uuid`
+        );
+        expect(message).toBe("a cancelled invoice is terminal and cannot be updated");
+      });
+
+      // The reallocation guard is SHADOWED on any non-draft row: PostgreSQL fires
+      // BEFORE-row triggers in alphabetical order, so
+      // `invoice_no_update_unless_permitted_transition_trigger` refuses the
+      // overwrite first and its message is the one observed. Isolating the
+      // reallocation trigger for the duration of this rolled-back transaction
+      // proves the guard's own predicate actually rejects the overwrite rather
+      // than merely being present as text.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await tx.$executeRaw`
+          UPDATE "invoice" SET "status" = 'CONFIRMED', "number" = 1,
+            "confirmed_at" = now(), "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        await tx.$executeRaw`ALTER TABLE "invoice" DISABLE TRIGGER "invoice_no_update_unless_permitted_transition_trigger"`;
+        const disabled = await tx.$queryRaw<{ tgenabled: string }[]>`
+          SELECT "tgenabled" FROM pg_trigger
+          WHERE "tgname" = 'invoice_no_update_unless_permitted_transition_trigger'
+        `;
+        expect(disabled).toEqual([{ tgenabled: "D" }]);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`UPDATE "invoice" SET "number" = 2 WHERE "id" = ${invoiceId}::uuid`
+        );
+        expect(message).toBe("an allocated invoice number is never reallocated");
+      });
+
+      // Every probe rolled back: the fixture stayed a DRAFT with a NULL number.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+      expect(await prisma.invoice.findUnique({ where: { id: billingInvoiceAId } })).toMatchObject({
+        status: "DRAFT",
+        number: null,
+      });
+    }, 30_000);
+
+    it("proves a confirmed invoice can still be cancelled and keeps its allocated number", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+
+      // The regression the native review raised twice: with the old header guard
+      // gated on "OLD is not DRAFT", a CONFIRMED invoice could never be
+      // cancelled, so `CANCELLED` was reachable only from `DRAFT` even though
+      // DEC-043 requires the issued invoice to be cancellable. BOTH transitions
+      // succeed here, and the second one keeps the allocated number.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await tx.$executeRaw`
+          UPDATE "invoice" SET "status" = 'CONFIRMED', "number" = 1,
+            "confirmed_at" = now(), "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        const cancelled = await tx.$executeRaw`
+          UPDATE "invoice" SET "status" = 'CANCELLED', "cancelled_at" = now(),
+            "cancel_reason" = 'Issued in error', "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(cancelled).toBe(1);
+        const stored = await tx.$queryRaw<{ status: string; number: number | null }[]>`
+          SELECT "status"::text AS status, "number" FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        // DEC-039/DEC-043: cancelling an issued invoice never frees its number.
+        expect(stored).toEqual([{ status: "CANCELLED", number: 1 }]);
+        const cancellation = await tx.$queryRaw<
+          { cancelled_at: Date | null; cancel_reason: string | null }[]
+        >`
+          SELECT "cancelled_at", "cancel_reason" FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(cancellation[0]?.cancelled_at).toBeInstanceOf(Date);
+        expect(cancellation[0]?.cancel_reason).toBe("Issued in error");
+      });
+
+      // The probe rolled back: no cancelled invoice survived.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+    }, 30_000);
+
+    it("rejects every update and every delete of an invoice_line snapshot", async () => {
+      const linesBefore = await prisma.invoiceLine.count();
+
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const lineId = await insertRawInvoiceLine(tx, tenantAId, invoiceId, billingItemAId);
+        const message = await captureDatabaseMessage(
+          () =>
+            tx.$executeRaw`UPDATE "invoice_line" SET "description" = 'tamper' WHERE "id" = ${lineId}::uuid`
+        );
+        expect(message).toBe(
+          "an immutable invoice line snapshot cannot be updated; cancel the invoice and issue a corrected one"
+        );
+      });
+
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const lineId = await insertRawInvoiceLine(tx, tenantAId, invoiceId, billingItemAId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`DELETE FROM "invoice_line" WHERE "id" = ${lineId}::uuid`
+        );
+        expect(message).toBe(
+          "an immutable invoice line snapshot cannot be deleted; cancel the invoice instead"
+        );
+      });
+
+      // Every probe rolled back: no rejected line survived.
+      expect(await prisma.invoiceLine.count()).toBe(linesBefore);
+    }, 30_000);
+
+    it("rejects a non-positive counter and admits the atomic single-statement allocation", async () => {
+      const sequencesBefore = await prisma.invoiceNumberSequence.count();
+
+      // The counter can never fall below 1: a value the `invoice_number_positive`
+      // CHECK would refuse can never be handed out.
+      for (const nextValue of [0, -1]) {
+        await inRolledBackTransaction(async (tx) => {
+          const message = await captureDatabaseMessage(() =>
+            insertRawSequence(tx, tenantAId, "A", nextValue)
+          );
+          expect(message, String(nextValue)).toContain(
+            "invoice_number_sequence_next_value_positive"
+          );
+        });
+      }
+
+      // The DEC-039 allocation is ONE statement: the increment and the read of
+      // the PRE-increment value happen under the row lock the UPDATE takes, so no
+      // two confirmations can read the same number.
+      await inRolledBackTransaction(async (tx) => {
+        // A series the committed fixtures do not use, so no unique key contends.
+        await insertRawSequence(tx, tenantAId, "Z", 1);
+        const first = await tx.$queryRaw<{ allocated: number; next_value: number }[]>`
+          UPDATE "invoice_number_sequence"
+          SET "next_value" = "next_value" + 1
+          WHERE "tenant_id" = ${tenantAId}::uuid AND "series" = 'Z'
+          RETURNING "next_value" - 1 AS allocated, "next_value"
+        `;
+        expect(first).toEqual([{ allocated: 1, next_value: 2 }]);
+        const second = await tx.$queryRaw<{ allocated: number; next_value: number }[]>`
+          UPDATE "invoice_number_sequence"
+          SET "next_value" = "next_value" + 1
+          WHERE "tenant_id" = ${tenantAId}::uuid AND "series" = 'Z'
+          RETURNING "next_value" - 1 AS allocated, "next_value"
+        `;
+        expect(second).toEqual([{ allocated: 2, next_value: 3 }]);
+      });
+
+      // Every probe rolled back, including the two allocations, and the
+      // committed counter is untouched.
+      expect(await prisma.invoiceNumberSequence.count()).toBe(sequencesBefore);
+      expect(
+        await prisma.invoiceNumberSequence.findUnique({ where: { id: billingSequenceAId } })
+      ).toMatchObject({ nextValue: 1 });
+    }, 30_000);
+
+    it("rejects the line quantity, position, money and description CHECK violations", async () => {
+      const linesBefore = await prisma.invoiceLine.count();
+
+      for (const quantity of ["0.000", "-1.000"]) {
+        await inRolledBackTransaction(async (tx) => {
+          const saleId = await insertRawSale(tx, tenantAId);
+          const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+          const message = await captureDatabaseMessage(() =>
+            insertRawInvoiceLine(tx, tenantAId, invoiceId, billingItemAId, { quantity })
+          );
+          expect(message, quantity).toContain("invoice_line_quantity_positive");
+        });
+      }
+
+      // A negative unit price is refused by its OWN CHECK: the other money
+      // defaults do not depend on `unitPrice`.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoiceLine(tx, tenantAId, invoiceId, billingItemAId, { unitPrice: "-0.01" })
+        );
+        expect(message).toContain("invoice_line_unit_price_non_negative");
+      });
+
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoiceLine(tx, tenantAId, invoiceId, billingItemAId, { position: -1 })
+        );
+        expect(message).toContain("invoice_line_position_non_negative");
+      });
+
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(() =>
+          insertRawInvoiceLine(tx, tenantAId, invoiceId, billingItemAId, {
+            description: "   ",
+          })
+        );
+        expect(message).toContain("invoice_line_description_not_blank");
+      });
+
+      // Every probe rolled back: no rejected line survived.
+      expect(await prisma.invoiceLine.count()).toBe(linesBefore);
+    }, 30_000);
+
+    it("leaves no residue: every raw probe rolled back and the fixture counts unchanged", async () => {
+      // Exactly the committed fixtures exist, in tenant A, and NOTHING ELSE on
+      // the whole database: every throwaway sale, invoice, line, catalog item and
+      // counter of this block's probes is gone, including the cross-tenant ones.
+      expect(await prisma.invoice.count()).toBe(1);
+      expect(await prisma.invoiceLine.count()).toBe(1);
+      expect(await prisma.invoiceNumberSequence.count()).toBe(1);
+      expect(await prisma.invoice.count({ where: { tenantId: tenantAId } })).toBe(1);
+      expect(await prisma.invoiceLine.count({ where: { tenantId: tenantAId } })).toBe(1);
+      expect(await prisma.invoiceNumberSequence.count({ where: { tenantId: tenantAId } })).toBe(1);
+      expect(await prisma.invoice.count({ where: { tenantId: tenantBId } })).toBe(0);
+      expect(await prisma.invoiceLine.count({ where: { tenantId: tenantBId } })).toBe(0);
+      expect(await prisma.invoiceNumberSequence.count({ where: { tenantId: tenantBId } })).toBe(0);
+
+      // The fixture rows themselves are exactly as `beforeAll` wrote them: the
+      // live DRAFT header with no number, its single frozen line and the counter
+      // still at 1.
+      expect(await prisma.invoice.findUnique({ where: { id: billingInvoiceAId } })).toMatchObject({
+        tenantId: tenantAId,
+        saleId: billingSaleAId,
+        status: "DRAFT",
+        series: "A",
+        number: null,
+        confirmedAt: null,
+        cancelledAt: null,
+        cancelReason: null,
+      });
+      expect(await prisma.invoiceLine.findUnique({ where: { id: billingLineAId } })).toMatchObject({
+        tenantId: tenantAId,
+        invoiceId: billingInvoiceAId,
+        catalogItemId: billingItemAId,
+        position: 0,
+        rateCode: "EXEMPT",
+      });
+      expect(
+        await prisma.invoiceNumberSequence.findUnique({ where: { id: billingSequenceAId } })
+      ).toMatchObject({ tenantId: tenantAId, series: "A", nextValue: 1 });
+    }, 30_000);
+  });
 });

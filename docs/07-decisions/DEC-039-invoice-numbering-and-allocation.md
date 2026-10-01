@@ -174,3 +174,24 @@ requirement; this record only chooses the allocation point, scope and constraint
 shape. The human-readable rendering of the number (prefixes, padding, year
 segments, establishment codes) is deliberately left to [[DEC-042]]'s Fiscal
 boundary, following [[DEC-018]], and is not implemented in EPIC-14.
+
+## Subsequent scope note
+
+**2026-10-01, after this record's acceptance.** The slice that implements this
+decision found one imprecise clause in the accepted text. This note **extends**
+the accepted decision and does not rewrite it: the accepted `## Decision` text
+stays recorded as decided, and the clarification below is what the implementing
+slices follow from this date.
+
+- **`number` is present exactly when `confirmed_at` is.** The accepted text says
+  the number is "required on `CONFIRMED` and `CANCELLED`", which conflicts with
+  the same decision's guarantee that "a cancelled or abandoned draft never
+  consumes a number": an invoice that is cancelled straight from `DRAFT` is
+  `CANCELLED` and yet must carry no number. The implemented rule is that
+  `number` and `confirmed_at` are present or absent **together**, enforced by
+  the biconditional CHECK `invoice_number_iff_confirmed`
+  (`(number IS NULL) = (confirmed_at IS NULL)`), so an invoice cancelled from
+  `DRAFT` keeps a NULL number and a confirmed invoice keeps its number
+  permanently after cancellation. The accepted guarantee — "no number is
+  consumed before confirmation, and `(tenant_id, series, number)` is unique" —
+  is unchanged; only the imprecise clause is corrected.

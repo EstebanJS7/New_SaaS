@@ -163,6 +163,11 @@ model Tenant {
   cashMovements               CashMovement[]
   payments                    Payment[]
   idempotencyRecords          IdempotencyRecord[]
+  /// EPIC-14 Billing back-references (DEC-038): the invoice aggregate and its
+  /// immutable snapshot lines, plus the per-tenant numbering counters.
+  invoices                    Invoice[]
+  invoiceLines                InvoiceLine[]
+  invoiceNumberSequences      InvoiceNumberSequence[]
 
   @@map("tenant")
 }
@@ -677,6 +682,11 @@ model Customer {
   /// EPIC-12 sale back-reference: the draft sales that name this customer
   /// through the OPTIONAL composite tenant-ownership FK (DEC-028).
   sales Sale[]
+
+  /// EPIC-14 Billing back-reference (DEC-038): the invoices that inherit this
+  /// customer from their source sale through the OPTIONAL composite
+  /// tenant-ownership FK. CONFIDENTIAL (PRD §41).
+  invoices Invoice[]
 
   /// Tenant-ownership key: target of the portal composite customer FKs.
   @@unique([tenantId, id])
@@ -1264,6 +1274,10 @@ model TaxRate {
   /// EPIC-12 sale back-reference: the frozen line snapshots that name this rate
   /// through the RESTRICT `tax_rate(code)` reference (DEC-021).
   saleLines SaleLine[]
+  /// EPIC-14 Billing back-reference (DEC-038): the invoice line snapshots that
+  /// freeze the same global rate code through the RESTRICT `tax_rate(code)`
+  /// reference.
+  invoiceLines InvoiceLine[]
 
   @@map("tax_rate")
 }
@@ -1327,6 +1341,10 @@ model CatalogItem {
   /// EPIC-12 sale back-reference: the priced sale lines that reference this item
   /// through the composite tenant-ownership FK.
   saleLines SaleLine[]
+
+  /// EPIC-14 Billing back-reference (DEC-038): the invoice line snapshots that
+  /// reference this item through the composite tenant-ownership FK.
+  invoiceLines InvoiceLine[]
 
   /// Tenant-ownership key: target of the composite service FK from Appointment
   /// (EPIC-09 WU4) and of the composite item FKs from the EPIC-10 stock ledger,
@@ -1731,6 +1749,14 @@ model Sale {
   payments Payment[]
   /// Idempotency records whose stored result is this sale (DEC-024).
   idempotencyRecords IdempotencyRecord[]
+  /// EPIC-14 Billing back-reference (DEC-038): the invoices sourced from this
+  /// sale. This is a LIST, not a singular field, because "at most one LIVE
+  /// invoice per sale" is a PARTIAL unique index in the migration
+  /// (`invoice_tenant_id_sale_id_key` ... WHERE "status" <> 'CANCELLED'), which
+  /// Prisma cannot express as `@@unique([tenantId, saleId])`. Cancelling an
+  /// invoice releases its sale for a corrected replacement (DEC-043), so more
+  /// than one invoice row per sale is a legitimate state.
+  invoices Invoice[]
 
   /// Tenant-ownership key: target of the composite sale FK from `SaleLine`.
   @@unique([tenantId, id])
@@ -2194,6 +2220,260 @@ model CashMovement {
   /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
   @@unique([tenantId, id])
   @@map("cash_movement")
+}
+
+// ---------------------------------------------------------------------------
+// Billing (EPIC-14 BILL-001 invoice data foundation, DEC-038, DEC-039,
+// DEC-040, DEC-043).
+//
+// The tenant-scoped invoice aggregate PRD §21 requires, built on the EPIC-12
+// sale foundation: `Invoice` (the DRAFT/CONFIRMED/CANCELLED header), the
+// immutable `InvoiceLine` snapshot copied verbatim from the sale's frozen
+// `SaleLine` rows, and the per-tenant `invoice_number_sequence` counter.
+//
+// The aggregate is FISCAL-FREE (DEC-042): no fiscal status, fiscal document,
+// provider, queue or submission column exists here, and PRD §21's "Invoice is
+// distinct from fiscal status" holds by that absence. PRD §22 and EPIC-15 own
+// the fiscal surface, which is why `fiscal.invoice.issue` stays reserved
+// (DEC-040).
+//
+// Billing performs no money arithmetic (DEC-021, DEC-038): every line amount on
+// an invoice is a copy of the frozen `SaleLine` snapshot, so the invoice total
+// is the sum of its own immutable lines rather than a second pricing authority.
+//
+// This migration is strictly additive: it creates three tables and one enum,
+// alters no existing table, writes no row and drops nothing.
+//
+// "At most one LIVE invoice per sale" is a DATABASE property, not an
+// application convention: it is carried by the PARTIAL unique index
+// `invoice_tenant_id_sale_id_key` on (tenant_id, sale_id)
+// WHERE status <> 'CANCELLED', declared as raw SQL in the migration because
+// Prisma cannot express partial indexes. A cancelled invoice therefore releases
+// its sale for a corrected replacement, which is exactly what DEC-038's
+// "fixing a wrong draft means cancelling it and creating a new invoice"
+// requires (DEC-043).
+//
+// Tenant ownership is carried by composite `(tenant_id, id)` keys on all three
+// tables, so an invoice can only reference a sale and a customer of the SAME
+// tenant, and a line can only reference an invoice and a catalog item of the
+// SAME tenant:
+//   * `invoice(tenant_id, sale_id) -> sale(tenant_id, id)`
+//   * `invoice(tenant_id, customer_id) -> customer(tenant_id, id)`
+//   * `invoice_line(tenant_id, invoice_id) -> invoice(tenant_id, id)`
+//   * `invoice_line(tenant_id, catalog_item_id) -> catalog_item(tenant_id, id)`
+//
+// Immutability: the invoice is immutable from creation at every status
+// (DEC-038), so no draft-editing route exists. The migration rejects every
+// `invoice` UPDATE except the three permitted transitions — `DRAFT ->
+// CONFIRMED`, `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED` (DEC-043) —
+// with a conditional `BEFORE UPDATE` trigger, conditional because Prisma writes
+// `updated_at` and both transitions update an existing row. It adds the
+// `BEFORE DELETE` trigger, the unconditional `BEFORE UPDATE` / `BEFORE DELETE`
+// triggers that make an `invoice_line` snapshot append-only, and the
+// `invoice_number_never_reallocated` guard that keeps a number permanent.
+//
+// Data classification: the invoice's references to a customer and to a sale are
+// CONFIDENTIAL, and its money amounts, status, series and number are INTERNAL
+// (PRD §41); logs and audit carry ids and field names only — never a payload.
+// ---------------------------------------------------------------------------
+
+/// Invoice lifecycle (PRD §21, DEC-038), pinned to exactly these three states.
+/// `DRAFT` is the state BILL-002 creates from a COMPLETED sale; `CONFIRMED` and
+/// `CANCELLED` are reachable only through the explicit BILL-003 commands, and
+/// `CANCELLED` is terminal. Values are appended, never reordered or removed. Evolve additively only.
+enum InvoiceStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+
+  @@map("invoice_status")
+}
+
+/// Tenant-scoped invoice header (PRD §21, DEC-038, DEC-039, DEC-043). An
+/// invoice is sourced from exactly ONE completed sale: `saleId` is NOT NULL and
+/// `customerId` is OPTIONAL through the composite `(tenantId, customerId)` FK,
+/// so a foreign-tenant customer is not a representable state while a walk-in
+/// sale's customerless invoice is (DEC-028). `currency` is inherited from that
+/// sale and is never read from a request body (DEC-022, DEC-038).
+///
+/// NO stored header totals exist (`subtotal`, `total`, `taxTotal`, ...): the
+/// invoice total is the sum of its immutable lines, so a stored total could
+/// disagree with them and would be a second authority. This is a projection of
+/// the frozen snapshot, not the pricing arithmetic DEC-038 forbids Billing from
+/// performing.
+///
+/// The number is allocated exactly once, at confirmation (DEC-039): `number` is
+/// NULL while the invoice is `DRAFT`, an invoice cancelled from `DRAFT` keeps it
+/// NULL, and a confirmed invoice keeps the number it was given even after
+/// cancellation, because an allocated number is never reused (DEC-043). The
+/// `(tenantId, series, number)` unique key is the allocation guarantee and
+/// `nextValue` lives in `InvoiceNumberSequence` — there is no `MAX()+1` path.
+///
+/// "At most one live invoice per sale" is carried by the PARTIAL unique index
+/// `invoice_tenant_id_sale_id_key` on (tenant_id, sale_id)
+/// WHERE status <> 'CANCELLED', which lives in the migration because Prisma
+/// cannot express a partial index. The model therefore declares NO
+/// `@@unique([tenantId, saleId])`: a singular sale-to-invoice relation would
+/// assert an unconditional one-to-one that the partial index deliberately does
+/// not, and the sale side is modelled as a list for the same reason.
+///
+/// The invoice is IMMUTABLE from creation at every status (DEC-038): the
+/// migration rejects every UPDATE except the three permitted transitions —
+/// `DRAFT -> CONFIRMED`, `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED`
+/// (DEC-043) — and rejects deleting a row that is no longer `DRAFT`, so a
+/// `DRAFT` may only be confirmed or cancelled, an issued invoice may only be
+/// cancelled, and no edit route exists. The guard is conditional rather than an
+/// outright ban because Prisma writes `updated_at` and confirmation and
+/// cancellation are updates of an existing row.
+/// Data classification: the customer and sale references are CONFIDENTIAL; the
+/// money amounts, status, series and number are INTERNAL (PRD §41); logs and
+/// audit carry ids and field names only.
+model Invoice {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  /// The ONE completed sale this invoice bills (DEC-038). NOT NULL: an invoice
+  /// with no sale is not a representable state in this epic.
+  saleId     String @map("sale_id") @db.Uuid
+  /// OPTIONAL customer inherited from the sale (DEC-028, DEC-038).
+  customerId String? @map("customer_id") @db.Uuid
+  /// ISO 4217 code inherited from the source sale; never read from a request.
+  currency   String @db.VarChar(3)
+  /// PRD §21 lifecycle. Defaults to DRAFT: nothing confirms an invoice
+  /// implicitly.
+  status     InvoiceStatus @default(DRAFT)
+
+  /// Numbering series (DEC-039): NOT NULL with a database default of `'A'`.
+  /// One series per tenant in this epic; multi-series is not modelled.
+  series       String @default("A") @db.VarChar(8)
+  /// Allocated number, NULL until confirmation and NULL forever for an invoice
+  /// cancelled from `DRAFT` (DEC-039, DEC-043).
+  number       Int?
+  /// Set exactly when the invoice is confirmed: the migration ties it to
+  /// `number` so a number and its confirmation timestamp always agree.
+  confirmedAt  DateTime? @map("confirmed_at") @db.Timestamptz(3)
+  /// Set exactly when the invoice is cancelled (DEC-043).
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  /// Required by a database CHECK for a `CANCELLED` invoice (DEC-043) and
+  /// otherwise absent; bounded so it cannot become an unbounded log.
+  cancelReason String? @map("cancel_reason") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the Sale must be in the SAME tenant.
+  sale     Sale      @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// OPTIONAL composite tenant-ownership FK: when a customer is present it must
+  /// be in the SAME tenant (DEC-028, DEC-038).
+  customer Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// The immutable snapshot lines copied from the sale's frozen `SaleLine` rows.
+  lines InvoiceLine[]
+
+  /// Tenant-ownership key: target of the composite invoice FK from
+  /// `InvoiceLine`.
+  @@unique([tenantId, id])
+  /// Allocation key (DEC-039): one number per (tenant, series). `number` is
+  /// nullable, and PostgreSQL keeps NULLs distinct, so every unnumbered draft
+  /// coexists under the same series.
+  @@unique([tenantId, series, number])
+  /// Tenant list lookup: `(tenant_id, status)` serves the status-filtered
+  /// invoice list without a second scan.
+  @@index([tenantId, status])
+  @@map("invoice")
+}
+
+/// Tenant-scoped invoice line (PRD §21, DEC-038). Every column is a verbatim
+/// copy of the source `SaleLine` snapshot — `description`, `rateCode`,
+/// `unitPrice`, `quantity`, `lineTotal`, `taxableBase` and `taxAmount` — so
+/// Billing reconstructs the arithmetic result rather than recomputing it: the
+/// same `Decimal(14, 2)` money scale and the same `Decimal(10, 3)` quantity
+/// scale as the sale, never a new precision.
+///
+/// `position` is the invoice-local ordering of the copied lines, unique per
+/// invoice, which fixes the reading order of a document that has no natural key
+/// of its own. `rateCode` stores the stable `tax_rate.code` value and is backed
+/// by a RESTRICT reference to the global row, exactly like `sale_line`, so an
+/// unknown code is not representable.
+///
+/// The line is an APPEND-ONLY snapshot with `createdAt` ONLY and no `updatedAt`
+/// by design: the migration rejects every UPDATE and every DELETE
+/// unconditionally, because a confirmed document's frozen amounts are never
+/// rewritten (PRD §40, DEC-038). Data classification: the description, the
+/// frozen rate code and the money amounts are INTERNAL (PRD §41); the catalog
+/// item reference is CONFIDENTIAL; logs and audit carry ids and field names
+/// only.
+model InvoiceLine {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId      String @map("tenant_id") @db.Uuid
+  invoiceId     String @map("invoice_id") @db.Uuid
+  catalogItemId String @map("catalog_item_id") @db.Uuid
+
+  /// Invoice-local line order, non-negative, unique per invoice.
+  position    Int
+  /// Frozen line description copied from the sale line.
+  description String @db.VarChar(200)
+  /// Frozen stable rate code (DEC-021, DEC-038), e.g. `EXEMPT`/`IVA_5`.
+  rateCode    String @map("rate_code") @db.VarChar(20)
+
+  unitPrice   Decimal @map("unit_price") @db.Decimal(14, 2)
+  quantity    Decimal @db.Decimal(10, 3)
+  lineTotal   Decimal @map("line_total") @db.Decimal(14, 2)
+  taxableBase Decimal @map("taxable_base") @db.Decimal(14, 2)
+  taxAmount   Decimal @map("tax_amount") @db.Decimal(14, 2)
+
+  /// Append-only snapshot rows are written once — no `updatedAt` by design.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the Invoice must be in the SAME tenant.
+  invoice Invoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the CatalogItem must be in the SAME tenant.
+  catalogItem CatalogItem @relation(fields: [tenantId, catalogItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// RESTRICT reference to the GLOBAL rate row (DEC-021): an unknown code is
+  /// not representable and a rate an invoice used can never be deleted.
+  taxRate TaxRate @relation(fields: [rateCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
+  @@unique([tenantId, id])
+  /// One line per position inside one invoice: the document's reading order.
+  @@unique([tenantId, invoiceId, position])
+  @@map("invoice_line")
+}
+
+/// Tenant-scoped numbering counter (PRD §21, DEC-039). One row per
+/// `(tenant, series)` holds `nextValue`, so allocation is a single atomic
+/// `UPDATE ... RETURNING` inside the confirm transaction rather than a
+/// `MAX()+1` read that races. BILL-003 owns the allocation; this slice ships
+/// the row shape and the positivity guarantee.
+///
+/// Unlike every other table in this section, this row is MEANT to be updated:
+/// the migration declares no trigger on it, because a counter that could not
+/// advance could not allocate. `nextValue` starts at 1 and never decreases, and
+/// the migration rejects a value below 1.
+/// Data classification: the series and the counter value are INTERNAL
+/// (PRD §41); logs and audit carry ids and field names only.
+model InvoiceNumberSequence {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  /// Numbering series (DEC-039): NOT NULL with a database default of `'A'`.
+  series   String @default("A") @db.VarChar(8)
+  /// The next number to allocate, strictly positive.
+  nextValue Int   @default(1) @map("next_value")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
+  @@unique([tenantId, id])
+  /// One counter per (tenant, series): the allocation scope of DEC-039.
+  @@unique([tenantId, series])
+  @@map("invoice_number_sequence")
 }
 
 // ---------------------------------------------------------------------------

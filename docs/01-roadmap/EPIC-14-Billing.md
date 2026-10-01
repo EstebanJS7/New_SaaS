@@ -99,6 +99,42 @@ implemented EPIC-14 behavior.
 - [[TD-018]] remains open for sale reversal and payment refund; EPIC-14 does not
   close it and emits no compensating financial record.
 
+## Progress
+
+- **[[BILL-001]] Invoice data foundation — `review`.** Local implementation and
+  verification are complete on `feat/epic-14-billing-invoice-foundation`:
+  `b1d5278` adds the `InvoiceStatus` / `Invoice` / `InvoiceLine` /
+  `InvoiceNumberSequence` schema, the additive
+  `20261001000001_billing_invoice_foundation` migration and
+  `schema-billing.test.ts` (38 tests); `64371f3` seeds the four `billing.*` keys
+  and their role-matrix rows (catalog 52 → 56); `dc9309c` adds the
+  live-PostgreSQL EPIC-14 block (14 insertions-only tests). Verification passed
+  locally: database suite (18 files / 399 tests), the focused seed suite (27
+  tests), `db:generate`, `db:deploy` (28 migrations applied), `db:live-verify`
+  (`LIVE MIGRATION VERIFICATION PASSED`, on a throwaway database), seed
+  idempotency (56 permissions on both runs), API live-PostgreSQL suite (**134
+  passed**; 120 before this slice), `typecheck` 14/14, `lint` 14/14 and
+  `format-check` clean. Two accepted decisions needed a
+  `## Subsequent scope note`: the number rule is the biconditional
+  `(number IS NULL) = (confirmed_at IS NULL)` ([[DEC-039]]), and the
+  one-invoice-per-sale uniqueness is the partial index
+  `... WHERE status <> 'CANCELLED'` ([[DEC-038]]). `lint` was missing from the
+  W3 gate list and caught one `no-unsafe-assignment` in the new probe, fixed in
+  `cccb71d` with the repository's existing `toBeInstanceOf(Date)` pattern. The
+  Story stays `review`, not `done`, until a CI receipt exists. The RDD native
+  review of the slice is closed, approved and acknowledged: lineage
+  `review-b65dbcee62dc6d5b` raised one BLOCKER twice from independent lenses —
+  the header guard made `CONFIRMED -> CANCELLED` impossible — fixed in `e5d8848`
+  with a 195-line correction against a budget of 200 and a two-sided live
+  regression probe, then validated and approved. The slice is published as pull
+  request #87 (`type:feature`) with both required checks green in run
+  `36873584746`: `Database migrations` pass in 1m8s — 28 migrations applied to a
+  fresh database and the live-PostgreSQL suite at **135 passed** — and
+  `Lint, Typecheck, Test, Build` pass in 4m18s. The scope records this slice
+  rests on are pull request #86 (`type:docs`), which must merge first because
+  CI's required checks only run for pull requests targeting `main`. The Story
+  moves to `done` when #87 merges.
+
 ## Scope
 
 - Add the tenant-scoped `Invoice` aggregate with the PRD §21 states `DRAFT`,
