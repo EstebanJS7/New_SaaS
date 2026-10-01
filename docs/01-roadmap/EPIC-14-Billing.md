@@ -99,6 +99,30 @@ implemented EPIC-14 behavior.
 - [[TD-018]] remains open for sale reversal and payment refund; EPIC-14 does not
   close it and emits no compensating financial record.
 
+## Progress
+
+- **[[BILL-001]] Invoice data foundation — `review`.** Local implementation and
+  verification are complete on `feat/epic-14-billing-invoice-foundation`:
+  `b1d5278` adds the `InvoiceStatus` / `Invoice` / `InvoiceLine` /
+  `InvoiceNumberSequence` schema, the additive
+  `20261001000001_billing_invoice_foundation` migration and
+  `schema-billing.test.ts` (38 tests); `64371f3` seeds the four `billing.*` keys
+  and their role-matrix rows (catalog 52 → 56); `dc9309c` adds the
+  live-PostgreSQL EPIC-14 block (14 insertions-only tests). Verification passed
+  locally: database suite (18 files / 399 tests), the focused seed suite (27
+  tests), `db:generate`, `db:deploy` (28 migrations applied), `db:live-verify`
+  (`LIVE MIGRATION VERIFICATION PASSED`, on a throwaway database), seed
+  idempotency (56 permissions on both runs), API live-PostgreSQL suite (**134
+  passed**; 120 before this slice), `typecheck` 14/14, `lint` 14/14 and
+  `format-check` clean. Two accepted decisions needed a
+  `## Subsequent scope note`: the number rule is the biconditional
+  `(number IS NULL) = (confirmed_at IS NULL)` ([[DEC-039]]), and the
+  one-invoice-per-sale uniqueness is the partial index
+  `... WHERE status <> 'CANCELLED'` ([[DEC-038]]). `lint` was missing from the
+  W3 gate list and caught one `no-unsafe-assignment` in the new probe, fixed in
+  `cccb71d` with the repository's existing `toBeInstanceOf(Date)` pattern. The
+  Story stays `review`, not `done`, until a CI receipt exists.
+
 ## Scope
 
 - Add the tenant-scoped `Invoice` aggregate with the PRD §21 states `DRAFT`,

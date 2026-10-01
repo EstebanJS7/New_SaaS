@@ -169,3 +169,30 @@ choosing "always from a completed sale" is an implementation choice inside the
 approved scope. If the maintainer prefers Option B, the product scope gains
 standalone invoicing and the change should be recorded here as an accepted
 decision before implementation, not as a PRD edit.
+
+## Subsequent scope note
+
+**2026-10-01, after this record's acceptance.** The slice that implements this
+decision found one imprecision in the accepted text. This note **extends** the
+accepted decision and does not rewrite it: the accepted `## Decision` text and
+its `UNIQUE (tenant_id, sale_id)` wording stay recorded as decided, and the
+clarification below is what the implementing slices follow from this date.
+
+- **The one-invoice-per-sale uniqueness is a PARTIAL index, not a table-wide
+  `UNIQUE`.** The accepted text says `UNIQUE (tenant_id, sale_id)`, while the
+  implemented index is the partial
+  `UNIQUE (tenant_id, sale_id) WHERE status <> 'CANCELLED'`. The reason is that
+  this same Story requires a trigger rejecting UPDATE and DELETE of a
+  non-`DRAFT` invoice, and no delete route exists: under a full unique, once a
+  draft invoice was cancelled, the cancelled row would keep the only slot for
+  that sale permanently and the sale could never be invoiced again — which
+  contradicts the accepted decision's own correction path ("fixing a wrong draft
+  means cancelling it and creating a new invoice from a new sale"). The partial
+  index keeps the accepted intent — at most one **live** invoice per sale — and
+  follows the shipped `cash_session_one_open_per_register_key` partial-index
+  precedent.
+- **The sale side is modelled as a list.** Prisma cannot express a partial
+  index, so `model Invoice` deliberately declares no
+  `@@unique([tenantId, saleId])` and `Sale` carries `invoices Invoice[]` rather
+  than a single back-reference. The constraint lives only in the migration as
+  `invoice_tenant_id_sale_id_key` and is proven against the live database.
