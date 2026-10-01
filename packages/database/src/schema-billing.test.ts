@@ -374,17 +374,16 @@ describe("migration · invoice foundation (EPIC-14 BILL-001)", () => {
     );
   });
 
-  it("makes the invoice delete and update CONDITIONAL on status, so DRAFT can still advance", () => {
+  it("makes the invoice delete CONDITIONAL on status, so a DRAFT can still be discarded", () => {
     // DDL-text inspection only, exactly like the sibling gates. The predicate is
     // asserted as text and the trigger is NOT executed here.
     //
-    // The conditional form is MANDATORY for the update trigger: Prisma writes
-    // `updated_at` on every update, so an unconditional BEFORE UPDATE trigger
-    // would block the `DRAFT -> CONFIRMED` transition itself. An unconditional
-    // `restrict_violation` (the cash shape) would fail these assertions.
+    // The delete guard is deliberately CONDITIONAL, not the unconditional
+    // `restrict_violation` shape the cash ledger uses, so a `DRAFT` may still be
+    // discarded before it becomes a document. The UPDATE guard has its own
+    // sibling test, because its predicate is a transition allow-list.
     for (const [name, operation, returned] of [
       ["invoice_no_delete_when_not_draft", "DELETE", "OLD"],
-      ["invoice_no_update_when_not_draft", "UPDATE", "NEW"],
     ] as const) {
       const body = functionBody(name);
 
@@ -405,6 +404,35 @@ describe("migration · invoice foundation (EPIC-14 BILL-001)", () => {
         )
       );
     }
+  });
+
+  it("permits only the three legitimate header transitions and rejects every other update", () => {
+    // The update guard is CONDITIONAL, and for the same concrete reason the
+    // delete guard is: Prisma writes `updated_at` and confirmation and
+    // cancellation update an existing row, so an unconditional `BEFORE UPDATE`
+    // trigger would block the very transitions it exists to protect. It is
+    // still not a hole: only `DRAFT -> CONFIRMED`, `DRAFT -> CANCELLED` and
+    // `CONFIRMED -> CANCELLED` pass.
+    const body = functionBody("invoice_no_update_unless_permitted_transition");
+
+    // A cancelled invoice is terminal, and a draft is immutable from creation:
+    // each has its own explicit rejection ahead of the three-clause predicate.
+    expect(body).toMatch(/IF OLD\."status" = 'CANCELLED' THEN/);
+    expect(body).toMatch(/IF OLD\."status" = 'DRAFT' AND NEW\."status" = 'DRAFT' THEN/);
+    // The exhaustive allow-list: three transitions in exactly two clauses, and
+    // every raise sits inside the `NOT (...)` rejection.
+    expect(body).toMatch(
+      /\(OLD\."status" = 'DRAFT' AND NEW\."status" IN \('CONFIRMED', 'CANCELLED'\)\)/
+    );
+    expect(body).toMatch(/OR \(OLD\."status" = 'CONFIRMED' AND NEW\."status" = 'CANCELLED'\)/);
+    expect(body).toMatch(/IF NOT \(/);
+    expect(body).not.toMatch(/BEGIN\s+RAISE EXCEPTION/);
+    expect(body).toMatch(/ERRCODE = 'restrict_violation'/);
+    expect(body).toMatch(/RETURN NEW;/);
+
+    expect(BILLING_SQL).toMatch(
+      /CREATE TRIGGER "invoice_no_update_unless_permitted_transition_trigger"\s+BEFORE UPDATE ON "invoice"\s+FOR EACH ROW EXECUTE FUNCTION "invoice_no_update_unless_permitted_transition"\(\)/
+    );
   });
 
   it("never reallocates an allocated number", () => {
@@ -455,7 +483,7 @@ describe("migration · invoice foundation (EPIC-14 BILL-001)", () => {
     expect(new Set(triggers)).toEqual(
       new Set([
         "invoice_no_delete_when_not_draft_trigger",
-        "invoice_no_update_when_not_draft_trigger",
+        "invoice_no_update_unless_permitted_transition_trigger",
         "invoice_number_never_reallocated_trigger",
         "invoice_line_no_update_trigger",
         "invoice_line_no_delete_trigger",

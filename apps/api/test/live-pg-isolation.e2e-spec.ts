@@ -13263,7 +13263,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       ).toEqual(
         [
           "invoice:invoice_no_delete_when_not_draft_trigger:invoice_no_delete_when_not_draft:11",
-          "invoice:invoice_no_update_when_not_draft_trigger:invoice_no_update_when_not_draft:19",
+          "invoice:invoice_no_update_unless_permitted_transition_trigger:invoice_no_update_unless_permitted_transition:19",
           "invoice:invoice_number_never_reallocated_trigger:invoice_number_never_reallocated:19",
           "invoice_line:invoice_line_no_delete_trigger:invoice_line_no_delete:11",
           "invoice_line:invoice_line_no_update_trigger:invoice_line_no_update:19",
@@ -13283,7 +13283,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         SELECT p.proname, p.prosrc
         FROM pg_proc AS p
         WHERE p.proname IN (
-          'invoice_no_delete_when_not_draft', 'invoice_no_update_when_not_draft',
+          'invoice_no_delete_when_not_draft', 'invoice_no_update_unless_permitted_transition',
           'invoice_number_never_reallocated', 'invoice_line_no_update',
           'invoice_line_no_delete'
         )
@@ -13298,8 +13298,18 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(deleteSource).toContain("ERRCODE = 'restrict_violation'");
       expect(deleteSource).not.toMatch(/BEGIN RAISE EXCEPTION/);
 
-      const updateSource = sourceByName.get("invoice_no_update_when_not_draft");
-      expect(updateSource).toContain(`IF OLD."status" <> 'DRAFT' THEN`);
+      const updateSource = sourceByName.get("invoice_no_update_unless_permitted_transition");
+      // The guard rejects everything but the three legitimate transitions: a
+      // cancelled row is terminal, a draft is immutable from creation, and the
+      // transition allow-list is the only way through.
+      expect(updateSource).toContain(`IF OLD."status" = 'CANCELLED' THEN`);
+      expect(updateSource).toContain(`IF OLD."status" = 'DRAFT' AND NEW."status" = 'DRAFT' THEN`);
+      expect(updateSource).toContain(
+        `(OLD."status" = 'DRAFT' AND NEW."status" IN ('CONFIRMED', 'CANCELLED'))`
+      );
+      expect(updateSource).toContain(
+        `OR (OLD."status" = 'CONFIRMED' AND NEW."status" = 'CANCELLED')`
+      );
       expect(updateSource).toContain("RETURN NEW;");
       expect(updateSource).toContain("ERRCODE = 'restrict_violation'");
       expect(updateSource).not.toMatch(/BEGIN RAISE EXCEPTION/);
@@ -13473,8 +13483,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         expect(stored[0]?.confirmed_at).toBeInstanceOf(Date);
       });
 
-      // A FURTHER update of the now-CONFIRMED invoice is rejected by the same
-      // conditional guard, so the transition is one-way at the database.
+      // A FURTHER update of the now-CONFIRMED invoice is rejected: an issued
+      // invoice may only be cancelled, never re-confirmed or edited, so the
+      // lifecycle is one-way at the database.
       await inRolledBackTransaction(async (tx) => {
         const saleId = await insertRawSale(tx, tenantAId);
         const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
@@ -13487,12 +13498,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           () =>
             tx.$executeRaw`UPDATE "invoice" SET "cancel_reason" = 'tamper' WHERE "id" = ${invoiceId}::uuid`
         );
-        expect(message).toBe(
-          "an invoice that is not a draft is immutable; cancel it and issue a corrected invoice"
-        );
+        expect(message).toBe("an issued invoice is immutable; only cancellation is permitted");
       });
 
-      // The same guard refuses an update of a CANCELLED invoice.
+      // A CANCELLED invoice is terminal: the guard refuses any update of it.
       await inRolledBackTransaction(async (tx) => {
         const saleId = await insertRawSale(tx, tenantAId);
         const invoiceId = await insertRawInvoice(tx, tenantAId, saleId, {
@@ -13503,18 +13512,16 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         const message = await captureDatabaseMessage(
           () => tx.$executeRaw`UPDATE "invoice" SET "series" = 'B' WHERE "id" = ${invoiceId}::uuid`
         );
-        expect(message).toBe(
-          "an invoice that is not a draft is immutable; cancel it and issue a corrected invoice"
-        );
+        expect(message).toBe("a cancelled invoice is terminal and cannot be updated");
       });
 
       // The reallocation guard is SHADOWED on any non-draft row: PostgreSQL fires
       // BEFORE-row triggers in alphabetical order, so
-      // `invoice_no_update_when_not_draft_trigger` refuses the overwrite first and
-      // its message is the one observed. Isolating the reallocation trigger for
-      // the duration of this rolled-back transaction proves the guard's own
-      // predicate actually rejects the overwrite rather than merely being
-      // present as text.
+      // `invoice_no_update_unless_permitted_transition_trigger` refuses the
+      // overwrite first and its message is the one observed. Isolating the
+      // reallocation trigger for the duration of this rolled-back transaction
+      // proves the guard's own predicate actually rejects the overwrite rather
+      // than merely being present as text.
       await inRolledBackTransaction(async (tx) => {
         const saleId = await insertRawSale(tx, tenantAId);
         const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
@@ -13523,10 +13530,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
             "confirmed_at" = now(), "updated_at" = now()
           WHERE "id" = ${invoiceId}::uuid
         `;
-        await tx.$executeRaw`ALTER TABLE "invoice" DISABLE TRIGGER "invoice_no_update_when_not_draft_trigger"`;
+        await tx.$executeRaw`ALTER TABLE "invoice" DISABLE TRIGGER "invoice_no_update_unless_permitted_transition_trigger"`;
         const disabled = await tx.$queryRaw<{ tgenabled: string }[]>`
           SELECT "tgenabled" FROM pg_trigger
-          WHERE "tgname" = 'invoice_no_update_when_not_draft_trigger'
+          WHERE "tgname" = 'invoice_no_update_unless_permitted_transition_trigger'
         `;
         expect(disabled).toEqual([{ tgenabled: "D" }]);
         const message = await captureDatabaseMessage(
@@ -13541,6 +13548,46 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         status: "DRAFT",
         number: null,
       });
+    }, 30_000);
+
+    it("proves a confirmed invoice can still be cancelled and keeps its allocated number", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+
+      // The regression the native review raised twice: with the old header guard
+      // gated on "OLD is not DRAFT", a CONFIRMED invoice could never be
+      // cancelled, so `CANCELLED` was reachable only from `DRAFT` even though
+      // DEC-043 requires the issued invoice to be cancellable. BOTH transitions
+      // succeed here, and the second one keeps the allocated number.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await tx.$executeRaw`
+          UPDATE "invoice" SET "status" = 'CONFIRMED', "number" = 1,
+            "confirmed_at" = now(), "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        const cancelled = await tx.$executeRaw`
+          UPDATE "invoice" SET "status" = 'CANCELLED', "cancelled_at" = now(),
+            "cancel_reason" = 'Issued in error', "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(cancelled).toBe(1);
+        const stored = await tx.$queryRaw<{ status: string; number: number | null }[]>`
+          SELECT "status"::text AS status, "number" FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        // DEC-039/DEC-043: cancelling an issued invoice never frees its number.
+        expect(stored).toEqual([{ status: "CANCELLED", number: 1 }]);
+        const cancellation = await tx.$queryRaw<
+          { cancelled_at: Date | null; cancel_reason: string | null }[]
+        >`
+          SELECT "cancelled_at", "cancel_reason" FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(cancellation[0]?.cancelled_at).toBeInstanceOf(Date);
+        expect(cancellation[0]?.cancel_reason).toBe("Issued in error");
+      });
+
+      // The probe rolled back: no cancelled invoice survived.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
     }, 30_000);
 
     it("rejects every update and every delete of an invoice_line snapshot", async () => {

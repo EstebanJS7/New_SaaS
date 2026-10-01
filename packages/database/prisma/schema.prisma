@@ -2263,12 +2263,14 @@ model CashMovement {
 //   * `invoice_line(tenant_id, catalog_item_id) -> catalog_item(tenant_id, id)`
 //
 // Immutability: the invoice is immutable from creation at every status
-// (DEC-038), so no draft-editing route exists. The migration adds the
-// status-conditional `BEFORE DELETE` / `BEFORE UPDATE` triggers on `invoice`
-// plus the unconditional `BEFORE UPDATE` / `BEFORE DELETE` triggers that make
-// an `invoice_line` snapshot append-only, and the `invoice_number_never_
-// reallocated` guard that keeps an allocated number permanent (DEC-039,
-// DEC-043).
+// (DEC-038), so no draft-editing route exists. The migration rejects every
+// `invoice` UPDATE except the three permitted transitions — `DRAFT ->
+// CONFIRMED`, `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED` (DEC-043) —
+// with a conditional `BEFORE UPDATE` trigger, conditional because Prisma writes
+// `updated_at` and both transitions update an existing row. It adds the
+// `BEFORE DELETE` trigger, the unconditional `BEFORE UPDATE` / `BEFORE DELETE`
+// triggers that make an `invoice_line` snapshot append-only, and the
+// `invoice_number_never_reallocated` guard that keeps a number permanent.
 //
 // Data classification: the invoice's references to a customer and to a sale are
 // CONFIDENTIAL, and its money amounts, status, series and number are INTERNAL
@@ -2316,8 +2318,13 @@ enum InvoiceStatus {
 /// not, and the sale side is modelled as a list for the same reason.
 ///
 /// The invoice is IMMUTABLE from creation at every status (DEC-038): the
-/// migration rejects UPDATE and DELETE unless the row is still `DRAFT`, so a
-/// `DRAFT` may only be confirmed or cancelled and no edit route exists.
+/// migration rejects every UPDATE except the three permitted transitions —
+/// `DRAFT -> CONFIRMED`, `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED`
+/// (DEC-043) — and rejects deleting a row that is no longer `DRAFT`, so a
+/// `DRAFT` may only be confirmed or cancelled, an issued invoice may only be
+/// cancelled, and no edit route exists. The guard is conditional rather than an
+/// outright ban because Prisma writes `updated_at` and confirmation and
+/// cancellation are updates of an existing row.
 /// Data classification: the customer and sale references are CONFIDENTIAL; the
 /// money amounts, status, series and number are INTERNAL (PRD §41); logs and
 /// audit carry ids and field names only.

@@ -62,11 +62,12 @@
 --     line money amount and the line position are non-negative;
 --   * the numbering counter can never fall below 1;
 --   * immutability is CONDITIONAL for the header and UNCONDITIONAL for the
---     snapshot. The invoice is immutable from creation at every status
---     (DEC-038), so a `BEFORE DELETE` and a `BEFORE UPDATE` trigger reject a row
---     that is no longer `DRAFT`. The update trigger is deliberately CONDITIONAL:
---     Prisma writes `updated_at`, so an unconditional `BEFORE UPDATE` trigger
---     would block the `DRAFT -> CONFIRMED` transition itself. An `invoice_line`
+--     snapshot. The header rejects EVERY update except the three permitted
+--     transitions — `DRAFT -> CONFIRMED`, `DRAFT -> CANCELLED` and
+--     `CONFIRMED -> CANCELLED` (DEC-038, DEC-043) — and a `BEFORE DELETE` trigger
+--     rejects deleting a row that is no longer `DRAFT`. It is not an unconditional
+--     ban: Prisma writes `updated_at`, and confirmation and cancellation are
+--     updates of an existing row that a blanket ban would block. An `invoice_line`
 --     has no draft state and no edit path at all, so its `BEFORE UPDATE` and
 --     `BEFORE DELETE` triggers reject any change whatsoever; a wrong document is
 --     corrected by cancelling it (DEC-043), never by rewriting a frozen amount
@@ -291,16 +292,28 @@ CREATE TRIGGER "invoice_no_delete_when_not_draft_trigger"
   BEFORE DELETE ON "invoice"
   FOR EACH ROW EXECUTE FUNCTION "invoice_no_delete_when_not_draft"();
 
--- CONDITIONAL immutability of the header, and the reason the form matters: the
--- rejection is gated on the OLD status being non-`DRAFT`, so the
--- `DRAFT -> CONFIRMED` transition itself still passes. An UNCONDITIONAL
--- `BEFORE UPDATE` trigger would reject that very transition, because Prisma
--- writes `updated_at` and the confirmation is an update of the draft row.
-CREATE OR REPLACE FUNCTION "invoice_no_update_when_not_draft"()
+-- CONDITIONAL immutability of the header: the guard permits EXACTLY the three
+-- legitimate transitions and rejects every other update, so a cancelled invoice
+-- is terminal and an issued invoice may only be cancelled. It is not an
+-- unconditional ban because Prisma writes `updated_at` on confirm and on cancel.
+CREATE OR REPLACE FUNCTION "invoice_no_update_unless_permitted_transition"()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF OLD."status" <> 'DRAFT' THEN
-    RAISE EXCEPTION 'an invoice that is not a draft is immutable; cancel it and issue a corrected invoice'
+  IF OLD."status" = 'CANCELLED' THEN
+    RAISE EXCEPTION 'a cancelled invoice is terminal and cannot be updated'
+      USING ERRCODE = 'restrict_violation';
+  END IF;
+
+  IF OLD."status" = 'DRAFT' AND NEW."status" = 'DRAFT' THEN
+    RAISE EXCEPTION 'a draft invoice is immutable; confirm or cancel it instead of editing it'
+      USING ERRCODE = 'restrict_violation';
+  END IF;
+
+  IF NOT (
+    (OLD."status" = 'DRAFT' AND NEW."status" IN ('CONFIRMED', 'CANCELLED'))
+    OR (OLD."status" = 'CONFIRMED' AND NEW."status" = 'CANCELLED')
+  ) THEN
+    RAISE EXCEPTION 'an issued invoice is immutable; only cancellation is permitted'
       USING ERRCODE = 'restrict_violation';
   END IF;
 
@@ -308,9 +321,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER "invoice_no_update_when_not_draft_trigger"
+CREATE TRIGGER "invoice_no_update_unless_permitted_transition_trigger"
   BEFORE UPDATE ON "invoice"
-  FOR EACH ROW EXECUTE FUNCTION "invoice_no_update_when_not_draft"();
+  FOR EACH ROW EXECUTE FUNCTION "invoice_no_update_unless_permitted_transition"();
 
 -- DEC-039/DEC-043: an allocated number is permanent. A confirmed invoice keeps
 -- its number after cancellation, so a stored number is never overwritten and a
