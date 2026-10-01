@@ -50,9 +50,27 @@ planned CASH stories before any implementation.
 - [x] CASH-004 W2: the proxy extension and the Cash client move (`f81cf5b`).
 - [x] CASH-004 W3: the staff Cash pages, their states and the navigation entry
       (`2b0e3e9`).
-- [ ] CASH-004 W4/W5 (RESUME HERE): the native review refused the whole CASH-004
-      range with `lens_context_budget_exceeded` (about 4.8k changed lines), so
-      it is being reviewed as three CHAINED candidates, each in its own detached
+- [ ] CASH-004 W5 (RESUME HERE): candidate C needs its correction. State after
+      the chained review: A `9796aa2` (the movement read, worktree
+      `/tmp/cash-review-a`) — lineage `review-eb52f160ccb3d48e` APPROVED and
+      acknowledged after one bounded correction: the route-contract inventory
+      now lists `GET /cash/movements` in the controller's registration order.
+      That fix landed on the branch as `f447a7a`. Informational findings only
+      otherwise. B `f81cf5b` (proxy + client move, worktree
+      `/tmp/cash-review-b`) — lineage `review-1ae7d843132142ca` APPROVED and
+      acknowledged on the first pass, no correction; two informational findings.
+      C `f81cf5b..bd97851` (pages, navigation and docs, worktree
+      `/tmp/cash-review-c`) — lineage `review-49541177bab12a4c` ran its single
+      `reliability` lens and returned `correction_required`; the correction
+      request has NOT been read or applied yet. Resume with STATUS on
+      `/tmp/cash-review-c` for that lineage, then apply the fix inside the
+      worktree, cherry-pick it onto the branch, and run the targeted validation.
+      Budget note: a medium-tier candidate of 3668 lines reviewed fine, while a
+      high-tier 4-lens candidate of 4763 was refused, so keep any further split
+      under roughly 3.5k lines.
+- [x] CASH-004 W4 (superseded): the single-candidate review was refused. range
+      with `lens_context_budget_exceeded` (about 4.8k changed lines), so it is
+      being reviewed as three CHAINED candidates, each in its own detached
       worktree and without rewriting history: A `9796aa2` the movement read, 337
       lines, worktree `/tmp/cash-review-a`; B `f81cf5b` the proxy plus the
       client move, 788 lines; C `2b0e3e9..HEAD` the pages, navigation and docs,
