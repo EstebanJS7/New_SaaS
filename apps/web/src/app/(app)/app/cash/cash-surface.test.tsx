@@ -218,6 +218,36 @@ describe("CashSurface commands", () => {
     expect(body).not.toHaveProperty("isActive");
   });
 
+  it("resets the per-session forms and the idempotency key when the selection changes", async () => {
+    const secondSession: CashSession = {
+      ...OPEN_SESSION,
+      id: "99999999-9999-4999-8999-999999999999",
+    };
+    installFetch({
+      registers: () => jsonResponse([REGISTER]),
+      sessions: () => jsonResponse([OPEN_SESSION, secondSession]),
+      movements: () => jsonResponse([]),
+    });
+
+    renderSurface();
+    const selectButtons = await screen.findAllByRole("button", { name: "Select session" });
+    fireEvent.click(selectButtons[0]);
+
+    // Values entered for the FIRST session must not survive a switch to the
+    // second: a carried counted amount would be submitted with the NEW session
+    // id, and a carried key would be replayed against the wrong movement.
+    fireEvent.change(await screen.findByLabelText("Counted amount"), {
+      target: { value: "498500.00" },
+    });
+    expect(screen.getByLabelText("Counted amount")).toHaveValue("498500.00");
+
+    fireEvent.click(selectButtons[1]);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Counted amount")).toHaveValue("");
+    });
+  });
+
   it("opens a session for a register and selects it for the ledger", async () => {
     const fetchMock = installFetch({
       registers: () => jsonResponse([REGISTER]),

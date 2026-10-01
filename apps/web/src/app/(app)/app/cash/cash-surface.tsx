@@ -176,6 +176,11 @@ export function CashSurface(): JSX.Element {
       />
 
       <MovementPanel
+        // Remount per session: the draft, the validation and mutation errors and
+        // the attempt's idempotency key all belong to ONE session, so switching
+        // the selection must not carry them over (a carried key or counted
+        // amount could be submitted against the wrong session).
+        key={selectedSession?.id ?? "no-session"}
         session={selectedSession}
         movements={movementsQuery.data ?? []}
         isLoading={movementsQuery.isLoading}
@@ -189,6 +194,7 @@ export function CashSurface(): JSX.Element {
       />
 
       <ClosePanel
+        key={selectedSession?.id ?? "no-session"}
         session={selectedSession}
         onClose={async (body) => {
           if (selectedSession === null) {
