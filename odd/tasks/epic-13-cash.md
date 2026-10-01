@@ -142,6 +142,11 @@ planned CASH stories before any implementation.
   review with `lens_context_budget_exceeded` and instructed smaller chained
   candidates. The split is non-destructive: the commits and the branch are
   unchanged, and only a detached worktree at each intermediate commit is added.
+- Branch published (2026-09-30): `feat/epic-13-cash-data-foundation` is pushed
+  and PR #84 is open against `main` with the `type:feature` label and both
+  required checks GREEN on CI run `36797910280` (`Database migrations` 1m14s,
+  `Lint, Typecheck, Test, Build` 4m10s). The stories stay `review` until that PR
+  MERGES: `done` requires a merged CI receipt, never an open one.
 - CASH-004 verification: web suite 81 files / 939 tests; API suite 76 files /
   1107 tests; API live suite 119 tests; typecheck, lint, build, format-check and
   `git diff --check` green after fixing one lint error in the movement panel.
