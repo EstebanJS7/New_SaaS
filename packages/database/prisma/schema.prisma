@@ -1980,16 +1980,36 @@ model IdempotencyRecord {
 // only — never a payload.
 // ---------------------------------------------------------------------------
 
-/// Cash movement kind (PRD §20, DEC-020), pinned to exactly one value for this
-/// epic: `SALE`. It is the only kind EPIC-12 writes — POS-003 appends it inside
-/// the CompleteSale transaction — while `REFUND`, `INCOME`, `EXPENSE`,
-/// `WITHDRAWAL`, `DEPOSIT` and `ADJUSTMENT` stay reserved for EPIC-13, which
-/// owns their commands. Values are appended, never reordered or removed.
+/// Cash movement kind (PRD §20, DEC-030). `SALE` was added by EPIC-12 and the
+/// remaining PRD §20 kinds are appended by EPIC-13; values are appended, never
+/// reordered or removed. The sign is owned by the movement kind rather than by
+/// the caller: SALE/INCOME/DEPOSIT add, REFUND/EXPENSE/WITHDRAWAL subtract and
+/// ADJUSTMENT carries an explicit direction in the command layer.
 /// Evolve additively only.
 enum CashMovementType {
   SALE
+  REFUND
+  INCOME
+  EXPENSE
+  WITHDRAWAL
+  DEPOSIT
+  ADJUSTMENT
 
   @@map("cash_movement_type")
+}
+
+/// Cash movement direction (PRD §20, DEC-030): the explicit sign of an
+/// `ADJUSTMENT`, the only movement kind whose increase/decrease the type cannot
+/// carry — SALE/INCOME/DEPOSIT add and REFUND/EXPENSE/WITHDRAWAL subtract. It is
+/// required EXACTLY for `ADJUSTMENT` and NULL for every other kind, enforced by
+/// the `cash_movement_direction_required` CHECK in the migration, and the stored
+/// `amount` stays positive for every kind because the type owns the sign.
+/// Values are appended, never reordered or removed. Evolve additively only.
+enum CashMovementDirection {
+  INCREASE
+  DECREASE
+
+  @@map("cash_movement_direction")
 }
 
 /// Cash session lifecycle (PRD §20), pinned to exactly these two states. A
@@ -2067,9 +2087,12 @@ model CashRegister {
 /// session.
 ///
 /// A session is never hard-deletable: the migration adds an unconditional
-/// `BEFORE DELETE` trigger, because there is no draft state in cash. Data
-/// classification: the status and the amount are INTERNAL (PRD §41); logs and
-/// audit carry ids and field names only.
+/// `BEFORE DELETE` trigger, because there is no draft state in cash. EPIC-13
+/// close writes `expectedAmount`, `countedAmount` and `differenceAmount` exactly
+/// once when the session reaches CLOSED; they are nullable until close and then
+/// part of the immutable accounting record. Data classification: the status and
+/// the amount are INTERNAL (PRD §41); logs and audit carry ids and field names
+/// only.
 model CashSession {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
@@ -2084,6 +2107,12 @@ model CashSession {
   openedByMembershipId String   @map("opened_by_membership_id") @db.Uuid
   /// Required opening float: `0.00` allowed, negative rejected by the CHECK.
   openingAmount        Decimal  @map("opening_amount") @db.Decimal(14, 2)
+  /// Server-computed expected amount at close, stored by the close command.
+  expectedAmount       Decimal? @map("expected_amount") @db.Decimal(14, 2)
+  /// Operator-counted amount at close, stored by the close command.
+  countedAmount        Decimal? @map("counted_amount") @db.Decimal(14, 2)
+  /// Counted minus expected amount at close, stored by the close command.
+  differenceAmount     Decimal? @map("difference_amount") @db.Decimal(14, 2)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -2116,14 +2145,17 @@ model CashSession {
 /// table and the immutability guarantee so the write path lands on a schema that
 /// cannot be bypassed.
 ///
-/// `type` is `SALE` only for this epic (the six remaining PRD §20 kinds are
-/// reserved for EPIC-13). `amount` is `Decimal(14, 2)` and the migration rejects
-/// a zero amount (`amount <> 0`); the SIGN is owned by the movement kind rather
-/// than by the caller, so the column never encodes the direction twice. `reason`
-/// is OPTIONAL free text: the only kind this epic writes is `SALE`, which is
-/// self-describing, while the kinds that need an explanation (INCOME, EXPENSE,
-/// ADJUSTMENT) arrive with EPIC-13; a bound is in place so the field cannot
-/// become an unbounded log.
+/// `amount` is `Decimal(14, 2)` and the migration rejects a zero amount
+/// (`amount <> 0`); the SIGN is owned by the movement kind rather than by the
+/// caller, so the column never encodes the direction twice. `reason` is OPTIONAL
+/// for `SALE` and `INCOME` and REQUIRED by a database CHECK for manual and
+/// corrective movement kinds so they explain themselves; a bound is in place so
+/// the field cannot become an unbounded log.
+///
+/// `direction` is the one exception the type-owned sign convention needs
+/// (DEC-030): it is REQUIRED exactly for `ADJUSTMENT`, NULL for every other
+/// kind, and the exclusive CHECK in the migration enforces both halves while
+/// the stored `amount` stays positive.
 ///
 /// A confirmed movement is IMMUTABLE: the migration rejects any UPDATE with a
 /// `BEFORE UPDATE` trigger and any DELETE with an unconditional `BEFORE DELETE`
@@ -2137,8 +2169,13 @@ model CashMovement {
   tenantId   String           @map("tenant_id") @db.Uuid
   registerId String           @map("register_id") @db.Uuid
   sessionId  String           @map("session_id") @db.Uuid
-  /// PRD §20 kind. `SALE` is the only value this epic writes (DEC-020).
+  /// PRD §20 kind. `SALE` is sale-generated; manual/corrective values require a reason.
   type       CashMovementType
+  /// Explicit direction of an `ADJUSTMENT` (DEC-030), REQUIRED exactly for
+  /// `ADJUSTMENT` and NULL for every other kind, whose sign the type owns.
+  /// Prisma cannot express the exclusive CHECK, so it lives in the migration as
+  /// `cash_movement_direction_required`; the `amount` stays positive regardless.
+  direction  CashMovementDirection?
   /// Exact money on the reference scale. Non-zero (CHECK) and sign-owned by
   /// the kind, never by the caller.
   amount     Decimal          @map("amount") @db.Decimal(14, 2)

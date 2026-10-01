@@ -185,6 +185,21 @@ const SALE_IDEMPOTENCY_KEY_CONFLICT_MESSAGE =
  */
 const CASH_ONE_OPEN_INDEX_PREDICATE = "status='OPEN'";
 
+/**
+ * Exact normalized rendering of the EPIC-13 CASH-002 exclusive CHECK
+ * `cash_movement_direction_required`: a direction is REQUIRED for an
+ * `ADJUSTMENT` and FORBIDDEN for every other kind. `normalizeIndexPredicate`
+ * strips the parser-added `::text` casts and formatting whitespace, so the
+ * stored CHECK
+ * `CHECK (((((type)::text = 'ADJUSTMENT'::text) AND (direction IS NOT NULL)) OR
+ * (((type)::text <> 'ADJUSTMENT'::text) AND (direction IS NULL))))`
+ * becomes this token string. Asserting exact equality — never a substring
+ * match — proves BOTH halves of the disjunction survive, so no row can satisfy
+ * both and no row can fall outside the constraint.
+ */
+const CASH_MOVEMENT_DIRECTION_REQUIRED_PREDICATE =
+  "CHECK(((((type)::text='ADJUSTMENT')AND(directionISNOTNULL))OR(((type)::text<>'ADJUSTMENT')AND(directionISNULL))))";
+
 interface CustomerDto {
   id: string;
   tenantId: string;
@@ -298,7 +313,12 @@ interface CashRegisterDto {
   updatedAt: string;
 }
 
-/** Allowlisted cash session projection (EPIC-12 POS-002 contract). */
+/**
+ * Allowlisted cash session projection (EPIC-12 POS-002 contract, extended by
+ * the EPIC-13 CASH-003 close command). The three close-result amounts are
+ * `null` for every `OPEN` session and carry the server-derived close figures at
+ * `Decimal(14, 2)` scale once the session is `CLOSED` (DEC-031).
+ */
 interface CashSessionDto {
   id: string;
   registerId: string;
@@ -306,8 +326,23 @@ interface CashSessionDto {
   openedAt: string;
   openedByMembershipId: string;
   openingAmount: string;
+  expectedAmount: string | null;
+  countedAmount: string | null;
+  differenceAmount: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Allowlisted cash movement projection (EPIC-13 CASH-002 contract). */
+interface CashMovementDto {
+  id: string;
+  registerId: string;
+  sessionId: string;
+  type: "REFUND" | "INCOME" | "EXPENSE" | "WITHDRAWAL" | "DEPOSIT" | "ADJUSTMENT";
+  direction: "INCREASE" | "DECREASE" | null;
+  amount: string;
+  reason: string | null;
+  createdAt: string;
 }
 
 interface PatientDto {
@@ -554,9 +589,17 @@ const SALE_PAYMENT_DTO_KEYS = ["amount", "id", "method"].sort();
 /** Exact allowlisted key set of the cash register response DTO. */
 const CASH_REGISTER_DTO_KEYS = ["createdAt", "id", "isActive", "name", "updatedAt"].sort();
 
-/** Exact allowlisted key set of the cash session response DTO. */
+/**
+ * Exact allowlisted key set of the cash session response DTO. Carries the three
+ * EPIC-13 CASH-003 close-result amounts (DEC-031): they are ALWAYS present on
+ * the projection and are `null` while the session is `OPEN`, so the key set is
+ * identical before and after a close.
+ */
 const CASH_SESSION_DTO_KEYS = [
+  "countedAmount",
   "createdAt",
+  "differenceAmount",
+  "expectedAmount",
   "id",
   "openedAt",
   "openedByMembershipId",
@@ -564,6 +607,22 @@ const CASH_SESSION_DTO_KEYS = [
   "registerId",
   "status",
   "updatedAt",
+].sort();
+
+/**
+ * Exact allowlisted key set of the cash movement response DTO (EPIC-13
+ * CASH-002). Deliberately has NO `tenantId`: the caller's tenant is already the
+ * request's own identity and the row is never addressed across a boundary.
+ */
+const CASH_MOVEMENT_DTO_KEYS = [
+  "amount",
+  "createdAt",
+  "direction",
+  "id",
+  "reason",
+  "registerId",
+  "sessionId",
+  "type",
 ].sort();
 
 /**
@@ -7462,20 +7521,32 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       return id;
     };
 
-    /** Raw `SALE` movement insert at the migration's exact shape; returns the id. */
+    /**
+     * Raw movement insert at the migration's exact shape; returns the id. The
+     * optional `direction` is the EPIC-13 CASH-002 column and defaults to NULL,
+     * the only legal value for every type-owned kind; an `ADJUSTMENT` probe MUST
+     * pass one, because `cash_movement_direction_required` refuses a NULL for it
+     * BEFORE the reason CHECK is ever consulted.
+     */
     const insertRawMovement = async (
       tx: Prisma.TransactionClient,
       tenantId: string,
       registerId: string,
       sessionId: string,
-      amount: string
+      amount: string,
+      type = "SALE",
+      reason: string | null = null,
+      direction: string | null = null
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "cash_movement" ("id", "tenant_id", "register_id", "session_id", "type", "amount")
+        INSERT INTO "cash_movement" (
+          "id", "tenant_id", "register_id", "session_id", "type", "amount", "reason", "direction"
+        )
         VALUES (
           ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid, ${sessionId}::uuid,
-          'SALE'::cash_movement_type, ${amount}::decimal
+          ${type}::cash_movement_type, ${amount}::decimal, ${reason},
+          ${direction}::cash_movement_direction
         )
       `;
       return id;
@@ -7483,9 +7554,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
     /**
      * The STORED `cash_session` columns of one row, read from PostgreSQL at
-     * their OWN exact scales, so the `Decimal(14, 2)` float and the server-owned
-     * opener are asserted against real database state rather than the HTTP
-     * projection alone.
+     * their OWN exact scales, so the `Decimal(14, 2)` float, the server-owned
+     * opener and the three EPIC-13 CASH-003 close-result columns (DEC-031, NULL
+     * while the session is `OPEN`) are asserted against real database state
+     * rather than the HTTP projection alone.
      */
     const rawStoredSession = (
       id: string
@@ -7496,13 +7568,19 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         status: string;
         opening_amount: string;
         opened_by_membership_id: string;
+        expected_amount: string | null;
+        counted_amount: string | null;
+        difference_amount: string | null;
       }[]
     > =>
       prisma.$queryRaw`
         SELECT
           "tenant_id"::text AS tenant_id, "register_id"::text AS register_id,
           "status"::text AS status, "opening_amount"::text AS opening_amount,
-          "opened_by_membership_id"::text AS opened_by_membership_id
+          "opened_by_membership_id"::text AS opened_by_membership_id,
+          "expected_amount"::text AS expected_amount,
+          "counted_amount"::text AS counted_amount,
+          "difference_amount"::text AS difference_amount
         FROM "cash_session" WHERE "id" = ${id}::uuid
       `;
 
@@ -7818,6 +7896,13 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(zeroBody.openingAmount).toBe("0.00");
       // The opener is the caller's OWN ACTIVE membership, never the body.
       expect(zeroBody.openedByMembershipId).toBe(membershipAId);
+      // The three EPIC-13 CASH-003 close-result amounts are ALWAYS present on
+      // the projection and are `null` while the session is `OPEN` (DEC-031): no
+      // route can write them except the close command, which this session never
+      // reaches in this block.
+      expect(zeroBody.expectedAmount).toBeNull();
+      expect(zeroBody.countedAmount).toBeNull();
+      expect(zeroBody.differenceAmount).toBeNull();
 
       const floatRequestId = "live-pg-cash-session-open-nonzero";
       const float = await openSession(
@@ -7831,11 +7916,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(floatBody.status).toBe("OPEN");
       expect(floatBody.openingAmount).toBe("1500.00");
       expect(floatBody.openedByMembershipId).toBe(membershipAId);
+      expect(floatBody.expectedAmount).toBeNull();
+      expect(floatBody.countedAmount).toBeNull();
+      expect(floatBody.differenceAmount).toBeNull();
 
       // The REAL stored columns at their own exact scale and tenant: the float
       // is `Decimal(14, 2)` (never a float), the status is server-owned `OPEN`,
-      // the register was resolved IN-TENANT and the opener is the caller's own
-      // membership in that tenant.
+      // the register was resolved IN-TENANT, the opener is the caller's own
+      // membership in that tenant and the close-result columns are still NULL.
       expect(await rawStoredSession(zeroBody.id)).toEqual([
         {
           tenant_id: tenantAId,
@@ -7843,6 +7931,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           status: "OPEN",
           opening_amount: "0.00",
           opened_by_membership_id: membershipAId,
+          expected_amount: null,
+          counted_amount: null,
+          difference_amount: null,
         },
       ]);
       expect(await rawStoredSession(floatBody.id)).toEqual([
@@ -7852,6 +7943,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           status: "OPEN",
           opening_amount: "1500.00",
           opened_by_membership_id: membershipAId,
+          expected_amount: null,
+          counted_amount: null,
+          difference_amount: null,
         },
       ]);
       // The opener belongs to the SAME tenant the composite key requires.
@@ -8208,12 +8302,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       `;
       expect(triggers.map((row) => row.tgname)).toEqual([
         "cash_movement_no_delete_trigger",
+        "cash_movement_no_insert_into_closed_session_trigger",
         "cash_movement_no_update_trigger",
         "cash_session_no_delete_trigger",
       ]);
       expect(triggers.map((row) => `${row.tgname}:${row.proname}`).sort()).toEqual(
         [
           "cash_movement_no_delete_trigger:cash_movement_no_delete",
+          "cash_movement_no_insert_into_closed_session_trigger:cash_movement_no_insert_into_closed_session",
           "cash_movement_no_update_trigger:cash_movement_no_update",
           "cash_session_no_delete_trigger:cash_session_no_delete",
         ].sort()
@@ -8229,6 +8325,20 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         expect(trigger.tgtype & 8, tgname).toBe(8); // DELETE
         expect(trigger.tgtype & 16, tgname).toBe(0); // NOT UPDATE
       }
+      const insertTrigger = triggerByName.get(
+        "cash_movement_no_insert_into_closed_session_trigger"
+      );
+      if (!insertTrigger) {
+        throw new Error(
+          "The cash_movement_no_insert_into_closed_session_trigger trigger is missing"
+        );
+      }
+      expect(insertTrigger.tgtype & 1).toBe(1); // ROW
+      expect(insertTrigger.tgtype & 2).toBe(2); // BEFORE
+      expect(insertTrigger.tgtype & 4).toBe(4); // INSERT
+      expect(insertTrigger.tgtype & 8).toBe(0); // NOT DELETE
+      expect(insertTrigger.tgtype & 16).toBe(0); // NOT UPDATE
+
       const updateTrigger = triggerByName.get("cash_movement_no_update_trigger");
       if (!updateTrigger) {
         throw new Error("The cash_movement_no_update_trigger trigger is missing");
@@ -8245,7 +8355,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         SELECT p.proname, p.prosrc
         FROM pg_proc AS p
         WHERE p.proname IN (
-          'cash_session_no_delete', 'cash_movement_no_delete', 'cash_movement_no_update'
+          'cash_session_no_delete', 'cash_movement_no_delete', 'cash_movement_no_update',
+          'cash_movement_no_insert_into_closed_session'
         )
       `;
       const sourceByName = new Map(
@@ -8260,10 +8371,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(sourceByName.get("cash_movement_no_update")).toContain(
         "a confirmed cash movement is immutable; correct it with a compensating movement"
       );
+      expect(sourceByName.get("cash_movement_no_insert_into_closed_session")).toContain(
+        "a cash movement cannot be inserted into a closed session"
+      );
       for (const proname of [
         "cash_session_no_delete",
         "cash_movement_no_delete",
         "cash_movement_no_update",
+        "cash_movement_no_insert_into_closed_session",
       ]) {
         expect(sourceByName.get(proname), proname).toContain("ERRCODE = 'restrict_violation'");
         expect(sourceByName.get(proname), proname).toContain("RAISE EXCEPTION");
@@ -8279,7 +8394,11 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       `;
       expect(checkRows.map((row) => row.conname).sort()).toEqual(
         [
+          // EPIC-13 CASH-002 adds the exclusive direction CHECK to the three
+          // EPIC-12/EPIC-13 CASH-001 constraints already applied here.
           "cash_movement_amount_non_zero",
+          "cash_movement_direction_required",
+          "cash_movement_reason_required",
           "cash_register_name_length",
           "cash_session_opening_amount_non_negative",
         ].sort()
@@ -8382,6 +8501,203 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(await prisma.cashSession.count({ where: { registerId: cashRegisterAId } })).toBe(0);
     }, 30_000);
 
+    it("applies the EPIC-13 CASH-001 enum, close columns, reason CHECK and closed-session guard", async () => {
+      const enumRows = await prisma.$queryRaw<{ label: string }[]>`
+        SELECT enumlabel AS label
+        FROM pg_enum
+        WHERE enumtypid = 'cash_movement_type'::regtype
+        ORDER BY enumsortorder
+      `;
+      expect(enumRows.map((row) => row.label)).toEqual([
+        "SALE",
+        "REFUND",
+        "INCOME",
+        "EXPENSE",
+        "WITHDRAWAL",
+        "DEPOSIT",
+        "ADJUSTMENT",
+      ]);
+
+      const closeColumns = await prisma.$queryRaw<
+        {
+          column_name: string;
+          is_nullable: string;
+          numeric_precision: number;
+          numeric_scale: number;
+        }[]
+      >`
+        SELECT column_name, is_nullable, numeric_precision, numeric_scale
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'cash_session'
+          AND column_name IN ('expected_amount', 'counted_amount', 'difference_amount')
+        ORDER BY column_name
+      `;
+      expect(
+        closeColumns.map(
+          (row) =>
+            `${row.column_name}:${row.is_nullable}:${row.numeric_precision}:${row.numeric_scale}`
+        )
+      ).toEqual([
+        "counted_amount:YES:14:2",
+        "difference_amount:YES:14:2",
+        "expected_amount:YES:14:2",
+      ]);
+
+      // EPIC-13 CASH-002 applied schema, added by
+      // `20260930000002_cash_movement_commands`: the explicit `ADJUSTMENT`
+      // direction enum in migration order, the nullable user-defined `direction`
+      // column, and the exclusive predicate that requires it exactly for
+      // `ADJUSTMENT`.
+      const directionEnum = await prisma.$queryRaw<{ enumlabel: string }[]>`
+        SELECT e.enumlabel
+        FROM pg_enum AS e
+        JOIN pg_type AS t ON t.oid = e.enumtypid
+        WHERE t.typname = 'cash_movement_direction'
+        ORDER BY e.enumsortorder ASC
+      `;
+      expect(directionEnum.map((row) => row.enumlabel)).toEqual(["INCREASE", "DECREASE"]);
+
+      const directionColumns = await prisma.$queryRaw<
+        { column_name: string; is_nullable: string; data_type: string; udt_name: string }[]
+      >`
+        SELECT column_name, is_nullable, data_type, udt_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'cash_movement'
+          AND column_name = 'direction'
+      `;
+      expect(
+        directionColumns.map(
+          (row) => `${row.column_name}:${row.is_nullable}:${row.data_type}:${row.udt_name}`
+        )
+      ).toEqual(["direction:YES:USER-DEFINED:cash_movement_direction"]);
+
+      // The APPLIED constraint predicate, normalized and compared for EXACT
+      // equality: both halves of the disjunction must survive.
+      const directionCheck = await prisma.$queryRaw<{ definition: string }[]>`
+        SELECT pg_get_constraintdef(c.oid) AS definition
+        FROM pg_constraint AS c
+        JOIN pg_class AS t ON t.oid = c.conrelid
+        WHERE t.relname = 'cash_movement' AND c.contype = 'c'
+          AND c.conname = 'cash_movement_direction_required'
+      `;
+      expect(directionCheck).toHaveLength(1);
+      expect(normalizeIndexPredicate(directionCheck[0].definition)).toBe(
+        CASH_MOVEMENT_DIRECTION_REQUIRED_PREDICATE
+      );
+
+      await inRolledBackTransaction(async (tx) => {
+        const openSessionId = await insertRawSession(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          membershipAId,
+          "10.00"
+        );
+        await expect(
+          insertRawMovement(tx, tenantAId, cashRegisterAId, openSessionId, "5.00", "SALE")
+        ).resolves.toEqual(expect.any(String));
+        await expect(
+          insertRawMovement(tx, tenantAId, cashRegisterAId, openSessionId, "5.00", "INCOME")
+        ).resolves.toEqual(expect.any(String));
+      });
+
+      for (const type of ["REFUND", "EXPENSE", "WITHDRAWAL", "DEPOSIT", "ADJUSTMENT"]) {
+        // EPIC-13 CASH-002: `ADJUSTMENT` is the one kind whose direction the
+        // type cannot own, so its probes supply one and the reason CHECK stays
+        // the SOLE violated constraint — the exclusivity CHECK would otherwise
+        // report first and mask it.
+        const direction = type === "ADJUSTMENT" ? "INCREASE" : null;
+
+        await inRolledBackTransaction(async (tx) => {
+          const openSessionId = await insertRawSession(
+            tx,
+            tenantAId,
+            cashRegisterAId,
+            membershipAId,
+            "10.00"
+          );
+          const nullReasonMessage = await captureDatabaseMessage(() =>
+            insertRawMovement(
+              tx,
+              tenantAId,
+              cashRegisterAId,
+              openSessionId,
+              "5.00",
+              type,
+              null,
+              direction
+            )
+          );
+          expect(nullReasonMessage).toContain("cash_movement_reason_required");
+        });
+
+        await inRolledBackTransaction(async (tx) => {
+          const openSessionId = await insertRawSession(
+            tx,
+            tenantAId,
+            cashRegisterAId,
+            membershipAId,
+            "10.00"
+          );
+          const blankReasonMessage = await captureDatabaseMessage(() =>
+            insertRawMovement(
+              tx,
+              tenantAId,
+              cashRegisterAId,
+              openSessionId,
+              "5.00",
+              type,
+              "   ",
+              direction
+            )
+          );
+          expect(blankReasonMessage).toContain("cash_movement_reason_required");
+        });
+
+        await inRolledBackTransaction(async (tx) => {
+          const openSessionId = await insertRawSession(
+            tx,
+            tenantAId,
+            cashRegisterAId,
+            membershipAId,
+            "10.00"
+          );
+          await expect(
+            insertRawMovement(
+              tx,
+              tenantAId,
+              cashRegisterAId,
+              openSessionId,
+              "5.00",
+              type,
+              "ok",
+              direction
+            )
+          ).resolves.toEqual(expect.any(String));
+        });
+      }
+
+      await inRolledBackTransaction(async (tx) => {
+        const closedSessionId = await insertRawSession(
+          tx,
+          tenantAId,
+          cashRegisterAId,
+          membershipAId,
+          "10.00",
+          "CLOSED"
+        );
+        const closedMessage = await captureDatabaseMessage(() =>
+          insertRawMovement(tx, tenantAId, cashRegisterAId, closedSessionId, "5.00", "INCOME", "ok")
+        );
+        expect(closedMessage).toBe("a cash movement cannot be inserted into a closed session");
+      });
+
+      expect(await prisma.cashMovement.count()).toBe(0);
+      expect(await prisma.cashSession.count({ where: { registerId: cashRegisterAId } })).toBe(0);
+    }, 30_000);
+
     it("masks another tenant's register as one byte-equivalent 404 and never exposes another tenant's session over real HTTP", async () => {
       const requestId = CASH_NOT_FOUND_REQUEST_ID;
       const auditsBefore = await prisma.auditLog.count();
@@ -8410,12 +8726,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(foreign.text).not.toContain(tenantBId);
       expect(CASH_REGISTER_NOT_FOUND_MESSAGE).not.toBe(CASH_SESSION_NOT_FOUND_MESSAGE);
 
-      // EPIC-12 deliberately exposes NO session-detail route (the accepted
-      // surface is exactly four routes: GET/POST /cash/registers and
-      // GET/POST /cash/sessions), so a session UUID is not addressable over
-      // HTTP and a byte-equivalent session `404` cannot be produced here. The
-      // tenant-scoped session list is the only HTTP boundary that consumes
-      // session rows, so the equivalent property is proven there: another
+      // EPIC-12's session surface had NO session-detail route, so a session
+      // UUID was not addressable over HTTP at all. EPIC-13 CASH-003 changes
+      // that: `POST /cash/sessions/:id/close` NOW addresses a session BY ID, so
+      // the session half of the cross-tenant guarantee is exercisable over HTTP
+      // and is proven byte-equivalent in the dedicated `EPIC-13 cash session
+      // close application-path isolation` block at the end of this file. The
+      // tenant-scoped session list remains the read boundary that consumes
+      // session rows, so the equivalent property is still proven here: another
       // tenant's session is NEVER observable, and neither is its tenant id.
       const allSessions = await supertest(serverUrl)
         .get("/cash/sessions")
@@ -8434,6 +8752,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         expect(list.text).not.toContain(tenantBId);
         for (const row of list.body as CashSessionDto[]) {
           expect(Object.keys(row).sort()).toEqual(CASH_SESSION_DTO_KEYS);
+          // Every tenant-A session of this block is still `OPEN` and was never
+          // closed, so the three close-result amounts are present and `null`
+          // (DEC-031).
+          if (row.status === "OPEN") {
+            expect(row.expectedAmount).toBeNull();
+            expect(row.countedAmount).toBeNull();
+            expect(row.differenceAmount).toBeNull();
+          }
         }
       }
 
@@ -9296,6 +9622,11 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(Object.keys(session).sort()).toEqual(CASH_SESSION_DTO_KEYS);
       expect(session.status).toBe("OPEN");
       expect(session.registerId).toBe(firstRegisterId);
+      // The session was opened and never closed by this block, so the three
+      // EPIC-13 CASH-003 close-result amounts are present and `null` (DEC-031).
+      expect(session.expectedAmount).toBeNull();
+      expect(session.countedAmount).toBeNull();
+      expect(session.differenceAmount).toBeNull();
       const openSessions = await prisma.cashSession.findMany({
         where: { tenantId: completionTenantId, status: "OPEN" },
       });
@@ -9384,6 +9715,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       const secondSession = second.body as CashSessionDto;
       expect(secondSession.status).toBe("OPEN");
       expect(secondSession.registerId).toBe(secondRegisterId);
+      expect(secondSession.expectedAmount).toBeNull();
+      expect(secondSession.countedAmount).toBeNull();
+      expect(secondSession.differenceAmount).toBeNull();
       expect(
         await prisma.cashSession.count({ where: { tenantId: completionTenantId, status: "OPEN" } })
       ).toBe(2);
@@ -10036,6 +10370,2159 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
       expect(await prisma.payment.count({ where: { saleId: foreignSaleAId } })).toBe(0);
       expect(await saleMovements(tenantAId, foreignItemAId)).toEqual([]);
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-13 CASH-002 live-PostgreSQL evidence.
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP and the applied `20260930000002_cash_movement_commands` DDL — what
+   * the shared in-memory boundary cannot represent:
+   *   1. the six accepted standalone kinds each appending exactly ONE immutable
+   *      `cash_movement` row and exactly ONE co-committed `cash.movement.created`
+   *      audit row carrying field NAMES only, exposed through the allowlisted DTO
+   *      and nothing else;
+   *   2. the reason rule (DEC-032): `INCOME` may omit it, the other five kinds
+   *      reject a missing and a whitespace-only reason;
+   *   3. the direction rule (DEC-030): required exactly for `ADJUSTMENT` and
+   *      forbidden for every other kind;
+   *   4. `SALE` is not addressable through the command (POS-003 owns it);
+   *   5. zero, negative and non-money amounts are rejected before any write;
+   *   6. a foreign-tenant session and an unknown session are ONE byte-equivalent
+   *      `404`, and a CLOSED session is the stable `409`, each persisting
+   *      nothing;
+   *   7. the database's own exclusivity: a raw `ADJUSTMENT` with a NULL direction
+   *      and a raw `INCOME` with a direction are both refused by
+   *      `cash_movement_direction_required`;
+   *   8. the command is INERT with respect to Sales and stock;
+   *   9. zero residue: every raw probe rolled back and the fixture counts
+   *      unchanged.
+   *
+   * The block owns a DEDICATED tenant with the `cash` entitlement, its own owner
+   * cookie, its own register and its own OPEN session, because the earlier cash
+   * blocks deliberately mutate the OPEN-session sets of tenants A and B. Every
+   * assertion is deterministic: no mock, no injected Prisma error, no sleep and
+   * no retry, and every raw mutation that is meant to be refused runs inside its
+   * OWN interactive transaction that is always rolled back.
+   */
+  describe("EPIC-13 cash movement command application-path isolation", () => {
+    /** Marker error that forces an interactive transaction to roll back. */
+    const CASH_MOVEMENT_ROLLBACK_SENTINEL = "live-pg-cash-movement-rollback";
+
+    /**
+     * The exact number of `cash_movement` rows this block COMMITS: the six
+     * accepted kinds, the reasonless `INCOME`, the explicit `ADJUSTMENT`, the
+     * inert kind and the idempotency `INCOME` whose retry appends nothing.
+     */
+    const CASH_MOVEMENT_COMMITTED_COUNT = 10;
+
+    /**
+     * Stable `409` wire message for a standalone movement against a session that
+     * is not `OPEN`, mirrored as a literal so the live suite asserts the
+     * byte-exact body the application emits rather than importing the production
+     * constant.
+     */
+    const CASH_MOVEMENT_SESSION_NOT_OPEN_MESSAGE = "This cash session is not open.";
+
+    /** The dedicated tenant that owns every movement fixture of this block. */
+    let movementTenantId: string;
+    let movementCookie: string;
+    /** The dedicated tenant's ONE fixture register and its ONE OPEN session. */
+    let movementRegisterId: string;
+    let movementSessionId: string;
+    /** The opener the raw CLOSED fixture stores (the tenant's ACTIVE membership). */
+    let movementMembershipId: string;
+    /** Probe-only register: no HTTP case ever resolves a session on it. */
+    let movementProbeRegisterId: string;
+    /** Register whose only session is the committed CLOSED fixture row. */
+    let movementClosedRegisterId: string;
+    let movementClosedSessionId: string;
+    /** Tenant A's own committed OPEN session, the foreign id of the 404 case. */
+    let foreignMovementSessionId: string;
+
+    /** One movement create over REAL HTTP; the key is fresh unless pinned. */
+    const createMovement = (
+      cookie: string,
+      body: Record<string, unknown>,
+      requestId: string,
+      idempotencyKey: string = randomUUID()
+    ): supertest.Test =>
+      supertest(serverUrl)
+        .post("/cash/movements")
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .set("Idempotency-Key", idempotencyKey)
+        .send(body);
+
+    /**
+     * Extracts the database message from Prisma's raw-query error wrapper
+     * (`Raw query failed. Code: `23514`. Message: `...``). The captured text is
+     * the database's own message, so an assertion can compare it EXACTLY instead
+     * of matching a substring of the wrapper.
+     */
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
+      // PostgreSQL renders a statement error with a fixed `ERROR: ` severity
+      // prefix; stripping it leaves the exact text the server raised.
+      return (match ? match[1] : text).replace(/^ERROR: /, "");
+    };
+
+    /** Runs `probe` and returns the exact database message of its rejection. */
+    const captureDatabaseMessage = async (probe: () => Promise<unknown>): Promise<string> => {
+      try {
+        await probe();
+      } catch (error) {
+        return databaseMessage(error);
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `work` inside an interactive transaction that is ALWAYS rolled back,
+     * so a probe can seed throwaway rows and attempt a mutation without
+     * persisting anything. An assertion failure inside `work` propagates and
+     * fails the case instead of matching the rollback sentinel.
+     */
+    const inRolledBackTransaction = async (
+      work: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<void> => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw new Error(CASH_MOVEMENT_ROLLBACK_SENTINEL);
+        })
+      ).rejects.toThrow(CASH_MOVEMENT_ROLLBACK_SENTINEL);
+    };
+
+    /** Raw session insert at the migration's exact shape; returns the id. */
+    const insertRawSession = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      registerId: string,
+      openedByMembershipId: string,
+      openingAmount: string,
+      status: "OPEN" | "CLOSED" = "OPEN"
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "cash_session" (
+          "id", "tenant_id", "register_id", "status", "opened_by_membership_id", "opening_amount"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid,
+          ${status}::cash_session_status, ${openedByMembershipId}::uuid,
+          ${openingAmount}::decimal
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * Raw movement insert at the migration's exact shape, direction included.
+     * The direction is the EPIC-13 CASH-002 column and is REQUIRED for an
+     * `ADJUSTMENT` and forbidden for every other kind, so the two exclusivity
+     * probes below can each violate one half of the constraint.
+     */
+    const insertRawMovement = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      registerId: string,
+      sessionId: string,
+      amount: string,
+      type: string,
+      reason: string | null,
+      direction: string | null
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "cash_movement" (
+          "id", "tenant_id", "register_id", "session_id", "type", "amount", "reason", "direction"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid, ${sessionId}::uuid,
+          ${type}::cash_movement_type, ${amount}::decimal, ${reason},
+          ${direction}::cash_movement_direction
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * The STORED columns of one movement row, read from PostgreSQL at their OWN
+     * exact shapes, so the amount and the direction are asserted against real
+     * database state rather than the HTTP projection alone.
+     */
+    const rawStoredMovement = (
+      id: string
+    ): Promise<
+      {
+        tenant_id: string;
+        register_id: string;
+        session_id: string;
+        type: string;
+        direction: string | null;
+        amount: string;
+        reason: string | null;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "tenant_id"::text AS tenant_id, "register_id"::text AS register_id,
+          "session_id"::text AS session_id, "type"::text AS type,
+          "direction"::text AS direction, "amount"::text AS amount, "reason" AS reason
+        FROM "cash_movement" WHERE "id" = ${id}::uuid
+      `;
+
+    /** Every stored `cash_movement` row of the dedicated tenant. */
+    const rawTenantMovements = (): Promise<
+      {
+        tenant_id: string;
+        register_id: string;
+        session_id: string;
+        type: string;
+        direction: string | null;
+        amount: string;
+        reason: string | null;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "tenant_id"::text AS tenant_id, "register_id"::text AS register_id,
+          "session_id"::text AS session_id, "type"::text AS type,
+          "direction"::text AS direction, "amount"::text AS amount, "reason" AS reason
+        FROM "cash_movement"
+        WHERE "tenant_id" = ${movementTenantId}::uuid
+        ORDER BY "created_at" ASC, "id" ASC
+      `;
+
+    /**
+     * The tables a movement create must never touch, counted GLOBALLY so a row
+     * written anywhere fails the comparison.
+     */
+    const readInertCounts = async () => ({
+      sales: await prisma.sale.count(),
+      saleLines: await prisma.saleLine.count(),
+      stockMovements: await prisma.stockMovement.count(),
+      stockBalances: await prisma.stockBalance.count(),
+      payments: await prisma.payment.count(),
+      cashSessions: await prisma.cashSession.count(),
+    });
+
+    beforeAll(async () => {
+      // The `cash` grant is explicit (DEC-026): plan mappings never grant
+      // access, so the dedicated tenant must hold a direct tenant_entitlement
+      // row before the movement route is reachable.
+      const movementTenant = await prisma.tenant.create({
+        data: { slug: "live-movement", name: "Tenant Movement" },
+      });
+      movementTenantId = movementTenant.id;
+
+      const ownerRole = await prisma.role.findUnique({ where: { code: "OWNER" } });
+      if (!ownerRole) {
+        throw new Error("Reference seed did not create OWNER role");
+      }
+      const movementOwner = await prisma.userProfile.create({
+        data: {
+          email: "owner-movement@live.test",
+          displayName: "Owner Movement",
+          status: "active",
+        },
+      });
+      const membership = await prisma.tenantMembership.create({
+        data: {
+          tenantId: movementTenant.id,
+          userProfileId: movementOwner.id,
+          roleId: ownerRole.id,
+          status: "ACTIVE",
+        },
+      });
+      movementMembershipId = membership.id;
+      const session = await app.get(SessionService).issue(movementOwner.id);
+      movementCookie = `${STAFF_SESSION_COOKIE}=${session.token}`;
+
+      const cashFeature = await prisma.featureCode.upsert({
+        where: { code: "cash" },
+        create: { code: "cash" },
+        update: {},
+      });
+      await prisma.tenantEntitlement.upsert({
+        where: {
+          tenantId_featureCodeId: { tenantId: movementTenant.id, featureCodeId: cashFeature.id },
+        },
+        create: { tenantId: movementTenant.id, featureCodeId: cashFeature.id },
+        update: {},
+      });
+
+      // The block's OWN register and OPEN session, created over REAL HTTP.
+      const register = await supertest(serverUrl)
+        .post("/cash/registers")
+        .set("Cookie", movementCookie)
+        .set("X-Request-Id", "live-pg-movement-fixture-register")
+        .send({ name: "Live Movement Drawer" })
+        .expect(201);
+      movementRegisterId = (register.body as CashRegisterDto).id;
+      const opened = await supertest(serverUrl)
+        .post("/cash/sessions")
+        .set("Cookie", movementCookie)
+        .set("X-Request-Id", "live-pg-movement-fixture-session")
+        .send({ registerId: movementRegisterId, openingAmount: "0.00" })
+        .expect(201);
+      movementSessionId = (opened.body as CashSessionDto).id;
+
+      // Probe-only register: the raw exclusivity probes seed their throwaway
+      // session on it, so a surviving session or movement there could only come
+      // from a probe that failed to roll back.
+      const probeRegister = await supertest(serverUrl)
+        .post("/cash/registers")
+        .set("Cookie", movementCookie)
+        .set("X-Request-Id", "live-pg-movement-fixture-probe-register")
+        .send({ name: "Live Movement Probe Drawer" })
+        .expect(201);
+      movementProbeRegisterId = (probeRegister.body as CashRegisterDto).id;
+
+      // The CLOSED-session fixture: the row is raw-inserted and COMMITTED on
+      // its OWN register, where it sits outside the one-OPEN partial index. The
+      // EPIC-13 CASH-003 close command now reaches `CLOSED` over HTTP, but this
+      // block deliberately does NOT close one of its own sessions: the fixture
+      // must stay independent of the close route (and of the close block that
+      // runs last), so the command's CLOSED rejection is proven against a row
+      // this block wrote itself.
+      const closedRegister = await supertest(serverUrl)
+        .post("/cash/registers")
+        .set("Cookie", movementCookie)
+        .set("X-Request-Id", "live-pg-movement-fixture-closed-register")
+        .send({ name: "Live Movement Closed Drawer" })
+        .expect(201);
+      movementClosedRegisterId = (closedRegister.body as CashRegisterDto).id;
+      movementClosedSessionId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "cash_session" (
+          "id", "tenant_id", "register_id", "status", "opened_by_membership_id", "opening_amount"
+        )
+        VALUES (
+          ${movementClosedSessionId}::uuid, ${movementTenantId}::uuid,
+          ${movementClosedRegisterId}::uuid, 'CLOSED'::cash_session_status,
+          ${movementMembershipId}::uuid, '0.00'::decimal
+        )
+      `;
+
+      // A REAL foreign OPEN session: tenant A's own committed drawer, resolved
+      // server-side only through tenant A's own request.
+      const foreignRegister = await supertest(serverUrl)
+        .post("/cash/registers")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", "live-pg-movement-fixture-foreign-register")
+        .send({ name: "Live Movement Foreign Drawer" })
+        .expect(201);
+      const foreign = await supertest(serverUrl)
+        .post("/cash/sessions")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", "live-pg-movement-fixture-foreign-session")
+        .send({ registerId: (foreignRegister.body as CashRegisterDto).id, openingAmount: "0.00" })
+        .expect(201);
+      foreignMovementSessionId = (foreign.body as CashSessionDto).id;
+
+      // The fixtures really are distinct tenants and the block starts clean.
+      expect(movementTenantId).not.toBe(tenantAId);
+      expect(await prisma.cashMovement.count({ where: { tenantId: movementTenantId } })).toBe(0);
+    }, 60_000);
+
+    it("creates exactly one movement and one cash.movement.created audit row for each accepted kind, through the allowlisted DTO only", async () => {
+      const accepted = [
+        { type: "REFUND", reason: "Live movement refund", direction: null, amount: "12.34" },
+        { type: "INCOME", reason: null, direction: null, amount: "56.78" },
+        { type: "EXPENSE", reason: "Live movement expense", direction: null, amount: "9.90" },
+        {
+          type: "WITHDRAWAL",
+          reason: "Live movement withdrawal",
+          direction: null,
+          amount: "100.00",
+        },
+        { type: "DEPOSIT", reason: "Live movement deposit", direction: null, amount: "250.50" },
+        {
+          type: "ADJUSTMENT",
+          reason: "Live movement adjustment",
+          direction: "INCREASE",
+          amount: "3.21",
+        },
+      ] as const;
+
+      for (const scenario of accepted) {
+        const requestId = `live-pg-movement-accept-${scenario.type.toLowerCase()}`;
+        const movementsBefore = await prisma.cashMovement.count({
+          where: { tenantId: movementTenantId },
+        });
+        const auditsBefore = await prisma.auditLog.count();
+
+        const body: Record<string, unknown> = {
+          sessionId: movementSessionId,
+          type: scenario.type,
+          amount: scenario.amount,
+        };
+        if (scenario.reason !== null) {
+          body.reason = scenario.reason;
+        }
+        if (scenario.direction !== null) {
+          body.direction = scenario.direction;
+        }
+
+        const response = await createMovement(movementCookie, body, requestId);
+        expect(response.status, scenario.type).toBe(201);
+        const created = response.body as CashMovementDto;
+        // The allowlisted projection: exact key set, no `tenantId` and no Prisma
+        // column name crossing the boundary.
+        expect(Object.keys(created).sort(), scenario.type).toEqual(CASH_MOVEMENT_DTO_KEYS);
+        expect(Object.keys(created), scenario.type).not.toContain("tenantId");
+        expect(created.registerId, scenario.type).toBe(movementRegisterId);
+        expect(created.sessionId, scenario.type).toBe(movementSessionId);
+        expect(created.type, scenario.type).toBe(scenario.type);
+        expect(created.direction, scenario.type).toBe(scenario.direction);
+        expect(created.amount, scenario.type).toBe(scenario.amount);
+        expect(created.reason, scenario.type).toBe(scenario.reason);
+        expect(response.text, scenario.type).not.toContain("tenant_id");
+        expect(response.text, scenario.type).not.toContain("register_id");
+
+        // The REAL stored row: the dedicated tenant, the server-resolved
+        // register/session pair, the kind, the explicit direction and the
+        // POSITIVE exact-scale amount.
+        expect(await rawStoredMovement(created.id), scenario.type).toEqual([
+          {
+            tenant_id: movementTenantId,
+            register_id: movementRegisterId,
+            session_id: movementSessionId,
+            type: scenario.type,
+            direction: scenario.direction,
+            amount: scenario.amount,
+            reason: scenario.reason,
+          },
+        ]);
+
+        // Exactly ONE co-committed `cash.movement.created` audit row carrying
+        // ids and field NAMES only.
+        const audits = await prisma.auditLog.findMany({ where: { requestId } });
+        expect(audits, scenario.type).toHaveLength(1);
+        expect(audits[0]).toMatchObject({
+          action: "cash.movement.created",
+          targetType: "cash_movement",
+          targetId: created.id,
+          tenantId: movementTenantId,
+        });
+        const metadata = audits[0].metadata as {
+          schemaVersion: number;
+          changedFields: string[];
+        };
+        expect(Object.keys(metadata).sort(), scenario.type).toEqual([
+          "changedFields",
+          "schemaVersion",
+        ]);
+        expect(metadata.schemaVersion, scenario.type).toBe(1);
+        const expectedChangedFields = ["sessionId", "type", "amount"];
+        if (scenario.reason !== null) {
+          expectedChangedFields.push("reason");
+        }
+        if (scenario.direction !== null) {
+          expectedChangedFields.push("direction");
+        }
+        expect(metadata.changedFields, scenario.type).toEqual(expectedChangedFields);
+        const serialized = JSON.stringify(metadata);
+        expect(serialized, scenario.type).not.toContain(created.id);
+        expect(serialized, scenario.type).not.toContain(movementSessionId);
+        expect(serialized, scenario.type).not.toContain(movementRegisterId);
+        expect(serialized, scenario.type).not.toContain(scenario.amount);
+        if (scenario.reason !== null) {
+          expect(serialized, scenario.type).not.toContain(scenario.reason);
+        }
+        if (scenario.direction !== null) {
+          expect(serialized, scenario.type).not.toContain(scenario.direction);
+        }
+
+        // The delta is exactly the command's own effect: one movement and one
+        // audit row, and exactly one movement of that kind on the session.
+        expect(
+          await prisma.cashMovement.count({ where: { tenantId: movementTenantId } }),
+          scenario.type
+        ).toBe(movementsBefore + 1);
+        expect(await prisma.auditLog.count(), scenario.type).toBe(auditsBefore + 1);
+        expect(
+          await prisma.cashMovement.count({
+            where: {
+              registerId: movementRegisterId,
+              sessionId: movementSessionId,
+              type: scenario.type,
+            },
+          }),
+          scenario.type
+        ).toBe(1);
+      }
+    }, 60_000);
+
+    it("admits INCOME with no reason while the five reason-required kinds reject a missing and a whitespace-only reason, persisting nothing", async () => {
+      const movementsBefore = await prisma.cashMovement.count({
+        where: { tenantId: movementTenantId },
+      });
+      const auditsBefore = await prisma.auditLog.count();
+
+      // INCOME is the ONE accepted kind whose reason is optional (DEC-032).
+      const incomeRequestId = "live-pg-movement-reason-income";
+      const income = await createMovement(
+        movementCookie,
+        { sessionId: movementSessionId, type: "INCOME", amount: "7.00" },
+        incomeRequestId
+      );
+      expect(income.status).toBe(201);
+      const incomeBody = income.body as CashMovementDto;
+      expect(incomeBody.reason).toBeNull();
+      expect(incomeBody.direction).toBeNull();
+      expect(await prisma.auditLog.count({ where: { requestId: incomeRequestId } })).toBe(1);
+
+      const rejected: { label: string; requestId: string; body: Record<string, unknown> }[] = [];
+      for (const type of ["REFUND", "EXPENSE", "WITHDRAWAL", "DEPOSIT", "ADJUSTMENT"]) {
+        // ADJUSTMENT's direction is supplied so the REASON is the only rejected
+        // field and the two rules stay separable.
+        const direction = type === "ADJUSTMENT" ? { direction: "INCREASE" } : {};
+        rejected.push({
+          label: `${type} missing reason`,
+          requestId: `live-pg-movement-reason-missing-${type.toLowerCase()}`,
+          body: { sessionId: movementSessionId, type, amount: "5.00", ...direction },
+        });
+        rejected.push({
+          label: `${type} whitespace-only reason`,
+          requestId: `live-pg-movement-reason-blank-${type.toLowerCase()}`,
+          body: { sessionId: movementSessionId, type, amount: "5.00", reason: "   ", ...direction },
+        });
+      }
+
+      for (const scenario of rejected) {
+        const response = await createMovement(movementCookie, scenario.body, scenario.requestId);
+        expect(response.status, scenario.label).toBe(400);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe(
+          "VALIDATION_FAILED"
+        );
+        // Value-free: neither the session nor the tenant echoes back.
+        expect(response.text, scenario.label).not.toContain(movementSessionId);
+        expect(response.text, scenario.label).not.toContain(movementTenantId);
+      }
+
+      // Nothing persisted by ANY rejection; exactly ONE movement and ONE audit
+      // row from the admitted reasonless INCOME.
+      expect(await prisma.cashMovement.count({ where: { tenantId: movementTenantId } })).toBe(
+        movementsBefore + 1
+      );
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(
+        await prisma.auditLog.count({
+          where: { requestId: { in: rejected.map((scenario) => scenario.requestId) } },
+        })
+      ).toBe(0);
+    }, 30_000);
+
+    it("requires a direction exactly for ADJUSTMENT, forbids it on every other kind and rejects SALE, persisting nothing", async () => {
+      const movementsBefore = await prisma.cashMovement.count({
+        where: { tenantId: movementTenantId },
+      });
+      const auditsBefore = await prisma.auditLog.count();
+
+      const rejected: { label: string; requestId: string; body: Record<string, unknown> }[] = [
+        {
+          label: "ADJUSTMENT without a direction",
+          requestId: "live-pg-movement-direction-missing",
+          body: {
+            sessionId: movementSessionId,
+            type: "ADJUSTMENT",
+            amount: "5.00",
+            reason: "Live movement adjustment",
+          },
+        },
+        ...(["REFUND", "INCOME", "EXPENSE", "WITHDRAWAL", "DEPOSIT"] as const).map((type) => ({
+          label: `${type} with a direction`,
+          requestId: `live-pg-movement-direction-forbidden-${type.toLowerCase()}`,
+          body: {
+            sessionId: movementSessionId,
+            type,
+            amount: "5.00",
+            reason: "Live movement with a direction",
+            direction: "INCREASE",
+          },
+        })),
+        {
+          label: "SALE is not addressable through the command",
+          requestId: "live-pg-movement-sale-rejected",
+          body: {
+            sessionId: movementSessionId,
+            type: "SALE",
+            amount: "5.00",
+            reason: "Live movement sale",
+          },
+        },
+      ];
+
+      for (const scenario of rejected) {
+        const response = await createMovement(movementCookie, scenario.body, scenario.requestId);
+        expect(response.status, scenario.label).toBe(400);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe(
+          "VALIDATION_FAILED"
+        );
+      }
+
+      // The accepted control: an ADJUSTMENT WITH its explicit DECREASE direction
+      // is admitted, so the rejection above is about the RULE and not about the
+      // body shape.
+      const acceptedRequestId = "live-pg-movement-direction-decrease";
+      const accepted = await createMovement(
+        movementCookie,
+        {
+          sessionId: movementSessionId,
+          type: "ADJUSTMENT",
+          amount: "5.00",
+          reason: "Live movement decrease",
+          direction: "DECREASE",
+        },
+        acceptedRequestId
+      );
+      expect(accepted.status).toBe(201);
+      const acceptedBody = accepted.body as CashMovementDto;
+      expect(acceptedBody.type).toBe("ADJUSTMENT");
+      expect(acceptedBody.direction).toBe("DECREASE");
+
+      expect(await prisma.cashMovement.count({ where: { tenantId: movementTenantId } })).toBe(
+        movementsBefore + 1
+      );
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(
+        await prisma.auditLog.count({
+          where: { requestId: { in: rejected.map((scenario) => scenario.requestId) } },
+        })
+      ).toBe(0);
+    }, 30_000);
+
+    it("rejects zero, negative and non-money amounts before any write", async () => {
+      const movementsBefore = await prisma.cashMovement.count({
+        where: { tenantId: movementTenantId },
+      });
+      const auditsBefore = await prisma.auditLog.count();
+
+      const rejectedAmounts = [
+        { label: "zero", amount: "0", requestId: "live-pg-movement-amount-zero" },
+        { label: "scaled zero", amount: "0.00", requestId: "live-pg-movement-amount-zero-scaled" },
+        { label: "negative", amount: "-1.00", requestId: "live-pg-movement-amount-negative" },
+        {
+          label: "small negative",
+          amount: "-0.01",
+          requestId: "live-pg-movement-amount-negative-small",
+        },
+        { label: "non-numeric", amount: "abc", requestId: "live-pg-movement-amount-non-numeric" },
+        { label: "scientific", amount: "1e3", requestId: "live-pg-movement-amount-scientific" },
+        {
+          label: "three decimals",
+          amount: "1.234",
+          requestId: "live-pg-movement-amount-three-decimals",
+        },
+        { label: "comma separator", amount: "1,00", requestId: "live-pg-movement-amount-comma" },
+        { label: "empty", amount: "", requestId: "live-pg-movement-amount-empty" },
+      ];
+
+      for (const scenario of rejectedAmounts) {
+        const response = await createMovement(
+          movementCookie,
+          { sessionId: movementSessionId, type: "INCOME", amount: scenario.amount },
+          scenario.requestId
+        );
+        expect(response.status, scenario.label).toBe(400);
+        expect((response.body as ErrorEnvelope).error.code, scenario.label).toBe(
+          "VALIDATION_FAILED"
+        );
+        expect(
+          await prisma.auditLog.count({ where: { requestId: scenario.requestId } }),
+          scenario.label
+        ).toBe(0);
+      }
+
+      // No rejected amount wrote a movement or an audit row.
+      expect(await prisma.cashMovement.count({ where: { tenantId: movementTenantId } })).toBe(
+        movementsBefore
+      );
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+    }, 30_000);
+
+    it("masks a foreign-tenant session and an unknown session as one byte-equivalent 404, persisting nothing", async () => {
+      const movementsBefore = await prisma.cashMovement.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = "live-pg-movement-not-found-proof";
+
+      const foreign = await createMovement(
+        movementCookie,
+        { sessionId: foreignMovementSessionId, type: "INCOME", amount: "5.00" },
+        requestId
+      );
+      const missing = await createMovement(
+        movementCookie,
+        { sessionId: randomUUID(), type: "INCOME", amount: "5.00" },
+        requestId
+      );
+
+      expect(foreign.status).toBe(404);
+      expect(missing.status).toBe(404);
+      expect((foreign.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect((foreign.body as { error: { message: string } }).error.message).toBe(
+        CASH_SESSION_NOT_FOUND_MESSAGE
+      );
+      // Byte-equivalence: a session owned by another tenant is indistinguishable
+      // from a non-existent one, echoed correlation included.
+      expect(foreign.text).toBe(missing.text);
+      expect(foreign.text).not.toContain(foreignMovementSessionId);
+      expect(foreign.text).not.toContain(tenantAId);
+
+      // Neither masked attempt persisted a movement or an audit row, and the
+      // foreign session survived unchanged.
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(
+        await prisma.cashSession.findUnique({ where: { id: foreignMovementSessionId } })
+      ).toMatchObject({ tenantId: tenantAId, status: "OPEN" });
+      expect(
+        await prisma.cashMovement.count({ where: { sessionId: foreignMovementSessionId } })
+      ).toBe(0);
+    }, 30_000);
+
+    it("rejects a movement into a CLOSED session with the stable 409, persisting nothing", async () => {
+      // The fixture is a REAL committed CLOSED row of this tenant: no HTTP case
+      // in this block closes a session, so it was raw-inserted once in
+      // `beforeAll` and remains independent of the CASH-003 close route.
+      expect(
+        await prisma.cashSession.findUnique({ where: { id: movementClosedSessionId } })
+      ).toMatchObject({ tenantId: movementTenantId, status: "CLOSED" });
+
+      const movementsBefore = await prisma.cashMovement.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = "live-pg-movement-closed-session";
+
+      const response = await createMovement(
+        movementCookie,
+        { sessionId: movementClosedSessionId, type: "INCOME", amount: "5.00" },
+        requestId
+      );
+      expect(response.status).toBe(409);
+      expect((response.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((response.body as { error: { message: string } }).error.message).toBe(
+        CASH_MOVEMENT_SESSION_NOT_OPEN_MESSAGE
+      );
+      // Value-free: neither the session nor the tenant id echoes back.
+      expect(response.text).not.toContain(movementClosedSessionId);
+      expect(response.text).not.toContain(movementTenantId);
+
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(
+        await prisma.cashMovement.count({ where: { sessionId: movementClosedSessionId } })
+      ).toBe(0);
+      expect(
+        await prisma.cashSession.findUnique({ where: { id: movementClosedSessionId } })
+      ).toMatchObject({ status: "CLOSED" });
+    }, 30_000);
+
+    it("refuses the two illegal direction combinations directly at cash_movement_direction_required with rolled-back raw inserts", async () => {
+      const movementsBefore = await prisma.cashMovement.count();
+      const sessionsBefore = await prisma.cashSession.count();
+
+      // An ADJUSTMENT with a NULL direction violates the first half of the
+      // exclusive CHECK...
+      await inRolledBackTransaction(async (tx) => {
+        const sessionId = await insertRawSession(
+          tx,
+          movementTenantId,
+          movementProbeRegisterId,
+          movementMembershipId,
+          "10.00"
+        );
+        const message = await captureDatabaseMessage(() =>
+          insertRawMovement(
+            tx,
+            movementTenantId,
+            movementProbeRegisterId,
+            sessionId,
+            "5.00",
+            "ADJUSTMENT",
+            "ok",
+            null
+          )
+        );
+        expect(message).toContain("cash_movement_direction_required");
+      });
+
+      // ...and an INCOME WITH a direction violates the second half. A rejected
+      // statement aborts its transaction, so each rejection owns its own.
+      await inRolledBackTransaction(async (tx) => {
+        const sessionId = await insertRawSession(
+          tx,
+          movementTenantId,
+          movementProbeRegisterId,
+          movementMembershipId,
+          "10.00"
+        );
+        const message = await captureDatabaseMessage(() =>
+          insertRawMovement(
+            tx,
+            movementTenantId,
+            movementProbeRegisterId,
+            sessionId,
+            "5.00",
+            "INCOME",
+            null,
+            "INCREASE"
+          )
+        );
+        expect(message).toContain("cash_movement_direction_required");
+      });
+
+      // The two legal combinations are admitted, so the constraint rejects the
+      // illegal pairs and nothing else.
+      await inRolledBackTransaction(async (tx) => {
+        const sessionId = await insertRawSession(
+          tx,
+          movementTenantId,
+          movementProbeRegisterId,
+          movementMembershipId,
+          "10.00"
+        );
+        await expect(
+          insertRawMovement(
+            tx,
+            movementTenantId,
+            movementProbeRegisterId,
+            sessionId,
+            "5.00",
+            "ADJUSTMENT",
+            "ok",
+            "INCREASE"
+          )
+        ).resolves.toEqual(expect.any(String));
+        await expect(
+          insertRawMovement(
+            tx,
+            movementTenantId,
+            movementProbeRegisterId,
+            sessionId,
+            "5.00",
+            "INCOME",
+            null,
+            null
+          )
+        ).resolves.toEqual(expect.any(String));
+      });
+
+      // Every probe rolled back: the probe register carries no session and no
+      // movement, and no throwaway row survived anywhere.
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.cashSession.count()).toBe(sessionsBefore);
+      expect(
+        await prisma.cashSession.count({ where: { registerId: movementProbeRegisterId } })
+      ).toBe(0);
+      expect(
+        await prisma.cashMovement.count({ where: { registerId: movementProbeRegisterId } })
+      ).toBe(0);
+    }, 30_000);
+
+    it("replays an identical retry with the same Idempotency-Key and appends nothing", async () => {
+      const movementsBefore = await prisma.cashMovement.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const key = randomUUID();
+      const requestId = "live-pg-cash-movement-idempotency";
+      const body = { sessionId: movementSessionId, type: "INCOME", amount: "77.00" };
+
+      // The deterministic id makes the PRIMARY KEY the guarantee: the retry
+      // replays the stored movement and appends no second row or audit row.
+      const first = await createMovement(movementCookie, body, requestId, key).expect(201);
+      const replay = await createMovement(movementCookie, body, requestId, key).expect(200);
+      expect(replay.body).toEqual(first.body);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore + 1);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+    }, 30_000);
+
+    it("stays inert: a movement writes no sale, sale line, stock movement or stock balance row", async () => {
+      const inertBefore = await readInertCounts();
+      const movementsBefore = await prisma.cashMovement.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = "live-pg-movement-inert";
+
+      const response = await createMovement(
+        movementCookie,
+        {
+          sessionId: movementSessionId,
+          type: "DEPOSIT",
+          amount: "44.44",
+          reason: "Live movement inert",
+        },
+        requestId
+      );
+      expect(response.status).toBe(201);
+      const created = response.body as CashMovementDto;
+      expect(created.type).toBe("DEPOSIT");
+      expect(created.direction).toBeNull();
+
+      // The command's WHOLE durable effect is one movement and one audit row:
+      // nothing on the Sales, stock or payment tables moved.
+      expect(await readInertCounts()).toEqual(inertBefore);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore + 1);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(1);
+    }, 30_000);
+
+    it("reads the movements this block committed, newest-first, narrowed by sessionId and never across tenants", async () => {
+      const movementsBefore = await prisma.cashMovement.count({
+        where: { tenantId: movementTenantId },
+      });
+      const auditsBefore = await prisma.auditLog.count();
+      // The block committed its whole ledger by this point; a read adds nothing.
+      expect(movementsBefore).toBe(CASH_MOVEMENT_COMMITTED_COUNT);
+
+      const listMovements = (cookie: string, query = ""): supertest.Test =>
+        supertest(serverUrl)
+          .get(`/cash/movements${query}`)
+          .set("Cookie", cookie)
+          .set("X-Request-Id", "live-pg-movement-read");
+
+      // The tenant's OWN committed ledger over REAL HTTP, through the
+      // allowlisted DTO only: ONE movement shape, and never a `tenantId`.
+      const listed = await listMovements(movementCookie).expect(200);
+      const movements = listed.body as CashMovementDto[];
+      expect(movements).toHaveLength(CASH_MOVEMENT_COMMITTED_COUNT);
+      for (const movement of movements) {
+        expect(Object.keys(movement).sort()).toEqual(CASH_MOVEMENT_DTO_KEYS);
+        expect(Object.keys(movement)).not.toContain("tenantId");
+        expect(movement.registerId).toBe(movementRegisterId);
+        expect(movement.sessionId).toBe(movementSessionId);
+      }
+      expect(listed.text).not.toContain("tenant_id");
+
+      // Newest first by `createdAt` with `id` ascending as the tiebreaker,
+      // matching the register and session list convention.
+      for (let index = 1; index < movements.length; index += 1) {
+        const previous = movements[index - 1];
+        const current = movements[index];
+        const byCreatedAt = previous.createdAt.localeCompare(current.createdAt);
+        expect(
+          byCreatedAt > 0 || (byCreatedAt === 0 && previous.id.localeCompare(current.id) <= 0),
+          `${previous.id} before ${current.id}`
+        ).toBe(true);
+      }
+
+      // The optional `sessionId` filter narrows to that session: every committed
+      // row lives on the fixture session, so the narrowed list is the same set.
+      const narrowed = await listMovements(
+        movementCookie,
+        `?sessionId=${movementSessionId}`
+      ).expect(200);
+      expect((narrowed.body as CashMovementDto[]).map((movement) => movement.id)).toEqual(
+        movements.map((movement) => movement.id)
+      );
+
+      // ... and a FOREIGN session id narrows to NOTHING rather than widening
+      // past the tenant predicate: this tenant can never read another's ledger.
+      const foreignNarrowed = await listMovements(
+        movementCookie,
+        `?sessionId=${foreignMovementSessionId}`
+      ).expect(200);
+      expect(foreignNarrowed.body).toEqual([]);
+
+      // The foreign tenant's own read is disjoint from this block's rows.
+      const foreignListed = await supertest(serverUrl)
+        .get("/cash/movements")
+        .set("Cookie", ownerACookie)
+        .set("X-Request-Id", "live-pg-movement-read-foreign")
+        .expect(200);
+      const ownIds = new Set(movements.map((movement) => movement.id));
+      for (const foreignMovement of foreignListed.body as CashMovementDto[]) {
+        expect(ownIds.has(foreignMovement.id)).toBe(false);
+      }
+
+      // A read is never audited and writes no movement.
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.cashMovement.count({ where: { tenantId: movementTenantId } })).toBe(
+        movementsBefore
+      );
+    }, 30_000);
+
+    it("leaves no residue: every raw probe rolled back and the fixture counts unchanged", async () => {
+      // The probe-only register carried the raw exclusivity probes: any
+      // surviving session or movement there could only come from a probe that
+      // failed to roll back.
+      expect(
+        await prisma.cashSession.count({ where: { registerId: movementProbeRegisterId } })
+      ).toBe(0);
+      expect(
+        await prisma.cashMovement.count({ where: { registerId: movementProbeRegisterId } })
+      ).toBe(0);
+
+      // The CLOSED fixture register carries exactly its ONE committed session
+      // and NO movement: the CLOSED rejection committed nothing.
+      expect(
+        await prisma.cashSession.count({ where: { registerId: movementClosedRegisterId } })
+      ).toBe(1);
+      expect(
+        await prisma.cashSession.count({
+          where: { registerId: movementClosedRegisterId, status: "CLOSED" },
+        })
+      ).toBe(1);
+      expect(
+        await prisma.cashMovement.count({ where: { sessionId: movementClosedSessionId } })
+      ).toBe(0);
+
+      // The dedicated tenant owns exactly its three fixture registers and its two
+      // committed sessions (the OPEN fixture and the CLOSED fixture).
+      expect(await prisma.cashRegister.count({ where: { tenantId: movementTenantId } })).toBe(3);
+      expect(await prisma.cashSession.count({ where: { tenantId: movementTenantId } })).toBe(2);
+
+      // Every COMMITTED movement belongs to the OPEN fixture session and carries
+      // a direction exactly when it is an ADJUSTMENT.
+      const committed = await rawTenantMovements();
+      expect(committed).toHaveLength(CASH_MOVEMENT_COMMITTED_COUNT);
+      for (const row of committed) {
+        expect(row.tenant_id).toBe(movementTenantId);
+        expect(row.register_id).toBe(movementRegisterId);
+        expect(row.session_id).toBe(movementSessionId);
+        expect(row.direction === null).toBe(row.type !== "ADJUSTMENT");
+      }
+
+      // Every committed movement carries exactly ONE audit row, and no other
+      // `cash.movement.created` row exists for this tenant.
+      expect(
+        await prisma.auditLog.count({
+          where: { action: "cash.movement.created", tenantId: movementTenantId },
+        })
+      ).toBe(CASH_MOVEMENT_COMMITTED_COUNT);
+      expect(await prisma.cashMovement.count({ where: { tenantId: movementTenantId } })).toBe(
+        CASH_MOVEMENT_COMMITTED_COUNT
+      );
+
+      // The foreign tenant's session of the 404 case is untouched.
+      expect(
+        await prisma.cashSession.findUnique({ where: { id: foreignMovementSessionId } })
+      ).toMatchObject({ tenantId: tenantAId, status: "OPEN" });
+      expect(
+        await prisma.cashMovement.count({ where: { sessionId: foreignMovementSessionId } })
+      ).toBe(0);
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-13 CASH-003 live-PostgreSQL evidence: the cash session CLOSE command at
+   * the REAL boundary.
+   *
+   * Proves against the booted AppModule, the real guard chain, real HTTP and the
+   * `20260930000001_cash_data_foundation` migration's applied DDL what the shared
+   * in-memory boundary cannot represent:
+   *   1. the server-side expected amount over a session holding EVERY PRD §20
+   *      kind (including both `ADJUSTMENT` directions), the three close amounts
+   *      stored and returned at `Decimal(14, 2)` scale, the exact difference
+   *      signal for an over AND a short drawer, and exactly ONE
+   *      `cash.session.closed` audit row carrying field NAMES only;
+   *   2. a ZERO-movement close at the opening amount (DEC-036);
+   *   3. the terminal second close: the stable `409` that persists nothing and
+   *      leaves the stored close amounts untouched;
+   *   4. the byte-equivalent cross-tenant `404` — the FIRST cash route that
+   *      addresses a session BY ID, so the session half of the cross-tenant
+   *      guarantee is now exercisable over HTTP — and no audit row;
+   *   5. a movement create refused against the CLOSED session with the same
+   *      stable `409`, plus the raw database trigger behind it;
+   *   6. the close serialization: two concurrent closes of the SAME session,
+   *      exactly one `201` and one stable `409` under a PROVEN session-row-lock
+   *      overlap, with exactly one audit row and the close amounts written once;
+   *   7. the applied close-column schema: NULLABLE `numeric(14,2)` in all three
+   *      columns, so a raw `CLOSED` session row committed by an EARLIER block is
+   *      still admitted;
+   *   8. zero residue: every raw probe rolled back and the fixture counts
+   *      unchanged.
+   *
+   * The block owns a DEDICATED tenant, four registers and its own sessions, and
+   * it runs LAST: no earlier block's session is ever closed by it, and the
+   * earlier blocks' committed-versus-rolled-back expectations are untouched.
+   *
+   * Every assertion is deterministic: no mock, no injected Prisma error, no
+   * sleep and no retry, and every raw-SQL mutation runs inside an interactive
+   * transaction that is always rolled back. A rejected statement ABORTS its
+   * transaction, so each expected database rejection owns its own transaction.
+   */
+  describe("EPIC-13 cash session close application-path isolation", () => {
+    /** Marker error that forces an interactive transaction to roll back. */
+    const CASH_CLOSE_ROLLBACK_SENTINEL = "live-pg-cash-close-rollback";
+
+    /**
+     * Stable `409` wire message for a command against a session that is not
+     * `OPEN`, mirrored as a literal so the live suite asserts the byte-exact
+     * body the application emits rather than importing the production constant.
+     */
+    const CASH_CLOSE_SESSION_NOT_OPEN_MESSAGE = "This cash session is not open.";
+
+    /**
+     * The seven movement kinds `POST /cash/movements` can create (PRD §20,
+     * DEC-030): every kind but `SALE`, plus BOTH `ADJUSTMENT` directions. The
+     * eighth kind, `SALE`, is owned by POS-003 and is therefore seeded raw (see
+     * {@link insertRawSaleMovement}), so the close formula's `+ SALE` term is
+     * exercised too.
+     */
+    const CLOSE_MOVEMENT_MIX = [
+      { type: "INCOME", amount: "25.05", reason: null, direction: null },
+      { type: "DEPOSIT", amount: "80.20", reason: "Live close deposit", direction: null },
+      { type: "REFUND", amount: "10.15", reason: "Live close refund", direction: null },
+      { type: "EXPENSE", amount: "20.30", reason: "Live close expense", direction: null },
+      { type: "WITHDRAWAL", amount: "15.40", reason: "Live close withdrawal", direction: null },
+      { type: "ADJUSTMENT", amount: "7.25", reason: "Live close increase", direction: "INCREASE" },
+      { type: "ADJUSTMENT", amount: "17.35", reason: "Live close decrease", direction: "DECREASE" },
+    ] as const;
+
+    /** The POS-003-owned `SALE` row the close formula's positive branch needs. */
+    const CLOSE_RAW_SALE_AMOUNT = "50.10";
+
+    /**
+     * The mixed session's figures, computed server-side by the close command:
+     *
+     *   expected = 123.45 opening
+     *            + 50.10 SALE + 25.05 INCOME + 80.20 DEPOSIT
+     *            - 10.15 REFUND - 20.30 EXPENSE - 15.40 WITHDRAWAL
+     *            + 7.25 ADJUSTMENT(INCREASE) - 17.35 ADJUSTMENT(DECREASE)
+     *            = 222.85
+     *
+     * with a counted amount ABOVE it, so `difference` is a POSITIVE over-drawer
+     * signal at `Decimal(14, 2)` scale (DEC-030/DEC-031).
+     */
+    const CLOSE_MIXED_OPENING_AMOUNT = "123.45";
+    const CLOSE_MIXED_EXPECTED_AMOUNT = "222.85";
+    const CLOSE_MIXED_COUNTED_AMOUNT = "225.00";
+    const CLOSE_MIXED_DIFFERENCE_AMOUNT = "2.15";
+
+    /**
+     * The ZERO-movement session: `expected === opening` (DEC-036) with a counted
+     * amount BELOW it, so `difference` is a NEGATIVE short-drawer signal.
+     */
+    const CLOSE_EMPTY_OPENING_AMOUNT = "150.00";
+    const CLOSE_EMPTY_COUNTED_AMOUNT = "140.00";
+    const CLOSE_EMPTY_DIFFERENCE_AMOUNT = "-10.00";
+
+    /** The race session: zero movements, two DIFFERENT counted amounts. */
+    const CLOSE_RACE_OPENING_AMOUNT = "300.00";
+    const CLOSE_RACE_COUNTED_AMOUNTS = ["305.00", "295.00"] as const;
+
+    /** Committed `cash_movement` rows of this block: 7 command rows + 1 raw SALE. */
+    const CASH_CLOSE_SESSION_MOVEMENT_COUNT = 8;
+    /** Of those, the ones the standalone command created (each with one audit row). */
+    const CASH_CLOSE_COMMAND_MOVEMENT_COUNT = 7;
+    /** The three sessions this block closes, one `cash.session.closed` audit each. */
+    const CASH_CLOSE_COMMITTED_CLOSED_COUNT = 3;
+
+    /** The dedicated tenant that owns every close fixture of this block. */
+    let closeTenantId: string;
+    let closeCookie: string;
+    let closeOwnerProfileId: string;
+    /** The dedicated tenant's ACTIVE membership: the opener the DB stores. */
+    let closeMembershipId: string;
+    /** Drawer holding the movement-mix session, then the concurrency probe. */
+    let closeRegisterId: string;
+    /** Drawer holding the ZERO-movement session. */
+    let closeEmptyRegisterId: string;
+    /** Drawer holding the concurrently-closed session. */
+    let closeRaceRegisterId: string;
+    /** Probe-only drawer: no HTTP case ever opens a session on it. */
+    let closeProbeRegisterId: string;
+    let closeMixedSessionId: string;
+    let closeEmptySessionId: string;
+    let closeRaceSessionId: string;
+    /** Tenant A's own committed OPEN session, the foreign id of the 404 case. */
+    let foreignCloseSessionId: string;
+
+    /** One register create over REAL HTTP with a pinned request id. */
+    const createRegister = (cookie: string, name: string, requestId: string): supertest.Test =>
+      supertest(serverUrl)
+        .post("/cash/registers")
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .send({ name });
+
+    /** One session open over REAL HTTP with a pinned request id. */
+    const openSession = (
+      cookie: string,
+      registerId: string,
+      openingAmount: string,
+      requestId: string
+    ): supertest.Test =>
+      supertest(serverUrl)
+        .post("/cash/sessions")
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .send({ registerId, openingAmount });
+
+    /**
+     * One session close over REAL HTTP with a pinned request id. The returned
+     * value is an EAGER promise (never a lazy supertest `Test`), so the request
+     * is already in flight when the concurrency case builds its racers: the
+     * row-lock barrier below would otherwise observe zero waiters.
+     */
+    const closeSession = (
+      cookie: string,
+      sessionId: string,
+      countedAmount: string,
+      requestId: string
+    ) =>
+      supertest(serverUrl)
+        .post(`/cash/sessions/${sessionId}/close`)
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .send({ countedAmount })
+        .then((response) => response);
+
+    /** One movement create over REAL HTTP; the key is fresh unless pinned. */
+    const createMovement = (
+      cookie: string,
+      body: Record<string, unknown>,
+      requestId: string,
+      idempotencyKey: string = randomUUID()
+    ): supertest.Test =>
+      supertest(serverUrl)
+        .post("/cash/movements")
+        .set("Cookie", cookie)
+        .set("X-Request-Id", requestId)
+        .set("Idempotency-Key", idempotencyKey)
+        .send(body);
+
+    /**
+     * Extracts the database message from Prisma's raw-query error wrapper
+     * (`Raw query failed. Code: `23001`. Message: `...``). The captured text is
+     * the database's own message, so an assertion can compare it EXACTLY instead
+     * of matching a substring of the wrapper.
+     */
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
+      // PostgreSQL renders a `RAISE EXCEPTION` message with a fixed `ERROR: `
+      // severity prefix; stripping it leaves the exact text the trigger raises.
+      return (match ? match[1] : text).replace(/^ERROR: /, "");
+    };
+
+    /** Runs `probe` and returns the exact database message of its rejection. */
+    const captureDatabaseMessage = async (probe: () => Promise<unknown>): Promise<string> => {
+      try {
+        await probe();
+      } catch (error) {
+        return databaseMessage(error);
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    /**
+     * Runs `work` inside an interactive transaction that is ALWAYS rolled back,
+     * so a probe can seed throwaway rows and attempt a mutation without
+     * persisting anything. A rejected statement ABORTS its transaction, so every
+     * expected database rejection below owns its OWN call to this helper. An
+     * assertion failure inside `work` propagates and fails the case instead of
+     * matching the rollback sentinel.
+     */
+    const inRolledBackTransaction = async (
+      work: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<void> => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw new Error(CASH_CLOSE_ROLLBACK_SENTINEL);
+        })
+      ).rejects.toThrow(CASH_CLOSE_ROLLBACK_SENTINEL);
+    };
+
+    /** Raw session insert at the migration's exact shape; returns the id. */
+    const insertRawSession = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      registerId: string,
+      openedByMembershipId: string,
+      openingAmount: string,
+      status: "OPEN" | "CLOSED"
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "cash_session" (
+          "id", "tenant_id", "register_id", "status", "opened_by_membership_id", "opening_amount"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid,
+          ${status}::cash_session_status, ${openedByMembershipId}::uuid,
+          ${openingAmount}::decimal
+        )
+      `;
+      return id;
+    };
+
+    /** Raw movement insert at the migration's exact shape; returns the id. */
+    const insertRawMovement = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      registerId: string,
+      sessionId: string,
+      amount: string,
+      type = "SALE"
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "cash_movement" (
+          "id", "tenant_id", "register_id", "session_id", "type", "amount", "reason", "direction"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid, ${sessionId}::uuid,
+          ${type}::cash_movement_type, ${amount}::decimal, NULL, NULL
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * Raw `SALE` cash movement at the migration's exact shape, committed by the
+     * fixture. `SALE` is the ONE kind `POST /cash/movements` deliberately refuses
+     * (POS-003 owns it inside CompleteSale), so seeding it raw is the only way
+     * the close formula's `+ SALE` term is exercised over a REAL ledger row. The
+     * session is `OPEN`, so the closed-session insert guard admits it.
+     */
+    const insertRawSaleMovement = async (
+      tenantId: string,
+      registerId: string,
+      sessionId: string,
+      amount: string
+    ): Promise<string> => {
+      const id = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "cash_movement" (
+          "id", "tenant_id", "register_id", "session_id", "type", "amount", "reason", "direction"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${registerId}::uuid, ${sessionId}::uuid,
+          'SALE'::cash_movement_type, ${amount}::decimal, NULL, NULL
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * The STORED close-result columns of one session, read from PostgreSQL at
+     * their OWN exact scales, so the three amounts are asserted against real
+     * `Decimal(14, 2)` state rather than the HTTP projection alone. `::text` on
+     * a NULL column stays NULL.
+     */
+    const rawStoredClose = (
+      id: string
+    ): Promise<
+      {
+        status: string;
+        expected_amount: string | null;
+        counted_amount: string | null;
+        difference_amount: string | null;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "status"::text AS status,
+          "expected_amount"::text AS expected_amount,
+          "counted_amount"::text AS counted_amount,
+          "difference_amount"::text AS difference_amount
+        FROM "cash_session" WHERE "id" = ${id}::uuid
+      `;
+
+    /** Every stored `cash_movement` of one session, at the columns' exact shapes. */
+    const rawSessionMovements = (
+      sessionId: string
+    ): Promise<
+      { type: string; direction: string | null; amount: string; reason: string | null }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "type"::text AS type, "direction"::text AS direction,
+          "amount"::text AS amount, "reason" AS reason
+        FROM "cash_movement"
+        WHERE "session_id" = ${sessionId}::uuid
+        ORDER BY "type"::text ASC, "amount"::text ASC, "id" ASC
+      `;
+
+    /** The exclusive `cash.session.closed` audit rows of one session. */
+    const closeAudits = (sessionId: string) =>
+      prisma.auditLog.findMany({
+        where: { action: "cash.session.closed", targetId: sessionId },
+      });
+
+    beforeAll(async () => {
+      // The `cash` grant is explicit (DEC-026): plan mappings never grant
+      // access, so the dedicated tenant must hold a direct tenant_entitlement
+      // row before the close route is reachable.
+      const closeTenant = await prisma.tenant.create({
+        data: { slug: "live-close", name: "Tenant Close" },
+      });
+      closeTenantId = closeTenant.id;
+
+      const ownerRole = await prisma.role.findUnique({ where: { code: "OWNER" } });
+      if (!ownerRole) {
+        throw new Error("Reference seed did not create OWNER role");
+      }
+      const closeOwner = await prisma.userProfile.create({
+        data: {
+          email: "owner-close@live.test",
+          displayName: "Owner Close",
+          status: "active",
+        },
+      });
+      closeOwnerProfileId = closeOwner.id;
+      const membership = await prisma.tenantMembership.create({
+        data: {
+          tenantId: closeTenant.id,
+          userProfileId: closeOwner.id,
+          roleId: ownerRole.id,
+          status: "ACTIVE",
+        },
+      });
+      closeMembershipId = membership.id;
+      const session = await app.get(SessionService).issue(closeOwner.id);
+      closeCookie = `${STAFF_SESSION_COOKIE}=${session.token}`;
+
+      const cashFeature = await prisma.featureCode.upsert({
+        where: { code: "cash" },
+        create: { code: "cash" },
+        update: {},
+      });
+      await prisma.tenantEntitlement.upsert({
+        where: {
+          tenantId_featureCodeId: { tenantId: closeTenant.id, featureCodeId: cashFeature.id },
+        },
+        create: { tenantId: closeTenant.id, featureCodeId: cashFeature.id },
+        update: {},
+      });
+
+      // Four drawers, every one owned by this block and this block only: the
+      // movement-mix drawer, the zero-movement drawer, the race drawer and the
+      // probe-only drawer no HTTP case ever resolves a session on.
+      closeRegisterId = (
+        (
+          await createRegister(
+            closeCookie,
+            "Live Close Mixed Drawer",
+            "live-pg-close-fixture-register-mixed"
+          ).expect(201)
+        ).body as CashRegisterDto
+      ).id;
+      closeEmptyRegisterId = (
+        (
+          await createRegister(
+            closeCookie,
+            "Live Close Empty Drawer",
+            "live-pg-close-fixture-register-empty"
+          ).expect(201)
+        ).body as CashRegisterDto
+      ).id;
+      closeRaceRegisterId = (
+        (
+          await createRegister(
+            closeCookie,
+            "Live Close Race Drawer",
+            "live-pg-close-fixture-register-race"
+          ).expect(201)
+        ).body as CashRegisterDto
+      ).id;
+      closeProbeRegisterId = (
+        (
+          await createRegister(
+            closeCookie,
+            "Live Close Probe Drawer",
+            "live-pg-close-fixture-register-probe"
+          ).expect(201)
+        ).body as CashRegisterDto
+      ).id;
+
+      // The movement-mix session: an exact opening float over which the server
+      // must fold EVERY kind and BOTH `ADJUSTMENT` directions. Seven kinds go
+      // through the REAL movement command, so the ledger the close reads is the
+      // one the database actually stored.
+      closeMixedSessionId = (
+        (
+          await openSession(
+            closeCookie,
+            closeRegisterId,
+            CLOSE_MIXED_OPENING_AMOUNT,
+            "live-pg-close-fixture-mixed-session"
+          ).expect(201)
+        ).body as CashSessionDto
+      ).id;
+      for (const [index, movement] of CLOSE_MOVEMENT_MIX.entries()) {
+        const body: Record<string, unknown> = {
+          sessionId: closeMixedSessionId,
+          type: movement.type,
+          amount: movement.amount,
+        };
+        if (movement.reason !== null) {
+          body.reason = movement.reason;
+        }
+        if (movement.direction !== null) {
+          body.direction = movement.direction;
+        }
+        await createMovement(closeCookie, body, `live-pg-close-fixture-mix-${index + 1}`).expect(
+          201
+        );
+      }
+      // The eighth kind, `SALE`, is POS-003's and the command refuses it, so the
+      // row is seeded raw on the still-OPEN session.
+      await insertRawSaleMovement(
+        closeTenantId,
+        closeRegisterId,
+        closeMixedSessionId,
+        CLOSE_RAW_SALE_AMOUNT
+      );
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeMixedSessionId } })).toBe(
+        CASH_CLOSE_SESSION_MOVEMENT_COUNT
+      );
+
+      // The ZERO-movement session (DEC-036) and the race session.
+      closeEmptySessionId = (
+        (
+          await openSession(
+            closeCookie,
+            closeEmptyRegisterId,
+            CLOSE_EMPTY_OPENING_AMOUNT,
+            "live-pg-close-fixture-empty-session"
+          ).expect(201)
+        ).body as CashSessionDto
+      ).id;
+      closeRaceSessionId = (
+        (
+          await openSession(
+            closeCookie,
+            closeRaceRegisterId,
+            CLOSE_RACE_OPENING_AMOUNT,
+            "live-pg-close-fixture-race-session"
+          ).expect(201)
+        ).body as CashSessionDto
+      ).id;
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeEmptySessionId } })).toBe(
+        0
+      );
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeRaceSessionId } })).toBe(0);
+
+      // A REAL foreign OPEN session: tenant A's own committed drawer, resolved
+      // server-side only through tenant A's own request. It is the foreign id of
+      // the byte-equivalent 404 case, and it must survive untouched.
+      const foreignRegister = (
+        (
+          await createRegister(
+            ownerACookie,
+            "Live Close Foreign Drawer",
+            "live-pg-close-fixture-foreign-register"
+          ).expect(201)
+        ).body as CashRegisterDto
+      ).id;
+      foreignCloseSessionId = (
+        (
+          await openSession(
+            ownerACookie,
+            foreignRegister,
+            "77.00",
+            "live-pg-close-fixture-foreign-session"
+          ).expect(201)
+        ).body as CashSessionDto
+      ).id;
+
+      // The fixtures really are distinct tenants and the block starts clean.
+      expect(closeTenantId).not.toBe(tenantAId);
+      expect(await prisma.cashMovement.count({ where: { tenantId: closeTenantId } })).toBe(
+        CASH_CLOSE_SESSION_MOVEMENT_COUNT
+      );
+      expect(
+        await prisma.cashSession.count({ where: { tenantId: closeTenantId, status: "CLOSED" } })
+      ).toBe(0);
+    }, 60_000);
+
+    it("closes a session over real HTTP: the expected amount folds every kind and both ADJUSTMENT directions, the three amounts are stored at scale 2, the difference is the exact over-drawer sign, and exactly one cash.session.closed audit row carries field NAMES only", async () => {
+      const requestId = "live-pg-close-mixed";
+      const auditsBefore = await prisma.auditLog.count();
+      const movementsBefore = await prisma.cashMovement.count();
+
+      // The REAL stored ledger the server must fold: every PRD §20 kind, both
+      // `ADJUSTMENT` directions, every amount stored POSITIVE (the kind owns the
+      // sign, DEC-030).
+      expect(await rawSessionMovements(closeMixedSessionId)).toEqual([
+        {
+          type: "ADJUSTMENT",
+          direction: "DECREASE",
+          amount: "17.35",
+          reason: "Live close decrease",
+        },
+        {
+          type: "ADJUSTMENT",
+          direction: "INCREASE",
+          amount: "7.25",
+          reason: "Live close increase",
+        },
+        { type: "DEPOSIT", direction: null, amount: "80.20", reason: "Live close deposit" },
+        { type: "EXPENSE", direction: null, amount: "20.30", reason: "Live close expense" },
+        { type: "INCOME", direction: null, amount: "25.05", reason: null },
+        { type: "REFUND", direction: null, amount: "10.15", reason: "Live close refund" },
+        { type: "SALE", direction: null, amount: CLOSE_RAW_SALE_AMOUNT, reason: null },
+        {
+          type: "WITHDRAWAL",
+          direction: null,
+          amount: "15.40",
+          reason: "Live close withdrawal",
+        },
+      ]);
+
+      const response = await closeSession(
+        closeCookie,
+        closeMixedSessionId,
+        CLOSE_MIXED_COUNTED_AMOUNT,
+        requestId
+      );
+      expect(response.status).toBe(201);
+      const body = response.body as CashSessionDto;
+      // The allowlisted projection: exact key set, no `tenantId` and no Prisma
+      // column name crossing the boundary.
+      expect(Object.keys(body).sort()).toEqual(CASH_SESSION_DTO_KEYS);
+      expect(Object.keys(body)).not.toContain("tenantId");
+      expect(body.id).toBe(closeMixedSessionId);
+      expect(body.registerId).toBe(closeRegisterId);
+      expect(body.status).toBe("CLOSED");
+      expect(body.openingAmount).toBe(CLOSE_MIXED_OPENING_AMOUNT);
+      expect(body.expectedAmount).toBe(CLOSE_MIXED_EXPECTED_AMOUNT);
+      expect(body.countedAmount).toBe(CLOSE_MIXED_COUNTED_AMOUNT);
+      expect(body.differenceAmount).toBe(CLOSE_MIXED_DIFFERENCE_AMOUNT);
+      // The SIGN, not only the literal: a counted amount ABOVE the server's
+      // expected amount is an over drawer (positive difference).
+      expect(Number(body.differenceAmount)).toBeGreaterThan(0);
+      expect(response.text).not.toContain("tenantId");
+
+      // The STORED close row at the columns' own exact scales.
+      expect(await rawStoredClose(closeMixedSessionId)).toEqual([
+        {
+          status: "CLOSED",
+          expected_amount: CLOSE_MIXED_EXPECTED_AMOUNT,
+          counted_amount: CLOSE_MIXED_COUNTED_AMOUNT,
+          difference_amount: CLOSE_MIXED_DIFFERENCE_AMOUNT,
+        },
+      ]);
+
+      // The read projection carries the SAME three amounts for a `CLOSED` row,
+      // and reads are never audited.
+      const listed = await supertest(serverUrl)
+        .get("/cash/sessions?status=CLOSED")
+        .set("Cookie", closeCookie)
+        .set("X-Request-Id", requestId)
+        .expect(200);
+      const closedRow = (listed.body as CashSessionDto[]).find(
+        (row) => row.id === closeMixedSessionId
+      );
+      expect(closedRow).toMatchObject({
+        status: "CLOSED",
+        expectedAmount: CLOSE_MIXED_EXPECTED_AMOUNT,
+        countedAmount: CLOSE_MIXED_COUNTED_AMOUNT,
+        differenceAmount: CLOSE_MIXED_DIFFERENCE_AMOUNT,
+      });
+
+      // Exactly ONE co-committed `cash.session.closed` audit row carrying ids
+      // and field NAMES only.
+      const audits = await closeAudits(closeMixedSessionId);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        action: "cash.session.closed",
+        targetType: "cash_session",
+        targetId: closeMixedSessionId,
+        tenantId: closeTenantId,
+        actorUserProfileId: closeOwnerProfileId,
+      });
+      const metadata = audits[0].metadata as {
+        schemaVersion: number;
+        changedFields: string[];
+      };
+      expect(Object.keys(metadata).sort()).toEqual(["changedFields", "schemaVersion"]);
+      expect(metadata.schemaVersion).toBe(1);
+      expect(metadata.changedFields).toEqual([
+        "status",
+        "expectedAmount",
+        "countedAmount",
+        "differenceAmount",
+      ]);
+      const serialized = JSON.stringify(metadata);
+      expect(serialized).not.toContain(closeMixedSessionId);
+      expect(serialized).not.toContain(closeRegisterId);
+      expect(serialized).not.toContain(closeTenantId);
+      expect(serialized).not.toContain(CLOSE_MIXED_COUNTED_AMOUNT);
+      expect(serialized).not.toContain(CLOSE_MIXED_EXPECTED_AMOUNT);
+      expect(serialized).not.toContain(CLOSE_MIXED_DIFFERENCE_AMOUNT);
+
+      // The close's WHOLE durable effect is the session's three columns and one
+      // audit row: no movement, no sale, nothing else.
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(1);
+    }, 60_000);
+
+    it("closes a session with ZERO movements at the opening amount and reports the exact short-drawer sign", async () => {
+      // The precondition is read from the REAL table, never assumed.
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeEmptySessionId } })).toBe(
+        0
+      );
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = "live-pg-close-empty";
+
+      const response = await closeSession(
+        closeCookie,
+        closeEmptySessionId,
+        CLOSE_EMPTY_COUNTED_AMOUNT,
+        requestId
+      );
+      expect(response.status).toBe(201);
+      const body = response.body as CashSessionDto;
+      expect(Object.keys(body).sort()).toEqual(CASH_SESSION_DTO_KEYS);
+      expect(body.status).toBe("CLOSED");
+      // ZERO movements: the expected amount IS the opening amount (DEC-036).
+      expect(body.expectedAmount).toBe(CLOSE_EMPTY_OPENING_AMOUNT);
+      expect(body.countedAmount).toBe(CLOSE_EMPTY_COUNTED_AMOUNT);
+      expect(body.differenceAmount).toBe(CLOSE_EMPTY_DIFFERENCE_AMOUNT);
+      // The SHORT drawer: `counted - expected` is NEGATIVE.
+      expect(Number(body.differenceAmount)).toBeLessThan(0);
+
+      expect(await rawStoredClose(closeEmptySessionId)).toEqual([
+        {
+          status: "CLOSED",
+          expected_amount: CLOSE_EMPTY_OPENING_AMOUNT,
+          counted_amount: CLOSE_EMPTY_COUNTED_AMOUNT,
+          difference_amount: CLOSE_EMPTY_DIFFERENCE_AMOUNT,
+        },
+      ]);
+      expect(await closeAudits(closeEmptySessionId)).toHaveLength(1);
+      // A zero-movement close writes NO movement and exactly one audit row.
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeEmptySessionId } })).toBe(
+        0
+      );
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+    }, 30_000);
+
+    it("rejects a second close of the same session as the stable 409, persisting nothing and leaving the stored close amounts untouched", async () => {
+      const storedBefore = await rawStoredClose(closeMixedSessionId);
+      expect(storedBefore).toEqual([
+        {
+          status: "CLOSED",
+          expected_amount: CLOSE_MIXED_EXPECTED_AMOUNT,
+          counted_amount: CLOSE_MIXED_COUNTED_AMOUNT,
+          difference_amount: CLOSE_MIXED_DIFFERENCE_AMOUNT,
+        },
+      ]);
+      const auditsBefore = await prisma.auditLog.count();
+      const sessionsBefore = await prisma.cashSession.count();
+      const movementsBefore = await prisma.cashMovement.count();
+      const requestId = "live-pg-close-second";
+
+      const response = await closeSession(closeCookie, closeMixedSessionId, "999.00", requestId);
+      expect(response.status).toBe(409);
+      expect((response.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((response.body as { error: { message: string } }).error.message).toBe(
+        CASH_CLOSE_SESSION_NOT_OPEN_MESSAGE
+      );
+      // Value-free: neither the session nor the tenant id echoes back.
+      expect(response.text).not.toContain(closeMixedSessionId);
+      expect(response.text).not.toContain(closeTenantId);
+
+      // `CLOSED` is terminal: the second request's counted amount never reached
+      // the row, nothing was created and no audit row was appended.
+      expect(await rawStoredClose(closeMixedSessionId)).toEqual(storedBefore);
+      expect(await prisma.cashSession.count()).toBe(sessionsBefore);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(await closeAudits(closeMixedSessionId)).toHaveLength(1);
+    }, 30_000);
+
+    it("masks a foreign-tenant session id and an unknown session id as one byte-equivalent 404, persisting nothing and appending no audit row", async () => {
+      // The foreign session is a REAL committed OPEN row of another tenant: the
+      // close route is the FIRST cash route that addresses a session BY ID, so
+      // this is where the session half of the cross-tenant guarantee becomes
+      // exercisable over HTTP.
+      expect(
+        await prisma.cashSession.findUnique({ where: { id: foreignCloseSessionId } })
+      ).toMatchObject({ tenantId: tenantAId, status: "OPEN" });
+      const auditsBefore = await prisma.auditLog.count();
+      const sessionsBefore = await prisma.cashSession.count();
+      const requestId = "live-pg-close-not-found-proof";
+
+      const foreign = await closeSession(closeCookie, foreignCloseSessionId, "10.00", requestId);
+      const missing = await closeSession(closeCookie, randomUUID(), "10.00", requestId);
+
+      expect(foreign.status).toBe(404);
+      expect(missing.status).toBe(404);
+      expect((foreign.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect((foreign.body as { error: { message: string } }).error.message).toBe(
+        CASH_SESSION_NOT_FOUND_MESSAGE
+      );
+      // Byte-equivalence: a session owned by another tenant is indistinguishable
+      // from a non-existent one, echoed correlation included.
+      expect(foreign.text).toBe(missing.text);
+      expect(foreign.text).not.toContain(foreignCloseSessionId);
+      expect(foreign.text).not.toContain(tenantAId);
+      // ONE shared session message, distinct from the register message.
+      expect(CASH_SESSION_NOT_FOUND_MESSAGE).not.toBe(CASH_REGISTER_NOT_FOUND_MESSAGE);
+
+      // Neither masked attempt persisted a close amount or an audit row, and the
+      // foreign session survived unchanged.
+      expect(await prisma.cashSession.count()).toBe(sessionsBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(await rawStoredClose(foreignCloseSessionId)).toEqual([
+        {
+          status: "OPEN",
+          expected_amount: null,
+          counted_amount: null,
+          difference_amount: null,
+        },
+      ]);
+      expect(await closeAudits(foreignCloseSessionId)).toHaveLength(0);
+      expect(await prisma.cashMovement.count({ where: { sessionId: foreignCloseSessionId } })).toBe(
+        0
+      );
+    }, 30_000);
+
+    it("refuses a movement create against the CLOSED session with the stable 409, persisting nothing", async () => {
+      // The session is a REAL committed CLOSED row: the closed-session rule is
+      // observable over HTTP, not only in the migration.
+      expect(await rawStoredClose(closeMixedSessionId)).toMatchObject([{ status: "CLOSED" }]);
+      const movementsBefore = await prisma.cashMovement.count();
+      const auditsBefore = await prisma.auditLog.count();
+      const requestId = "live-pg-close-closed-movement";
+
+      const response = await createMovement(
+        closeCookie,
+        { sessionId: closeMixedSessionId, type: "INCOME", amount: "5.00" },
+        requestId
+      );
+      expect(response.status).toBe(409);
+      expect((response.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((response.body as { error: { message: string } }).error.message).toBe(
+        CASH_CLOSE_SESSION_NOT_OPEN_MESSAGE
+      );
+      // Value-free: neither the session nor the tenant id echoes back.
+      expect(response.text).not.toContain(closeMixedSessionId);
+      expect(response.text).not.toContain(closeTenantId);
+
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore);
+      expect(await prisma.auditLog.count({ where: { requestId } })).toBe(0);
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeMixedSessionId } })).toBe(
+        CASH_CLOSE_SESSION_MOVEMENT_COUNT
+      );
+    }, 30_000);
+
+    it("refuses a raw movement insert into the CLOSED session at the database trigger with a rolled-back probe", async () => {
+      const movementsBefore = await prisma.cashMovement.count();
+      const sessionsBefore = await prisma.cashSession.count();
+
+      // DEC-035's database backstop: the migration's insert guard raises
+      // `restrict_violation` (`23001`) with this exact message. A rejected
+      // statement aborts its transaction, so the probe owns its own.
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(() =>
+          insertRawMovement(tx, closeTenantId, closeRegisterId, closeMixedSessionId, "5.00")
+        );
+        expect(message).toBe("a cash movement cannot be inserted into a closed session");
+      });
+
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.cashSession.count()).toBe(sessionsBefore);
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeMixedSessionId } })).toBe(
+        CASH_CLOSE_SESSION_MOVEMENT_COUNT
+      );
+    }, 30_000);
+
+    it("serializes two concurrent closes of the same session under a PROVEN row-lock overlap: one 201, one stable 409, one audit row and the close amounts written once", async () => {
+      const firstRequestId = "live-pg-close-race-1";
+      const secondRequestId = "live-pg-close-race-2";
+      const auditsBefore = await prisma.auditLog.count();
+      const movementsBefore = await prisma.cashMovement.count();
+      const sessionsBefore = await prisma.cashSession.count();
+
+      // Deterministic overlap: a dedicated transaction holds THIS session's row
+      // lock (`SELECT ... FOR UPDATE`), which is the exact lock the close command
+      // takes FIRST (`lockById`), so BOTH closes park on that single row before
+      // either can read the status. The FOR UPDATE is a ROW lock, so the barrier
+      // is the tuple-lock waiter count `waitForRowLockWaiters` over the row's
+      // `(relation, page, tuple)` — the file's `pg_stat_activity`-backed barrier
+      // helper: a waiter registers a `tuple` lock on THAT exact tuple while it
+      // blocks, so an unrelated lock waiter (a relation, advisory or other-row
+      // lock) can never satisfy it. The interleaving is decided by the database
+      // boundary, never by wall-clock timing, and an unproven overlap throws.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT "id" FROM "cash_session"
+            WHERE "tenant_id" = ${closeTenantId}::uuid AND "id" = ${closeRaceSessionId}::uuid
+            FOR UPDATE
+          `;
+          signalBarrierReady();
+          // The session row lock is released ONLY once the barrier resolves, so
+          // the racers stay parked until both are provably on that row.
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+      // The row lock is held now, so the ctid cannot move under the racers.
+      const ctid = await readRowCtid(prisma, "cash_session", closeRaceSessionId);
+
+      const racers = CLOSE_RACE_COUNTED_AMOUNTS.map((countedAmount, index) =>
+        closeSession(
+          closeCookie,
+          closeRaceSessionId,
+          countedAmount,
+          index === 0 ? firstRequestId : secondRequestId
+        )
+      );
+
+      try {
+        await waitForRowLockWaiters(prisma, "cash_session", ctid.page, ctid.tuple, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      // The database guarantees this outcome for EVERY interleaving: the winner
+      // commits its close inside its transaction, and the loser's post-lock read
+      // sees the committed `CLOSED` and is refused by the `OPEN` gate. The
+      // assertions never depend on WHICH request won, and there is no sleep and
+      // no retry that could hide a double close.
+      const admitted = responses.filter((response) => response.status === 201);
+      const rejected = responses.filter((response) => response.status === 409);
+      expect(admitted).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0].body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((rejected[0].body as { error: { message: string } }).error.message).toBe(
+        CASH_CLOSE_SESSION_NOT_OPEN_MESSAGE
+      );
+
+      const admittedBody = admitted[0].body as CashSessionDto;
+      expect(admittedBody.status).toBe("CLOSED");
+      expect(admittedBody.expectedAmount).toBe(CLOSE_RACE_OPENING_AMOUNT);
+      // The WINNER'S OWN counted amount is the one that reached the row, so the
+      // close amounts were written exactly ONCE and the loser wrote nothing.
+      expect(CLOSE_RACE_COUNTED_AMOUNTS).toContain(admittedBody.countedAmount);
+      expect(admittedBody.differenceAmount).toBe(
+        admittedBody.countedAmount === CLOSE_RACE_COUNTED_AMOUNTS[0] ? "5.00" : "-5.00"
+      );
+      expect(await rawStoredClose(closeRaceSessionId)).toEqual([
+        {
+          status: "CLOSED",
+          expected_amount: CLOSE_RACE_OPENING_AMOUNT,
+          counted_amount: admittedBody.countedAmount,
+          difference_amount: admittedBody.differenceAmount,
+        },
+      ]);
+
+      // Exactly ONE `cash.session.closed` audit row for this session and ONE
+      // audit row across BOTH attempts: the loser rolled its whole transaction
+      // back.
+      expect(await closeAudits(closeRaceSessionId)).toHaveLength(1);
+      expect(
+        await prisma.auditLog.count({
+          where: { requestId: { in: [firstRequestId, secondRequestId] } },
+        })
+      ).toBe(1);
+      expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
+      expect(await prisma.cashMovement.count()).toBe(movementsBefore);
+      expect(await prisma.cashSession.count()).toBe(sessionsBefore);
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeRaceSessionId } })).toBe(0);
+    }, 60_000);
+
+    it("asserts the applied close-column schema and that a raw CLOSED session row needs no close amounts", async () => {
+      // The applied columns: NULLABLE `numeric(14,2)` in all three, exactly the
+      // migration's additive declaration. A `CLOSED` session row therefore does
+      // NOT have to carry close amounts, which is what keeps a raw fixture row
+      // written outside the close command admissible.
+      const columns = await prisma.$queryRaw<
+        {
+          column_name: string;
+          data_type: string;
+          is_nullable: string;
+          numeric_precision: number | null;
+          numeric_scale: number | null;
+        }[]
+      >`
+        SELECT column_name, data_type, is_nullable, numeric_precision, numeric_scale
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'cash_session'
+          AND column_name IN ('expected_amount', 'counted_amount', 'difference_amount')
+        ORDER BY column_name ASC
+      `;
+      expect(columns).toEqual([
+        {
+          column_name: "counted_amount",
+          data_type: "numeric",
+          is_nullable: "YES",
+          numeric_precision: 14,
+          numeric_scale: 2,
+        },
+        {
+          column_name: "difference_amount",
+          data_type: "numeric",
+          is_nullable: "YES",
+          numeric_precision: 14,
+          numeric_scale: 2,
+        },
+        {
+          column_name: "expected_amount",
+          data_type: "numeric",
+          is_nullable: "YES",
+          numeric_precision: 14,
+          numeric_scale: 2,
+        },
+      ]);
+
+      // The applied schema admits a CLOSED session row written WITHOUT any close
+      // amount: a raw insert at the migration's exact shape succeeds and the
+      // three columns read back NULL. The probe rolls back.
+      await inRolledBackTransaction(async (tx) => {
+        const rawClosedId = await insertRawSession(
+          tx,
+          closeTenantId,
+          closeProbeRegisterId,
+          closeMembershipId,
+          "0.00",
+          "CLOSED"
+        );
+        const stored = await tx.$queryRaw<
+          {
+            status: string;
+            expected_amount: string | null;
+            counted_amount: string | null;
+            difference_amount: string | null;
+          }[]
+        >`
+          SELECT
+            "status"::text AS status,
+            "expected_amount"::text AS expected_amount,
+            "counted_amount"::text AS counted_amount,
+            "difference_amount"::text AS difference_amount
+          FROM "cash_session" WHERE "id" = ${rawClosedId}::uuid
+        `;
+        expect(stored).toEqual([
+          {
+            status: "CLOSED",
+            expected_amount: null,
+            counted_amount: null,
+            difference_amount: null,
+          },
+        ]);
+      });
+
+      // The raw CLOSED row an EARLIER block (the EPIC-13 movement command block)
+      // committed is still admitted and still carries no close amounts, because
+      // no column became NOT NULL.
+      const earlierRawRegister = await prisma.cashRegister.findFirst({
+        where: { name: "Live Movement Closed Drawer" },
+      });
+      expect(earlierRawRegister).not.toBeNull();
+      const earlierRawClosed = await prisma.cashSession.findFirst({
+        where: { registerId: earlierRawRegister?.id ?? "", status: "CLOSED" },
+      });
+      expect(earlierRawClosed).not.toBeNull();
+      expect(earlierRawClosed).toMatchObject({
+        status: "CLOSED",
+        expectedAmount: null,
+        countedAmount: null,
+        differenceAmount: null,
+      });
+      // It is also the ONLY raw CLOSED row in the whole database whose three
+      // close columns are still NULL: every CLOSED row THIS block produced went
+      // through the close command and therefore carries all three.
+      expect(
+        await prisma.cashSession.count({
+          where: {
+            status: "CLOSED",
+            expectedAmount: null,
+            countedAmount: null,
+            differenceAmount: null,
+          },
+        })
+      ).toBe(1);
+    }, 30_000);
+
+    it("leaves no residue: every raw probe rolled back and the fixture counts unchanged", async () => {
+      // The probe-only drawer carried the raw CLOSED-session probe: any
+      // surviving row there could only come from a probe that failed to roll
+      // back.
+      expect(await prisma.cashSession.count({ where: { registerId: closeProbeRegisterId } })).toBe(
+        0
+      );
+      expect(await prisma.cashMovement.count({ where: { registerId: closeProbeRegisterId } })).toBe(
+        0
+      );
+
+      // The dedicated tenant owns exactly its four fixture registers and its
+      // three sessions, ALL of them closed through the command.
+      expect(await prisma.cashRegister.count({ where: { tenantId: closeTenantId } })).toBe(4);
+      expect(await prisma.cashSession.count({ where: { tenantId: closeTenantId } })).toBe(3);
+      expect(
+        await prisma.cashSession.count({ where: { tenantId: closeTenantId, status: "CLOSED" } })
+      ).toBe(3);
+      expect(
+        await prisma.cashSession.count({ where: { tenantId: closeTenantId, status: "OPEN" } })
+      ).toBe(0);
+
+      // The ledger is exactly the mixed session's rows: the seven command
+      // movements plus the raw POS-003-owned `SALE` row.
+      expect(await prisma.cashMovement.count({ where: { tenantId: closeTenantId } })).toBe(
+        CASH_CLOSE_SESSION_MOVEMENT_COUNT
+      );
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeMixedSessionId } })).toBe(
+        CASH_CLOSE_SESSION_MOVEMENT_COUNT
+      );
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeEmptySessionId } })).toBe(
+        0
+      );
+      expect(await prisma.cashMovement.count({ where: { sessionId: closeRaceSessionId } })).toBe(0);
+
+      // ONE `cash.session.closed` audit row per closed session: the rejected
+      // second close, the two masked 404s, the refused movement and the loser of
+      // the race appended none.
+      expect(
+        await prisma.auditLog.count({
+          where: { action: "cash.session.closed", tenantId: closeTenantId },
+        })
+      ).toBe(CASH_CLOSE_COMMITTED_CLOSED_COUNT);
+      expect(
+        await prisma.auditLog.count({
+          where: { action: "cash.movement.created", tenantId: closeTenantId },
+        })
+      ).toBe(CASH_CLOSE_COMMAND_MOVEMENT_COUNT);
+      expect(
+        await prisma.auditLog.count({
+          where: { action: "cash.session.opened", tenantId: closeTenantId },
+        })
+      ).toBe(3);
+
+      // The foreign tenant's session of the 404 case is untouched.
+      expect(
+        await prisma.cashSession.findUnique({ where: { id: foreignCloseSessionId } })
+      ).toMatchObject({ tenantId: tenantAId, status: "OPEN" });
+      expect(await rawStoredClose(foreignCloseSessionId)).toEqual([
+        {
+          status: "OPEN",
+          expected_amount: null,
+          counted_amount: null,
+          difference_amount: null,
+        },
+      ]);
+      expect(await prisma.cashMovement.count({ where: { sessionId: foreignCloseSessionId } })).toBe(
+        0
+      );
     }, 30_000);
   });
 });

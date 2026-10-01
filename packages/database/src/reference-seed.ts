@@ -94,6 +94,13 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   `OWNER`/`ADMIN`/`CASHIER` hold it and no other role does (DEC-026 and its
  *   2026-09-29 subsequent-scope note, which moves the seeded catalog
  *   50 -> 51 and the epic's total 43 -> 51).
+ * - EPIC-13 CASH-002 adds `cash.movement.create` for the standalone non-sale
+ *   movement commands (DEC-034): creating manual/corrective cash movements is
+ *   a Cash write, so `OWNER`/`ADMIN`/`CASHIER` hold it and no other role does.
+ *   It is seeded BEFORE the command route that consumes it, exactly like the
+ *   cash and sales keys above, and moves the seeded catalog 51 -> 52. The
+ *   pre-existing `cash.session.close` is consumed by CASH-003 and is not
+ *   re-scoped or re-counted here.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -167,6 +174,11 @@ export const PERMISSION_SEEDS = [
   // completing a sale writes money, stock and cash, so `OWNER`/`ADMIN`/`CASHIER`
   // hold it and no other role does.
   { key: "sales.complete", name: "Complete sales" },
+  // EPIC-13 CASH-002 adds `cash.movement.create` (DEC-034): the standalone
+  // non-sale movement command writes money into the immutable cash ledger, so it
+  // follows the existing cash write shape — `OWNER`/`ADMIN`/`CASHIER` hold it,
+  // no other role does — and moves the seeded catalog 51 -> 52.
+  { key: "cash.movement.create", name: "Create cash movements" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -228,6 +240,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.register.create",
     "cash.session.open",
     "sales.complete",
+    "cash.movement.create",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -281,6 +294,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.register.create",
     "cash.session.open",
     "sales.complete",
+    "cash.movement.create",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
@@ -336,6 +350,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.register.create",
     "cash.session.open",
     "sales.complete",
+    "cash.movement.create",
   ],
   // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
   // catalog keys plus the EPIC-10 stock write key; front-desk, veterinary and

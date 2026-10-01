@@ -27,6 +27,8 @@ import { findMigration, loadMigrations, loadPrismaSchema } from "./schema-files.
 const SCHEMA = loadPrismaSchema();
 const MIGRATIONS = loadMigrations();
 const CASH_SQL = findMigration(MIGRATIONS, "_cash_foundation").sql;
+const CASH_EXTENSION_SQL = findMigration(MIGRATIONS, "_cash_data_foundation").sql;
+const CASH_COMMANDS_SQL = findMigration(MIGRATIONS, "_cash_movement_commands").sql;
 
 /** The three EPIC-12 cash tables, in migration order. */
 const CASH_TABLES = ["cash_register", "cash_session", "cash_movement"] as const;
@@ -112,15 +114,19 @@ function tableBlock(table: string): string {
 }
 
 /** Body of one `CREATE OR REPLACE FUNCTION "<name>"()` declaration. */
-function functionBody(name: string): string {
+function functionBodyFrom(sql: string, name: string): string {
   const marker = `CREATE OR REPLACE FUNCTION "${name}"()`;
-  const start = CASH_SQL.indexOf(marker);
+  const start = sql.indexOf(marker);
   expect(start, `function ${name} must exist`).toBeGreaterThan(-1);
 
-  const rest = CASH_SQL.slice(start + marker.length);
+  const rest = sql.slice(start + marker.length);
   const end = rest.indexOf("$$ LANGUAGE plpgsql;");
   expect(end, `function ${name} must close with a plpgsql language clause`).toBeGreaterThan(-1);
   return rest.slice(0, end);
+}
+
+function functionBody(name: string): string {
+  return functionBodyFrom(CASH_SQL, name);
 }
 
 describe("migration · cash foundation (EPIC-12 POS-002)", () => {
@@ -343,6 +349,130 @@ describe("migration · cash foundation (EPIC-12 POS-002)", () => {
   });
 });
 
+describe("migration · cash data foundation extension (EPIC-13 CASH-001)", () => {
+  it("appends the six remaining movement enum values without rewriting the enum", () => {
+    const values = [
+      ...CASH_EXTENSION_SQL.matchAll(/ALTER TYPE "cash_movement_type" ADD VALUE '([A-Z_]+)'/g),
+    ].map(([, value]) => value);
+    expect(values).toEqual(["REFUND", "INCOME", "EXPENSE", "WITHDRAWAL", "DEPOSIT", "ADJUSTMENT"]);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/CREATE TYPE "cash_movement_type"/);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/DROP TYPE/);
+  });
+
+  it("adds nullable close-result money columns to cash_session", () => {
+    expect(CASH_EXTENSION_SQL).toMatch(/ADD COLUMN "expected_amount" DECIMAL\(14,2\)/);
+    expect(CASH_EXTENSION_SQL).toMatch(/ADD COLUMN "counted_amount" DECIMAL\(14,2\)/);
+    expect(CASH_EXTENSION_SQL).toMatch(/ADD COLUMN "difference_amount" DECIMAL\(14,2\)/);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/"expected_amount" DECIMAL\(14,2\) NOT NULL/);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/"counted_amount" DECIMAL\(14,2\) NOT NULL/);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/"difference_amount" DECIMAL\(14,2\) NOT NULL/);
+  });
+
+  it("requires a reason for manual/corrective kinds without unsafe enum-literal use", () => {
+    expect(CASH_EXTENSION_SQL).toMatch(
+      /CONSTRAINT "cash_movement_reason_required"\s+CHECK \("type"::text IN \('SALE', 'INCOME'\) OR \("reason" IS NOT NULL AND btrim\("reason"\) <> ''\)\)/
+    );
+    expect(CASH_EXTENSION_SQL).not.toMatch(/"type"\s*=\s*'INCOME'/);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/'INCOME'::cash_movement_type/);
+  });
+
+  it("rejects inserting a movement into a CLOSED session", () => {
+    const body = functionBodyFrom(
+      CASH_EXTENSION_SQL,
+      "cash_movement_no_insert_into_closed_session"
+    );
+    expect(body).toMatch(/SELECT "status"\s+INTO session_status/);
+    expect(body).toMatch(/WHERE "id" = NEW\."session_id"\s+FOR UPDATE/);
+    expect(body).toMatch(/IF session_status = 'CLOSED' THEN/);
+    expect(body).toMatch(/a cash movement cannot be inserted into a closed session/);
+    expect(body).toMatch(/ERRCODE = 'restrict_violation'/);
+    expect(body).toMatch(/RETURN NEW/);
+    expect(CASH_EXTENSION_SQL).toMatch(
+      /CREATE TRIGGER "cash_movement_no_insert_into_closed_session_trigger"\s+BEFORE INSERT ON "cash_movement"\s+FOR EACH ROW EXECUTE FUNCTION "cash_movement_no_insert_into_closed_session"\(\)/
+    );
+  });
+
+  it("is additive and does not recreate the EPIC-12 cash invariants", () => {
+    expect(CASH_EXTENSION_SQL).not.toMatch(/\bINSERT\s+INTO\b/i);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/\bDROP\b/i);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/\bTRUNCATE\b/i);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/cash_session_one_open_per_register_key/);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/cash_session_no_delete_trigger/);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/cash_movement_no_delete_trigger/);
+    expect(CASH_EXTENSION_SQL).not.toMatch(/cash_movement_no_update_trigger/);
+  });
+
+  it("classifies the EPIC-13 cash extension fields in the applied artifact", () => {
+    expect(CASH_EXTENSION_SQL).toMatch(/INTERNAL \(PRD §41\)/);
+    expect(CASH_EXTENSION_SQL).toMatch(/logs and audit carry ids and field names only/);
+  });
+});
+
+describe("migration · cash movement commands (EPIC-13 CASH-002)", () => {
+  it("creates the direction enum with exactly INCREASE and DECREASE", () => {
+    const typeValues = /CREATE TYPE "cash_movement_direction" AS ENUM \(([^)]*)\)/.exec(
+      CASH_COMMANDS_SQL
+    )?.[1];
+    expect(typeValues).toBe("'INCREASE', 'DECREASE'");
+    expect(CASH_COMMANDS_SQL).not.toMatch(/CREATE TYPE "cash_movement_type"/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/DROP TYPE/);
+  });
+
+  it("adds the nullable direction column to cash_movement", () => {
+    expect(CASH_COMMANDS_SQL).toMatch(
+      /ALTER TABLE "cash_movement" ADD COLUMN "direction" "cash_movement_direction"/
+    );
+    // Required exactly for ADJUSTMENT and NULL for every other kind: the
+    // exclusivity is the CHECK's job, so the column itself must stay nullable
+    // and must never be defaulted.
+    expect(CASH_COMMANDS_SQL).not.toMatch(/"direction" "cash_movement_direction" NOT NULL/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/"direction"[^\n]*DEFAULT/);
+  });
+
+  it("carries the EXCLUSIVE direction CHECK with the exact DEC-030 predicate", () => {
+    // The predicate is asserted character by character: it must DEMAND a
+    // direction for ADJUSTMENT and FORBID one for every other kind, so a row can
+    // satisfy neither both halves nor a third state. `type` is compared as TEXT
+    // because the six EPIC-13 enum values were appended in the previous
+    // migration's transaction and are unsafe as enum literals in this one.
+    expect(CASH_COMMANDS_SQL).toMatch(
+      /CONSTRAINT "cash_movement_direction_required"\s+CHECK \(\("type"::text = 'ADJUSTMENT' AND "direction" IS NOT NULL\) OR \("type"::text <> 'ADJUSTMENT' AND "direction" IS NULL\)\)/
+    );
+    expect(CASH_COMMANDS_SQL).not.toMatch(/'ADJUSTMENT'::cash_movement_type/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/"type"\s*=\s*'ADJUSTMENT'/);
+  });
+
+  it("never uses floating point for the cash movement direction surface", () => {
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\b(DOUBLE|REAL|FLOAT)\b/i);
+  });
+
+  it("is additive: it alters only cash_movement and writes nothing", () => {
+    const alteredTables = [...CASH_COMMANDS_SQL.matchAll(/ALTER TABLE "([a-z_]+)"/g)].map(
+      ([, table]) => table
+    );
+    expect(new Set(alteredTables)).toEqual(new Set(["cash_movement"]));
+
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bINSERT\b/i);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bDROP\b/i);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bTRUNCATE\b/i);
+    // No data mutation: the only UPDATE tokens would be trigger declarations, and
+    // this slice declares none.
+    expect(CASH_COMMANDS_SQL).not.toMatch(/\bUPDATE\s+[^\s]+\s+SET\b/i);
+    // The EPIC-12 and CASH-001 guarantees are not recreated here.
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_session_one_open_per_register_key/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_movement_reason_required/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_movement_no_delete_trigger/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_movement_no_update_trigger/);
+    expect(CASH_COMMANDS_SQL).not.toMatch(/cash_movement_no_insert_into_closed_session/);
+  });
+
+  it("classifies the direction field in the applied artifact", () => {
+    expect(CASH_COMMANDS_SQL).toMatch(/INTERNAL \(PRD §41\)/);
+    expect(CASH_COMMANDS_SQL).toMatch(/audit carry ids and field names only/);
+  });
+});
+
 describe("schema · cash foundation (EPIC-12 POS-002)", () => {
   it("declares the three models, the two enums and their table mappings", () => {
     expect(SCHEMA).toMatch(/model CashRegister\b/);
@@ -357,15 +487,21 @@ describe("schema · cash foundation (EPIC-12 POS-002)", () => {
     expect(SCHEMA).toMatch(/@@map\("cash_session_status"\)/);
   });
 
-  it("pins the movement enum to SALE only and reserves the six EPIC-13 kinds (DEC-020)", () => {
-    expect(enumLiterals("CashMovementType")).toEqual(["SALE"]);
+  it("pins the movement enum to SALE plus the six EPIC-13 kinds in appended order", () => {
+    expect(enumLiterals("CashMovementType")).toEqual([
+      "SALE",
+      "REFUND",
+      "INCOME",
+      "EXPENSE",
+      "WITHDRAWAL",
+      "DEPOSIT",
+      "ADJUSTMENT",
+    ]);
 
     const doc = docCommentAbove("enum CashMovementType ");
-    expect(doc).toMatch(/DEC-020/);
-    expect(doc).toMatch(/the only kind EPIC-12 writes/);
-    expect(doc).toMatch(/appended, never reordered or removed/);
-    // The reserved kinds are named in the prose so the additive contract is
-    // visible to the next epic without reading the decision record.
+    expect(doc).toMatch(/DEC-030/);
+    expect(doc).toMatch(/appended, never\s+reordered or removed/);
+    expect(doc).toMatch(/sign is owned by the movement kind/);
     for (const kind of RESERVED_MOVEMENT_KINDS) {
       expect(doc).toContain(kind);
     }
@@ -417,6 +553,15 @@ describe("schema · cash foundation (EPIC-12 POS-002)", () => {
     );
     expect(session).not.toMatch(/openingAmount\s+Decimal\?/);
     expect(session).not.toMatch(/openingAmount[^\n]*@default/);
+    expect(session).toMatch(
+      /expectedAmount\s+Decimal\?\s+@map\("expected_amount"\)\s+@db\.Decimal\(14, 2\)/
+    );
+    expect(session).toMatch(
+      /countedAmount\s+Decimal\?\s+@map\("counted_amount"\)\s+@db\.Decimal\(14, 2\)/
+    );
+    expect(session).toMatch(
+      /differenceAmount\s+Decimal\?\s+@map\("difference_amount"\)\s+@db\.Decimal\(14, 2\)/
+    );
 
     expect(session).toMatch(
       /tenant\s+Tenant\s+@relation\(fields: \[tenantId\], references: \[id\], onDelete: Restrict, onUpdate: Restrict\)/
@@ -502,16 +647,20 @@ describe("schema · cash foundation (EPIC-12 POS-002)", () => {
     expect(movementDoc).toMatch(/POS-003/);
     expect(movementDoc).toMatch(/IMMUTABLE/);
     expect(movementDoc).toMatch(/compensating movement/);
+    expect(movementDoc).toMatch(/OPTIONAL\s+for `SALE` and `INCOME`/);
+    expect(movementDoc).toMatch(/REQUIRED by a database CHECK/);
 
     const sessionDoc = modelDocComment("CashSession");
     expect(sessionDoc).toMatch(/required opening float/);
     expect(sessionDoc).toMatch(/0\.00/);
   });
 
-  it("documents the additive movement enum and the reserved EPIC-13 kinds (DEC-020)", () => {
+  it("documents the additive movement enum and type-owned sign convention", () => {
     const doc = docCommentAbove("enum CashMovementType ");
-    expect(doc).toMatch(/reserved for EPIC-13/);
-    expect(doc).toMatch(/Values are appended, never reordered or removed/);
+    expect(doc).toMatch(/remaining PRD §20 kinds are appended by EPIC-13/);
+    expect(doc).toMatch(/values are appended, never\s+reordered or removed/);
+    expect(doc).toMatch(/SALE\/INCOME\/DEPOSIT add/);
+    expect(doc).toMatch(/REFUND\/EXPENSE\/WITHDRAWAL subtract/);
   });
 
   it("documents the data classification in the three model doc comments", () => {
@@ -519,8 +668,37 @@ describe("schema · cash foundation (EPIC-12 POS-002)", () => {
       const doc = modelDocComment(model);
       expect(doc, `${model} must classify its data`).toMatch(/INTERNAL \(PRD §41\)/);
       expect(doc, `${model} must keep logs payload-free`).toMatch(
-        /logs and\s+audit carry ids and\s+field names only/
+        /logs and\s+audit carry ids and\s+field\s+names\s+only/
       );
     }
+  });
+});
+
+describe("schema · cash movement commands (EPIC-13 CASH-002)", () => {
+  it("pins the movement direction enum, its mapping and its DEC-030 contract", () => {
+    expect(SCHEMA).toMatch(/enum CashMovementDirection\b/);
+    expect(SCHEMA).toMatch(/@@map\("cash_movement_direction"\)/);
+    // Asserted exactly: a third literal (or a reordered one) is a scope change.
+    expect(enumLiterals("CashMovementDirection")).toEqual(["INCREASE", "DECREASE"]);
+
+    const doc = docCommentAbove("enum CashMovementDirection ");
+    expect(doc).toMatch(/DEC-030/);
+    expect(doc).toMatch(/required EXACTLY for `ADJUSTMENT`/);
+    expect(doc).toMatch(/NULL for every other kind/);
+    expect(doc).toMatch(/`amount` stays positive/);
+  });
+
+  it("declares direction as an optional enum on CashMovement without modelling the CHECK", () => {
+    const movement = modelBlock("CashMovement");
+    expect(movement).toMatch(/direction\s+CashMovementDirection\?/);
+    // The exclusivity is a raw-SQL CHECK, so Prisma must NOT model it: the field
+    // is a plain optional enum, with no default and no uniqueness of its own.
+    expect(movement).not.toMatch(/direction[^\n]*@default/);
+    expect(movement).not.toMatch(/direction[^\n]*@unique/);
+
+    const fieldDoc = docCommentAbove("direction  CashMovementDirection?");
+    expect(fieldDoc).toMatch(/DEC-030/);
+    expect(fieldDoc).toMatch(/REQUIRED exactly for/);
+    expect(fieldDoc).toMatch(/`amount` stays positive/);
   });
 });

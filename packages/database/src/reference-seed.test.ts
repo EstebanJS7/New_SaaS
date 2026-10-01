@@ -654,6 +654,29 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     expect(seededKeys).toContain("cash.session.close");
   });
 
+  it("seeds the cash movement permission and decided matrix (EPIC-13 CASH-002)", () => {
+    const movementPermissionKey = "cash.movement.create";
+    const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    expect(seededKeys).toContain(movementPermissionKey);
+    expect(movementPermissionKey).toMatch(PERMISSION_KEY_PATTERN);
+
+    // Maintainer matrix (DEC-034, 2026-09-29): a standalone movement writes money
+    // into the immutable cash ledger, so it follows the existing cash write shape
+    // — the owner, the admin and the cashier hold it and no other role does. It
+    // is a Cash-domain key, so the `cash` capability is the second gate and is
+    // asserted in the API slice where the guard actually runs.
+    for (const roleCode of ["OWNER", "ADMIN", "CASHIER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain(movementPermissionKey);
+    }
+    for (const roleCode of ["VETERINARIAN", "RECEPTIONIST", "INVENTORY_MANAGER"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain(movementPermissionKey);
+    }
+    // DEC-034 moves the seeded catalog 51 -> 52; the pre-existing close key is
+    // consumed by CASH-003 and is neither added nor re-counted here.
+    expect(seededKeys).toContain("cash.session.close");
+    expect(FEATURE_CODE_SEEDS).toContain("cash");
+  });
+
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
     expect(SPECIES_SEEDS.map((species) => species.code)).toEqual([
       "dog",
@@ -715,7 +738,9 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // `cash.read`, `cash.register.create` and `cash.session.open`, moving it to
       // 50; POS-003's `sales.complete` completes the epic's 43 -> 51 total and
       // moves the probe to 51.
-      permissions: 51,
+      // EPIC-13 CASH-002 adds `cash.movement.create` (DEC-034), the standalone
+      // non-sale movement command key, moving the seeded catalog 51 -> 52.
+      permissions: 52,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

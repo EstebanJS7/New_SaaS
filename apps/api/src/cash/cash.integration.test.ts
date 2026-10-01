@@ -5,6 +5,7 @@ import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-ap
 import { expectCrossTenant404 } from "../../test/support/expect-cross-tenant-404.js";
 import {
   type AuditLogRow,
+  type CashMovementRow,
   type CashRegisterRow,
   type CashSessionRow,
   type IsolationDatabase,
@@ -15,7 +16,11 @@ import {
   seedRoleWithKeys,
   type RbacActor,
 } from "../../test/support/rbac-fixture.js";
-import type { CashRegisterResponse, CashSessionResponse } from "./cash.dto.js";
+import type {
+  CashMovementResponse,
+  CashRegisterResponse,
+  CashSessionResponse,
+} from "./cash.dto.js";
 import { CASH_PERMISSIONS } from "./cash.permissions.js";
 import {
   CASH_REGISTER_NOT_FOUND_MESSAGE,
@@ -23,8 +28,12 @@ import {
 } from "./cash.repository.js";
 import {
   CASH_FEATURE_NOT_ENTITLED_MESSAGE,
+  CASH_MOVEMENT_CREATED_ACTION,
+  CASH_MOVEMENT_TARGET_TYPE,
   CASH_REGISTER_NAME_CONFLICT_MESSAGE,
   CASH_SESSION_ALREADY_OPEN_MESSAGE,
+  CASH_SESSION_CLOSED_ACTION,
+  CASH_SESSION_NOT_OPEN_MESSAGE,
 } from "./cash.service.js";
 import { CASH_DTO_SCHEMA_VERSION } from "./cash.zod.js";
 
@@ -49,8 +58,27 @@ const CASH_SESSION_RESPONSE_KEYS: readonly string[] = [
   "openedAt",
   "openedByMembershipId",
   "openingAmount",
+  "expectedAmount",
+  "countedAmount",
+  "differenceAmount",
   "createdAt",
   "updatedAt",
+];
+
+/**
+ * Exact allowlisted movement key set — any extra key fails these assertions.
+ * `tenantId` is deliberately absent: the caller's tenant is the request's own
+ * identity and the DTO never echoes it back.
+ */
+const CASH_MOVEMENT_RESPONSE_KEYS: readonly string[] = [
+  "id",
+  "registerId",
+  "sessionId",
+  "type",
+  "direction",
+  "amount",
+  "reason",
+  "createdAt",
 ];
 
 /** The full cash matrix an owning role holds; the read-only actor holds one key. */
@@ -58,6 +86,8 @@ const ALL_CASH_PERMISSIONS: readonly string[] = [
   CASH_PERMISSIONS.read,
   CASH_PERMISSIONS.createRegister,
   CASH_PERMISSIONS.openSession,
+  CASH_PERMISSIONS.closeSession,
+  CASH_PERMISSIONS.createMovement,
 ];
 
 interface CashTenant {
@@ -176,6 +206,56 @@ function sessionBody(
   return { registerId, openingAmount, ...extra };
 }
 
+/**
+ * A valid movement body — `INCOME` needs no reason, so it is the simplest
+ * accepted shape. `extra` overrides any key to break exactly one rule.
+ */
+function movementBody(
+  sessionId: unknown,
+  extra: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return { sessionId, type: "INCOME", amount: "10.00", ...extra };
+}
+
+/**
+ * A valid close body — only `countedAmount` is accepted. `extra` overrides any
+ * key to break exactly one rule.
+ */
+function closeBody(
+  countedAmount: unknown = "0.00",
+  extra: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return { countedAmount, ...extra };
+}
+
+/**
+ * Seeds one immutable movement row DIRECTLY in the in-memory ledger. The close
+ * tests need the `SALE` kind too, which the standalone command deliberately
+ * rejects (POS-003 owns it), so the ledger is seeded rather than driven through
+ * `/cash/movements`.
+ */
+function seedMovement(
+  booted: BootedTestApp,
+  owner: CashTenant,
+  session: CashSessionRow,
+  movement: {
+    type: CashMovementRow["type"];
+    amount: string;
+    direction?: CashMovementRow["direction"];
+  }
+): CashMovementRow {
+  return booted.db.prisma.cashMovement.create({
+    data: {
+      tenantId: owner.tenant.id,
+      registerId: session.registerId,
+      sessionId: session.id,
+      type: movement.type,
+      amount: movement.amount,
+      direction: movement.direction ?? null,
+    },
+  });
+}
+
 /** Every audit row targeting one resource — the per-mutation row count. */
 function auditsForTarget(booted: BootedTestApp, targetId: string): AuditLogRow[] {
   return [...booted.db.tables.audits.values()].filter((row) => row.targetId === targetId);
@@ -251,6 +331,49 @@ async function withCashSessionCreateFailing(
 }
 
 /**
+ * Companion to {@link withCashSessionCreateFailing} for the movement delegate:
+ * the closed-session INSERT trigger cannot fire in the in-memory fake (it stores
+ * the session status directly), so the service's trigger -> `409` translation is
+ * exercised by injecting the exact error Prisma would raise for that trigger.
+ * The real trigger against real PostgreSQL is proven by the live-PG gate (W3).
+ */
+async function withCashMovementCreateFailing(
+  db: IsolationDatabase,
+  error: unknown,
+  run: () => Promise<void>
+): Promise<void> {
+  const original = db.prisma.cashMovement.create;
+  db.prisma.cashMovement.create = () => {
+    throw error;
+  };
+  try {
+    await run();
+  } finally {
+    db.prisma.cashMovement.create = original;
+  }
+}
+
+/**
+ * Models the LOST CLOSE RACE: the conditional `WHERE status = 'OPEN'` write
+ * matches zero rows because the winner of the race already committed `CLOSED`.
+ * A synchronous map cannot interleave, so the delegate's `updateMany` is
+ * replaced by a zero-row result for the duration of `run`; the real concurrent
+ * close is proven against live PostgreSQL by W2.
+ */
+async function withCashSessionCloseAffectingNoRows(
+  db: IsolationDatabase,
+  run: () => Promise<void>
+): Promise<void> {
+  const original = db.prisma.cashSession.updateMany;
+  db.prisma.cashSession.updateMany = () => ({ count: 0 });
+  try {
+    await run();
+  } finally {
+    db.prisma.cashSession.updateMany = original;
+  }
+}
+
+/**
  * EPIC-12 POS-002 cash register/session surface over the REAL guard chain
  * (Auth → Tenancy → RBAC) and the shared in-memory boundary, which snapshots and
  * restores its tables on a thrown transaction — so "persists nothing" is proven,
@@ -269,12 +392,12 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
     await booted.close();
   });
 
-  it("requires cash.read on both read routes and appends nothing when denied", async () => {
+  it("requires cash.read on every read route and appends nothing when denied", async () => {
     const register = fixture.createRegister(fixture.a);
     fixture.openSession(fixture.a, register.id);
     const auditsBefore = booted.db.tables.audits.size;
 
-    for (const path of ["/cash/registers", "/cash/sessions"]) {
+    for (const path of ["/cash/registers", "/cash/sessions", "/cash/movements"]) {
       const response = await supertest(booted.app.getHttpServer())
         .get(path)
         .set("Cookie", fixture.noPermission.cookie)
@@ -282,8 +405,8 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
       expect((response.body as ErrorDto).error.code, path).toBe("FORBIDDEN");
     }
 
-    // `cash.read` alone reads both routes.
-    for (const path of ["/cash/registers", "/cash/sessions"]) {
+    // `cash.read` alone reads every route.
+    for (const path of ["/cash/registers", "/cash/sessions", "/cash/movements"]) {
       await supertest(booted.app.getHttpServer())
         .get(path)
         .set("Cookie", fixture.readOnly.cookie)
@@ -296,6 +419,7 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
 
   it("requires the matching cash permission on every write route and persists nothing when denied", async () => {
     const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
 
     const cases = [
       {
@@ -307,6 +431,16 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
         label: CASH_PERMISSIONS.openSession,
         path: "/cash/sessions",
         body: sessionBody(register.id, "100.00"),
+      },
+      {
+        label: CASH_PERMISSIONS.createMovement,
+        path: "/cash/movements",
+        body: movementBody(session.id),
+      },
+      {
+        label: CASH_PERMISSIONS.closeSession,
+        path: `/cash/sessions/${session.id}/close`,
+        body: closeBody("100.00"),
       },
     ];
 
@@ -324,16 +458,32 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
     }
 
     expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    // The denied close wrote no close amount and left the session OPEN.
+    expect(booted.db.tables.cashSessions.get(session.id)).toMatchObject({
+      status: "OPEN",
+      expectedAmount: null,
+      countedAmount: null,
+      differenceAmount: null,
+    });
+    expect(auditsForTarget(booted, session.id)).toHaveLength(0);
   });
 
   it("rejects a route of each kind when the tenant holds the permission but not the cash capability", async () => {
     const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
 
     const cases = [
       { method: "get" as const, path: "/cash/registers" },
       { method: "get" as const, path: "/cash/sessions" },
+      { method: "get" as const, path: "/cash/movements" },
       { method: "post" as const, path: "/cash/registers", body: registerBody() },
       { method: "post" as const, path: "/cash/sessions", body: sessionBody(register.id) },
+      { method: "post" as const, path: "/cash/movements", body: movementBody(session.id) },
+      {
+        method: "post" as const,
+        path: `/cash/sessions/${session.id}/close`,
+        body: closeBody("0.00"),
+      },
     ];
 
     const sizesBefore = tableSizes(booted.db);
@@ -351,6 +501,14 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
     }
 
     expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    // The capability-denied close wrote no close amount and left it OPEN.
+    expect(booted.db.tables.cashSessions.get(session.id)).toMatchObject({
+      status: "OPEN",
+      expectedAmount: null,
+      countedAmount: null,
+      differenceAmount: null,
+    });
+    expect(auditsForTarget(booted, session.id)).toHaveLength(0);
   });
 
   it("creates a register, co-commits one audit row and returns the allowlisted DTO", async () => {
@@ -718,10 +876,20 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
       expect((response.body as ErrorDto).error.code, query).toBe("VALIDATION_FAILED");
     }
 
+    // The movement list query is strict too: a non-UUID session and an unknown
+    // key are both the stable 400.
+    for (const query of ["?sessionId=not-a-uuid", `?tenantId=${randomUUID()}`, "?foo=bar"]) {
+      const response = await supertest(booted.app.getHttpServer())
+        .get(`/cash/movements${query}`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(400);
+      expect((response.body as ErrorDto).error.code, query).toBe("VALIDATION_FAILED");
+    }
+
     expect(tableSizes(booted.db)).toEqual(sizesBefore);
   });
 
-  it("exposes no PATCH, no DELETE and no close route anywhere on the cash surface", async () => {
+  it("exposes no PATCH and no DELETE anywhere on the cash surface", async () => {
     const register = fixture.createRegister(fixture.a);
     const session = fixture.openSession(fixture.a, register.id);
     const sizesBefore = tableSizes(booted.db);
@@ -732,7 +900,6 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
       ["patch", "/cash/registers"],
       ["delete", `/cash/sessions/${session.id}`],
       ["patch", `/cash/sessions/${session.id}`],
-      ["post", `/cash/sessions/${session.id}/close`],
     ] as const) {
       await supertest(booted.app.getHttpServer())
         [method](path)
@@ -741,6 +908,558 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
     }
 
     expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.cashSessions.get(session.id)?.status).toBe("OPEN");
+  });
+
+  it("admits GET and POST /cash/movements and still exposes no PATCH or DELETE route", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
+
+    // The movement command IS admitted (the route inventory grew by exactly
+    // this one command) ...
+    await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(session.id))
+      .expect(201);
+
+    // ... the movement list READ is admitted too (EPIC-13 CASH-004) ...
+    const listed = await supertest(booted.app.getHttpServer())
+      .get("/cash/movements")
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect(Array.isArray(listed.body)).toBe(true);
+
+    // ... while no update or delete affordance exists anywhere near it.
+    for (const [method, path] of [
+      ["patch", "/cash/movements"],
+      ["delete", "/cash/movements"],
+      ["patch", `/cash/movements/${session.id}`],
+      ["delete", `/cash/movements/${session.id}`],
+      ["delete", `/cash/sessions/${session.id}/close`],
+    ] as const) {
+      await supertest(booted.app.getHttpServer())
+        [method](path)
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(404);
+    }
+  });
+
+  /**
+   * EPIC-13 CASH-004 — the movement list read. The list returns the same
+   * allowlisted movement DTO the create route already returns, newest first with
+   * the `id` tiebreaker, and the optional `sessionId` filter is applied ON TOP of
+   * the tenant predicate so it can only ever narrow.
+   */
+  it("lists the caller tenant's movements newest-first with the allowlisted DTO and never another tenant's", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
+    const foreignRegister = fixture.createRegister(fixture.b);
+    const foreignSession = fixture.openSession(fixture.b, foreignRegister.id);
+
+    const first = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(session.id, { type: "INCOME", amount: "10.00" }))
+      .expect(201);
+    const second = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(session.id, { type: "DEPOSIT", amount: "20.00", reason: "Top-up" }))
+      .expect(201);
+    const foreign = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.b.actor.cookie)
+      .send(movementBody(foreignSession.id, { type: "INCOME", amount: "30.00" }))
+      .expect(201);
+
+    const auditsBefore = booted.db.tables.audits.size;
+    const response = await supertest(booted.app.getHttpServer())
+      .get("/cash/movements")
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    const rows = response.body as CashMovementResponse[];
+
+    // The allowlisted key set travels UNCHANGED from the create route: one
+    // movement shape for the browser, and never a `tenantId`.
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual([...CASH_MOVEMENT_RESPONSE_KEYS].sort());
+      expect(Object.keys(row)).not.toContain("tenantId");
+    }
+    expect(rows.map((row) => row.id)).toContain((first.body as CashMovementResponse).id);
+    expect(rows.map((row) => row.id)).toContain((second.body as CashMovementResponse).id);
+    expect(rows.map((row) => row.id)).not.toContain((foreign.body as CashMovementResponse).id);
+    // Every row minted for THIS session is present exactly once, so the read
+    // returns the caller tenant's own movements and not another tenant's.
+    const ownRows = rows.filter((row) => row.sessionId === session.id);
+    expect(ownRows.map((row) => row.id).sort()).toEqual(
+      [(first.body as CashMovementResponse).id, (second.body as CashMovementResponse).id].sort()
+    );
+    expect(ownRows.every((row) => row.registerId === register.id)).toBe(true);
+
+    // Newest first by `createdAt` with `id` ascending as the tiebreaker.
+    for (let index = 1; index < rows.length; index += 1) {
+      const previous = rows[index - 1];
+      const current = rows[index];
+      const byCreatedAt = previous.createdAt.localeCompare(current.createdAt);
+      expect(
+        byCreatedAt > 0 || (byCreatedAt === 0 && previous.id.localeCompare(current.id) <= 0),
+        `${previous.id} before ${current.id}`
+      ).toBe(true);
+    }
+
+    // A read is never audited.
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+  });
+
+  it("narrows the movement list to one session and never widens it past the tenant predicate", async () => {
+    const firstRegister = fixture.createRegister(fixture.a);
+    const firstSession = fixture.openSession(fixture.a, firstRegister.id);
+    const secondRegister = fixture.createRegister(fixture.a);
+    const secondSession = fixture.openSession(fixture.a, secondRegister.id);
+    const foreignSession = fixture.openSession(fixture.b, fixture.createRegister(fixture.b).id);
+
+    const inFirst = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(firstSession.id, { type: "INCOME", amount: "11.00" }))
+      .expect(201);
+    await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(secondSession.id, { type: "INCOME", amount: "22.00" }))
+      .expect(201);
+    const foreign = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.b.actor.cookie)
+      .send(movementBody(foreignSession.id, { type: "INCOME", amount: "33.00" }))
+      .expect(201);
+
+    // The filter narrows to the named in-tenant session...
+    const narrowed = await supertest(booted.app.getHttpServer())
+      .get(`/cash/movements?sessionId=${firstSession.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    const narrowedRows = narrowed.body as CashMovementResponse[];
+    expect(narrowedRows.map((row) => row.id)).toEqual([(inFirst.body as CashMovementResponse).id]);
+    expect(narrowedRows.every((row) => row.sessionId === firstSession.id)).toBe(true);
+
+    // ...and a FOREIGN session id narrows to NOTHING rather than widening across
+    // the tenant boundary: the filter rides on top of the tenant predicate.
+    const foreignNarrowed = await supertest(booted.app.getHttpServer())
+      .get(`/cash/movements?sessionId=${foreignSession.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect(foreignNarrowed.body).toEqual([]);
+
+    // The foreign tenant reads its own movement and never A's.
+    const foreignList = await supertest(booted.app.getHttpServer())
+      .get("/cash/movements")
+      .set("Cookie", fixture.b.actor.cookie)
+      .expect(200);
+    const foreignIds = (foreignList.body as CashMovementResponse[]).map((row) => row.id);
+    expect(foreignIds).toContain((foreign.body as CashMovementResponse).id);
+    expect(foreignIds).not.toContain((inFirst.body as CashMovementResponse).id);
+  });
+
+  it("creates each of the six accepted movement kinds with one movement and one audit row", async () => {
+    const kinds: readonly {
+      type: CashMovementResponse["type"];
+      reason?: string;
+      direction?: "INCREASE" | "DECREASE";
+      expectedDirection: "INCREASE" | "DECREASE" | null;
+    }[] = [
+      { type: "REFUND", reason: "Customer refund", expectedDirection: null },
+      { type: "INCOME", expectedDirection: null },
+      { type: "EXPENSE", reason: "Cleaning supplies", expectedDirection: null },
+      { type: "WITHDRAWAL", reason: "Bank deposit run", expectedDirection: null },
+      { type: "DEPOSIT", reason: "Owner top-up", expectedDirection: null },
+      {
+        type: "ADJUSTMENT",
+        reason: "Count correction",
+        direction: "INCREASE",
+        expectedDirection: "INCREASE",
+      },
+    ];
+
+    for (const kind of kinds) {
+      const register = fixture.createRegister(fixture.a);
+      const session = fixture.openSession(fixture.a, register.id);
+      const auditsBefore = booted.db.tables.audits.size;
+      const movementsBefore = booted.db.tables.cashMovements.size;
+
+      const response = await supertest(booted.app.getHttpServer())
+        .post("/cash/movements")
+        .set("Idempotency-Key", randomUUID())
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(
+          movementBody(session.id, {
+            type: kind.type,
+            amount: "1500.00",
+            ...(kind.reason !== undefined ? { reason: kind.reason } : {}),
+            ...(kind.direction !== undefined ? { direction: kind.direction } : {}),
+          })
+        )
+        .expect(201);
+
+      const body = response.body as CashMovementResponse;
+      expect(Object.keys(body).sort(), kind.type).toEqual([...CASH_MOVEMENT_RESPONSE_KEYS].sort());
+      // The allowlisted DTO never echoes the caller's own tenant.
+      expect(Object.keys(body), kind.type).not.toContain("tenantId");
+      expect(body.type).toBe(kind.type);
+      expect(body.direction).toBe(kind.expectedDirection);
+      expect(body.amount).toBe("1500.00");
+      expect(body.reason).toBe(kind.reason ?? null);
+      // The register is derived from the resolved session, never the body.
+      expect(body.registerId).toBe(register.id);
+      expect(body.sessionId).toBe(session.id);
+
+      // Exactly one movement row, stored POSITIVE and tenant-scoped.
+      expect(booted.db.tables.cashMovements.size, kind.type).toBe(movementsBefore + 1);
+      const row = booted.db.tables.cashMovements.get(body.id)!;
+      expect(row.tenantId).toBe(fixture.a.tenant.id);
+      expect(row.type).toBe(kind.type);
+      expect(row.direction).toBe(kind.expectedDirection);
+      expect(row.amount).toBe("1500.00");
+      expect(row.reason).toBe(kind.reason ?? null);
+
+      // Exactly one co-committed audit row, carrying field NAMES only.
+      expect(booted.db.tables.audits.size, kind.type).toBe(auditsBefore + 1);
+      const audits = auditsForTarget(booted, body.id);
+      expect(audits, kind.type).toHaveLength(1);
+      expect(audits[0].action).toBe(CASH_MOVEMENT_CREATED_ACTION);
+      expect(audits[0].targetType).toBe(CASH_MOVEMENT_TARGET_TYPE);
+      expect(audits[0].tenantId).toBe(fixture.a.tenant.id);
+      expect(audits[0].actorUserProfileId).toBe(fixture.a.actor.profile.id);
+      expect(audits[0].metadata.schemaVersion).toBe(CASH_DTO_SCHEMA_VERSION);
+      expect(changedFieldsOf(audits[0])).toContain("sessionId");
+      expect(changedFieldsOf(audits[0])).toContain("type");
+      expect(changedFieldsOf(audits[0])).toContain("amount");
+
+      const serialized = JSON.stringify(audits[0].metadata);
+      expect(serialized).not.toContain(body.id);
+      expect(serialized).not.toContain(session.id);
+      expect(serialized).not.toContain(register.id);
+      expect(serialized).not.toContain("1500.00");
+      if (kind.reason !== undefined) {
+        expect(serialized).not.toContain(kind.reason);
+      }
+    }
+  });
+
+  it("requires a reason for the five reason-bound kinds and admits INCOME without one", async () => {
+    const requiredKinds = ["REFUND", "EXPENSE", "WITHDRAWAL", "DEPOSIT", "ADJUSTMENT"] as const;
+    const movementsBefore = booted.db.tables.cashMovements.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    for (const type of requiredKinds) {
+      const register = fixture.createRegister(fixture.a);
+      const session = fixture.openSession(fixture.a, register.id);
+      const direction = type === "ADJUSTMENT" ? { direction: "DECREASE" } : {};
+
+      const rejected: [string, Record<string, unknown>][] = [
+        ["missing", movementBody(session.id, { type, ...direction })],
+        ["blank", movementBody(session.id, { type, reason: "   ", ...direction })],
+        ["empty", movementBody(session.id, { type, reason: "", ...direction })],
+      ];
+      for (const [label, body] of rejected) {
+        const response = await supertest(booted.app.getHttpServer())
+          .post("/cash/movements")
+          .set("Idempotency-Key", randomUUID())
+          .set("Cookie", fixture.a.actor.cookie)
+          .send(body)
+          .expect(400);
+        expect((response.body as ErrorDto).error.code, `${type} ${label}`).toBe(
+          "VALIDATION_FAILED"
+        );
+      }
+    }
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+
+    // INCOME is the one kind whose reason is optional and is admitted without one.
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
+    const accepted = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(session.id, { type: "INCOME", reason: undefined }))
+      .expect(201);
+    const body = accepted.body as CashMovementResponse;
+    expect(body.reason).toBeNull();
+    expect(changedFieldsOf(auditsForTarget(booted, body.id)[0])).toEqual([
+      "sessionId",
+      "type",
+      "amount",
+    ]);
+
+    // A blank reason is still rejected even for the reason-optional kind.
+    const blankIncome = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(session.id, { type: "INCOME", reason: "   " }))
+      .expect(400);
+    expect((blankIncome.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("requires an ADJUSTMENT direction and forbids one for every other kind", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
+    const movementsBefore = booted.db.tables.cashMovements.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const rejected: [string, Record<string, unknown>][] = [
+      [
+        "ADJUSTMENT without direction",
+        movementBody(session.id, { type: "ADJUSTMENT", reason: "Count" }),
+      ],
+      [
+        "ADJUSTMENT with an unknown direction",
+        movementBody(session.id, { type: "ADJUSTMENT", reason: "Count", direction: "SIDEWAYS" }),
+      ],
+      [
+        "REFUND with a direction",
+        movementBody(session.id, { type: "REFUND", reason: "Refund", direction: "INCREASE" }),
+      ],
+      [
+        "INCOME with a direction",
+        movementBody(session.id, { type: "INCOME", direction: "DECREASE" }),
+      ],
+      [
+        "EXPENSE with a direction",
+        movementBody(session.id, { type: "EXPENSE", reason: "Supplies", direction: "INCREASE" }),
+      ],
+      [
+        "WITHDRAWAL with a direction",
+        movementBody(session.id, { type: "WITHDRAWAL", reason: "Run", direction: "DECREASE" }),
+      ],
+      [
+        "DEPOSIT with a direction",
+        movementBody(session.id, { type: "DEPOSIT", reason: "Top-up", direction: "INCREASE" }),
+      ],
+    ];
+
+    for (const [label, body] of rejected) {
+      const response = await supertest(booted.app.getHttpServer())
+        .post("/cash/movements")
+        .set("Idempotency-Key", randomUUID())
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(body)
+        .expect(400);
+      expect((response.body as ErrorDto).error.code, label).toBe("VALIDATION_FAILED");
+    }
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+  });
+
+  it("rejects a SALE movement as a validation error and persists nothing", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
+    const movementsBefore = booted.db.tables.cashMovements.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    for (const body of [
+      movementBody(session.id, { type: "SALE" }),
+      movementBody(session.id, { type: "SALE", reason: "Forged sale" }),
+      movementBody(session.id, { type: "sale" }),
+    ]) {
+      const response = await supertest(booted.app.getHttpServer())
+        .post("/cash/movements")
+        .set("Idempotency-Key", randomUUID())
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(body)
+        .expect(400);
+      expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    }
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+  });
+
+  it("rejects zero, negative and non-money amounts before any write", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
+    const movementsBefore = booted.db.tables.cashMovements.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const rejected: unknown[] = [
+      "0",
+      "0.00",
+      "00.00",
+      "-1.00",
+      "1e2",
+      "1.234",
+      "1.2.3",
+      "abc",
+      "1234567890123.00",
+      "10,00",
+      10.5,
+      0,
+      null,
+      true,
+    ];
+
+    for (const amount of rejected) {
+      const response = await supertest(booted.app.getHttpServer())
+        .post("/cash/movements")
+        .set("Idempotency-Key", randomUUID())
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(movementBody(session.id, { amount }))
+        .expect(400);
+      expect((response.body as ErrorDto).error.code, String(amount)).toBe("VALIDATION_FAILED");
+    }
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+  });
+
+  it("masks an unknown and a foreign session as a byte-equivalent 404 and persists nothing", async () => {
+    const foreignSession = fixture.openSession(fixture.b, fixture.createRegister(fixture.b).id);
+    const movementsBefore = booted.db.tables.cashMovements.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.a.actor.cookie,
+      method: "POST",
+      nonexistentUrl: "/cash/movements",
+      foreignUrl: "/cash/movements",
+      body: movementBody(randomUUID()),
+      foreignBody: movementBody(foreignSession.id),
+      forbiddenIdentifiers: [foreignSession.id, fixture.b.tenant.id],
+    });
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+
+    // The shared message is the session one, distinct from the register one.
+    const unknown = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(randomUUID()))
+      .expect(404);
+    expect((unknown.body as ErrorDto).error.message).toBe(CASH_SESSION_NOT_FOUND_MESSAGE);
+    expect(CASH_SESSION_NOT_FOUND_MESSAGE).not.toBe(CASH_REGISTER_NOT_FOUND_MESSAGE);
+  });
+
+  it("rejects a CLOSED session with the stable 409 and persists nothing", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { status: "CLOSED" });
+    const movementsBefore = booted.db.tables.cashMovements.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(session.id, { type: "DEPOSIT", reason: "Closed drawer" }))
+      .expect(409);
+    const errorBody = response.body as ErrorDto;
+    expect(errorBody.error.code).toBe("CONFLICT");
+    expect(errorBody.error.message).toBe(CASH_SESSION_NOT_OPEN_MESSAGE);
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+    expect(booted.db.tables.cashSessions.get(session.id)?.status).toBe("CLOSED");
+  });
+
+  it("maps the closed-session INSERT trigger to the same stable 409 (injected: the fake cannot fire the trigger)", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
+    const movementsBefore = booted.db.tables.cashMovements.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    // INJECTED: the real trigger is `cash_movement_no_insert_into_closed_session`
+    // and is proven against live PostgreSQL by the W3 gate; here the delegate
+    // throws the exact reject the database would raise, with the SQLSTATE and
+    // message Prisma surfaces for a `raise_exception`.
+    const triggerError = Object.assign(
+      new Error(
+        "Raw query failed. Code: `23001`. Message: `a cash movement cannot be inserted into a closed session`"
+      ),
+      {
+        code: "P2010",
+        meta: {
+          code: "23001",
+          message: "a cash movement cannot be inserted into a closed session",
+        },
+      }
+    );
+
+    await withCashMovementCreateFailing(booted.db, triggerError, async () => {
+      const response = await supertest(booted.app.getHttpServer())
+        .post("/cash/movements")
+        .set("Idempotency-Key", randomUUID())
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(movementBody(session.id))
+        .expect(409);
+      const errorBody = response.body as ErrorDto;
+      expect(errorBody.error.code).toBe("CONFLICT");
+      expect(errorBody.error.message).toBe(CASH_SESSION_NOT_OPEN_MESSAGE);
+    });
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+  });
+
+  it("requires the Idempotency-Key, replays an identical retry and conflicts on a reused key", async () => {
+    const session = fixture.openSession(fixture.a, fixture.createRegister(fixture.a).id);
+    const body = movementBody(session.id, { type: "INCOME", amount: "250.00" });
+    const post = (key: string | undefined, payload: Record<string, unknown> = body) => {
+      const request = supertest(booted.app.getHttpServer())
+        .post("/cash/movements")
+        .set("Cookie", fixture.a.actor.cookie);
+      return (key === undefined ? request : request.set("Idempotency-Key", key)).send(payload);
+    };
+    const movementsBefore = booted.db.tables.cashMovements.size;
+    const auditsBefore = booted.db.tables.audits.size;
+    const key = randomUUID();
+
+    await post(undefined).expect(400);
+    const first = await post(key).expect(201);
+
+    // Same key and body: a `200` replay that appends nothing; different body: `409`.
+    expect((await post(key).expect(200)).body).toEqual(first.body);
+    await post(key, movementBody(session.id, { type: "INCOME", amount: "300.00" })).expect(409);
+
+    expect(booted.db.tables.cashMovements.size).toBe(movementsBefore + 1);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+  });
+
+  it("writes only the movement and its audit row: no sale, stock, payment or close state is touched", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id);
+    const sizesBefore = tableSizes(booted.db);
+
+    await supertest(booted.app.getHttpServer())
+      .post("/cash/movements")
+      .set("Idempotency-Key", randomUUID())
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(movementBody(session.id, { type: "DEPOSIT", reason: "Owner top-up", amount: "250.00" }))
+      .expect(201);
+
+    const sizesAfter = tableSizes(booted.db);
+    expect(sizesAfter.cashMovements).toBe(sizesBefore.cashMovements + 1);
+    expect(sizesAfter.audits).toBe(sizesBefore.audits + 1);
+    expect(sizesAfter.sales).toBe(sizesBefore.sales);
+    expect(sizesAfter.saleLines).toBe(sizesBefore.saleLines);
+    expect(sizesAfter.stockMovements).toBe(sizesBefore.stockMovements);
+    expect(sizesAfter.stockBalances).toBe(sizesBefore.stockBalances);
+    expect(sizesAfter.payments).toBe(sizesBefore.payments);
+    expect(sizesAfter.cashRegisters).toBe(sizesBefore.cashRegisters);
+    expect(sizesAfter.cashSessions).toBe(sizesBefore.cashSessions);
     expect(booted.db.tables.cashSessions.get(session.id)?.status).toBe("OPEN");
   });
 
@@ -796,5 +1515,332 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
       (row: CashSessionRow) => row.tenantId === fixture.a.tenant.id && row.status === "CLOSED"
     ).length;
     expect(closedAfter).toBe(closedBefore);
+  });
+
+  /**
+   * EPIC-13 CASH-003 close command. The expected amount is computed SERVER-SIDE
+   * from the opening amount and the immutable movement rows, the three close
+   * amounts are stored on the session, one audit row co-commits, and `CLOSED` is
+   * terminal.
+   */
+  it("closes an OPEN session, computes the expected amount over every kind and co-commits one audit row", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "100.00" });
+
+    // Every kind and BOTH adjustment directions. Amounts stay POSITIVE and the
+    // KIND owns the sign (DEC-030).
+    const mix: readonly {
+      type: CashMovementRow["type"];
+      amount: string;
+      direction?: CashMovementRow["direction"];
+    }[] = [
+      { type: "SALE", amount: "50.00" },
+      { type: "INCOME", amount: "25.00" },
+      { type: "DEPOSIT", amount: "80.00" },
+      { type: "REFUND", amount: "10.00" },
+      { type: "EXPENSE", amount: "20.00" },
+      { type: "WITHDRAWAL", amount: "15.00" },
+      { type: "ADJUSTMENT", amount: "7.00", direction: "INCREASE" },
+      { type: "ADJUSTMENT", amount: "17.00", direction: "DECREASE" },
+    ];
+    for (const movement of mix) {
+      seedMovement(booted, fixture.a, session, movement);
+    }
+
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("195.50"))
+      .expect(201);
+
+    const body = response.body as CashSessionResponse;
+    expect(Object.keys(body).sort()).toEqual([...CASH_SESSION_RESPONSE_KEYS].sort());
+    // No Prisma model and no foreign server-owned key crosses the boundary.
+    expect(Object.keys(body)).not.toContain("tenantId");
+    expect(body.status).toBe("CLOSED");
+    expect(body.openingAmount).toBe("100.00");
+    // 100 + 50 + 25 + 80 - 10 - 20 - 15 + 7 - 17 = 200
+    expect(body.expectedAmount).toBe("200.00");
+    expect(body.countedAmount).toBe("195.50");
+    // DIFFERENCE SIGN: counted - expected, negative when the drawer is short.
+    expect(body.differenceAmount).toBe("-4.50");
+
+    // Stored on the session row, exact at scale 2.
+    expect(booted.db.tables.cashSessions.get(session.id)).toMatchObject({
+      status: "CLOSED",
+      expectedAmount: "200.00",
+      countedAmount: "195.50",
+      differenceAmount: "-4.50",
+    });
+
+    // Exactly ONE co-committed audit row, carrying field NAMES only.
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+    const audits = auditsForTarget(booted, session.id);
+    expect(audits).toHaveLength(1);
+    expect(audits[0].action).toBe(CASH_SESSION_CLOSED_ACTION);
+    expect(audits[0].targetType).toBe("cash_session");
+    expect(audits[0].tenantId).toBe(fixture.a.tenant.id);
+    expect(audits[0].actorUserProfileId).toBe(fixture.a.actor.profile.id);
+    expect(audits[0].metadata.schemaVersion).toBe(CASH_DTO_SCHEMA_VERSION);
+    expect(changedFieldsOf(audits[0])).toEqual([
+      "status",
+      "expectedAmount",
+      "countedAmount",
+      "differenceAmount",
+    ]);
+
+    // Field NAMES only: no identifier and no stored amount reaches the trail.
+    const serializedMeta = JSON.stringify(audits[0].metadata);
+    expect(serializedMeta).not.toContain(session.id);
+    expect(serializedMeta).not.toContain(register.id);
+    expect(serializedMeta).not.toContain("195.50");
+    expect(serializedMeta).not.toContain("200.00");
+
+    // The read projection carries the same three close amounts, and reads are
+    // never audited.
+    const listed = await supertest(booted.app.getHttpServer())
+      .get("/cash/sessions?status=CLOSED")
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    const closed = (listed.body as CashSessionResponse[]).find((row) => row.id === session.id);
+    expect(closed?.expectedAmount).toBe("200.00");
+    expect(closed?.countedAmount).toBe("195.50");
+    expect(closed?.differenceAmount).toBe("-4.50");
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+  });
+
+  it("closes a session with ZERO movements at the opening amount", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "250.00" });
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("250.00"))
+      .expect(201);
+
+    const body = response.body as CashSessionResponse;
+    expect(body.status).toBe("CLOSED");
+    expect(body.expectedAmount).toBe("250.00");
+    expect(body.countedAmount).toBe("250.00");
+    expect(body.differenceAmount).toBe("0.00");
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+  });
+
+  it("accepts a 0.00 counted amount and reports a negative difference when the drawer is short", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "10.00" });
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("0.00"))
+      .expect(201);
+
+    const body = response.body as CashSessionResponse;
+    expect(body.countedAmount).toBe("0.00");
+    expect(body.expectedAmount).toBe("10.00");
+    expect(body.differenceAmount).toBe("-10.00");
+  });
+
+  it("rejects a second close as the stable 409 and persists nothing", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "100.00" });
+
+    await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("100.00"))
+      .expect(201);
+
+    const sizesBefore = tableSizes(booted.db);
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("999.00"))
+      .expect(409);
+    expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((response.body as ErrorDto).error.message).toBe(CASH_SESSION_NOT_OPEN_MESSAGE);
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+    expect(auditsForTarget(booted, session.id)).toHaveLength(1);
+    // `CLOSED` is terminal: the first close's amounts are immutable and the
+    // second request's counted amount never reached the row.
+    expect(booted.db.tables.cashSessions.get(session.id)).toMatchObject({
+      status: "CLOSED",
+      expectedAmount: "100.00",
+      countedAmount: "100.00",
+      differenceAmount: "0.00",
+    });
+  });
+
+  it("maps a lost close race to the same stable 409 and persists nothing (injected: the fake cannot interleave)", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "100.00" });
+    const sizesBefore = tableSizes(booted.db);
+    const auditsBefore = booted.db.tables.audits.size;
+
+    // INJECTED: the conditional `WHERE status = 'OPEN'` write of the real
+    // PostgreSQL statement matches zero rows when the winner committed first;
+    // the real interleaving is proven against live PostgreSQL by W2.
+    await withCashSessionCloseAffectingNoRows(booted.db, async () => {
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/cash/sessions/${session.id}/close`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(closeBody("100.00"))
+        .expect(409);
+      expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+      expect((response.body as ErrorDto).error.message).toBe(CASH_SESSION_NOT_OPEN_MESSAGE);
+    });
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+    expect(booted.db.tables.cashSessions.get(session.id)).toMatchObject({
+      status: "OPEN",
+      expectedAmount: null,
+      countedAmount: null,
+      differenceAmount: null,
+    });
+  });
+
+  it("masks an unknown and a foreign session as a byte-equivalent 404 on close and persists nothing", async () => {
+    const foreignSession = fixture.openSession(fixture.b, fixture.createRegister(fixture.b).id, {
+      openingAmount: "10.00",
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.a.actor.cookie,
+      method: "POST",
+      nonexistentUrl: `/cash/sessions/${randomUUID()}/close`,
+      foreignUrl: `/cash/sessions/${foreignSession.id}/close`,
+      body: closeBody("10.00"),
+      forbiddenIdentifiers: [foreignSession.id, fixture.b.tenant.id],
+    });
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.cashSessions.get(foreignSession.id)?.status).toBe("OPEN");
+
+    // Both use the ONE shared session message, distinct from the register one.
+    const unknown = await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${randomUUID()}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("10.00"))
+      .expect(404);
+    expect((unknown.body as ErrorDto).error.message).toBe(CASH_SESSION_NOT_FOUND_MESSAGE);
+    expect(CASH_SESSION_NOT_FOUND_MESSAGE).not.toBe(CASH_REGISTER_NOT_FOUND_MESSAGE);
+  });
+
+  it("rejects every invalid close body and path parameter with 400 and persists nothing", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "100.00" });
+    const sizesBefore = tableSizes(booted.db);
+
+    const rejected: [string, Record<string, unknown>][] = [
+      ["missing counted amount", {}],
+      ["misspelled key", { countedAmmount: "10.00" }],
+      ["unknown key", closeBody("10.00", { drawer: randomUUID() })],
+      ["negative", closeBody("-1.00")],
+      ["non-decimal", closeBody("abc")],
+      ["three decimals", closeBody("1.234")],
+      ["exponential", closeBody("1e2")],
+      ["float", closeBody(1.5)],
+      ["null", closeBody(null)],
+      ["tenantId", closeBody("10.00", { tenantId: randomUUID() })],
+      ["status", closeBody("10.00", { status: "CLOSED" })],
+      ["expectedAmount", closeBody("10.00", { expectedAmount: "5.00" })],
+      ["differenceAmount", closeBody("10.00", { differenceAmount: "5.00" })],
+      ["idempotency key", closeBody("10.00", { idempotencyKey: randomUUID() })],
+    ];
+    for (const [label, body] of rejected) {
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/cash/sessions/${session.id}/close`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(body)
+        .expect(400);
+      expect((response.body as ErrorDto).error.code, label).toBe("VALIDATION_FAILED");
+    }
+
+    // A non-UUID session id is the same stable 400, never a database cast error.
+    const badId = await supertest(booted.app.getHttpServer())
+      .post("/cash/sessions/not-a-uuid/close")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("10.00"))
+      .expect(400);
+    expect((badId.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.cashSessions.get(session.id)).toMatchObject({
+      status: "OPEN",
+      expectedAmount: null,
+      countedAmount: null,
+      differenceAmount: null,
+    });
+  });
+
+  it("admits POST /cash/sessions/:id/close and still exposes no PATCH, DELETE or reopen route", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "10.00" });
+
+    // The close command IS admitted — the route inventory grew by exactly this
+    // one command ...
+    await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("10.00"))
+      .expect(201);
+
+    // ... while no update, delete or reopen affordance exists anywhere near it.
+    for (const [method, path] of [
+      ["patch", `/cash/sessions/${session.id}`],
+      ["delete", `/cash/sessions/${session.id}`],
+      ["patch", "/cash/sessions"],
+      ["patch", `/cash/sessions/${session.id}/close`],
+      ["delete", `/cash/sessions/${session.id}/close`],
+      ["post", `/cash/sessions/${session.id}/reopen`],
+      ["patch", `/cash/sessions/${session.id}/reopen`],
+    ] as const) {
+      await supertest(booted.app.getHttpServer())
+        [method](path)
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(404);
+    }
+
+    // No reopen: the session stays terminal `CLOSED`.
+    expect(booted.db.tables.cashSessions.get(session.id)?.status).toBe("CLOSED");
+  });
+
+  it("writes only the session's close amounts and one audit row: no movement, sale, stock or payment state is touched", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "40.00" });
+    const sizesBefore = tableSizes(booted.db);
+
+    await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("40.00"))
+      .expect(201);
+
+    const sizesAfter = tableSizes(booted.db);
+    // The close changes the session row (in place) and appends one audit row —
+    // nothing else. The close is a projection of the existing ledger, not a new
+    // movement.
+    expect(sizesAfter.audits).toBe(sizesBefore.audits + 1);
+    expect(sizesAfter.cashSessions).toBe(sizesBefore.cashSessions);
+    expect(sizesAfter.cashMovements).toBe(sizesBefore.cashMovements);
+    expect(sizesAfter.cashRegisters).toBe(sizesBefore.cashRegisters);
+    expect(sizesAfter.sales).toBe(sizesBefore.sales);
+    expect(sizesAfter.saleLines).toBe(sizesBefore.saleLines);
+    expect(sizesAfter.stockMovements).toBe(sizesBefore.stockMovements);
+    expect(sizesAfter.stockBalances).toBe(sizesBefore.stockBalances);
+    expect(sizesAfter.payments).toBe(sizesBefore.payments);
+    expect(sizesAfter.idempotencyRecords).toBe(sizesBefore.idempotencyRecords);
   });
 });

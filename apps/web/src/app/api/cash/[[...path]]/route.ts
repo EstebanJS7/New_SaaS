@@ -16,74 +16,93 @@ const WEB_CASH_PREFIX = "/api/cash";
 type CashMethod = "GET" | "POST";
 
 /**
- * Method-independent shapes of the cash API surface: the register sub-collection
- * and the session sub-collection.
+ * Shapes of the cash API surface this proxy serves: the register, session and
+ * movement sub-collections plus the terminal session-close command.
  */
-type CashPathShape = "registers" | "sessions";
+type CashPathShape = "registers" | "sessions" | "movements" | "sessionClose";
 
 /**
- * The four routes this proxy serves, matching the API's own cash surface (EPIC-12
- * POS-004). They are declared here, in one place, so the reachable surface is
- * readable and cannot grow by accident:
+ * The seven routes this proxy serves, matching the API's own cash surface
+ * (EPIC-12 POS-004, EPIC-13 CASH-002/CASH-003). They are declared here, in one
+ * place, so the reachable surface is readable and cannot grow by accident:
  *
- * - `GET  /cash/registers`   the caller tenant's registers
- * - `POST /cash/registers`   create an in-tenant register
- * - `GET  /cash/sessions`    the caller tenant's sessions (optional `status`)
- * - `POST /cash/sessions`    open one session for an in-tenant register
+ * - `GET  /cash/registers`          the caller tenant's registers
+ * - `POST /cash/registers`          create an in-tenant register
+ * - `GET  /cash/sessions`           the caller tenant's sessions (optional `status`)
+ * - `POST /cash/sessions`           open one session for an in-tenant register
+ * - `GET  /cash/movements`          the immutable ledger (optional `sessionId`)
+ * - `POST /cash/movements`          create one standalone movement
+ * - `POST /cash/sessions/:id/close` close one `OPEN` session against a counted amount
+ *
+ * The three sub-collections answer both verbs, so they form a COMPLETE six-pair
+ * method×shape product. The close command is single-verb by design: only `POST`
+ * is offered, and a `GET` on it is refused here (keeping the pre-extension 404
+ * for that path) instead of being forwarded on a hop the API could only answer
+ * with its own 404.
  *
  * Deliberately absent (so the request is refused here, never smuggled upstream):
- * `PATCH` and `DELETE` anywhere, and every `POST /cash/sessions/:id/close`-style
- * route — session close, the expected/counted difference, the six remaining
- * movement kinds and the cash reversal belong to EPIC-13 (DEC-020), and this
- * Story ships no close command. A caller-supplied `status`, `tenantId`,
- * `openedByMembershipId`, `currency`, `branchId` or `isActive` is refused as a
- * body key below rather than forwarded.
+ * `PATCH` and `DELETE` anywhere, a session reopen (`CLOSED` is terminal,
+ * DEC-036), and the cash reversal route (a later epic owns it, per the API
+ * controller). A caller-supplied `status`, `tenantId`, `isActive`,
+ * `openedByMembershipId`, `currency` or `branchId` is refused as a body key
+ * below rather than forwarded.
  *
- * Unlike the sale surface, these four pairs form a COMPLETE method×shape product
- * (each shape answers both verbs), so the cash proxy has no reachable
- * "known path, disallowed method" branch: a verb it does not export is answered
- * by the framework's own router before this module runs, and the module exports
- * only `GET` and `POST`. The rejection contract this module owns is therefore the
- * unknown path, the malformed path, the out-of-contract query, the
- * out-of-contract body and the missing credential.
+ * The module exports only `GET` and `POST`, so a verb it does not export is
+ * answered by the framework's own router before this module runs. The rejection
+ * contract this module owns is therefore the unknown path, the malformed path,
+ * the out-of-contract query, the out-of-contract body and the missing
+ * credential — plus the method-mismatch `GET` on the single-verb close shape
+ * above.
  */
 
 /**
  * Query keys each shape accepts, in canonical forward order. It mirrors the cash
  * contracts in `apps/api/src/cash/cash.zod.ts` exactly: `cashSessionListQuery`
  * defines `status` for `GET /cash/sessions` (one lifecycle value, with no
- * implicit open-only default), while the register list declares no `@Query` at
- * all and therefore accepts none. Both queries are `.strict()` upstream, so an
- * unknown key is a `400` there; this boundary refuses it outright instead of
- * forwarding a parameter the browser invented.
+ * implicit open-only default), `cashMovementListQuery` defines the optional
+ * `sessionId` for `GET /cash/movements`, while the register list declares no
+ * `@Query` at all and therefore accepts none, and the close command declares
+ * none either. Every query is `.strict()` upstream, so an unknown key is a `400`
+ * there; this boundary refuses it outright instead of forwarding a parameter the
+ * browser invented.
  */
 const CASH_QUERY_KEYS: Readonly<Record<CashPathShape, readonly string[]>> = {
   registers: [],
   sessions: ["status"],
+  movements: ["sessionId"],
+  sessionClose: [],
 };
 
 /**
  * Top-level body keys each shape accepts on `POST`, mirroring the `.strict()`
  * request schemas in `apps/api/src/cash/cash.zod.ts`: `createCashRegisterBody`
- * accepts `name` alone, and `openCashSessionBody` accepts `registerId` and
- * `openingAmount` alone.
+ * accepts `name` alone, `openCashSessionBody` accepts `registerId` and
+ * `openingAmount` alone, `createCashMovementBody` accepts `sessionId`, `type`,
+ * `amount`, `reason` and `direction`, and `closeCashSessionBody` accepts
+ * `countedAmount` alone.
  *
  * This is where the proxy refuses, before any upstream call, the keys those
  * schemas deliberately exclude — `tenantId` (server-resolved, never caller
  * authority), the server-owned `status` and `isActive`, the server-resolved
- * `openedByMembershipId` instead of any caller identity, and the non-existent
- * `currency` and `branchId` (DEC-020: there is no currency column and no Branch
- * dimension). The refusal reuses the API's own stable `VALIDATION_FAILED`
- * envelope and message for the shape, so a caller cannot tell a proxy refusal
- * from an API refusal by shape or by text ([[TD-013]]).
+ * `openedByMembershipId` instead of any caller identity, the server-derived
+ * movement `registerId`, and the non-existent `currency` and `branchId`
+ * (DEC-020: there is no currency column and no Branch dimension). The refusal
+ * reuses the API's own stable `VALIDATION_FAILED` envelope and message for the
+ * shape, so a caller cannot tell a proxy refusal from an API refusal by shape or
+ * by text ([[TD-013]]).
  *
- * Nested keys are not inspected because neither cash body has a nested object.
- * The check is deliberately a key-set check, never a re-encode: the caller's
- * bytes are forwarded unchanged once the key set is known to be in contract.
+ * Nested keys are not inspected because no cash body has a nested object. The
+ * check is deliberately a key-set check, never a re-encode: the caller's bytes
+ * are forwarded unchanged once the key set is known to be in contract. The
+ * cross-field movement rules (a reason for every kind but `INCOME`, a direction
+ * exactly for `ADJUSTMENT`) are NOT re-implemented here: the API stays their only
+ * validator.
  */
 const CASH_BODY_KEYS: Readonly<Record<CashPathShape, readonly string[]>> = {
   registers: ["name"],
   sessions: ["registerId", "openingAmount"],
+  movements: ["sessionId", "type", "amount", "reason", "direction"],
+  sessionClose: ["countedAmount"],
 };
 
 /**
@@ -95,6 +114,8 @@ const CASH_BODY_KEYS: Readonly<Record<CashPathShape, readonly string[]>> = {
 const CASH_BODY_MESSAGES: Readonly<Record<CashPathShape, string>> = {
   registers: "Invalid cash register create body.",
   sessions: "Invalid cash session open body.",
+  movements: "Invalid cash movement create body.",
+  sessionClose: "Invalid cash session close body.",
 };
 
 /** Uniform not-found: this boundary never reveals whether a path exists. */
@@ -148,22 +169,35 @@ function unauthenticated(): NextResponse {
 
 /**
  * Classifies validated segments into a known cash path shape, or `null` when the
- * path is not part of the API surface at all. Method-independent, so the caller
- * can tell "unknown path" apart from "known path, wrong method". The two
- * sub-collections are the whole surface: there is no third segment, so
- * `/api/cash/sessions/:id/close` is an unknown path rather than a command this
- * slice forgot to allow.
+ * path is not part of the API surface for the request method. The classifier is
+ * method-aware only where the API is: the three sub-collections answer both
+ * verbs, while `sessions/:id/close` is `POST`-only, so a `GET` on it is `null`
+ * here (a refusal, preserving the pre-extension 404 for that path) instead of a
+ * forwarded hop the API could only answer with its own 404.
+ *
+ * The middle segment of the close shape is an opaque session id: it is
+ * re-encoded like every other segment and deliberately NOT validated here — the
+ * API owns value validation, and this proxy owns only "is this the close
+ * shape". The segment count is exact, so `/sessions/:id/close/extra`,
+ * `/sessions/:id` and `/movements/:id` are unknown paths rather than half-matched
+ * commands.
  */
-function cashPathShape(segments: readonly string[]): CashPathShape | null {
-  if (segments.length !== 1) {
+function cashPathShape(segments: readonly string[], method: CashMethod): CashPathShape | null {
+  if (segments.length === 1) {
+    const [first] = segments;
+    if (first === "registers") {
+      return "registers";
+    }
+    if (first === "sessions") {
+      return "sessions";
+    }
+    if (first === "movements") {
+      return "movements";
+    }
     return null;
   }
-  const [first] = segments;
-  if (first === "registers") {
-    return "registers";
-  }
-  if (first === "sessions") {
-    return "sessions";
+  if (segments.length === 3 && segments[0] === "sessions" && segments[2] === "close") {
+    return method === "POST" ? "sessionClose" : null;
   }
   return null;
 }
@@ -173,7 +207,8 @@ function cashPathShape(segments: readonly string[]): CashPathShape | null {
  * `null` when the requested query is out of contract.
  *
  * Query policy: only `GET` accepts a query, and only the keys the shape's
- * contract defines (`status` for the session list, none for the register list).
+ * contract defines (`status` for the session list, `sessionId` for the movement
+ * list, none for the register list or the close command).
  * A query on a mutating verb, or an unknown key, is refused (uniform not-found,
  * never dropped silently) so the proxy cannot become a query tunnel. The string
  * is rebuilt from the allowlist rather than forwarded verbatim, so a duplicate
@@ -243,7 +278,7 @@ function resolveCashPath(request: NextRequest, method: CashMethod): CashResoluti
     return { ok: false, response: invalidPath() };
   }
 
-  const shape = cashPathShape(segments);
+  const shape = cashPathShape(segments, method);
   if (shape === null) {
     return { ok: false, response: notFound() };
   }
@@ -323,23 +358,25 @@ async function resolveCashBody(
 /**
  * Proxies staff cash API calls to the private NestJS cash surface.
  *
- * `/api/cash/registers` maps to the upstream `/cash/registers` and
- * `/api/cash/sessions` to `/cash/sessions`. An empty, unknown, malformed,
- * method-mismatched or out-of-contract request is rejected here before any
- * upstream call.
+ * `/api/cash/registers` maps to the upstream `/cash/registers`,
+ * `/api/cash/sessions` to `/cash/sessions`, `/api/cash/movements` to
+ * `/cash/movements` and `/api/cash/sessions/:id/close` to
+ * `/cash/sessions/:id/close`. An empty, unknown, malformed, method-mismatched or
+ * out-of-contract request is rejected here before any upstream call.
  *
- * Browser headers cross through a strict allowlist: only the authenticated staff
- * session cookie (read server-side by name, never from the browser) and
- * `x-request-id`. No tenant, role, permission or user header is ever
- * synthesized — in particular the session opener is resolved by the API from the
- * authenticated context, never from the body or a forwarded header. A mutating
- * body is read once and forwarded byte-for-byte after its key set is checked
- * against the shape's contract, and the proxy declares the JSON media type
- * itself because the cash surface is JSON-only. Upstream status, error envelope,
- * `content-type` and `x-request-id` are preserved and the upstream body is
- * streamed back — so a `400`, the entitlement `403`, the permission `403`,
- * `404` and the two stable `409`s (duplicate register name, register already
- * open) reach the browser unchanged.
+ * Browser headers cross through a strict allowlist: the authenticated staff
+ * session cookie (read server-side by name, never from the browser),
+ * `x-request-id`, and — on the movement-create command alone — the caller-owned
+ * `Idempotency-Key` the API requires. No tenant, role, permission or user header
+ * is ever synthesized — in particular the session opener is resolved by the API
+ * from the authenticated context, never from the body or a forwarded header. A
+ * mutating body is read once and forwarded byte-for-byte after its key set is
+ * checked against the shape's contract, and the proxy declares the JSON media
+ * type itself because the cash surface is JSON-only. Upstream status, error
+ * envelope, `content-type` and `x-request-id` are preserved and the upstream
+ * body is streamed back — so a `400`, the entitlement `403`, the permission
+ * `403`, `404` and the stable `409`s (duplicate register name, register already
+ * open, closed session, reused idempotency key) reach the browser unchanged.
  */
 async function proxyCashRequest(request: NextRequest, method: CashMethod): Promise<NextResponse> {
   const resolution = resolveCashPath(request, method);
@@ -373,6 +410,19 @@ async function proxyCashRequest(request: NextRequest, method: CashMethod): Promi
 
   if (bodyResolution.body !== undefined) {
     headers["content-type"] = "application/json";
+  }
+
+  // The movement-create command REQUIRES a caller-owned `Idempotency-Key`
+  // (DEC-024): the API derives the movement's identity from it and replays the
+  // stored movement for an identical retry. This proxy forwards it verbatim — it
+  // never mints, rewrites or reuses one — and forwards it on NO other shape, so
+  // the read paths stay exactly as header-thin as before. An absent (or empty)
+  // key stays absent, so the API answers its own stable `400`.
+  if (resolution.shape === "movements" && method === "POST") {
+    const idempotencyKey = request.headers.get("Idempotency-Key");
+    if (idempotencyKey) {
+      headers["Idempotency-Key"] = idempotencyKey;
+    }
   }
 
   const response = await fetch(`${apiUrl}${resolution.path}`, {

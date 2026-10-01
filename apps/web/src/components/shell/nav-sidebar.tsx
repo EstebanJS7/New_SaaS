@@ -15,13 +15,15 @@ export interface NavLink {
 /**
  * Real staff destinations shipped so far. Business entries land with their
  * epics (Customers in EPIC-04, Patients in EPIC-05, Agenda in EPIC-07, Catalog
- * in EPIC-09, Suppliers and Purchases in EPIC-11, the POS in EPIC-12); the
- * placeholder labels below remain chrome-only until a later epic supplies a
- * real surface.
+ * in EPIC-09, Suppliers and Purchases in EPIC-11, the POS in EPIC-12, Cash in
+ * EPIC-13); the placeholder labels below remain chrome-only until a later epic
+ * supplies a real surface.
  *
- * The POS is the first entry with a capability requirement: DEC-026 gates the
- * sale surface on the seeded `sales` feature code, so the entry declares it and
- * the shell hides it when it knows the tenant lacks the capability.
+ * The POS and Cash are the entries with a capability requirement: DEC-026 gates
+ * the sale surface on the seeded `sales` feature code and DEC-037 gates the Cash
+ * workspace on the seeded `cash` feature code, so each entry declares its
+ * requirement and the shell hides it when it knows the tenant lacks the
+ * capability.
  */
 export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/customers", label: "Customers" },
@@ -30,6 +32,7 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/suppliers", label: "Suppliers" },
   { href: "/app/purchases", label: "Purchases" },
   { href: "/app/sales", label: "POS", requiredFeature: "sales" },
+  { href: "/app/cash", label: "Cash", requiredFeature: "cash" },
   { href: "/app/agenda", label: "Agenda" },
 ];
 
@@ -81,10 +84,11 @@ interface NavSidebarProps {
  * Plain `<aside>` composition per design D8; entries are semantic links or
  * inert buttons styled exclusively with semantic tokens. Customers (EPIC-04),
  * Patients (EPIC-05), Catalog (EPIC-09), Suppliers and Purchases (EPIC-11), the
- * POS (EPIC-12) and Agenda (EPIC-07) are real `next/link` destinations declared
- * with no client-side permission gate, because the API is the only authorization
- * authority and answers `403` on its own. The POS entry additionally declares its
- * `sales` capability so the shell can hide it when it knows the tenant lacks it.
+ * POS (EPIC-12), Cash (EPIC-13) and Agenda (EPIC-07) are real `next/link`
+ * destinations declared with no client-side permission gate, because the API is
+ * the only authorization authority and answers `403` on its own. The POS and
+ * Cash entries additionally declare their `sales`/`cash` capability so the shell
+ * can hide them when it knows the tenant lacks them.
  */
 export function NavSidebar({ entitlements }: NavSidebarProps = {}): JSX.Element {
   return (

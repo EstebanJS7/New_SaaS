@@ -43,6 +43,22 @@ export interface CashSessionRow {
   openedAt: Date;
   openedByMembershipId: string;
   openingAmount: Prisma.Decimal | string;
+  /**
+   * Server-computed expected amount, written ONLY by the close command and
+   * `null` while the session is `OPEN` (DEC-031). Exact `Decimal(14, 2)`.
+   */
+  expectedAmount: Prisma.Decimal | string | null;
+  /**
+   * Operator-counted amount, written ONLY by the close command and `null`
+   * while the session is `OPEN` (DEC-031). Exact `Decimal(14, 2)`.
+   */
+  countedAmount: Prisma.Decimal | string | null;
+  /**
+   * `countedAmount - expectedAmount`, written ONLY by the close command and
+   * `null` while the session is `OPEN` (DEC-031). Exact `Decimal(14, 2)` and
+   * legitimately NEGATIVE when the drawer is short.
+   */
+  differenceAmount: Prisma.Decimal | string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -73,6 +89,16 @@ export interface CashSessionCreateData {
 /** Supported read filters for {@link CashRepository.listSessions}. */
 export interface CashSessionListFilters {
   status?: CashSessionStatusValue;
+}
+
+/**
+ * Supported read filters for {@link CashRepository.listMovements}. The optional
+ * `sessionId` narrows the ledger to ONE session; there is deliberately no
+ * status, type or date filter, so the movement list stays the smallest read the
+ * staff surface needs (EPIC-13 CASH-004).
+ */
+export interface CashMovementListFilters {
+  sessionId?: string;
 }
 
 /** Predicate fields the tenant-scoped register queries are allowed to build. */
@@ -112,9 +138,34 @@ export interface CashRegisterDelegate {
 }
 
 /**
+ * The three close-result amounts written by {@link CashRepository.close}, all
+ * already exact fixed-scale strings computed by the expected-amount helper.
+ * There is deliberately NO `status` field: the transition to `CLOSED` is owned
+ * by the close method, so a caller cannot write the amounts without closing.
+ */
+export interface CashSessionCloseData {
+  readonly expectedAmount: string;
+  readonly countedAmount: string;
+  readonly differenceAmount: string;
+}
+
+/**
+ * Raw-SQL seam for the transaction-scoped cash session row lock. Declared
+ * structurally (the sale/purchase raw-seam convention) so the generated client
+ * and the shared in-memory boundary both satisfy it. The in-memory boundary
+ * models `SELECT ... FOR UPDATE` as a plain read because a synchronous map
+ * cannot interleave, so the real serialization proof stays live-PostgreSQL-owned.
+ */
+export interface CashRawClient {
+  $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>;
+}
+
+/**
  * Structural contract for the session delegate. The generated client and the
  * in-memory test fake both satisfy it. There is deliberately NO delete and NO
- * status update: a session is a confirmed record and close is EPIC-13 surface.
+ * unconditional status update: a session is a confirmed record, and its ONLY
+ * status transition is the conditional `OPEN` -> `CLOSED` write of
+ * {@link CashRepository.close}, which requires the stored status to be `OPEN`.
  */
 export interface CashSessionDelegate {
   findFirst: (args: { where: CashSessionWhere }) => Promise<CashSessionRow | null>;
@@ -125,6 +176,14 @@ export interface CashSessionDelegate {
   create: (args: {
     data: CashSessionCreateData & { tenantId: string; status: CashSessionStatusValue };
   }) => Promise<CashSessionRow>;
+  /**
+   * Conditional close write: `where` carries the STORED `status` (`OPEN`), so a
+   * lost race matches zero rows and the caller maps it to the stable `409`.
+   */
+  updateMany: (args: {
+    where: CashSessionWhere;
+    data: CashSessionCloseData & { status: CashSessionStatusValue };
+  }) => Promise<{ count: number }>;
 }
 
 /**
@@ -141,20 +200,33 @@ export interface CashMembershipLookup {
 
 /**
  * Cash movement kind values pinned by schema enum `cash_movement_type`. EPIC-12
- * POS-002 ships the standalone `SALE`; EPIC-13 appends the six remaining PRD §20
- * kinds additively (DEC-020). Kept as a local literal union so this boundary
- * stays decoupled from the generated client namespace.
+ * POS-002 ships the standalone `SALE`; EPIC-13 CASH-002 appends the six
+ * remaining PRD §20 kinds the standalone command can create (DEC-020). Kept as
+ * a local literal union so this boundary stays decoupled from the generated
+ * client namespace.
  */
-export type CashMovementTypeValue = "SALE";
+export type CashMovementTypeValue =
+  "SALE" | "REFUND" | "INCOME" | "EXPENSE" | "WITHDRAWAL" | "DEPOSIT" | "ADJUSTMENT";
+
+/**
+ * Explicit sign of an `ADJUSTMENT` pinned by schema enum
+ * `cash_movement_direction` (DEC-030). Required exactly for `ADJUSTMENT` and
+ * `null` for every type-owned kind, a rule the migration's exclusive
+ * `cash_movement_direction_required` CHECK enforces.
+ */
+export type CashMovementDirectionValue = "INCREASE" | "DECREASE";
 
 /**
  * Immutable cash movement row (PRD §20, DEC-020). `amount` is an exact
  * `Decimal(14, 2)` — `Prisma.Decimal` at runtime, a plain exact string in the
- * in-memory fake — and is NEVER coerced to a JavaScript float. The `reason` is
- * optional free text; the `SALE` kind is self-describing and ships none.
- * Nothing in POS-002 writes one: POS-003 appends the `SALE` movement inside the
- * CompleteSale transaction. There is deliberately no `updatedAt` — the row is
- * append-only by design.
+ * in-memory fake — and is NEVER coerced to a JavaScript float; it stays
+ * POSITIVE for every kind because the type owns the sign (DEC-030). The
+ * `reason` is optional free text (`SALE` and `INCOME` may omit it; every other
+ * kind requires it per DEC-032). `direction` is non-null exactly for an
+ * `ADJUSTMENT`. Nothing in POS-002 writes one: POS-003 appends the `SALE`
+ * movement inside the CompleteSale transaction and CASH-002 appends the six
+ * standalone kinds through {@link CashRepository.createMovement}. There is
+ * deliberately no `updatedAt` — the row is append-only by design.
  */
 export interface CashMovementRow {
   id: string;
@@ -162,6 +234,7 @@ export interface CashMovementRow {
   registerId: string;
   sessionId: string;
   type: CashMovementTypeValue;
+  direction: CashMovementDirectionValue | null;
   amount: Prisma.Decimal | string;
   reason: string | null;
   createdAt: Date;
@@ -172,23 +245,63 @@ export interface CashMovementRow {
  * deliberately NO `tenantId` and NO `type` field: tenant identity comes from the
  * request context and the kind is owned by the command (`SALE`), not by a
  * caller argument. The session and register are the server-resolved pair.
+ * `reason` and `direction` are optional here and default to `null` on the row.
  */
 export interface CashMovementCreateData {
   readonly registerId: string;
   readonly sessionId: string;
   readonly amount: Prisma.Decimal | string;
+  readonly reason?: string | null;
+  readonly direction?: CashMovementDirectionValue | null;
+}
+
+/**
+ * Write payload for {@link CashRepository.createMovement}, the EPIC-13 CASH-002
+ * standalone command. There is deliberately NO `tenantId` field (resolved from
+ * the request context): the kind, the amount, the required/optional reason and
+ * the `ADJUSTMENT`-only direction are all already validated by the request
+ * contract before they reach this seam. The register and session are the
+ * server-resolved in-tenant pair, so a caller argument cannot re-scope them.
+ */
+export interface StandaloneCashMovementCreateData {
+  readonly registerId: string;
+  readonly sessionId: string;
+  readonly type: CashMovementTypeValue;
+  readonly amount: Prisma.Decimal | string;
+  readonly reason: string | null;
+  readonly direction: CashMovementDirectionValue | null;
+  /** Deterministic id derived from the caller's `Idempotency-Key` (DEC-024), so
+   * the PRIMARY KEY is the idempotency guarantee. */
+  readonly id: string;
 }
 
 /**
  * Structural contract for the movement delegate. `create` is the ONLY mutation
  * this boundary exposes: a movement is append-only and immutable (no update, no
- * delete), matching the schema's immutability triggers. EPIC-12 writes no row
- * through it; POS-003 appends the `SALE` movement inside its transaction.
+ * delete), matching the schema's immutability triggers. POS-003 appends the
+ * `SALE` movement inside its transaction and CASH-002 appends the six standalone
+ * kinds through {@link CashRepository.createMovement}.
  */
 export interface CashMovementDelegate {
   create: (args: {
-    data: CashMovementCreateData & { tenantId: string; type: CashMovementTypeValue };
+    data: CashMovementCreateData & {
+      tenantId: string;
+      type: CashMovementTypeValue;
+      id?: string;
+    };
   }) => Promise<CashMovementRow>;
+  findUnique: (args: { where: { id: string } }) => Promise<CashMovementRow | null>;
+  /**
+   * The immutable movements of the caller's tenant, in stable order. The close
+   * command reads ONE session's ledger to compute the expected amount over the
+   * frozen ledger (DEC-030/DEC-035), and the EPIC-13 CASH-004 read lists the
+   * tenant's whole ledger with an optional `sessionId` narrowing; nothing
+   * mutates a row.
+   */
+  findMany: (args: {
+    where: { tenantId: string; sessionId?: string };
+    orderBy?: readonly CashOrderBy[];
+  }) => Promise<CashMovementRow[]>;
 }
 
 /**
@@ -196,7 +309,7 @@ export interface CashMovementDelegate {
  * seam: the audited service passes its open transaction handle here so the cash
  * change and its audit row co-commit.
  */
-export interface CashTx {
+export interface CashTx extends CashRawClient {
   cashRegister: CashRegisterDelegate;
   cashSession: CashSessionDelegate;
   cashMovement: CashMovementDelegate;
@@ -252,11 +365,13 @@ export const CASH_MEMBERSHIP_NOT_RESOLVED_MESSAGE =
  * the request context, so `opened_by_membership_id` can never be supplied by a
  * caller.
  *
- * There is deliberately NO delete method and no status update anywhere on this
- * repository: a session close is EPIC-13 surface. The one movement write is
- * {@link createSaleMovement}, the append-only `SALE` row POS-003 co-commits
- * inside the CompleteSale transaction; EPIC-13 owns the six remaining kinds.
- * No method takes a caller-supplied tenant id.
+ * There is deliberately NO delete method and no UNCONDITIONAL status update
+ * anywhere on this repository: a session close is the single explicit,
+ * conditional `OPEN` -> `CLOSED` transition of {@link close}. The movement
+ * writes are {@link createSaleMovement} (the append-only `SALE` row POS-003
+ * co-commits inside the CompleteSale transaction) and {@link createMovement}
+ * (the six standalone kinds CASH-002 co-commits with its audit row). No method
+ * takes a caller-supplied tenant id.
  */
 @Injectable()
 export class CashRepository {
@@ -372,6 +487,108 @@ export class CashRepository {
   }
 
   /**
+   * Row-locks one session of the caller's active tenant, identified by the
+   * `(tenant_id, id)` pair, for the rest of the caller's open transaction
+   * (DEC-035).
+   *
+   * This is the PRIMARY serialization of the close command: the transaction
+   * takes the session lock BEFORE its post-lock status read, so two concurrent
+   * closes of the SAME session serialize here — the loser blocks on this row
+   * lock and its post-lock read then sees the winner's committed `CLOSED` — and
+   * it is the same lock the migration's movement-insert trigger takes, so a
+   * movement writer cannot interleave with a close (DEC-035). The lock is
+   * transaction-scoped, so a rolled-back command leaves nothing locked.
+   *
+   * A zero-row match (unknown or foreign id, which by construction takes no
+   * lock) is not an error here: the caller's subsequent tenant-scoped read is
+   * what renders the shared byte-equivalent `404`. The in-memory boundary models
+   * this as a plain read; the real interleaving is proven by the live-PostgreSQL
+   * evidence owned by the next slice.
+   */
+  async lockById(id: string, tx?: CashTx): Promise<void> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    // Explicit `::uuid` casts (the sale/purchase row-lock precedent): Prisma
+    // binds template values as `text`, so comparing them directly against the
+    // `uuid` columns fails with `42883: operator does not exist: uuid = text`.
+    await client.$queryRaw`
+      SELECT "id" FROM "cash_session"
+      WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid
+      FOR UPDATE
+    `;
+  }
+
+  /**
+   * The caller's active-tenant movements, newest first with the same `id`
+   * tiebreaker as the register and session lists. The optional `sessionId`
+   * filter is applied on top of the implicit tenant predicate, so a FOREIGN
+   * session id can only ever narrow the result to nothing; it can never widen it
+   * past the tenant. An omitted filter adds NO predicate.
+   *
+   * This is the movement list read of EPIC-13 CASH-004. It is a pure read: no
+   * audit row is appended and no row is mutated.
+   */
+  async listMovements(
+    filters: CashMovementListFilters = {},
+    tx?: CashTx
+  ): Promise<CashMovementRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashMovement.findMany({
+      where: {
+        tenantId,
+        ...(filters.sessionId !== undefined ? { sessionId: filters.sessionId } : {}),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    });
+  }
+
+  /**
+   * The immutable movements of ONE session in the CALLER'S active tenant, in
+   * stable chronological order with the `id` tiebreaker. The tenant predicate
+   * rides along in the same WHERE clause, so a close can only ever compute the
+   * expected amount over movements of the session its own tenant just resolved.
+   * A session with zero movements returns an empty array — a valid close input
+   * (DEC-036).
+   */
+  async listSessionMovements(sessionId: string, tx?: CashTx): Promise<CashMovementRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashMovement.findMany({
+      where: { tenantId, sessionId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+  }
+
+  /**
+   * Applies the conditional `OPEN` -> `CLOSED` transition of one session of the
+   * caller's active tenant, writing the three server-derived close amounts.
+   *
+   * This write is the BACKSTOP of the close serialization, not its primary
+   * mechanism: {@link lockById}'s row lock is what makes a concurrent second
+   * close observe the committed status. The write is still conditional on the
+   * STORED status being `OPEN`, so if that status were ever not `OPEN` the
+   * statement affects zero rows and returns `false`, which the service maps to
+   * the same stable `409 CONFLICT` as any other non-`OPEN` session. `CLOSED` is
+   * the ONLY status this method can produce and the close amounts are written
+   * exactly once, in the same statement.
+   */
+  async close(id: string, amounts: CashSessionCloseData, tx?: CashTx): Promise<boolean> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const result = await client.cashSession.updateMany({
+      where: { id, tenantId, status: "OPEN" },
+      data: {
+        status: "CLOSED",
+        expectedAmount: amounts.expectedAmount,
+        countedAmount: amounts.countedAmount,
+        differenceAmount: amounts.differenceAmount,
+      },
+    });
+    return result.count > 0;
+  }
+
+  /**
    * Resolves the CALLER'S OWN active-tenant membership id for
    * `opened_by_membership_id`. Both the tenant and the profile come from the
    * request context — never from the body — and the lookup requires the
@@ -445,5 +662,44 @@ export class CashRepository {
         tenantId,
       },
     });
+  }
+
+  /**
+   * Appends one immutable standalone cash movement in the CALLER'S active tenant
+   * (EPIC-13 CASH-002). `tenantId` is resolved from the request context and
+   * placed LAST in the payload, so even a rogue property on `data` cannot
+   * re-scope the insert. The kind, the amount, the reason and the
+   * `ADJUSTMENT`-only direction are the already-validated command values; the
+   * register and session are the server-resolved in-tenant pair, so a caller
+   * argument can neither re-scope nor smuggle a different drawer. The database's
+   * reason CHECK and exclusive `direction` CHECK remain the backstops.
+   */
+  async createMovement(
+    data: StandaloneCashMovementCreateData,
+    tx?: CashTx
+  ): Promise<CashMovementRow> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashMovement.create({
+      data: {
+        id: data.id,
+        registerId: data.registerId,
+        sessionId: data.sessionId,
+        type: data.type,
+        amount: data.amount,
+        reason: data.reason,
+        direction: data.direction,
+        tenantId,
+      },
+    });
+  }
+
+  /** One movement of the caller's ACTIVE tenant by id (DEC-024 replay path), or
+   * `null`; another tenant's id is never readable. */
+  async findMovementById(id: string, tx?: CashTx): Promise<CashMovementRow | null> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const row = await client.cashMovement.findUnique({ where: { id } });
+    return row !== null && row.tenantId === tenantId ? row : null;
   }
 }
