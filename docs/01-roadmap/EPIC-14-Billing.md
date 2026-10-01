@@ -121,7 +121,12 @@ implemented EPIC-14 behavior.
   `... WHERE status <> 'CANCELLED'` ([[DEC-038]]). `lint` was missing from the
   W3 gate list and caught one `no-unsafe-assignment` in the new probe, fixed in
   `cccb71d` with the repository's existing `toBeInstanceOf(Date)` pattern. The
-  Story stays `review`, not `done`, until a CI receipt exists.
+  Story stays `review`, not `done`, until a CI receipt exists. The RDD native
+  review of the slice is closed, approved and acknowledged: lineage
+  `review-b65dbcee62dc6d5b` raised one BLOCKER twice from independent lenses —
+  the header guard made `CONFIRMED -> CANCELLED` impossible — fixed in `e5d8848`
+  with a 195-line correction against a budget of 200 and a two-sided live
+  regression probe, then validated and approved.
 
 ## Scope
 

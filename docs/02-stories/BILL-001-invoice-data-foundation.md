@@ -226,18 +226,18 @@ no existing migration and alters no existing table.
 - Permission seed catalog — the four `billing.*` keys and their role-matrix
   rows.
 
-| Guarantee                   | Implemented shape                                                                                        |
-| --------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Tenant scope                | RESTRICT tenant FKs and `@@unique([tenantId, id])` ownership keys                                        |
-| One invoice per sale        | PARTIAL `UNIQUE (tenant_id, sale_id) WHERE status <> 'CANCELLED'`; a cancelled invoice releases its sale |
-| Number only when issued     | `series` NOT NULL defaulted to `'A'`; `number` present exactly when `confirmed_at` is                    |
-| Number uniqueness           | `UNIQUE (tenant_id, series, number)`                                                                     |
-| Positive number             | CHECK `number > 0`                                                                                       |
-| Immutable issued invoice    | Trigger rejecting UPDATE and DELETE of a non-`DRAFT` invoice                                             |
-| Immutable snapshot amounts  | Trigger rejecting any UPDATE of an `InvoiceLine` amount                                                  |
-| Number is never reallocated | Trigger rejecting an UPDATE of an allocated `number`                                                     |
-| Sequence ownership          | `UNIQUE (tenant_id, series)` with a non-negative `next_value`                                            |
-| Money precision             | NUMERIC amounts, never a float, gated by the conventions test                                            |
+| Guarantee                   | Implemented shape                                                                                               |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Tenant scope                | RESTRICT tenant FKs and `@@unique([tenantId, id])` ownership keys                                               |
+| One invoice per sale        | PARTIAL `UNIQUE (tenant_id, sale_id) WHERE status <> 'CANCELLED'`; a cancelled invoice releases its sale        |
+| Number only when issued     | `series` NOT NULL defaulted to `'A'`; `number` present exactly when `confirmed_at` is                           |
+| Number uniqueness           | `UNIQUE (tenant_id, series, number)`                                                                            |
+| Positive number             | CHECK `number > 0`                                                                                              |
+| Immutable issued invoice    | Trigger rejecting every DELETE of a non-`DRAFT` invoice and every UPDATE except the three permitted transitions |
+| Immutable snapshot amounts  | Trigger rejecting any UPDATE of an `InvoiceLine` amount                                                         |
+| Number is never reallocated | Trigger rejecting an UPDATE of an allocated `number`                                                            |
+| Sequence ownership          | `UNIQUE (tenant_id, series)` with a non-negative `next_value`                                                   |
+| Money precision             | NUMERIC amounts, never a float, gated by the conventions test                                                   |
 
 ## UI
 
@@ -372,14 +372,21 @@ its rows were not touched, matching the fresh-database condition CI uses.
   decision rather than a reinterpretation during implementation. [[DEC-038]] and
   [[DEC-039]] each carry a `## Subsequent scope note` recording the two
   clarifications this slice had to make.
-- `invoice_number_never_reallocated` is **defence in depth, not the load-bearing
-  guard**: for a non-`DRAFT` row the alphabetically earlier
-  `invoice_no_update_when_not_draft` trigger raises first, and on a `DRAFT` row
-  `number` must be NULL by `invoice_number_iff_confirmed`, so the reallocation
-  trigger cannot be reached through normal DML. Its live probe isolates it by
-  disabling the shadowing trigger inside the same rolled-back transaction after
-  asserting `tgenabled = 'D'`. The number guarantee rests primarily on the
-  header immutability trigger plus the biconditional CHECK.
+- `invoice_number_never_reallocated` is a **live guard on the cancellation
+  path**, not merely defence in depth: the header guard inspects only the status
+  transition, so an update that takes a `CONFIRMED` invoice to `CANCELLED` while
+  also rewriting `number` is admitted by the header guard and rejected by this
+  one. On the other permitted transitions the number is either NULL
+  (`DRAFT -> CONFIRMED`) or unchanged. Its live probe isolates it by disabling
+  the header trigger inside the same rolled-back transaction after asserting
+  `tgenabled = 'D'`, because on a `CONFIRMED -> CONFIRMED` update the header
+  trigger raises first.
+- The header guard inspects the **status transition only**: it constrains which
+  transitions are legal, not which other columns may change during one. `number`
+  is protected by the reallocation trigger, while `currency` and `confirmed_at`
+  are protected only because the sole writer sets neither. The DB-level
+  tightening is recorded as [[TD-023]] instead of being folded into this slice,
+  which the native review had already approved and closed.
 - `db:live-verify` is not idempotent, so the recorded run used the throwaway
   database `newsaas_verify_epic14_bill001` rather than the development database.
 - The live-PostgreSQL suite requires a schema-less `DATABASE_URL`, and
@@ -414,12 +421,11 @@ its rows were not touched, matching the fresh-database condition CI uses.
 - [[TD-022]] tracks the still-deferred portal invoice and document surface; it
   was created during the EPIC-14 kickoff and is kept current by [[BILL-005]]
   ([[DEC-044]]).
-- No new technical debt was created by this slice. The shadowed
-  `invoice_number_never_reallocated` trigger is defence in depth rather than
-  debt: the number guarantee is already carried by
-  `invoice_no_update_when_not_draft` plus `invoice_number_iff_confirmed`, and
-  the extra trigger keeps a future schema change from silently opening a
-  reallocation path.
+- [[TD-023]] records the one gap this slice leaves: because the header guard
+  inspects the status transition only, `currency` and `confirmed_at` are not
+  DB-enforced as immutable during an allowed transition. `number` is guarded by
+  `invoice_number_never_reallocated`, which is a live guard and not debt.
+- No other technical debt was created by this slice.
 - If a later slice ships a shortcut it must create a debt record rather than
   hide it.
 
@@ -473,12 +479,25 @@ receipt does not exist yet.
 What remains before `done`:
 
 - a CI run of the merged work units that reproduces the recorded gates;
-- `pnpm lint` over the merged work units, which this slice did not run;
+- `pnpm lint` over the merged work units: it ran locally at 14/14 tasks and
+  caught one `no-unsafe-assignment` in the new probe, fixed in `cccb71d`. The CI
+  receipt is what is still missing;
 - [[BILL-002]] and [[BILL-003]], which own the creation/read routes, the
   `requireCustomerForInvoice` gate, the confirm and cancel commands, number
   allocation and route-level authorization and audit;
 - [[BILL-005]], which reconciles the epic's closure counters, including the new
   `28 migrations`, `56 permissions` and `134` live-PostgreSQL cases, and creates
   `docs/05-modules/Billing.md` from CI receipts.
+
+The RDD native review of this slice is **closed, approved and acknowledged**.
+Lineage `review-b65dbcee62dc6d5b` covered the committed range `da7919b..e5d8848`
+(12 paths, 3200 changed lines, high tier, four lenses) and raised one BLOCKER
+twice, from two independent lenses: the header guard made
+`CONFIRMED -> CANCELLED` impossible. The fix was submitted as a 195-line
+correction plan against a budget of 200, validated by the targeted validator,
+approved and acknowledged with burn evidence `gentle-ai.review-acknowledged/v1`.
+Four non-blocking readability advisories (`R2-001`..`R2-004`) were recorded; all
+four were stale claims left behind by the correction and the lint fix and are
+reconciled in the same commit that records this outcome.
 
 The Story may not be marked `done` while any required gate is unverified.

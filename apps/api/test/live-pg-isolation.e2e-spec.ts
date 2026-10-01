@@ -12541,10 +12541,11 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
    * constraints by their stored definitions, the PARTIAL live-invoice unique
    * index and the plain allocation key, the eight composite RESTRICT foreign
    * keys, and the five immutability triggers with their timing and their
-   * conditional predicates; then the behaviour those constraints carry — the
-   * numbering biconditional, the cancelled-invoice requirements, a cancellation
-   * releasing its sale for a corrected replacement, the CONDITIONAL header
-   * trigger that still admits `DRAFT -> CONFIRMED`, the unconditional line
+   * status-transition predicates; then the behaviour those constraints carry —
+   * the numbering biconditional, the cancelled-invoice requirements, a
+   * cancellation releasing its sale for a corrected replacement, the header
+   * trigger whose allow-list admits exactly `DRAFT -> CONFIRMED`,
+   * `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED`, the unconditional line
    * snapshot triggers, and the single-statement counter allocation.
    *
    * Every raw mutation runs inside an interactive transaction that is ALWAYS

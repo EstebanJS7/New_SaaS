@@ -174,13 +174,13 @@ as subsequent scope notes on the accepted records, not applied silently:
   pass. This matches the EPIC-13 note and belongs to [[TD-021]].
 - Finding worth recording: `invoice_number_never_reallocated` is **defence in
   depth, not the load-bearing guard**. For a non-`DRAFT` row the alphabetically
-  earlier `invoice_no_update_when_not_draft` trigger raises first, and on a
-  `DRAFT` row `number` must be NULL by `invoice_number_iff_confirmed`, so the
-  reallocation trigger cannot be reached through normal DML. Its probe therefore
-  disables the shadowing trigger inside a rolled-back transaction to isolate it,
-  and asserts `tgenabled = 'D'` first so the isolation is proven rather than
-  assumed. The number guarantee rests primarily on the header immutability
-  trigger plus the biconditional CHECK.
+  earlier `invoice_no_update_unless_permitted_transition` trigger raises first,
+  and on a `DRAFT` row `number` must be NULL by `invoice_number_iff_confirmed`,
+  so the reallocation trigger cannot be reached through normal DML. Its probe
+  therefore disables the shadowing trigger inside a rolled-back transaction to
+  isolate it, and asserts `tgenabled = 'D'` first so the isolation is proven
+  rather than assumed. The number guarantee rests primarily on the header
+  immutability trigger plus the biconditional CHECK.
 - Documentation counter to reconcile at closure: the last recorded live-PG
   baseline in the docs is `119`, while the suite reports `120` before this slice
   and `134` after it. The delta is exactly the 14 new tests; the stale baseline
@@ -195,6 +195,39 @@ as subsequent scope notes on the accepted records, not applied silently:
   commit. `pnpm lint` is green at 14/14 tasks, and the W4 gate list now carries
   it explicitly. Lesson recorded: lint belongs in every work unit that touches a
   linted path, not only in the slice's final sweep.
+
+### BILL-001 — RDD native review outcome (closed, approved)
+
+- Lineage `review-b65dbcee62dc6d5b`, target `sha256:423807f0…` for the initial
+  candidate and `sha256:6e486a1a…` after the correction; committed range
+  `da7919b..e5d8848`, 12 paths, 3200 changed lines, high tier, four lenses
+  (`review-risk`, `review-resilience`, `review-readability`,
+  `review-reliability`), correction budget 200.
+- The review raised one BLOCKER twice, independently:
+  `R3-CONFIRMED-CANCELLATION` (reliability) and `R4-001` (resilience). The
+  header `BEFORE UPDATE` guard rejected every update whose OLD status was not
+  `DRAFT`, so a `CONFIRMED` invoice could never become `CANCELLED`, against
+  [[DEC-043]] and against this migration's own comments. **Every local gate was
+  green**, because the schema test and the live probe encoded the same wrong
+  assumption as the trigger.
+- Correction: `e5d8848`, 195 diff lines (145 added, 50 deleted), submitted as an
+  exact correction plan and accepted as candidate tree `02ed9c43…`. The guard is
+  now `invoice_no_update_unless_permitted_transition` with an exhaustive
+  allow-list, plus a two-sided live regression probe.
+- Outcome: the targeted validator ran on the corrected candidate, the review
+  closed `approved` on its last admitted event, and the acknowledgement burned
+  the authority with `burn_evidence: gentle-ai.review-acknowledged/v1`.
+  `delivery: ordinary-repository-policy` — the review never authorizes delivery.
+- Four non-blocking readability advisories (`R2-001`..`R2-004`, one WARNING and
+  three SUGGESTIONs) were recorded as informational only. All four were stale
+  claims left by the correction and the lint fix (a criterion still stating the
+  imprecise number rule, a bullet still claiming lint was not run, and two block
+  comment phrases describing the old trigger) and are fixed in this commit.
+- Operative lesson recorded for the epic: the review caught a semantic
+  cancellation-path blocker that lint, typecheck and both database suites could
+  not see, because the tests mirrored the defect. Keep the review in the loop
+  for every slice that writes a state machine, and never treat green gates as
+  evidence that a transition is reachable.
 
 ## Evidence
 
@@ -218,7 +251,8 @@ as subsequent scope notes on the accepted records, not applied silently:
   `invoice_line_tax_amount_non_negative`, `invoice_line_position_non_negative`,
   `invoice_line_description_not_blank`,
   `invoice_number_sequence_next_value_positive`; triggers
-  `invoice_no_delete_when_not_draft`, `invoice_no_update_when_not_draft`,
+  `invoice_no_delete_when_not_draft`,
+  `invoice_no_update_unless_permitted_transition`,
   `invoice_number_never_reallocated`, `invoice_line_no_update`,
   `invoice_line_no_delete`; partial index `invoice_tenant_id_sale_id_key`
   (`... WHERE "status" <> 'CANCELLED'`).
