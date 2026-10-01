@@ -40,11 +40,27 @@ planned CASH stories before any implementation.
       idempotency, so a retry could double-count cash. It now requires the
       `Idempotency-Key` and derives a deterministic movement id, inside the
       frozen 200-line correction budget.
-- [ ] CASH-003 W1: the expected-amount helper and the
-      `POST /cash/sessions/:id/close` command (row lock, OPEN gate, conditional
-      write, audit).
-- [ ] CASH-003 W2: durable live-PostgreSQL coverage for close.
-- [ ] CASH-003 W3: reconcile docs, run checks and run the native review.
+- [x] CASH-003 W1: the expected-amount helper (`cash.expected-amount.ts`) and
+      the `POST /cash/sessions/:id/close` command (row lock, OPEN gate,
+      conditional write, audit).
+- [x] CASH-003 W2: durable live-PostgreSQL coverage for close.
+- [x] CASH-003 W3: reconcile docs, run checks and run the native review
+      (`review-24ef69934fe4e591`, approved on the first pass).
+- [x] CASH-004 W1: `GET /cash/movements` (`9796aa2`).
+- [x] CASH-004 W2: the proxy extension and the Cash client move (`f81cf5b`).
+- [x] CASH-004 W3: the staff Cash pages, their states and the navigation entry
+      (`2b0e3e9`).
+- [ ] CASH-004 W4/W5 (RESUME HERE): the native review refused the whole CASH-004
+      range with `lens_context_budget_exceeded` (about 4.8k changed lines), so
+      it is being reviewed as three CHAINED candidates, each in its own detached
+      worktree and without rewriting history: A `9796aa2` the movement read, 337
+      lines, worktree `/tmp/cash-review-a`; B `f81cf5b` the proxy plus the
+      client move, 788 lines; C `2b0e3e9..HEAD` the pages, navigation and docs,
+      3638 lines. State: A's lineage `review-eb52f160ccb3d48e` ran its four
+      lenses and returned `correction_required`; the correction request has NOT
+      been read or applied yet. B and C have no lineage yet. Candidate C may
+      itself exceed the reviewer budget and would then need the pages commit
+      split further.
 
 ## Evidence
 
@@ -104,6 +120,10 @@ planned CASH stories before any implementation.
   insert helper in the live spec, the reused opening-amount pattern name in the
   close body, and the deliberate non-idempotent retry semantics the DEC-036
   terminal state requires.
+- CASH-004 review split (2026-09-30): the provider refused the single-candidate
+  review with `lens_context_budget_exceeded` and instructed smaller chained
+  candidates. The split is non-destructive: the commits and the branch are
+  unchanged, and only a detached worktree at each intermediate commit is added.
 - CASH-004 verification: web suite 81 files / 939 tests; API suite 76 files /
   1107 tests; API live suite 119 tests; typecheck, lint, build, format-check and
   `git diff --check` green after fixing one lint error in the movement panel.
