@@ -312,7 +312,7 @@ BILL-001 closed.
 
 - [x] W1 — in-memory test boundary: the three invoice tables (delegates,
       registration, snapshot) so a Billing integration suite can run.
-- [ ] W2 — the billing module creation path: `POST /invoices`, the verbatim
+- [x] W2 — the billing module creation path: `POST /invoices`, the verbatim
       snapshot copy, the settings gate, the audit row and the stable errors,
       with the route pin and the integration suite.
 - [ ] W3 — the reads: `GET /invoices` and `GET /invoices/:id`, their pins, the
@@ -357,6 +357,52 @@ BILL-001 closed.
   proportionate; keep test-infrastructure changes as their own candidate instead
   of burying them inside a feature commit, or the reliability lens never sees
   them.
+
+### BILL-002 W2 — invoice creation path
+
+- Created `apps/api/src/billing/`: `billing.permissions.ts` (the frozen four-key
+  family; only `read`/`create` are consumed in this slice), `billing.zod.ts`
+  (`.strict()` body so an unknown key is the stable `400`), `billing.dto.ts` (no
+  `tenantId`, fixed-scale decimal strings), `billing.repository.ts` (`create`,
+  tenant-predicated `findById` with ordered lines, the single-query
+  `readCatalogItemNames`, one `INVOICE_NOT_FOUND_MESSAGE`), `billing.service.ts`
+  (the entitlement and permission gates, one `$transaction`, the verbatim copy,
+  the `P2002` → `409` translation, one co-committed audit row, the projections),
+  `billing.controller.ts` (only `POST /invoices`), `billing.module.ts` and
+  `billing.integration.test.ts` (12 cases). Changed `apps/api/src/app.module.ts`
+  (registration before `PortalModule`), the route-contract probe (the
+  `POST /invoices` inventory entry and its permission pin) and the in-memory
+  fake.
+- Size: 1828 new lines plus 89/15 tracked, about 1932 diff lines, all insertions
+  except the two W1 advisory fixes.
+- Pinned rejection paths: `403 FEATURE_NOT_ENTITLED`, `403 FORBIDDEN` (route
+  guard and the service's defence-in-depth), `404` reusing the shared
+  `SALE_NOT_FOUND_MESSAGE` for a foreign or unknown sale, `409` for a sale that
+  is not `COMPLETED`, for a sale that already has a live invoice (the partial
+  index's `P2002`, matched by index or column shape), for a description over 200
+  characters and for the missing-customer setting gate, and `400` for every
+  invalid body.
+- Audit: `invoice.created`, target type `invoice`, changed-field NAMES only
+  (`saleId`, `customerId`, `currency`, `lines`), co-committed inside the
+  transaction so a rejection leaves no audit row.
+- Projections: `total` and `taxTotal` are summed locally from the invoice's own
+  frozen lines with `Prisma.Decimal`; `apps/api/src/sales/sales.pricing.ts` is
+  not imported.
+- Gates: the focused suite 12 tests; the whole API suite 76 files (1 skipped) /
+  **1000 tests passed** / 135 skipped; `pnpm typecheck` 14/14; `pnpm lint`
+  14/14; `pnpm format-check` clean. The parent re-ran the focused and full
+  suites and prettier, and read the transaction, the copy, the matcher and the
+  projections.
+- Disclosed deviation, accepted: the invoice lines are walked in ascending
+  `catalogItemId` order before `position` is assigned, because
+  `SaleRepository.findById` declares no `orderBy` and an unordered read would
+  make the frozen document layout non-reproducible. The sale model records no
+  explicit line order, so this is a deterministic choice rather than a faithful
+  one; it is recorded as a story limitation in W4.
+- The two W1 advisories are closed against their real consumer: the fake now
+  refuses an unscoped invoice header read loudly instead of answering across
+  tenants, and its partial-unique check considers the incoming row's own status
+  so a `CANCELLED` insert can never collide, which matches PostgreSQL.
 
 ## Evidence
 

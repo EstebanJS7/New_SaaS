@@ -12,6 +12,7 @@ import { SUPPLIERS_PERMISSIONS } from "../suppliers/suppliers.permissions.js";
 import { PURCHASES_PERMISSIONS } from "../purchases/purchases.permissions.js";
 import { SALES_PERMISSIONS } from "../sales/sales.permissions.js";
 import { CASH_PERMISSIONS } from "../cash/cash.permissions.js";
+import { BILLING_PERMISSIONS } from "../billing/billing.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -194,6 +195,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // EPIC-13 CASH-003 — explicit session close command (expected/counted
   // difference + terminal CLOSED; no reopen, no PATCH, no DELETE)
   "POST /cash/sessions/:id/close",
+  // EPIC-14 BILL-002 — the invoice creation command. The two invoice reads are
+  // W3's and are deliberately absent from this slice (no PATCH, no DELETE, no
+  // confirm/cancel route: BILL-003 owns the lifecycle).
+  "POST /invoices",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -402,6 +407,19 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /cash/movements": CASH_PERMISSIONS.read,
   "POST /cash/movements": CASH_PERMISSIONS.createMovement,
   "POST /cash/sessions/:id/close": CASH_PERMISSIONS.closeSession,
+};
+
+/**
+ * EPIC-14 BILL-002 invoice surface. `POST /invoices` MUST declare exactly
+ * `billing.create`; a route decorated with another billing tier (or none) fails
+ * by name, which the permission-less 403 sweep cannot catch. Only the CREATE
+ * entry is listed here: W3 adds the two `GET` entries together with their
+ * routes, and BILL-003's `confirm`/`cancel` keys must never appear until their
+ * commands ship. There is deliberately no `PATCH`, no `DELETE` and no generic
+ * status route: the invoice is immutable from creation (DEC-038, DEC-043).
+ */
+const BILLING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "POST /invoices": BILLING_PERMISSIONS.create,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -652,6 +670,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in CASH_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED CASH ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY billing route to its single intended granular billing.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/invoices"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(BILLING_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING BILLING ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG BILLING PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in BILLING_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED BILLING ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);

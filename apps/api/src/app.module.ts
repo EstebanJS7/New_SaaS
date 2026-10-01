@@ -3,6 +3,7 @@ import { PrismaModule } from "@newsaas/database";
 import { StorageModule } from "@newsaas/storage";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
+import { BillingModule } from "./billing/billing.module.js";
 import { BrandingModule } from "./branding/branding.module.js";
 import { CashModule } from "./cash/cash.module.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
@@ -75,6 +76,12 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // kept after Sales so the dependency direction reads top-down. Registered
     // BEFORE PortalModule, which must stay last.
     CashModule,
+    // EPIC-14 BILL-002 billing: the Core invoice creation surface that turns one
+    // completed sale into one invoice and is the third entitlement-gated Core
+    // surface (DEC-040). It adds no APP_GUARD, so its position is free — kept
+    // after Cash so the dependency direction reads top-down. Registered BEFORE
+    // PortalModule, which must stay last.
+    BillingModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.

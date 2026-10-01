@@ -2236,6 +2236,21 @@ function orderInvoices(
 }
 
 /**
+ * An invoice HEADER read is tenant-scoped BY CONSTRUCTION: the shipped Billing
+ * repository always builds `where.tenantId` from the request context, and the
+ * real delegate would silently return a FOREIGN row for a predicate that omitted
+ * it — exactly the tenant-isolation defect an integration suite must never
+ * mirror. The fake therefore refuses an unscoped header read loudly instead of
+ * answering it (the `$queryRaw` "fails loudly rather than return wrong rows"
+ * precedent).
+ */
+function assertInvoiceTenantScope(where: InvoiceWhere): void {
+  if (where.tenantId === undefined) {
+    throw new Error("invoice header reads require a tenantId predicate (tenant-isolation guard)");
+  }
+}
+
+/**
  * An invoice's related lines by `position` — the document's reading order, not
  * insertion order. The include may request the explicit direction; `true` reads
  * the defined ascending order.
@@ -3409,11 +3424,12 @@ export function createIsolationDatabase(): IsolationDatabase {
     },
     invoice: {
       findFirst: ({ where, include }) => {
+        assertInvoiceTenantScope(where);
         const header =
           [...invoiceTable.values()].find(
             (candidate) =>
               (where.id === undefined || candidate.id === where.id) &&
-              (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+              candidate.tenantId === where.tenantId &&
               (where.status === undefined || candidate.status === where.status)
           ) ?? null;
         if (!header) return null;
@@ -3423,10 +3439,11 @@ export function createIsolationDatabase(): IsolationDatabase {
         };
       },
       findMany: ({ where, include, orderBy }) => {
+        assertInvoiceTenantScope(where);
         const headers = [...invoiceTable.values()].filter(
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
-            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            candidate.tenantId === where.tenantId &&
             (where.status === undefined || candidate.status === where.status)
         );
         const ordered = orderBy === undefined ? headers : orderInvoices(headers, orderBy);
@@ -3436,21 +3453,26 @@ export function createIsolationDatabase(): IsolationDatabase {
         }));
       },
       create: ({ data }) => {
+        const series = data.series ?? "A";
+        const number = data.number ?? null;
+        // Mirrors the schema default so an omitted status still lands DRAFT.
+        const status = data.status ?? "DRAFT";
         // Partial unique index `invoice_tenant_id_sale_id_key`: at most ONE live
-        // (non-CANCELLED) invoice per `(tenant, sale)`. A cancelled invoice falls
-        // outside the index and releases its sale (DEC-043), so it never blocks a
-        // replacement.
-        const liveForSale = [...invoiceTable.values()].some(
-          (candidate) =>
-            candidate.tenantId === data.tenantId &&
-            candidate.saleId === data.saleId &&
-            candidate.status !== "CANCELLED"
-        );
+        // (non-CANCELLED) invoice per `(tenant, sale)`. The index participates on
+        // BOTH sides — an existing CANCELLED row never blocks, and a CANCELLED
+        // row being created can never collide — so a cancelled invoice falls
+        // outside the index and releases its sale (DEC-043).
+        const liveForSale =
+          status !== "CANCELLED" &&
+          [...invoiceTable.values()].some(
+            (candidate) =>
+              candidate.tenantId === data.tenantId &&
+              candidate.saleId === data.saleId &&
+              candidate.status !== "CANCELLED"
+          );
         if (liveForSale) {
           throw uniqueConstraintError("Invoice", "invoice_tenant_id_sale_id_key");
         }
-        const series = data.series ?? "A";
-        const number = data.number ?? null;
         // Allocation key `invoice_tenant_id_series_number_key`: PostgreSQL keeps
         // NULLs distinct, so unnumbered drafts coexist and only a real number
         // collides.
@@ -3485,8 +3507,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           saleId: data.saleId,
           customerId: data.customerId ?? null,
           currency: data.currency,
-          // Mirrors the schema default so an omitted status still lands DRAFT.
-          status: data.status ?? "DRAFT",
+          status,
           series,
           number,
           confirmedAt: data.confirmedAt ?? null,
