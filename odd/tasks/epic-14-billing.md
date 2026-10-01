@@ -270,6 +270,226 @@ as subsequent scope notes on the accepted records, not applied silently:
 - The epic stays `planned`: [[BILL-002]] through [[BILL-005]] remain, and
   [[TD-023]] stays open for BILL-003.
 
+## BILL-002 — invoice creation and read API (work units)
+
+Branch: `feat/epic-14-billing-invoice-api`, cut from `main` at `10ab908` after
+BILL-001 closed.
+
+### Pinned slice contract (parent-owned)
+
+- Routes: `POST /invoices` (`billing.create`), `GET /invoices` and
+  `GET /invoices/:id` (`billing.read`), all behind the `billing` entitlement.
+- **`invoice_line.description` comes from `catalog_item.name`.** The column is a
+  NOT NULL snapshot and `SaleLine` carries no description, so creation reads the
+  catalog name for each copied line, tenant-predicated, in one query.
+- **Length trap and its resolution.** `CatalogItem.name` is an unbounded
+  `String` and `invoice_line.description` is `VarChar(200)`, so a verbatim copy
+  can violate the column. Creation must NOT truncate silently: a line whose
+  description exceeds 200 characters is rejected with a stable domain error. The
+  narrower column is a defect of the BILL-001 data foundation and is recorded as
+  [[TD-024]] for a later corrective migration.
+- **No header totals are stored**; the DTO's `total` and `taxAmount` are
+  projections summed locally from the invoice's own immutable lines with
+  `Prisma.Decimal`, documented as a projection of frozen values. Billing must
+  NOT import `apps/api/src/sales/sales.pricing.ts`.
+- **No activation checks.** Creation requires the sale to be `COMPLETED` and,
+  when `requireCustomerForInvoice` is on, the sale to carry a customer. A
+  customer or catalog item deactivated _after_ the sale must never make a
+  completed sale un-invoiceable.
+- **No pagination.** `GET /invoices` filters by `status` and orders by
+  `createdAt desc, id asc`, matching the shipped sales and cash lists; the
+  unbounded list is recorded as a limitation rather than silently capped.
+- `requireCustomerForInvoice` is read through
+  `TenantSettingsService.get("sales")` and narrowed with a
+  `typeof === "boolean"` defence, mirroring `SalesService.resolveCurrency`.
+- A second invoice for a live sale is the partial unique index's `P2002`,
+  translated to `409` by matching the index shape, following the `CashService`
+  precedent. A cancelled invoice releases its sale.
+- Audit action `invoice.created`, target type `invoice`, changed-field NAMES
+  only.
+
+### Work units
+
+- [x] W1 — in-memory test boundary: the three invoice tables (delegates,
+      registration, snapshot) so a Billing integration suite can run.
+- [x] W2 — the billing module creation path: `POST /invoices`, the verbatim
+      snapshot copy, the settings gate, the audit row and the stable errors,
+      with the route pin and the integration suite.
+- [x] W3 — the reads: `GET /invoices` and `GET /invoices/:id`, their pins, the
+      integration cases and the live-PostgreSQL BILL-002 block.
+- [x] W4 — docs reconciliation: the story record, the epic progress entry, the
+      two stale invariant claims and [[TD-024]].
+
+### BILL-002 W1 — in-memory test boundary
+
+- `apps/api/test/support/in-memory-database.ts` gained the `invoice`,
+  `invoice_line` and `invoice_number_sequence` delegates, their registration and
+  snapshot entries, and the two constraint shapes the integration suite needs
+  (`invoice_tenant_id_sale_id_key` for a second live invoice on one sale, and
+  the allocation key), so a Billing integration suite can boot the real
+  `AppModule` without a database.
+- Insertions only: `442 0` in `git diff --numstat`, file at 4405 lines. No
+  production code changed, and the existing suites prove the change is inert:
+  the focused sales and cash integration suites passed 75 tests, and
+  `pnpm --filter @newsaas/api test` stayed green.
+- Gates: `pnpm lint`, `pnpm typecheck` and `pnpm format-check` green.
+
+### BILL-002 W1 — RDD native review (closed, approved)
+
+- Lineage `review-01c7a12dc4e54144`, candidate range `10ab908..68d1c1c`, 2
+  paths, 506 changed lines, tier **medium**, one lens (`review-reliability`),
+  correction budget 200. The provider derived one lens because the change is
+  test infrastructure, not production behaviour.
+- Outcome: **approved on the first pass**, no correction required; the
+  acknowledgement burned the authority with
+  `burn_evidence: gentle-ai.review-acknowledged/v1`.
+- Two non-blocking advisories, both inside the fake invoice delegates: `R3-1`
+  (WARNING, `in-memory-database.ts:3410`, the `invoice.findFirst` delegate) and
+  `R3-2` (SUGGESTION, `:3443-3451`, the partial-unique enforcement in
+  `invoice.create`). They are scheduled into W2 rather than patched blind: the
+  fake's only real consumer is the Billing repository that W2 writes, so the
+  `include`/`orderBy` fidelity and the constraint shapes can only be _verified_
+  once that caller exists and the integration suite exercises them. Patching a
+  test double from an advisory without its claim text would risk teaching the
+  fake the wrong rule, which is exactly the mirrored-bug failure mode BILL-001
+  already suffered.
+- Operative lesson: a medium-tier candidate gets one lens, so this was fast and
+  proportionate; keep test-infrastructure changes as their own candidate instead
+  of burying them inside a feature commit, or the reliability lens never sees
+  them.
+
+### BILL-002 W2 — invoice creation path
+
+- Created `apps/api/src/billing/`: `billing.permissions.ts` (the frozen four-key
+  family; only `read`/`create` are consumed in this slice), `billing.zod.ts`
+  (`.strict()` body so an unknown key is the stable `400`), `billing.dto.ts` (no
+  `tenantId`, fixed-scale decimal strings), `billing.repository.ts` (`create`,
+  tenant-predicated `findById` with ordered lines, the single-query
+  `readCatalogItemNames`, one `INVOICE_NOT_FOUND_MESSAGE`), `billing.service.ts`
+  (the entitlement and permission gates, one `$transaction`, the verbatim copy,
+  the `P2002` → `409` translation, one co-committed audit row, the projections),
+  `billing.controller.ts` (only `POST /invoices`), `billing.module.ts` and
+  `billing.integration.test.ts` (12 cases). Changed `apps/api/src/app.module.ts`
+  (registration before `PortalModule`), the route-contract probe (the
+  `POST /invoices` inventory entry and its permission pin) and the in-memory
+  fake.
+- Size: 1828 new lines plus 89/15 tracked, about 1932 diff lines, all insertions
+  except the two W1 advisory fixes.
+- Pinned rejection paths: `403 FEATURE_NOT_ENTITLED`, `403 FORBIDDEN` (route
+  guard and the service's defence-in-depth), `404` reusing the shared
+  `SALE_NOT_FOUND_MESSAGE` for a foreign or unknown sale, `409` for a sale that
+  is not `COMPLETED`, for a sale that already has a live invoice (the partial
+  index's `P2002`, matched by index or column shape), for a description over 200
+  characters and for the missing-customer setting gate, and `400` for every
+  invalid body.
+- Audit: `invoice.created`, target type `invoice`, changed-field NAMES only
+  (`saleId`, `customerId`, `currency`, `lines`), co-committed inside the
+  transaction so a rejection leaves no audit row.
+- Projections: `total` and `taxTotal` are summed locally from the invoice's own
+  frozen lines with `Prisma.Decimal`; `apps/api/src/sales/sales.pricing.ts` is
+  not imported.
+- Gates: the focused suite 12 tests; the whole API suite 76 files (1 skipped) /
+  **1000 tests passed** / 135 skipped; `pnpm typecheck` 14/14; `pnpm lint`
+  14/14; `pnpm format-check` clean. The parent re-ran the focused and full
+  suites and prettier, and read the transaction, the copy, the matcher and the
+  projections.
+- Disclosed deviation, accepted: the invoice lines are walked in ascending
+  `catalogItemId` order before `position` is assigned, because
+  `SaleRepository.findById` declares no `orderBy` and an unordered read would
+  make the frozen document layout non-reproducible. The sale model records no
+  explicit line order, so this is a deterministic choice rather than a faithful
+  one; it is recorded as a story limitation in W4.
+- The two W1 advisories are closed against their real consumer: the fake now
+  refuses an unscoped invoice header read loudly instead of answering across
+  tenants, and its partial-unique check considers the incoming row's own status
+  so a `CANCELLED` insert can never collide, which matches PostgreSQL.
+
+### BILL-002 W2 — RDD native review (closed, approved)
+
+- Lineage `review-4fe1a95e416b6b45`, candidate range `fbf8111..d508520`, 12
+  paths, 1980 changed lines, tier medium, one lens (`review-reliability`),
+  correction budget 200. **Approved on the first pass**, no correction; the
+  acknowledgement burned the authority with
+  `burn_evidence: gentle-ai.review-acknowledged/v1`.
+- `R3-ORDERING-TIEBREAK` (WARNING, `billing.service.ts:217-219`) confirmed the
+  deliberate deviation the writer disclosed: the invoice lines are ordered by
+  ascending `catalogItemId`, which is deterministic but arbitrary. The root
+  cause is outside Billing — `sale_line` records no order and `createdAt` is
+  identical for one transaction — so it is recorded as [[TD-025]] with the fix,
+  the backfill decision and the ownership. `invoice_line.position` already
+  exists and is unique per invoice, so only the source order is missing.
+- `R3-SETTINGS-INVALID-UNCOVERED` (SUGGESTION, `billing.service.ts:459-461`):
+  the `typeof !== "boolean"` narrowing is unreachable because
+  `TenantSettingsService.get` validates the stored namespace against its schema
+  before returning, and the same unreachable defence exists in
+  `SalesService.resolveCurrency`. Kept for consistency with that precedent and
+  recorded as a deliberate coverage gap rather than deleted, so the module does
+  not silently diverge from the shipped shape.
+- Both advisories are informational and non-blocking, and both are carried into
+  W4's story record and limitation list.
+
+### BILL-002 W3 — invoice reads and live-PostgreSQL coverage
+
+- `GET /invoices` (optional `status` filter, `createdAt desc, id asc`, no
+  pagination) and `GET /invoices/:id`, both behind `billing.read` plus the
+  `billing` entitlement in the same gate order the create path uses, and both
+  reusing the single `INVOICE_NOT_FOUND_MESSAGE` so the masks are
+  byte-equivalent by construction. The route-contract probe now pins the full
+  read surface, so the three-route family is complete.
+- Size: `1378` added / `24` removed across 7 files, of which 848 insertions are
+  the live-PostgreSQL block.
+- Gates: the billing suite **19 tests**; the API suite **76 files (1 skipped) /
+  1007 tests passed** / 142 skipped; the live-PostgreSQL suite **142 passed**
+  (was 135, so this slice adds 7 route-level cases); `pnpm typecheck` and
+  `pnpm lint` 14/14; `pnpm format-check` clean. The parent reproduced the
+  focused suite and the live-PostgreSQL suite.
+- The live block proves the application paths over real HTTP against the
+  disposable database: creation from a completed sale and the matching read with
+  the copied values and the summed total, the list and the `status` filter in
+  both directions, byte-equivalent `404`s between a foreign and an unknown
+  invoice id and between a foreign and an unknown sale, the stable `409` for a
+  second invoice on one sale, `403 FEATURE_NOT_ENTITLED` in an unentitled
+  tenant, and a no-residue count check after every rejection.
+
+### BILL-002 W3 — RDD native review (closed, approved)
+
+- Lineage `review-d918081c81315de7`, candidate range `f2ce931..41e412b`, 8
+  paths, 1427 changed lines, tier **high**, **four lenses** (`risk`,
+  `resilience`, `readability`, `reliability`) — the tier came from
+  `process_boundary` on the live-PostgreSQL spec, not from the production code.
+  Four reviewers prepared and submitted; **approved**, no correction; the
+  authority is burned with `burn_evidence: gentle-ai.review-acknowledged/v1`.
+- `R4-UNBOUNDED-LIST` (WARNING, `billing.controller.ts:36-41`): the resilience
+  lens flagged the unpaginated list, which was a pinned decision, not an
+  oversight. The pattern is repo-wide — `GET /sales`, `GET /cash/sessions` and
+  `GET /cash/movements` are equally unbounded — so it is recorded as [[TD-026]]
+  with one shared pagination contract to apply to every staff list in a single
+  slice, rather than silently capping one surface and truncating results.
+- Three `readability` and `reliability` suggestions (`billing.zod.ts:57`,
+  `billing.integration.test.ts:677`, `:933-935`, `:1104`) are informational test
+  and schema polish, carried into W4's record.
+- The risk lens returned the smallest review payload of the four (897 bytes)
+  with nothing to report, which is a useful signal that the tenant isolation and
+  the authorization sweeps held.
+
+### BILL-002 W4 — documentation reconciliation
+
+- [[BILL-002]] moved to `review` with its eleven acceptance criteria checked,
+  the two stale domain invariants corrected while checking them (the one-invoice
+  rule is the PARTIAL index, and `series` is NOT NULL defaulted to `'A'` rather
+  than `NULL` while `DRAFT`), and the implementation, verification, tests,
+  limitations, debt, files and completion sections rewritten against what
+  actually shipped.
+- The epic gained the BILL-002 progress entry; the epic's own acceptance block
+  for BILL-002 stays unchecked because [[BILL-005]] reconciles the epic's
+  criteria at closure against CI receipts.
+- Three debt records now carry the slice's advisories: [[TD-024]] (the
+  `VarChar(200)` description versus the unbounded catalog name), [[TD-025]]
+  (sale lines record no order) and [[TD-026]] (every list endpoint is unbounded,
+  with one shared pagination contract as the fix).
+- [[TD-021]] gained a second concrete consequence: the live-PostgreSQL suite
+  needs a schema-less `DATABASE_URL`, not just an exported one.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)

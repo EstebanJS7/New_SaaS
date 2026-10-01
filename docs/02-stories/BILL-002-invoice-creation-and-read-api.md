@@ -3,7 +3,7 @@ id: BILL-002
 type: story
 title: Invoice creation and read API
 epic: EPIC-14
-status: planned
+status: review
 priority: high
 depends_on:
   - BILL-001
@@ -22,7 +22,7 @@ prd_sections:
 permissions:
   - billing.read
   - billing.create
-branch:
+branch: feat/epic-14-billing-invoice-api
 created: 2026-10-01
 updated: 2026-10-01
 ---
@@ -109,36 +109,36 @@ API computes no money and accepts no caller-computed amount.
 
 ## Acceptance Criteria
 
-- [ ] `POST /invoices` creates a `DRAFT` invoice from exactly one `COMPLETED`
+- [x] `POST /invoices` creates a `DRAFT` invoice from exactly one `COMPLETED`
       in-tenant sale behind `billing.create` and the `billing` capability, and
       copies the sale's `SaleLine` snapshot verbatim. Evidence: the integration
       case asserting the copied amounts and the route permission pin.
-- [ ] `requireCustomerForInvoice` gates creation when the sale has no customer,
+- [x] `requireCustomerForInvoice` gates creation when the sale has no customer,
       and the gate reads the typed setting rather than raw JSON. Evidence: the
       integration case toggling the setting and the rejection case.
-- [ ] A sale that is not `COMPLETED`, a sale with an existing invoice, and a
+- [x] A sale that is not `COMPLETED`, a sale with an existing invoice, and a
       nonexistent sale each fail with their own stable domain code and persist
       nothing. Evidence: the three rejection cases plus the no-residue
       assertion.
-- [ ] `GET /invoices` and `GET /invoices/:id` are tenant-scoped behind
+- [x] `GET /invoices` and `GET /invoices/:id` are tenant-scoped behind
       `billing.read`; foreign identifiers are byte-equivalent `404`s. Evidence:
       the tenant-isolation integration and live-PostgreSQL cases.
-- [ ] The API never accepts tenant authority from body, query or route.
+- [x] The API never accepts tenant authority from body, query or route.
       Evidence: the tenant-isolation cases and the request-schema review.
-- [ ] Creation is audited with actor, tenant and invoice reference, and rejected
+- [x] Creation is audited with actor, tenant and invoice reference, and rejected
       attempts write no audit row. Evidence: the audit assertions of both
       suites.
-- [ ] Tenant isolation is enforced when applicable. Evidence: the
+- [x] Tenant isolation is enforced when applicable. Evidence: the
       byte-equivalent foreign/unknown invoice and sale `404` cases over real
       HTTP, and the tenant-predicated repository reads.
-- [ ] Backend authorization is enforced when applicable. Evidence: the
+- [x] Backend authorization is enforced when applicable. Evidence: the
       deny-by-default route pins for `GET /invoices`, `GET /invoices/:id` and
       `POST /invoices`, plus the permission and `billing` capability sweeps.
-- [ ] Required loading/error/empty/success UX exists. Evidence: not applicable
+- [x] Required loading/error/empty/success UX exists. Evidence: not applicable
       in this story, owned by [[BILL-004]].
-- [ ] Required audit exists. Evidence: exactly one `invoice.created` row
+- [x] Required audit exists. Evidence: exactly one `invoice.created` row
       co-committed with each accepted creation, carrying field NAMES only.
-- [ ] Tests required by the Story pass. Evidence: the integration suite, the
+- [x] Tests required by the Story pass. Evidence: the integration suite, the
       route-contract probe, the live-PostgreSQL block and the repository gates
       are green in the merged work unit.
 
@@ -147,13 +147,15 @@ API computes no money and accepts no caller-computed amount.
 - **Invoice lines are immutable snapshots.** An `InvoiceLine` copies the sale's
   frozen `SaleLine` values verbatim; Billing performs no money arithmetic and
   trusts no caller-computed amount ([[DEC-038]]).
-- **One invoice per completed sale.** `UNIQUE (tenant_id, sale_id)` rejects a
-  second invoice for the same sale, and an invoice always originates in exactly
-  one completed sale ([[DEC-038]]).
+- **One live invoice per completed sale.** The PARTIAL
+  `UNIQUE (tenant_id, sale_id) WHERE status <> 'CANCELLED'` rejects a second
+  live invoice for the same sale while a cancelled one releases its sale, and an
+  invoice always originates in exactly one completed sale ([[DEC-038]]).
 - **Payments stay on the sale.** No payment, cash or receivable record is read
   or written by this Story (PRD §19, [[DEC-044]]).
-- **A number is allocated only at confirmation.** Creation writes no number;
-  `number` and `series` stay `NULL` while `DRAFT` ([[DEC-039]]).
+- **A number is allocated only at confirmation.** Creation writes no number, so
+  `number` stays `NULL` while `DRAFT`; `series` is NOT NULL and defaults to
+  `'A'` ([[DEC-039]]).
 - **`CANCELLED` is terminal and drafts are never edited.** There is no edit,
   patch or delete route for an invoice at any status ([[DEC-038]], [[DEC-043]]).
 - **The invoice is fiscal-free.** Billing imports no Fiscal provider and stores
@@ -210,62 +212,131 @@ adds no migration of its own.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented and committed on `feat/epic-14-billing-invoice-api` across three
+work units, each reviewed and approved by the RDD native review before the next
+one started:
+
+- **W1 `68d1c1c`** — the in-memory test boundary gained the `invoice`,
+  `invoice_line` and `invoice_number_sequence` delegates, their registration and
+  snapshot entries, and the two constraint shapes the suite asserts, so a
+  Billing integration suite can boot the real `AppModule` without a database.
+- **W2 `d508520`** — the `billing` module and `POST /invoices`: the entitlement
+  and permission gates, one `$transaction`, the verbatim snapshot copy, the
+  `catalog_item.name` description read in one query, the length guard, the
+  `requireCustomerForInvoice` gate, the `P2002` → `409` translation, one
+  co-committed `invoice.created` audit row and the line projections.
+- **W3 `41e412b`** — `GET /invoices` with its `status` filter and
+  `GET /invoices/:id`, their route pins and the live-PostgreSQL block that
+  proves the application paths over real HTTP.
+
+No migration: [[BILL-001]] shipped the tables, the triggers and the seeded
+`billing.*` keys, and this Story consumes them.
 
 ## Verification
 
 ```text
-Not run.
+pnpm --filter @newsaas/api exec vitest run src/billing/billing.integration.test.ts
+  -> 19 tests passed
+
+pnpm --filter @newsaas/api test
+  -> 76 files passed | 1 skipped (77)
+     1007 tests passed | 142 skipped (1135)
+
+pnpm --filter @newsaas/api test:live-pg   (schema-less DATABASE_URL)
+  -> 142 passed (142), was 135 before this Story
+
+pnpm typecheck
+  -> 14 / 14
+
+pnpm lint
+  -> 14 / 14
+
+pnpm format-check
+  -> clean
 ```
+
+Two environment conditions are operational facts, not defects: `pnpm lint` and
+`pnpm format-check` need nothing special, but the live-PostgreSQL suite needs
+`DATABASE_URL` exported from the workspace-root `.env` **with its query string
+stripped**, because the `.env` value carries `?schema=public` and the suite
+feeds it to `psql`, which aborts with `invalid URI query parameter: "schema"`.
+Both belong to [[TD-021]].
 
 ## Tests Added
 
-- `apps/api/src/billing/billing.integration.test.ts` (planned) — the creation
-  case with the verbatim snapshot copy, the `requireCustomerForInvoice` gate,
-  the three rejection cases with their no-residue assertion, the tenant-scoped
-  reads, the permission and capability sweeps, the strict body contract and the
-  audit shape.
-- `apps/api/src/rbac/route-contract.probe.test.ts` (planned update) — the three
-  routes pinned in the deny-by-default inventory with their permissions.
-- `apps/api/test/live-pg-isolation.e2e-spec.ts` (planned) — the byte-equivalent
-  cross-tenant `404`, the applied-schema read of the copied snapshot and the
-  second-invoice rejection for the same sale.
-- `apps/api/src/settings/` (planned update, if the typed read needs a test) —
-  the `requireCustomerForInvoice` consumption.
+- `apps/api/src/billing/billing.integration.test.ts` — 19 cases over the real
+  `AppModule` and the in-memory boundary: the authorization and capability
+  sweeps, the verbatim copy with no number and series `A`, the over-long
+  description guard at 200 and 201 characters, the byte-equivalent `404` for an
+  unknown and a foreign sale, the `409`s for a draft, a cancelled sale and a
+  second invoice, the released sale after cancellation, the setting gate both
+  ways, every invalid body, the absence of any read/PATCH/DELETE route on the
+  creation slice, the shared invoice `404` constant, and the position order of
+  the lines read through the real repository.
+- `apps/api/src/rbac/route-contract.probe.test.ts` — the three routes pinned in
+  the exact-set inventory with their permissions, so the whole `billing` family
+  is enumerated and deny-by-default.
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — a new peer block with 7
+  route-level cases: creation then read with the copied values and the summed
+  total, the list and its `status` filter both ways, the byte-equivalent `404`s
+  between a foreign and an unknown invoice id and between a foreign and an
+  unknown sale, the stable `409` for a second invoice,
+  `403 FEATURE_NOT_ENTITLED` in an unentitled tenant, and a no-residue count
+  check after every rejection.
+- `apps/api/test/support/in-memory-database.ts` — the invoice delegates, plus
+  the two fidelity fixes the W1 review asked for.
 
 ## Known Limitations
 
-- Nothing is implemented. The Story is `planned` and every criterion is
-  unchecked.
-- [[DEC-038]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] were accepted on
-  2026-10-01 by the maintainer; changing one later needs a new decision rather
-  than a reinterpretation during implementation.
-- The epic and the decisions do not state whether an inactive customer or an
-  inactive catalog item blocks invoice creation. The slice must resolve that
-  without extending scope and record the resolution in this Story rather than
-  invent a rule here.
-- The epic and the decisions do not fix a list pagination shape or a default
-  page size for `GET /invoices`; the slice must follow the shipped list
-  precedent rather than introduce a new one.
-- Draft editing is unavailable ([[DEC-038]]). A wrong draft is cancelled by
-  [[BILL-003]] and rebuilt from a new sale; there is no draft update route.
+- **The invoice line order is deterministic but arbitrary.** The lines are
+  walked in ascending `catalogItemId` order because `SaleLine` records no order
+  and `createdAt` is identical for every line of one transaction. The same sale
+  always produces the same document, which is what a legal document needs, but
+  the order does not reflect the order the lines were sold. [[TD-025]] records
+  the fix (a `sale_line.position` column) and the backfill decision. The RDD
+  native review flagged this as `R3-ORDERING-TIEBREAK`.
+- **`GET /invoices` is unbounded.** It returns every invoice of the tenant with
+  its lines, like the shipped sales and cash lists. A shared pagination contract
+  is recorded as [[TD-026]]; capping this one surface alone would truncate
+  results with no way to page past the cut. The review flagged it as
+  `R4-UNBOUNDED-LIST`.
+- **The settings narrowing defence is uncovered.** `requireCustomerForInvoice`
+  is narrowed with a `typeof !== "boolean"` check that
+  `TenantSettingsService.get` makes unreachable, because the typed service
+  validates the stored namespace before returning. The same dead defence exists
+  in `SalesService.resolveCurrency`, so it is kept for consistency and recorded
+  rather than removed; the review raised it as `R3-SETTINGS-INVALID-UNCOVERED`.
+- **An item description over 200 characters blocks invoicing.** The guard
+  refuses rather than truncating, because `invoice_line.description` is
+  `VarChar(200)` while `catalog_item.name` is unbounded. [[TD-024]] records the
+  corrective migration.
+- **No activation checks.** A customer or catalog item deactivated after the
+  sale does not block invoicing, which is deliberate: a completed sale must stay
+  invoiceable.
+- Draft editing is unavailable ([[DEC-038]]): a wrong draft is cancelled by
+  [[BILL-003]] and rebuilt from a new sale.
 - While [[DEC-038]] Option A stands, a tenant cannot invoice work that has no
   completed sale.
 - No fiscal state, no portal invoice read, no printed rendering and no export
   exist in this Story ([[DEC-042]], [[DEC-044]]).
-- The epic is silent on invoice search or date-range filtering beyond the
-  planned status filter, so no other filter is planned here.
+- Only the `status` filter exists; there is no search, date range or sorting
+  parameter.
 
 ## Technical Debt
 
-- [[TD-018]] stays open. This Story adds no sale reversal, stock compensation,
-  payment refund or compensating financial record; nothing here corrects a
-  completed sale.
-- [[TD-022]] tracks the still-deferred portal invoice and document surface; it
-  was created during the EPIC-14 kickoff and is kept current by [[BILL-005]]
-  ([[DEC-044]]).
-- No other debt is planned. If a slice ships a shortcut it must create a debt
-  record rather than hide it.
+- [[TD-024]] — `invoice_line.description` is `VarChar(200)` while
+  `catalog_item.name` is unbounded, so a long name is refused instead of
+  truncated. Created by this Story and assigned to the corrective slice.
+- [[TD-025]] — sale lines record no order, so the invoice snapshot order is
+  arbitrary. Created by this Story and assigned to the corrective slice or
+  [[BILL-003]].
+- [[TD-026]] — every list endpoint in the repository returns unbounded results,
+  including `GET /invoices`. Created by this Story with a shared pagination
+  contract as the fix.
+- [[TD-018]] stays open: this Story adds no sale reversal, stock compensation,
+  payment refund or compensating financial record.
+- [[TD-022]] tracks the deferred portal invoice and document surface and is kept
+  current by [[BILL-005]].
 
 ## Decisions / ADRs
 
@@ -283,20 +354,36 @@ Not run.
 
 ## Files / Modules
 
-Planned paths; nothing below exists yet.
+Implemented. Created:
 
-- `apps/api/src/billing/`
-- `apps/api/src/app.module.ts`
-- `apps/api/src/settings/`
-- `apps/api/src/rbac/route-contract.probe.test.ts`
-- `apps/api/test/live-pg-isolation.e2e-spec.ts`
-- `docs/01-roadmap/EPIC-14-Billing.md`
+- `apps/api/src/billing/billing.permissions.ts`
+- `apps/api/src/billing/billing.zod.ts`
+- `apps/api/src/billing/billing.dto.ts`
+- `apps/api/src/billing/billing.repository.ts`
+- `apps/api/src/billing/billing.service.ts`
+- `apps/api/src/billing/billing.controller.ts`
+- `apps/api/src/billing/billing.module.ts`
+- `apps/api/src/billing/billing.integration.test.ts`
+
+Changed:
+
+- `apps/api/src/app.module.ts` — `BillingModule` registered before
+  `PortalModule`
+- `apps/api/src/rbac/route-contract.probe.test.ts` — the three routes and their
+  pins
+- `apps/api/test/support/in-memory-database.ts` — the invoice delegates
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — the BILL-002 route block
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+The Story is `review`, not `done`: implementation, both local suites and three
+approved native reviews are complete on `feat/epic-14-billing-invoice-api`, but
+no CI receipt exists yet because the pull request is not open. It moves to
+`done` when the branch's pull request merges with both required checks green,
+together with the QA evidence entry.
 
-This Story stays `planned` while nothing exists. It may not be marked `done`
-before the maintainer accepts or amends the decisions it depends on, the routes
-and their permission pins land in the same work unit, and the merged work units
-carry their CI receipts.
+Three RDD native reviews closed **approved** with the authority burned:
+`review-01c7a12dc4e54144` (W1, medium, one lens), `review-4fe1a95e416b6b45` (W2,
+medium, one lens) and `review-d918081c81315de7` (W3, high, four lenses). No
+correction was required by any of them. Their advisories are the three debt
+records above plus informational test and schema polish.

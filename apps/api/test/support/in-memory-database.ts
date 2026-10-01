@@ -540,6 +540,134 @@ export interface IdempotencyRecordRow {
   createdAt: Date;
 }
 
+/** Lifecycle values pinned by schema enum `invoice_status` (PRD §21, DEC-038). */
+export type InvoiceStatusRow = "DRAFT" | "CONFIRMED" | "CANCELLED";
+
+/**
+ * Tenant-scoped invoice HEADER as the in-memory boundary stores it (EPIC-14
+ * BILL-001). Lines live in {@link InvoiceLineRow} and are assembled onto the
+ * read model by the delegates, mirroring the real `include: { lines: ... }`
+ * read. `number`/`confirmedAt` are nullable and agree by the schema's
+ * `number iff confirmed` rule, and `cancelReason` is present exactly for a
+ * `CANCELLED` invoice (DEC-039, DEC-043).
+ *
+ * HONEST LIMITATION: this fake enforces the TWO unique indexes the BILL-002
+ * suite asserts — the PARTIAL `invoice_tenant_id_sale_id_key` on
+ * `(tenantId, saleId) WHERE status <> 'CANCELLED'` and the allocation key
+ * `invoice_tenant_id_series_number_key` on `(tenantId, series, number)` — plus
+ * the per-invoice line position key. Every OTHER database property (the
+ * composite foreign keys, the CHECK constraints, the conditional header
+ * immutability triggers and the never-reallocated-number trigger) stays
+ * live-PostgreSQL-owned, exactly like the sale/payment/ledger boundaries.
+ */
+export interface InvoiceHeaderRow {
+  id: string;
+  tenantId: string;
+  saleId: string;
+  customerId: string | null;
+  currency: string;
+  status: InvoiceStatusRow;
+  series: string;
+  number: number | null;
+  confirmedAt: Date | null;
+  cancelledAt: Date | null;
+  cancelReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Tenant-scoped invoice line row (EPIC-14 BILL-001). The four money amounts are
+ * exact `Decimal(14, 2)` and `quantity` an exact `Decimal(10, 3)`, all stored as
+ * exact decimal STRINGS — never JavaScript floats, following the `saleLines`
+ * convention. `position` is the invoice-local reading order and the row is the
+ * frozen snapshot (DEC-038) copied from the source sale line. There is
+ * deliberately NO `updatedAt`: the line is append-only.
+ */
+export interface InvoiceLineRow {
+  id: string;
+  tenantId: string;
+  invoiceId: string;
+  catalogItemId: string;
+  position: number;
+  description: string;
+  rateCode: string;
+  unitPrice: string;
+  quantity: string;
+  lineTotal: string;
+  taxableBase: string;
+  taxAmount: string;
+  createdAt: Date;
+}
+
+/** Invoice read model WITH its line set (the `include: { lines: ... }` shape). */
+export interface InvoiceRow extends InvoiceHeaderRow {
+  lines: InvoiceLineRow[];
+}
+
+/** Predicate fields the in-memory invoice reads/writes are allowed to build. */
+export interface InvoiceWhere {
+  id?: string;
+  tenantId?: string;
+  status?: InvoiceStatusRow;
+}
+
+/** Ordering clauses the in-memory invoice list accepts. */
+export interface InvoiceOrderBy {
+  createdAt?: "asc" | "desc";
+  id?: "asc" | "desc";
+}
+
+/**
+ * The line-relation `include` the Billing read boundary nests. `true` reads the
+ * document in its defined reading order; the object form mirrors the explicit
+ * `orderBy: { position: 'asc' }` a repository may declare.
+ */
+export interface InvoiceLinesInclude {
+  lines?: true | { orderBy?: { position?: "asc" | "desc" } };
+}
+
+/** Nested line create payload accepted by the in-memory `invoice.create`. */
+export interface InvoiceLineCreateData {
+  catalogItemId: string;
+  position: number;
+  description: string;
+  rateCode: string;
+  unitPrice: string | { toString(): string };
+  quantity: string | { toString(): string };
+  lineTotal: string | { toString(): string };
+  taxableBase: string | { toString(): string };
+  taxAmount: string | { toString(): string };
+}
+
+/**
+ * Tenant-scoped numbering counter row (EPIC-14 BILL-001, DEC-039): one row per
+ * `(tenant, series)` whose `nextValue` is the next number to allocate. Unlike
+ * every other row in this boundary it is MEANT to be updated (no trigger), so it
+ * carries `updatedAt`.
+ */
+export interface InvoiceNumberSequenceRow {
+  id: string;
+  tenantId: string;
+  series: string;
+  nextValue: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Sequence write payload; `nextValue` may be an atomic increment (DEC-039). */
+export interface InvoiceNumberSequenceUpdateData {
+  nextValue?: number | { increment: number };
+}
+
+/**
+ * Compound-key predicate for the counter. Both the named compound key
+ * (`tenantId_series`) and the extended-where shorthand are accepted, mirroring
+ * the shapes a Prisma caller may build.
+ */
+export type InvoiceNumberSequenceWhere =
+  { tenantId_series: { tenantId: string; series: string } } | { tenantId: string; series: string };
+
 /**
  * Tenant-scoped cash register as the in-memory boundary stores it (EPIC-12
  * POS-002). There is no balance column: the register's expected amount is
@@ -1271,6 +1399,58 @@ export interface IsolationDatabase {
         };
       }) => IdempotencyRecordRow;
     };
+    /**
+     * Invoice header reads/writes (EPIC-14 BILL-002). Reads assemble the line set,
+     * mirroring the repository's `include: { lines: ... }`; `create` nests the
+     * frozen snapshot lines and reproduces the two unique indexes the suite
+     * asserts. There is deliberately NO `update`/`delete`: the header lifecycle
+     * has its own commands (BILL-003) and a cancelled invoice is terminal.
+     */
+    invoice: {
+      findFirst: (args: {
+        where: InvoiceWhere;
+        include?: InvoiceLinesInclude;
+      }) => InvoiceRow | null;
+      findMany: (args: {
+        where: InvoiceWhere;
+        include?: InvoiceLinesInclude;
+        orderBy?: readonly InvoiceOrderBy[];
+      }) => InvoiceRow[];
+      /** Nested line create; the fake fills tenant/invoice ids from the header. */
+      create: (args: {
+        data: {
+          tenantId: string;
+          saleId: string;
+          customerId?: string | null;
+          currency: string;
+          status?: InvoiceStatusRow;
+          series?: string;
+          number?: number | null;
+          confirmedAt?: Date | null;
+          cancelledAt?: Date | null;
+          cancelReason?: string | null;
+          lines: { create: readonly InvoiceLineCreateData[] };
+        };
+      }) => InvoiceRow;
+      /** Tenant/status-filtered list count for the paginated read. */
+      count: (args?: { where?: InvoiceWhere }) => number;
+    };
+    /**
+     * Numbering counter the confirm transaction advances (DEC-039). Present now
+     * so BILL-003 does not have to reopen the boundary; BILL-002 writes no row.
+     */
+    invoiceNumberSequence: {
+      findUnique: (args: { where: InvoiceNumberSequenceWhere }) => InvoiceNumberSequenceRow | null;
+      upsert: (args: {
+        where: InvoiceNumberSequenceWhere;
+        create: { tenantId: string; series?: string; nextValue?: number };
+        update: InvoiceNumberSequenceUpdateData;
+      }) => InvoiceNumberSequenceRow;
+      update: (args: {
+        where: InvoiceNumberSequenceWhere;
+        data: InvoiceNumberSequenceUpdateData;
+      }) => InvoiceNumberSequenceRow;
+    };
     cashRegister: {
       findFirst: (args: { where: CashRegisterWhere }) => CashRegisterRow | null;
       findMany: (args: {
@@ -1653,6 +1833,9 @@ export interface IsolationDatabase {
     saleLines: Map<string, SaleLineRow>;
     payments: Map<string, PaymentRow>;
     idempotencyRecords: Map<string, IdempotencyRecordRow>;
+    invoices: Map<string, InvoiceHeaderRow>;
+    invoiceLines: Map<string, InvoiceLineRow>;
+    invoiceNumberSequences: Map<string, InvoiceNumberSequenceRow>;
     cashRegisters: Map<string, CashRegisterRow>;
     cashSessions: Map<string, CashSessionRow>;
     cashMovements: Map<string, CashMovementRow>;
@@ -2001,6 +2184,91 @@ function linesForSale(saleLineTable: Map<string, SaleLineRow>, saleId: string): 
 }
 
 /**
+ * Raises the STRUCTURAL `P2002` shape a Prisma unique-index violation carries
+ * (`code` plus the violated index name in `meta.target`). The partial
+ * `invoice_tenant_id_sale_id_key` and the allocation key
+ * `invoice_tenant_id_series_number_key` are reported by INDEX NAME: the partial
+ * index is raw SQL and therefore unknown to the Prisma schema, and the cash,
+ * clinical and sales services all match either the index name or the offending
+ * field set. Anything that would violate a constraint this boundary does not
+ * model is left to live PostgreSQL.
+ */
+function uniqueConstraintError(modelName: string, indexName: string): Error {
+  return Object.assign(new Error(`Unique constraint failed on the constraint: \`${indexName}\``), {
+    code: "P2002",
+    meta: { modelName, target: [indexName] },
+  });
+}
+
+/** Resolves both sequence where shapes onto the `(tenantId, series)` pair. */
+function resolveInvoiceSequenceKey(where: InvoiceNumberSequenceWhere): {
+  tenantId: string;
+  series: string;
+} {
+  return "tenantId_series" in where
+    ? where.tenantId_series
+    : { tenantId: where.tenantId, series: where.series };
+}
+
+/**
+ * Ordering for the invoice list: `createdAt` (newest first on the shipped
+ * query) with `id` as the stable tie-break, mirroring the repository's declared
+ * deterministic order.
+ */
+function orderInvoices(
+  rows: InvoiceHeaderRow[],
+  orderBy: readonly InvoiceOrderBy[] | undefined
+): InvoiceHeaderRow[] {
+  if (orderBy === undefined) return rows;
+  return [...rows].sort((left, right) => {
+    for (const clause of orderBy) {
+      if (clause.createdAt !== undefined) {
+        const compared = left.createdAt.getTime() - right.createdAt.getTime();
+        if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.id !== undefined) {
+        const compared = left.id.localeCompare(right.id);
+        if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+      }
+    }
+    return 0;
+  });
+}
+
+/**
+ * An invoice HEADER read is tenant-scoped BY CONSTRUCTION: the shipped Billing
+ * repository always builds `where.tenantId` from the request context, and the
+ * real delegate would silently return a FOREIGN row for a predicate that omitted
+ * it — exactly the tenant-isolation defect an integration suite must never
+ * mirror. The fake therefore refuses an unscoped header read loudly instead of
+ * answering it (the `$queryRaw` "fails loudly rather than return wrong rows"
+ * precedent).
+ */
+function assertInvoiceTenantScope(where: InvoiceWhere): void {
+  if (where.tenantId === undefined) {
+    throw new Error("invoice header reads require a tenantId predicate (tenant-isolation guard)");
+  }
+}
+
+/**
+ * An invoice's related lines by `position` — the document's reading order, not
+ * insertion order. The include may request the explicit direction; `true` reads
+ * the defined ascending order.
+ */
+function linesForInvoice(
+  invoiceLineTable: Map<string, InvoiceLineRow>,
+  invoiceId: string,
+  include: InvoiceLinesInclude | undefined
+): InvoiceLineRow[] {
+  const lines = include?.lines;
+  const direction = lines && typeof lines === "object" ? (lines.orderBy?.position ?? "asc") : "asc";
+  const rows = [...invoiceLineTable.values()]
+    .filter((line) => line.invoiceId === invoiceId)
+    .sort((left, right) => left.position - right.position);
+  return direction === "desc" ? rows.reverse() : rows;
+}
+
+/**
  * Ordering for the cash register/session/movement lists: `createdAt` (newest
  * first on the shipped queries) with `id` as the stable tie-break, mirroring the
  * repository's declared deterministic order.
@@ -2069,6 +2337,13 @@ export function createIsolationDatabase(): IsolationDatabase {
   // them; nothing else writes a row.
   const paymentTable = new Map<string, PaymentRow>();
   const idempotencyRecordTable = new Map<string, IdempotencyRecordRow>();
+  // EPIC-14 BILL-002: the invoice aggregate the Billing reads/writes touch.
+  // Header and lines are separate storage maps so the delegates can assemble the
+  // `include: { lines: ... }` shape; the numbering counter rides along so
+  // BILL-003's allocation does not have to reopen this boundary.
+  const invoiceTable = new Map<string, InvoiceHeaderRow>();
+  const invoiceLineTable = new Map<string, InvoiceLineRow>();
+  const invoiceNumberSequenceTable = new Map<string, InvoiceNumberSequenceRow>();
   // EPIC-12 POS-002: the register/session tables the cash surface touches. The
   // movement table is MODELLED (so the inertness probe can diff it) but nothing
   // in EPIC-12 writes a row — POS-003 does, and EPIC-13 owns the other kinds.
@@ -2124,6 +2399,9 @@ export function createIsolationDatabase(): IsolationDatabase {
     saleLines: saleLineTable,
     payments: paymentTable,
     idempotencyRecords: idempotencyRecordTable,
+    invoices: invoiceTable,
+    invoiceLines: invoiceLineTable,
+    invoiceNumberSequences: invoiceNumberSequenceTable,
     cashRegisters: cashRegisterTable,
     cashSessions: cashSessionTable,
     cashMovements: cashMovementTable,
@@ -3144,6 +3422,188 @@ export function createIsolationDatabase(): IsolationDatabase {
         return created;
       },
     },
+    invoice: {
+      findFirst: ({ where, include }) => {
+        assertInvoiceTenantScope(where);
+        const header =
+          [...invoiceTable.values()].find(
+            (candidate) =>
+              (where.id === undefined || candidate.id === where.id) &&
+              candidate.tenantId === where.tenantId &&
+              (where.status === undefined || candidate.status === where.status)
+          ) ?? null;
+        if (!header) return null;
+        return {
+          ...header,
+          lines: include?.lines ? linesForInvoice(invoiceLineTable, header.id, include) : [],
+        };
+      },
+      findMany: ({ where, include, orderBy }) => {
+        assertInvoiceTenantScope(where);
+        const headers = [...invoiceTable.values()].filter(
+          (candidate) =>
+            (where.id === undefined || candidate.id === where.id) &&
+            candidate.tenantId === where.tenantId &&
+            (where.status === undefined || candidate.status === where.status)
+        );
+        const ordered = orderBy === undefined ? headers : orderInvoices(headers, orderBy);
+        return ordered.map((header) => ({
+          ...header,
+          lines: include?.lines ? linesForInvoice(invoiceLineTable, header.id, include) : [],
+        }));
+      },
+      create: ({ data }) => {
+        const series = data.series ?? "A";
+        const number = data.number ?? null;
+        // Mirrors the schema default so an omitted status still lands DRAFT.
+        const status = data.status ?? "DRAFT";
+        // Partial unique index `invoice_tenant_id_sale_id_key`: at most ONE live
+        // (non-CANCELLED) invoice per `(tenant, sale)`. The index participates on
+        // BOTH sides — an existing CANCELLED row never blocks, and a CANCELLED
+        // row being created can never collide — so a cancelled invoice falls
+        // outside the index and releases its sale (DEC-043).
+        const liveForSale =
+          status !== "CANCELLED" &&
+          [...invoiceTable.values()].some(
+            (candidate) =>
+              candidate.tenantId === data.tenantId &&
+              candidate.saleId === data.saleId &&
+              candidate.status !== "CANCELLED"
+          );
+        if (liveForSale) {
+          throw uniqueConstraintError("Invoice", "invoice_tenant_id_sale_id_key");
+        }
+        // Allocation key `invoice_tenant_id_series_number_key`: PostgreSQL keeps
+        // NULLs distinct, so unnumbered drafts coexist and only a real number
+        // collides.
+        if (
+          number !== null &&
+          [...invoiceTable.values()].some(
+            (candidate) =>
+              candidate.tenantId === data.tenantId &&
+              candidate.series === series &&
+              candidate.number === number
+          )
+        ) {
+          throw uniqueConstraintError("Invoice", "invoice_tenant_id_series_number_key");
+        }
+        // `invoice_line_tenant_id_invoice_id_position_key`: one line per position
+        // inside one invoice. Checked up front so a duplicate rejects the whole
+        // create instead of leaving a half-written document behind.
+        const positions = new Set<number>();
+        for (const line of data.lines.create) {
+          if (positions.has(line.position)) {
+            throw uniqueConstraintError(
+              "InvoiceLine",
+              "invoice_line_tenant_id_invoice_id_position_key"
+            );
+          }
+          positions.add(line.position);
+        }
+        const now = new Date();
+        const created: InvoiceHeaderRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          saleId: data.saleId,
+          customerId: data.customerId ?? null,
+          currency: data.currency,
+          status,
+          series,
+          number,
+          confirmedAt: data.confirmedAt ?? null,
+          cancelledAt: data.cancelledAt ?? null,
+          cancelReason: data.cancelReason ?? null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        invoiceTable.set(created.id, created);
+        // Nested create: the line inherits the header's tenant and invoice id,
+        // exactly as Prisma fills them from the parent relation.
+        for (const line of data.lines.create) {
+          const createdLine: InvoiceLineRow = {
+            id: randomUUID(),
+            tenantId: created.tenantId,
+            invoiceId: created.id,
+            catalogItemId: line.catalogItemId,
+            position: line.position,
+            description: line.description,
+            rateCode: line.rateCode,
+            unitPrice: toDecimalString(line.unitPrice),
+            quantity: toDecimalString(line.quantity),
+            lineTotal: toDecimalString(line.lineTotal),
+            taxableBase: toDecimalString(line.taxableBase),
+            taxAmount: toDecimalString(line.taxAmount),
+            createdAt: now,
+          };
+          invoiceLineTable.set(createdLine.id, createdLine);
+        }
+        return { ...created, lines: linesForInvoice(invoiceLineTable, created.id, undefined) };
+      },
+      count: ({ where } = {}) =>
+        [...invoiceTable.values()].filter(
+          (candidate) =>
+            (where?.id === undefined || candidate.id === where.id) &&
+            (where?.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where?.status === undefined || candidate.status === where.status)
+        ).length,
+    },
+    invoiceNumberSequence: {
+      findUnique: ({ where }) => {
+        const key = resolveInvoiceSequenceKey(where);
+        return (
+          [...invoiceNumberSequenceTable.values()].find(
+            (candidate) => candidate.tenantId === key.tenantId && candidate.series === key.series
+          ) ?? null
+        );
+      },
+      upsert: ({ where, create, update }) => {
+        const key = resolveInvoiceSequenceKey(where);
+        const existing = [...invoiceNumberSequenceTable.values()].find(
+          (candidate) => candidate.tenantId === key.tenantId && candidate.series === key.series
+        );
+        const now = new Date();
+        if (existing) {
+          if (update.nextValue !== undefined) {
+            existing.nextValue =
+              typeof update.nextValue === "number"
+                ? update.nextValue
+                : existing.nextValue + update.nextValue.increment;
+          }
+          existing.updatedAt = now;
+          return existing;
+        }
+        const created: InvoiceNumberSequenceRow = {
+          id: randomUUID(),
+          tenantId: create.tenantId,
+          // Mirrors the schema default so an omitted series still lands `A`.
+          series: create.series ?? "A",
+          // Mirrors the schema default so an omitted counter still starts at 1.
+          nextValue: create.nextValue ?? 1,
+          createdAt: now,
+          updatedAt: now,
+        };
+        invoiceNumberSequenceTable.set(created.id, created);
+        return created;
+      },
+      update: ({ where, data }) => {
+        const key = resolveInvoiceSequenceKey(where);
+        const existing = [...invoiceNumberSequenceTable.values()].find(
+          (candidate) => candidate.tenantId === key.tenantId && candidate.series === key.series
+        );
+        if (!existing) {
+          // Structural P2025 mirrors the real delegate's rejected shape.
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        if (data.nextValue !== undefined) {
+          existing.nextValue =
+            typeof data.nextValue === "number"
+              ? data.nextValue
+              : existing.nextValue + data.nextValue.increment;
+        }
+        existing.updatedAt = new Date();
+        return existing;
+      },
+    },
     cashRegister: {
       findFirst: ({ where }) =>
         [...cashRegisterTable.values()].find(
@@ -3947,6 +4407,9 @@ export function createIsolationDatabase(): IsolationDatabase {
       saleLines: saleLineTable,
       payments: paymentTable,
       idempotencyRecords: idempotencyRecordTable,
+      invoices: invoiceTable,
+      invoiceLines: invoiceLineTable,
+      invoiceNumberSequences: invoiceNumberSequenceTable,
       cashRegisters: cashRegisterTable,
       cashSessions: cashSessionTable,
       cashMovements: cashMovementTable,
