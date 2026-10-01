@@ -40,7 +40,126 @@ product/architecture choices.
       text in each `## Decision` section, and reconcile every downstream claim
       in the epic and the BILL stories.
 
+## BILL-001 — invoice data foundation (work units)
+
+Branch: `feat/epic-14-billing-invoice-foundation` (renamed from
+`docs/epic-14-billing-kickoff`; the docs commits are part of it, matching the
+EPIC-13 precedent of one branch per epic carrying scope and implementation).
+
+### Pinned slice contract (parent-owned, so no writer invents identifiers)
+
+- Migration folder: `20261001000001_billing_invoice_foundation`.
+- Enum `InvoiceStatus` -> table-scoped type `invoice_status`, created with
+  `CREATE TYPE` and the full literal set `DRAFT`, `CONFIRMED`, `CANCELLED` in
+  one migration (never `ALTER TYPE ... ADD VALUE`, which cannot be used as an
+  enum literal in the same transaction).
+- `Invoice` -> `invoice`; `InvoiceLine` -> `invoice_line`;
+  `InvoiceNumberSequence` -> `invoice_number_sequence`.
+- **No stored header totals.** The invoice total is the sum of its immutable
+  lines, so a stored total can never disagree with them. This is a projection of
+  the snapshot, not the pricing arithmetic [[DEC-038]] forbids.
+- `invoice` money and status columns are INTERNAL, the customer-linked
+  references are CONFIDENTIAL (PRD §41).
+
+### Two accepted-decision clarifications found while pinning the contract
+
+Both are refinements that keep the decisions' stated intent and must be recorded
+as subsequent scope notes on the accepted records, not applied silently:
+
+1. **`number` is present exactly when `confirmed_at` is** ([[DEC-039]]).
+   [[DEC-039]] said "required on `CONFIRMED` and `CANCELLED`" but also "a
+   cancelled or abandoned draft never consumes a number". The two conflict for a
+   `DRAFT` that is cancelled, and only the second is correct: the accepted
+   guarantee is "no number is consumed before confirmation". The CHECK becomes
+   `(number IS NULL) = (confirmed_at IS NULL)`.
+2. **The one-invoice-per-sale uniqueness is partial** ([[DEC-038]]).
+   `UNIQUE (tenant_id, sale_id)` combined with the story's own "trigger
+   rejecting UPDATE and DELETE of a non-`DRAFT` invoice" and the absence of any
+   delete route would block a sale from ever being invoiced again once a draft
+   invoice is cancelled. The index becomes
+   `UNIQUE (tenant_id, sale_id) WHERE status <> 'CANCELLED'`, so cancelled
+   invoices stay permanent records while the sale is freed. This follows the
+   shipped `cash_session_one_open_per_register_key` partial-index precedent.
+
+### Work units
+
+- [x] W1 — schema + migration + schema gate: `InvoiceStatus`, the three models,
+      the back-relations, the section banner, the additive migration with its
+      constraints, partial unique index and immutability triggers, and
+      `packages/database/src/schema-billing.test.ts`.
+- [ ] W2 — `billing.*` seeds: the four `PERMISSION_SEEDS` entries, the
+      `ROLE_PERMISSION_MATRIX` rows for all six roles, and the two pinned counts
+      in `reference-seed.test.ts` (52 -> 56 and the VETERINARIAN exact array).
+- [ ] W3 — live-PostgreSQL applied-schema block for EPIC-14 in
+      `apps/api/test/live-pg-isolation.e2e-spec.ts`.
+- [ ] W4 — docs reconciliation: the two subsequent scope notes on DEC-038 and
+      DEC-039, the BILL-001 implementation record, the epic progress entry, the
+      story guarantee-table fix (`series` is non-null), and the pinned doc
+      counters for migrations/permissions if the closure needs them.
+
+### Gates for this slice
+
+- `pnpm --filter @newsaas/database test` (schema gate plus the seed suite).
+- `pnpm --filter @newsaas/database db:generate`.
+- `pnpm --filter @newsaas/database db:deploy` against the local Docker Postgres
+  and `pnpm --filter @newsaas/database db:live-verify`.
+- `pnpm --filter @newsaas/api test:live-pg` ([[TD-021]]: `.env` defines
+  `DATABASE_URL` but not `DATABASE_URL_TEST`, and the suite falls back to
+  `DATABASE_URL`, so no extra variable is required locally).
+- `pnpm typecheck`, `pnpm lint`, `pnpm format-check`, `git diff --check`.
+
 ## Evidence
+
+### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
+
+- Files: `packages/database/prisma/schema.prisma` (+273 lines: the Billing
+  section banner, `enum InvoiceStatus`, `model Invoice`, `model InvoiceLine`,
+  `model InvoiceNumberSequence`, and the `Tenant`, `Sale`, `Customer`, `TaxRate`
+  and `CatalogItem` back-relations);
+  `packages/database/prisma/migrations/20261001000001_billing_invoice_foundation/migration.sql`
+  (new, 362 lines: one `CREATE TYPE`, three `CREATE TABLE`, eight indexes, eight
+  RESTRICT FKs, five triggers); `packages/database/src/schema-billing.test.ts`
+  (new, 729 lines, 38 tests).
+- Committed trigger/constraint names: CHECKs `invoice_number_iff_confirmed`,
+  `invoice_number_positive`, `invoice_series_not_blank`,
+  `invoice_draft_not_confirmed`, `invoice_confirmed_requires_timestamp`,
+  `invoice_cancelled_at_matches_status`, `invoice_cancel_reason_present`,
+  `invoice_line_quantity_positive`, `invoice_line_unit_price_non_negative`,
+  `invoice_line_line_total_non_negative`,
+  `invoice_line_taxable_base_non_negative`,
+  `invoice_line_tax_amount_non_negative`, `invoice_line_position_non_negative`,
+  `invoice_line_description_not_blank`,
+  `invoice_number_sequence_next_value_positive`; triggers
+  `invoice_no_delete_when_not_draft`, `invoice_no_update_when_not_draft`,
+  `invoice_number_never_reallocated`, `invoice_line_no_update`,
+  `invoice_line_no_delete`; partial index `invoice_tenant_id_sale_id_key`
+  (`... WHERE "status" <> 'CANCELLED'`).
+- Gates: `db:generate` passed; `pnpm --filter @newsaas/database test` **18 files
+  / 399 tests passed** (was 17/361, so `schema-billing.test.ts` adds 38);
+  `pnpm typecheck` 14/14 tasks; `pnpm format-check` clean; `db:deploy` reported
+  `28 migrations found` and applied exactly
+  `20261001000001_billing_invoice_foundation`; `db:live-verify` printed
+  `LIVE MIGRATION VERIFICATION PASSED`.
+- `db:live-verify` is not idempotent and cannot pass against the development
+  database (`live-a` / `live-b` exist since 2026-09-30, `P2002` on `slug`). It
+  was therefore run on a throwaway database `newsaas_verify_epic14_bill001`,
+  created and dropped inside the running container; the development database and
+  its rows were not touched. This is the same fresh-database condition CI uses.
+- Cross-epic counter bumped with an explicit authorization:
+  `packages/database/src/schema-clinical.test.ts` pins schema-wide
+  `@@unique([tenantId, id])` occurrences, `19 -> 22`, plus its model-list
+  comment. This is the established per-epic update, not a weakened assertion.
+- Two operational notes for later slices: `db:deploy` and `db:live-verify` fail
+  with `P1012 Environment variable not found: DATABASE_URL` unless
+  `DATABASE_URL` is exported from the workspace-root `.env`, which Prisma does
+  not auto-load ([[TD-021]] territory); and the delegated writer echoed a local
+  dev-database credential fragment once in its log. That credential is the local
+  Docker dev value from the gitignored `.env`, not a repository secret, so no
+  rotation is required — recorded here rather than left unnoticed.
+- Documentation counters that must move at closure: `27 migrations` -> 28 and
+  `52 permissions` -> 56 (`docs/01-roadmap/ROADMAP.md`,
+  `docs/01-roadmap/EPIC-13-Cash.md`, `docs/10-qa/CI-EVIDENCE.md`,
+  `docs/02-stories/CASH-002-cash-movement-commands.md`).
 
 - Created: 2026-10-01.
 - Branch at start: `main` tracking `origin/main`.
