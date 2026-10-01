@@ -3,7 +3,7 @@ id: BILL-001
 type: story
 title: Invoice data foundation
 epic: EPIC-14
-status: review
+status: done
 priority: high
 depends_on: []
 prd_sections:
@@ -321,6 +321,12 @@ CI (pull request #87, head 17ebae5, run 36873584746)
   -> Lint, Typecheck, Test, Build: pass (4m18s)
      - database 18 files, API 75 files (1 skipped), web 81 files
 
+CI (merged main, head fc60d11, run 36885623341) - the merged-receipt gate
+  -> Database migrations: success (15:38:07Z -> 15:39:14Z)
+     - 28 migrations found; all successfully applied to a fresh database
+  -> Lint, Typecheck, Test, Build: success (15:38:07Z -> 15:42:32Z)
+  -> pull request #86 merged as 15dc434 first, then #87 as fc60d11
+
 Seed idempotency (throwaway database newsaas_verify_seed_w2_33045,
 both db:seed runs)
   -> identical counts: roles: 6, permissions: 56, featureCodes: 12,
@@ -480,44 +486,35 @@ Implemented paths.
 
 ## Completion Notes
 
-The Story is `review`, not `done`: implementation and local verification are
-complete and committed on `feat/epic-14-billing-invoice-foundation`, but a CI
-receipt does not exist yet.
+The Story is `done`. Every acceptance criterion is checked, the migration is
+merged, the permissions are enforced by the seeded matrix, tenant isolation is
+covered at the schema and live-database levels, and both the local gates and the
+**merged** CI run are green.
 
-What remains before `done`:
+Evidence of closure:
 
-- a CI run of the merged work units that reproduces the recorded gates;
-- `pnpm lint` over the merged work units: it ran locally at 14/14 tasks and
-  caught one `no-unsafe-assignment` in the new probe, fixed in `cccb71d`. The CI
-  receipt is what is still missing;
-- [[BILL-002]] and [[BILL-003]], which own the creation/read routes, the
-  `requireCustomerForInvoice` gate, the confirm and cancel commands, number
-  allocation and route-level authorization and audit;
-- [[BILL-005]], which reconciles the epic's closure counters, including the new
-  `28 migrations`, `56 permissions` and `134` live-PostgreSQL cases, and creates
-  `docs/05-modules/Billing.md` from CI receipts.
+- pull request #86 carried the scope records and merged as `15dc434`; pull
+  request #87 carried this slice and merged as `fc60d11`;
+- run
+  [`36885623341`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36885623341)
+  on the merged `main` at `fc60d11` concluded `success` on both required checks
+  (`Database migrations` 15:38:07Z to 15:39:14Z, `Lint, Typecheck, Test, Build`
+  15:38:07Z to 15:42:32Z), and its `migrations` job applied all **28**
+  migrations to a fresh database;
+- the slice receipt before the merge was run `36873584746` at head `17ebae5`,
+  whose `migrations` job reproduced the local gate including the live-PostgreSQL
+  suite at **135 passed**;
+- the QA evidence entry is recorded in `docs/10-qa/CI-EVIDENCE.md`.
 
-The CI receipt now exists: pull request #87 at head `17ebae5` passed both
-required checks in run `36873584746`, and the `Database migrations` job
-reproduced the whole persistence gate on a fresh database — 28 migrations
-applied, the seed run twice with the count-equality probe, and the
-live-PostgreSQL suite at **135 passed**, which is the number that locally needed
-a throwaway database. The Story still stays `review` rather than `done` because
-its own criterion is a CI run of the **merged** work units: it moves to `done`
-when the pull request merges, together with the QA evidence entry. The scope
-records this slice depends on are pull request #86 (`type:docs`), which must
-merge first because CI's required checks only run for pull requests targeting
-`main`.
+What this Story deliberately does not include, so the epic does not read as
+complete: [[BILL-002]] and [[BILL-003]] own the creation and read routes, the
+`requireCustomerForInvoice` gate, the confirm and cancel commands, the atomic
+number allocation and route-level authorization and audit; [[BILL-004]] owns the
+staff surface; [[BILL-005]] reconciles the epic's closure counters and creates
+`docs/05-modules/Billing.md` from CI receipts. [[TD-023]] stays open for the
+transition-only header guard.
 
-The RDD native review of this slice is **closed, approved and acknowledged**.
-Lineage `review-b65dbcee62dc6d5b` covered the committed range `da7919b..e5d8848`
-(12 paths, 3200 changed lines, high tier, four lenses) and raised one BLOCKER
-twice, from two independent lenses: the header guard made
-`CONFIRMED -> CANCELLED` impossible. The fix was submitted as a 195-line
-correction plan against a budget of 200, validated by the targeted validator,
-approved and acknowledged with burn evidence `gentle-ai.review-acknowledged/v1`.
-Four non-blocking readability advisories (`R2-001`..`R2-004`) were recorded; all
-four were stale claims left behind by the correction and the lint fix and are
-reconciled in the same commit that records this outcome.
-
-The Story may not be marked `done` while any required gate is unverified.
+`done` here means implementation closure for this slice only. It is **not** a
+production-readiness statement: the epic stays `planned`, [[EPIC-20]] Production
+Hardening remains, and the open debt ([[TD-018]], [[TD-021]], [[TD-022]],
+[[TD-023]]) is untouched.
