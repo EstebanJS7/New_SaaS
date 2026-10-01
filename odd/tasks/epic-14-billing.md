@@ -270,6 +270,70 @@ as subsequent scope notes on the accepted records, not applied silently:
 - The epic stays `planned`: [[BILL-002]] through [[BILL-005]] remain, and
   [[TD-023]] stays open for BILL-003.
 
+## BILL-002 — invoice creation and read API (work units)
+
+Branch: `feat/epic-14-billing-invoice-api`, cut from `main` at `10ab908` after
+BILL-001 closed.
+
+### Pinned slice contract (parent-owned)
+
+- Routes: `POST /invoices` (`billing.create`), `GET /invoices` and
+  `GET /invoices/:id` (`billing.read`), all behind the `billing` entitlement.
+- **`invoice_line.description` comes from `catalog_item.name`.** The column is a
+  NOT NULL snapshot and `SaleLine` carries no description, so creation reads the
+  catalog name for each copied line, tenant-predicated, in one query.
+- **Length trap and its resolution.** `CatalogItem.name` is an unbounded
+  `String` and `invoice_line.description` is `VarChar(200)`, so a verbatim copy
+  can violate the column. Creation must NOT truncate silently: a line whose
+  description exceeds 200 characters is rejected with a stable domain error. The
+  narrower column is a defect of the BILL-001 data foundation and is recorded as
+  [[TD-024]] for a later corrective migration.
+- **No header totals are stored**; the DTO's `total` and `taxAmount` are
+  projections summed locally from the invoice's own immutable lines with
+  `Prisma.Decimal`, documented as a projection of frozen values. Billing must
+  NOT import `apps/api/src/sales/sales.pricing.ts`.
+- **No activation checks.** Creation requires the sale to be `COMPLETED` and,
+  when `requireCustomerForInvoice` is on, the sale to carry a customer. A
+  customer or catalog item deactivated _after_ the sale must never make a
+  completed sale un-invoiceable.
+- **No pagination.** `GET /invoices` filters by `status` and orders by
+  `createdAt desc, id asc`, matching the shipped sales and cash lists; the
+  unbounded list is recorded as a limitation rather than silently capped.
+- `requireCustomerForInvoice` is read through
+  `TenantSettingsService.get("sales")` and narrowed with a
+  `typeof === "boolean"` defence, mirroring `SalesService.resolveCurrency`.
+- A second invoice for a live sale is the partial unique index's `P2002`,
+  translated to `409` by matching the index shape, following the `CashService`
+  precedent. A cancelled invoice releases its sale.
+- Audit action `invoice.created`, target type `invoice`, changed-field NAMES
+  only.
+
+### Work units
+
+- [x] W1 — in-memory test boundary: the three invoice tables (delegates,
+      registration, snapshot) so a Billing integration suite can run.
+- [ ] W2 — the billing module creation path: `POST /invoices`, the verbatim
+      snapshot copy, the settings gate, the audit row and the stable errors,
+      with the route pin and the integration suite.
+- [ ] W3 — the reads: `GET /invoices` and `GET /invoices/:id`, their pins, the
+      integration cases and the live-PostgreSQL BILL-002 block.
+- [ ] W4 — docs reconciliation: the story record, the epic progress entry, the
+      two stale invariant claims and [[TD-024]].
+
+### BILL-002 W1 — in-memory test boundary
+
+- `apps/api/test/support/in-memory-database.ts` gained the `invoice`,
+  `invoice_line` and `invoice_number_sequence` delegates, their registration and
+  snapshot entries, and the two constraint shapes the integration suite needs
+  (`invoice_tenant_id_sale_id_key` for a second live invoice on one sale, and
+  the allocation key), so a Billing integration suite can boot the real
+  `AppModule` without a database.
+- Insertions only: `442 0` in `git diff --numstat`, file at 4405 lines. No
+  production code changed, and the existing suites prove the change is inert:
+  the focused sales and cash integration suites passed 75 tests, and
+  `pnpm --filter @newsaas/api test` stayed green.
+- Gates: `pnpm lint`, `pnpm typecheck` and `pnpm format-check` green.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
