@@ -52,9 +52,8 @@ schema-level state, numbering and immutability constraints, and the seeded
   `packages/database/src/reference-seed.test.ts`, and the `billing` and `fiscal`
   feature codes are already seeded against the inert `STARTER_PLAN_SEED`
   ([[DEC-040]]).
-- [[DEC-038]], [[DEC-039]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] are
-  **proposed**, not accepted. Implementation must not start until the maintainer
-  accepts or amends them.
+- [[DEC-038]], [[DEC-039]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] were
+  accepted on 2026-10-01 by the maintainer and are binding on this Story.
 
 ## In Scope
 
@@ -266,9 +265,9 @@ Not run.
 
 - Nothing is implemented. The Story is `planned` and every criterion is
   unchecked.
-- [[DEC-038]], [[DEC-039]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] are
-  proposed, not accepted; implementation must not start before the maintainer
-  accepts or amends them.
+- [[DEC-038]], [[DEC-039]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] were
+  accepted on 2026-10-01 by the maintainer; changing one later needs a new
+  decision rather than a reinterpretation during implementation.
 - The epic is fiscal-free. No fiscal document, fiscal status or fiscal
   submission exists after this Story ([[DEC-042]]), so the PRD §36 journey step
   "fiscal submission queued" is not reached by EPIC-14.

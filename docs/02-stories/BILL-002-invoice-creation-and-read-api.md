@@ -56,9 +56,8 @@ API computes no money and accepts no caller-computed amount.
   directory, and `apps/api/src/rbac/route-contract.probe.test.ts` pins the route
   inventory and each route's required permission, so a new route and its key
   must land in the same slice.
-- [[DEC-038]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] are **proposed**, not
-  accepted. Implementation must not start until the maintainer accepts or amends
-  them.
+- [[DEC-038]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] were accepted on
+  2026-10-01 by the maintainer and are binding on this Story.
 
 ## In Scope
 
@@ -238,9 +237,9 @@ Not run.
 
 - Nothing is implemented. The Story is `planned` and every criterion is
   unchecked.
-- [[DEC-038]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] are proposed, not
-  accepted; implementation must not start before the maintainer accepts or
-  amends them.
+- [[DEC-038]], [[DEC-040]], [[DEC-042]] and [[DEC-044]] were accepted on
+  2026-10-01 by the maintainer; changing one later needs a new decision rather
+  than a reinterpretation during implementation.
 - The epic and the decisions do not state whether an inactive customer or an
   inactive catalog item blocks invoice creation. The slice must resolve that
   without extending scope and record the resolution in this Story rather than

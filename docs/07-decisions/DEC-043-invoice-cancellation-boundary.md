@@ -2,7 +2,7 @@
 id: DEC-043
 type: decision
 title: Invoice cancellation boundary (EPIC-14)
-status: proposed
+status: accepted
 date: 2026-10-01
 related_epics:
   - "EPIC-14"
@@ -145,7 +145,21 @@ that the business document was cancelled.
 
 ## Decision
 
-_Pending. Proposed to the maintainer on 2026-10-01; Option A is recommended._
+Accepted on 2026-10-01 by the maintainer. Option A is the decision:
+`POST /invoices/:id/cancel` ships in EPIC-14 behind `billing.cancel`, from
+`DRAFT` or `CONFIRMED`, with a required reason and exactly one audit row. It
+sets `CANCELLED`, retains the allocated number and never releases or reuses it,
+keeps `CANCELLED` terminal, is replay-safe through its own state gate
+([[DEC-041]]), and performs no stock, cash, payment or fiscal side effect. No
+row is deleted.
+
+The other options stay recorded above as what was considered; acceptance selects
+Option A only.
+
+The `## Hand-off to EPIC-15` section above is part of the accepted decision, not
+a note: [[EPIC-15]] must revisit the cancel path once `FiscalDocument` exists,
+or record why it does not. BILL-003 owns the command, its state gates, its audit
+assertion and its tenant isolation.
 
 ## PRD Update
 

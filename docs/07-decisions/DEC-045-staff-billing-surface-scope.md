@@ -2,7 +2,7 @@
 id: DEC-045
 type: decision
 title: Staff billing surface scope (EPIC-14)
-status: proposed
+status: accepted
 date: 2026-10-01
 related_epics:
   - "EPIC-14"
@@ -117,7 +117,22 @@ the absence of a print/export feature as explicit limitations.
 
 ## Decision
 
-_Pending. Proposed to the maintainer on 2026-10-01; Option A is recommended._
+Accepted on 2026-10-01 by the maintainer. Option A is the decision: one
+operational Billing workspace at `apps/web/src/app/(app)/app/billing/` with the
+`/api/billing` proxy, a Billing-owned client module, the status-filtered invoice
+list, the invoice detail with its snapshot lines and totals, the
+create-from-sale flow, confirm, and cancel with a reason, plus loading, empty,
+error, success, permission-denied and entitlement-denied state coverage and a
+navigation entry gated behind `requiredFeature: "billing"`. No printable
+document, no portal route and no export are added.
+
+The other options stay recorded above as what was considered; acceptance selects
+Option A only.
+
+Two binding rules while implementing: the surface performs no money arithmetic
+and displays the server-computed values as returned, and it shows no fiscal
+state because none exists in this epic ([[DEC-042]]). BILL-004 owns the pages,
+the proxy, the client module, the state coverage and the navigation entry.
 
 ## PRD Update
 

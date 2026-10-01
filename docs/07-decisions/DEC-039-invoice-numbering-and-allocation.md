@@ -2,7 +2,7 @@
 id: DEC-039
 type: decision
 title: Invoice numbering and allocation point (EPIC-14)
-status: proposed
+status: accepted
 date: 2026-10-01
 related_epics:
   - "EPIC-14"
@@ -140,7 +140,32 @@ The printable rendering of `series` + `number` is deliberately not decided here
 
 ## Decision
 
-_Pending. Proposed to the maintainer on 2026-10-01; Option A is recommended._
+Accepted on 2026-10-01 by the maintainer. Option A is the decision: a new
+tenant-scoped `invoice_number_sequence` row keyed by `(tenant_id, series)` holds
+`next_value`, and the number is allocated inside the `confirm` transaction with
+**one atomic statement** so that no read-then-write window exists and the
+allocation and the state transition commit together or not at all:
+
+```sql
+UPDATE invoice_number_sequence SET next_value = next_value + 1
+WHERE tenant_id = $1 AND series = $2
+RETURNING next_value - 1
+```
+
+`number` stays `NULL` while the invoice is `DRAFT` and is required on
+`CONFIRMED` and `CANCELLED`; `series` is a non-null column defaulted to `'A'`;
+`UNIQUE (tenant_id, series, number)` holds. The recorded guarantee is exactly
+"no number is consumed before confirmation and `(tenant_id, series, number)` is
+unique" — never "the issued sequence has no holes under any failure mode".
+
+The other options stay recorded above as what was considered; acceptance selects
+Option A only.
+
+The statement's row lock is held until the `confirm` transaction commits, so
+`confirm` must stay short and must never hold the tenant's counter behind
+unrelated work; BILL-003 owns that constraint and its live-PostgreSQL
+concurrency case. The printable rendering of the number stays deferred to
+[[EPIC-15]] ([[DEC-042]]).
 
 ## PRD Update
 

@@ -2,7 +2,7 @@
 id: DEC-042
 type: decision
 title: Fiscal boundary ownership across EPIC-14 and EPIC-15
-status: proposed
+status: accepted
 date: 2026-10-01
 related_epics:
   - "EPIC-14"
@@ -141,7 +141,19 @@ journey step it leaves open, and [[EPIC-15]] is where the linkage and the
 
 ## Decision
 
-_Pending. Proposed to the maintainer on 2026-10-01; Option A is recommended._
+Accepted on 2026-10-01 by the maintainer. Option A is the decision: EPIC-14
+ships a fiscal-free invoice — no fiscal column, reference, port, provider, queue
+or event — and [[EPIC-15]] owns the Fiscal application interface, the fake
+provider, `FiscalDocument`, the queued submission, the `fiscal-ui` surface and
+the additive linkage from an invoice to its fiscal document.
+
+The other options stay recorded above as what was considered; acceptance selects
+Option A only.
+
+The consequence is accepted explicitly: the PRD §36 journey step "fiscal
+submission queued" is not reached when EPIC-14 closes, and the epic, the module
+documentation and the closure evidence must state that rather than imply it.
+Billing imports no Fiscal provider, concrete or otherwise, in this epic.
 
 ## PRD Update
 

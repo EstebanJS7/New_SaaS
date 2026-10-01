@@ -58,9 +58,8 @@ route, performs no money arithmetic and shows no fiscal state.
   `apps/api/src/rbac/route-contract.probe.test.ts` actively fails the build if
   any route appears under `/portal/invoices`, `/portal/documents` or
   `/portal/files`.
-- [[DEC-040]], [[DEC-042]], [[DEC-044]] and [[DEC-045]] are **proposed**, not
-  accepted. Implementation must not start until the maintainer accepts or amends
-  them.
+- [[DEC-040]], [[DEC-042]], [[DEC-044]] and [[DEC-045]] were accepted on
+  2026-10-01 by the maintainer and are binding on this Story.
 
 ## In Scope
 
@@ -246,9 +245,9 @@ Not run.
 
 - Nothing is implemented. The Story is `planned` and every criterion is
   unchecked.
-- [[DEC-040]], [[DEC-042]], [[DEC-044]] and [[DEC-045]] are proposed, not
-  accepted; implementation must not start before the maintainer accepts or
-  amends them.
+- [[DEC-040]], [[DEC-042]], [[DEC-044]] and [[DEC-045]] were accepted on
+  2026-10-01 by the maintainer; changing one later needs a new decision rather
+  than a reinterpretation during implementation.
 - **The navigation entitlement gate is dormant.** The shell accepts an optional
   `entitlements` prop and defaults to _unknown = show_, and no browser-side
   entitlement source exists, so the gate is unit-testable but not fed in

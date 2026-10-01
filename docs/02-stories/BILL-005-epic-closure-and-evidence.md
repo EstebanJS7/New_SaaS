@@ -50,9 +50,9 @@ changelog and the roadmap status against evidence.
 - [[TD-018]] stays open for sale reversal and payment refund; the closure must
   not close it, and [[DEC-043]] requires the refund and fiscal-cancellation
   non-effects to stay visible.
-- [[DEC-038]] through [[DEC-045]] are **proposed**, not accepted. No status may
-  move to `done` before the maintainer accepts or amends them and the
-  implementation receipts exist.
+- [[DEC-038]] through [[DEC-045]] were accepted on 2026-10-01 by the maintainer,
+  so the closure rests on accepted decisions; no status may move to `done`
+  before the implementation receipts exist.
 
 ## In Scope
 
@@ -95,8 +95,9 @@ changelog and the roadmap status against evidence.
   and [[EPIC-18]].
 - **Rewriting the [[EPIC-14]] pre-implementation snapshot to read as if it had
   always described the implemented state.**
-- **Rewriting the proposed decisions into accepted decisions.** Only the
-  maintainer accepts them.
+- **Changing an accepted decision.** The eight decisions were accepted on
+  2026-10-01; a later change needs a new decision from the maintainer, not an
+  edit here.
 - **A PRD edit.** No decision here requires one.
 
 ## Acceptance Criteria
@@ -204,8 +205,8 @@ Not run.
   "fiscal submission queued" remains unreached ([[DEC-042]]), and with no portal
   invoice read, so the PRD §26 invoices/documents capability remains
   unimplemented ([[DEC-044]]).
-- [[DEC-038]] through [[DEC-045]] are proposed, not accepted, so no status may
-  move to `done` before the maintainer accepts or amends them.
+- [[DEC-038]] through [[DEC-045]] were accepted on 2026-10-01, so no later slice
+  may reinterpret them; a change needs a new decision.
 - Editing the five BILL story files carries the formatter risk [[TD-017]]
   records: a wikilink must never wrap inside a list item, and a formatting
   change must be verified idempotent before the closure commit.

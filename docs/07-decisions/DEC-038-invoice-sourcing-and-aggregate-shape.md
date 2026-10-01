@@ -2,7 +2,7 @@
 id: DEC-038
 type: decision
 title: Invoice sourcing and aggregate shape (EPIC-14)
-status: proposed
+status: accepted
 date: 2026-10-01
 related_epics:
   - "EPIC-14"
@@ -143,7 +143,24 @@ verbatim snapshot copy.
 
 ## Decision
 
-_Pending. Proposed to the maintainer on 2026-10-01; Option A is recommended._
+Accepted on 2026-10-01 by the maintainer. Option A is the decision: an invoice
+is created only from exactly one `COMPLETED` in-tenant sale, with `saleId` NOT
+NULL and `UNIQUE (tenant_id, sale_id)`; `InvoiceLine` rows are copied verbatim
+from that sale's frozen `SaleLine` snapshot; the invoice inherits the sale's
+`currency` and `customerId` (customer nullable per [[DEC-028]]); and
+`requireCustomerForInvoice` gates creation for a sale without a customer. The
+invoice is immutable from creation at every status, so a `DRAFT` may only be
+confirmed or cancelled: there is no draft-editing route and no `billing.update`
+permission, and cancelling a draft consumes no number.
+
+The other options stay recorded above as what was considered; acceptance selects
+Option A only.
+
+The cost is accepted explicitly rather than hidden: a tenant cannot invoice work
+that has no completed sale, and fixing a wrong draft means cancelling it and
+creating a new invoice from a new sale. BILL-001 owns the models and the
+constraints; BILL-002 owns the creation path, the setting gate and the verbatim
+snapshot copy.
 
 ## PRD Update
 

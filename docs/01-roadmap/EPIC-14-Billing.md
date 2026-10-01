@@ -303,9 +303,8 @@ planned evidence that will close it.
   `CompleteSale` writer this epic reads.
 - [[EPIC-02]] RBAC/Entitlements/Tenant Settings (**done**) — permission seeds,
   the role matrix, the `billing` feature code and the typed settings service.
-- [[DEC-038]] through [[DEC-045]] — the EPIC-14 decisions. All eight are
-  **proposed**, not accepted: implementation must not start until the maintainer
-  accepts or amends them.
+- [[DEC-038]] through [[DEC-045]] — the EPIC-14 decisions, accepted on
+  2026-10-01 by the maintainer and binding on the dependent stories.
 - [[TD-018]] — remains open for sale reversal and payment refund; EPIC-14 must
   not silently absorb that scope.
 - [[DEC-018]], [[DEC-027]] — a sale and a purchase carry no number; the invoice
@@ -329,15 +328,15 @@ planned evidence that will close it.
 
 ## Decisions / ADRs
 
-The eight EPIC-14 Decisions were proposed on 2026-10-01 and are **pending
-maintainer acceptance**. They are not binding until accepted.
+The eight EPIC-14 Decisions were accepted on 2026-10-01 by the maintainer and
+are binding on the dependent stories:
 
 - [[DEC-038]] — invoice sourcing and aggregate shape: one invoice per completed
   sale, snapshot lines copied verbatim, currency and customer inherited, and
   `requireCustomerForInvoice` gating creation.
 - [[DEC-039]] — invoice numbering: a per-tenant `invoice_number_sequence` row
-  allocated at confirmation under a row lock, nullable while `DRAFT`,
-  `UNIQUE (tenant_id, series, number)`.
+  allocated at confirmation with one atomic `UPDATE ... RETURNING`, `number`
+  nullable while `DRAFT`, `UNIQUE (tenant_id, series, number)`.
 - [[DEC-040]] — the `billing.*` permission family, the read-wide/write-to-owning
   roles matrix, the `billing` entitlement gate and the fiscal ownership of
   `fiscal.invoice.issue`.
@@ -348,10 +347,10 @@ maintainer acceptance**. They are not binding until accepted.
   queued submission.
 - [[DEC-043]] — cancellation boundary: `POST /invoices/:id/cancel` from `DRAFT`
   or `CONFIRMED` with a reason and audit, retaining the number, with no payment
-  or fiscal reversal.
-- [[DEC-044]] — epic scope boundaries: the deferred portal surface, the
-  receivable/credit-ledger exclusion, print/export, reports, notifications and
-  branch-series numbering each have a named owner.
+  or fiscal reversal and a recorded hand-off to [[EPIC-15]].
+- [[DEC-044]] — epic scope boundaries: the deferred portal surface (tracked by
+  [[TD-022]]), the receivable/credit-ledger exclusion, print/export, reports,
+  notifications and branch-series numbering each have a named owner.
 - [[DEC-045]] — staff surface scope: one operational Billing workspace with full
   state coverage and no printable document.
 

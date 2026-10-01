@@ -3,7 +3,7 @@ id: DEC-041
 type: decision
 title:
   Invoice confirmation effects, idempotency and the event boundary (EPIC-14)
-status: proposed
+status: accepted
 date: 2026-10-01
 related_epics:
   - "EPIC-14"
@@ -144,7 +144,23 @@ migration and its schema test.
 
 ## Decision
 
-_Pending. Proposed to the maintainer on 2026-10-01; Option A is recommended._
+Accepted on 2026-10-01 by the maintainer. Option A is the decision: `confirm` is
+a single transaction that locks the invoice row, gates on `DRAFT`, allocates the
+number from the tenant sequence, sets `CONFIRMED` and writes exactly one audit
+row. It requires no `Idempotency-Key`, needs no `IdempotencyRecord` change, and
+emits no `InvoiceConfirmed` event in EPIC-14.
+
+The other options stay recorded above as what was considered; acceptance selects
+Option A only.
+
+The binding rule is that an idempotency key is required when a retry could apply
+a second effect that the current state cannot prove was already applied — a
+money writer carrying a payload. A payload-free, conditionally guarded
+transition is replay-safe by its own state machine, so a key would add a schema
+change and a write without adding a guarantee. If the native review of BILL-003
+disagrees, the bounded correction is either to require the header with an
+additive `IdempotencyRecord` change or to prove the state gate covers the
+replay.
 
 ## PRD Update
 

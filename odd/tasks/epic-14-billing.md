@@ -14,7 +14,8 @@ product/architecture choices.
   is created by BILL-005 after implementation.
 - Keep generated repository artifacts in English with YAML frontmatter.
 - Keep EPIC-14 and the BILL stories in `planned` until implementation starts.
-- Keep every EPIC-14 decision `proposed` until the maintainer accepts it.
+- Record an EPIC-14 decision as `accepted` only by an explicit maintainer act,
+  never by inference from a kickoff approval.
 
 ## Tasks
 
@@ -33,8 +34,11 @@ product/architecture choices.
       surface, with its owner and its re-evaluation point, and reconcile every
       reference to it across the epic and the BILL stories.
 - [x] Run the docs-only formatting and whitespace checks and record results.
-- [ ] Maintainer review: accept, amend or reject DEC-038 through DEC-045.
-      Implementation must not start before this lands.
+- [x] Maintainer review (2026-10-01): DEC-038 through DEC-045 accepted as
+      proposed with the three polish items applied.
+- [x] Convert DEC-038 through DEC-045 to `status: accepted` with the acceptance
+      text in each `## Decision` section, and reconcile every downstream claim
+      in the epic and the BILL stories.
 
 ## Evidence
 
@@ -64,11 +68,18 @@ product/architecture choices.
   numbering in `related_stories`, the `series`/`number` nullability rule in
   DEC-039 and BILL-001, and the [[TD-022]] references after the debt record was
   created).
-- Maintainer review outcome (2026-10-01): the eight decisions were approved as
-  proposed, with the three polish items below applied before the kickoff commit.
-  The decisions remain `status: proposed` in their frontmatter; acceptance is
-  recorded by the epic's decision section once the maintainer confirms it, and
-  no implementation slice may start before then.
+- Maintainer review outcome (2026-10-01): the eight decisions were accepted as
+  proposed, with the three polish items below applied. The kickoff landed as
+  `673cfb7` while the decisions were still `proposed`.
+- Acceptance commit (2026-10-01, the second commit on
+  `docs/epic-14-billing-kickoff`,
+  `docs(EPIC-14): accept the billing decisions`): `DEC-038` through `DEC-045`
+  moved to `status: accepted`, each `## Decision` section now carries the
+  accepted option and its terms (following the EPIC-13/DEC-026 precedent), and
+  every downstream claim was reconciled: the epic's `## Decisions / ADRs`
+  section and its dependency list, the `proposed, not accepted` bullets in
+  BILL-001 through BILL-004, and BILL-005's three references. The acceptance is
+  a separate, auditable commit rather than an amend of the kickoff.
 - Polish items applied:
   1. DEC-039 now prescribes **one atomic statement** for the number allocation
      (`UPDATE invoice_number_sequence SET next_value = next_value + 1 … RETURNING next_value - 1`)
@@ -96,7 +107,6 @@ product/architecture choices.
     test file, so those suites are unaffected. They become required again at
     BILL-001.
 - Open limitations of this pass:
-  - All eight decisions are `proposed`, not `accepted`, in their frontmatter.
   - `openspec/config.yaml` still carries a stale context line naming EPIC-09 as
     the next planned epic. It was deliberately not edited: it is an OpenSpec
     artifact and any refresh is the maintainer's call.

@@ -58,8 +58,8 @@ audit. Neither command touches money, stock, cash or fiscal state.
   conditional writes (EPIC-12 `CompleteSale`, EPIC-13 cash close), and
   `apps/api/src/billing/` does not exist yet.
 - [[DEC-039]], [[DEC-040]], [[DEC-041]], [[DEC-042]], [[DEC-043]] and
-  [[DEC-044]] are **proposed**, not accepted. Implementation must not start
-  until the maintainer accepts or amends them.
+  [[DEC-044]] were accepted on 2026-10-01 by the maintainer and are binding on
+  this Story.
 
 ## In Scope
 
@@ -266,8 +266,8 @@ Not run.
 - Nothing is implemented. The Story is `planned` and every criterion is
   unchecked.
 - [[DEC-039]], [[DEC-040]], [[DEC-041]], [[DEC-042]], [[DEC-043]] and
-  [[DEC-044]] are proposed, not accepted; implementation must not start before
-  the maintainer accepts or amends them.
+  [[DEC-044]] were accepted on 2026-10-01 by the maintainer; changing one later
+  needs a new decision rather than a reinterpretation during implementation.
 - A retried `confirm` is replay-safe through the state gate, not through a
   stored idempotency record ([[DEC-041]]). A client that retries after a timeout
   must read the invoice to learn the outcome.

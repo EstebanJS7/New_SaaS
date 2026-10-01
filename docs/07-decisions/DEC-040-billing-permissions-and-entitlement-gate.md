@@ -2,7 +2,7 @@
 id: DEC-040
 type: decision
 title: Billing permissions, role matrix and entitlement gate (EPIC-14)
-status: proposed
+status: accepted
 date: 2026-10-01
 related_epics:
   - "EPIC-14"
@@ -146,7 +146,26 @@ follow-up.
 
 ## Decision
 
-_Pending. Proposed to the maintainer on 2026-10-01; Option A is recommended._
+Accepted on 2026-10-01 by the maintainer. Option A is the decision: four keys —
+`billing.read`, `billing.create`, `billing.confirm`, `billing.cancel` — are
+seeded into `PERMISSION_SEEDS` and wired into `ROLE_PERMISSION_MATRIX`, moving
+the pinned count 52 → 56; all six roles hold `billing.read`; `OWNER`, `ADMIN`
+and `CASHIER` hold the three write keys; no `billing.update` key is added
+because the invoice is immutable from creation ([[DEC-038]]); the Billing routes
+are gated on the already-seeded `billing` feature code through
+`EntitlementsService.has`; and `fiscal.invoice.issue` stays a Fiscal capability,
+consumed by no EPIC-14 route and reserved for [[EPIC-15]] behind the `fiscal`
+feature code.
+
+The other options stay recorded above as what was considered; acceptance selects
+Option A only.
+
+This record also settles the ambiguity around `fiscal.invoice.issue`: it means
+fiscal issuance, not confirming a business invoice. If [[EPIC-15]] needs a
+different key for its issuance surface, that is a new decision rather than a
+reinterpretation of this one. BILL-002 owns `billing.read` and `billing.create`;
+BILL-003 owns `billing.confirm` and `billing.cancel`; the seed-count and
+route-contract probes move with each slice.
 
 ## PRD Update
 

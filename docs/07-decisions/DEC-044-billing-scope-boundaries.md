@@ -2,7 +2,7 @@
 id: DEC-044
 type: decision
 title: Billing epic scope boundaries (EPIC-14)
-status: proposed
+status: accepted
 date: 2026-10-01
 related_epics:
   - "EPIC-14"
@@ -146,7 +146,21 @@ the explicit limitation list current instead of closing either by implication.
 
 ## Decision
 
-_Pending. Proposed to the maintainer on 2026-10-01; Option A is recommended._
+Accepted on 2026-10-01 by the maintainer. Option A is the decision: EPIC-14
+ships the narrow Billing slice and every exclusion listed above stands, with the
+portal invoice and document surface tracked by [[TD-022]] — owned by the
+maintainer, re-evaluated after [[EPIC-15]]/[[EPIC-16]] — instead of being
+implemented here.
+
+The other options stay recorded above as what was considered; acceptance selects
+Option A only.
+
+The boundary rule is binding while implementing: EPIC-14 may read Sales and may
+write only its own aggregate, and it writes no money, stock, payment, cash or
+fiscal state. BILL-001 owns the aggregate boundary; BILL-004 owns the staff
+surface and must not add a portal route or a print or export feature; BILL-005
+keeps [[TD-022]] and the limitation list current instead of closing either by
+implication.
 
 ## PRD Update
 
