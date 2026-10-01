@@ -137,6 +137,23 @@ implemented EPIC-14 behavior.
   CI's required checks only run for pull requests targeting `main`. The Story is
   `done`; the epic stays `planned` until [[BILL-002]] through [[BILL-005]] land.
 
+- **[[BILL-002]] Invoice creation and read API — `review`.** Implemented on
+  `feat/epic-14-billing-invoice-api` in three work units: `68d1c1c` extends the
+  in-memory test boundary with the invoice tables, `d508520` adds the `billing`
+  module and `POST /invoices` (the verbatim snapshot copy, the
+  `catalog_item.name` description read in one query with a 200-character guard,
+  the `requireCustomerForInvoice` gate, the `P2002` → `409` translation and one
+  co-committed `invoice.created` audit row) and `41e412b` adds `GET /invoices`
+  with its `status` filter and `GET /invoices/:id` plus the live-PostgreSQL
+  route block. Verification passed locally: the focused suite 19 tests, the API
+  suite 76 files / 1007 tests, the live-PostgreSQL suite **142 passed** (was
+  135), `typecheck` 14/14, `lint` 14/14 and `format-check` clean. Three RDD
+  native reviews closed **approved** with no correction
+  (`review-01c7a12dc4e54144`, `review-4fe1a95e416b6b45`,
+  `review-d918081c81315de7`), and their advisories are [[TD-024]], [[TD-025]]
+  and [[TD-026]]. The Story stays `review` until its pull request merges with a
+  CI receipt.
+
 ## Scope
 
 - Add the tenant-scoped `Invoice` aggregate with the PRD §21 states `DRAFT`,

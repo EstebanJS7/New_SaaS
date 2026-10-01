@@ -317,7 +317,7 @@ BILL-001 closed.
       with the route pin and the integration suite.
 - [x] W3 — the reads: `GET /invoices` and `GET /invoices/:id`, their pins, the
       integration cases and the live-PostgreSQL BILL-002 block.
-- [ ] W4 — docs reconciliation: the story record, the epic progress entry, the
+- [x] W4 — docs reconciliation: the story record, the epic progress entry, the
       two stale invariant claims and [[TD-024]].
 
 ### BILL-002 W1 — in-memory test boundary
@@ -471,6 +471,24 @@ BILL-001 closed.
 - The risk lens returned the smallest review payload of the four (897 bytes)
   with nothing to report, which is a useful signal that the tenant isolation and
   the authorization sweeps held.
+
+### BILL-002 W4 — documentation reconciliation
+
+- [[BILL-002]] moved to `review` with its eleven acceptance criteria checked,
+  the two stale domain invariants corrected while checking them (the one-invoice
+  rule is the PARTIAL index, and `series` is NOT NULL defaulted to `'A'` rather
+  than `NULL` while `DRAFT`), and the implementation, verification, tests,
+  limitations, debt, files and completion sections rewritten against what
+  actually shipped.
+- The epic gained the BILL-002 progress entry; the epic's own acceptance block
+  for BILL-002 stays unchecked because [[BILL-005]] reconciles the epic's
+  criteria at closure against CI receipts.
+- Three debt records now carry the slice's advisories: [[TD-024]] (the
+  `VarChar(200)` description versus the unbounded catalog name), [[TD-025]]
+  (sale lines record no order) and [[TD-026]] (every list endpoint is unbounded,
+  with one shared pagination contract as the fix).
+- [[TD-021]] gained a second concrete consequence: the live-PostgreSQL suite
+  needs a schema-less `DATABASE_URL`, not just an exported one.
 
 ## Evidence
 
