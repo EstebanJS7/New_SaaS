@@ -404,6 +404,30 @@ BILL-001 closed.
   tenants, and its partial-unique check considers the incoming row's own status
   so a `CANCELLED` insert can never collide, which matches PostgreSQL.
 
+### BILL-002 W2 — RDD native review (closed, approved)
+
+- Lineage `review-4fe1a95e416b6b45`, candidate range `fbf8111..d508520`, 12
+  paths, 1980 changed lines, tier medium, one lens (`review-reliability`),
+  correction budget 200. **Approved on the first pass**, no correction; the
+  acknowledgement burned the authority with
+  `burn_evidence: gentle-ai.review-acknowledged/v1`.
+- `R3-ORDERING-TIEBREAK` (WARNING, `billing.service.ts:217-219`) confirmed the
+  deliberate deviation the writer disclosed: the invoice lines are ordered by
+  ascending `catalogItemId`, which is deterministic but arbitrary. The root
+  cause is outside Billing — `sale_line` records no order and `createdAt` is
+  identical for one transaction — so it is recorded as [[TD-025]] with the fix,
+  the backfill decision and the ownership. `invoice_line.position` already
+  exists and is unique per invoice, so only the source order is missing.
+- `R3-SETTINGS-INVALID-UNCOVERED` (SUGGESTION, `billing.service.ts:459-461`):
+  the `typeof !== "boolean"` narrowing is unreachable because
+  `TenantSettingsService.get` validates the stored namespace against its schema
+  before returning, and the same unreachable defence exists in
+  `SalesService.resolveCurrency`. Kept for consistency with that precedent and
+  recorded as a deliberate coverage gap rather than deleted, so the module does
+  not silently diverge from the shipped shape.
+- Both advisories are informational and non-blocking, and both are carried into
+  W4's story record and limitation list.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
