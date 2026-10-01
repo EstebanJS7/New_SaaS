@@ -183,11 +183,13 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /cash/registers",
   "POST /cash/registers",
   "GET /cash/sessions",
+  // EPIC-13 CASH-004 — the movement list read the staff Cash surface needs (no
+  // write affordance). It is listed here in the CONTROLLER's registration order,
+  // which keeps this inventory a faithful transcription of the surface.
+  "GET /cash/movements",
   "POST /cash/sessions",
   // EPIC-13 CASH-002 — standalone cash movement command (six non-sale kinds;
-  // SALE is rejected by the request contract). EPIC-13 CASH-004 adds the
-  // movement list read the staff Cash surface needs (no write affordance).
-  "GET /cash/movements",
+  // SALE is rejected by the request contract).
   "POST /cash/movements",
   // EPIC-13 CASH-003 — explicit session close command (expected/counted
   // difference + terminal CLOSED; no reopen, no PATCH, no DELETE)
