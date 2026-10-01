@@ -1077,10 +1077,11 @@ This section is the machine-generated receipt for the merged slice and is
 
 ## EPIC-14 Billing
 
-| Slice                               | Pull request | Merge commit | CI run                                                                           | Checks                                                                          |
-| ----------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Scope, plans and accepted decisions | #86          | `15dc434`    | [`36873574529`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36873574529) | `Database migrations` 1m14s, `Lint, Typecheck, Test, Build` 4m21s               |
-| BILL-001 invoice data foundation    | #87          | `fc60d11`    | [`36885623341`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36885623341) | `Database migrations` 1m7s, `Lint, Typecheck, Test, Build` 4m25s on merged main |
+| Slice                                  | Pull request | Merge commit | CI run                                                                           | Checks                                                                               |
+| -------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Scope, plans and accepted decisions    | #86          | `15dc434`    | [`36873574529`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36873574529) | `Database migrations` 1m14s, `Lint, Typecheck, Test, Build` 4m21s                    |
+| BILL-001 invoice data foundation       | #87          | `fc60d11`    | [`36885623341`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36885623341) | `Database migrations` 1m7s, `Lint, Typecheck, Test, Build` 4m25s on merged main      |
+| BILL-002 invoice creation and read API | #89          | `c52b175`    | [`36911300059`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36911300059) | `Database migrations` success, `Lint, Typecheck, Test, Build` success on merged main |
 
 The scope records landed first because CI's required checks only run for pull
 requests targeting the default branch: #86 merged as `15dc434` and #87 as
@@ -1114,6 +1115,42 @@ The RDD native review of the slice closed **approved** (lineage
 impossible, which two independent lenses raised as a BLOCKER while every local
 gate was green. [[TD-023]] records the transition-only guard that the correction
 left behind.
+
+### BILL-002 invoice creation and read API
+
+Pull request #89's own receipt before the merge was run
+[`36905626822`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36905626822)
+at the branch head: `Database migrations` 1m3s and
+`Lint, Typecheck, Test, Build` 3m37s, with the live-PostgreSQL suite at **142
+passed**.
+
+Local evidence, reproduced by the `migrations` job on a fresh database:
+
+- the `billing` module and its three routes: `POST /invoices` behind
+  `billing.create`, and `GET /invoices` plus `GET /invoices/:id` behind
+  `billing.read`, all also gated on the `billing` entitlement. No migration was
+  added: [[BILL-001]] shipped the tables and the seeded keys;
+- the invoice lines copy the frozen `SaleLine` values verbatim, with
+  `description` read from `catalog_item.name` in one query and refused rather
+  than truncated above 200 characters, and `total`/`taxTotal` projected from the
+  invoice's own lines instead of recomputed;
+- the billing integration suite **19 cases** over the real `AppModule` and the
+  in-memory boundary, including the authorization and capability sweeps, the
+  byte-equivalent sale `404`, the three `409` paths, the audit shape and the
+  no-residue assertions;
+- the live-PostgreSQL suite grew from 135 to **142 cases**, adding a route block
+  that proves over real HTTP the creation-and-read round trip, the list and its
+  `status` filter, the byte-equivalent `404`s for a foreign and an unknown
+  invoice id and sale, the second-invoice `409` and `403 FEATURE_NOT_ENTITLED`;
+- the API suite reported **76 files (1 skipped) / 1007 tests passed** and the
+  database suite 18 files / 400 tests; `pnpm typecheck` and `pnpm lint` were
+  14/14 and `pnpm format-check` clean.
+
+Three RDD native reviews closed **approved** with the authority burned and no
+correction required: `review-01c7a12dc4e54144` (the in-memory boundary),
+`review-4fe1a95e416b6b45` (the creation path) and `review-d918081c81315de7` (the
+read surface, four lenses). Their advisories are recorded as [[TD-024]],
+[[TD-025]] and [[TD-026]].
 
 This section is the machine-generated receipt for the merged slice and is
 **not** a production-readiness statement.

@@ -3,7 +3,7 @@ id: BILL-002
 type: story
 title: Invoice creation and read API
 epic: EPIC-14
-status: review
+status: done
 priority: high
 depends_on:
   - BILL-001
@@ -253,6 +253,16 @@ pnpm lint
 
 pnpm format-check
   -> clean
+
+CI (pull request #89, run 36905626822)
+  -> Database migrations: pass (1m3s)
+  -> Lint, Typecheck, Test, Build: pass (3m37s)
+     - live-PostgreSQL suite: Tests 142 passed (142)
+
+CI (merged main, head c52b175, run 36911300059) - the merged-receipt gate
+  -> Database migrations: success; 28 migrations applied to a fresh database
+  -> Lint, Typecheck, Test, Build: success
+  -> pull request #89 merged as c52b175
 ```
 
 Two environment conditions are operational facts, not defects: `pnpm lint` and
@@ -376,14 +386,31 @@ Changed:
 
 ## Completion Notes
 
-The Story is `review`, not `done`: implementation, both local suites and three
-approved native reviews are complete on `feat/epic-14-billing-invoice-api`, but
-no CI receipt exists yet because the pull request is not open. It moves to
-`done` when the branch's pull request merges with both required checks green,
-together with the QA evidence entry.
+The Story is `done`. Every acceptance criterion is checked, the module is
+merged, the three routes are pinned deny-by-default in the route-contract probe,
+tenant isolation is covered both against the in-memory boundary and over real
+HTTP, and the local gates and the **merged** CI run are green.
 
-Three RDD native reviews closed **approved** with the authority burned:
-`review-01c7a12dc4e54144` (W1, medium, one lens), `review-4fe1a95e416b6b45` (W2,
-medium, one lens) and `review-d918081c81315de7` (W3, high, four lenses). No
-correction was required by any of them. Their advisories are the three debt
-records above plus informational test and schema polish.
+Evidence of closure:
+
+- pull request #89 merged as `c52b175`;
+- run
+  [`36911300059`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36911300059)
+  on the merged `main` at `c52b175` concluded `success` on both required checks,
+  and its `migrations` job applied all **28** migrations to a fresh database;
+- the slice receipt before the merge was run `36905626822`, whose `migrations`
+  job reported the live-PostgreSQL suite at **142 passed**, the same number the
+  local run reported;
+- the QA evidence entry is recorded in `docs/10-qa/CI-EVIDENCE.md`.
+
+What this Story deliberately does not include, so the epic does not read as
+complete: [[BILL-003]] owns `confirm` and `cancel`, the atomic number allocation
+and their audit, and it also owes [[TD-023]], the header guard that inspects the
+status transition only. [[BILL-004]] owns the staff surface and [[BILL-005]]
+reconciles the epic's closure counters and creates `docs/05-modules/Billing.md`.
+[[TD-024]], [[TD-025]] and [[TD-026]] stay open.
+
+`done` here means implementation closure for this slice only. It is **not** a
+production-readiness statement: the epic stays `planned`, [[EPIC-20]] Production
+Hardening remains, and the open debt ([[TD-018]], [[TD-021]] through [[TD-026]])
+is untouched.
