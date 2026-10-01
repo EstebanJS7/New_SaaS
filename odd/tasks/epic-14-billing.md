@@ -334,6 +334,30 @@ BILL-001 closed.
   `pnpm --filter @newsaas/api test` stayed green.
 - Gates: `pnpm lint`, `pnpm typecheck` and `pnpm format-check` green.
 
+### BILL-002 W1 — RDD native review (closed, approved)
+
+- Lineage `review-01c7a12dc4e54144`, candidate range `10ab908..68d1c1c`, 2
+  paths, 506 changed lines, tier **medium**, one lens (`review-reliability`),
+  correction budget 200. The provider derived one lens because the change is
+  test infrastructure, not production behaviour.
+- Outcome: **approved on the first pass**, no correction required; the
+  acknowledgement burned the authority with
+  `burn_evidence: gentle-ai.review-acknowledged/v1`.
+- Two non-blocking advisories, both inside the fake invoice delegates: `R3-1`
+  (WARNING, `in-memory-database.ts:3410`, the `invoice.findFirst` delegate) and
+  `R3-2` (SUGGESTION, `:3443-3451`, the partial-unique enforcement in
+  `invoice.create`). They are scheduled into W2 rather than patched blind: the
+  fake's only real consumer is the Billing repository that W2 writes, so the
+  `include`/`orderBy` fidelity and the constraint shapes can only be _verified_
+  once that caller exists and the integration suite exercises them. Patching a
+  test double from an advisory without its claim text would risk teaching the
+  fake the wrong rule, which is exactly the mirrored-bug failure mode BILL-001
+  already suffered.
+- Operative lesson: a medium-tier candidate gets one lens, so this was fast and
+  proportionate; keep test-infrastructure changes as their own candidate instead
+  of burying them inside a feature commit, or the reliability lens never sees
+  them.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
