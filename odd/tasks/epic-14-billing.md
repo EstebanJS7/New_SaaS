@@ -92,10 +92,13 @@ as subsequent scope notes on the accepted records, not applied silently:
       in `reference-seed.test.ts` (52 -> 56 and the VETERINARIAN exact array).
 - [x] W3 — live-PostgreSQL applied-schema block for EPIC-14 in
       `apps/api/test/live-pg-isolation.e2e-spec.ts`.
-- [ ] W4 — docs reconciliation: the two subsequent scope notes on DEC-038 and
-      DEC-039, the BILL-001 implementation record, the epic progress entry, the
-      story guarantee-table fix (`series` is non-null), and the pinned doc
-      counters for migrations/permissions if the closure needs them.
+- [x] W4 — docs reconciliation: the two subsequent scope notes on DEC-038 and
+      DEC-039, the BILL-001 implementation record, the epic progress entry and
+      the story guarantee-table fix (`series` is non-null). The migration and
+      permission counters are deliberately **not** touched here: the historical
+      records (`ROADMAP.md`, `EPIC-13-Cash.md`, `docs/10-qa/CI-EVIDENCE.md`,
+      `CASH-002`) are closure receipts of earlier epics, and the new `28`/`56`
+      figures belong to BILL-005's closure evidence.
 
 ### Gates for this slice
 
@@ -103,9 +106,12 @@ as subsequent scope notes on the accepted records, not applied silently:
 - `pnpm --filter @newsaas/database db:generate`.
 - `pnpm --filter @newsaas/database db:deploy` against the local Docker Postgres
   and `pnpm --filter @newsaas/database db:live-verify`.
-- `pnpm --filter @newsaas/api test:live-pg` ([[TD-021]]: `.env` defines
-  `DATABASE_URL` but not `DATABASE_URL_TEST`, and the suite falls back to
-  `DATABASE_URL`, so no extra variable is required locally).
+- `pnpm --filter @newsaas/api test:live-pg` ([[TD-021]]: the suite needs
+  `DATABASE_URL` exported from the workspace-root `.env`, which Prisma does not
+  auto-load, AND it needs the value to be **schema-less** — the `.env` value
+  carries `?schema=public`, which the suite feeds to `psql` and which aborts
+  with `invalid URI query parameter: "schema"`. Strip the query string for this
+  command.)
 - `pnpm typecheck`, `pnpm lint`, `pnpm format-check`, `git diff --check`.
 
 ### BILL-001 W2 — `billing.*` permission family
@@ -179,6 +185,16 @@ as subsequent scope notes on the accepted records, not applied silently:
   baseline in the docs is `119`, while the suite reports `120` before this slice
   and `134` after it. The delta is exactly the 14 new tests; the stale baseline
   is a docs counter, not a defect.
+
+- **Gate omission caught at W4.** `pnpm lint` was missing from the W3 gate list
+  the parent handed to the writer. Running it during W4 found exactly one error
+  in the new probe — `@typescript-eslint/no-unsafe-assignment` from an object
+  literal holding `expect.any(Date)` (the only such usage in the suite) — fixed
+  by switching to the repository's existing
+  `expect(stored[0]?.confirmed_at).toBeInstanceOf(Date)` pattern in a follow-up
+  commit. `pnpm lint` is green at 14/14 tasks, and the W4 gate list now carries
+  it explicitly. Lesson recorded: lint belongs in every work unit that touches a
+  linted path, not only in the slice's final sweep.
 
 ## Evidence
 
@@ -303,3 +319,37 @@ as subsequent scope notes on the accepted records, not applied silently:
     artifact and any refresh is the maintainer's call.
   - `FILE-MANIFEST.md` already does not list EPIC-09 through EPIC-13 docs and
     was left alone rather than diverging further.
+
+### BILL-001 W4 — documentation reconciliation
+
+- Reconciled the implemented slice into the repository records with **no**
+  source, schema, migration, seed or test change:
+  - `docs/07-decisions/DEC-038-invoice-sourcing-and-aggregate-shape.md` and
+    `docs/07-decisions/DEC-039-invoice-numbering-and-allocation.md` each gained
+    a `## Subsequent scope note`; the accepted `## Decision` text was left
+    untouched. This follows the EPIC-12/[[DEC-026]] precedent: the note extends
+    the accepted decision rather than rewriting it, so the partial sale index
+    ([[DEC-038]]) and the biconditional number rule ([[DEC-039]]) are recorded
+    as clarifications of an accepted decision, not as silent deviations.
+  - `docs/02-stories/BILL-001-invoice-data-foundation.md`: `status: review`, the
+    working branch, the corrected guarantee table (partial sale index; `series`
+    NOT NULL defaulted to `'A'`), the ticked criteria with the real evidence,
+    the implementation summary with the three commits and the two
+    clarifications, the verification commands with their real results, the two
+    environment conditions, the test inventory, the known limitations (including
+    the shadowed-trigger finding) and the real file paths.
+  - `docs/01-roadmap/EPIC-14-Billing.md`: one `## Progress` bullet for BILL-001.
+    The epic's BILL-001 acceptance block stays unticked; BILL-005 reconciles it
+    at closure with CI receipts. The `## Current state before implementation`
+    snapshot was not touched.
+- **No historical documentation counter was changed.**
+  `docs/01-roadmap/ROADMAP.md`, `docs/01-roadmap/EPIC-13-Cash.md`,
+  `docs/10-qa/CI-EVIDENCE.md` and
+  `docs/02-stories/CASH-002-cash-movement-commands.md` still state
+  `27 migrations`, `52 permissions` and a `119` live-PG baseline. Those are
+  closure receipts of the state at those epics' closures, not live counters. The
+  new `28 migrations`, `56 permissions` and `134` live-PG cases are left for
+  BILL-005 to write into the EPIC-14 closure evidence. `docs/05-modules/**`
+  stays untouched because BILL-005 owns the module doc.
+- Gates: `npx prettier --write` and `npx prettier --check` over the five files,
+  plus `pnpm format-check`. No test suite was run: no code changed.

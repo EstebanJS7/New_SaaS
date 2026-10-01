@@ -13467,9 +13467,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           SELECT "status"::text AS status, "number", "confirmed_at"
           FROM "invoice" WHERE "id" = ${invoiceId}::uuid
         `;
-        expect(stored).toEqual([
-          { status: "CONFIRMED", number: 1, confirmed_at: expect.any(Date) },
-        ]);
+        expect(stored).toHaveLength(1);
+        expect(stored[0]?.status).toBe("CONFIRMED");
+        expect(stored[0]?.number).toBe(1);
+        expect(stored[0]?.confirmed_at).toBeInstanceOf(Date);
       });
 
       // A FURTHER update of the now-CONFIRMED invoice is rejected by the same
