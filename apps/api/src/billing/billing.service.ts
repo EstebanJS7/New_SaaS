@@ -17,6 +17,7 @@ import {
   type BillingTx,
   type InvoiceLineRow,
   type InvoiceLineWriteData,
+  type InvoiceListFilters,
   type InvoiceRow,
 } from "./billing.repository.js";
 import { BILLING_DTO_SCHEMA_VERSION, type CreateInvoiceInput } from "./billing.zod.js";
@@ -296,7 +297,8 @@ function toInvoiceResponse(row: InvoiceRow): InvoiceResponse {
 
 /**
  * Billing application boundary (EPIC-14 BILL-002): the create command that turns
- * exactly one `COMPLETED` in-tenant sale into one `DRAFT` invoice.
+ * exactly one `COMPLETED` in-tenant sale into one `DRAFT` invoice, plus the two
+ * tenant-scoped reads that describe it (`listInvoices`, `getInvoice`).
  *
  * - The `billing` entitlement is asserted FIRST (`403 FEATURE_NOT_ENTITLED`) and
  *   the route-level permission is RE-ASSERTED SECOND (`403 FORBIDDEN`), on every
@@ -312,6 +314,10 @@ function toInvoiceResponse(row: InvoiceRow): InvoiceResponse {
  *   and has NO number — allocation belongs to confirmation (DEC-039).
  * - The invoice is IMMUTABLE from creation: there is no update and no delete
  *   path here, and BILL-003 owns confirm/cancel (DEC-038/DEC-043).
+ * - The reads run the SAME gate order as the command — entitlement first,
+ *   permission second — and are pure: no audit row is appended and no row is
+ *   mutated. A foreign or unknown invoice id is the shared `404`, so every
+ *   invoice `404` is byte-equivalent by construction.
  * - Reference-state gates are deliberately absent: a customer or catalog item
  *   deactivated AFTER the sale must never make a completed sale un-invoiceable.
  * - The command appends exactly ONE audit row through {@link AuditWriter},
@@ -421,6 +427,39 @@ export class BillingService {
       }
       throw error;
     }
+  }
+
+  /**
+   * The caller tenant's invoices with their lines, newest first, optionally
+   * narrowed by status (EPIC-14 BILL-002 W3). An omitted filter applies NO
+   * implicit default, and there is no pagination: the shipped sales/cash list
+   * precedent.
+   *
+   * The gate order is the SAME one the create path and the sibling sales reads
+   * use: the `billing` entitlement FIRST (`403 FEATURE_NOT_ENTITLED`) and the
+   * `billing.read` permission SECOND (`403 FORBIDDEN`). A denial reaches no data
+   * access, so this pure read never touches a row.
+   */
+  async listInvoices(filters: InvoiceListFilters = {}): Promise<InvoiceResponse[]> {
+    await this.assertBillingEnabled();
+    await this.requirePermission(BILLING_PERMISSIONS.read);
+    const rows = await this.billing.list(filters);
+    return rows.map(toInvoiceResponse);
+  }
+
+  /**
+   * One invoice of the caller tenant with its lines, addressed by id. A foreign
+   * or unknown UUID is the SAME `404` with the repository's single message, so
+   * the two masks are byte-equivalent by construction and no other tenant's
+   * document is ever described.
+   *
+   * The gate order is the list's: entitlement first, `billing.read` second.
+   */
+  async getInvoice(id: string): Promise<InvoiceResponse> {
+    await this.assertBillingEnabled();
+    await this.requirePermission(BILLING_PERMISSIONS.read);
+    const row = await this.billing.findById(id);
+    return toInvoiceResponse(row);
   }
 
   /**

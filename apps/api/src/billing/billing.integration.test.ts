@@ -674,7 +674,7 @@ describe("Billing HTTP boundary — invoice creation (EPIC-14 BILL-002)", () => 
     expect(tableSizes(booted.db)).toEqual(sizesBefore);
   });
 
-  it("exposes no read, PATCH or DELETE route on this slice's invoice surface", async () => {
+  it("exposes no PATCH, PUT or DELETE route on this slice's invoice surface", async () => {
     const sale = fixture.seedSale(fixture.a);
     const created = await supertest(booted.app.getHttpServer())
       .post("/invoices")
@@ -684,13 +684,26 @@ describe("Billing HTTP boundary — invoice creation (EPIC-14 BILL-002)", () => 
     const invoiceId = (created.body as InvoiceDto).id;
     const sizesBefore = tableSizes(booted.db);
 
+    // W3 ships the two GET reads; the immutability fence is everything that
+    // MUTATES an existing document, plus every generic status route.
+    await supertest(booted.app.getHttpServer())
+      .get("/invoices")
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    await supertest(booted.app.getHttpServer())
+      .get(`/invoices/${invoiceId}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+
     for (const [method, path] of [
-      ["get", "/invoices"],
-      ["get", `/invoices/${invoiceId}`],
       ["patch", `/invoices/${invoiceId}`],
+      ["put", `/invoices/${invoiceId}`],
       ["delete", `/invoices/${invoiceId}`],
       ["patch", "/invoices"],
+      ["put", "/invoices"],
       ["delete", "/invoices"],
+      ["post", `/invoices/${invoiceId}/confirm`],
+      ["post", `/invoices/${invoiceId}/cancel`],
     ] as const) {
       await supertest(booted.app.getHttpServer())
         [method](path)
@@ -824,5 +837,349 @@ describe("Billing repository — tenant-scoped invoice read (R3-1 fidelity)", ()
     expect(() => booted.db.prisma.invoice.findFirst({ where: { status: "DRAFT" } })).toThrow(
       /tenantId predicate/
     );
+  });
+});
+
+/**
+ * The W3 read surface over the REAL HTTP boundary: the filtered list and the id
+ * read, both behind the `billing` entitlement and `billing.read`, with the
+ * tenant predicate applied to every query. The ordering, the filter and the
+ * cross-tenant mask are asserted here; the live-PostgreSQL block owns the
+ * applied-DDL and durable-state evidence.
+ */
+describe("Billing HTTP boundary — invoice reads (EPIC-14 BILL-002 W3)", () => {
+  let booted: BootedTestApp;
+  let fixture: BillingHttpFixture;
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    fixture = seedBillingHttp(booted.db);
+  });
+
+  afterAll(async () => {
+    await booted.close();
+  });
+
+  /**
+   * Pins a stored invoice's `createdAt` (the in-memory `invoice.create` always
+   * stamps "now") so the newest-first assertion has a known answer instead of
+   * depending on wall-clock ordering between two HTTP calls.
+   */
+  function pinCreatedAt(invoiceId: string, iso: string): void {
+    const row = booted.db.tables.invoices.get(invoiceId);
+    if (!row) {
+      throw new Error(`stored invoice ${invoiceId} not found`);
+    }
+    row.createdAt = new Date(iso);
+  }
+
+  const postInvoice = (cookie: string, saleId: string) =>
+    supertest(booted.app.getHttpServer()).post("/invoices").set("Cookie", cookie).send({ saleId });
+
+  const getInvoices = (cookie: string, query = "") =>
+    supertest(booted.app.getHttpServer()).get(`/invoices${query}`).set("Cookie", cookie);
+
+  const getInvoice = (cookie: string, id: string) =>
+    supertest(booted.app.getHttpServer()).get(`/invoices/${id}`).set("Cookie", cookie);
+
+  it("lists the tenant's invoices newest-first and honours the status filter in both directions", async () => {
+    const first = (
+      await postInvoice(fixture.a.actor.cookie, fixture.seedSale(fixture.a).id).expect(201)
+    ).body as InvoiceDto;
+    const second = (
+      await postInvoice(fixture.a.actor.cookie, fixture.seedSale(fixture.a).id).expect(201)
+    ).body as InvoiceDto;
+    // Far-future stamps: the two drafts head the list whatever else this
+    // describe's other cases stored, and their relative order is known.
+    pinCreatedAt(first.id, "2100-01-01T00:00:00.000Z");
+    pinCreatedAt(second.id, "2100-01-02T00:00:00.000Z");
+
+    // A CONFIRMED invoice cannot be produced over HTTP (BILL-003 owns the
+    // transition), so it is seeded directly to exercise the filter in BOTH
+    // directions: it must appear under CONFIRMED and never under DRAFT.
+    const confirmed = booted.db.prisma.invoice.create({
+      data: {
+        tenantId: fixture.a.tenant.id,
+        saleId: fixture.seedSale(fixture.a).id,
+        customerId: null,
+        currency: "PYG",
+        status: "CONFIRMED",
+        series: "A",
+        number: 1,
+        confirmedAt: new Date(),
+        lines: {
+          create: [
+            {
+              catalogItemId: fixture.createItem(fixture.a).id,
+              position: 0,
+              description: "confirmed line",
+              rateCode: "EXEMPT",
+              unitPrice: "500.00",
+              quantity: "1.000",
+              lineTotal: "500.00",
+              taxableBase: "500.00",
+              taxAmount: "0.00",
+            },
+          ],
+        },
+      },
+    });
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const listed = await getInvoices(fixture.a.actor.cookie).expect(200);
+    const list = listed.body as InvoiceDto[];
+    expect(Array.isArray(list)).toBe(true);
+    expect(list.length).toBeGreaterThanOrEqual(3);
+    // Newest first by `createdAt`: the two pinned drafts lead, in order.
+    expect(list[0].id).toBe(second.id);
+    expect(list[1].id).toBe(first.id);
+    expect(list.map((invoice) => invoice.id)).toContain(confirmed.id);
+    for (const invoice of list) {
+      // Exact allowlisted key set, and the tenant is never on the wire.
+      expect(Object.keys(invoice).sort()).toEqual([...INVOICE_RESPONSE_KEYS].sort());
+      expect("tenantId" in invoice).toBe(false);
+    }
+    expect(listed.text).not.toContain("tenant_id");
+    expect(listed.text).not.toContain("invoice_id");
+
+    const drafts = (await getInvoices(fixture.a.actor.cookie, "?status=DRAFT").expect(200))
+      .body as InvoiceDto[];
+    const draftIds = drafts.map((invoice) => invoice.id);
+    expect(draftIds).toContain(first.id);
+    expect(draftIds).toContain(second.id);
+    expect(draftIds).not.toContain(confirmed.id);
+    for (const invoice of drafts) {
+      expect(invoice.status).toBe("DRAFT");
+    }
+
+    const confirmedList = (
+      await getInvoices(fixture.a.actor.cookie, "?status=CONFIRMED").expect(200)
+    ).body as InvoiceDto[];
+    expect(confirmedList.map((invoice) => invoice.id)).toEqual([confirmed.id]);
+    expect(confirmedList[0].number).toBe(1);
+
+    const cancelledList = (
+      await getInvoices(fixture.a.actor.cookie, "?status=CANCELLED").expect(200)
+    ).body as InvoiceDto[];
+    expect(cancelledList).toEqual([]);
+
+    // Four pure reads appended no audit row and wrote no state.
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+    expect(booted.db.tables.invoices.get(confirmed.id)?.status).toBe("CONFIRMED");
+  });
+
+  it("returns one invoice with its lines in position order and the id read equals the create response", async () => {
+    const item = fixture.createItem(fixture.a);
+    const sale = fixture.seedSale(fixture.a);
+    // Lines inserted OUT of position order: the read must return the document's
+    // frozen reading order, not the relation's insertion order.
+    const stored = booted.db.prisma.invoice.create({
+      data: {
+        tenantId: fixture.a.tenant.id,
+        saleId: sale.id,
+        customerId: null,
+        currency: "PYG",
+        lines: {
+          create: [
+            {
+              catalogItemId: item.id,
+              position: 2,
+              description: "third",
+              rateCode: "EXEMPT",
+              unitPrice: "3.00",
+              quantity: "1.000",
+              lineTotal: "3.00",
+              taxableBase: "3.00",
+              taxAmount: "0.00",
+            },
+            {
+              catalogItemId: item.id,
+              position: 0,
+              description: "first",
+              rateCode: "EXEMPT",
+              unitPrice: "1.00",
+              quantity: "1.000",
+              lineTotal: "1.00",
+              taxableBase: "1.00",
+              taxAmount: "0.00",
+            },
+            {
+              catalogItemId: item.id,
+              position: 1,
+              description: "second",
+              rateCode: "EXEMPT",
+              unitPrice: "2.00",
+              quantity: "1.000",
+              lineTotal: "2.00",
+              taxableBase: "2.00",
+              taxAmount: "0.00",
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await getInvoice(fixture.a.actor.cookie, stored.id).expect(200);
+    const body = response.body as InvoiceDto;
+    expect(Object.keys(body).sort()).toEqual([...INVOICE_RESPONSE_KEYS].sort());
+    expect(body.id).toBe(stored.id);
+    expect(body.status).toBe("DRAFT");
+    expect(body.series).toBe("A");
+    // A draft carries NO allocated number (DEC-039).
+    expect(body.number).toBeNull();
+    expect(body.confirmedAt).toBeNull();
+    expect(body.lines.map((line) => line.position)).toEqual([0, 1, 2]);
+    expect(body.lines.map((line) => line.description)).toEqual(["first", "second", "third"]);
+    for (const line of body.lines) {
+      expect(Object.keys(line).sort()).toEqual([...INVOICE_LINE_RESPONSE_KEYS].sort());
+    }
+    // Totals are projections over the invoice's OWN frozen lines, fixed-scale.
+    expect(body.total).toBe("6.00");
+    expect(body.taxTotal).toBe("0.00");
+    expect(response.text).not.toContain("tenant_id");
+    expect(response.text).not.toContain("invoice_id");
+
+    // The create response and the later id read describe the SAME document,
+    // byte for byte.
+    const createdResponse = await postInvoice(
+      fixture.a.actor.cookie,
+      fixture.seedSale(fixture.a).id
+    ).expect(201);
+    const created = createdResponse.body as InvoiceDto;
+    const reread = await getInvoice(fixture.a.actor.cookie, created.id).expect(200);
+    expect((reread.body as InvoiceDto).id).toBe(created.id);
+    expect(reread.text).toBe(createdResponse.text);
+  });
+
+  it("masks a foreign and an unknown invoice id as a byte-equivalent 404 and never leaks another tenant's invoice", async () => {
+    const foreignSale = fixture.seedSale(fixture.b);
+    const foreign = (await postInvoice(fixture.b.actor.cookie, foreignSale.id).expect(201))
+      .body as InvoiceDto;
+    const sizesBefore = tableSizes(booted.db);
+
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.a.actor.cookie,
+      method: "GET",
+      nonexistentUrl: `/invoices/${randomUUID()}`,
+      foreignUrl: `/invoices/${foreign.id}`,
+      forbiddenIdentifiers: [
+        foreign.id,
+        foreign.saleId,
+        fixture.b.tenant.id,
+        foreign.lines[0].description,
+      ],
+    });
+
+    // One shared message backs every invoice 404 (byte-equivalence by construction).
+    const probe = await getInvoice(fixture.a.actor.cookie, foreign.id).expect(404);
+    expect((probe.body as ErrorDto).error.code).toBe("NOT_FOUND");
+    expect((probe.body as ErrorDto).error.message).toBe(INVOICE_NOT_FOUND_MESSAGE);
+
+    // Neither tenant's rows moved, and tenant B still reads its OWN invoice.
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    const foreignRead = await getInvoice(fixture.b.actor.cookie, foreign.id).expect(200);
+    expect((foreignRead.body as InvoiceDto).saleId).toBe(foreign.saleId);
+  });
+
+  it("requires billing.read on both reads and persists nothing when denied", async () => {
+    const invoice = (
+      await postInvoice(fixture.a.actor.cookie, fixture.seedSale(fixture.a).id).expect(201)
+    ).body as InvoiceDto;
+    const sizesBefore = tableSizes(booted.db);
+
+    const deniedList = await getInvoices(fixture.noPermission.cookie).expect(403);
+    expect((deniedList.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    const deniedRead = await getInvoice(fixture.noPermission.cookie, invoice.id).expect(403);
+    expect((deniedRead.body as ErrorDto).error.code).toBe("FORBIDDEN");
+
+    // ONE `billing.read` key is enough for both reads.
+    await getInvoices(fixture.readOnly.cookie).expect(200);
+    const allowed = await getInvoice(fixture.readOnly.cookie, invoice.id).expect(200);
+    expect((allowed.body as InvoiceDto).id).toBe(invoice.id);
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  it("gates both reads on the billing entitlement before the permission and persists nothing", async () => {
+    const sale = fixture.seedSale(fixture.c);
+    const sizesBefore = tableSizes(booted.db);
+
+    // Tenant C holds the FULL `billing.*` matrix but no entitlement, so a 403
+    // here can only be the entitlement gate — the one asserted FIRST.
+    const list = await getInvoices(fixture.c.actor.cookie).expect(403);
+    expect((list.body as ErrorDto).error.code).toBe("FEATURE_NOT_ENTITLED");
+    expect((list.body as ErrorDto).error.message).toBe(BILLING_FEATURE_NOT_ENTITLED_MESSAGE);
+
+    // An UNKNOWN id is still the entitlement 403, never a 404: the gate runs
+    // before any data access.
+    const read = await getInvoice(fixture.c.actor.cookie, randomUUID()).expect(403);
+    expect((read.body as ErrorDto).error.code).toBe("FEATURE_NOT_ENTITLED");
+
+    const created = await postInvoice(fixture.c.actor.cookie, sale.id).expect(403);
+    expect((created.body as ErrorDto).error.code).toBe("FEATURE_NOT_ENTITLED");
+
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  it("rejects an unknown, malformed or non-enum list query and a malformed id with the stable 400", async () => {
+    const invoice = (
+      await postInvoice(fixture.a.actor.cookie, fixture.seedSale(fixture.a).id).expect(201)
+    ).body as InvoiceDto;
+    const sizesBefore = tableSizes(booted.db);
+
+    for (const query of [
+      "?status=BOGUS",
+      "?status=draft",
+      "?status=",
+      "?status=DRAFT&status=CONFIRMED",
+      `?tenantId=${fixture.a.tenant.id}`,
+      `?saleId=${invoice.saleId}`,
+      "?limit=10",
+      "?unknown=1",
+    ]) {
+      const response = await getInvoices(fixture.a.actor.cookie, query).expect(400);
+      expect((response.body as ErrorDto).error.code, query).toBe("VALIDATION_FAILED");
+    }
+
+    for (const id of ["not-a-uuid", "123", "00000000-0000-0000-0000-00000000000z"]) {
+      const response = await getInvoice(fixture.a.actor.cookie, id).expect(400);
+      expect((response.body as ErrorDto).error.code, id).toBe("VALIDATION_FAILED");
+    }
+
+    // Every rejection persisted nothing and the valid read still answers.
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    const valid = await getInvoice(fixture.a.actor.cookie, invoice.id).expect(200);
+    expect((valid.body as InvoiceDto).id).toBe(invoice.id);
+  });
+
+  it("keeps the list tenant-scoped when the other tenant has invoices of its own", async () => {
+    const mine = (
+      await postInvoice(fixture.a.actor.cookie, fixture.seedSale(fixture.a).id).expect(201)
+    ).body as InvoiceDto;
+    const foreign = (
+      await postInvoice(fixture.b.actor.cookie, fixture.seedSale(fixture.b).id).expect(201)
+    ).body as InvoiceDto;
+
+    const mineIds = (
+      (await getInvoices(fixture.a.actor.cookie).expect(200)).body as InvoiceDto[]
+    ).map((invoice) => invoice.id);
+    const foreignIds = (
+      (await getInvoices(fixture.b.actor.cookie).expect(200)).body as InvoiceDto[]
+    ).map((invoice) => invoice.id);
+
+    expect(mineIds).toContain(mine.id);
+    expect(mineIds).not.toContain(foreign.id);
+    expect(foreignIds).toContain(foreign.id);
+    expect(foreignIds).not.toContain(mine.id);
+    // The two result sets are disjoint: no row is visible to both tenants.
+    expect(mineIds.filter((id) => foreignIds.includes(id))).toEqual([]);
+
+    // The same holds for the filtered read.
+    const foreignDrafts = (
+      (await getInvoices(fixture.b.actor.cookie, "?status=DRAFT").expect(200)).body as InvoiceDto[]
+    ).map((invoice) => invoice.id);
+    expect(foreignDrafts).toContain(foreign.id);
+    expect(foreignDrafts).not.toContain(mine.id);
   });
 });

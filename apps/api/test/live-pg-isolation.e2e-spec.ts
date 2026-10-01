@@ -87,6 +87,15 @@ const SALE_NOT_FOUND_REQUEST_ID = "live-pg-sale-not-found-proof";
 /** Server-owned request id pinned on every completion cross-tenant miss. */
 const COMPLETION_NOT_FOUND_REQUEST_ID = "live-pg-completion-not-found-proof";
 
+/** Server-owned request id pinned on every invoice cross-tenant miss (W3 reads). */
+const INVOICE_NOT_FOUND_REQUEST_ID = "live-pg-invoice-not-found-proof";
+
+/**
+ * Server-owned request id pinned on every invoice SOURCE-SALE cross-tenant miss
+ * (`POST /invoices` addresses a sale, so its masked 404 is the sale's).
+ */
+const INVOICE_SALE_NOT_FOUND_REQUEST_ID = "live-pg-invoice-sale-not-found-proof";
+
 /** Stable `404` wire message shared by every sale verb. */
 const SALE_NOT_FOUND_MESSAGE = "Sale was not found.";
 
@@ -96,6 +105,23 @@ const SALE_NOT_FOUND_MESSAGE = "Sale was not found.";
  * application emits rather than importing the production constant.
  */
 const SALE_NOT_EDITABLE_MESSAGE = "Only a draft sale can be changed.";
+
+/** Stable `404` wire message shared by every invoice read verb (EPIC-14 W3). */
+const INVOICE_NOT_FOUND_MESSAGE = "Invoice was not found.";
+
+/**
+ * Stable `409` wire message for a second LIVE invoice on one sale (DEC-043),
+ * mirrored as a literal so the live suite asserts the byte-exact body the
+ * application emits rather than importing the production constant.
+ */
+const INVOICE_SALE_ALREADY_INVOICED_MESSAGE = "This sale already has an invoice.";
+
+/**
+ * Stable `403` wire message for a tenant without the `billing` entitlement
+ * (DEC-040), mirrored as a literal so the live suite asserts the byte-exact
+ * body the application emits.
+ */
+const BILLING_FEATURE_NOT_ENTITLED_MESSAGE = "Billing features are not enabled for this tenant.";
 
 /**
  * Stable `400` wire message for an item whose informational
@@ -343,6 +369,44 @@ interface CashMovementDto {
   amount: string;
   reason: string | null;
   createdAt: string;
+}
+
+/** Allowlisted invoice line projection (EPIC-14 W3 contract). */
+interface InvoiceLineDto {
+  id: string;
+  catalogItemId: string;
+  position: number;
+  description: string;
+  rateCode: string;
+  unitPrice: string;
+  quantity: string;
+  lineTotal: string;
+  taxableBase: string;
+  taxAmount: string;
+}
+
+/**
+ * Allowlisted invoice response projection (EPIC-14 W3 contract). There is
+ * deliberately no `tenantId` on the wire (the cash precedent). `number` IS a
+ * present key and is `null` until confirmation (DEC-039), so "no number is
+ * present" means the value is NULL, never that the key is missing.
+ */
+interface InvoiceDto {
+  id: string;
+  saleId: string;
+  customerId: string | null;
+  currency: string;
+  status: "DRAFT" | "CONFIRMED" | "CANCELLED";
+  series: string;
+  number: number | null;
+  confirmedAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  lines: InvoiceLineDto[];
+  total: string;
+  taxTotal: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface PatientDto {
@@ -623,6 +687,45 @@ const CASH_MOVEMENT_DTO_KEYS = [
   "registerId",
   "sessionId",
   "type",
+].sort();
+
+/**
+ * Exact allowlisted key set of the invoice response DTO (EPIC-14 W3).
+ * Deliberately has NO `tenantId` (the cash precedent): the caller's tenant is
+ * already the request's own identity and an invoice is never addressed across a
+ * boundary. It has no fiscal field and no payment field either — Billing keeps
+ * no fiscal state (DEC-042) and payments stay on the sale (DEC-044).
+ */
+const INVOICE_DTO_KEYS = [
+  "cancelReason",
+  "cancelledAt",
+  "confirmedAt",
+  "createdAt",
+  "currency",
+  "customerId",
+  "id",
+  "lines",
+  "number",
+  "saleId",
+  "series",
+  "status",
+  "taxTotal",
+  "total",
+  "updatedAt",
+].sort();
+
+/** Exact allowlisted key set of one invoice line projection (EPIC-14 W3). */
+const INVOICE_LINE_DTO_KEYS = [
+  "catalogItemId",
+  "description",
+  "id",
+  "lineTotal",
+  "position",
+  "quantity",
+  "rateCode",
+  "taxAmount",
+  "taxableBase",
+  "unitPrice",
 ].sort();
 
 /**
@@ -13755,6 +13858,751 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(
         await prisma.invoiceNumberSequence.findUnique({ where: { id: billingSequenceAId } })
       ).toMatchObject({ tenantId: tenantAId, series: "A", nextValue: 1 });
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-14 BILL-002 W3 live-PostgreSQL invoice READ surface evidence.
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP and `20261001000001_billing_invoice_foundation`'s applied DDL —
+   * what the shared in-memory boundary cannot:
+   *   1. `POST /invoices` turns ONE committed `COMPLETED` sale into a `DRAFT`
+   *      invoice whose every copied line value equals the sale's OWN frozen
+   *      `sale_line` value, whose totals are the exact sum of those lines and
+   *      which carries NO allocated number;
+   *   2. `GET /invoices/:id` answers the SAME document, byte for byte;
+   *   3. `GET /invoices` lists it newest-first, and the `status` filter both
+   *      selects and excludes it;
+   *   4. a foreign-tenant invoice id and an unknown id are ONE byte-equivalent
+   *      `404` under one pinned request id, leaving both tenants' rows untouched;
+   *   5. a foreign-tenant and an unknown SOURCE sale on `POST /invoices` are the
+   *      same byte-equivalent `404`, reusing the shared sale message;
+   *   6. a second live invoice for one sale is the stable `409` with zero
+   *      residue;
+   *   7. an unentitled tenant gets `403 FEATURE_NOT_ENTITLED` on both reads and
+   *      on the create, persisting nothing.
+   *
+   * FIXTURE STRATEGY — RAW INSERTS for the SOURCE rows, REAL HTTP for the
+   * invoice surface. The invoice command reads its sale through the real,
+   * tenant-predicated `SaleRepository`, so a raw `sale` + `sale_line` +
+   * `catalog_item` triple at the migration's exact shape IS the production
+   * input; producing the same `COMPLETED` sale over HTTP would need a stock
+   * funding adjustment, a cash register, an open session and a payment set —
+   * four commands of setup for a fact the EPIC-12 POS-003 block already owns —
+   * while raw inserts let this block assert the verbatim COPY against the exact
+   * frozen values it wrote. Neither invoice route is ever bypassed: every
+   * assertion below goes over real HTTP. Only the two committed baselines no
+   * HTTP route can produce are raw — the back-dated `DRAFT` (its `created_at` is
+   * the newest-first anchor) and the `CONFIRMED` row (confirming an invoice is
+   * BILL-003's command, so no route exists yet).
+   *
+   * Every negative probe asserts that nothing persisted, and the closing case
+   * proves no orphan or cross-tenant row survived any of them.
+   */
+  describe("EPIC-14 billing invoice read application-path isolation", () => {
+    /** Entitled tenant that owns the read fixtures. */
+    let readTenantId: string;
+    let readCookie: string;
+    /** Foreign tenant whose live invoice must never be addressable by id. */
+    let foreignTenantId: string;
+    let foreignCookie: string;
+    /** Permissioned tenant WITHOUT the `billing` entitlement (DEC-040). */
+    let unentitledTenantId: string;
+    let unentitledCookie: string;
+
+    /** Global SEED-owned rates the frozen sale lines carry (PRD §15). */
+    let exemptRateId: string;
+    let iva10RateId: string;
+
+    /** Tenant R items referenced by the main sale's two frozen lines. */
+    let readItemOneId: string;
+    let readItemTwoId: string;
+    /** Tenant F and tenant U items, referenced only by their own sales. */
+    let foreignItemId: string;
+    let unentitledItemId: string;
+
+    /** The committed `COMPLETED` sale the create/read case invoices. */
+    let readSaleId: string;
+    /** Committed back-dated `DRAFT` fixture: the newest-first anchor. */
+    let backdatedInvoiceId: string;
+    /** The back-dated fixture's source sale, kept so the row is asserted exactly. */
+    let backdatedSaleId: string;
+    /** Committed `CONFIRMED` fixture: the status filter's positive side. */
+    let confirmedInvoiceId: string;
+    /** The confirmed fixture's source sale, kept so the row is asserted exactly. */
+    let confirmedSaleId: string;
+
+    /** One frozen sale line the raw fixture writes; the invoice must copy it. */
+    interface FrozenSaleLine {
+      readonly catalogItemId: string;
+      readonly rateCode: string;
+      readonly unitPrice: string;
+      readonly quantity: string;
+      readonly lineTotal: string;
+      readonly taxableBase: string;
+      readonly taxAmount: string;
+    }
+
+    /**
+     * One tenant with an ACTIVE OWNER membership, a real session cookie and (for
+     * the entitled ones) a direct `billing` entitlement row. The OWNER role
+     * already holds every `billing.*` key (the DEC-040 matrix), so the
+     * unentitled tenant is refused by the ENTITLEMENT gate alone — never by a
+     * missing permission.
+     */
+    const provisionTenant = async (
+      slug: string,
+      email: string,
+      options: { entitled: boolean }
+    ): Promise<{ tenantId: string; cookie: string }> => {
+      const tenant = await prisma.tenant.create({ data: { slug, name: slug } });
+      const role = await prisma.role.findUnique({ where: { code: "OWNER" } });
+      if (!role) {
+        throw new Error("Reference seed did not create OWNER role");
+      }
+      const profile = await prisma.userProfile.create({
+        data: { email, displayName: email, status: "active" },
+      });
+      await prisma.tenantMembership.create({
+        data: {
+          tenantId: tenant.id,
+          userProfileId: profile.id,
+          roleId: role.id,
+          status: "ACTIVE",
+        },
+      });
+      if (options.entitled) {
+        const feature = await prisma.featureCode.upsert({
+          where: { code: "billing" },
+          create: { code: "billing" },
+          update: {},
+        });
+        await prisma.tenantEntitlement.upsert({
+          where: {
+            tenantId_featureCodeId: { tenantId: tenant.id, featureCodeId: feature.id },
+          },
+          create: { tenantId: tenant.id, featureCodeId: feature.id },
+          update: {},
+        });
+      }
+      const session = await app.get(SessionService).issue(profile.id);
+      return { tenantId: tenant.id, cookie: `${STAFF_SESSION_COOKIE}=${session.token}` };
+    };
+
+    /** Raw tenant catalog item at the migration's exact shape; returns the id. */
+    const insertItem = async (
+      tenantId: string,
+      name: string,
+      taxRateId: string
+    ): Promise<string> => {
+      const id = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "catalog_item" ("id", "tenant_id", "kind", "name", "tax_rate_id")
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, 'SUPPLY'::catalog_item_kind, ${name},
+          ${taxRateId}::uuid
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * Raw `COMPLETED` sale WITH its frozen `sale_line` rows at the migration's
+     * exact shape; committed, because it is the production INPUT the invoice
+     * command reads through the real repository.
+     */
+    const insertCompletedSale = async (
+      tenantId: string,
+      lines: readonly FrozenSaleLine[]
+    ): Promise<string> => {
+      const saleId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+        VALUES (${saleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+      `;
+      for (const line of lines) {
+        await prisma.$executeRaw`
+          INSERT INTO "sale_line" (
+            "id", "tenant_id", "sale_id", "catalog_item_id", "rate_code",
+            "unit_price", "quantity", "line_total", "taxable_base", "tax_amount"
+          )
+          VALUES (
+            ${randomUUID()}::uuid, ${tenantId}::uuid, ${saleId}::uuid,
+            ${line.catalogItemId}::uuid, ${line.rateCode}, ${line.unitPrice}::decimal,
+            ${line.quantity}::decimal, ${line.lineTotal}::decimal,
+            ${line.taxableBase}::decimal, ${line.taxAmount}::decimal
+          )
+        `;
+      }
+      return saleId;
+    };
+
+    /** A fresh committed `COMPLETED` sale with ONE frozen line. */
+    const freshSale = (tenantId: string, catalogItemId: string): Promise<string> =>
+      insertCompletedSale(tenantId, [
+        {
+          catalogItemId,
+          rateCode: "EXEMPT",
+          unitPrice: "100.00",
+          quantity: "1.000",
+          lineTotal: "100.00",
+          taxableBase: "100.00",
+          taxAmount: "0.00",
+        },
+      ]);
+
+    /**
+     * Raw invoice fixture WITH its lines, used ONLY for the two committed
+     * baselines no HTTP route can produce. `createdAt` is explicit so the
+     * newest-first anchor is deterministic rather than wall-clock dependent.
+     */
+    const insertInvoiceFixture = async (
+      tenantId: string,
+      saleId: string,
+      options: {
+        status: "DRAFT" | "CONFIRMED";
+        number?: number;
+        confirmedAt?: Date;
+        createdAt?: Date;
+        lines: readonly (FrozenSaleLine & { position: number; description: string })[];
+      }
+    ): Promise<string> => {
+      const id = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "invoice" (
+          "id", "tenant_id", "sale_id", "currency", "status", "series", "number",
+          "confirmed_at", "created_at"
+        )
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${saleId}::uuid, 'PYG',
+          ${options.status}::invoice_status, 'A', ${options.number ?? null}::int,
+          ${options.confirmedAt ?? null}::timestamptz,
+          ${options.createdAt ?? new Date()}::timestamptz
+        )
+      `;
+      for (const line of options.lines) {
+        await prisma.$executeRaw`
+          INSERT INTO "invoice_line" (
+            "id", "tenant_id", "invoice_id", "catalog_item_id", "position",
+            "description", "rate_code", "unit_price", "quantity", "line_total",
+            "taxable_base", "tax_amount"
+          )
+          VALUES (
+            ${randomUUID()}::uuid, ${tenantId}::uuid, ${id}::uuid,
+            ${line.catalogItemId}::uuid, ${line.position}, ${line.description},
+            ${line.rateCode}, ${line.unitPrice}::decimal, ${line.quantity}::decimal,
+            ${line.lineTotal}::decimal, ${line.taxableBase}::decimal,
+            ${line.taxAmount}::decimal
+          )
+        `;
+      }
+      return id;
+    };
+
+    /**
+     * The stored `sale_line` values of one sale, at their OWN exact scales, so
+     * the verbatim copy is asserted against real PostgreSQL rather than the HTTP
+     * projection alone.
+     */
+    const rawSaleLines = (
+      saleId: string
+    ): Promise<
+      {
+        catalog_item_id: string;
+        rate_code: string;
+        unit_price: string;
+        quantity: string;
+        line_total: string;
+        taxable_base: string;
+        tax_amount: string;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "catalog_item_id"::text AS catalog_item_id, "rate_code" AS rate_code,
+          "unit_price"::text AS unit_price, "quantity"::text AS quantity,
+          "line_total"::text AS line_total, "taxable_base"::text AS taxable_base,
+          "tax_amount"::text AS tax_amount
+        FROM "sale_line" WHERE "sale_id" = ${saleId}::uuid
+        ORDER BY "catalog_item_id"::text ASC
+      `;
+
+    /** The stored invoice header of one invoice, read from PostgreSQL directly. */
+    const rawInvoiceHeader = (
+      invoiceId: string
+    ): Promise<
+      { id: string; tenant_id: string; sale_id: string; status: string; number: number | null }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "id"::text AS id, "tenant_id"::text AS tenant_id, "sale_id"::text AS sale_id,
+          "status"::text AS status, "number"
+        FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+      `;
+
+    /**
+     * Every table the invoice surface can write, counted so a rejection can
+     * prove that NOTHING was persisted for ANY of them. The counts are GLOBAL:
+     * a row written anywhere would fail the comparison.
+     */
+    const readResidue = async () => ({
+      invoices: await prisma.invoice.count(),
+      invoiceLines: await prisma.invoiceLine.count(),
+      audits: await prisma.auditLog.count(),
+    });
+
+    /** One invoice create over REAL HTTP, with an optional pinned request id. */
+    const postInvoice = (cookie: string, saleId: string, requestId?: string) => {
+      const request = supertest(serverUrl).post("/invoices").set("Cookie", cookie);
+      return (requestId === undefined ? request : request.set("X-Request-Id", requestId)).send({
+        saleId,
+      });
+    };
+
+    /** The invoice list over REAL HTTP with an optional raw query string. */
+    const getInvoices = (cookie: string, query = "") =>
+      supertest(serverUrl).get(`/invoices${query}`).set("Cookie", cookie);
+
+    /** The id read over REAL HTTP, with an optional pinned request id. */
+    const getInvoice = (cookie: string, id: string, requestId?: string) => {
+      const request = supertest(serverUrl).get(`/invoices/${id}`).set("Cookie", cookie);
+      return requestId === undefined ? request : request.set("X-Request-Id", requestId);
+    };
+
+    beforeAll(async () => {
+      // The rate rows are SEED-owned, so resolving them proves the reference
+      // seed really ran against this database (PRD §15).
+      const rates = await prisma.taxRate.findMany();
+      const rateIdsByCode = new Map(rates.map((rate) => [rate.code, rate.id]));
+      const requireRate = (code: string): string => {
+        const id = rateIdsByCode.get(code);
+        if (!id) {
+          throw new Error(`Reference seed did not create the global ${code} tax rate`);
+        }
+        return id;
+      };
+      exemptRateId = requireRate("EXEMPT");
+      iva10RateId = requireRate("IVA_10");
+
+      const read = await provisionTenant("live-billing-read", "owner-billing-read@live.test", {
+        entitled: true,
+      });
+      readTenantId = read.tenantId;
+      readCookie = read.cookie;
+      const foreign = await provisionTenant(
+        "live-billing-foreign",
+        "owner-billing-foreign@live.test",
+        { entitled: true }
+      );
+      foreignTenantId = foreign.tenantId;
+      foreignCookie = foreign.cookie;
+      const unentitled = await provisionTenant(
+        "live-billing-unentitled",
+        "owner-billing-unentitled@live.test",
+        { entitled: false }
+      );
+      unentitledTenantId = unentitled.tenantId;
+      unentitledCookie = unentitled.cookie;
+
+      readItemOneId = await insertItem(readTenantId, "Live Billing Read Item One", exemptRateId);
+      readItemTwoId = await insertItem(readTenantId, "Live Billing Read Item Two", iva10RateId);
+      foreignItemId = await insertItem(foreignTenantId, "Live Billing Foreign Item", exemptRateId);
+      unentitledItemId = await insertItem(
+        unentitledTenantId,
+        "Live Billing Unentitled Item",
+        exemptRateId
+      );
+
+      // The main sale: one EXEMPT and one IVA_10 frozen line, so the verbatim
+      // copy AND the tax projection are both observable.
+      readSaleId = await insertCompletedSale(readTenantId, [
+        {
+          catalogItemId: readItemOneId,
+          rateCode: "EXEMPT",
+          unitPrice: "1000.00",
+          quantity: "2.000",
+          lineTotal: "2000.00",
+          taxableBase: "2000.00",
+          taxAmount: "0.00",
+        },
+        {
+          catalogItemId: readItemTwoId,
+          rateCode: "IVA_10",
+          unitPrice: "1100.00",
+          quantity: "1.000",
+          lineTotal: "1100.00",
+          taxableBase: "1000.00",
+          taxAmount: "100.00",
+        },
+      ]);
+
+      // The back-dated DRAFT: the one 2020 row of the newest-first assertion.
+      backdatedSaleId = await freshSale(readTenantId, readItemOneId);
+      backdatedInvoiceId = await insertInvoiceFixture(readTenantId, backdatedSaleId, {
+        status: "DRAFT",
+        createdAt: new Date("2020-01-01T00:00:00.000Z"),
+        lines: [
+          {
+            catalogItemId: readItemOneId,
+            position: 0,
+            description: "Live Billing Back-dated Line",
+            rateCode: "EXEMPT",
+            unitPrice: "100.00",
+            quantity: "1.000",
+            lineTotal: "100.00",
+            taxableBase: "100.00",
+            taxAmount: "0.00",
+          },
+        ],
+      });
+
+      // The CONFIRMED row: no HTTP route confirms an invoice before BILL-003, so
+      // the filter's positive side must be seeded directly.
+      confirmedSaleId = await freshSale(readTenantId, readItemTwoId);
+      confirmedInvoiceId = await insertInvoiceFixture(readTenantId, confirmedSaleId, {
+        status: "CONFIRMED",
+        number: 1,
+        confirmedAt: new Date(),
+        lines: [
+          {
+            catalogItemId: readItemTwoId,
+            position: 0,
+            description: "Live Billing Confirmed Line",
+            rateCode: "IVA_10",
+            unitPrice: "1100.00",
+            quantity: "1.000",
+            lineTotal: "1100.00",
+            taxableBase: "1000.00",
+            taxAmount: "100.00",
+          },
+        ],
+      });
+    }, 60_000);
+
+    it("creates a DRAFT invoice from a committed COMPLETED sale and answers the identical document from GET /invoices/:id", async () => {
+      const residueBefore = await readResidue();
+
+      const created = await postInvoice(readCookie, readSaleId).expect(201);
+      const body = created.body as InvoiceDto;
+      expect(Object.keys(body).sort()).toEqual(INVOICE_DTO_KEYS);
+      expect("tenantId" in body).toBe(false);
+      expect(body.saleId).toBe(readSaleId);
+      expect(body.customerId).toBeNull();
+      expect(body.currency).toBe("PYG");
+      expect(body.status).toBe("DRAFT");
+      // The database-default series; creation allocates NO number (DEC-039).
+      expect(body.series).toBe("A");
+      expect(body.number).toBeNull();
+      expect(body.confirmedAt).toBeNull();
+      expect(body.cancelledAt).toBeNull();
+      expect(body.cancelReason).toBeNull();
+
+      // Every copied value equals the SALE's OWN frozen `sale_line` value, and
+      // the description is the source catalog item's name.
+      const frozen = await rawSaleLines(readSaleId);
+      expect(frozen).toHaveLength(2);
+      expect(body.lines).toHaveLength(2);
+      const items = await prisma.$queryRaw<{ id: string; name: string }[]>`
+        SELECT "id"::text AS id, "name" AS name FROM "catalog_item"
+        WHERE "tenant_id" = ${readTenantId}::uuid
+      `;
+      const nameById = new Map(items.map((item) => [item.id, item.name]));
+      body.lines.forEach((line, index) => {
+        expect(Object.keys(line).sort()).toEqual(INVOICE_LINE_DTO_KEYS);
+        expect(line.position).toBe(index);
+        const source = frozen.find((row) => row.catalog_item_id === line.catalogItemId);
+        expect(source, `no frozen sale line for ${line.catalogItemId}`).toBeDefined();
+        expect(line.rateCode).toBe(source?.rate_code);
+        expect(line.unitPrice).toBe(source?.unit_price);
+        expect(line.quantity).toBe(source?.quantity);
+        expect(line.lineTotal).toBe(source?.line_total);
+        expect(line.taxableBase).toBe(source?.taxable_base);
+        expect(line.taxAmount).toBe(source?.tax_amount);
+        expect(line.description).toBe(nameById.get(line.catalogItemId));
+        // Fixed-scale literals, never JavaScript floats.
+        expect(line.unitPrice).toMatch(/^\d+\.\d{2}$/);
+        expect(line.quantity).toMatch(/^\d+\.\d{3}$/);
+        expect(line.lineTotal).toMatch(/^\d+\.\d{2}$/);
+      });
+      // The totals are the exact SUM of the copied lines: 2000.00 + 1100.00 and
+      // 0.00 + 100.00.
+      expect(body.total).toBe("3100.00");
+      expect(body.taxTotal).toBe("100.00");
+
+      // The STORED header carries no number either.
+      expect(await rawInvoiceHeader(body.id)).toEqual([
+        {
+          id: body.id,
+          tenant_id: readTenantId,
+          sale_id: readSaleId,
+          status: "DRAFT",
+          number: null,
+        },
+      ]);
+
+      // The id read describes the SAME document, byte for byte.
+      const reread = await getInvoice(readCookie, body.id).expect(200);
+      expect(reread.text).toBe(created.text);
+
+      // The create wrote exactly one header and its two lines.
+      const residueAfter = await readResidue();
+      expect(residueAfter.invoices).toBe(residueBefore.invoices + 1);
+      expect(residueAfter.invoiceLines).toBe(residueBefore.invoiceLines + 2);
+    }, 30_000);
+
+    it("lists the tenant's invoices newest-first, honours the status filter in both directions and never lists another tenant's invoice", async () => {
+      const freshInvoice = (
+        await postInvoice(readCookie, await freshSale(readTenantId, readItemOneId)).expect(201)
+      ).body as InvoiceDto;
+      const foreignInvoice = (
+        await postInvoice(foreignCookie, await freshSale(foreignTenantId, foreignItemId)).expect(
+          201
+        )
+      ).body as InvoiceDto;
+      const residueBefore = await readResidue();
+
+      const listed = await getInvoices(readCookie).expect(200);
+      const list = listed.body as InvoiceDto[];
+      const ids = list.map((invoice) => invoice.id);
+      expect(ids).toContain(freshInvoice.id);
+      // Newest first: the 2020 back-dated row is LAST and the row just created
+      // precedes it. An insertion-ordered or unsorted list fails both.
+      expect(ids.at(-1)).toBe(backdatedInvoiceId);
+      expect(ids.indexOf(freshInvoice.id)).toBeLessThan(ids.indexOf(backdatedInvoiceId));
+      expect(ids).not.toContain(foreignInvoice.id);
+      for (const invoice of list) {
+        expect(Object.keys(invoice).sort()).toEqual(INVOICE_DTO_KEYS);
+        expect("tenantId" in invoice).toBe(false);
+      }
+      expect(listed.text).not.toContain(foreignInvoice.id);
+      expect(listed.text).not.toContain(foreignTenantId);
+
+      // The filter SELECTS the draft rows…
+      const drafts = (await getInvoices(readCookie, "?status=DRAFT").expect(200))
+        .body as InvoiceDto[];
+      const draftIds = drafts.map((invoice) => invoice.id);
+      expect(draftIds).toContain(freshInvoice.id);
+      expect(draftIds).toContain(backdatedInvoiceId);
+      expect(draftIds).not.toContain(confirmedInvoiceId);
+      for (const invoice of drafts) {
+        expect(invoice.status).toBe("DRAFT");
+      }
+
+      // …and EXCLUDES everything else on the other side of the enum.
+      const confirmed = (await getInvoices(readCookie, "?status=CONFIRMED").expect(200))
+        .body as InvoiceDto[];
+      expect(confirmed.map((invoice) => invoice.id)).toEqual([confirmedInvoiceId]);
+      expect(confirmed[0].number).toBe(1);
+
+      const cancelled = (await getInvoices(readCookie, "?status=CANCELLED").expect(200))
+        .body as InvoiceDto[];
+      expect(cancelled).toEqual([]);
+
+      // The foreign tenant's OWN list holds its own invoice and none of R's.
+      const foreignList = (await getInvoices(foreignCookie).expect(200)).body as InvoiceDto[];
+      const foreignIds = foreignList.map((invoice) => invoice.id);
+      expect(foreignIds).toContain(foreignInvoice.id);
+      expect(foreignIds).not.toContain(freshInvoice.id);
+      expect(foreignIds).not.toContain(backdatedInvoiceId);
+      expect(foreignIds.filter((id) => ids.includes(id))).toEqual([]);
+
+      // Six pure reads wrote nothing at all.
+      expect(await readResidue()).toEqual(residueBefore);
+    }, 30_000);
+
+    it("masks a foreign-tenant and an unknown invoice id as one byte-equivalent 404 with no leak and no state change", async () => {
+      const foreignInvoice = (
+        await postInvoice(foreignCookie, await freshSale(foreignTenantId, foreignItemId)).expect(
+          201
+        )
+      ).body as InvoiceDto;
+      const residueBefore = await readResidue();
+
+      const foreignProbe = await getInvoice(
+        readCookie,
+        foreignInvoice.id,
+        INVOICE_NOT_FOUND_REQUEST_ID
+      ).expect(404);
+      const unknownProbe = await getInvoice(
+        readCookie,
+        randomUUID(),
+        INVOICE_NOT_FOUND_REQUEST_ID
+      ).expect(404);
+
+      for (const probe of [foreignProbe, unknownProbe]) {
+        expect((probe.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+        expect((probe.body as { error: { message: string } }).error.message).toBe(
+          INVOICE_NOT_FOUND_MESSAGE
+        );
+        expect(probe.headers["x-request-id"]).toBe(INVOICE_NOT_FOUND_REQUEST_ID);
+      }
+      // Byte-equivalence: a foreign tenant UUID is indistinguishable from a
+      // non-existent one, echoed correlation included.
+      expect(foreignProbe.text).toBe(unknownProbe.text);
+      for (const leaked of [
+        foreignInvoice.id,
+        foreignInvoice.saleId,
+        foreignTenantId,
+        foreignInvoice.lines[0].description,
+      ]) {
+        expect(foreignProbe.text, leaked).not.toContain(leaked);
+        expect(unknownProbe.text, leaked).not.toContain(leaked);
+      }
+
+      // Neither tenant's rows moved, and the foreign invoice is untouched.
+      expect(await readResidue()).toEqual(residueBefore);
+      expect(await rawInvoiceHeader(foreignInvoice.id)).toEqual([
+        {
+          id: foreignInvoice.id,
+          tenant_id: foreignTenantId,
+          sale_id: foreignInvoice.saleId,
+          status: "DRAFT",
+          number: null,
+        },
+      ]);
+      // The foreign tenant still reads its OWN invoice.
+      const own = await getInvoice(foreignCookie, foreignInvoice.id).expect(200);
+      expect((own.body as InvoiceDto).saleId).toBe(foreignInvoice.saleId);
+    }, 30_000);
+
+    it("masks a foreign-tenant and an unknown SOURCE sale as one byte-equivalent 404 reusing the shared sale message", async () => {
+      const foreignSaleId = await freshSale(foreignTenantId, foreignItemId);
+      const residueBefore = await readResidue();
+
+      const foreignProbe = await postInvoice(
+        readCookie,
+        foreignSaleId,
+        INVOICE_SALE_NOT_FOUND_REQUEST_ID
+      ).expect(404);
+      const unknownProbe = await postInvoice(
+        readCookie,
+        randomUUID(),
+        INVOICE_SALE_NOT_FOUND_REQUEST_ID
+      ).expect(404);
+
+      for (const probe of [foreignProbe, unknownProbe]) {
+        expect((probe.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+        // The SHARED sale message — never an invoice-specific one.
+        expect((probe.body as { error: { message: string } }).error.message).toBe(
+          SALE_NOT_FOUND_MESSAGE
+        );
+        expect(probe.headers["x-request-id"]).toBe(INVOICE_SALE_NOT_FOUND_REQUEST_ID);
+      }
+      expect(foreignProbe.text).toBe(unknownProbe.text);
+      expect(foreignProbe.text).not.toContain(foreignSaleId);
+      expect(foreignProbe.text).not.toContain(foreignTenantId);
+
+      // Nothing was written for either reference and the foreign sale is intact.
+      expect(await readResidue()).toEqual(residueBefore);
+      expect(await prisma.invoice.count({ where: { saleId: foreignSaleId } })).toBe(0);
+      expect(await prisma.sale.findUnique({ where: { id: foreignSaleId } })).toMatchObject({
+        tenantId: foreignTenantId,
+        status: "COMPLETED",
+      });
+    }, 30_000);
+
+    it("rejects a second live invoice for one sale with the stable 409 and writes nothing", async () => {
+      const saleId = await freshSale(readTenantId, readItemOneId);
+      const first = (await postInvoice(readCookie, saleId).expect(201)).body as InvoiceDto;
+      const residueBefore = await readResidue();
+
+      const second = await postInvoice(readCookie, saleId).expect(409);
+      expect((second.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((second.body as { error: { message: string } }).error.message).toBe(
+        INVOICE_SALE_ALREADY_INVOICED_MESSAGE
+      );
+
+      // No residue: no header, no line and no audit row beyond the first create.
+      const residueAfter = await readResidue();
+      expect(residueAfter.invoices).toBe(residueBefore.invoices);
+      expect(residueAfter.invoiceLines).toBe(residueBefore.invoiceLines);
+      expect(residueAfter.audits).toBe(residueBefore.audits);
+      expect(await prisma.invoice.count({ where: { saleId } })).toBe(1);
+      expect(await prisma.invoiceLine.count({ where: { invoiceId: first.id } })).toBe(1);
+    }, 30_000);
+
+    it("returns 403 FEATURE_NOT_ENTITLED to an unentitled tenant on both reads and on the create, persisting nothing", async () => {
+      const saleId = await freshSale(unentitledTenantId, unentitledItemId);
+      const residueBefore = await readResidue();
+
+      const create = await postInvoice(unentitledCookie, saleId).expect(403);
+      expect((create.body as ErrorEnvelope).error.code).toBe("FEATURE_NOT_ENTITLED");
+      expect((create.body as { error: { message: string } }).error.message).toBe(
+        BILLING_FEATURE_NOT_ENTITLED_MESSAGE
+      );
+
+      const list = await getInvoices(unentitledCookie).expect(403);
+      expect((list.body as ErrorEnvelope).error.code).toBe("FEATURE_NOT_ENTITLED");
+      expect((list.body as { error: { message: string } }).error.message).toBe(
+        BILLING_FEATURE_NOT_ENTITLED_MESSAGE
+      );
+
+      // An UNKNOWN id is still the entitlement 403, never a 404: this tenant
+      // holds the FULL `billing.*` matrix, so the gate that fires first can only
+      // be the entitlement.
+      const read = await getInvoice(unentitledCookie, randomUUID()).expect(403);
+      expect((read.body as ErrorEnvelope).error.code).toBe("FEATURE_NOT_ENTITLED");
+
+      expect(await readResidue()).toEqual(residueBefore);
+      expect(await prisma.invoice.count({ where: { tenantId: unentitledTenantId } })).toBe(0);
+      expect(await prisma.invoiceLine.count({ where: { tenantId: unentitledTenantId } })).toBe(0);
+      expect(await prisma.invoice.count({ where: { saleId } })).toBe(0);
+    }, 30_000);
+
+    it("leaves no residue: every rejection wrote nothing and every stored invoice mirrors its source sale exactly", async () => {
+      // The unentitled tenant never acquired an invoice, and no masked probe
+      // wrote one anywhere.
+      expect(await prisma.invoice.count({ where: { tenantId: unentitledTenantId } })).toBe(0);
+      expect(await prisma.invoiceLine.count({ where: { tenantId: unentitledTenantId } })).toBe(0);
+
+      const invoices = await prisma.invoice.findMany({
+        // Scoped to THIS block's two entitled tenants: the BILL-001 block owns a
+        // raw tenant-A fixture whose source sale deliberately carries no line
+        // rows, so a global "one line per sale line" claim would be about that
+        // block's DDL fixture rather than about this read surface.
+        where: { tenantId: { in: [readTenantId, foreignTenantId] } },
+        select: { id: true, tenantId: true, saleId: true, number: true, status: true },
+      });
+      expect(invoices.length).toBeGreaterThan(0);
+      for (const invoice of invoices) {
+        // One invoice LINE per FROZEN sale line: nothing dropped, nothing added.
+        const invoiceLines = await prisma.invoiceLine.count({ where: { invoiceId: invoice.id } });
+        const saleLines = await prisma.saleLine.count({ where: { saleId: invoice.saleId } });
+        expect(invoiceLines, invoice.id).toBe(saleLines);
+        // No line ever lands in a tenant other than its own header's.
+        expect(
+          await prisma.invoiceLine.count({
+            where: { invoiceId: invoice.id, tenantId: invoice.tenantId },
+          })
+        ).toBe(invoiceLines);
+        // The invoice and its SOURCE sale live in the same tenant.
+        const sale = await prisma.sale.findUnique({
+          where: { id: invoice.saleId },
+          select: { tenantId: true },
+        });
+        expect(sale?.tenantId, invoice.id).toBe(invoice.tenantId);
+      }
+
+      // The two committed baselines are exactly as `beforeAll` wrote them.
+      expect(await rawInvoiceHeader(backdatedInvoiceId)).toEqual([
+        {
+          id: backdatedInvoiceId,
+          tenant_id: readTenantId,
+          sale_id: backdatedSaleId,
+          status: "DRAFT",
+          number: null,
+        },
+      ]);
+      expect(await rawInvoiceHeader(confirmedInvoiceId)).toEqual([
+        {
+          id: confirmedInvoiceId,
+          tenant_id: readTenantId,
+          sale_id: confirmedSaleId,
+          status: "CONFIRMED",
+          number: 1,
+        },
+      ]);
     }, 30_000);
   });
 });

@@ -195,9 +195,11 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // EPIC-13 CASH-003 — explicit session close command (expected/counted
   // difference + terminal CLOSED; no reopen, no PATCH, no DELETE)
   "POST /cash/sessions/:id/close",
-  // EPIC-14 BILL-002 — the invoice creation command. The two invoice reads are
-  // W3's and are deliberately absent from this slice (no PATCH, no DELETE, no
-  // confirm/cancel route: BILL-003 owns the lifecycle).
+  // EPIC-14 BILL-002 — the invoice creation command plus the read surface W3
+  // added: the filtered list and the id read. Still no PATCH, no PUT, no
+  // DELETE and no confirm/cancel route: BILL-003 owns the lifecycle.
+  "GET /invoices",
+  "GET /invoices/:id",
   "POST /invoices",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
@@ -410,15 +412,18 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-14 BILL-002 invoice surface. `POST /invoices` MUST declare exactly
- * `billing.create`; a route decorated with another billing tier (or none) fails
- * by name, which the permission-less 403 sweep cannot catch. Only the CREATE
- * entry is listed here: W3 adds the two `GET` entries together with their
- * routes, and BILL-003's `confirm`/`cancel` keys must never appear until their
- * commands ship. There is deliberately no `PATCH`, no `DELETE` and no generic
- * status route: the invoice is immutable from creation (DEC-038, DEC-043).
+ * EPIC-14 BILL-002 invoice surface. Every route MUST declare exactly its single
+ * billing tier: `billing.create` for the creation command and `billing.read` for
+ * both reads. A route decorated with another billing tier (or none) fails by
+ * name, which the permission-less 403 sweep cannot catch. The map now covers the
+ * FULL read surface, and BILL-003's `confirm`/`cancel` keys must never appear
+ * until their commands ship. There is deliberately no `PATCH`, no `PUT`, no
+ * `DELETE` and no generic status route: the invoice is immutable from creation
+ * (DEC-038, DEC-043).
  */
 const BILLING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /invoices": BILLING_PERMISSIONS.read,
+  "GET /invoices/:id": BILLING_PERMISSIONS.read,
   "POST /invoices": BILLING_PERMISSIONS.create,
 };
 

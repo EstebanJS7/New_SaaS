@@ -103,6 +103,25 @@ export interface InvoiceWhere {
 }
 
 /**
+ * The filters the tenant-scoped invoice list accepts. There is deliberately no
+ * `tenantId` (resolved from the request context), no `saleId` and no
+ * pagination: the shipped sales/cash lists take an optional `status` only, and
+ * an unbounded list is a recorded limitation rather than a silent cap.
+ */
+export interface InvoiceListFilters {
+  status?: InvoiceStatusValue;
+}
+
+/**
+ * Ordering clauses the invoice list builds: `createdAt` newest first with `id`
+ * ascending as the stable tie-breaker (the sales/cash list convention).
+ */
+export interface InvoiceOrderBy {
+  createdAt?: "asc" | "desc";
+  id?: "asc" | "desc";
+}
+
+/**
  * The line-relation `include` both header reads declare: the document's own
  * frozen reading order, never an unordered relation read. The created row is
  * returned through this same include, so the write response and every later read
@@ -130,6 +149,11 @@ export interface InvoiceDelegate {
     where: InvoiceWhere;
     include: InvoiceLinesInclude;
   }) => Promise<InvoiceRow | null>;
+  findMany: (args: {
+    where: InvoiceWhere;
+    include: InvoiceLinesInclude;
+    orderBy: readonly InvoiceOrderBy[];
+  }) => Promise<InvoiceRow[]>;
   create: (args: {
     data: {
       saleId: string;
@@ -256,6 +280,34 @@ export class BillingRepository {
       throw new DomainError("NOT_FOUND", INVOICE_NOT_FOUND_MESSAGE);
     }
     return row;
+  }
+
+  /**
+   * The caller's active-tenant invoices, WITH their lines in position order.
+   *
+   * DETERMINISTIC ORDER: newest first by `createdAt`, with `id` ascending as the
+   * tiebreaker for rows created in the same millisecond — an invoice carries no
+   * ordering column of its own and `number` is NULL until confirmation, so this
+   * pair is what makes the list stable across reads (the sales/cash list
+   * convention). The optional `status` filter is applied on top of the implicit
+   * tenant predicate; an omitted filter adds NO predicate, so this layer owns no
+   * default visibility policy.
+   *
+   * There is deliberately NO pagination: the shipped sales/cash lists have none
+   * either and an unbounded read is a recorded limitation of this slice, never a
+   * silent cap.
+   */
+  async list(filters: InvoiceListFilters = {}, tx?: BillingTx): Promise<InvoiceRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.invoice.findMany({
+      where: {
+        tenantId,
+        ...(filters.status !== undefined ? { status: filters.status } : {}),
+      },
+      include: INVOICE_LINES_BY_POSITION,
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    });
   }
 
   /**

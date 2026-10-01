@@ -315,7 +315,7 @@ BILL-001 closed.
 - [x] W2 — the billing module creation path: `POST /invoices`, the verbatim
       snapshot copy, the settings gate, the audit row and the stable errors,
       with the route pin and the integration suite.
-- [ ] W3 — the reads: `GET /invoices` and `GET /invoices/:id`, their pins, the
+- [x] W3 — the reads: `GET /invoices` and `GET /invoices/:id`, their pins, the
       integration cases and the live-PostgreSQL BILL-002 block.
 - [ ] W4 — docs reconciliation: the story record, the epic progress entry, the
       two stale invariant claims and [[TD-024]].
@@ -427,6 +427,29 @@ BILL-001 closed.
   not silently diverge from the shipped shape.
 - Both advisories are informational and non-blocking, and both are carried into
   W4's story record and limitation list.
+
+### BILL-002 W3 — invoice reads and live-PostgreSQL coverage
+
+- `GET /invoices` (optional `status` filter, `createdAt desc, id asc`, no
+  pagination) and `GET /invoices/:id`, both behind `billing.read` plus the
+  `billing` entitlement in the same gate order the create path uses, and both
+  reusing the single `INVOICE_NOT_FOUND_MESSAGE` so the masks are
+  byte-equivalent by construction. The route-contract probe now pins the full
+  read surface, so the three-route family is complete.
+- Size: `1378` added / `24` removed across 7 files, of which 848 insertions are
+  the live-PostgreSQL block.
+- Gates: the billing suite **19 tests**; the API suite **76 files (1 skipped) /
+  1007 tests passed** / 142 skipped; the live-PostgreSQL suite **142 passed**
+  (was 135, so this slice adds 7 route-level cases); `pnpm typecheck` and
+  `pnpm lint` 14/14; `pnpm format-check` clean. The parent reproduced the
+  focused suite and the live-PostgreSQL suite.
+- The live block proves the application paths over real HTTP against the
+  disposable database: creation from a completed sale and the matching read with
+  the copied values and the summed total, the list and the `status` filter in
+  both directions, byte-equivalent `404`s between a foreign and an unknown
+  invoice id and between a foreign and an unknown sale, the stable `409` for a
+  second invoice on one sale, `403 FEATURE_NOT_ENTITLED` in an unentitled
+  tenant, and a no-residue count check after every rejection.
 
 ## Evidence
 

@@ -28,3 +28,30 @@ export const createInvoiceBody = z
   .strict();
 
 export type CreateInvoiceInput = z.infer<typeof createInvoiceBody>;
+
+/**
+ * Lifecycle values pinned by the `invoice_status` enum (PRD §21, DEC-038),
+ * declared as a local literal tuple so this boundary stays decoupled from the
+ * generated client namespace. The server owns the lifecycle: no request
+ * contract accepts a caller-supplied status, and `CONFIRMED`/`CANCELLED` are
+ * reachable only through BILL-003's explicit commands — the list filter merely
+ * selects among stored values.
+ */
+export const INVOICE_STATUS_VALUES = Object.freeze(["DRAFT", "CONFIRMED", "CANCELLED"] as const);
+
+/** Invoice-addressed path parameter; a non-UUID is `400 VALIDATION_FAILED`. */
+export const invoiceIdParam = z.object({ id: z.string().uuid() });
+
+/**
+ * Invoice list query. The optional `status` narrows the list to one lifecycle
+ * value and is applied on top of the implicit tenant predicate; an omitted
+ * status applies NO filter (there is deliberately no implicit draft-only
+ * default). `.strict()` rejects unknown query keys instead of ignoring them, so
+ * a caller cannot smuggle a tenant, sale or pagination predicate into the read,
+ * mirroring the catalog/stock-movement/supplier/purchase/sale/cash filters.
+ */
+export const invoiceListQuery = z
+  .object({ status: z.enum(INVOICE_STATUS_VALUES).optional() })
+  .strict();
+
+export type InvoiceListFiltersInput = z.infer<typeof invoiceListQuery>;
