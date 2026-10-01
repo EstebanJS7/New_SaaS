@@ -126,7 +126,14 @@ implemented EPIC-14 behavior.
   `review-b65dbcee62dc6d5b` raised one BLOCKER twice from independent lenses —
   the header guard made `CONFIRMED -> CANCELLED` impossible — fixed in `e5d8848`
   with a 195-line correction against a budget of 200 and a two-sided live
-  regression probe, then validated and approved.
+  regression probe, then validated and approved. The slice is published as pull
+  request #87 (`type:feature`) with both required checks green in run
+  `36873584746`: `Database migrations` pass in 1m8s — 28 migrations applied to a
+  fresh database and the live-PostgreSQL suite at **135 passed** — and
+  `Lint, Typecheck, Test, Build` pass in 4m18s. The scope records this slice
+  rests on are pull request #86 (`type:docs`), which must merge first because
+  CI's required checks only run for pull requests targeting `main`. The Story
+  moves to `done` when #87 merges.
 
 ## Scope
 

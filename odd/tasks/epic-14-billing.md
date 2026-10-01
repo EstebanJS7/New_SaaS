@@ -43,8 +43,9 @@ product/architecture choices.
 ## BILL-001 — invoice data foundation (work units)
 
 Branch: `feat/epic-14-billing-invoice-foundation` (renamed from
-`docs/epic-14-billing-kickoff`; the docs commits are part of it, matching the
-EPIC-13 precedent of one branch per epic carrying scope and implementation).
+`feat/epic-14-billing-invoice-foundation`; the docs commits are part of it,
+matching the EPIC-13 precedent of one branch per epic carrying scope and
+implementation).
 
 ### Pinned slice contract (parent-owned, so no writer invents identifiers)
 
@@ -229,6 +230,29 @@ as subsequent scope notes on the accepted records, not applied silently:
   for every slice that writes a state machine, and never treat green gates as
   evidence that a transition is reachable.
 
+### BILL-001 — publication and CI receipt
+
+- The scope half of the chain is branch `docs/epic-14-billing-scope`, cut at
+  `da7919b`, published as pull request **#86** (`type:docs`); run `36873574529`
+  is green on both required checks (`Database migrations` 1m14s,
+  `Lint, Typecheck, Test, Build` 4m21s).
+- The implementation half is `feat/epic-14-billing-invoice-foundation`,
+  published as pull request **#87** (`type:feature`) at head `17ebae5`; run
+  `36873584746` is green on both required checks: `Database migrations` 1m8s and
+  `Lint, Typecheck, Test, Build` 4m18s.
+- The CI `Database migrations` job reproduced the whole persistence gate on a
+  fresh database, including the number that locally required a throwaway
+  database: `28 migrations found` with all of them applied, the reference seed
+  run twice with the count-equality probe, and the live-PostgreSQL suite at
+  **`Tests 135 passed (135)`**. The other job reported database 18 files, API 75
+  files (1 skipped) and web 81 files.
+- Both pull requests target `main`, because CI's required checks only run for
+  pull requests targeting the default branch. #87's diff therefore also shows
+  #86's records until #86 merges, so the merge order is #86 then #87.
+- BILL-001 stays `review`: its own criterion is a CI run of the **merged** work
+  units, so it moves to `done` when #87 merges, together with the QA evidence
+  entry.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
@@ -285,10 +309,14 @@ as subsequent scope notes on the accepted records, not applied silently:
 
 - Created: 2026-10-01.
 - Branch at start: `main` tracking `origin/main`.
-- Working branch: `docs/epic-14-billing-kickoff`.
-- Kickoff commit: `df2feaa` —
+- Working branch: `docs/epic-14-billing-kickoff`, renamed to
+  `feat/epic-14-billing-invoice-foundation` when the implementation started (the
+  EPIC-13 precedent of one branch per epic carrying scope and implementation).
+- Kickoff commit: `673cfb7` —
   `docs(EPIC-14): add billing scope, planned stories and proposed decisions` (16
-  new files; not pushed, no PR opened).
+  new files). The scope records were later split onto their own branch
+  `docs/epic-14-billing-scope`, cut at `da7919b`, and published as pull request
+  #86.
 - Read-only exploration: `gentle-ai-explore` confirmed that no EPIC-14 artifact,
   no `Invoice`/`InvoiceLine`/`InvoiceStatus` model, no `billing/` or `fiscal/`
   API module and no numbering infrastructure existed before this pass, and that
@@ -312,10 +340,10 @@ as subsequent scope notes on the accepted records, not applied silently:
 - Maintainer review outcome (2026-10-01): the eight decisions were accepted as
   proposed, with the three polish items below applied. The kickoff landed as
   `673cfb7` while the decisions were still `proposed`.
-- Acceptance commit (2026-10-01, the second commit on
-  `docs/epic-14-billing-kickoff`,
-  `docs(EPIC-14): accept the billing decisions`): `DEC-038` through `DEC-045`
-  moved to `status: accepted`, each `## Decision` section now carries the
+- Acceptance commit (2026-10-01, now `da7919b`, and the tip of the
+  `docs/epic-14-billing-scope` branch):
+  `docs(EPIC-14): accept the billing decisions` moved `DEC-038` through
+  `DEC-045` to `status: accepted`, each `## Decision` section now carries the
   accepted option and its terms (following the EPIC-13/DEC-026 precedent), and
   every downstream claim was reconciled: the epic's `## Decisions / ADRs`
   section and its dependency list, the `proposed, not accepted` bullets in

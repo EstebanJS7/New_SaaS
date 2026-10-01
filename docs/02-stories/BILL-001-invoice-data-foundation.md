@@ -313,6 +313,14 @@ pnpm lint
 pnpm format-check
   -> clean
 
+CI (pull request #87, head 17ebae5, run 36873584746)
+  -> Database migrations: pass (1m8s)
+     - 28 migrations found; all successfully applied to a fresh database
+     - live-PostgreSQL suite: Tests 135 passed (135)
+     - reference seed run twice with the count-equality probe
+  -> Lint, Typecheck, Test, Build: pass (4m18s)
+     - database 18 files, API 75 files (1 skipped), web 81 files
+
 Seed idempotency (throwaway database newsaas_verify_seed_w2_33045,
 both db:seed runs)
   -> identical counts: roles: 6, permissions: 56, featureCodes: 12,
@@ -488,6 +496,18 @@ What remains before `done`:
 - [[BILL-005]], which reconciles the epic's closure counters, including the new
   `28 migrations`, `56 permissions` and `134` live-PostgreSQL cases, and creates
   `docs/05-modules/Billing.md` from CI receipts.
+
+The CI receipt now exists: pull request #87 at head `17ebae5` passed both
+required checks in run `36873584746`, and the `Database migrations` job
+reproduced the whole persistence gate on a fresh database — 28 migrations
+applied, the seed run twice with the count-equality probe, and the
+live-PostgreSQL suite at **135 passed**, which is the number that locally needed
+a throwaway database. The Story still stays `review` rather than `done` because
+its own criterion is a CI run of the **merged** work units: it moves to `done`
+when the pull request merges, together with the QA evidence entry. The scope
+records this slice depends on are pull request #86 (`type:docs`), which must
+merge first because CI's required checks only run for pull requests targeting
+`main`.
 
 The RDD native review of this slice is **closed, approved and acknowledged**.
 Lineage `review-b65dbcee62dc6d5b` covered the committed range `da7919b..e5d8848`
