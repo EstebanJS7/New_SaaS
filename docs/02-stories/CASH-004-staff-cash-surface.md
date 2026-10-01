@@ -3,7 +3,7 @@ id: CASH-004
 type: story
 title: Staff Cash surface
 epic: EPIC-13
-status: review
+status: done
 priority: high
 depends_on:
   - CASH-002
@@ -20,7 +20,7 @@ permissions:
   - cash.session.close
 branch: feat/epic-13-cash-data-foundation
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # CASH-004 — Staff Cash surface
@@ -244,4 +244,11 @@ One lint error introduced during the slice (a null check the rule prefers as
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Closed 2026-10-01. Implemented on `feat/epic-13-cash-data-foundation` and merged
+into `main` as PR #84 (merge commit `5058d59`) with CI run
+[`36800148919`](https://github.com/EstebanJS7/NewSaaS/actions/runs/36800148919)
+green on both required checks. Every acceptance criterion is checked, the local
+gates passed and the native review approved the candidate, so `status` is
+`done`.
+
+`done` means implementation closure only: it is never production readiness.

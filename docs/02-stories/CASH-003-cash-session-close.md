@@ -3,7 +3,7 @@ id: CASH-003
 type: story
 title: Cash session close
 epic: EPIC-13
-status: review
+status: done
 priority: high
 depends_on:
   - CASH-001
@@ -21,7 +21,7 @@ permissions:
   - cash.session.close
 branch: feat/epic-13-cash-data-foundation
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # CASH-003 — Cash session close
@@ -244,6 +244,11 @@ git diff --check                                                                
 
 ## Completion Notes
 
-Local implementation and verification are complete on
-`feat/epic-13-cash-data-foundation`. Status is `review`; `done` remains reserved
-for merged, CI-backed closure.
+Closed 2026-10-01. Implemented on `feat/epic-13-cash-data-foundation` and merged
+into `main` as PR #84 (merge commit `5058d59`) with CI run
+[`36800148919`](https://github.com/EstebanJS7/NewSaaS/actions/runs/36800148919)
+green on both required checks. Every acceptance criterion is checked, the local
+gates passed and the native review approved the candidate, so `status` is
+`done`.
+
+`done` means implementation closure only: it is never production readiness.

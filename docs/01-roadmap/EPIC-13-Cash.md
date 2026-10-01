@@ -2,7 +2,7 @@
 id: EPIC-13
 type: epic
 title: Cash
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-12
@@ -16,7 +16,7 @@ prd_sections:
   - "40"
   - "41"
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # EPIC-13 — Cash
@@ -122,6 +122,16 @@ implemented EPIC-13 behavior.
   suite (76 files / 1107 tests), API live-PostgreSQL suite (119 tests),
   typecheck, lint, build, `format-check` and `git diff --check`. The Story stays
   `review`, not `done`, until a CI receipt exists.
+
+- **[[CASH-005]] Epic closure and evidence — `done`.** The closure branch
+  `docs/epic-13-cash-closure`, cut from `main` at `5058d59`, updates
+  `docs/05-modules/Cash.md`, adds the EPIC-13 `CI-EVIDENCE.md` section and the
+  changelog entry, and moves the roadmap row to `done`.
+- **EPIC-13 is `done`.** All five Stories closed with merged, CI-backed receipts
+  and every Exit Criterion is checked. Open debt stays visible: [[TD-018]] (sale
+  reversal and payment refund) with [[TD-016]], [[TD-017]], [[TD-019]],
+  [[TD-020]] and [[TD-021]], and EPIC-20 Production Hardening above all of it.
+  `done` means implementation closure only, never production readiness.
 
 ## Scope
 
@@ -300,17 +310,18 @@ planned evidence that will close it.
 
 ## Exit Criteria
 
-- [ ] Every Story — [[CASH-001]], [[CASH-002]], [[CASH-003]], [[CASH-004]] and
+- [x] Every Story — [[CASH-001]], [[CASH-002]], [[CASH-003]], [[CASH-004]] and
       [[CASH-005]] — is `done` with acceptance criteria checked and evidence
       recorded.
-- [ ] The Cash API exposes explicit commands for movement creation and close,
+- [x] The Cash API exposes explicit commands for movement creation and close,
       with no generic status patch and no delete/edit of confirmed records.
-- [ ] Tenant isolation, authorization, capability gates, audit and immutable
+- [x] Tenant isolation, authorization, capability gates, audit and immutable
       ledger invariants are covered at the API and live-PostgreSQL levels.
-- [ ] The staff Cash surface covers the operational flow with documented UX
+- [x] The staff Cash surface covers the operational flow with documented UX
       states and semantic design-token usage.
-- [ ] Module documentation, QA evidence, changelog and roadmap are current.
-- [ ] Required checks are green for the merged work units.
+- [x] Module documentation, QA evidence, changelog and roadmap are current.
+- [x] Required checks are green for the merged work units: PR #84 merged as
+      `5058d59` with CI run `36800148919` green on both required checks.
 
 ## Decisions / ADRs
 

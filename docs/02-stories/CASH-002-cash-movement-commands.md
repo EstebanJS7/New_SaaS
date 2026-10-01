@@ -3,7 +3,7 @@ id: CASH-002
 type: story
 title: Cash movement commands
 epic: EPIC-13
-status: review
+status: done
 priority: high
 depends_on:
   - CASH-001
@@ -20,7 +20,7 @@ permissions:
   - cash.movement.create
 branch: feat/epic-13-cash-data-foundation
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # CASH-002 — Cash movement commands
@@ -281,7 +281,11 @@ rule requires, and the now-unused type import was removed.
 
 ## Completion Notes
 
-Local implementation and verification are complete on
-`feat/epic-13-cash-data-foundation`, and the native high-tier review approved
-the candidate after one bounded correction. Status is `review`; `done` remains
-reserved for merged, CI-backed closure.
+Closed 2026-10-01. Implemented on `feat/epic-13-cash-data-foundation` and merged
+into `main` as PR #84 (merge commit `5058d59`) with CI run
+[`36800148919`](https://github.com/EstebanJS7/NewSaaS/actions/runs/36800148919)
+green on both required checks. Every acceptance criterion is checked, the local
+gates passed and the native review approved the candidate, so `status` is
+`done`.
+
+`done` means implementation closure only: it is never production readiness.
