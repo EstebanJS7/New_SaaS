@@ -3,7 +3,7 @@ id: CASH-001
 type: story
 title: Cash data foundation extension
 epic: EPIC-13
-status: review
+status: done
 priority: high
 depends_on:
   - EPIC-12
@@ -16,7 +16,7 @@ prd_sections:
 permissions: []
 branch: feat/epic-13-cash-data-foundation
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # CASH-001 — Cash data foundation extension
@@ -229,6 +229,11 @@ Notes:
 
 ## Completion Notes
 
-Local implementation and verification are complete on
-`feat/epic-13-cash-data-foundation`. Status is `review`, not `done`, because no
-CI receipt exists yet. `done` remains reserved for merged, CI-backed closure.
+Closed 2026-10-01. Implemented on `feat/epic-13-cash-data-foundation` and merged
+into `main` as PR #84 (merge commit `5058d59`) with CI run
+[`36800148919`](https://github.com/EstebanJS7/NewSaaS/actions/runs/36800148919)
+green on both required checks. Every acceptance criterion is checked, the local
+gates passed and the native review approved the candidate, so `status` is
+`done`.
+
+`done` means implementation closure only: it is never production readiness.

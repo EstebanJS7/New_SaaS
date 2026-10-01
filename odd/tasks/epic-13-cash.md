@@ -50,6 +50,9 @@ planned CASH stories before any implementation.
 - [x] CASH-004 W2: the proxy extension and the Cash client move (`f81cf5b`).
 - [x] CASH-004 W3: the staff Cash pages, their states and the navigation entry
       (`2b0e3e9`).
+- [x] CASH-005: the epic closure (module docs, CI-EVIDENCE, changelog, roadmap
+      status) on the closure branch `docs/epic-13-cash-closure`, cut from `main`
+      after PR #84 merged as `5058d59`.
 - [x] CASH-004 W5: the chained native review is COMPLETE — all three candidates
       approved and acknowledged. A `9796aa2` (the movement read) — lineage
       `review-eb52f160ccb3d48e` approved after one bounded correction (the
@@ -140,6 +143,11 @@ planned CASH stories before any implementation.
   review with `lens_context_budget_exceeded` and instructed smaller chained
   candidates. The split is non-destructive: the commits and the branch are
   unchanged, and only a detached worktree at each intermediate commit is added.
+- EPIC-13 merged (2026-10-01): PR #84 merged into `main` as `5058d59` with CI
+  run `36800148919` green (1m12s / 4m36s). The five stories and the epic record
+  are `done`, and the closure branch `docs/epic-13-cash-closure` carries the
+  module documentation, the CI-EVIDENCE section, the changelog entry and the
+  roadmap status.
 - Branch published (2026-09-30): `feat/epic-13-cash-data-foundation` is pushed
   and PR #84 is open against `main` with the `type:feature` label and both
   required checks GREEN on CI run `36797910280` (`Database migrations` 1m14s,

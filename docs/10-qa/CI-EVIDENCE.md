@@ -1039,3 +1039,38 @@ grew from 71 to **99 cases** across the epic, including the EPIC-12 sale-draft,
 sale-completion and cash-foundation blocks. This section is the
 machine-generated receipt for the merged slices and is **not** a
 production-readiness statement.
+
+## EPIC-13 Cash
+
+| Slice                                      | Pull request | Merge commit | CI run                                                                           | Checks                                                            |
+| ------------------------------------------ | ------------ | ------------ | -------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Scope, decisions and the four CASH stories | #84          | `5058d59`    | [`36800148919`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36800148919) | `Database migrations` 1m12s, `Lint, Typecheck, Test, Build` 4m36s |
+
+PR #84 carried the whole epic on one branch, so its receipt covers CASH-001 to
+CASH-004 together; earlier heads of the same pull request also passed both
+required checks (runs
+[`36797910280`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36797910280)
+and
+[`36798999894`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36798999894)).
+
+Local evidence recorded before the merge and re-run after the final correction:
+
+- database suite **17 files / 361 tests**, including the close columns, the
+  reason and direction CHECKs and the closed-session insert guard;
+- API suite **76 files / 1107 tests**, including the expected-amount unit cases
+  and the close integration branches;
+- web suite **81 files / 940 tests**, including the cash client transport, the
+  workspace panels and the navigation gate;
+- API live-PostgreSQL suite **119 cases**, including the EPIC-13
+  movement-command block (the six kinds, the replayed retry and the
+  closed-session insert) and the session-close block (the mixed-kind and
+  zero-movement closes, the second-close `409` under a proven row-lock overlap,
+  and the byte-equivalent session `404`);
+- `db:deploy` applied **27 migrations**; a live `db:seed` reported a
+  `permission` count of **52** with `cash.movement.create` held by exactly
+  `OWNER`, `ADMIN` and `CASHIER`;
+- `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm format-check` and
+  `git diff --check` green.
+
+This section is the machine-generated receipt for the merged slice and is
+**not** a production-readiness statement.

@@ -3,7 +3,7 @@ id: CASH-005
 type: story
 title: Epic closure and evidence
 epic: EPIC-13
-status: planned
+status: done
 priority: medium
 depends_on:
   - CASH-001
@@ -16,9 +16,9 @@ prd_sections:
   - "40"
   - "41"
 permissions: []
-branch:
+branch: docs/epic-13-cash-closure
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # CASH-005 — Epic closure and evidence
@@ -55,16 +55,19 @@ receipts exist.
 
 ## Acceptance Criteria
 
-- [ ] [[CASH-001]], [[CASH-002]], [[CASH-003]] and [[CASH-004]] are `done` with
-      CI-backed or explicitly recorded verification evidence.
-- [ ] `docs/05-modules/Cash.md` reflects implemented EPIC-13 behavior and no
-      planned-only behavior.
-- [ ] `docs/10-qa/CI-EVIDENCE.md` records the relevant local/CI verification
-      receipts, including durable live-PostgreSQL evidence.
-- [ ] The changelog and roadmap status are updated in the closure branch after
-      feature implementation merges.
-- [ ] EPIC-13's exit criteria are checked only when they are backed by evidence.
-- [ ] Open limitations and debt, especially [[TD-018]], stay visible.
+- [x] [[CASH-001]], [[CASH-002]], [[CASH-003]] and [[CASH-004]] are `done` with
+      CI-backed verification evidence: PR #84 merged as `5058d59` with CI run
+      `36800148919` green.
+- [x] `docs/05-modules/Cash.md` reflects implemented EPIC-13 behavior and no
+      planned-only behavior: the seven routes, the close arithmetic and its
+      stored amounts, the movement reason and direction rules, the staff
+      workspace and the updated limitations.
+- [x] `docs/10-qa/CI-EVIDENCE.md` records the relevant local/CI verification
+      receipts, including the 119 durable live-PostgreSQL cases.
+- [x] The changelog and roadmap status are updated in this closure branch, which
+      was cut from `main` AFTER the feature merge.
+- [x] EPIC-13's exit criteria are checked only where evidence backs them.
+- [x] Open limitations and debt, especially [[TD-018]], stay visible.
 - [ ] Tenant isolation is enforced when applicable.
 - [ ] Backend authorization is enforced when applicable.
 - [ ] Required loading/error/empty/success UX exists.
@@ -111,13 +114,31 @@ None yet
 
 ## Implementation Summary
 
-_Not implemented._
+The closure branch `docs/epic-13-cash-closure`, cut from `main` at `5058d59`
+(the PR #84 merge), carries:
+
+- `docs/05-modules/Cash.md` rewritten for the implemented epic: the owned tables
+  with the close columns and the movement `direction`, the seven routes, the
+  invariants (the sign map, the reason rule, the direction exclusivity, the
+  serialized terminal close), the close arithmetic, the staff surface, the audit
+  actions and the updated known limitations;
+- the EPIC-13 section of `docs/10-qa/CI-EVIDENCE.md` with the merge receipt and
+  the local evidence;
+- the `EPIC-13 — Cash` changelog entry in `docs/09-releases/CHANGELOG.md`;
+- the `docs/01-roadmap/ROADMAP.md` row moved to `done` with its nuance
+  paragraph;
+- the [[CASH-001]] to [[CASH-005]] stories and the epic record set to `done`,
+  each with its merge receipt.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check  -> passed
+git diff --check   -> passed
 ```
+
+Documentation-only closure: no source file changes, so no suite re-run was
+required beyond the format and whitespace gates.
 
 ## Tests Added
 
@@ -149,4 +170,9 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Closed 2026-10-01 in the closure branch, after PR #84 merged into `main` as
+`5058d59` with CI run `36800148919` green on both required checks. Every
+acceptance criterion is checked and the documentation describes only implemented
+behavior.
+
+`done` means implementation closure only: it is never production readiness.

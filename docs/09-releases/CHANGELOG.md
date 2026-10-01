@@ -6,6 +6,33 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-13 — Cash:
+  - The remaining PRD §20 cash movement kinds (`REFUND`, `INCOME`, `EXPENSE`,
+    `WITHDRAWAL`, `DEPOSIT`, `ADJUSTMENT`) appended to the existing `SALE`
+    value, with the sign owned by the kind and an explicit `INCREASE`/`DECREASE`
+    direction required exactly for `ADJUSTMENT`.
+  - `POST /cash/movements`: a standalone non-sale movement against an `OPEN`
+    session, with a reason required for every kind but `INCOME`, the session
+    resolved in-tenant and the register derived server-side. It is idempotent
+    through a required `Idempotency-Key`, so an identical retry replays the
+    stored movement instead of double-counting cash.
+  - `GET /cash/movements`, the tenant-scoped movement list of one session or of
+    the whole tenant.
+  - `POST /cash/sessions/:id/close`: it locks the session, computes the expected
+    amount on the server from the opening amount and the movements, stores the
+    expected, counted and difference amounts, compares them with the operator's
+    count, writes one audit row and leaves the session terminally `CLOSED`. A
+    shift with no movement closes with the opening amount as its expectation,
+    and a second close is a stable conflict.
+  - The staff Cash workspace at `/app/cash`: registers, sessions with their
+    filter and open form, the movement ledger with its create form, and the
+    close with the expected/counted comparison — over an `/api/cash` proxy that
+    grew to seven routes and a Cash client that now lives with its own domain
+    instead of under the sales route.
+  - One new permission key (`cash.movement.create`) granted to `OWNER`, `ADMIN`
+    and `CASHIER`, moving the seeded catalog from 51 to 52;
+    `cash.session.close`, seeded since EPIC-01, is finally consumed by the close
+    route.
 - EPIC-12 — POS and payments:
   - The `Sale` aggregate with a `sale_status` enum pinned to `DRAFT`,
     `COMPLETED` and `CANCELLED`, priced lines that freeze their tax-included

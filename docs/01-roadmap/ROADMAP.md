@@ -21,7 +21,7 @@ updated: 2026-09-27
 | EPIC-10 | Inventory                          |    done | EPIC-09                   |
 | EPIC-11 | Suppliers/Purchases                |    done | EPIC-10                   |
 | EPIC-12 | POS/Payments                       |    done | EPIC-09, EPIC-10          |
-| EPIC-13 | Cash                               | planned | EPIC-12                   |
+| EPIC-13 | Cash                               |    done | EPIC-12                   |
 | EPIC-14 | Billing                            | planned | EPIC-12                   |
 | EPIC-15 | Fiscal Abstraction                 | planned | EPIC-14                   |
 | EPIC-16 | Fiscal Third-party Adapter         | planned | EPIC-15                   |
@@ -90,6 +90,18 @@ writer complies with its protocol.
 ## Architecture baseline
 
 Architecture freeze: PRD v1.3. Structural changes require an accepted ADR.
+
+[[EPIC-13]] Cash moved to `done` on 2026-10-01, merged as PR #84
+(`feat/epic-13-cash-data-foundation`, merge commit `5058d59`) with CI run
+[`36800148919`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36800148919)
+green on both required checks. `done` means epic implementation closure only:
+the local gates passed (database 17 files / 361 tests, API 76 files / 1107
+tests, web 81 files / 940 tests), the API live-PostgreSQL suite grew from 99 to
+**119 cases** including the movement-command and session-close blocks, and the
+applied schema reports 27 migrations, a `permission` count of 52 and the cash
+CHECKs, triggers and close columns. It is **never** production readiness:
+[[EPIC-20]] Production Hardening and the open Tech Debt items remain, and a
+completed sale still cannot be reversed or refunded until [[TD-018]] lands.
 
 [[EPIC-12]] POS/Payments moved to `done` on 2026-09-29 after its five Stories
 merged with the required CI checks green: the scope and Decisions as PR #76
