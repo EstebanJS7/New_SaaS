@@ -12648,8 +12648,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
    * the numbering biconditional, the cancelled-invoice requirements, a
    * cancellation releasing its sale for a corrected replacement, the header
    * trigger whose allow-list admits exactly `DRAFT -> CONFIRMED`,
-   * `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED`, the unconditional line
-   * snapshot triggers, and the single-statement counter allocation.
+   * `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED` and whose ownership clause
+   * (TD-023) refuses a permitted transition that also rewrites an identity
+   * column, the unconditional line snapshot triggers, and the single-statement
+   * counter allocation.
    *
    * Every raw mutation runs inside an interactive transaction that is ALWAYS
    * rolled back, so no probe row ever survives; the last case asserts that as a
@@ -12934,6 +12936,27 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         VALUES (${id}::uuid, ${tenantId}::uuid, ${series}, ${nextValue})
       `;
       return id;
+    };
+
+    /**
+     * Confirms a freshly inserted `DRAFT` exactly as BILL-003's command will: the
+     * status, the allocated number and an explicit confirmation timestamp in ONE
+     * statement, with `updated_at` written by the caller as Prisma does. The
+     * timestamp is caller-supplied so a cancellation probe can tell the original
+     * confirmation apart from a value it tries to move it to.
+     */
+    const confirmRawInvoice = async (
+      tx: Prisma.TransactionClient,
+      invoiceId: string,
+      confirmedAt: Date,
+      number = 1
+    ): Promise<void> => {
+      await tx.$executeRaw`
+        UPDATE "invoice"
+        SET "status" = 'CONFIRMED', "number" = ${number},
+            "confirmed_at" = ${confirmedAt}::timestamptz, "updated_at" = now()
+        WHERE "id" = ${invoiceId}::uuid
+      `;
     };
 
     beforeAll(async () => {
@@ -13418,6 +13441,42 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(updateSource).toContain("ERRCODE = 'restrict_violation'");
       expect(updateSource).not.toMatch(/BEGIN RAISE EXCEPTION/);
 
+      // TD-023: the APPLIED body carries the OWNERSHIP clause too, read here
+      // from the live function source, so a database still running the
+      // pre-TD-023 body fails this case instead of passing vacuously. Each entry
+      // is the whole clause — predicate, message and error code — so a clause
+      // that lost any part of it is a non-whitespace difference.
+      for (const [column, message] of [
+        ["tenant_id", "a permitted transition cannot move an invoice to another tenant"],
+        ["id", "a permitted transition cannot change the invoice id"],
+        ["sale_id", "a permitted transition cannot re-point an invoice to another sale"],
+        ["customer_id", "a permitted transition cannot change the invoice customer"],
+        ["currency", "a permitted transition cannot change the invoice currency"],
+        ["series", "a permitted transition cannot change the invoice series"],
+        ["created_at", "a permitted transition cannot change the invoice creation timestamp"],
+      ] as const) {
+        expect(updateSource, column).toContain(
+          `IF NEW."${column}" IS DISTINCT FROM OLD."${column}" THEN RAISE EXCEPTION '${message}' USING ERRCODE = 'restrict_violation'; END IF;`
+        );
+      }
+
+      // `confirmed_at` is owned by the confirmation ALONE: `DRAFT -> CONFIRMED`
+      // may write it, every other permitted transition must leave it untouched,
+      // which is what keeps a cancelled invoice's original confirmation time.
+      expect(updateSource).toContain(
+        `IF NEW."confirmed_at" IS DISTINCT FROM OLD."confirmed_at" AND NOT (OLD."status" = 'DRAFT' AND NEW."status" = 'CONFIRMED') THEN RAISE EXCEPTION 'a permitted transition cannot change the invoice confirmation timestamp' USING ERRCODE = 'restrict_violation'; END IF;`
+      );
+
+      // The columns the transition OWNS gain no comparison at all: `updated_at`
+      // stays freely writable (Prisma writes it on confirm and on cancel), and
+      // `cancelled_at`/`cancel_reason` stay writable on the cancellation path
+      // because the CHECKs already tie both to the `CANCELLED` status. `number`
+      // keeps `invoice_number_never_reallocated` and `status` keeps the
+      // allow-list, so no column gains a second authority.
+      for (const column of ["updated_at", "cancelled_at", "cancel_reason", "number", "status"]) {
+        expect(updateSource, column).not.toContain(`IS DISTINCT FROM OLD."${column}"`);
+      }
+
       const reallocationSource = sourceByName.get("invoice_number_never_reallocated");
       expect(reallocationSource).toContain(
         'OLD."number" IS NOT NULL AND NEW."number" IS DISTINCT FROM OLD."number"'
@@ -13691,6 +13750,202 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
 
       // The probe rolled back: no cancelled invoice survived.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+    }, 30_000);
+
+    it("rejects a permitted DRAFT to CONFIRMED transition that also rewrites an identity column (TD-023)", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+
+      // Every probe below is a LEGAL transition — `DRAFT -> CONFIRMED` — that
+      // drags one identity column along with it. Before TD-023 the guard compared
+      // the status pair only, so each of these updates was admitted and the
+      // document silently changed identity while it was confirmed. The observed
+      // message is asserted EXACTLY, so a rejection that came from a CHECK, an FK
+      // or the allocation index cannot be mistaken for the ownership clause.
+
+      // (1) `currency`: the invoice would confirm in a currency other than its
+      // source sale's.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "currency" = 'USD', "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice currency");
+      });
+
+      // (2) `series`: the invoice would confirm into a different numbering
+      // series than the one its number is scoped to (DEC-039).
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "series" = 'B', "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice series");
+      });
+
+      // (3) `sale_id`: the document would be re-pointed to ANOTHER completed sale
+      // of the same tenant, so the invoice and the sale it bills would disagree.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const otherSaleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "sale_id" = ${otherSaleId}::uuid, "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot re-point an invoice to another sale");
+      });
+
+      // (4) `customer_id`: the invoice would acquire a customer it was never
+      // created for. The customer is a REAL same-tenant row, so the composite FK
+      // would accept it and the ownership clause is provably what refuses it.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const customer = await tx.customer.create({
+          data: {
+            tenantId: tenantAId,
+            kind: "INDIVIDUAL",
+            displayName: "Live Billing Customer",
+          },
+        });
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "customer_id" = ${customer.id}::uuid, "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice customer");
+      });
+
+      // (5) `created_at`: the creation time would be rewritten, so the document's
+      // age would no longer be the moment it was created.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "created_at" = now() - interval '1 day', "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice creation timestamp");
+      });
+
+      // Every probe rolled back: no rejected confirmation survived any of them.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+    }, 30_000);
+
+    it("rejects a CONFIRMED to CANCELLED transition that moves a column it does not own, and keeps the document intact when it moves only the ones it does (TD-023)", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+      const confirmedAt = new Date("2026-10-01T12:00:00.000Z");
+      const movedConfirmedAt = new Date("2026-10-02T12:00:00.000Z");
+
+      // (1) `confirmed_at`: a cancellation that also rewrites WHEN the document
+      // was confirmed is refused, so the timestamp stays evidence of the real
+      // confirmation rather than of the cancellation's convenience.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await confirmRawInvoice(tx, invoiceId, confirmedAt);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CANCELLED', "cancelled_at" = now(),
+                "cancel_reason" = 'Issued in error',
+                "confirmed_at" = ${movedConfirmedAt}::timestamptz, "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe(
+          "a permitted transition cannot change the invoice confirmation timestamp"
+        );
+      });
+
+      // (2) `currency`: a cancellation that also changes the document currency is
+      // refused, so the cancelled invoice keeps the currency it was issued in.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await confirmRawInvoice(tx, invoiceId, confirmedAt);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CANCELLED', "cancelled_at" = now(),
+                "cancel_reason" = 'Issued in error', "currency" = 'USD',
+                "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice currency");
+      });
+
+      // (3) The SAME transition with ONLY the columns it owns SUCCEEDS: the
+      // status, `cancelled_at` and `cancel_reason` move, while the allocated
+      // `number` and the original `confirmed_at` stay exactly as confirmation
+      // wrote them (DEC-039, DEC-043).
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await confirmRawInvoice(tx, invoiceId, confirmedAt);
+
+        const confirmed = await tx.$queryRaw<{ confirmed_at: Date; number: number }[]>`
+          SELECT "confirmed_at", "number" FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(confirmed[0]?.confirmed_at.getTime()).toBe(confirmedAt.getTime());
+        expect(confirmed[0]?.number).toBe(1);
+
+        const cancelled = await tx.$executeRaw`
+          UPDATE "invoice"
+          SET "status" = 'CANCELLED', "cancelled_at" = now(),
+              "cancel_reason" = 'Issued in error', "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(cancelled).toBe(1);
+
+        const stored = await tx.$queryRaw<
+          {
+            status: string;
+            number: number | null;
+            confirmed_at: Date | null;
+            cancelled_at: Date | null;
+            cancel_reason: string | null;
+          }[]
+        >`
+          SELECT "status"::text AS status, "number", "confirmed_at", "cancelled_at", "cancel_reason"
+          FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(stored).toHaveLength(1);
+        expect(stored[0]?.status).toBe("CANCELLED");
+        // DEC-039/DEC-043: cancelling never frees the number and never rewrites
+        // the confirmation it is the evidence of.
+        expect(stored[0]?.number).toBe(1);
+        expect(stored[0]?.confirmed_at?.getTime()).toBe(confirmedAt.getTime());
+        expect(stored[0]?.cancelled_at).toBeInstanceOf(Date);
+        expect(stored[0]?.cancel_reason).toBe("Issued in error");
+      });
+
+      // Every probe rolled back: no throwaway invoice survived any of them.
       expect(await prisma.invoice.count()).toBe(invoicesBefore);
     }, 30_000);
 

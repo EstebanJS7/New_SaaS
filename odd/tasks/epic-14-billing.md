@@ -503,6 +503,94 @@ BILL-001 closed.
 - The epic stays `planned`: [[BILL-003]] through [[BILL-005]] remain, and
   [[TD-023]] through [[TD-026]] stay open.
 
+## BILL-003 — invoice confirmation and cancellation (work units)
+
+Branch: `feat/epic-14-billing-invoice-commands`, cut from `main` at `4c90c83`
+after BILL-002 closed.
+
+### Pinned slice contract (parent-owned)
+
+- `POST /invoices/:id/confirm` behind `billing.confirm`: lock the invoice row
+  `FOR UPDATE`, gate on `DRAFT`, allocate the number from the tenant sequence,
+  write `CONFIRMED` plus `confirmed_at`, and co-commit exactly one audit row.
+  The allocation and the transition commit together or not at all.
+- **The allocation is ONE atomic statement that also creates the counter row**,
+  because a tenant may have no `invoice_number_sequence` row yet:
+  `INSERT INTO "invoice_number_sequence" ("tenant_id", "series", "next_value") VALUES ($1::uuid, 'A', 2) ON CONFLICT ("tenant_id", "series") DO UPDATE SET "next_value" = "invoice_number_sequence"."next_value" + 1, "updated_at" = now() RETURNING "next_value" - 1`.
+  A fresh row returns 1 and an existing row returns its current value, with no
+  read-then-write window.
+- `POST /invoices/:id/cancel` behind `billing.cancel`: a required non-blank
+  reason bounded to 500 characters, the `DRAFT` or `CONFIRMED` gate, the write
+  to `CANCELLED` with `cancelled_at` and `cancel_reason`, the allocated number
+  retained, and exactly one co-committed audit row.
+- **Replay-safe by state, no key**: a retried confirm on a `CONFIRMED` invoice
+  and a repeated cancel on a `CANCELLED` invoice return `200` with the same
+  representation and write no second audit row ([[DEC-041]]).
+- Audit actions `invoice.confirmed` and `invoice.cancelled`, target type
+  `invoice`, changed-field NAMES only.
+- [[TD-023]] is **this slice's**: a migration that `CREATE OR REPLACE`s the
+  header guard so a permitted transition cannot change `tenant_id`, `id`,
+  `sale_id`, `customer_id`, `currency`, `series` or `created_at`, and cannot
+  move `confirmed_at` except on `DRAFT -> CONFIRMED`. Today the guard inspects
+  the status transition only, so a cancellation could silently re-point the
+  document.
+- No event is emitted and nothing outside Billing is written ([[DEC-041]],
+  [[DEC-042]], [[DEC-043]]).
+
+### Work units
+
+- [x] W1 — the TD-023 migration: the tightened header guard, its schema-gate
+      update and the live-PostgreSQL probes for the rejected column changes and
+      the admitted transition.
+- [ ] W2 — the confirm command: the locked read, the atomic allocation, the
+      state write, the audit, the replay, the route pin and the integration
+      cases.
+- [ ] W3 — the cancel command: the reason contract, the two-state gate, the
+      terminal write, the audit, the replay, the route pin, the integration
+      cases and the live-PostgreSQL command block including the
+      concurrent-confirm overlap.
+- [ ] W4 — docs reconciliation: the story record, the epic progress entry,
+      [[TD-023]] resolution and the new counters.
+
+### BILL-003 W1 — TD-023 closed by tightening the header guard
+
+- The additive migration `20261001000002_invoice_header_guard_tightening`
+  `CREATE OR REPLACE`s the guard body without recreating the trigger and without
+  touching any table: the three-transition allow-list is kept byte-identical,
+  and a new ownership clause rejects a permitted transition that also changes
+  `tenant_id`, `id`, `sale_id`, `customer_id`, `currency`, `series` or
+  `created_at`, and forbids moving `confirmed_at` except on
+  `DRAFT -> CONFIRMED`. `updated_at`, `cancelled_at`, `cancel_reason` and
+  `number` keep their existing owners, so the tighten does not narrow the state
+  machine.
+- The schema gate gained three cases pinning the ownership clause per column,
+  the strict additivity of the replacement (no table, trigger, type, index, row
+  or DDL beyond the one function) and the classification prose.
+- The live-PostgreSQL block gained two rolled-back cases: five identity-column
+  rewrites during `DRAFT -> CONFIRMED` are rejected with their exact messages,
+  and a `CONFIRMED -> CANCELLED` that moves `confirmed_at` or `currency` is
+  rejected while the clean cancel succeeds keeping the allocated number and the
+  original confirmation timestamp byte-equal.
+- **Discrimination evidence, which is the point of this closure**: the writer
+  re-armed the pre-TD-023 body on a throwaway database and ran the probe's exact
+  tampering statement. It was **admitted** (`UPDATE 1`, row `CONFIRMED | USD`),
+  proving the gap was real and that the new probe is not mirrored to a wrong
+  assumption; after applying the migration unchanged, the same statement was
+  rejected and no row changed. This is the BILL-001 mirrored-bug lesson applied
+  before the fact rather than after a review.
+- Gates: the database suite 18 files / **403 tests** (was 400); `db:deploy`
+  reported **29 migrations** and applied the new one; `db:live-verify` printed
+  `LIVE MIGRATION VERIFICATION PASSED` on throwaway databases; the
+  live-PostgreSQL suite **144 passed** (was 142, and the 142 pre-existing cases
+  are unchanged); `pnpm typecheck` and `pnpm lint` 14/14; `pnpm format-check`
+  clean.
+- Local state note: the development database now has migration 29 applied, a
+  local-only change with no repository effect.
+- [[TD-023]]'s own verification checklist is satisfied by the two live cases and
+  the schema gate, so it can be marked `resolved` in W4.
+
+## Evidence
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
