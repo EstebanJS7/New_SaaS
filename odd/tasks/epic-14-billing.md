@@ -451,6 +451,27 @@ BILL-001 closed.
   second invoice on one sale, `403 FEATURE_NOT_ENTITLED` in an unentitled
   tenant, and a no-residue count check after every rejection.
 
+### BILL-002 W3 — RDD native review (closed, approved)
+
+- Lineage `review-d918081c81315de7`, candidate range `f2ce931..41e412b`, 8
+  paths, 1427 changed lines, tier **high**, **four lenses** (`risk`,
+  `resilience`, `readability`, `reliability`) — the tier came from
+  `process_boundary` on the live-PostgreSQL spec, not from the production code.
+  Four reviewers prepared and submitted; **approved**, no correction; the
+  authority is burned with `burn_evidence: gentle-ai.review-acknowledged/v1`.
+- `R4-UNBOUNDED-LIST` (WARNING, `billing.controller.ts:36-41`): the resilience
+  lens flagged the unpaginated list, which was a pinned decision, not an
+  oversight. The pattern is repo-wide — `GET /sales`, `GET /cash/sessions` and
+  `GET /cash/movements` are equally unbounded — so it is recorded as [[TD-026]]
+  with one shared pagination contract to apply to every staff list in a single
+  slice, rather than silently capping one surface and truncating results.
+- Three `readability` and `reliability` suggestions (`billing.zod.ts:57`,
+  `billing.integration.test.ts:677`, `:933-935`, `:1104`) are informational test
+  and schema polish, carried into W4's record.
+- The risk lens returned the smallest review payload of the four (897 bytes)
+  with nothing to report, which is a useful signal that the tenant isolation and
+  the authorization sweeps held.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
