@@ -90,7 +90,7 @@ as subsequent scope notes on the accepted records, not applied silently:
 - [x] W2 — `billing.*` seeds: the four `PERMISSION_SEEDS` entries, the
       `ROLE_PERMISSION_MATRIX` rows for all six roles, and the two pinned counts
       in `reference-seed.test.ts` (52 -> 56 and the VETERINARIAN exact array).
-- [ ] W3 — live-PostgreSQL applied-schema block for EPIC-14 in
+- [x] W3 — live-PostgreSQL applied-schema block for EPIC-14 in
       `apps/api/test/live-pg-isolation.e2e-spec.ts`.
 - [ ] W4 — docs reconciliation: the two subsequent scope notes on DEC-038 and
       DEC-039, the BILL-001 implementation record, the epic progress entry, the
@@ -134,6 +134,51 @@ as subsequent scope notes on the accepted records, not applied silently:
   container, never the development database): both `db:seed` runs produced
   identical counts —
   `roles: 6, permissions: 56, featureCodes: 12, plans: 1, rolePermissions: 187, planCapabilities: 12, species: 6, breeds: 9, taxRates: 3`.
+
+### BILL-001 W3 — live-PostgreSQL invoice probes
+
+- File: `apps/api/test/live-pg-isolation.e2e-spec.ts`, **insertions only**
+  (`1183 0` per `git diff --numstat`): no existing block, fixture or assertion
+  was modified. The new peer block
+  `describe("EPIC-14 billing application-path isolation")` starts at line 12554
+  and adds 14 tests.
+- Coverage: the applied `invoice_status` enum order; the column shapes and
+  nullability of the three tables (`14:2` money, `10:3` quantity, nullable
+  `number`); the fifteen CHECK definitions read from `pg_constraint`; the
+  partial `invoice_tenant_id_sale_id_key` predicate, the allocation key and the
+  three ownership keys from `pg_index`; the eight RESTRICT FKs and the absence
+  of CASCADE; the five triggers with their conditional predicates read from
+  `pg_proc.prosrc`; and behaviour inside rolled-back transactions — a numbered
+  draft and an unnumbered confirmation rejected, a cancelled insert without a
+  reason rejected, a second live invoice for one sale rejected while a cancelled
+  one and its replacement are admitted, the `DRAFT -> CONFIRMED` transition
+  admitted, later updates and number reallocation rejected, every `invoice_line`
+  update and delete rejected, a non-positive counter rejected and the atomic
+  allocation admitted, and a no-residue count check.
+- Gates: `pnpm --filter @newsaas/api test:live-pg` **134 passed (134)**; the
+  same run shows `14 passed | 120 skipped` under `-t EPIC-14`, so the
+  pre-EPIC-14 baseline is 120 and this slice adds exactly 14. `pnpm typecheck`
+  14/14; `pnpm format-check` clean. The parent reproduced the full suite and the
+  focused suite independently.
+- Environment contract: the suite requires a **schema-less** `DATABASE_URL`. The
+  workspace-root `.env` value carries `?schema=public`, and the suite builds a
+  `psql` admin URL from it, so the run aborts in `beforeAll` with
+  `psql: error: invalid URI query parameter: "schema"`. Exporting `DATABASE_URL`
+  with the query string stripped (and the same for `DATABASE_URL_TEST`) makes it
+  pass. This matches the EPIC-13 note and belongs to [[TD-021]].
+- Finding worth recording: `invoice_number_never_reallocated` is **defence in
+  depth, not the load-bearing guard**. For a non-`DRAFT` row the alphabetically
+  earlier `invoice_no_update_when_not_draft` trigger raises first, and on a
+  `DRAFT` row `number` must be NULL by `invoice_number_iff_confirmed`, so the
+  reallocation trigger cannot be reached through normal DML. Its probe therefore
+  disables the shadowing trigger inside a rolled-back transaction to isolate it,
+  and asserts `tgenabled = 'D'` first so the isolation is proven rather than
+  assumed. The number guarantee rests primarily on the header immutability
+  trigger plus the biconditional CHECK.
+- Documentation counter to reconcile at closure: the last recorded live-PG
+  baseline in the docs is `119`, while the suite reports `120` before this slice
+  and `134` after it. The delta is exactly the 14 new tests; the stale baseline
+  is a docs counter, not a defect.
 
 ## Evidence
 
