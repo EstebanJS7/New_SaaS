@@ -490,6 +490,19 @@ BILL-001 closed.
 - [[TD-021]] gained a second concrete consequence: the live-PostgreSQL suite
   needs a schema-less `DATABASE_URL`, not just an exported one.
 
+### BILL-002 — merged and closed
+
+- Pull request **#89** merged as `c52b175`.
+- The merged-receipt gate is run `36911300059` on `main` at `c52b175`: both
+  required checks `success`, with all 28 migrations applied to a fresh database.
+- [[BILL-002]] moved to `done` with its acceptance criteria checked (eleven in
+  the story, six in the epic block) and the two pre-implementation wordings
+  corrected while ticking them: the one-invoice rule is the partial index, and
+  `series` is NOT NULL defaulted to `'A'`.
+- `docs/10-qa/CI-EVIDENCE.md` gained the BILL-002 row and section.
+- The epic stays `planned`: [[BILL-003]] through [[BILL-005]] remain, and
+  [[TD-023]] through [[TD-026]] stay open.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)

@@ -137,22 +137,24 @@ implemented EPIC-14 behavior.
   CI's required checks only run for pull requests targeting `main`. The Story is
   `done`; the epic stays `planned` until [[BILL-002]] through [[BILL-005]] land.
 
-- **[[BILL-002]] Invoice creation and read API — `review`.** Implemented on
-  `feat/epic-14-billing-invoice-api` in three work units: `68d1c1c` extends the
-  in-memory test boundary with the invoice tables, `d508520` adds the `billing`
-  module and `POST /invoices` (the verbatim snapshot copy, the
-  `catalog_item.name` description read in one query with a 200-character guard,
-  the `requireCustomerForInvoice` gate, the `P2002` → `409` translation and one
-  co-committed `invoice.created` audit row) and `41e412b` adds `GET /invoices`
-  with its `status` filter and `GET /invoices/:id` plus the live-PostgreSQL
-  route block. Verification passed locally: the focused suite 19 tests, the API
-  suite 76 files / 1007 tests, the live-PostgreSQL suite **142 passed** (was
-  135), `typecheck` 14/14, `lint` 14/14 and `format-check` clean. Three RDD
-  native reviews closed **approved** with no correction
+- **[[BILL-002]] Invoice creation and read API — `done`.** Merged as pull
+  request #89 (`c52b175`) with run `36911300059` green on both required checks
+  on the merged `main`, whose `migrations` job applied all 28 migrations to a
+  fresh database. Implemented on `feat/epic-14-billing-invoice-api` in three
+  work units: `68d1c1c` extends the in-memory test boundary with the invoice
+  tables, `d508520` adds the `billing` module and `POST /invoices` (the verbatim
+  snapshot copy, the `catalog_item.name` description read in one query with a
+  200-character guard, the `requireCustomerForInvoice` gate, the `P2002` → `409`
+  translation and one co-committed `invoice.created` audit row) and `41e412b`
+  adds `GET /invoices` with its `status` filter and `GET /invoices/:id` plus the
+  live-PostgreSQL route block. Verification passed locally: the focused suite 19
+  tests, the API suite 76 files / 1007 tests, the live-PostgreSQL suite **142
+  passed** (was 135), `typecheck` 14/14, `lint` 14/14 and `format-check` clean.
+  Three RDD native reviews closed **approved** with no correction
   (`review-01c7a12dc4e54144`, `review-4fe1a95e416b6b45`,
   `review-d918081c81315de7`), and their advisories are [[TD-024]], [[TD-025]]
-  and [[TD-026]]. The Story stays `review` until its pull request merges with a
-  CI receipt.
+  and [[TD-026]]. The Story is `done`; the epic stays `planned` until
+  [[BILL-003]] through [[BILL-005]] land.
 
 ## Scope
 
@@ -246,23 +248,23 @@ planned evidence that will close it.
 
 ### BILL-002 — Invoice creation and read API
 
-- [ ] `POST /invoices` creates a `DRAFT` invoice from exactly one `COMPLETED`
+- [x] `POST /invoices` creates a `DRAFT` invoice from exactly one `COMPLETED`
       in-tenant sale behind `billing.create` and the `billing` capability, and
       copies the sale's `SaleLine` snapshot verbatim. Evidence: the integration
       case asserting the copied amounts and the route permission pin.
-- [ ] `requireCustomerForInvoice` gates creation when the sale has no customer,
+- [x] `requireCustomerForInvoice` gates creation when the sale has no customer,
       and the gate reads the typed setting rather than raw JSON. Evidence: the
       integration case toggling the setting and the rejection case.
-- [ ] A sale that is not `COMPLETED`, a sale with an existing invoice, and a
+- [x] A sale that is not `COMPLETED`, a sale with an existing invoice, and a
       nonexistent sale each fail with their own stable domain code and persist
       nothing. Evidence: the three rejection cases plus the no-residue
       assertion.
-- [ ] `GET /invoices` and `GET /invoices/:id` are tenant-scoped behind
+- [x] `GET /invoices` and `GET /invoices/:id` are tenant-scoped behind
       `billing.read`; foreign identifiers are byte-equivalent `404`s. Evidence:
       the tenant-isolation integration and live-PostgreSQL cases.
-- [ ] The API never accepts tenant authority from body, query or route.
+- [x] The API never accepts tenant authority from body, query or route.
       Evidence: the tenant-isolation cases and the request-schema review.
-- [ ] Creation is audited with actor, tenant and invoice reference, and rejected
+- [x] Creation is audited with actor, tenant and invoice reference, and rejected
       attempts write no audit row. Evidence: the audit assertions of both
       suites.
 
