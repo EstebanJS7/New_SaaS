@@ -101,6 +101,17 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   cash and sales keys above, and moves the seeded catalog 51 -> 52. The
  *   pre-existing `cash.session.close` is consumed by CASH-003 and is not
  *   re-scoped or re-counted here.
+ * - EPIC-14 BILL-001 adds the `billing` family over the Core billing domain:
+ *   `billing.read` mirrors the read-wide catalog shape, and
+ *   `billing.create`/`confirm`/`cancel` are the owning-roles write keys
+ *   (DEC-040). They are seeded BEFORE the routes that consume them: BILL-002
+ *   consumes `billing.read` and `billing.create`, and BILL-003 consumes
+ *   `billing.confirm` and `billing.cancel`. The family follows the
+ *   DEC-016/DEC-026 read-wide/write-to-the-owning-roles shape, moving the
+ *   seeded catalog 52 -> 56. No `billing.update` key exists because the invoice
+ *   is immutable from creation (DEC-038), so there is no edit route to protect.
+ *   The pre-existing `fiscal.invoice.issue` stays a Fiscal capability consumed
+ *   by no EPIC-14 route and reserved for EPIC-15 (DEC-040).
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -179,6 +190,17 @@ export const PERMISSION_SEEDS = [
   // follows the existing cash write shape — `OWNER`/`ADMIN`/`CASHIER` hold it,
   // no other role does — and moves the seeded catalog 51 -> 52.
   { key: "cash.movement.create", name: "Create cash movements" },
+  // EPIC-14 BILL-001 adds the `billing` family (DEC-040): all six roles read
+  // invoices, and `OWNER`/`ADMIN`/`CASHIER` create, confirm and cancel them,
+  // following the DEC-016/DEC-026 read-wide/write-to-the-owning-roles shape.
+  // They are seeded BEFORE the routes that consume them (BILL-002 reads and
+  // creates, BILL-003 confirms and cancels) and move the seeded catalog
+  // 52 -> 56. No `billing.update` key is added: the invoice is immutable from
+  // creation (DEC-038), so the Billing API has no edit route to protect.
+  { key: "billing.read", name: "Read invoices" },
+  { key: "billing.create", name: "Create invoices" },
+  { key: "billing.confirm", name: "Confirm invoices" },
+  { key: "billing.cancel", name: "Cancel invoices" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -241,6 +263,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.session.open",
     "sales.complete",
     "cash.movement.create",
+    "billing.read",
+    "billing.create",
+    "billing.confirm",
+    "billing.cancel",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -295,6 +321,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.session.open",
     "sales.complete",
     "cash.movement.create",
+    "billing.read",
+    "billing.create",
+    "billing.confirm",
+    "billing.cancel",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
@@ -314,6 +344,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "purchases.read",
     "sales.read",
     "cash.read",
+    "billing.read",
   ],
   RECEPTIONIST: [
     "inventory.stock.read",
@@ -334,6 +365,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "purchases.read",
     "sales.read",
     "cash.read",
+    "billing.read",
   ],
   CASHIER: [
     "cash.session.close",
@@ -351,6 +383,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.session.open",
     "sales.complete",
     "cash.movement.create",
+    "billing.read",
+    "billing.create",
+    "billing.confirm",
+    "billing.cancel",
   ],
   // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
   // catalog keys plus the EPIC-10 stock write key; front-desk, veterinary and
@@ -374,6 +410,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "purchases.receive",
     "sales.read",
     "cash.read",
+    "billing.read",
   ],
 };
 

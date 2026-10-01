@@ -87,7 +87,7 @@ as subsequent scope notes on the accepted records, not applied silently:
       the back-relations, the section banner, the additive migration with its
       constraints, partial unique index and immutability triggers, and
       `packages/database/src/schema-billing.test.ts`.
-- [ ] W2 — `billing.*` seeds: the four `PERMISSION_SEEDS` entries, the
+- [x] W2 — `billing.*` seeds: the four `PERMISSION_SEEDS` entries, the
       `ROLE_PERMISSION_MATRIX` rows for all six roles, and the two pinned counts
       in `reference-seed.test.ts` (52 -> 56 and the VETERINARIAN exact array).
 - [ ] W3 — live-PostgreSQL applied-schema block for EPIC-14 in
@@ -107,6 +107,33 @@ as subsequent scope notes on the accepted records, not applied silently:
   `DATABASE_URL` but not `DATABASE_URL_TEST`, and the suite falls back to
   `DATABASE_URL`, so no extra variable is required locally).
 - `pnpm typecheck`, `pnpm lint`, `pnpm format-check`, `git diff --check`.
+
+### BILL-001 W2 — `billing.*` permission family
+
+- Files: `packages/database/src/reference-seed.ts` (646 lines) and
+  `packages/database/src/reference-seed.test.ts` (849 lines).
+- Keys added at the end of `PERMISSION_SEEDS` with a per-entry comment block and
+  a new `- EPIC-14 BILL-001 ...` bullet on the catalogue doc comment:
+  `billing.read`, `billing.create`, `billing.confirm`, `billing.cancel`. No
+  `billing.update` (the invoice is immutable from creation, [[DEC-038]]), no
+  feature-code change (`billing` and `fiscal` already exist) and no change to
+  `fiscal.invoice.issue`.
+- Role matrix as finally verified: `OWNER` 56 keys, `ADMIN` 56, `VETERINARIAN`
+  18, `RECEPTIONIST` 19, `CASHIER` 19, `INVENTORY_MANAGER` 19. All six hold
+  `billing.read`; only `OWNER`, `ADMIN` and `CASHIER` hold `billing.create`,
+  `billing.confirm` and `billing.cancel`.
+- Pinned expectations reconciled: `permissions: 52 -> 56` and the exact
+  `ROLE_PERMISSION_MATRIX.VETERINARIAN` array (`+ "billing.read"`). No other
+  assertion needed changing; nothing was weakened.
+- Gates: `reference-seed.test.ts` 27 tests passed; the whole database package
+  `18 files / 399 tests passed`; `pnpm typecheck` 14/14; `pnpm format-check`
+  clean. The parent re-ran the focused suite, the full package suite and
+  prettier over the two files and reproduced all three.
+- Seed idempotency reproduced exactly as CI does it, on the throwaway database
+  `newsaas_verify_seed_w2_33045` (created and dropped inside the running
+  container, never the development database): both `db:seed` runs produced
+  identical counts —
+  `roles: 6, permissions: 56, featureCodes: 12, plans: 1, rolePermissions: 187, planCapabilities: 12, species: 6, breeds: 9, taxRates: 3`.
 
 ## Evidence
 
