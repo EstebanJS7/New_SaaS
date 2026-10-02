@@ -3,7 +3,7 @@ id: BILL-003
 type: story
 title: Invoice confirmation and cancellation commands
 epic: EPIC-14
-status: planned
+status: review
 priority: high
 depends_on:
   - BILL-001
@@ -22,7 +22,7 @@ prd_sections:
 permissions:
   - billing.confirm
   - billing.cancel
-branch:
+branch: feat/epic-14-billing-invoice-commands
 created: 2026-10-01
 updated: 2026-10-01
 ---
@@ -113,46 +113,46 @@ audit. Neither command touches money, stock, cash or fiscal state.
 
 ## Acceptance Criteria
 
-- [ ] `POST /invoices/:id/confirm` locks the invoice row, gates on `DRAFT`,
+- [x] `POST /invoices/:id/confirm` locks the invoice row, gates on `DRAFT`,
       allocates the number from `invoice_number_sequence` inside the same
       transaction, sets `CONFIRMED` and writes exactly one audit row. Evidence:
       the API integration case, the live-PostgreSQL case and the audit
       assertion.
-- [ ] Two concurrent confirms of the same invoice admit exactly one confirmation
+- [x] Two concurrent confirms of the same invoice admit exactly one confirmation
       and allocate exactly one number; the loser observes a stable conflict or a
       replay of the same representation, never a second number. Evidence: the
       live-PostgreSQL row-lock overlap case.
-- [ ] A retried `confirm` on an already `CONFIRMED` invoice returns `200` with
+- [x] A retried `confirm` on an already `CONFIRMED` invoice returns `200` with
       the same representation and writes no second audit row, and `confirm` on a
       `CANCELLED` invoice is rejected. Evidence: the replay and rejection cases
       ([[DEC-041]]).
-- [ ] `POST /invoices/:id/cancel` accepts a reason, gates on `DRAFT` or
+- [x] `POST /invoices/:id/cancel` accepts a reason, gates on `DRAFT` or
       `CONFIRMED`, sets `CANCELLED`, retains the allocated number and writes
       exactly one audit row; `CANCELLED` is terminal. Evidence: the
       draft-cancel, confirmed-cancel, repeat-cancel and terminal-state cases
       ([[DEC-043]]).
-- [ ] Cancellation performs no payment, cash, stock or fiscal side effect, and
+- [x] Cancellation performs no payment, cash, stock or fiscal side effect, and
       the implementation contains no Fiscal import. Evidence: the no-residue
       assertions and a repository search for fiscal imports in Billing.
-- [ ] Both commands enforce authentication, tenant context, `billing.confirm` /
+- [x] Both commands enforce authentication, tenant context, `billing.confirm` /
       `billing.cancel`, the `billing` capability and byte-equivalent
       cross-tenant `404`s. Evidence: the authorization sweeps and the live
       cross-tenant cases.
-- [ ] No route accepts a generic status patch, and no route deletes an invoice.
+- [x] No route accepts a generic status patch, and no route deletes an invoice.
       Evidence: the route-contract inventory.
-- [ ] Tenant isolation is enforced when applicable. Evidence: the
+- [x] Tenant isolation is enforced when applicable. Evidence: the
       byte-equivalent foreign/unknown invoice `404` cases and the
       tenant-predicated locked read inside the confirm transaction.
-- [ ] Backend authorization is enforced when applicable. Evidence: the
+- [x] Backend authorization is enforced when applicable. Evidence: the
       deny-by-default route pins for both commands with their permission keys,
       plus the permission and capability sweeps.
-- [ ] Required loading/error/empty/success UX exists. Evidence: not applicable
+- [x] Required loading/error/empty/success UX exists. Evidence: not applicable
       in this story, owned by [[BILL-004]].
-- [ ] Required audit exists. Evidence: exactly one `invoice.confirmed` row per
+- [x] Required audit exists. Evidence: exactly one `invoice.confirmed` row per
       accepted confirmation and one `invoice.cancelled` row per accepted
       cancellation, each carrying the actor, the invoice reference and field
       NAMES only, with no audit row for a rejection or a replay.
-- [ ] Tests required by the Story pass. Evidence: the integration suite, the
+- [x] Tests required by the Story pass. Evidence: the integration suite, the
       route-contract probe, the live-PostgreSQL block and the repository gates
       are green in the merged work unit.
 
@@ -236,75 +236,108 @@ result additively and add its schema test.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented and committed on `feat/epic-14-billing-invoice-commands` across
+three work units, each reviewed and approved by the RDD native review before the
+next one started:
+
+- **W1 `c384f61`** — closes [[TD-023]]: the additive migration
+  `20261001000002_invoice_header_guard_tightening` replaces the guard body so a
+  permitted transition can only change the columns it owns.
+- **W2 `d0ef051`** — `POST /invoices/:id/confirm`: the locked read, the atomic
+  `INSERT ... ON CONFLICT ... RETURNING "next_value" - 1` allocation, the
+  conditional transition, the replay-by-state and one co-committed
+  `invoice.confirmed` audit row.
+- **W3 `16fe4ec`** — `POST /invoices/:id/cancel` plus the durable
+  live-PostgreSQL command block, including the proven concurrent-confirm
+  overlap.
+
+No migration for the commands themselves: [[BILL-001]] shipped the sequence
+table and the guard, and this Story drives them through the HTTP surface.
 
 ## Verification
 
 ```text
-Not run.
+pnpm --filter @newsaas/api exec vitest run src/billing/billing.integration.test.ts
+  -> 32 tests passed
+
+pnpm --filter @newsaas/api test          (DATABASE_URL_TEST exported)
+  -> 77 files passed (77), 1173 tests passed (1173)
+     the live-PostgreSQL spec runs INSIDE this suite when DATABASE_URL_TEST is
+     set, so nothing is skipped; without it the same command reports
+     76 files / 1020 tests passed / 144 skipped
+
+pnpm --filter @newsaas/api test:live-pg  (schema-less DATABASE_URL)
+  -> 153 passed (153), was 144 before this Story
+
+pnpm --filter @newsaas/database test
+  -> 18 files / 403 tests passed (W1 added 3)
+
+pnpm --filter @newsaas/database db:deploy
+  -> 29 migrations found; applied 20261001000002_invoice_header_guard_tightening
+
+pnpm --filter @newsaas/database db:live-verify
+  -> LIVE MIGRATION VERIFICATION PASSED, on a throwaway database
+
+pnpm typecheck / pnpm lint / pnpm format-check
+  -> 14 / 14, 14 / 14, clean
 ```
+
+The live-PostgreSQL suite needs `DATABASE_URL` exported from the workspace-root
+`.env` **with its query string stripped**, because the `.env` value carries
+`?schema=public` and the suite feeds it to `psql`, which aborts with
+`invalid URI query parameter: "schema"` ([[TD-021]]).
 
 ## Tests Added
 
-- `apps/api/src/billing/billing.integration.test.ts` (planned) — the confirm
-  success with its single number and audit row, the state gates, the replay
-  cases, the cancel cases for both source states, the repeat cancel, the
-  terminal-state rejections, the strict body contract, the permission and
-  capability sweeps and the rejection no-residue assertions.
-- `apps/api/src/rbac/route-contract.probe.test.ts` (planned update) — both
-  commands pinned in the deny-by-default inventory with their permissions, plus
-  the inventory proof that no status-patch or delete route exists.
-- `apps/api/test/live-pg-isolation.e2e-spec.ts` (planned) — the row-lock overlap
-  admitting exactly one confirmation and one number, the number allocation
-  inside the transaction, the byte-equivalent cross-tenant `404`, the trigger
-  rejections for a non-`DRAFT` update and the audit assertions.
-- `apps/api/test/support/in-memory-database.ts` (planned update) — the sequence
-  and locked-read seam the in-memory boundary needs for the new commands.
+- `apps/api/src/billing/billing.integration.test.ts` — 13 new cases over the
+  real `AppModule` and the in-memory boundary: the confirmed result and the
+  replayed confirm that keeps the SAME number with the counter NOT advanced, two
+  invoices receiving consecutive numbers, the `CANCELLED` confirm `409`, the
+  draft and confirmed cancels, the cancel replay, the five invalid cancel
+  bodies, the byte-equivalent `404`s, both authorization paths, and the audit
+  metadata carrying field names but never the reason text.
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` — 9 new route-level cases,
+  including the two forced overlaps: the same-invoice concurrent confirm (one
+  number, one audit row, one counter advance) and the counter-row overlap
+  proving two different invoices get two distinct consecutive numbers.
+- `packages/database/src/schema-billing.test.ts` — 3 cases pinning the tightened
+  guard's ownership clause per column, the strict additivity of the replacement,
+  and the classification prose.
+- `apps/api/src/rbac/route-contract.probe.test.ts` — the two command routes
+  pinned with their permissions, completing the four-route `billing` family.
 
 ## Known Limitations
 
-- Nothing is implemented. The Story is `planned` and every criterion is
-  unchecked.
-- [[DEC-039]], [[DEC-040]], [[DEC-041]], [[DEC-042]], [[DEC-043]] and
-  [[DEC-044]] were accepted on 2026-10-01 by the maintainer; changing one later
-  needs a new decision rather than a reinterpretation during implementation.
-- A retried `confirm` is replay-safe through the state gate, not through a
-  stored idempotency record ([[DEC-041]]). A client that retries after a timeout
-  must read the invoice to learn the outcome.
-- Confirmation holds a row lock on the tenant's `invoice_number_sequence` row
-  for the duration of its transaction, so a blocked confirmation delays other
-  confirmations for the same tenant and series. That serialization is intended
-  and must be covered by the live concurrency case ([[DEC-039]]).
-- Cancelling a `CONFIRMED` invoice does not reverse money already collected
-  ([[TD-018]]) and does not cancel any fiscal document ([[EPIC-15]],
-  [[DEC-042]]). Both non-effects are deliberate and must be documented rather
-  than implied.
-- A cancelled or confirmed invoice keeps its number and the number is never
-  reused; `CANCELLED` is terminal with no reopen path ([[DEC-043]]).
-- The epic does not fix the reason's length, format or whether it is trimmed;
-  the slice must follow the shipped reason-validation precedent rather than
-  invent a rule here.
-- The epic does not state whether cancelling a `CONFIRMED` invoice writes any
-  additional correction record beyond the audit row. [[DEC-043]] states only
-  that cancellation performs no payment, cash, stock or fiscal side effect, so
-  no compensating record is planned.
-- The recorded guarantee is "no number is consumed before confirmation and
-  `(tenant_id, series, number)` is unique", not "the issued sequence is gap-free
-  under every failure mode" ([[DEC-039]]).
+- **`confirm` and `cancel` are replay-safe by state, not by key.** A retry after
+  a timeout must read the invoice back to learn the outcome; there is no
+  `Idempotency-Key` and no stored idempotency record ([[DEC-041]]). The
+  trade-off is deliberate: the commands carry no payload, so the state machine
+  is the guard.
+- **`GET /invoices` and the other staff lists are unbounded** ([[TD-026]]).
+- **The invoice line order is deterministic but arbitrary** ([[TD-025]]).
+- **An item description over 200 characters blocks invoicing** ([[TD-024]]).
+- **No fiscal effect.** Confirmation queues no submission and emits no event;
+  [[EPIC-15]] owns the interface and the consumer ([[DEC-042]]).
+- **Cancelling a confirmed invoice does not reverse anything.** No payment,
+  cash, stock or fiscal record is touched, and [[TD-018]] still owns payment
+  refund and sale reversal ([[DEC-043]]).
+- **`CANCELLED` is terminal**: no reopen, no second cancellation into a
+  different outcome, and the allocated number is never released or reused.
+- **`confirm` and `cancel` re-run the `billing` entitlement and permission gates
+  on every call**, so a mid-flight revocation is denied at the next attempt.
 
 ## Technical Debt
 
-- [[TD-018]] stays open. This Story adds no sale reversal, stock compensation,
-  payment refund or compensating financial record; cancellation is a state
-  transition on the invoice, never a money reversal.
-- [[TD-022]] tracks the still-deferred portal invoice and document surface; it
-  was created during the EPIC-14 kickoff and is kept current by [[BILL-005]]
-  ([[DEC-044]]).
-- [[TD-021]] may still require the live-PostgreSQL environment contract for the
-  concurrency case; the implementation slice must record its exact verification
-  behavior rather than skipping the case silently.
-- No other debt is planned. If a slice ships a shortcut it must create a debt
-  record rather than hide it.
+- [[TD-023]] is **resolved** by this Story: the header guard now rejects a
+  permitted transition that also changes `tenant_id`, `id`, `sale_id`,
+  `customer_id`, `currency`, `series` or `created_at`, and cannot move
+  `confirmed_at` except on `DRAFT -> CONFIRMED`.
+- [[TD-024]], [[TD-025]] and [[TD-026]] stay open; they belong to the BILL-001
+  and BILL-002 record and are untouched here.
+- [[TD-018]] stays open: this Story adds no sale reversal, stock compensation or
+  payment refund, and cancellation is not a financial correction.
+- [[TD-022]] tracks the deferred portal invoice and document surface, kept
+  current by [[BILL-005]].
 
 ## Decisions / ADRs
 
@@ -326,21 +359,34 @@ Not run.
 
 ## Files / Modules
 
-Planned paths; nothing below exists yet.
+Implemented. Created:
 
-- `apps/api/src/billing/`
+- `packages/database/prisma/migrations/20261001000002_invoice_header_guard_tightening/migration.sql`
+
+Changed:
+
+- `apps/api/src/billing/billing.repository.ts` — `lockById`, `allocateNumber`,
+  `markConfirmed`, `markCancelled`
+- `apps/api/src/billing/billing.service.ts` — `confirmInvoice`, `cancelInvoice`
+- `apps/api/src/billing/billing.controller.ts` — the two command routes
+- `apps/api/src/billing/billing.zod.ts` — `cancelInvoiceBody`
+- `apps/api/src/billing/billing.integration.test.ts`
 - `apps/api/src/rbac/route-contract.probe.test.ts`
 - `apps/api/test/support/in-memory-database.ts`
 - `apps/api/test/live-pg-isolation.e2e-spec.ts`
-- `packages/database/prisma/schema.prisma` (only under [[DEC-041]] Option B)
-- `packages/database/src/schema-sales.test.ts` (only under [[DEC-041]] Option B)
-- `docs/01-roadmap/EPIC-14-Billing.md`
+- `packages/database/src/schema-billing.test.ts`
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+The Story is `review`, not `done`: implementation, the local gates and three
+approved native reviews are complete on `feat/epic-14-billing-invoice-commands`,
+but no CI receipt exists yet because the pull request is not open. It moves to
+`done` when the branch's pull request merges with both required checks green,
+together with the QA evidence entry.
 
-This Story stays `planned` while nothing exists. It may not be marked `done`
-before the maintainer accepts or amends the decisions it depends on, the
-concurrent-confirm concurrency case is proven against live PostgreSQL, and the
-merged work units carry their CI receipts.
+Three RDD native reviews closed **approved** with the authority burned:
+`review-b795346140ce8fe1` (W1, high, four lenses), `review-2b1723416d0631b5`
+(W2, medium, one lens) and `review-7752615080dcd223` (W3, high, four lenses). No
+correction was required by any of them. W2's single advisory,
+`R3-CONCURRENCY-COVERAGE`, was an obligation this Story then discharged in W3
+with the two forced overlaps rather than a timing assumption.

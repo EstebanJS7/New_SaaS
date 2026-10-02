@@ -549,7 +549,7 @@ after BILL-002 closed.
       terminal write, the audit, the replay, the route pin, the integration
       cases and the live-PostgreSQL command block including the
       concurrent-confirm overlap.
-- [ ] W4 — docs reconciliation: the story record, the epic progress entry,
+- [x] W4 — docs reconciliation: the story record, the epic progress entry,
       [[TD-023]] resolution and the new counters.
 
 ### BILL-003 W1 — TD-023 closed by tightening the header guard
@@ -730,6 +730,25 @@ after BILL-002 closed.
 - Three readability suggestions (`live-pg-isolation.e2e-spec.ts:14911-14915`,
   `in-memory-database.ts:612-614`, `billing.integration.test.ts:728-734`) are
   informational comment and naming polish.
+
+### BILL-003 W4 — documentation reconciliation
+
+- [[BILL-003]] moved to `review` with its twelve acceptance criteria checked; it
+  carried no stale invariant wording, so nothing needed correcting while
+  checking them.
+- The implementation, verification, tests, limitations, debt, files and
+  completion sections were rewritten against what shipped, including the three
+  approved reviews and the fact that W3 discharged W2's concurrency obligation
+  with two forced overlaps instead of a timing assumption.
+- [[TD-023]] is now **resolved**, with a `## Resolution` section naming the
+  commit, the migration, the ownership clause, the discrimination evidence and
+  the independent review confirmation.
+- The epic gained the BILL-003 progress entry; the epic's own acceptance block
+  for BILL-003 stays unchecked because [[BILL-005]] reconciles the epic's
+  criteria at closure against CI receipts.
+- Counters that move at closure, for BILL-005: **29 migrations** (was 28),
+  live-PostgreSQL **153 cases** (was 142 at the start of the epic), database
+  suite 18 files / 403 tests, and the `permission` count unchanged at **56**.
 
 ## Evidence
 

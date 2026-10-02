@@ -156,6 +156,27 @@ implemented EPIC-14 behavior.
   and [[TD-026]]. The Story is `done`; the epic stays `planned` until
   [[BILL-003]] through [[BILL-005]] land.
 
+- **[[BILL-003]] Invoice confirmation and cancellation commands — `review`.**
+  Implemented on `feat/epic-14-billing-invoice-commands` in three work units:
+  `c384f61` closes [[TD-023]] by tightening the header guard so a permitted
+  transition can only change the columns it owns, `d0ef051` adds
+  `POST /invoices/:id/confirm` with the atomic
+  `INSERT ... ON CONFLICT ... RETURNING "next_value" - 1` allocation and the
+  replay-by-state, and `16fe4ec` adds `POST /invoices/:id/cancel` plus the
+  durable command block. Verification passed locally: the focused suite 32
+  tests, the API suite 77 files / 1173 tests with `DATABASE_URL_TEST` exported
+  (the live-PostgreSQL spec then runs inside it), the live-PostgreSQL suite
+  **153 passed** (was 144), the database suite 18 files / 403 tests, `db:deploy`
+  reporting **29 migrations**, `typecheck` and `lint` 14/14, `format-check`
+  clean. Three RDD native reviews closed **approved** with no correction
+  (`review-b795346140ce8fe1`, `review-2b1723416d0631b5`,
+  `review-7752615080dcd223`), and W2's `R3-CONCURRENCY-COVERAGE` advisory was
+  discharged in W3 by two **forced** overlaps — a same-invoice concurrent
+  confirm proving one number, one audit row and one counter advance, and a
+  counter-row overlap proving two different invoices receive two distinct
+  consecutive numbers — rather than a timing assumption. The Story stays
+  `review` until its pull request merges with a CI receipt.
+
 ## Scope
 
 - Add the tenant-scoped `Invoice` aggregate with the PRD §21 states `DRAFT`,

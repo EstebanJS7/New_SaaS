@@ -2,7 +2,7 @@
 id: TD-023
 type: tech-debt
 title: The invoice header guard constrains the status transition only
-status: open
+status: resolved
 severity: low
 related_epics:
   - EPIC-14
@@ -95,6 +95,30 @@ Add the corresponding live probes for the rejected shapes, including the
 Address it in the slice that owns the cancel command, [[BILL-003]], so the guard
 and its only caller land together with their tests; or earlier if any other
 writer appears. Owner: the EPIC-14 implementation slices, not a separate epic.
+
+## Resolution
+
+Resolved on 2026-10-01 by [[BILL-003]] work unit W1, commit `c384f61`.
+
+The additive migration `20261001000002_invoice_header_guard_tightening`
+`CREATE OR REPLACE`s the guard body. It does not recreate the trigger, does not
+touch a table, column, type or index, writes no row and drops nothing. The
+three-transition allow-list is kept byte-identical, and a new ownership clause
+rejects a permitted transition that also changes `tenant_id`, `id`, `sale_id`,
+`customer_id`, `currency`, `series` or `created_at`, and forbids moving
+`confirmed_at` except on `DRAFT -> CONFIRMED`. `updated_at`, `cancelled_at`,
+`cancel_reason` and `number` keep their existing owners, so the state machine is
+not narrowed.
+
+**Discrimination evidence, which is the part that matters.** Re-arming the
+pre-fix body on a throwaway database admitted the exact tampering statement the
+new probe uses (`UPDATE 1`, row `CONFIRMED | USD`), proving the gap was real;
+after applying the migration unchanged, the same statement was rejected and no
+row changed. A probe that merely mirrors its own code proves nothing.
+
+The RDD native review of that work unit closed **approved** (lineage
+`review-b795346140ce8fe1`, four lenses); it independently confirmed the
+correction with no further finding on this rule.
 
 ## Verification After Resolution
 
