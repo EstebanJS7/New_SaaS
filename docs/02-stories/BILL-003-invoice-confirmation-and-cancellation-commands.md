@@ -3,7 +3,7 @@ id: BILL-003
 type: story
 title: Invoice confirmation and cancellation commands
 epic: EPIC-14
-status: review
+status: done
 priority: high
 depends_on:
   - BILL-001
@@ -282,6 +282,15 @@ pnpm typecheck / pnpm lint / pnpm format-check
   -> 14 / 14, 14 / 14, clean
 ```
 
+CI (pull request #91, run 36956282465) -> Database migrations: pass (1m11s) ->
+Lint, Typecheck, Test, Build: pass (4m17s)
+
+CI (merged main, head 558fe0b, run 36956634087) - the merged-receipt gate ->
+Database migrations: success; 29 migrations applied to a fresh database -> Lint,
+Typecheck, Test, Build: success -> pull request #91 merged as 558fe0b
+
+```
+
 The live-PostgreSQL suite needs `DATABASE_URL` exported from the workspace-root
 `.env` **with its query string stripped**, because the `.env` value carries
 `?schema=public` and the suite feeds it to `psql`, which aborts with
@@ -378,15 +387,28 @@ Changed:
 
 ## Completion Notes
 
-The Story is `review`, not `done`: implementation, the local gates and three
-approved native reviews are complete on `feat/epic-14-billing-invoice-commands`,
-but no CI receipt exists yet because the pull request is not open. It moves to
-`done` when the branch's pull request merges with both required checks green,
-together with the QA evidence entry.
+The Story is `done`. Every acceptance criterion is checked, the migration is
+merged, the four `billing` routes are pinned deny-by-default, both commands are
+replay-safe by state, the concurrency is proven by forced overlaps rather than
+timing, and the local gates and the **merged** CI run are green.
 
-Three RDD native reviews closed **approved** with the authority burned:
-`review-b795346140ce8fe1` (W1, high, four lenses), `review-2b1723416d0631b5`
-(W2, medium, one lens) and `review-7752615080dcd223` (W3, high, four lenses). No
-correction was required by any of them. W2's single advisory,
-`R3-CONCURRENCY-COVERAGE`, was an obligation this Story then discharged in W3
-with the two forced overlaps rather than a timing assumption.
+Evidence of closure:
+
+- pull request #91 merged as `558fe0b`;
+- run
+  [`36956634087`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36956634087)
+  on the merged `main` at `558fe0b` concluded `success` on both required checks,
+  and its `migrations` job applied all **29** migrations to a fresh database;
+- the slice receipt before the merge was run `36956282465`;
+- [[TD-023]] is `resolved` by this Story;
+- the QA evidence entry is recorded in `docs/10-qa/CI-EVIDENCE.md`.
+
+What this Story deliberately does not include, so the epic does not read as
+complete: [[BILL-004]] owns the staff Billing workspace and [[BILL-005]] owns the
+module documentation and the epic closure. [[TD-024]], [[TD-025]], [[TD-026]] and
+[[TD-018]] stay open.
+
+`done` here means implementation closure for this slice only. It is **not** a
+production-readiness statement: the epic stays `planned`, [[EPIC-20]] Production
+Hardening remains, and the open debt is untouched.
+```

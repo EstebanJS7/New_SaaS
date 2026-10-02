@@ -156,14 +156,16 @@ implemented EPIC-14 behavior.
   and [[TD-026]]. The Story is `done`; the epic stays `planned` until
   [[BILL-003]] through [[BILL-005]] land.
 
-- **[[BILL-003]] Invoice confirmation and cancellation commands — `review`.**
-  Implemented on `feat/epic-14-billing-invoice-commands` in three work units:
-  `c384f61` closes [[TD-023]] by tightening the header guard so a permitted
-  transition can only change the columns it owns, `d0ef051` adds
-  `POST /invoices/:id/confirm` with the atomic
-  `INSERT ... ON CONFLICT ... RETURNING "next_value" - 1` allocation and the
-  replay-by-state, and `16fe4ec` adds `POST /invoices/:id/cancel` plus the
-  durable command block. Verification passed locally: the focused suite 32
+- **[[BILL-003]] Invoice confirmation and cancellation commands — `done`.**
+  Merged as pull request #91 (`558fe0b`) with run `36956634087` green on both
+  required checks on the merged `main`, whose `migrations` job applied all 29
+  migrations to a fresh database. It also closes [[TD-023]]. Implemented on
+  `feat/epic-14-billing-invoice-commands` in three work units: `c384f61` closes
+  [[TD-023]] by tightening the header guard so a permitted transition can only
+  change the columns it owns, `d0ef051` adds `POST /invoices/:id/confirm` with
+  the atomic `INSERT ... ON CONFLICT ... RETURNING "next_value" - 1` allocation
+  and the replay-by-state, and `16fe4ec` adds `POST /invoices/:id/cancel` plus
+  the durable command block. Verification passed locally: the focused suite 32
   tests, the API suite 77 files / 1173 tests with `DATABASE_URL_TEST` exported
   (the live-PostgreSQL spec then runs inside it), the live-PostgreSQL suite
   **153 passed** (was 144), the database suite 18 files / 403 tests, `db:deploy`
@@ -174,8 +176,8 @@ implemented EPIC-14 behavior.
   discharged in W3 by two **forced** overlaps — a same-invoice concurrent
   confirm proving one number, one audit row and one counter advance, and a
   counter-row overlap proving two different invoices receive two distinct
-  consecutive numbers — rather than a timing assumption. The Story stays
-  `review` until its pull request merges with a CI receipt.
+  consecutive numbers — rather than a timing assumption. The Story is `done`;
+  the epic stays `planned` until [[BILL-004]] and [[BILL-005]] land.
 
 ## Scope
 
@@ -291,32 +293,32 @@ planned evidence that will close it.
 
 ### BILL-003 — Invoice confirmation and cancellation commands
 
-- [ ] `POST /invoices/:id/confirm` locks the invoice row, gates on `DRAFT`,
+- [x] `POST /invoices/:id/confirm` locks the invoice row, gates on `DRAFT`,
       allocates the number from `invoice_number_sequence` inside the same
       transaction, sets `CONFIRMED` and writes exactly one audit row. Evidence:
       the API integration case, the live-PostgreSQL case and the audit
       assertion.
-- [ ] Two concurrent confirms of the same invoice admit exactly one confirmation
+- [x] Two concurrent confirms of the same invoice admit exactly one confirmation
       and allocate exactly one number; the loser observes a stable conflict or a
       replay of the same representation, never a second number. Evidence: the
       live-PostgreSQL row-lock overlap case.
-- [ ] A retried `confirm` on an already `CONFIRMED` invoice returns `200` with
+- [x] A retried `confirm` on an already `CONFIRMED` invoice returns `200` with
       the same representation and writes no second audit row, and `confirm` on a
       `CANCELLED` invoice is rejected. Evidence: the replay and rejection cases
       ([[DEC-041]]).
-- [ ] `POST /invoices/:id/cancel` accepts a reason, gates on `DRAFT` or
+- [x] `POST /invoices/:id/cancel` accepts a reason, gates on `DRAFT` or
       `CONFIRMED`, sets `CANCELLED`, retains the allocated number and writes
       exactly one audit row; `CANCELLED` is terminal. Evidence: the
       draft-cancel, confirmed-cancel, repeat-cancel and terminal-state cases
       ([[DEC-043]]).
-- [ ] Cancellation performs no payment, cash, stock or fiscal side effect, and
+- [x] Cancellation performs no payment, cash, stock or fiscal side effect, and
       the implementation contains no Fiscal import. Evidence: the no-residue
       assertions and a repository search for fiscal imports in Billing.
-- [ ] Both commands enforce authentication, tenant context, `billing.confirm` /
+- [x] Both commands enforce authentication, tenant context, `billing.confirm` /
       `billing.cancel`, the `billing` capability and byte-equivalent
       cross-tenant `404`s. Evidence: the authorization sweeps and the live
       cross-tenant cases.
-- [ ] No route accepts a generic status patch, and no route deletes an invoice.
+- [x] No route accepts a generic status patch, and no route deletes an invoice.
       Evidence: the route-contract inventory.
 
 ### BILL-004 — Staff billing surface
