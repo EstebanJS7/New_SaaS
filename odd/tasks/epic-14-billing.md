@@ -648,6 +648,27 @@ after BILL-002 closed.
 - The durable live-PostgreSQL proof, including the concurrent-confirm overlap,
   lands in W3.
 
+### BILL-003 W2 — RDD native review (closed, approved)
+
+- Lineage `review-2b1723416d0631b5`, candidate range `266340f..fcfb50b`, 7
+  paths, 647 changed lines, tier medium, one lens (`review-reliability`),
+  correction budget 200. **Approved**, no correction; the authority is burned
+  with `burn_evidence: gentle-ai.review-acknowledged/v1`.
+- `R3-CONCURRENCY-COVERAGE` (WARNING, `billing.integration.test.ts:1195`) is the
+  useful kind of finding: it confirms that the in-memory suite cannot prove the
+  row-lock serialization, which is exactly the split this plan pins. The block's
+  own doc comment already says so, and the finding converts that statement into
+  an **obligation for W3**: the live-PostgreSQL block must prove the
+  concurrent-confirm overlap (one admitted confirmation, exactly one number
+  allocated, the loser seeing the same representation or the stable `409`, never
+  a second number) or this WARNING stands uncovered. W3 does not close without
+  it.
+- One process note: the first facade STATUS was called with a base ref I typed
+  instead of the one the provider composed, and the provider refused it with
+  `git_command_failed` / `Needed a single revision` and a `not_started` mutation
+  outcome. The composed value was recovered from the issued START command and
+  the call succeeded. Never type a provider-composed selector: copy it.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
