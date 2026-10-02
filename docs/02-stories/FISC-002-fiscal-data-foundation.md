@@ -3,7 +3,7 @@ id: FISC-002
 type: story
 title: Fiscal data foundation
 epic: EPIC-15
-status: review
+status: done
 priority: high
 depends_on:
   - FISC-001
@@ -344,5 +344,39 @@ The remaining advisories are recorded and not actioned:
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+`done` on 2026-10-02. All six acceptance criteria are checked and every required
+gate is green, including the live-PostgreSQL gate that this slice could not run
+when it was first written.
+
+Merged evidence: pull request #97 (`feat/epic-15-fiscal-data-foundation`),
+stacked on the scope pull request #96. CI run **`37050111481`** is green on both
+required checks. The `Database migrations` job applied **30 migrations** to a
+fresh PostgreSQL 16 container, including
+`20261002000001_fiscal_data_foundation`, reported
+`All migrations have been successfully applied.`, re-seeded reference data to
+identical counts (`permissions: 56`, `featureCodes: 12`, `rolePermissions: 187`),
+passed `LIVE MIGRATION VERIFICATION PASSED`, and ran the live-PostgreSQL
+application-path suite at **176 passed (176)** — the 23 fiscal cases included.
+`Lint, Typecheck, Test, Build` is green as well.
+
+Local evidence, all executed on a reachable PostgreSQL: `db:deploy` 30
+migrations, `test:live-pg` 176/176, database suite 19 files / 407 tests,
+`typecheck` 14/14, `lint` 14/14, `build` 9/9, `format-check` clean.
+
+Four native review lineages closed approved and acknowledged with no correction:
+`review-55a6586fdf5cc2c2`, `review-49e414ffad03db30`,
+`review-a26929649a8d3a16` and `review-2c9359c3812696e8`. The advisories were
+treated as candidate defects rather than style notes, which was correct: they
+exposed a broken `[\\s\\S]` regex, two rejected probes sharing an aborted
+transaction, a case named "for every status" that probed one, and four cases
+creating a second invoice for the fixture sale. Even after that, the first
+execution of the block still found 15 failures in 22 cases — the durable lesson
+of this slice is that for a database artifact, review is not a substitute for
+execution. [[TD-027]] recorded the deferred gate and is now `resolved`.
+
+What this Story deliberately does **not** ship: no route, no worker, no
+provider, no settings namespace and no seed change. The status transition
+allow-list belongs to [[FISC-004]], which is why an `APPROVED` or `REJECTED`
+fiscal document is still updatable at the database level until then.
+
 ```

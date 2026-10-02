@@ -1242,3 +1242,46 @@ until [[EPIC-15]] and [[EPIC-16]].
 
 This section is the machine-generated receipt for the merged slice and is
 **not** a production-readiness statement.
+
+### EPIC-15 FISC-002 — Fiscal data foundation
+
+FISC-002 closed on 2026-10-02 with the scope pull request #96 and the slice pull
+request #97 (`feat/epic-15-fiscal-data-foundation`). CI run **`37050111481`** is
+green on both required checks.
+
+`Database migrations` applied **30 migrations** to a fresh PostgreSQL 16
+container, including the additive `20261002000001_fiscal_data_foundation`, and
+reported `All migrations have been successfully applied.` The seed idempotency
+probe returned identical counts on both runs — `permissions: 56`,
+`featureCodes: 12`, `rolePermissions: 187` — which is the expected result for
+this slice, because [[DEC-040]] had already allocated `fiscal.invoice.issue` and
+the `fiscal` feature code in EPIC-01. The live migration verification passed,
+and the live-PostgreSQL application-path suite ran **176 passed (176)**, up from
+153: the 23 new cases are the `EPIC-15 fiscal data foundation` block, which
+proves the applied enum orders, the exact `fiscal_document` column set and
+scalar types, both named CHECK definitions, the ownership and partial unique
+indexes, all five structural triggers with their timing and events, the
+partial-index release after cancellation, both directions of the cancellation
+biconditional, the negative-attempt-count CHECK on the path where it is
+reachable, DELETE refusal for every status, per-column identity refusal,
+write-once `external_id`/`cdc`, monotonic `attempt_count`, cross-tenant
+composite-FK refusal, the admitted `PENDING` -> `SUBMITTED` -> `APPROVED` ->
+`CANCELLED` positive control and a no-residue count invariant.
+
+The frozen `@@unique([tenantId, id])` ownership counter moved from **22 to 23**.
+The database suite grew from 18 files / 403 tests to **19 files / 407 tests**;
+`typecheck` and `lint` were 14/14, `build` 9/9 and `format-check` clean.
+
+Two things this receipt records rather than smooths over. First, the
+live-PostgreSQL gate was **not executed** while the slice was written: no
+PostgreSQL was reachable, and the first run afterwards found **15 failures in 22
+cases** — a `databaseMessage` that compared against Prisma's whole render
+including the `DETAIL:` line, an invoice fixture colliding on
+`UNIQUE (tenant_id, series, number)`, untyped parameters in the identity probes,
+a CHECK probed on a path its own trigger preempts, and two wrong catalogue
+expectations. All five causes are fixed and re-run green, and [[TD-027]] is
+`resolved` with this evidence. Second, four native review lineages closed
+approved and acknowledged with no correction (`review-55a6586fdf5cc2c2`,
+`review-49e414ffad03db30`, `review-a26929649a8d3a16`,
+`review-2c9359c3812696e8`), which is exactly why the first point matters: review
+did not find those 15 defects and execution did.

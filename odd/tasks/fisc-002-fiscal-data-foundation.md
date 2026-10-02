@@ -294,6 +294,25 @@ the executable gate is not "nice to have" — it is the only reviewer that finds
 this class of defect. When it is unavailable, treat the slice as unverified and
 say so, rather than letting three green review rounds stand in for a run.
 
+## Closure
+
+`done` on 2026-10-02. Published as the scope pull request #96 and the slice pull
+request #97 (`feat/epic-15-fiscal-data-foundation`, base `main`), CI run
+**`37050111481`** green on both required checks.
+
+The `Database migrations` job applied **30 migrations** to a fresh PostgreSQL 16
+container including `20261002000001_fiscal_data_foundation`, re-seeded reference
+data to identical counts (`permissions: 56`, `featureCodes: 12`), passed the
+live migration verification, and ran the live-PostgreSQL suite at **176 passed
+(176)** — the 23 fiscal cases included. Local gates: `db:deploy` 30 migrations,
+`test:live-pg` 176/176, database 19 files / 407 tests, `typecheck` 14/14, `lint`
+14/14, `build` 9/9, `format-check` clean.
+
+Four native review lineages closed approved and acknowledged with zero
+corrections: `review-55a6586fdf5cc2c2`, `review-49e414ffad03db30`,
+`review-a26929649a8d3a16`, `review-2c9359c3812696e8`. [[TD-027]] moved to
+`resolved` with the executed evidence.
+
 ## Notes
 
 - Base commit `59a5002` (the kickoff docs). Branch
