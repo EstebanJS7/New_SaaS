@@ -13912,6 +13912,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         const confirmed = await tx.$queryRaw<{ confirmed_at: Date; number: number }[]>`
           SELECT "confirmed_at", "number" FROM "invoice" WHERE "id" = ${invoiceId}::uuid
         `;
+        expect(confirmed).toHaveLength(1);
         expect(confirmed[0]?.confirmed_at.getTime()).toBe(confirmedAt.getTime());
         expect(confirmed[0]?.number).toBe(1);
 

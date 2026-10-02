@@ -589,7 +589,28 @@ after BILL-002 closed.
 - [[TD-023]]'s own verification checklist is satisfied by the two live cases and
   the schema gate, so it can be marked `resolved` in W4.
 
-## Evidence
+### BILL-003 W1 — RDD native review (closed, approved)
+
+- Lineage `review-b795346140ce8fe1`, candidate range `4c90c83..c384f61`, 4
+  paths, 635 changed lines, tier **high**, **four lenses** (again driven by
+  `process_boundary` on the live-PostgreSQL spec); **approved** with no
+  correction, and the authority is burned.
+- The first capture hit a genuine transport defect, not a content one: the
+  readability reviewer's payload arrived as truncated JSON
+  (`5 arrays opened, 4 closed`), so the provider **refused the submission at
+  admission without consuming the slot** and preserved the rejected payload
+  under `.git/gentle-ai/rejected-results/`. Two reviewers had already been
+  admitted and two had not. Following the provider's instruction, fresh STATUS
+  was queried and only the two reoffered slots were run, which closed the
+  review. **Never resubmit refused bytes** is the rule that kept this clean.
+- `R2-doc-duplicate-evidence-heading` (WARNING) and `R3-001` (SUGGESTION) both
+  pointed at a duplicated `## Evidence` heading that this session's own
+  documentation injection introduced in this file. Fixed in the same commit that
+  records the outcome: an agent-generated docs defect caught by the review.
+- `R2-live-pg-confirmed-at-null-handling` (SUGGESTION) asked for an explicit row
+  count before dereferencing the queried confirmation row; an
+  `expect(confirmed).toHaveLength(1)` was added, and the live-PostgreSQL suite
+  was re-run at **144 passed**.
 
 ## Evidence
 
