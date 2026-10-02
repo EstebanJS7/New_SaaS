@@ -15595,4 +15595,503 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       }
     }, 30_000);
   });
+
+  /**
+   * EPIC-15 FISC-002 live-PostgreSQL evidence. FISC-002 ships no API surface,
+   * so every probe is a direct database statement at the migration's exact
+   * shape. Every mutation runs in a transaction that is deliberately rolled
+   * back; the final count case verifies that no probe row survived.
+   */
+  describe("EPIC-15 fiscal data foundation", () => {
+    const FISCAL_ROLLBACK_SENTINEL = "live-pg-fiscal-rollback";
+    let fiscalSaleAId: string;
+    let fiscalInvoiceAId: string;
+    let fiscalDocumentAId: string;
+    let fiscalDocumentBaseline: number;
+
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\\s\\S]*?)`/.exec(text);
+      return (match ? match[1] : text).replace(/^ERROR: /, "");
+    };
+
+    const captureDatabaseMessage = async (probe: () => Promise<unknown>): Promise<string> => {
+      try {
+        await probe();
+      } catch (error) {
+        return databaseMessage(error);
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    const captureRawRejection = async (
+      probe: () => Promise<unknown>
+    ): Promise<{ sqlState: string | undefined; message: string }> => {
+      try {
+        await probe();
+      } catch (error) {
+        const candidate = error as { meta?: { code?: unknown; message?: unknown } };
+        return {
+          sqlState: typeof candidate.meta?.code === "string" ? candidate.meta.code : undefined,
+          message:
+            typeof candidate.meta?.message === "string"
+              ? candidate.meta.message
+              : databaseMessage(error),
+        };
+      }
+      throw new Error("Expected the raw statement to be rejected by the database");
+    };
+
+    const inRolledBackTransaction = async (
+      work: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<void> => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw new Error(FISCAL_ROLLBACK_SENTINEL);
+        })
+      ).rejects.toThrow(FISCAL_ROLLBACK_SENTINEL);
+    };
+
+    const insertRawFiscalSale = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      status = "COMPLETED"
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+        VALUES (${id}::uuid, ${tenantId}::uuid, 'PYG', ${status}::sale_status)
+      `;
+      return id;
+    };
+
+    const insertRawFiscalInvoice = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      saleId: string,
+      options: {
+        customerId?: string | null;
+        status?: string;
+        series?: string;
+        number?: number | null;
+        confirmedAt?: Date | null;
+        cancelledAt?: Date | null;
+        cancelReason?: string | null;
+      } = {}
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "invoice" (
+          "id", "tenant_id", "sale_id", "customer_id", "currency", "status",
+          "series", "number", "confirmed_at", "cancelled_at", "cancel_reason"
+        ) VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${saleId}::uuid,
+          ${options.customerId ?? null}::uuid, 'PYG', ${options.status ?? "CONFIRMED"}::invoice_status,
+          ${options.series ?? "A"}, ${options.number === undefined ? 1 : options.number}::int,
+          ${options.confirmedAt === undefined ? new Date() : options.confirmedAt}::timestamptz,
+          ${options.cancelledAt ?? null}::timestamptz, ${options.cancelReason ?? null}
+        )
+      `;
+      return id;
+    };
+
+    const insertRawFiscalDocument = async (
+      tx: Prisma.TransactionClient,
+      tenantId: string,
+      invoiceId: string,
+      options: {
+        provider?: string;
+        status?: string;
+        externalId?: string | null;
+        cdc?: string | null;
+        attemptCount?: number;
+        cancelledAt?: Date | null;
+      } = {}
+    ): Promise<string> => {
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "fiscal_document" (
+          "id", "tenant_id", "invoice_id", "provider", "status", "external_id",
+          "cdc", "attempt_count", "cancelled_at"
+        ) VALUES (
+          ${id}::uuid, ${tenantId}::uuid, ${invoiceId}::uuid,
+          ${options.provider ?? "THIRD_PARTY"}::fiscal_provider,
+          ${options.status ?? "PENDING"}::fiscal_document_status,
+          ${options.externalId ?? null}, ${options.cdc ?? null},
+          ${options.attemptCount ?? 0}, ${options.cancelledAt ?? null}::timestamptz
+        )
+      `;
+      return id;
+    };
+
+    beforeAll(async () => {
+      fiscalSaleAId = await insertRawFiscalSale(prisma, tenantAId);
+      fiscalInvoiceAId = await insertRawFiscalInvoice(prisma, tenantAId, fiscalSaleAId);
+      fiscalDocumentAId = await insertRawFiscalDocument(prisma, tenantAId, fiscalInvoiceAId, {
+        status: "PENDING",
+      });
+      fiscalDocumentBaseline = await prisma.fiscalDocument.count({
+        where: { tenantId: tenantAId },
+      });
+    }, 60_000);
+
+    it("orders both applied fiscal enums exactly", async () => {
+      const rows = await prisma.$queryRaw<
+        { typname: string; enumlabel: string; enumsortorder: number }[]
+      >`
+        SELECT t.typname, e.enumlabel, e.enumsortorder
+        FROM pg_enum AS e JOIN pg_type AS t ON t.oid = e.enumtypid
+        WHERE t.typname IN ('fiscal_provider', 'fiscal_document_status')
+        ORDER BY t.typname, e.enumsortorder
+      `;
+      for (const [name, expected] of Object.entries({
+        fiscal_provider: ["THIRD_PARTY", "SIFEN_DIRECT", "FAKE"],
+        fiscal_document_status: [
+          "PENDING",
+          "QUEUED",
+          "SENDING",
+          "SUBMITTED",
+          "APPROVED",
+          "REJECTED",
+          "ERROR",
+          "CANCEL_PENDING",
+          "CANCELLED",
+        ],
+      })) {
+        const actual = rows.filter((row) => row.typname === name);
+        expect(actual.map((row) => row.enumlabel)).toEqual(expected);
+        expect(actual.map((row) => row.enumsortorder)).toEqual(
+          expected.map((_, index) => index + 1)
+        );
+      }
+    }, 30_000);
+
+    it("proves the exact applied fiscal_document columns and scalar types", async () => {
+      const rows = await prisma.$queryRaw<
+        { column_name: string; data_type: string; udt_name: string }[]
+      >`
+        SELECT column_name, data_type, udt_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'fiscal_document'
+        ORDER BY ordinal_position
+      `;
+      expect(rows.map((row) => row.column_name)).toEqual([
+        "id",
+        "tenant_id",
+        "invoice_id",
+        "provider",
+        "status",
+        "external_id",
+        "cdc",
+        "xml_storage_key",
+        "kude_storage_key",
+        "request_snapshot",
+        "response_snapshot",
+        "attempt_count",
+        "last_attempt_at",
+        "last_error_code",
+        "last_error_message",
+        "submitted_at",
+        "resolved_at",
+        "cancelled_at",
+        "created_at",
+        "updated_at",
+      ]);
+      const types = new Map(
+        rows.map((row) => [row.column_name, `${row.data_type}:${row.udt_name}`])
+      );
+      for (const column of ["id", "tenant_id", "invoice_id"])
+        expect(types.get(column)).toBe("uuid:uuid");
+      for (const column of [
+        "external_id",
+        "cdc",
+        "xml_storage_key",
+        "kude_storage_key",
+        "last_error_code",
+        "last_error_message",
+      ])
+        expect(types.get(column), column).toBe("text:text");
+      for (const column of ["request_snapshot", "response_snapshot"])
+        expect(types.get(column), column).toBe("jsonb:jsonb");
+      expect(types.get("attempt_count")).toBe("integer:int4");
+      for (const column of [
+        "last_attempt_at",
+        "submitted_at",
+        "resolved_at",
+        "cancelled_at",
+        "created_at",
+        "updated_at",
+      ])
+        expect(types.get(column), column).toBe("timestamp with time zone:timestamptz");
+    }, 30_000);
+
+    it("proves exact fiscal CHECK definitions and the closed constraint-name set", async () => {
+      const rows = await prisma.$queryRaw<{ conname: string; definition: string }[]>`
+        SELECT c.conname, pg_get_constraintdef(c.oid) AS definition
+        FROM pg_constraint AS c JOIN pg_class AS t ON t.oid = c.conrelid
+        WHERE t.relname = 'fiscal_document' AND c.contype = 'c'
+      `;
+      expect(rows.map((row) => row.conname).sort()).toEqual([
+        "fiscal_document_attempt_count_non_negative",
+        "fiscal_document_cancelled_at_iff_cancelled",
+      ]);
+      const defs = new Map(
+        rows.map((row) => [row.conname, normalizeIndexPredicate(row.definition)])
+      );
+      expect(defs.get("fiscal_document_attempt_count_non_negative")).toBe(
+        "CHECK((attempt_count>=(0)::integer))"
+      );
+      expect(defs.get("fiscal_document_cancelled_at_iff_cancelled")).toBe(
+        "CHECK(((cancelled_atISNULL)=(status<>'CANCELLED'::fiscal_document_status)))"
+      );
+      const externalIdConstraint = await prisma.$queryRaw<{ exists: boolean }[]>`
+        SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fiscal_document_external_id_iff_resolved') AS exists
+      `;
+      expect(externalIdConstraint[0].exists).toBe(false);
+    }, 30_000);
+
+    it("proves the ownership and partial invoice unique indexes", async () => {
+      const rows = await prisma.$queryRaw<
+        {
+          relname: string;
+          is_unique: boolean;
+          key_1: string | null;
+          key_2: string | null;
+          predicate: string | null;
+        }[]
+      >`
+        SELECT c.relname, i.indisunique AS is_unique,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index AS i JOIN pg_class AS c ON c.oid = i.indexrelid
+        WHERE i.indrelid = 'fiscal_document'::regclass
+          AND c.relname IN ('fiscal_document_tenant_id_id_key', 'fiscal_document_tenant_id_invoice_id_key')
+      `;
+      const ownership = rows.find((row) => row.relname === "fiscal_document_tenant_id_id_key");
+      expect(ownership).toMatchObject({
+        is_unique: true,
+        key_1: "tenant_id",
+        key_2: "id",
+        predicate: null,
+      });
+      const partial = rows.find(
+        (row) => row.relname === "fiscal_document_tenant_id_invoice_id_key"
+      );
+      expect(partial).toMatchObject({ is_unique: true, key_1: "tenant_id", key_2: "invoice_id" });
+      expect(partial?.predicate).not.toBeNull();
+      expect(normalizeIndexPredicate(partial!.predicate!)).toBe("status<>'CANCELLED'");
+    }, 30_000);
+
+    it("proves all five structural triggers fire BEFORE their expected events", async () => {
+      const rows = await prisma.$queryRaw<{ tgname: string; timing: string; event: string }[]>`
+        SELECT tg.tgname,
+          CASE WHEN (tg.tgtype & 2) = 2 THEN 'BEFORE' ELSE 'OTHER' END AS timing,
+          CASE WHEN (tg.tgtype & 8) = 8 THEN 'DELETE' ELSE 'UPDATE' END AS event
+        FROM pg_trigger AS tg
+        WHERE tg.tgrelid = 'fiscal_document'::regclass AND NOT tg.tgisinternal
+      `;
+      const expected = [
+        ["fiscal_document_no_delete_trigger", "DELETE"],
+        ["fiscal_document_cancelled_immutable_trigger", "UPDATE"],
+        ["fiscal_document_identity_immutable_trigger", "UPDATE"],
+        ["fiscal_document_provider_refs_write_once_trigger", "UPDATE"],
+        ["fiscal_document_attempts_monotonic_trigger", "UPDATE"],
+      ];
+      expect(rows.map((row) => [row.tgname, row.event]).sort()).toEqual(expected.sort());
+      expect(rows.every((row) => row.timing === "BEFORE")).toBe(true);
+    }, 30_000);
+
+    it("releases the partial unique key only after cancellation", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const databaseRejection = await captureDatabaseMessage(() =>
+          insertRawFiscalDocument(tx, tenantAId, fiscalInvoiceAId)
+        );
+        expect(databaseRejection).toContain("duplicate key value violates unique constraint");
+        const rejection = await captureRawRejection(() =>
+          insertRawFiscalDocument(tx, tenantAId, fiscalInvoiceAId)
+        );
+        expect(rejection.sqlState).toBe("23505");
+        expect(rejection.message).toContain("Key (tenant_id, invoice_id)=");
+        await tx.$executeRaw`
+          UPDATE "fiscal_document" SET "status" = 'CANCELLED'::fiscal_document_status,
+            "cancelled_at" = now() WHERE "id" = ${fiscalDocumentAId}::uuid
+        `;
+        await expect(insertRawFiscalDocument(tx, tenantAId, fiscalInvoiceAId)).resolves.toEqual(
+          expect.any(String)
+        );
+      });
+    }, 30_000);
+
+    it("rejects negative attempt counts with the named CHECK", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+          UPDATE "fiscal_document" SET "attempt_count" = -1
+          WHERE "id" = ${fiscalDocumentAId}::uuid
+        `
+        );
+        expect(message).toBe(
+          'new row for relation "fiscal_document" violates check constraint "fiscal_document_attempt_count_non_negative"'
+        );
+      });
+    }, 30_000);
+
+    it("rejects CANCELLED without cancelled_at", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+          UPDATE "fiscal_document" SET "status" = 'CANCELLED'::fiscal_document_status
+          WHERE "id" = ${fiscalDocumentAId}::uuid
+        `
+        );
+        expect(message).toBe(
+          'new row for relation "fiscal_document" violates check constraint "fiscal_document_cancelled_at_iff_cancelled"'
+        );
+      });
+    }, 30_000);
+
+    it("rejects cancelled_at on a non-CANCELLED document", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+          UPDATE "fiscal_document" SET "cancelled_at" = now()
+          WHERE "id" = ${fiscalDocumentAId}::uuid
+        `
+        );
+        expect(message).toBe(
+          'new row for relation "fiscal_document" violates check constraint "fiscal_document_cancelled_at_iff_cancelled"'
+        );
+      });
+    }, 30_000);
+
+    it("rejects fiscal document deletion for every status", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+          DELETE FROM "fiscal_document" WHERE "id" = ${fiscalDocumentAId}::uuid
+        `
+        );
+        expect(message).toBe("a fiscal document cannot be deleted; cancel it instead");
+      });
+    }, 30_000);
+
+    it("rejects payload updates to a CANCELLED document", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "PENDING" });
+        await tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'CANCELLED', "cancelled_at" = now() WHERE "id" = ${id}::uuid`;
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+          UPDATE "fiscal_document" SET "last_error_code" = 'changed' WHERE "id" = ${id}::uuid
+        `
+        );
+        expect(message).toBe("a cancelled fiscal document cannot be updated");
+      });
+    }, 30_000);
+
+    it.each([
+      ["tenant_id", () => tenantBId],
+      ["id", () => randomUUID()],
+      ["invoice_id", () => randomUUID()],
+      ["provider", () => "FAKE"],
+      ["created_at", () => new Date(0)],
+    ])(
+      "rejects changing immutable identity field %s",
+      async (column, value) => {
+        await inRolledBackTransaction(async (tx) => {
+          const next = value();
+          const message = await captureDatabaseMessage(() =>
+            tx.$executeRawUnsafe(
+              `UPDATE "fiscal_document" SET "${column}" = $1 WHERE "id" = $2::uuid`,
+              next,
+              fiscalDocumentAId
+            )
+          );
+          expect(message).toBe(`a fiscal document ${column} cannot be changed`);
+        });
+      },
+      30_000
+    );
+
+    it.each([
+      ["external_id", "a fiscal document external_id is write-once"],
+      ["cdc", "a fiscal document cdc is write-once"],
+    ])(
+      "allows setting %s once and rejects rewriting it",
+      async (column, rejection) => {
+        await inRolledBackTransaction(async (tx) => {
+          const invoice = await insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId);
+          const id = await insertRawFiscalDocument(tx, tenantAId, invoice);
+          await tx.$executeRawUnsafe(
+            `UPDATE "fiscal_document" SET "${column}" = $1 WHERE "id" = $2::uuid`,
+            "first",
+            id
+          );
+          const message = await captureDatabaseMessage(() =>
+            tx.$executeRawUnsafe(
+              `UPDATE "fiscal_document" SET "${column}" = $1 WHERE "id" = $2::uuid`,
+              "second",
+              id
+            )
+          );
+          expect(message).toBe(rejection);
+        });
+      },
+      30_000
+    );
+
+    it("rejects decreasing attempt_count and admits an increase", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { attemptCount: 1 });
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "attempt_count" = 2 WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+          UPDATE "fiscal_document" SET "attempt_count" = 1 WHERE "id" = ${id}::uuid
+        `
+        );
+        expect(message).toBe("a fiscal document attempt_count cannot decrease");
+      });
+    }, 30_000);
+
+    it("rejects an invoice reference owned by another tenant", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantBId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantBId, sale);
+        const message = await captureDatabaseMessage(() =>
+          insertRawFiscalDocument(tx, tenantAId, invoice)
+        );
+        expect(message).toContain(
+          'violates foreign key constraint "fiscal_document_tenant_id_invoice_id_fkey"'
+        );
+      });
+    }, 30_000);
+
+    it("admits the documented submission approval and cancellation path", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        // This exact path is what the two corrected guards protect: the dropped external-id CHECK would have rejected the final step, and the broad terminal-immutability guard would have rejected it too.
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "PENDING" });
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SUBMITTED', "external_id" = 'provider-1' WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'APPROVED' WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'CANCELLED', "cancelled_at" = now(), "resolved_at" = now() WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+      });
+    }, 30_000);
+
+    it("leaves the tenant fiscal-document count at its seeded baseline", async () => {
+      expect(await prisma.fiscalDocument.count({ where: { tenantId: tenantAId } })).toBe(
+        fiscalDocumentBaseline
+      );
+    }, 30_000);
+  });
 });

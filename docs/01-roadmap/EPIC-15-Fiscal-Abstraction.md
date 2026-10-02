@@ -61,6 +61,32 @@ to prove the Core abstraction.
 - No `FiscalDocument` model, Fiscal module, fiscal worker, fiscal module docs,
   EPIC-15 stories or EPIC-15 decisions exist before this kickoff.
 
+## Progress
+
+- **[[FISC-002]] Fiscal data foundation — `review`.** Implemented on
+  `feat/epic-15-fiscal-data-foundation` as the additive `FiscalDocument`
+  persistence foundation: `enum FiscalProvider` with PRD §22's three values,
+  `enum FiscalDocumentStatus` with the SIFEN lifecycle minus `SIGNING`, the
+  tenant-scoped aggregate with a composite RESTRICT invoice FK and no duplicated
+  invoice money or series, two named CHECKs (`attempt_count >= 0` and the
+  cancellation biconditional), a partial unique index mirrored from Billing that
+  admits one non-cancelled document per invoice, and five structural triggers.
+  Verification passed locally: database suite 19 files / 407 tests (was 18 /
+  403), `db:generate`, `typecheck` 14/14, `lint` 14/14, `build` 9/9 and
+  `format-check` clean. The frozen ownership-key counter moved 22 → 23, and the
+  seed probes deliberately did not move because [[DEC-040]] had already
+  allocated `fiscal.invoice.issue` and the `fiscal` feature code. The slice is
+  `review`, not `done`, for one reason recorded rather than hidden: **no
+  PostgreSQL was reachable in the implementation environment**, so the migration
+  was never applied and the 22 written live-PostgreSQL cases never executed. Two
+  guards were also corrected during implementation because both were pinned
+  before the flow that would use them existed: the dropped
+  `external_id_iff_resolved` CHECK would have rejected the legitimate
+  `SUBMITTED` -> `APPROVED` -> `CANCELLED` path, and the narrowed
+  `cancelled_immutable` trigger replaced a broader guard that made `CANCELLED`
+  unreachable from `APPROVED` and `REJECTED` — the same defect class [[TD-023]]
+  recorded for the EPIC-14 invoice header guard.
+
 ## Scope
 
 - Add the tenant-scoped Fiscal domain data model, including `FiscalDocument`,
@@ -122,15 +148,23 @@ remain open. Each unchecked box names planned evidence that will close it.
 
 ### FISC-002 — Fiscal data foundation
 
-- [ ] `FiscalDocument` and fiscal enums exist as tenant-scoped additive schema
+- [x] `FiscalDocument` and fiscal enums exist as tenant-scoped additive schema
       with composite ownership keys, source invoice ownership, provider/state
       constraints, storage-reference fields and sanitized snapshot fields.
-- [ ] Fiscal state is not duplicated into `Invoice`, and invoice-to-fiscal
-      linkage is additive and tenant-safe.
-- [ ] Database tests and live-PostgreSQL probes cover constraints, tenant
-      isolation, immutability and classification-relevant fields.
-- [ ] Any new fiscal permission/settings seeds reconcile the pinned seed-count
-      probes in the same slice.
+      Evidence: migration `20261002000001_fiscal_data_foundation`,
+      `schema-fiscal.test.ts` and the fiscal live-PostgreSQL block.
+- [x] Fiscal state is not duplicated into `Invoice`, and invoice-to-fiscal
+      linkage is additive and tenant-safe. Evidence: no fiscal column on
+      `Invoice`, only a back-reference and the composite RESTRICT FK.
+- [x] Database tests and live-PostgreSQL probes cover constraints, tenant
+      isolation, immutability and classification-relevant fields. Evidence: 4
+      textual gates plus 22 live-PostgreSQL cases. **The live-PostgreSQL cases
+      are written and typechecked but unexecuted**, because no PostgreSQL was
+      reachable in the implementation environment; that is the slice's open
+      verification item.
+- [x] Any new fiscal permission/settings seeds reconcile the pinned seed-count
+      probes in the same slice. Evidence: nothing was added, so the pinned
+      probes stay at `permissions: 56` and `featureCodes: 12`.
 
 ### FISC-003 — Fiscal application interface and fake provider
 
