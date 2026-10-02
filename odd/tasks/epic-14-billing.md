@@ -837,35 +837,36 @@ BILL-003 closed.
 
 - 16 new files (2269 lines) plus the navigation entry (44/18 on two tracked
   files), about 2287 insertions: `page.tsx`, `billing-surface.tsx`, the
-  `invoice-list`, `invoice-detail` and `create-invoice` panels, `billing-display`,
-  `billing-validation` and `billing-outcome`, each with its colocated test.
-- **No money arithmetic in the client, verified rather than asserted**: a grep for
-  `parseFloat|parseInt|Number(|Math.|toFixed|.reduce(` over every non-test Billing
-  UI module returns exactly one hit, and it is a comment stating that there is
-  none. Amounts render through textual digit grouping only and the totals are the
-  API's projected strings.
-- State coverage with a named test for each branch: list loading, empty, error and
-  success; detail loading, no-selection, error and the backend `404` rendered as an
-  error rather than as data; the entitlement-denied workspace; the permission
-  refusal; the create validation, conflict and success; and the confirm and cancel
-  success and conflict outcomes.
-- The navigation entry `{ href: "/app/billing", label: "Billing", requiredFeature:
-  "billing" }` sits after Cash, and it **strengthened** the nav suite rather than
-  narrowing it: the entry count moves 11 → 12, the new link's href and label are
-  asserted, the placeholder slice index moves with it, and two new cases prove the
-  `billing` gate is independent of `sales` and `cash` in both directions.
+  `invoice-list`, `invoice-detail` and `create-invoice` panels,
+  `billing-display`, `billing-validation` and `billing-outcome`, each with its
+  colocated test.
+- **No money arithmetic in the client, verified rather than asserted**: a grep
+  for `parseFloat|parseInt|Number(|Math.|toFixed|.reduce(` over every non-test
+  Billing UI module returns exactly one hit, and it is a comment stating that
+  there is none. Amounts render through textual digit grouping only and the
+  totals are the API's projected strings.
+- State coverage with a named test for each branch: list loading, empty, error
+  and success; detail loading, no-selection, error and the backend `404`
+  rendered as an error rather than as data; the entitlement-denied workspace;
+  the permission refusal; the create validation, conflict and success; and the
+  confirm and cancel success and conflict outcomes.
+- The navigation entry
+  `{ href: "/app/billing", label: "Billing", requiredFeature: "billing" }` sits
+  after Cash, and it **strengthened** the nav suite rather than narrowing it:
+  the entry count moves 11 → 12, the new link's href and label are asserted, the
+  placeholder slice index moves with it, and two new cases prove the `billing`
+  gate is independent of `sales` and `cash` in both directions.
 - Gates: the focused suites **102 tests** (11 files); the web suite **90 files /
   1050 tests** (was 83 / 983); `pnpm typecheck` and `pnpm lint` 14/14;
-  `pnpm format-check` clean. The parent re-ran both suites and prettier, read the
-  arithmetic grep and the full navigation diff.
+  `pnpm format-check` clean. The parent re-ran both suites and prettier, read
+  the arithmetic grep and the full navigation diff.
 - **One limitation the Story must record honestly**: the API returns the same
   `200` body for a fresh transition and for a replay and exposes no replay
-  discriminant in the DTO ([[DEC-041]] chose that deliberately), so the surface can
-  render a replay safely but **cannot display a distinct "already confirmed"
+  discriminant in the DTO ([[DEC-041]] chose that deliberately), so the surface
+  can render a replay safely but **cannot display a distinct "already confirmed"
   outcome**. The acceptance criterion that asks for the replay as a distinct
-  outcome is therefore only satisfiable in the weaker replay-safe-rendering sense,
-  and W3 must say so rather than tick it as written.
-
+  outcome is therefore only satisfiable in the weaker replay-safe-rendering
+  sense, and W3 must say so rather than tick it as written.
 
 ## Evidence
 
