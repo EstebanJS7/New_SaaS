@@ -542,7 +542,7 @@ after BILL-002 closed.
 - [x] W1 — the TD-023 migration: the tightened header guard, its schema-gate
       update and the live-PostgreSQL probes for the rejected column changes and
       the admitted transition.
-- [ ] W2 — the confirm command: the locked read, the atomic allocation, the
+- [x] W2 — the confirm command: the locked read, the atomic allocation, the
       state write, the audit, the replay, the route pin and the integration
       cases.
 - [ ] W3 — the cancel command: the reason contract, the two-state gate, the
@@ -611,6 +611,42 @@ after BILL-002 closed.
   count before dereferencing the queried confirmation row; an
   `expect(confirmed).toHaveLength(1)` was added, and the live-PostgreSQL suite
   was re-run at **144 passed**.
+
+### BILL-003 W2 — confirm command
+
+- `POST /invoices/:id/confirm` behind `billing.confirm`, no body and no
+  `Idempotency-Key`, reusing the existing param schema and response DTO.
+- Transaction order: row-lock the header `FOR UPDATE`, then the **post-lock
+  authoritative read** (so a foreign or unknown id is the shared byte-equivalent
+  `404` and writes nothing), then branch on the locked status — `CONFIRMED`
+  returns the row unchanged with **no allocation and no second audit row** (the
+  replay of [[DEC-041]]), `CANCELLED` is the stable `409`, and `DRAFT` allocates
+  and transitions.
+- The allocation is the pinned single statement:
+  `INSERT INTO "invoice_number_sequence" ("tenant_id", "series", "next_value") VALUES ($1::uuid, $2, 2) ON CONFLICT ("tenant_id", "series") DO UPDATE SET "next_value" = "invoice_number_sequence"."next_value" + 1, "updated_at" = now() RETURNING "next_value" - 1`,
+  read positionally so the arbitrary column alias cannot matter, refusing a
+  non-positive result with a stable error rather than writing it. A fresh tenant
+  row returns `1`; an existing row its next value.
+- The conditional transition is
+  `updateMany({ where: { id, tenantId, status: "DRAFT" } })`, and a `0`-row
+  result is the lost-race backstop that raises the same stable `409` instead of
+  a silent success. The lock is the raw tenant-predicated
+  `SELECT ... FOR UPDATE` with explicit `::uuid` casts, following the sale/cash
+  precedent and its documented `42883: operator does not exist: uuid = text`
+  rationale.
+- One co-committed `invoice.confirmed` audit row on a real transition, with
+  changed-field NAMES only (`status`, `number`, `confirmedAt`).
+- Size: `586` added / `23` removed across 6 files. Gates: the focused suite **25
+  tests** (was 19); the API suite **76 files (1 skipped) / 1013 tests passed** /
+  144 skipped; `pnpm typecheck` and `pnpm lint` 14/14; `pnpm format-check`
+  clean. The parent re-ran the focused and full suites and prettier, and read
+  the allocation, the lock, the conditional write and the transaction order.
+- The tests cover the confirmed result, the **replay keeping the same number
+  with the counter NOT advanced** (the number-skip guard a naive replay would
+  break), the `CANCELLED` `409`, the byte-equivalent `404`, both authorization
+  paths, and two invoices in one tenant receiving consecutive numbers.
+- The durable live-PostgreSQL proof, including the concurrent-confirm overlap,
+  lands in W3.
 
 ## Evidence
 
