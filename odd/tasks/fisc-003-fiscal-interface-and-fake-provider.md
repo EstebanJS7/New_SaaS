@@ -284,9 +284,22 @@ wires the issue command.
 - [x] T6 — Add the three unit suites and the source-text boundary test;
       reconcile any module-inventory assertion the new module disturbs. No
       module-inventory or wiring assertion needed reconciliation.
-- [ ] T7 — Verify: focused suites, `pnpm test`, `typecheck`, `lint`,
-      `format-check`; then the native review. Every gate is green; the native
-      review is the remaining step.
+- [x] T7 — Verify: focused suites, `pnpm test`, `typecheck`, `lint`,
+      `format-check`; then the native review. Every gate is green and the native
+      review closed approved; its one substantive advisory was fixed in a
+      follow-up work unit.
+
+## Review round
+
+Lineage `review-7b6f337b64ce340f` closed **approved and acknowledged**: tier
+medium, one lens (`review-reliability`), no correction budget consumed. Three
+advisories; the WARNING (the composition root's production refusal had no test)
+was fixed by extracting a pure exported `resolveFiscalProvider` and covering it,
+and the empty-script coverage gap was pinned. See the Story's
+`## Review record`.
+
+Consequence: the follow-up work unit is a new candidate and needs its own
+preflight, as the contract requires.
 
 ## Contract correction during implementation
 

@@ -230,6 +230,31 @@ live-PostgreSQL spec, unchanged at 176 cases.
 - No retry, backoff or idempotency behaviour ships here; the port only
   classifies outcomes for [[FISC-004]] to act on.
 
+## Review record
+
+The native review of this slice closed **approved and acknowledged** on lineage
+`review-7b6f337b64ce340f` (revision
+`sha256:1288115284326d4e0feae11052387d148578cd1fd3f20e0f41173650d6ca07aa`),
+`risk_tier: medium`, one lens (`review-reliability`), no correction budget
+consumed. Three advisories, and the substantive one was fixed rather than
+recorded:
+
+- `R3-fiscal-prod-gate-uncovered` (WARNING) — the composition root's production
+  refusal had no test, because it lived inside a Nest factory where nothing
+  would notice it regressing. The resolution was extracted into a pure exported
+  `resolveFiscalProvider(nodeEnv, rawValue)` and covered by
+  `fiscal.module.test.ts`: unset outside production resolves to `undefined`,
+  `fake` is accepted in every environment, production with an unset value is
+  refused, and a value outside the closed set is refused. The closed set itself
+  is pinned so widening it must be a deliberate edit.
+- `R3-fake-empty-outcomes` (SUGGESTION) — the fake already fell back to
+  `APPROVED` for an empty script, so this was a coverage gap rather than a
+  defect. `fake-fiscal.provider.test.ts` now pins that degenerate case.
+- `R3-boundary-filter-fragile` (SUGGESTION) — the boundary test's specifier
+  filter is a little indirect but correct: its extractor is self-tested against
+  all four import forms, which is what keeps it from passing vacuously.
+  Recorded, not actioned.
+
 ## Technical Debt
 
 - None planned.

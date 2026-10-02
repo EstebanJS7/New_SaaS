@@ -37,6 +37,15 @@ describe("FakeFiscalProvider", () => {
     expect((await issue(createFakeFiscalProvider())).outcome).toBe("APPROVED");
   });
 
+  it("falls back to APPROVED for an empty script rather than failing", async () => {
+    // An empty script is the degenerate case of "shorter than the call count":
+    // there is no last entry to repeat, so the default stands instead of the
+    // fake throwing on a dev process that configured nothing.
+    const provider = createFakeFiscalProvider({ outcomes: [] });
+    expect((await issue(provider)).outcome).toBe("APPROVED");
+    expect((await issue(provider)).outcome).toBe("APPROVED");
+  });
+
   it.each([
     ["APPROVED", "externalId"],
     ["REJECTED", "reasonCode"],
