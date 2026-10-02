@@ -25,6 +25,7 @@ import {
   BILLING_FEATURE_NOT_ENTITLED_MESSAGE,
   INVOICE_CUSTOMER_REQUIRED_MESSAGE,
   INVOICE_LINE_DESCRIPTION_TOO_LONG_MESSAGE,
+  INVOICE_NOT_DRAFT_MESSAGE,
   INVOICE_SALE_ALREADY_INVOICED_MESSAGE,
   INVOICE_SALE_NOT_COMPLETED_MESSAGE,
 } from "./billing.service.js";
@@ -695,6 +696,10 @@ describe("Billing HTTP boundary — invoice creation (EPIC-14 BILL-002)", () => 
       .set("Cookie", fixture.a.actor.cookie)
       .expect(200);
 
+    // W2 ships the confirm transition, so it is now a REAL route and is proven
+    // by the confirmation suite below. The immutability fence is everything that
+    // still MUTATES an existing document without a dedicated command, plus every
+    // generic status route; `cancel` stays a 404 until BILL-003 W3.
     for (const [method, path] of [
       ["patch", `/invoices/${invoiceId}`],
       ["put", `/invoices/${invoiceId}`],
@@ -702,7 +707,6 @@ describe("Billing HTTP boundary — invoice creation (EPIC-14 BILL-002)", () => 
       ["patch", "/invoices"],
       ["put", "/invoices"],
       ["delete", "/invoices"],
-      ["post", `/invoices/${invoiceId}/confirm`],
       ["post", `/invoices/${invoiceId}/cancel`],
     ] as const) {
       await supertest(booted.app.getHttpServer())
@@ -1181,5 +1185,226 @@ describe("Billing HTTP boundary — invoice reads (EPIC-14 BILL-002 W3)", () => 
     ).map((invoice) => invoice.id);
     expect(foreignDrafts).toContain(foreign.id);
     expect(foreignDrafts).not.toContain(mine.id);
+  });
+});
+
+/**
+ * The W2 confirmation command over the REAL HTTP boundary: the locked read, the
+ * atomic number allocation, the conditional `DRAFT -> CONFIRMED` write, the
+ * co-committed audit row, the replay-by-state contract and the state gates. The
+ * durable allocation and the concurrent-confirm row-lock overlap are
+ * live-PostgreSQL evidence owned by BILL-003 W3, so these in-memory cases cover
+ * the RESULT shape, the number-skip guard and the no-residue guarantees rather
+ * than the serialization itself.
+ */
+describe("Billing HTTP boundary — invoice confirmation (EPIC-14 BILL-003 W2)", () => {
+  let booted: BootedTestApp;
+  let fixture: BillingHttpFixture;
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    fixture = seedBillingHttp(booted.db);
+  });
+
+  afterAll(async () => {
+    await booted.close();
+  });
+
+  const postInvoice = (cookie: string, saleId: string) =>
+    supertest(booted.app.getHttpServer()).post("/invoices").set("Cookie", cookie).send({ saleId });
+
+  const confirmInvoice = (cookie: string, id: string) =>
+    supertest(booted.app.getHttpServer()).post(`/invoices/${id}/confirm`).set("Cookie", cookie);
+
+  /** The `(tenant, series)` counter row the confirm transaction advances. */
+  function sequenceFor(tenantId: string, series = "A") {
+    return [...booted.db.tables.invoiceNumberSequences.values()].find(
+      (row) => row.tenantId === tenantId && row.series === series
+    );
+  }
+
+  async function createDraft(owner: BillingTenant): Promise<InvoiceDto> {
+    return (await postInvoice(owner.actor.cookie, fixture.seedSale(owner).id).expect(201))
+      .body as InvoiceDto;
+  }
+
+  /**
+   * The `invoice.confirmed` audit rows for one invoice. The create command
+   * co-commits its OWN `invoice.created` row against the same target, so the
+   * confirmation assertions filter by action rather than by target alone.
+   */
+  function confirmedAuditsFor(invoiceId: string): AuditLogRow[] {
+    return auditsForTarget(booted, invoiceId).filter((row) => row.action === "invoice.confirmed");
+  }
+
+  it("confirms a DRAFT invoice, allocating a positive number and co-committing one audit row", async () => {
+    const created = await createDraft(fixture.a);
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const response = await confirmInvoice(fixture.a.actor.cookie, created.id).expect(200);
+    const body = response.body as InvoiceDto;
+    expect(Object.keys(body).sort()).toEqual([...INVOICE_RESPONSE_KEYS].sort());
+    expect(body.id).toBe(created.id);
+    expect(body.saleId).toBe(created.saleId);
+    expect(body.status).toBe("CONFIRMED");
+    expect(body.series).toBe("A");
+    expect(body.number).not.toBeNull();
+    expect(Number.isInteger(body.number)).toBe(true);
+    expect(body.number!).toBeGreaterThan(0);
+    expect(body.confirmedAt).not.toBeNull();
+    expect(body.cancelledAt).toBeNull();
+    expect(body.cancelReason).toBeNull();
+
+    // The allocation and the transition committed together, so the response is
+    // exactly the STORED document.
+    const stored = booted.db.tables.invoices.get(created.id);
+    expect(stored?.status).toBe("CONFIRMED");
+    expect(stored?.number).toBe(body.number);
+    expect(stored?.confirmedAt).not.toBeNull();
+    expect(stored?.confirmedAt?.toISOString()).toBe(body.confirmedAt);
+
+    // Exactly ONE audit row for the real transition, ids and field NAMES only.
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+    const rows = confirmedAuditsFor(created.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe("invoice.confirmed");
+    expect(rows[0].targetType).toBe("invoice");
+    expect(rows[0].tenantId).toBe(fixture.a.tenant.id);
+    expect(rows[0].actorUserProfileId).toBe(fixture.a.actor.profile.id);
+    expect(changedFieldsOf(rows[0])).toEqual(["status", "number", "confirmedAt"]);
+    expect(rows[0].metadata).toEqual({
+      schemaVersion: BILLING_DTO_SCHEMA_VERSION,
+      changedFields: ["status", "number", "confirmedAt"],
+    });
+  });
+
+  it("replays a CONFIRMED invoice with the SAME number, no second audit row and no counter advance", async () => {
+    const created = await createDraft(fixture.a);
+    const firstResponse = await confirmInvoice(fixture.a.actor.cookie, created.id).expect(200);
+    const first = firstResponse.body as InvoiceDto;
+    const auditsAfterFirst = booted.db.tables.audits.size;
+    const counterAfterFirst = sequenceFor(fixture.a.tenant.id)?.nextValue;
+    expect(counterAfterFirst).toBe(first.number! + 1);
+
+    const replay = await confirmInvoice(fixture.a.actor.cookie, created.id).expect(200);
+    const body = replay.body as InvoiceDto;
+    expect(body.status).toBe("CONFIRMED");
+    expect(body.number).toBe(first.number);
+    expect(body.confirmedAt).toBe(first.confirmedAt);
+    // Byte-identical representation: the replay writes nothing at all.
+    expect(replay.text).toBe(firstResponse.text);
+
+    // The number-skip guard: a replay must NOT reach the allocator, so the
+    // counter stays where the first confirmation left it.
+    expect(sequenceFor(fixture.a.tenant.id)?.nextValue).toBe(counterAfterFirst);
+    // …and no second audit row was appended.
+    expect(booted.db.tables.audits.size).toBe(auditsAfterFirst);
+    expect(confirmedAuditsFor(created.id)).toHaveLength(1);
+  });
+
+  it("rejects a CANCELLED invoice with the stable 409 and leaves no residue", async () => {
+    const sale = fixture.seedSale(fixture.a);
+    const cancelled = booted.db.prisma.invoice.create({
+      data: {
+        tenantId: fixture.a.tenant.id,
+        saleId: sale.id,
+        customerId: null,
+        currency: "PYG",
+        status: "CANCELLED",
+        series: "A",
+        number: null,
+        cancelledAt: new Date(),
+        cancelReason: "Corrected",
+        lines: { create: [] },
+      },
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    const response = await confirmInvoice(fixture.a.actor.cookie, cancelled.id).expect(409);
+    expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((response.body as ErrorDto).error.message).toBe(INVOICE_NOT_DRAFT_MESSAGE);
+
+    // A rejected confirm persists nothing and allocates no number.
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.invoices.get(cancelled.id)?.status).toBe("CANCELLED");
+  });
+
+  it("masks a foreign and an unknown invoice id as a byte-equivalent 404 and persists nothing", async () => {
+    const foreign = (
+      await postInvoice(fixture.b.actor.cookie, fixture.seedSale(fixture.b).id).expect(201)
+    ).body as InvoiceDto;
+    const sizesBefore = tableSizes(booted.db);
+
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.a.actor.cookie,
+      method: "POST",
+      nonexistentUrl: `/invoices/${randomUUID()}/confirm`,
+      foreignUrl: `/invoices/${foreign.id}/confirm`,
+      forbiddenIdentifiers: [foreign.id, foreign.saleId, fixture.b.tenant.id],
+    });
+
+    // The masked paths are the shared invoice 404, byte-identical by constant.
+    const probe = await confirmInvoice(fixture.a.actor.cookie, foreign.id).expect(404);
+    expect((probe.body as ErrorDto).error.code).toBe("NOT_FOUND");
+    expect((probe.body as ErrorDto).error.message).toBe(INVOICE_NOT_FOUND_MESSAGE);
+
+    // Neither tenant's rows moved: a 404 never allocates and never writes.
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.invoices.get(foreign.id)?.status).toBe("DRAFT");
+  });
+
+  it("requires billing.confirm and the billing entitlement, persisting nothing when denied", async () => {
+    const draftA = await createDraft(fixture.a);
+    // Tenant C is unentitled, so its draft is seeded directly (the create route
+    // is itself gated on the entitlement).
+    const draftC = booted.db.prisma.invoice.create({
+      data: {
+        tenantId: fixture.c.tenant.id,
+        saleId: fixture.seedSale(fixture.c).id,
+        customerId: null,
+        currency: "PYG",
+        status: "DRAFT",
+        series: "A",
+        lines: { create: [] },
+      },
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    // A member of A whose role has NO billing key.
+    const none = await confirmInvoice(fixture.noPermission.cookie, draftA.id).expect(403);
+    expect((none.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    // A member of A with `billing.read` only: confirm is still a 403.
+    const readOnly = await confirmInvoice(fixture.readOnly.cookie, draftA.id).expect(403);
+    expect((readOnly.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    // Tenant C holds the FULL matrix but no entitlement: gated FIRST.
+    const unentitled = await confirmInvoice(fixture.c.actor.cookie, draftC.id).expect(403);
+    expect((unentitled.body as ErrorDto).error.code).toBe("FEATURE_NOT_ENTITLED");
+    expect((unentitled.body as ErrorDto).error.message).toBe(BILLING_FEATURE_NOT_ENTITLED_MESSAGE);
+
+    // …and a malformed id is the stable 400 for a permissioned actor.
+    const malformed = await supertest(booted.app.getHttpServer())
+      .post("/invoices/not-a-uuid/confirm")
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(400);
+    expect((malformed.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+
+    expect(booted.db.tables.invoices.get(draftA.id)?.status).toBe("DRAFT");
+    expect(booted.db.tables.invoices.get(draftC.id)?.status).toBe("DRAFT");
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  it("allocates consecutive numbers to two invoices of the same tenant", async () => {
+    const first = (
+      await confirmInvoice(fixture.a.actor.cookie, (await createDraft(fixture.a)).id).expect(200)
+    ).body as InvoiceDto;
+    const second = (
+      await confirmInvoice(fixture.a.actor.cookie, (await createDraft(fixture.a)).id).expect(200)
+    ).body as InvoiceDto;
+
+    expect(first.number).not.toBeNull();
+    expect(second.number).toBe(first.number! + 1);
+    // The counter now points at the NEXT number to allocate.
+    expect(sequenceFor(fixture.a.tenant.id)?.nextValue).toBe(second.number! + 1);
   });
 });

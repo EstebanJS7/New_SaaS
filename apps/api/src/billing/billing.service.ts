@@ -43,6 +43,7 @@ export interface BillingPrisma {
  * audited, and BILL-003 owns the confirm/cancel actions.
  */
 export const INVOICE_CREATED_ACTION = "invoice.created";
+export const INVOICE_CONFIRMED_ACTION = "invoice.confirmed";
 export const INVOICE_TARGET_TYPE = "invoice";
 
 /**
@@ -80,6 +81,17 @@ export const INVOICE_CUSTOMER_REQUIRED_MESSAGE =
  * service-level pre-check: the rule is enforced by the database.
  */
 export const INVOICE_SALE_ALREADY_INVOICED_MESSAGE = "This sale already has an invoice.";
+
+/**
+ * Stable `409 CONFLICT` message shared by BOTH non-`DRAFT` confirm rejections
+ * (DEC-041): a `CANCELLED` invoice is terminal, and the zero-row conditional
+ * transition is a lost concurrent-confirm race. One message is the shipped
+ * precedent (the sale `complete`/`cancel` and the cash close share a single
+ * message across their pre-lock gate and their post-lock backstop), and it
+ * keeps the two rejection paths byte-equivalent instead of leaking which
+ * interleaving happened.
+ */
+export const INVOICE_NOT_DRAFT_MESSAGE = "Only a draft invoice can be confirmed.";
 
 /**
  * Stable `409 CONFLICT` message for a copied line description that does not fit
@@ -126,6 +138,14 @@ const INVOICE_CREATE_CHANGED_FIELDS: readonly string[] = [
   "currency",
   "lines",
 ];
+
+/**
+ * Audit field NAMES for one invoice confirmation. `changedFields` carries NAMES
+ * only: the allocated number, the status and the confirmation timestamp are
+ * INTERNAL (PRD §41), but no stored value is copied into the trail — the action,
+ * the invoice id and the field names are all the row carries.
+ */
+const INVOICE_CONFIRM_CHANGED_FIELDS: readonly string[] = ["status", "number", "confirmedAt"];
 
 /**
  * Exact partial unique index behind the one-live-invoice-per-sale rule:
@@ -312,8 +332,10 @@ function toInvoiceResponse(row: InvoiceRow): InvoiceResponse {
  *   line value is copied verbatim from the frozen snapshot (DEC-038). The
  *   invoice is `DRAFT` by schema default, carries the database-default series
  *   and has NO number — allocation belongs to confirmation (DEC-039).
- * - The invoice is IMMUTABLE from creation: there is no update and no delete
- *   path here, and BILL-003 owns confirm/cancel (DEC-038/DEC-043).
+ * - The invoice is IMMUTABLE from creation: there is no edit and no delete
+ *   path here. BILL-003 W2 ships the ONE explicit `confirm` transition (row lock
+ *   + atomic number allocation + conditional state write + one audit row);
+ *   cancellation stays BILL-003 W3 (DEC-038/DEC-039/DEC-041/DEC-043).
  * - The reads run the SAME gate order as the command — entitlement first,
  *   permission second — and are pure: no audit row is appended and no row is
  *   mutated. A foreign or unknown invoice id is the shared `404`, so every
@@ -323,7 +345,8 @@ function toInvoiceResponse(row: InvoiceRow): InvoiceResponse {
  * - The command appends exactly ONE audit row through {@link AuditWriter},
  *   INSIDE the same transaction as the invoice write, carrying stable ids and
  *   field NAMES only. A rejection persists nothing — no invoice, no line and no
- *   audit row.
+ *   audit row. Confirmation is replay-safe by its own state gate and requires
+ *   NO `Idempotency-Key` (DEC-041).
  */
 @Injectable()
 export class BillingService {
@@ -459,6 +482,100 @@ export class BillingService {
     await this.assertBillingEnabled();
     await this.requirePermission(BILLING_PERMISSIONS.read);
     const row = await this.billing.findById(id);
+    return toInvoiceResponse(row);
+  }
+
+  /**
+   * Confirms one `DRAFT` invoice of the caller tenant and co-commits its single
+   * audit row: the number allocation and the `DRAFT -> CONFIRMED` transition
+   * commit together or not at all (DEC-039, DEC-041).
+   *
+   * ORDER: the `billing` entitlement and the `billing.confirm` permission are
+   * asserted FIRST, outside the transaction, exactly like the creation path, so
+   * a denial reaches no data access. Inside ONE `$transaction` the command then:
+   *
+   * 1. row-locks the invoice HEADER (`SELECT ... FOR UPDATE`), which is the
+   *    PRIMARY serialization against a concurrent confirm;
+   * 2. reads the invoice tenant-scoped AFTER the lock — a foreign or unknown id
+   *    is the shared byte-equivalent `404` — and branches on the LOCKED status:
+   *    - `CONFIRMED` is a REPLAY (DEC-041): the row is returned UNCHANGED, with
+   *      no allocation and no second audit row, so a retry can never consume a
+   *      number (which would make a later invoice skip one);
+   *    - `CANCELLED` is terminal and rejected with the stable `409`, persisting
+   *      nothing;
+   *    - `DRAFT` allocates the number and applies the conditional transition; a
+   *      zero-row result is a lost concurrent-confirm race and the same stable
+   *      `409`, never a silent success;
+   * 3. appends exactly ONE audit row on a REAL transition;
+   * 4. re-reads the invoice and returns its allowlisted DTO with `series`,
+   *    `number`, `status: "CONFIRMED"` and `confirmedAt` populated.
+   *
+   * The command writes NO line, NO amount, NO payment, NO cash, NO stock and NO
+   * fiscal state, and emits NO event: it changes only the header's own status,
+   * number and confirmation timestamp (DEC-041, DEC-042).
+   */
+  async confirmInvoice(id: string): Promise<InvoiceResponse> {
+    await this.assertBillingEnabled();
+    await this.requirePermission(BILLING_PERMISSIONS.confirm);
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      // PRIMARY serialization: row-lock the invoice HEADER before anything else,
+      // so two concurrent confirms of the SAME invoice serialize here and the
+      // loser's post-lock read sees the winner's committed `CONFIRMED` status.
+      await this.billing.lockById(id, tx);
+
+      // POST-LOCK authoritative read: a foreign or unknown id resolves here as
+      // the shared byte-equivalent `404` and writes nothing.
+      const locked = await this.billing.findById(id, tx);
+
+      // A retried confirm on an already `CONFIRMED` invoice is a PURE REPLAY:
+      // the row is returned unchanged and NOTHING is written — no allocation,
+      // no state change and no second audit row (DEC-041).
+      if (locked.status === "CONFIRMED") {
+        return locked;
+      }
+
+      // A cancelled invoice is terminal (DEC-043): the stable `409`, nothing
+      // written.
+      if (locked.status === "CANCELLED") {
+        throw new DomainError("CONFLICT", INVOICE_NOT_DRAFT_MESSAGE);
+      }
+
+      // The allocation is ONE atomic statement that also creates the counter row
+      // when the tenant has none, so no read-then-write window exists (DEC-039).
+      const number = await this.billing.allocateNumber(locked.series, tx);
+
+      // The conditional `WHERE status = 'DRAFT'` write is the backstop of the
+      // serialization: a zero-row result means the stored status was not `DRAFT`
+      // after all, which is a lost race and rejects with the same stable `409`.
+      const applied = await this.billing.markConfirmed(id, number, tx);
+      if (applied === 0) {
+        throw new DomainError("CONFLICT", INVOICE_NOT_DRAFT_MESSAGE);
+      }
+
+      const confirmed = await this.billing.findById(id, tx);
+
+      await this.audit.append(
+        {
+          action: INVOICE_CONFIRMED_ACTION,
+          // The resource's OWN tenant, resolved by the repository from the
+          // request context — never a caller-supplied value.
+          tenantId: confirmed.tenantId,
+          actorUserProfileId,
+          targetType: INVOICE_TARGET_TYPE,
+          targetId: confirmed.id,
+          metadata: {
+            schemaVersion: BILLING_DTO_SCHEMA_VERSION,
+            changedFields: [...INVOICE_CONFIRM_CHANGED_FIELDS],
+          },
+        },
+        tx
+      );
+
+      return confirmed;
+    });
+
     return toInvoiceResponse(row);
   }
 

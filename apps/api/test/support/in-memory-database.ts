@@ -1434,6 +1434,18 @@ export interface IsolationDatabase {
       }) => InvoiceRow;
       /** Tenant/status-filtered list count for the paginated read. */
       count: (args?: { where?: InvoiceWhere }) => number;
+      /**
+       * Filter-shaped conditional header transition the confirm command applies
+       * (BILL-003). Mirrors the real delegate's `updateMany`: a tenant-
+       * predicate-shaped update whose `status` predicate is the DRAFT gate, and
+       * which writes only `status`, `number` and `confirmedAt` (plus the
+       * `updatedAt` the `@updatedAt` column owns). Returns the affected count so
+       * a zero-row result is a lost race rather than a silent success.
+       */
+      updateMany: (args: {
+        where: InvoiceWhere;
+        data: { status?: InvoiceStatusRow; number?: number; confirmedAt?: Date };
+      }) => { count: number };
     };
     /**
      * Numbering counter the confirm transaction advances (DEC-039). Present now
@@ -2511,9 +2523,51 @@ export function createIsolationDatabase(): IsolationDatabase {
         }
         return Promise.resolve([{ id: session.id, status: session.status }]);
       }
+      // EPIC-14 BILL-003 W2: the confirm command row-locks the invoice header
+      // before its post-lock status read. Same modelling as the sale/purchase
+      // locks above; the real concurrent-confirm interleaving is proven against
+      // live PostgreSQL (BILL-003 W3).
+      if (text.includes('"invoice"') && text.includes("FOR UPDATE")) {
+        const [tenantId, invoiceId] = values as string[];
+        const header = invoiceTable.get(invoiceId);
+        if (header?.tenantId !== tenantId) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ id: header.id, status: header.status }]);
+      }
+      // EPIC-14 BILL-003 W2: the number allocation is ONE atomic statement that
+      // also creates the counter row when absent (DEC-039). A synchronous map
+      // cannot interleave, so this reproduces the statement's RESULT exactly — a
+      // fresh row returns 1, an existing row returns its current value and
+      // advances the counter — while the statement's atomicity and the
+      // concurrent-confirm serialization stay live-PostgreSQL-owned (TD-006).
+      if (text.includes('"invoice_number_sequence"') && text.includes("ON CONFLICT")) {
+        const [tenantId, series] = values as string[];
+        const existing = [...invoiceNumberSequenceTable.values()].find(
+          (candidate) => candidate.tenantId === tenantId && candidate.series === series
+        );
+        if (existing) {
+          const allocated = existing.nextValue;
+          existing.nextValue = allocated + 1;
+          existing.updatedAt = new Date();
+          return Promise.resolve([{ "?column?": allocated }]);
+        }
+        const now = new Date();
+        const created: InvoiceNumberSequenceRow = {
+          id: randomUUID(),
+          tenantId,
+          series,
+          // The statement INSERTs `next_value = 2` and returns `next_value - 1`.
+          nextValue: 2,
+          createdAt: now,
+          updatedAt: now,
+        };
+        invoiceNumberSequenceTable.set(created.id, created);
+        return Promise.resolve([{ "?column?": 1 }]);
+      }
       if (!text.includes("tenant_membership") || !text.includes("FOR UPDATE")) {
         throw new Error(
-          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock, the sale header FOR UPDATE lock, the cash session FOR UPDATE lock and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
+          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock, the sale header FOR UPDATE lock, the cash session FOR UPDATE lock, the invoice header FOR UPDATE lock, the invoice_number_sequence ON CONFLICT allocation and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
         );
       }
       const [tenantId] = values as string[];
@@ -3546,6 +3600,27 @@ export function createIsolationDatabase(): IsolationDatabase {
             (where?.tenantId === undefined || candidate.tenantId === where.tenantId) &&
             (where?.status === undefined || candidate.status === where.status)
         ).length,
+      updateMany: ({ where, data }) => {
+        // Tenant-scoped BY CONSTRUCTION, exactly like the header reads: a
+        // transition that omitted the tenant predicate would silently move
+        // another tenant's document, so the fake refuses it loudly.
+        assertInvoiceTenantScope(where);
+        let count = 0;
+        for (const candidate of invoiceTable.values()) {
+          if (where.id !== undefined && candidate.id !== where.id) continue;
+          if (candidate.tenantId !== where.tenantId) continue;
+          if (where.status !== undefined && candidate.status !== where.status) continue;
+          // Only the three columns the confirm transition owns are writable; a
+          // request for the invoice identity, currency or series has no shape in
+          // this delegate. `updatedAt` is the `@updatedAt` column.
+          if (data.status !== undefined) candidate.status = data.status;
+          if (data.number !== undefined) candidate.number = data.number;
+          if (data.confirmedAt !== undefined) candidate.confirmedAt = data.confirmedAt;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
     },
     invoiceNumberSequence: {
       findUnique: ({ where }) => {

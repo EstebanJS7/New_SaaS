@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Query } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
@@ -18,10 +18,11 @@ import { createInvoiceBody, invoiceIdParam, invoiceListQuery } from "./billing.z
  *
  * This work unit ships the creation command plus its two reads: the list with an
  * optional `status` filter and the id read with the document's snapshot lines.
- * `billing.confirm` and `billing.cancel` are BILL-003's keys and are never
- * referenced by a route here. There is no `PATCH`, no `PUT` and no delete route
- * anywhere: the invoice is immutable from creation and its lifecycle belongs to
- * BILL-003 (DEC-038/DEC-043).
+ * BILL-003 W2 adds the explicit `POST /invoices/:id/confirm` transition behind
+ * `billing.confirm`; `billing.cancel` stays BILL-003 W3 and is never referenced
+ * by a route here. There is no `PATCH`, no `PUT` and no delete route anywhere:
+ * the invoice is immutable from creation and its lifecycle belongs to BILL-003
+ * (DEC-038/DEC-039/DEC-041/DEC-043).
  */
 @Controller("invoices")
 export class BillingController {
@@ -63,6 +64,23 @@ export class BillingController {
   async create(@Body() body: unknown): Promise<InvoiceResponse> {
     const input = parseInput(createInvoiceBody, body, "Invalid invoice create body.");
     return this.billing.create(input);
+  }
+
+  /**
+   * Confirms one `DRAFT` in-tenant invoice, allocating its number inside the
+   * same transaction as the `CONFIRMED` write. The request carries NO body and
+   * requires NO `Idempotency-Key`: the transition is payload-free and guarded by
+   * its own state, so a retried call returns `200` with the same representation
+   * (DEC-041) and the `@HttpCode(200)` keeps the fresh and replay cases
+   * identical. A `CANCELLED` invoice is the stable `409`. A non-UUID id is the
+   * stable `400 VALIDATION_FAILED`.
+   */
+  @Post(":id/confirm")
+  @HttpCode(200)
+  @RequirePermissions(BILLING_PERMISSIONS.confirm)
+  async confirm(@Param() params: unknown): Promise<InvoiceResponse> {
+    const { id } = parseInput(invoiceIdParam, params, "Invalid invoice id.");
+    return this.billing.confirmInvoice(id);
   }
 }
 
