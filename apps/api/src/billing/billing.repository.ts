@@ -95,11 +95,21 @@ export interface InvoiceCreateData {
   readonly lines: readonly InvoiceLineWriteData[];
 }
 
+/**
+ * Status predicate the tenant-scoped invoice reads and the `updateMany`
+ * transitions may build: one lifecycle value (the confirm gate) or the `in` set
+ * the cancellation gate needs, because cancellation is admitted from BOTH
+ * `DRAFT` and `CONFIRMED` (DEC-043). Declared as a local union so this boundary
+ * stays decoupled from the generated client namespace.
+ */
+export type InvoiceStatusFilter =
+  InvoiceStatusValue | { readonly in: readonly InvoiceStatusValue[] };
+
 /** Predicate fields the tenant-scoped invoice reads are allowed to build. */
 export interface InvoiceWhere {
   id?: string;
   tenantId: string;
-  status?: InvoiceStatusValue;
+  status?: InvoiceStatusFilter;
 }
 
 /**
@@ -164,6 +174,40 @@ export interface InvoiceDelegate {
     };
     include: InvoiceLinesInclude;
   }) => Promise<InvoiceRow>;
+  /**
+   * The CONDITIONAL status transition of the confirm command (BILL-003): a
+   * filter-shaped update, exactly like the sale `complete` backstop, so the
+   * stored status itself is the guard. `@updatedAt` writes `updated_at`, which
+   * is why it is not part of `data`; `confirmedAt` is written ONLY here.
+   *
+   * BILL-003 W3's cancellation reuses this ONE delegate: its `status` predicate
+   * is the `in` set `{ DRAFT, CONFIRMED }` and its `data` writes only
+   * `cancelledAt` and `cancelReason` — never `number` or `confirmedAt`, which
+   * belong to the confirmation (the W1 header guard rejects a transition that
+   * moves a column it does not own).
+   */
+  updateMany: (args: {
+    where: InvoiceWhere;
+    data: {
+      status?: InvoiceStatusValue;
+      number?: number;
+      confirmedAt?: Date;
+      cancelledAt?: Date;
+      cancelReason?: string;
+    };
+  }) => Promise<{ count: number }>;
+}
+
+/**
+ * Raw-SQL seam for the transaction-scoped invoice row lock and the atomic
+ * number allocation. Declared structurally (the sales/cash raw-seam convention)
+ * so the generated client and the shared in-memory boundary both satisfy it.
+ * The in-memory boundary models `SELECT ... FOR UPDATE` as a plain read and the
+ * allocation as its own result, because a synchronous map cannot interleave; the
+ * real serialization proof stays live-PostgreSQL-owned.
+ */
+export interface BillingRawClient {
+  $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>;
 }
 
 /**
@@ -185,13 +229,23 @@ export interface BillingCatalogItemDelegate {
  * seam: the audited service passes its open transaction handle here so the
  * invoice, its lines and its audit row co-commit.
  */
-export interface BillingTx {
+export interface BillingTx extends BillingRawClient {
   invoice: InvoiceDelegate;
   catalogItem: BillingCatalogItemDelegate;
 }
 
 /** Single stable message behind every invoice 404 — byte-equivalence by construction. */
 export const INVOICE_NOT_FOUND_MESSAGE = "Invoice was not found.";
+
+/**
+ * Stable `409 CONFLICT` message for an allocation that returned a non-positive
+ * value. A number below 1 is not a representable invoice number (the schema's
+ * `invoice_number_positive` CHECK and the counter's own positivity guarantee),
+ * so it is a data-integrity anomaly: the command refuses to write it rather
+ * than persisting an invalid document.
+ */
+export const INVOICE_NUMBER_ALLOCATION_FAILED_MESSAGE =
+  "The invoice number could not be allocated.";
 
 /**
  * Single stable message behind every unresolved invoice-line catalog item. The
@@ -215,8 +269,10 @@ export const INVOICE_CATALOG_ITEM_NOT_FOUND_MESSAGE = "An invoice line catalog i
  *
  * The SOURCE sale is read through the sibling {@link SaleRepository} — it is
  * tenant-predicated and already throws the shared sale 404, so this module never
- * defines a second sale-not-found message. Nothing here writes a number, a
- * status transition, a payment, a cash movement or any fiscal state.
+ * defines a second sale-not-found message. BILL-003's confirm command adds the
+ * transaction-scoped header lock, the atomic number allocation and the
+ * conditional `DRAFT -> CONFIRMED` write; nothing here writes a payment, a cash
+ * movement, a stock movement or any fiscal state.
  */
 @Injectable()
 export class BillingRepository {
@@ -280,6 +336,122 @@ export class BillingRepository {
       throw new DomainError("NOT_FOUND", INVOICE_NOT_FOUND_MESSAGE);
     }
     return row;
+  }
+
+  /**
+   * Row-locks one invoice HEADER of the caller's active tenant, identified by the
+   * `(tenant_id, id)` pair, for the rest of the caller's open transaction.
+   *
+   * This is the PRIMARY serialization of the confirm command: the transaction
+   * takes the header lock BEFORE its post-lock status read, so two concurrent
+   * confirms of the SAME invoice serialize here — the loser blocks on this row
+   * lock and its post-lock read then sees the winner's committed `CONFIRMED`
+   * status and replays instead of allocating a second number. The lock is
+   * transaction-scoped, so a rolled-back command leaves nothing locked.
+   *
+   * A zero-row match (unknown or foreign id, which by construction takes no
+   * lock) is not an error here: the caller's subsequent tenant-scoped read is
+   * what renders the shared byte-equivalent `404`. The in-memory boundary models
+   * this as a plain read; the real interleaving is proven by the live-PostgreSQL
+   * evidence owned by BILL-003 W3.
+   */
+  async lockById(id: string, tx?: BillingTx): Promise<void> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    // Explicit `::uuid` casts (the sale/cash row-lock precedent): Prisma binds
+    // template values as `text`, so comparing them directly against the `uuid`
+    // columns fails with `42883: operator does not exist: uuid = text`.
+    await client.$queryRaw`
+      SELECT "id" FROM "invoice"
+      WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid
+      FOR UPDATE
+    `;
+  }
+
+  /**
+   * Allocates the next invoice number for one `(tenant, series)` in the caller's
+   * active tenant with ONE atomic statement that also CREATES the counter row
+   * when the tenant has none (DEC-039).
+   *
+   * The upsert-and-increment shape is what removes the read-then-write window a
+   * `SELECT ... FOR UPDATE` plus `UPDATE` pair would leave: a fresh row is
+   * inserted with `next_value = 2` and returns `1`, while an existing row is
+   * incremented and returns its PRE-increment value. Either way the row's own
+   * lock is held for the rest of the transaction, so the allocation and the
+   * `DRAFT -> CONFIRMED` transition commit together or not at all — a rolled
+   * back confirm consumes no number.
+   *
+   * A non-positive or non-integer result is a data-integrity anomaly (the schema
+   * forbids a number below 1), so it is refused with a stable `409` instead of
+   * being written onto the invoice.
+   */
+  async allocateNumber(series: string, tx?: BillingTx): Promise<number> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const rows = (await client.$queryRaw`
+      INSERT INTO "invoice_number_sequence" ("tenant_id", "series", "next_value")
+      VALUES (${tenantId}::uuid, ${series}, 2)
+      ON CONFLICT ("tenant_id", "series")
+      DO UPDATE SET "next_value" = "invoice_number_sequence"."next_value" + 1,
+                    "updated_at" = now()
+      RETURNING "next_value" - 1
+    `) as Record<string, unknown>[];
+    // The statement returns exactly one row and exactly one (unnamed) column;
+    // read it positionally so the arbitrary `?column?` alias cannot matter.
+    const allocated = rows.length > 0 ? Number(Object.values(rows[0])[0]) : Number.NaN;
+    if (!Number.isInteger(allocated) || allocated <= 0) {
+      throw new DomainError("CONFLICT", INVOICE_NUMBER_ALLOCATION_FAILED_MESSAGE);
+    }
+    return allocated;
+  }
+
+  /**
+   * Applies the `DRAFT` -> `CONFIRMED` transition of one invoice of the caller's
+   * active tenant, writing the allocated number and the confirmation timestamp
+   * (DEC-039).
+   *
+   * This write is the BACKSTOP of the confirm serialization, not its primary
+   * mechanism: {@link lockById}'s header row lock is what makes a concurrent
+   * second confirm observe the committed status. The write is still conditional
+   * on the STORED status being `DRAFT`, so if that status were ever not `DRAFT`
+   * the statement affects zero rows; the caller maps that to the stable `409`
+   * instead of treating it as a success. Only `status`, `number` and
+   * `confirmed_at` are written — the W1 header guard rejects a transition that
+   * moves a column it does not own — and `updated_at` is handled by `@updatedAt`.
+   */
+  async markConfirmed(id: string, number: number, tx?: BillingTx): Promise<number> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const result = await client.invoice.updateMany({
+      where: { id, tenantId, status: "DRAFT" },
+      data: { status: "CONFIRMED", number, confirmedAt: new Date() },
+    });
+    return result.count;
+  }
+
+  /**
+   * Applies the terminal `CANCELLED` transition of one invoice of the caller's
+   * active tenant, writing the cancellation timestamp and the reason (DEC-043).
+   *
+   * This write is the BACKSTOP of the cancellation serialization, not its
+   * primary mechanism: {@link lockById}'s header row lock is what makes a
+   * concurrent second command observe the committed status. The write is still
+   * conditional on the STORED status being `DRAFT` or `CONFIRMED`, so if that
+   * status were ever not admissible the statement affects zero rows; the caller
+   * maps that to the stable `409` instead of treating it as a success. Only
+   * `status`, `cancelled_at` and `cancel_reason` are written — the W1 header
+   * guard rejects a transition that moves a column it does not own — so the
+   * allocated `number` and the original `confirmed_at` are RETAINED verbatim
+   * (DEC-039, DEC-043), and `updated_at` is handled by `@updatedAt`.
+   */
+  async markCancelled(id: string, reason: string, tx?: BillingTx): Promise<number> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const result = await client.invoice.updateMany({
+      where: { id, tenantId, status: { in: ["DRAFT", "CONFIRMED"] } },
+      data: { status: "CANCELLED", cancelledAt: new Date(), cancelReason: reason },
+    });
+    return result.count;
   }
 
   /**

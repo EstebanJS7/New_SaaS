@@ -1,11 +1,16 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Query } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
 import type { InvoiceResponse } from "./billing.dto.js";
 import { BILLING_PERMISSIONS } from "./billing.permissions.js";
 import { BillingService } from "./billing.service.js";
-import { createInvoiceBody, invoiceIdParam, invoiceListQuery } from "./billing.zod.js";
+import {
+  createInvoiceBody,
+  cancelInvoiceBody,
+  invoiceIdParam,
+  invoiceListQuery,
+} from "./billing.zod.js";
 
 /**
  * Private tenant-scoped invoice surface (EPIC-14 BILL-002).
@@ -18,10 +23,11 @@ import { createInvoiceBody, invoiceIdParam, invoiceListQuery } from "./billing.z
  *
  * This work unit ships the creation command plus its two reads: the list with an
  * optional `status` filter and the id read with the document's snapshot lines.
- * `billing.confirm` and `billing.cancel` are BILL-003's keys and are never
- * referenced by a route here. There is no `PATCH`, no `PUT` and no delete route
- * anywhere: the invoice is immutable from creation and its lifecycle belongs to
- * BILL-003 (DEC-038/DEC-043).
+ * BILL-003 W2 adds the explicit `POST /invoices/:id/confirm` transition behind
+ * `billing.confirm` and W3 completes the family with
+ * `POST /invoices/:id/cancel` behind `billing.cancel`. There is no `PATCH`, no
+ * `PUT` and no delete route anywhere: the invoice is immutable from creation and
+ * its lifecycle belongs to BILL-003 (DEC-038/DEC-039/DEC-041/DEC-043).
  */
 @Controller("invoices")
 export class BillingController {
@@ -63,6 +69,45 @@ export class BillingController {
   async create(@Body() body: unknown): Promise<InvoiceResponse> {
     const input = parseInput(createInvoiceBody, body, "Invalid invoice create body.");
     return this.billing.create(input);
+  }
+
+  /**
+   * Confirms one `DRAFT` in-tenant invoice, allocating its number inside the
+   * same transaction as the `CONFIRMED` write. The request carries NO body and
+   * requires NO `Idempotency-Key`: the transition is payload-free and guarded by
+   * its own state, so a retried call returns `200` with the same representation
+   * (DEC-041) and the `@HttpCode(200)` keeps the fresh and replay cases
+   * identical. A `CANCELLED` invoice is the stable `409`. A non-UUID id is the
+   * stable `400 VALIDATION_FAILED`.
+   */
+  @Post(":id/confirm")
+  @HttpCode(200)
+  @RequirePermissions(BILLING_PERMISSIONS.confirm)
+  async confirm(@Param() params: unknown): Promise<InvoiceResponse> {
+    const { id } = parseInput(invoiceIdParam, params, "Invalid invoice id.");
+    return this.billing.confirmInvoice(id);
+  }
+
+  /**
+   * Cancels one `DRAFT` or `CONFIRMED` in-tenant invoice, writing the terminal
+   * `CANCELLED` state with its reason inside the same transaction as its audit
+   * row (DEC-043). The body carries ONLY the reason:
+   *
+   * a non-blank string of at most 500 characters (trimmed first), so a missing,
+   * blank, whitespace-only, over-long or extra key is the stable `400` through
+   * `parseInput`. The command is state-guarded and payload-free apart from the
+   * reason, so it requires NO `Idempotency-Key`: a repeat on an already
+   * `CANCELLED` invoice is a `200` replay with the same representation, and the
+   * `@HttpCode(200)` keeps the fresh and replay cases identical. A non-UUID id
+   * is the stable `400 VALIDATION_FAILED`.
+   */
+  @Post(":id/cancel")
+  @HttpCode(200)
+  @RequirePermissions(BILLING_PERMISSIONS.cancel)
+  async cancel(@Param() params: unknown, @Body() body: unknown): Promise<InvoiceResponse> {
+    const { id } = parseInput(invoiceIdParam, params, "Invalid invoice id.");
+    const { reason } = parseInput(cancelInvoiceBody, body, "Invalid invoice cancel body.");
+    return this.billing.cancelInvoice(id, reason);
   }
 }
 

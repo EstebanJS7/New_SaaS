@@ -503,6 +503,253 @@ BILL-001 closed.
 - The epic stays `planned`: [[BILL-003]] through [[BILL-005]] remain, and
   [[TD-023]] through [[TD-026]] stay open.
 
+## BILL-003 — invoice confirmation and cancellation (work units)
+
+Branch: `feat/epic-14-billing-invoice-commands`, cut from `main` at `4c90c83`
+after BILL-002 closed.
+
+### Pinned slice contract (parent-owned)
+
+- `POST /invoices/:id/confirm` behind `billing.confirm`: lock the invoice row
+  `FOR UPDATE`, gate on `DRAFT`, allocate the number from the tenant sequence,
+  write `CONFIRMED` plus `confirmed_at`, and co-commit exactly one audit row.
+  The allocation and the transition commit together or not at all.
+- **The allocation is ONE atomic statement that also creates the counter row**,
+  because a tenant may have no `invoice_number_sequence` row yet:
+  `INSERT INTO "invoice_number_sequence" ("tenant_id", "series", "next_value") VALUES ($1::uuid, 'A', 2) ON CONFLICT ("tenant_id", "series") DO UPDATE SET "next_value" = "invoice_number_sequence"."next_value" + 1, "updated_at" = now() RETURNING "next_value" - 1`.
+  A fresh row returns 1 and an existing row returns its current value, with no
+  read-then-write window.
+- `POST /invoices/:id/cancel` behind `billing.cancel`: a required non-blank
+  reason bounded to 500 characters, the `DRAFT` or `CONFIRMED` gate, the write
+  to `CANCELLED` with `cancelled_at` and `cancel_reason`, the allocated number
+  retained, and exactly one co-committed audit row.
+- **Replay-safe by state, no key**: a retried confirm on a `CONFIRMED` invoice
+  and a repeated cancel on a `CANCELLED` invoice return `200` with the same
+  representation and write no second audit row ([[DEC-041]]).
+- Audit actions `invoice.confirmed` and `invoice.cancelled`, target type
+  `invoice`, changed-field NAMES only.
+- [[TD-023]] is **this slice's**: a migration that `CREATE OR REPLACE`s the
+  header guard so a permitted transition cannot change `tenant_id`, `id`,
+  `sale_id`, `customer_id`, `currency`, `series` or `created_at`, and cannot
+  move `confirmed_at` except on `DRAFT -> CONFIRMED`. Today the guard inspects
+  the status transition only, so a cancellation could silently re-point the
+  document.
+- No event is emitted and nothing outside Billing is written ([[DEC-041]],
+  [[DEC-042]], [[DEC-043]]).
+
+### Work units
+
+- [x] W1 — the TD-023 migration: the tightened header guard, its schema-gate
+      update and the live-PostgreSQL probes for the rejected column changes and
+      the admitted transition.
+- [x] W2 — the confirm command: the locked read, the atomic allocation, the
+      state write, the audit, the replay, the route pin and the integration
+      cases.
+- [x] W3 — the cancel command: the reason contract, the two-state gate, the
+      terminal write, the audit, the replay, the route pin, the integration
+      cases and the live-PostgreSQL command block including the
+      concurrent-confirm overlap.
+- [x] W4 — docs reconciliation: the story record, the epic progress entry,
+      [[TD-023]] resolution and the new counters.
+
+### BILL-003 W1 — TD-023 closed by tightening the header guard
+
+- The additive migration `20261001000002_invoice_header_guard_tightening`
+  `CREATE OR REPLACE`s the guard body without recreating the trigger and without
+  touching any table: the three-transition allow-list is kept byte-identical,
+  and a new ownership clause rejects a permitted transition that also changes
+  `tenant_id`, `id`, `sale_id`, `customer_id`, `currency`, `series` or
+  `created_at`, and forbids moving `confirmed_at` except on
+  `DRAFT -> CONFIRMED`. `updated_at`, `cancelled_at`, `cancel_reason` and
+  `number` keep their existing owners, so the tighten does not narrow the state
+  machine.
+- The schema gate gained three cases pinning the ownership clause per column,
+  the strict additivity of the replacement (no table, trigger, type, index, row
+  or DDL beyond the one function) and the classification prose.
+- The live-PostgreSQL block gained two rolled-back cases: five identity-column
+  rewrites during `DRAFT -> CONFIRMED` are rejected with their exact messages,
+  and a `CONFIRMED -> CANCELLED` that moves `confirmed_at` or `currency` is
+  rejected while the clean cancel succeeds keeping the allocated number and the
+  original confirmation timestamp byte-equal.
+- **Discrimination evidence, which is the point of this closure**: the writer
+  re-armed the pre-TD-023 body on a throwaway database and ran the probe's exact
+  tampering statement. It was **admitted** (`UPDATE 1`, row `CONFIRMED | USD`),
+  proving the gap was real and that the new probe is not mirrored to a wrong
+  assumption; after applying the migration unchanged, the same statement was
+  rejected and no row changed. This is the BILL-001 mirrored-bug lesson applied
+  before the fact rather than after a review.
+- Gates: the database suite 18 files / **403 tests** (was 400); `db:deploy`
+  reported **29 migrations** and applied the new one; `db:live-verify` printed
+  `LIVE MIGRATION VERIFICATION PASSED` on throwaway databases; the
+  live-PostgreSQL suite **144 passed** (was 142, and the 142 pre-existing cases
+  are unchanged); `pnpm typecheck` and `pnpm lint` 14/14; `pnpm format-check`
+  clean.
+- Local state note: the development database now has migration 29 applied, a
+  local-only change with no repository effect.
+- [[TD-023]]'s own verification checklist is satisfied by the two live cases and
+  the schema gate, so it can be marked `resolved` in W4.
+
+### BILL-003 W1 — RDD native review (closed, approved)
+
+- Lineage `review-b795346140ce8fe1`, candidate range `4c90c83..c384f61`, 4
+  paths, 635 changed lines, tier **high**, **four lenses** (again driven by
+  `process_boundary` on the live-PostgreSQL spec); **approved** with no
+  correction, and the authority is burned.
+- The first capture hit a genuine transport defect, not a content one: the
+  readability reviewer's payload arrived as truncated JSON
+  (`5 arrays opened, 4 closed`), so the provider **refused the submission at
+  admission without consuming the slot** and preserved the rejected payload
+  under `.git/gentle-ai/rejected-results/`. Two reviewers had already been
+  admitted and two had not. Following the provider's instruction, fresh STATUS
+  was queried and only the two reoffered slots were run, which closed the
+  review. **Never resubmit refused bytes** is the rule that kept this clean.
+- `R2-doc-duplicate-evidence-heading` (WARNING) and `R3-001` (SUGGESTION) both
+  pointed at a duplicated `## Evidence` heading that this session's own
+  documentation injection introduced in this file. Fixed in the same commit that
+  records the outcome: an agent-generated docs defect caught by the review.
+- `R2-live-pg-confirmed-at-null-handling` (SUGGESTION) asked for an explicit row
+  count before dereferencing the queried confirmation row; an
+  `expect(confirmed).toHaveLength(1)` was added, and the live-PostgreSQL suite
+  was re-run at **144 passed**.
+
+### BILL-003 W2 — confirm command
+
+- `POST /invoices/:id/confirm` behind `billing.confirm`, no body and no
+  `Idempotency-Key`, reusing the existing param schema and response DTO.
+- Transaction order: row-lock the header `FOR UPDATE`, then the **post-lock
+  authoritative read** (so a foreign or unknown id is the shared byte-equivalent
+  `404` and writes nothing), then branch on the locked status — `CONFIRMED`
+  returns the row unchanged with **no allocation and no second audit row** (the
+  replay of [[DEC-041]]), `CANCELLED` is the stable `409`, and `DRAFT` allocates
+  and transitions.
+- The allocation is the pinned single statement:
+  `INSERT INTO "invoice_number_sequence" ("tenant_id", "series", "next_value") VALUES ($1::uuid, $2, 2) ON CONFLICT ("tenant_id", "series") DO UPDATE SET "next_value" = "invoice_number_sequence"."next_value" + 1, "updated_at" = now() RETURNING "next_value" - 1`,
+  read positionally so the arbitrary column alias cannot matter, refusing a
+  non-positive result with a stable error rather than writing it. A fresh tenant
+  row returns `1`; an existing row its next value.
+- The conditional transition is
+  `updateMany({ where: { id, tenantId, status: "DRAFT" } })`, and a `0`-row
+  result is the lost-race backstop that raises the same stable `409` instead of
+  a silent success. The lock is the raw tenant-predicated
+  `SELECT ... FOR UPDATE` with explicit `::uuid` casts, following the sale/cash
+  precedent and its documented `42883: operator does not exist: uuid = text`
+  rationale.
+- One co-committed `invoice.confirmed` audit row on a real transition, with
+  changed-field NAMES only (`status`, `number`, `confirmedAt`).
+- Size: `586` added / `23` removed across 6 files. Gates: the focused suite **25
+  tests** (was 19); the API suite **76 files (1 skipped) / 1013 tests passed** /
+  144 skipped; `pnpm typecheck` and `pnpm lint` 14/14; `pnpm format-check`
+  clean. The parent re-ran the focused and full suites and prettier, and read
+  the allocation, the lock, the conditional write and the transaction order.
+- The tests cover the confirmed result, the **replay keeping the same number
+  with the counter NOT advanced** (the number-skip guard a naive replay would
+  break), the `CANCELLED` `409`, the byte-equivalent `404`, both authorization
+  paths, and two invoices in one tenant receiving consecutive numbers.
+- The durable live-PostgreSQL proof, including the concurrent-confirm overlap,
+  lands in W3.
+
+### BILL-003 W2 — RDD native review (closed, approved)
+
+- Lineage `review-2b1723416d0631b5`, candidate range `266340f..fcfb50b`, 7
+  paths, 647 changed lines, tier medium, one lens (`review-reliability`),
+  correction budget 200. **Approved**, no correction; the authority is burned
+  with `burn_evidence: gentle-ai.review-acknowledged/v1`.
+- `R3-CONCURRENCY-COVERAGE` (WARNING, `billing.integration.test.ts:1195`) is the
+  useful kind of finding: it confirms that the in-memory suite cannot prove the
+  row-lock serialization, which is exactly the split this plan pins. The block's
+  own doc comment already says so, and the finding converts that statement into
+  an **obligation for W3**: the live-PostgreSQL block must prove the
+  concurrent-confirm overlap (one admitted confirmation, exactly one number
+  allocated, the loser seeing the same representation or the stable `409`, never
+  a second number) or this WARNING stands uncovered. W3 does not close without
+  it.
+- One process note: the first facade STATUS was called with a base ref I typed
+  instead of the one the provider composed, and the provider refused it with
+  `git_command_failed` / `Needed a single revision` and a `not_started` mutation
+  outcome. The composed value was recovered from the issued START command and
+  the call succeeded. Never type a provider-composed selector: copy it.
+
+### BILL-003 W3 — cancel command and the durable command coverage
+
+- `POST /invoices/:id/cancel` behind `billing.cancel`: a `.strict()` body whose
+  `reason` must be non-blank after trimming and at most 500 characters, with the
+  database's `invoice_cancel_reason_present` CHECK as the backstop rather than
+  the first line. Same shape as confirm: lock the header, read it post-lock so a
+  foreign or unknown id is the shared byte-equivalent `404`, replay an already
+  `CANCELLED` invoice unchanged with no write and no second audit row, otherwise
+  the conditional `WHERE status IN ('DRAFT','CONFIRMED')` write whose zero-row
+  result is the lost-race `409`.
+- The reason TEXT never enters the audit trail: the metadata carries the field
+  names `status`, `cancelledAt`, `cancelReason` and nothing else. The allocated
+  number and the original `confirmed_at` survive a confirmed cancellation, which
+  is the transition the W1 guard explicitly admits.
+- **`R3-CONCURRENCY-COVERAGE` is closed, and better than the obligation asked.**
+  The live block forces a GENUINE overlap on the SAME invoice by having a
+  dedicated transaction hold the exact header row lock the command takes first,
+  reading the row's `ctid` so it cannot move, and using `waitForRowLockWaiters`
+  against that exact `(relation, page, tuple)` so BOTH confirmations are
+  provably parked before either can read the status or allocate: the
+  interleaving is decided by the database boundary, not by timing. It then
+  asserts exactly ONE number across both responses, one header holding it, the
+  counter advanced **exactly once** and exactly one audit row.
+- It also adds a SECOND forced overlap, on the tenant's
+  `invoice_number_sequence` row, proving two DIFFERENT invoices confirmed
+  concurrently receive two DISTINCT consecutive numbers. That is the atomicity
+  of the allocation statement itself, which the header lock cannot cover.
+- Size: `1355` added / `45` removed across 8 files, of which 734 insertions are
+  the live-PostgreSQL block. Gates: the focused suite **32 tests** (was 25); the
+  API suite **77 files / 1173 tests passed** with `DATABASE_URL_TEST` exported,
+  because the live-PostgreSQL spec then runs inside it (1020 + 153); the
+  separate live-PostgreSQL run **153 passed** (was 144, so this slice adds 9);
+  `pnpm typecheck` and `pnpm lint` 14/14; `pnpm format-check` clean. The parent
+  re-ran all four and read the cancel transaction and the two overlap probes.
+- The eight-route family is now complete in the route-contract probe: the frozen
+  inventory and the per-route permission map hold all four `billing` routes.
+
+### BILL-003 W3 — RDD native review (closed, approved)
+
+- Lineage `review-7752615080dcd223`, candidate range `9579931..16fe4ec`, 9
+  paths, 1439 changed lines, tier **high**, **four lenses**; **approved** with
+  no correction, authority burned.
+- The relay refused the risk lens' payload at admission TWICE with a truncated
+  JSON envelope (`3 arrays opened, 2 closed`, preserving the payload under
+  `.git/gentle-ai/rejected-results/`). Nothing was consumed
+  (`submitted_reviewers: 0`) and the preserved bytes contained a complete
+  verdict — the defect is in the envelope, not the review. Following the
+  provider: fresh STATUS, re-run only the reoffered slots, **never resubmit
+  refused bytes**. The third attempt submitted all four.
+- `R3-1` (WARNING, `billing.zod.ts:65`) flagged the `.trim().min(1)` ordering on
+  the cancel reason: if Zod validated the untrimmed value, a whitespace-only
+  reason would pass the API and then fail the database CHECK as a 500-class
+  error instead of the stable `400`. **Verified empirically rather than
+  assumed**: a probe against the installed Zod 3.24 shows `"   "`, `""` and
+  `"\t\n "` are all REJECTED and `"ok"` is accepted trimmed, so the check runs
+  on the trimmed value and the advisory is informational. The ordering is subtle
+  enough that it is recorded, so a later reader does not "fix" it into a bug by
+  moving `.min(1)` before `.trim()`.
+- Three readability suggestions (`live-pg-isolation.e2e-spec.ts:14911-14915`,
+  `in-memory-database.ts:612-614`, `billing.integration.test.ts:728-734`) are
+  informational comment and naming polish.
+
+### BILL-003 W4 — documentation reconciliation
+
+- [[BILL-003]] moved to `review` with its twelve acceptance criteria checked; it
+  carried no stale invariant wording, so nothing needed correcting while
+  checking them.
+- The implementation, verification, tests, limitations, debt, files and
+  completion sections were rewritten against what shipped, including the three
+  approved reviews and the fact that W3 discharged W2's concurrency obligation
+  with two forced overlaps instead of a timing assumption.
+- [[TD-023]] is now **resolved**, with a `## Resolution` section naming the
+  commit, the migration, the ownership clause, the discrimination evidence and
+  the independent review confirmation.
+- The epic gained the BILL-003 progress entry; the epic's own acceptance block
+  for BILL-003 stays unchecked because [[BILL-005]] reconciles the epic's
+  criteria at closure against CI receipts.
+- Counters that move at closure, for BILL-005: **29 migrations** (was 28),
+  live-PostgreSQL **153 cases** (was 142 at the start of the epic), database
+  suite 18 files / 403 tests, and the `permission` count unchanged at **56**.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)

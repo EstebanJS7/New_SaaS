@@ -605,11 +605,19 @@ export interface InvoiceRow extends InvoiceHeaderRow {
   lines: InvoiceLineRow[];
 }
 
+/**
+ * Status predicate the in-memory invoice delegates accept: one lifecycle value
+ * (the confirm gate) or the `in` set the cancellation gate needs, because cancel
+ * is admitted from BOTH `DRAFT` and `CONFIRMED` (DEC-043). Mirrors the
+ * repository's own {@link InvoiceStatusRow} union without importing it.
+ */
+export type InvoiceStatusFilter = InvoiceStatusRow | { in: readonly InvoiceStatusRow[] };
+
 /** Predicate fields the in-memory invoice reads/writes are allowed to build. */
 export interface InvoiceWhere {
   id?: string;
   tenantId?: string;
-  status?: InvoiceStatusRow;
+  status?: InvoiceStatusFilter;
 }
 
 /** Ordering clauses the in-memory invoice list accepts. */
@@ -1434,6 +1442,26 @@ export interface IsolationDatabase {
       }) => InvoiceRow;
       /** Tenant/status-filtered list count for the paginated read. */
       count: (args?: { where?: InvoiceWhere }) => number;
+      /**
+       * Filter-shaped conditional header transition the confirm and cancel
+       * commands apply (BILL-003). Mirrors the real delegate's `updateMany`: a
+       * tenant-predicate-shaped update whose `status` predicate is the state
+       * gate, and which writes only the columns the owning transition owns —
+       * `status`, `number` and `confirmedAt` for confirm, `status`,
+       * `cancelledAt` and `cancelReason` for cancel — plus the `updatedAt` the
+       * `@updatedAt` column owns. Returns the affected count so a zero-row
+       * result is a lost race rather than a silent success.
+       */
+      updateMany: (args: {
+        where: InvoiceWhere;
+        data: {
+          status?: InvoiceStatusRow;
+          number?: number;
+          confirmedAt?: Date;
+          cancelledAt?: Date;
+          cancelReason?: string;
+        };
+      }) => { count: number };
     };
     /**
      * Numbering counter the confirm transaction advances (DEC-039). Present now
@@ -2251,6 +2279,19 @@ function assertInvoiceTenantScope(where: InvoiceWhere): void {
 }
 
 /**
+ * True when a stored invoice status satisfies the delegate's status predicate.
+ * A bare literal is an equality gate (confirm) and `{ in }` is a set gate
+ * (cancel), exactly like the real Prisma filter union.
+ */
+function matchesInvoiceStatus(
+  status: InvoiceStatusRow,
+  filter: InvoiceStatusFilter | undefined
+): boolean {
+  if (filter === undefined) return true;
+  return typeof filter === "string" ? status === filter : filter.in.includes(status);
+}
+
+/**
  * An invoice's related lines by `position` — the document's reading order, not
  * insertion order. The include may request the explicit direction; `true` reads
  * the defined ascending order.
@@ -2511,9 +2552,51 @@ export function createIsolationDatabase(): IsolationDatabase {
         }
         return Promise.resolve([{ id: session.id, status: session.status }]);
       }
+      // EPIC-14 BILL-003 W2: the confirm command row-locks the invoice header
+      // before its post-lock status read. Same modelling as the sale/purchase
+      // locks above; the real concurrent-confirm interleaving is proven against
+      // live PostgreSQL (BILL-003 W3).
+      if (text.includes('"invoice"') && text.includes("FOR UPDATE")) {
+        const [tenantId, invoiceId] = values as string[];
+        const header = invoiceTable.get(invoiceId);
+        if (header?.tenantId !== tenantId) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ id: header.id, status: header.status }]);
+      }
+      // EPIC-14 BILL-003 W2: the number allocation is ONE atomic statement that
+      // also creates the counter row when absent (DEC-039). A synchronous map
+      // cannot interleave, so this reproduces the statement's RESULT exactly — a
+      // fresh row returns 1, an existing row returns its current value and
+      // advances the counter — while the statement's atomicity and the
+      // concurrent-confirm serialization stay live-PostgreSQL-owned (TD-006).
+      if (text.includes('"invoice_number_sequence"') && text.includes("ON CONFLICT")) {
+        const [tenantId, series] = values as string[];
+        const existing = [...invoiceNumberSequenceTable.values()].find(
+          (candidate) => candidate.tenantId === tenantId && candidate.series === series
+        );
+        if (existing) {
+          const allocated = existing.nextValue;
+          existing.nextValue = allocated + 1;
+          existing.updatedAt = new Date();
+          return Promise.resolve([{ "?column?": allocated }]);
+        }
+        const now = new Date();
+        const created: InvoiceNumberSequenceRow = {
+          id: randomUUID(),
+          tenantId,
+          series,
+          // The statement INSERTs `next_value = 2` and returns `next_value - 1`.
+          nextValue: 2,
+          createdAt: now,
+          updatedAt: now,
+        };
+        invoiceNumberSequenceTable.set(created.id, created);
+        return Promise.resolve([{ "?column?": 1 }]);
+      }
       if (!text.includes("tenant_membership") || !text.includes("FOR UPDATE")) {
         throw new Error(
-          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock, the sale header FOR UPDATE lock, the cash session FOR UPDATE lock and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
+          `in-memory $queryRaw fake only supports the tenant_membership FOR UPDATE lock, the purchase header FOR UPDATE lock, the sale header FOR UPDATE lock, the cash session FOR UPDATE lock, the invoice header FOR UPDATE lock, the invoice_number_sequence ON CONFLICT allocation and pg_advisory_xact_lock (got: ${text.slice(0, 60)}...)`
         );
       }
       const [tenantId] = values as string[];
@@ -3430,7 +3513,7 @@ export function createIsolationDatabase(): IsolationDatabase {
             (candidate) =>
               (where.id === undefined || candidate.id === where.id) &&
               candidate.tenantId === where.tenantId &&
-              (where.status === undefined || candidate.status === where.status)
+              matchesInvoiceStatus(candidate.status, where.status)
           ) ?? null;
         if (!header) return null;
         return {
@@ -3444,7 +3527,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             candidate.tenantId === where.tenantId &&
-            (where.status === undefined || candidate.status === where.status)
+            matchesInvoiceStatus(candidate.status, where.status)
         );
         const ordered = orderBy === undefined ? headers : orderInvoices(headers, orderBy);
         return ordered.map((header) => ({
@@ -3544,8 +3627,31 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where?.id === undefined || candidate.id === where.id) &&
             (where?.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where?.status === undefined || candidate.status === where.status)
+            matchesInvoiceStatus(candidate.status, where?.status)
         ).length,
+      updateMany: ({ where, data }) => {
+        // Tenant-scoped BY CONSTRUCTION, exactly like the header reads: a
+        // transition that omitted the tenant predicate would silently move
+        // another tenant's document, so the fake refuses it loudly.
+        assertInvoiceTenantScope(where);
+        let count = 0;
+        for (const candidate of invoiceTable.values()) {
+          if (where.id !== undefined && candidate.id !== where.id) continue;
+          if (candidate.tenantId !== where.tenantId) continue;
+          if (!matchesInvoiceStatus(candidate.status, where.status)) continue;
+          // Only the columns an invoice transition owns are writable; a request
+          // for the invoice identity, currency or series has no shape in this
+          // delegate. `updatedAt` is the `@updatedAt` column.
+          if (data.status !== undefined) candidate.status = data.status;
+          if (data.number !== undefined) candidate.number = data.number;
+          if (data.confirmedAt !== undefined) candidate.confirmedAt = data.confirmedAt;
+          if (data.cancelledAt !== undefined) candidate.cancelledAt = data.cancelledAt;
+          if (data.cancelReason !== undefined) candidate.cancelReason = data.cancelReason;
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
     },
     invoiceNumberSequence: {
       findUnique: ({ where }) => {

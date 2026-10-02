@@ -12648,8 +12648,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
    * the numbering biconditional, the cancelled-invoice requirements, a
    * cancellation releasing its sale for a corrected replacement, the header
    * trigger whose allow-list admits exactly `DRAFT -> CONFIRMED`,
-   * `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED`, the unconditional line
-   * snapshot triggers, and the single-statement counter allocation.
+   * `DRAFT -> CANCELLED` and `CONFIRMED -> CANCELLED` and whose ownership clause
+   * (TD-023) refuses a permitted transition that also rewrites an identity
+   * column, the unconditional line snapshot triggers, and the single-statement
+   * counter allocation.
    *
    * Every raw mutation runs inside an interactive transaction that is ALWAYS
    * rolled back, so no probe row ever survives; the last case asserts that as a
@@ -12934,6 +12936,27 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         VALUES (${id}::uuid, ${tenantId}::uuid, ${series}, ${nextValue})
       `;
       return id;
+    };
+
+    /**
+     * Confirms a freshly inserted `DRAFT` exactly as BILL-003's command will: the
+     * status, the allocated number and an explicit confirmation timestamp in ONE
+     * statement, with `updated_at` written by the caller as Prisma does. The
+     * timestamp is caller-supplied so a cancellation probe can tell the original
+     * confirmation apart from a value it tries to move it to.
+     */
+    const confirmRawInvoice = async (
+      tx: Prisma.TransactionClient,
+      invoiceId: string,
+      confirmedAt: Date,
+      number = 1
+    ): Promise<void> => {
+      await tx.$executeRaw`
+        UPDATE "invoice"
+        SET "status" = 'CONFIRMED', "number" = ${number},
+            "confirmed_at" = ${confirmedAt}::timestamptz, "updated_at" = now()
+        WHERE "id" = ${invoiceId}::uuid
+      `;
     };
 
     beforeAll(async () => {
@@ -13418,6 +13441,42 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(updateSource).toContain("ERRCODE = 'restrict_violation'");
       expect(updateSource).not.toMatch(/BEGIN RAISE EXCEPTION/);
 
+      // TD-023: the APPLIED body carries the OWNERSHIP clause too, read here
+      // from the live function source, so a database still running the
+      // pre-TD-023 body fails this case instead of passing vacuously. Each entry
+      // is the whole clause — predicate, message and error code — so a clause
+      // that lost any part of it is a non-whitespace difference.
+      for (const [column, message] of [
+        ["tenant_id", "a permitted transition cannot move an invoice to another tenant"],
+        ["id", "a permitted transition cannot change the invoice id"],
+        ["sale_id", "a permitted transition cannot re-point an invoice to another sale"],
+        ["customer_id", "a permitted transition cannot change the invoice customer"],
+        ["currency", "a permitted transition cannot change the invoice currency"],
+        ["series", "a permitted transition cannot change the invoice series"],
+        ["created_at", "a permitted transition cannot change the invoice creation timestamp"],
+      ] as const) {
+        expect(updateSource, column).toContain(
+          `IF NEW."${column}" IS DISTINCT FROM OLD."${column}" THEN RAISE EXCEPTION '${message}' USING ERRCODE = 'restrict_violation'; END IF;`
+        );
+      }
+
+      // `confirmed_at` is owned by the confirmation ALONE: `DRAFT -> CONFIRMED`
+      // may write it, every other permitted transition must leave it untouched,
+      // which is what keeps a cancelled invoice's original confirmation time.
+      expect(updateSource).toContain(
+        `IF NEW."confirmed_at" IS DISTINCT FROM OLD."confirmed_at" AND NOT (OLD."status" = 'DRAFT' AND NEW."status" = 'CONFIRMED') THEN RAISE EXCEPTION 'a permitted transition cannot change the invoice confirmation timestamp' USING ERRCODE = 'restrict_violation'; END IF;`
+      );
+
+      // The columns the transition OWNS gain no comparison at all: `updated_at`
+      // stays freely writable (Prisma writes it on confirm and on cancel), and
+      // `cancelled_at`/`cancel_reason` stay writable on the cancellation path
+      // because the CHECKs already tie both to the `CANCELLED` status. `number`
+      // keeps `invoice_number_never_reallocated` and `status` keeps the
+      // allow-list, so no column gains a second authority.
+      for (const column of ["updated_at", "cancelled_at", "cancel_reason", "number", "status"]) {
+        expect(updateSource, column).not.toContain(`IS DISTINCT FROM OLD."${column}"`);
+      }
+
       const reallocationSource = sourceByName.get("invoice_number_never_reallocated");
       expect(reallocationSource).toContain(
         'OLD."number" IS NOT NULL AND NEW."number" IS DISTINCT FROM OLD."number"'
@@ -13691,6 +13750,203 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
 
       // The probe rolled back: no cancelled invoice survived.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+    }, 30_000);
+
+    it("rejects a permitted DRAFT to CONFIRMED transition that also rewrites an identity column (TD-023)", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+
+      // Every probe below is a LEGAL transition — `DRAFT -> CONFIRMED` — that
+      // drags one identity column along with it. Before TD-023 the guard compared
+      // the status pair only, so each of these updates was admitted and the
+      // document silently changed identity while it was confirmed. The observed
+      // message is asserted EXACTLY, so a rejection that came from a CHECK, an FK
+      // or the allocation index cannot be mistaken for the ownership clause.
+
+      // (1) `currency`: the invoice would confirm in a currency other than its
+      // source sale's.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "currency" = 'USD', "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice currency");
+      });
+
+      // (2) `series`: the invoice would confirm into a different numbering
+      // series than the one its number is scoped to (DEC-039).
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "series" = 'B', "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice series");
+      });
+
+      // (3) `sale_id`: the document would be re-pointed to ANOTHER completed sale
+      // of the same tenant, so the invoice and the sale it bills would disagree.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const otherSaleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "sale_id" = ${otherSaleId}::uuid, "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot re-point an invoice to another sale");
+      });
+
+      // (4) `customer_id`: the invoice would acquire a customer it was never
+      // created for. The customer is a REAL same-tenant row, so the composite FK
+      // would accept it and the ownership clause is provably what refuses it.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const customer = await tx.customer.create({
+          data: {
+            tenantId: tenantAId,
+            kind: "INDIVIDUAL",
+            displayName: "Live Billing Customer",
+          },
+        });
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "customer_id" = ${customer.id}::uuid, "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice customer");
+      });
+
+      // (5) `created_at`: the creation time would be rewritten, so the document's
+      // age would no longer be the moment it was created.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CONFIRMED', "number" = 1, "confirmed_at" = now(),
+                "created_at" = now() - interval '1 day', "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice creation timestamp");
+      });
+
+      // Every probe rolled back: no rejected confirmation survived any of them.
+      expect(await prisma.invoice.count()).toBe(invoicesBefore);
+    }, 30_000);
+
+    it("rejects a CONFIRMED to CANCELLED transition that moves a column it does not own, and keeps the document intact when it moves only the ones it does (TD-023)", async () => {
+      const invoicesBefore = await prisma.invoice.count();
+      const confirmedAt = new Date("2026-10-01T12:00:00.000Z");
+      const movedConfirmedAt = new Date("2026-10-02T12:00:00.000Z");
+
+      // (1) `confirmed_at`: a cancellation that also rewrites WHEN the document
+      // was confirmed is refused, so the timestamp stays evidence of the real
+      // confirmation rather than of the cancellation's convenience.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await confirmRawInvoice(tx, invoiceId, confirmedAt);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CANCELLED', "cancelled_at" = now(),
+                "cancel_reason" = 'Issued in error',
+                "confirmed_at" = ${movedConfirmedAt}::timestamptz, "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe(
+          "a permitted transition cannot change the invoice confirmation timestamp"
+        );
+      });
+
+      // (2) `currency`: a cancellation that also changes the document currency is
+      // refused, so the cancelled invoice keeps the currency it was issued in.
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await confirmRawInvoice(tx, invoiceId, confirmedAt);
+        const message = await captureDatabaseMessage(
+          () => tx.$executeRaw`
+            UPDATE "invoice"
+            SET "status" = 'CANCELLED', "cancelled_at" = now(),
+                "cancel_reason" = 'Issued in error', "currency" = 'USD',
+                "updated_at" = now()
+            WHERE "id" = ${invoiceId}::uuid
+          `
+        );
+        expect(message).toBe("a permitted transition cannot change the invoice currency");
+      });
+
+      // (3) The SAME transition with ONLY the columns it owns SUCCEEDS: the
+      // status, `cancelled_at` and `cancel_reason` move, while the allocated
+      // `number` and the original `confirmed_at` stay exactly as confirmation
+      // wrote them (DEC-039, DEC-043).
+      await inRolledBackTransaction(async (tx) => {
+        const saleId = await insertRawSale(tx, tenantAId);
+        const invoiceId = await insertRawInvoice(tx, tenantAId, saleId);
+        await confirmRawInvoice(tx, invoiceId, confirmedAt);
+
+        const confirmed = await tx.$queryRaw<{ confirmed_at: Date; number: number }[]>`
+          SELECT "confirmed_at", "number" FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(confirmed).toHaveLength(1);
+        expect(confirmed[0]?.confirmed_at.getTime()).toBe(confirmedAt.getTime());
+        expect(confirmed[0]?.number).toBe(1);
+
+        const cancelled = await tx.$executeRaw`
+          UPDATE "invoice"
+          SET "status" = 'CANCELLED', "cancelled_at" = now(),
+              "cancel_reason" = 'Issued in error', "updated_at" = now()
+          WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(cancelled).toBe(1);
+
+        const stored = await tx.$queryRaw<
+          {
+            status: string;
+            number: number | null;
+            confirmed_at: Date | null;
+            cancelled_at: Date | null;
+            cancel_reason: string | null;
+          }[]
+        >`
+          SELECT "status"::text AS status, "number", "confirmed_at", "cancelled_at", "cancel_reason"
+          FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+        `;
+        expect(stored).toHaveLength(1);
+        expect(stored[0]?.status).toBe("CANCELLED");
+        // DEC-039/DEC-043: cancelling never frees the number and never rewrites
+        // the confirmation it is the evidence of.
+        expect(stored[0]?.number).toBe(1);
+        expect(stored[0]?.confirmed_at?.getTime()).toBe(confirmedAt.getTime());
+        expect(stored[0]?.cancelled_at).toBeInstanceOf(Date);
+        expect(stored[0]?.cancel_reason).toBe("Issued in error");
+      });
+
+      // Every probe rolled back: no throwaway invoice survived any of them.
       expect(await prisma.invoice.count()).toBe(invoicesBefore);
     }, 30_000);
 
@@ -14603,6 +14859,740 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           number: 1,
         },
       ]);
+    }, 30_000);
+  });
+
+  /**
+   * EPIC-14 BILL-003 W3 live-PostgreSQL invoice COMMAND surface evidence.
+   *
+   * Proves at the REAL boundary — the booted AppModule, the real guard chain,
+   * real HTTP and `20261001000001_billing_invoice_foundation`'s applied DDL plus
+   * `20261001000002_invoice_header_guard_tightening` — what the shared in-memory
+   * boundary cannot:
+   *   1. `POST /invoices/:id/confirm` returns `200` with a positive `series 'A'`
+   *      number, and a REPLAY returns the same number while the tenant's
+   *      `invoice_number_sequence` row does NOT advance;
+   *   2. a GENUINE concurrent-confirm overlap on the SAME invoice admits exactly
+   *      ONE real transition: the loser sees the same representation or the
+   *      stable `409`, never a second number, the counter advances EXACTLY once
+   *      and exactly one `invoice.confirmed` audit row is appended;
+   *   3. two DIFFERENT invoices confirmed under a forced overlap on the COUNTER
+   *      ROW receive two DISTINCT consecutive numbers — the counter's atomicity,
+   *      not the header lock's;
+   *   4. `POST /invoices/:id/confirm` on a `CANCELLED` invoice is the stable
+   *      `409` with no residue;
+   *   5. `POST /invoices/:id/cancel` cancels a `DRAFT` and a `CONFIRMED` invoice,
+   *      the second keeping its allocated `number` and its ORIGINAL
+   *      `confirmed_at`, and a repeat is a `200` replay with no second audit row;
+   *   6. a foreign-tenant invoice id and an unknown id are ONE byte-equivalent
+   *      `404` under one pinned request id on BOTH commands, leaving both
+   *      tenants' rows untouched;
+   *   7. an unentitled tenant gets `403 FEATURE_NOT_ENTITLED` on both commands,
+   *      persisting nothing;
+   *   8. exactly one `invoice.confirmed` and one `invoice.cancelled` audit row per
+   *      real transition and NONE for a replay, with the reason TEXT absent from
+   *      the metadata;
+   *   9. no command path leaves residue: the `invoice`, `invoice_line`,
+   *      `invoice_number_sequence` and `audit_log` counts are unchanged after
+   *      every rejection.
+   *
+   * FIXTURE STRATEGY — RAW INSERTS for the SOURCE rows, REAL HTTP for every
+   * command. Each command's source `COMPLETED` sale is a raw `sale` + `sale_line`
+   * + `catalog_item` triple at the migration's exact shape (the same production
+   * input the BILL-002 read block uses); no invoice COMMAND is ever bypassed.
+   *
+   * CONCURRENCY METHOD — a DETERMINISTIC DATABASE BARRIER, never a sleep. The
+   * same-invoice race holds the invoice HEADER row lock (`SELECT ... FOR UPDATE`)
+   * from a dedicated transaction and waits over `waitForRowLockWaiters` on that
+   * row's exact `(relation, page, tuple)` until BOTH racers are provably parked;
+   * the two-different-invoices race holds the `invoice_number_sequence` row lock
+   * instead, so the overlap is forced on the COUNTER the allocation serializes
+   * on. An unproven overlap THROWS rather than passing as a sequential race.
+   */
+  describe("EPIC-14 billing invoice command application-path isolation", () => {
+    /** The two stable `409` messages, mirrored as literals (never imported). */
+    const INVOICE_NOT_DRAFT_MESSAGE = "Only a draft invoice can be confirmed.";
+
+    /**
+     * The `DRAFT` the entitlement case seeds DIRECTLY for the unentitled tenant
+     * (its create route is itself entitlement-gated). Kept so the closing case
+     * can prove the 403s left it exactly as seeded.
+     */
+    let unentitledDraftId: string;
+
+    /** One request id shared by every masked-404 probe on BOTH commands. */
+    const COMMAND_NOT_FOUND_REQUEST_ID = "live-pg-invoice-command-not-found-proof";
+
+    /** Entitled tenant that owns the command fixtures. */
+    let commandTenantId: string;
+    let commandCookie: string;
+    /** Foreign tenant whose invoice must never be addressable or mutated. */
+    let foreignTenantId: string;
+    let foreignCookie: string;
+    /** Permissioned tenant WITHOUT the `billing` entitlement (DEC-040). */
+    let unentitledTenantId: string;
+    let unentitledCookie: string;
+
+    /** Global SEED-owned exempt rate the frozen sale lines carry (PRD §15). */
+    let exemptRateId: string;
+
+    /** One item per tenant, referenced by that tenant's frozen sale lines. */
+    let commandItemId: string;
+    let foreignItemId: string;
+    let unentitledItemId: string;
+
+    /**
+     * The item a raw sale line of each tenant must reference. `sale_line` carries
+     * a COMPOSITE `(tenant_id, catalog_item_id)` foreign key, so a line can only
+     * cite an item of its OWN tenant; this map keeps the raw `COMPLETED` sale
+     * fixtures valid at the migration's exact shape.
+     */
+    const itemByTenant = new Map<string, string>();
+
+    /**
+     * One tenant with an ACTIVE OWNER membership, a real session cookie and (for
+     * the entitled ones) a direct `billing` entitlement row. OWNER already holds
+     * every `billing.*` key, so the unentitled tenant is refused by the
+     * ENTITLEMENT gate alone — never by a missing permission.
+     */
+    const provisionTenant = async (
+      slug: string,
+      email: string,
+      options: { entitled: boolean }
+    ): Promise<{ tenantId: string; cookie: string }> => {
+      const tenant = await prisma.tenant.create({ data: { slug, name: slug } });
+      const role = await prisma.role.findUnique({ where: { code: "OWNER" } });
+      if (!role) {
+        throw new Error("Reference seed did not create OWNER role");
+      }
+      const profile = await prisma.userProfile.create({
+        data: { email, displayName: email, status: "active" },
+      });
+      await prisma.tenantMembership.create({
+        data: {
+          tenantId: tenant.id,
+          userProfileId: profile.id,
+          roleId: role.id,
+          status: "ACTIVE",
+        },
+      });
+      if (options.entitled) {
+        const feature = await prisma.featureCode.upsert({
+          where: { code: "billing" },
+          create: { code: "billing" },
+          update: {},
+        });
+        await prisma.tenantEntitlement.upsert({
+          where: {
+            tenantId_featureCodeId: { tenantId: tenant.id, featureCodeId: feature.id },
+          },
+          create: { tenantId: tenant.id, featureCodeId: feature.id },
+          update: {},
+        });
+      }
+      const session = await app.get(SessionService).issue(profile.id);
+      return { tenantId: tenant.id, cookie: `${STAFF_SESSION_COOKIE}=${session.token}` };
+    };
+
+    /** Raw tenant catalog item at the migration's exact shape; returns the id. */
+    const insertItem = async (
+      tenantId: string,
+      name: string,
+      taxRateId: string
+    ): Promise<string> => {
+      const id = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "catalog_item" ("id", "tenant_id", "kind", "name", "tax_rate_id")
+        VALUES (
+          ${id}::uuid, ${tenantId}::uuid, 'SUPPLY'::catalog_item_kind, ${name},
+          ${taxRateId}::uuid
+        )
+      `;
+      return id;
+    };
+
+    /**
+     * Raw `COMPLETED` sale WITH its frozen `sale_line` rows at the migration's
+     * exact shape; COMMITTED, because it is the production INPUT the invoice
+     * command reads through the real `SaleRepository`.
+     */
+    const insertCompletedSale = async (tenantId: string): Promise<string> => {
+      const catalogItemId = itemByTenant.get(tenantId);
+      if (!catalogItemId) {
+        throw new Error(`No live billing item was provisioned for tenant ${tenantId}`);
+      }
+      const saleId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+        VALUES (${saleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+      `;
+      await prisma.$executeRaw`
+        INSERT INTO "sale_line" (
+          "id", "tenant_id", "sale_id", "catalog_item_id", "rate_code",
+          "unit_price", "quantity", "line_total", "taxable_base", "tax_amount"
+        )
+        VALUES (
+          ${randomUUID()}::uuid, ${tenantId}::uuid, ${saleId}::uuid, ${catalogItemId}::uuid,
+          'EXEMPT', 100.00::decimal, 1.000::decimal, 100.00::decimal, 100.00::decimal,
+          0.00::decimal
+        )
+      `;
+      return saleId;
+    };
+
+    /** A fresh committed `COMPLETED` sale with ONE frozen line. */
+    const freshSale = (tenantId: string): Promise<string> => insertCompletedSale(tenantId);
+
+    /** The invoice create command over REAL HTTP; returns the DRAFT it created. */
+    const createDraft = async (cookie: string, tenantId: string): Promise<InvoiceDto> => {
+      const saleId = await freshSale(tenantId);
+      return (
+        await supertest(serverUrl)
+          .post("/invoices")
+          .set("Cookie", cookie)
+          .send({ saleId })
+          .expect(201)
+      ).body as InvoiceDto;
+    };
+
+    /** The confirm command over REAL HTTP, with an optional pinned request id. */
+    const confirmInvoice = (cookie: string, id: string, requestId?: string) => {
+      const request = supertest(serverUrl).post(`/invoices/${id}/confirm`).set("Cookie", cookie);
+      return requestId === undefined ? request : request.set("X-Request-Id", requestId);
+    };
+
+    /** The cancel command over REAL HTTP, with an optional pinned request id. */
+    const cancelInvoice = (cookie: string, id: string, reason: string, requestId?: string) => {
+      const request = supertest(serverUrl).post(`/invoices/${id}/cancel`).set("Cookie", cookie);
+      return (requestId === undefined ? request : request.set("X-Request-Id", requestId)).send({
+        reason,
+      });
+    };
+
+    /** The stored invoice header, read from PostgreSQL directly. */
+    const rawInvoiceHeader = (
+      invoiceId: string
+    ): Promise<
+      {
+        status: string;
+        number: number | null;
+        confirmed_at: Date | null;
+        cancelled_at: Date | null;
+        cancel_reason: string | null;
+        tenant_id: string;
+        sale_id: string;
+      }[]
+    > =>
+      prisma.$queryRaw`
+        SELECT
+          "status"::text AS status, "number", "confirmed_at", "cancelled_at",
+          "cancel_reason", "tenant_id"::text AS tenant_id, "sale_id"::text AS sale_id
+        FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+      `;
+
+    /** The `(tenant, series)` counter row the confirm transaction advances. */
+    const sequenceRow = (tenantId: string, series = "A") =>
+      prisma.invoiceNumberSequence.findUnique({
+        where: { tenantId_series: { tenantId, series } },
+      });
+
+    /** The next number the counter would allocate; `1` before the row exists. */
+    const sequenceNextValue = async (tenantId: string): Promise<number> =>
+      (await sequenceRow(tenantId))?.nextValue ?? 1;
+
+    /** The audit rows of ONE action targeting one invoice. */
+    const auditRows = (targetId: string, action: string) =>
+      prisma.auditLog.findMany({ where: { targetId, action } });
+
+    /**
+     * Every table the invoice command surface can write, counted so a rejection
+     * can prove NOTHING was persisted for any of them. The counts are GLOBAL: a
+     * row written anywhere would fail the comparison.
+     */
+    const readResidue = async () => ({
+      invoices: await prisma.invoice.count(),
+      invoiceLines: await prisma.invoiceLine.count(),
+      sequences: await prisma.invoiceNumberSequence.count(),
+      audits: await prisma.auditLog.count(),
+    });
+
+    beforeAll(async () => {
+      const rates = await prisma.taxRate.findMany();
+      const rateIdsByCode = new Map(rates.map((rate) => [rate.code, rate.id]));
+      const requireRate = (code: string): string => {
+        const id = rateIdsByCode.get(code);
+        if (!id) {
+          throw new Error(`Reference seed did not create the global ${code} tax rate`);
+        }
+        return id;
+      };
+      exemptRateId = requireRate("EXEMPT");
+
+      const command = await provisionTenant(
+        "live-billing-command",
+        "owner-billing-command@live.test",
+        { entitled: true }
+      );
+      commandTenantId = command.tenantId;
+      commandCookie = command.cookie;
+      const foreign = await provisionTenant(
+        "live-billing-command-foreign",
+        "owner-billing-command-foreign@live.test",
+        { entitled: true }
+      );
+      foreignTenantId = foreign.tenantId;
+      foreignCookie = foreign.cookie;
+      const unentitled = await provisionTenant(
+        "live-billing-command-unentitled",
+        "owner-billing-command-unentitled@live.test",
+        { entitled: false }
+      );
+      unentitledTenantId = unentitled.tenantId;
+      unentitledCookie = unentitled.cookie;
+
+      commandItemId = await insertItem(commandTenantId, "Live Billing Command Item", exemptRateId);
+      foreignItemId = await insertItem(
+        foreignTenantId,
+        "Live Billing Command Foreign Item",
+        exemptRateId
+      );
+      unentitledItemId = await insertItem(
+        unentitledTenantId,
+        "Live Billing Command Unentitled Item",
+        exemptRateId
+      );
+      itemByTenant.set(commandTenantId, commandItemId);
+      itemByTenant.set(foreignTenantId, foreignItemId);
+      itemByTenant.set(unentitledTenantId, unentitledItemId);
+    }, 60_000);
+
+    it("confirms a DRAFT with a positive series A number and replays it without advancing the counter", async () => {
+      const draft = await createDraft(commandCookie, commandTenantId);
+      expect(draft.status).toBe("DRAFT");
+      expect(draft.number).toBeNull();
+
+      const sequenceBefore = await sequenceNextValue(commandTenantId);
+      const confirmed = await confirmInvoice(commandCookie, draft.id).expect(200);
+      const body = confirmed.body as InvoiceDto;
+      expect(Object.keys(body).sort()).toEqual(INVOICE_DTO_KEYS);
+      expect(body.status).toBe("CONFIRMED");
+      expect(body.series).toBe("A");
+      expect(body.number).not.toBeNull();
+      expect(Number.isInteger(body.number)).toBe(true);
+      expect(body.number!).toBeGreaterThan(0);
+      expect(body.confirmedAt).not.toBeNull();
+
+      // The counter advanced EXACTLY once and now points at the next number.
+      const sequenceAfterFirst = await sequenceNextValue(commandTenantId);
+      expect(sequenceAfterFirst).toBe(sequenceBefore + 1);
+      expect(sequenceAfterFirst).toBe(body.number! + 1);
+
+      // The STORED header mirrors the response.
+      const header = await rawInvoiceHeader(draft.id);
+      expect(header).toHaveLength(1);
+      expect(header[0].status).toBe("CONFIRMED");
+      expect(header[0].number).toBe(body.number);
+
+      // A REPLAY returns the SAME representation and consumes NO second number.
+      const replay = await confirmInvoice(commandCookie, draft.id).expect(200);
+      expect(replay.text).toBe(confirmed.text);
+      expect(await sequenceNextValue(commandTenantId)).toBe(sequenceAfterFirst);
+      expect(await auditRows(draft.id, "invoice.confirmed")).toHaveLength(1);
+    }, 30_000);
+
+    it("forces a real concurrent-confirm overlap on the SAME invoice: one number, one audit row, one counter advance", async () => {
+      const draft = await createDraft(commandCookie, commandTenantId);
+      const sequenceBefore = await sequenceNextValue(commandTenantId);
+
+      // Deterministic overlap: a dedicated transaction holds the invoice HEADER
+      // row lock (`SELECT ... FOR UPDATE`) — the exact row the confirm command
+      // locks FIRST — so BOTH confirmations park on that single row before
+      // either can read the status or allocate. `waitForRowLockWaiters` matches
+      // the tuple lock the waiters register on THAT exact `(relation, page,
+      // tuple)`, so an unrelated lock waiter can never satisfy the barrier and
+      // the interleaving is decided by the database boundary, not by timing.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT "id" FROM "invoice"
+            WHERE "tenant_id" = ${commandTenantId}::uuid AND "id" = ${draft.id}::uuid
+            FOR UPDATE
+          `;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+      // The row lock is held now, so the ctid cannot move under the racers.
+      const ctid = await readRowCtid(prisma, "invoice", draft.id);
+
+      const racers = [
+        confirmInvoice(commandCookie, draft.id).then((response) => response),
+        confirmInvoice(commandCookie, draft.id).then((response) => response),
+      ];
+      try {
+        await waitForRowLockWaiters(prisma, "invoice", ctid.page, ctid.tuple, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      // Exactly ONE real transition is admitted. Every interleaving that reaches
+      // the database produces this: the loser's post-lock read sees the winner's
+      // committed `CONFIRMED` status and replays, or the conditional write is a
+      // zero-row lost race. A second confirmation is NOT representable.
+      const successful = responses
+        .filter((response) => response.status === 200)
+        .map((response) => response.body as InvoiceDto);
+      const conflicts = responses.filter((response) => response.status === 409);
+      expect(successful.length + conflicts.length).toBe(2);
+      expect(successful.length).toBeGreaterThanOrEqual(1);
+      expect(conflicts.length).toBeLessThanOrEqual(1);
+      for (const conflict of conflicts) {
+        expect((conflict.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+        expect((conflict.body as { error: { message: string } }).error.message).toBe(
+          INVOICE_NOT_DRAFT_MESSAGE
+        );
+      }
+
+      // Every admitted response describes the SAME single number — never two.
+      const numbers = new Set(successful.map((body) => body.number));
+      expect(numbers.size).toBe(1);
+      const allocated = [...numbers][0];
+      expect(allocated).not.toBeNull();
+
+      // Exactly ONE number, ONE audit row and ONE counter advance across BOTH
+      // attempts: the sequence advanced EXACTLY once.
+      const header = await rawInvoiceHeader(draft.id);
+      expect(header).toHaveLength(1);
+      expect(header[0].status).toBe("CONFIRMED");
+      expect(header[0].number).toBe(allocated);
+      expect(await sequenceNextValue(commandTenantId)).toBe(sequenceBefore + 1);
+      expect(await auditRows(draft.id, "invoice.confirmed")).toHaveLength(1);
+    }, 60_000);
+
+    it("allocates two DISTINCT consecutive numbers to two different invoices under a forced overlap on the counter row", async () => {
+      // A warm-up confirmation guarantees the counter row EXISTS (the barrier
+      // locks it) and fixes the baseline the race advances from.
+      const warmup = await createDraft(commandCookie, commandTenantId);
+      await confirmInvoice(commandCookie, warmup.id).expect(200);
+      const existing = await sequenceRow(commandTenantId);
+      expect(existing).not.toBeNull();
+      const sequenceBefore = existing!.nextValue;
+
+      const first = await createDraft(commandCookie, commandTenantId);
+      const second = await createDraft(commandCookie, commandTenantId);
+
+      // Deterministic overlap on the COUNTER ROW: a dedicated transaction holds
+      // `SELECT ... FOR UPDATE` on the tenant's `invoice_number_sequence` row, so
+      // BOTH confirmations park inside the allocation statement — the ONLY thing
+      // that serializes two invoices with DIFFERENT header rows. The per-header
+      // lock cannot help here, so a distinct-consecutive result proves the
+      // counter's own atomicity.
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT "id" FROM "invoice_number_sequence" WHERE "id" = ${existing!.id}::uuid FOR UPDATE
+          `;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+      const ctid = await readRowCtid(prisma, "invoice_number_sequence", existing!.id);
+
+      const racers = [
+        confirmInvoice(commandCookie, first.id).then((response) => response),
+        confirmInvoice(commandCookie, second.id).then((response) => response),
+      ];
+      try {
+        await waitForRowLockWaiters(
+          prisma,
+          "invoice_number_sequence",
+          ctid.page,
+          ctid.tuple,
+          2,
+          10_000
+        );
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+
+      const responses = await Promise.all(racers);
+      const bodies = responses.map((response) => {
+        expect(response.status).toBe(200);
+        return response.body as InvoiceDto;
+      });
+      const numbers = bodies
+        .map((body) => body.number)
+        .sort((left, right) => (left ?? 0) - (right ?? 0));
+      expect(numbers[0]).not.toBeNull();
+      expect(numbers[1]).toBe(numbers[0]! + 1);
+      // TWO advances, one per invoice — never a shared number.
+      expect(await sequenceNextValue(commandTenantId)).toBe(sequenceBefore + 2);
+      for (const invoice of [first, second]) {
+        expect(await auditRows(invoice.id, "invoice.confirmed")).toHaveLength(1);
+      }
+    }, 60_000);
+
+    it("rejects a confirm on a CANCELLED invoice with the stable 409 and writes nothing", async () => {
+      const draft = await createDraft(commandCookie, commandTenantId);
+      await cancelInvoice(commandCookie, draft.id, "Cancelled before confirm").expect(200);
+      const residueBefore = await readResidue();
+      const sequenceBefore = await sequenceNextValue(commandTenantId);
+
+      const rejected = await confirmInvoice(commandCookie, draft.id).expect(409);
+      expect((rejected.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+      expect((rejected.body as { error: { message: string } }).error.message).toBe(
+        INVOICE_NOT_DRAFT_MESSAGE
+      );
+
+      // No residue and no number consumed by a rejected confirmation.
+      expect(await readResidue()).toEqual(residueBefore);
+      expect(await sequenceNextValue(commandTenantId)).toBe(sequenceBefore);
+      const header = await rawInvoiceHeader(draft.id);
+      expect(header).toHaveLength(1);
+      expect(header[0].status).toBe("CANCELLED");
+      expect(header[0].number).toBeNull();
+    }, 30_000);
+
+    it("cancels a DRAFT and a CONFIRMED invoice over real HTTP, the second keeping its number and its original confirmation timestamp", async () => {
+      const draft = await createDraft(commandCookie, commandTenantId);
+      const cancelledDraft = await cancelInvoice(commandCookie, draft.id, "Draft was wrong").expect(
+        200
+      );
+      const draftBody = cancelledDraft.body as InvoiceDto;
+      expect(draftBody.status).toBe("CANCELLED");
+      expect(draftBody.number).toBeNull();
+      expect(draftBody.confirmedAt).toBeNull();
+      expect(draftBody.cancelReason).toBe("Draft was wrong");
+      expect(draftBody.cancelledAt).not.toBeNull();
+      const storedDraft = await rawInvoiceHeader(draft.id);
+      expect(storedDraft).toHaveLength(1);
+      expect(storedDraft[0].status).toBe("CANCELLED");
+      expect(storedDraft[0].number).toBeNull();
+      expect(storedDraft[0].cancel_reason).toBe("Draft was wrong");
+
+      // A CONFIRMED invoice keeps BOTH its allocated number and its original
+      // `confirmed_at` through the cancellation (DEC-039, DEC-043).
+      const issued = await createDraft(commandCookie, commandTenantId);
+      const confirmed = (await confirmInvoice(commandCookie, issued.id).expect(200))
+        .body as InvoiceDto;
+      const numberBefore = confirmed.number;
+      const confirmedAtBefore = confirmed.confirmedAt;
+      expect(numberBefore).not.toBeNull();
+      expect(confirmedAtBefore).not.toBeNull();
+
+      const cancelledConfirmed = await cancelInvoice(
+        commandCookie,
+        issued.id,
+        "Issued by mistake"
+      ).expect(200);
+      const body = cancelledConfirmed.body as InvoiceDto;
+      expect(body.status).toBe("CANCELLED");
+      expect(body.number).toBe(numberBefore);
+      expect(body.confirmedAt).toBe(confirmedAtBefore);
+      expect(body.cancelReason).toBe("Issued by mistake");
+      expect(body.cancelledAt).not.toBeNull();
+
+      const stored = await rawInvoiceHeader(issued.id);
+      expect(stored).toHaveLength(1);
+      expect(stored[0].status).toBe("CANCELLED");
+      expect(stored[0].number).toBe(numberBefore);
+      expect(stored[0].confirmed_at!.toISOString()).toBe(confirmedAtBefore);
+
+      // Each real transition wrote exactly ONE cancelled row; a REPEAT is a
+      // replay with the same body and NO second row.
+      expect(await auditRows(draft.id, "invoice.cancelled")).toHaveLength(1);
+      expect(await auditRows(issued.id, "invoice.cancelled")).toHaveLength(1);
+      const replay = await cancelInvoice(commandCookie, issued.id, "A different reason").expect(
+        200
+      );
+      expect(replay.text).toBe(cancelledConfirmed.text);
+      expect(await auditRows(issued.id, "invoice.cancelled")).toHaveLength(1);
+    }, 30_000);
+
+    it("masks a foreign and an unknown invoice id as one byte-equivalent 404 on BOTH commands with the same request id", async () => {
+      const foreignInvoice = await createDraft(foreignCookie, foreignTenantId);
+      const residueBefore = await readResidue();
+
+      const confirmForeign = await confirmInvoice(
+        commandCookie,
+        foreignInvoice.id,
+        COMMAND_NOT_FOUND_REQUEST_ID
+      ).expect(404);
+      const confirmUnknown = await confirmInvoice(
+        commandCookie,
+        randomUUID(),
+        COMMAND_NOT_FOUND_REQUEST_ID
+      ).expect(404);
+      const cancelForeign = await cancelInvoice(
+        commandCookie,
+        foreignInvoice.id,
+        "Mistaken",
+        COMMAND_NOT_FOUND_REQUEST_ID
+      ).expect(404);
+      const cancelUnknown = await cancelInvoice(
+        commandCookie,
+        randomUUID(),
+        "Mistaken",
+        COMMAND_NOT_FOUND_REQUEST_ID
+      ).expect(404);
+
+      for (const probe of [confirmForeign, confirmUnknown, cancelForeign, cancelUnknown]) {
+        expect((probe.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+        expect((probe.body as { error: { message: string } }).error.message).toBe(
+          INVOICE_NOT_FOUND_MESSAGE
+        );
+        expect(probe.headers["x-request-id"]).toBe(COMMAND_NOT_FOUND_REQUEST_ID);
+      }
+      // ALL FOUR are the SAME bytes: one shared message and one pinned request
+      // id make a foreign id indistinguishable from an unknown one on EITHER
+      // command.
+      expect(
+        new Set([confirmForeign.text, confirmUnknown.text, cancelForeign.text, cancelUnknown.text])
+          .size
+      ).toBe(1);
+      for (const leaked of [foreignInvoice.id, foreignInvoice.saleId, foreignTenantId]) {
+        expect(confirmForeign.text, leaked).not.toContain(leaked);
+        expect(cancelForeign.text, leaked).not.toContain(leaked);
+      }
+
+      // Neither tenant's rows moved and the foreign invoice is still a DRAFT.
+      expect(await readResidue()).toEqual(residueBefore);
+      const stored = await rawInvoiceHeader(foreignInvoice.id);
+      expect(stored).toHaveLength(1);
+      expect(stored[0].status).toBe("DRAFT");
+      expect(stored[0].tenant_id).toBe(foreignTenantId);
+      expect(stored[0].number).toBeNull();
+    }, 30_000);
+
+    it("returns 403 FEATURE_NOT_ENTITLED to an unentitled tenant on both commands, persisting nothing", async () => {
+      // The create route is itself entitlement-gated, so the draft is seeded
+      // directly for this tenant.
+      const saleId = await freshSale(unentitledTenantId);
+      const draft = await prisma.invoice.create({
+        data: {
+          tenantId: unentitledTenantId,
+          saleId,
+          currency: "PYG",
+          lines: { create: [] },
+        },
+      });
+      unentitledDraftId = draft.id;
+      const residueBefore = await readResidue();
+
+      const confirm = await confirmInvoice(unentitledCookie, draft.id).expect(403);
+      expect((confirm.body as ErrorEnvelope).error.code).toBe("FEATURE_NOT_ENTITLED");
+      expect((confirm.body as { error: { message: string } }).error.message).toBe(
+        BILLING_FEATURE_NOT_ENTITLED_MESSAGE
+      );
+      const cancel = await cancelInvoice(unentitledCookie, draft.id, "Mistaken").expect(403);
+      expect((cancel.body as ErrorEnvelope).error.code).toBe("FEATURE_NOT_ENTITLED");
+      expect((cancel.body as { error: { message: string } }).error.message).toBe(
+        BILLING_FEATURE_NOT_ENTITLED_MESSAGE
+      );
+
+      // The entitlement gate runs BEFORE any data access: no write, no number.
+      expect(await readResidue()).toEqual(residueBefore);
+      const stored = await rawInvoiceHeader(draft.id);
+      expect(stored).toHaveLength(1);
+      expect(stored[0].status).toBe("DRAFT");
+    }, 30_000);
+
+    it("writes exactly one confirmed and one cancelled audit row per real transition and never the reason text", async () => {
+      const draft = await createDraft(commandCookie, commandTenantId);
+
+      await confirmInvoice(commandCookie, draft.id).expect(200);
+      expect(await auditRows(draft.id, "invoice.confirmed")).toHaveLength(1);
+      expect(await auditRows(draft.id, "invoice.cancelled")).toHaveLength(0);
+
+      const reason = "Audit must never carry this 8f3a text";
+      await cancelInvoice(commandCookie, draft.id, reason).expect(200);
+      const cancelledRows = await auditRows(draft.id, "invoice.cancelled");
+      expect(cancelledRows).toHaveLength(1);
+      expect(cancelledRows[0].targetType).toBe("invoice");
+      expect(cancelledRows[0].targetId).toBe(draft.id);
+      expect(cancelledRows[0].tenantId).toBe(commandTenantId);
+      // Field NAMES only — the metadata is the schema version and the names.
+      expect(cancelledRows[0].metadata).toEqual({
+        schemaVersion: 1,
+        changedFields: ["status", "cancelledAt", "cancelReason"],
+      });
+      expect(JSON.stringify(cancelledRows[0].metadata)).not.toContain(reason);
+
+      // A replay writes NO second row for either action.
+      await cancelInvoice(commandCookie, draft.id, "another reason").expect(200);
+      expect(await auditRows(draft.id, "invoice.cancelled")).toHaveLength(1);
+      expect(await auditRows(draft.id, "invoice.confirmed")).toHaveLength(1);
+    }, 30_000);
+
+    it("leaves no residue: rejected commands wrote nothing and no rejected command advanced the counter", async () => {
+      // The unentitled tenant's ONLY invoice is the `DRAFT` the entitlement case
+      // seeded DIRECTLY: both command rejections left it untouched and created no
+      // line, no counter row and no audit row.
+      expect(await prisma.invoice.count({ where: { tenantId: unentitledTenantId } })).toBe(1);
+      expect(await prisma.invoiceLine.count({ where: { tenantId: unentitledTenantId } })).toBe(0);
+      expect(
+        await prisma.invoiceNumberSequence.count({ where: { tenantId: unentitledTenantId } })
+      ).toBe(0);
+      expect(await prisma.auditLog.count({ where: { tenantId: unentitledTenantId } })).toBe(0);
+      const seededUnentitled = await rawInvoiceHeader(unentitledDraftId);
+      expect(seededUnentitled).toHaveLength(1);
+      expect(seededUnentitled[0].status).toBe("DRAFT");
+      expect(seededUnentitled[0].number).toBeNull();
+
+      // Every stored invoice of the command tenant is internally consistent: a
+      // `CONFIRMED` row has a number, a `CANCELLED` row explains itself, and no
+      // cancelled row ever lost a number it had been allocated.
+      const invoices = await prisma.invoice.findMany({
+        where: { tenantId: commandTenantId },
+        select: {
+          id: true,
+          status: true,
+          number: true,
+          confirmedAt: true,
+          cancelledAt: true,
+          cancelReason: true,
+        },
+      });
+      expect(invoices.length).toBeGreaterThan(0);
+      for (const invoice of invoices) {
+        if (invoice.status === "CONFIRMED") {
+          expect(invoice.number, invoice.id).not.toBeNull();
+          expect(invoice.confirmedAt, invoice.id).not.toBeNull();
+        }
+        if (invoice.status === "CANCELLED") {
+          expect(invoice.cancelledAt, invoice.id).not.toBeNull();
+          expect(invoice.cancelReason, invoice.id).not.toBeNull();
+          // A confirmed-then-cancelled row kept its number AND its timestamp.
+          if (invoice.number !== null) {
+            expect(invoice.confirmedAt, invoice.id).not.toBeNull();
+          }
+        }
+      }
     }, 30_000);
   });
 });

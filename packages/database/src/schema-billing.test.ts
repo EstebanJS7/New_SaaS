@@ -21,7 +21,9 @@ import { findMigration, loadMigrations, loadPrismaSchema } from "./schema-files.
  *     contradict DEC-043's "a cancelled invoice releases its sale";
  *   * a stored header total reappearing on a snapshot aggregate (DEC-038);
  *   * a `CASCADE` that would let PostgreSQL destroy a confirmed financial
- *     document implicitly.
+ *     document implicitly;
+ *   * a header guard that constrains WHICH transition is legal but not WHICH
+ *     COLUMNS a permitted transition may change (TD-023).
  *
  * Scope of this file: the persistence guarantees only. The `billing.*`
  * permission seeds are gated in `reference-seed.test.ts`, and the HTTP surface
@@ -31,6 +33,14 @@ import { findMigration, loadMigrations, loadPrismaSchema } from "./schema-files.
 const SCHEMA = loadPrismaSchema();
 const MIGRATIONS = loadMigrations();
 const BILLING_SQL = findMigration(MIGRATIONS, "_billing_invoice_foundation").sql;
+/**
+ * TD-023 (BILL-003 W1): the additive migration that REPLACES the body of
+ * `invoice_no_update_unless_permitted_transition`, so the applied guard is a
+ * permitted transition PLUS the ownership clause. The trigger declaration
+ * itself stays in `BILLING_SQL` — `CREATE OR REPLACE FUNCTION` resolves by name,
+ * so the tightening must not recreate it.
+ */
+const INVOICE_GUARD_SQL = findMigration(MIGRATIONS, "_invoice_header_guard_tightening").sql;
 
 /** The three invoice tables, in migration order. */
 const INVOICE_TABLES = ["invoice", "invoice_line", "invoice_number_sequence"] as const;
@@ -105,13 +115,19 @@ function tableBlock(table: string): string {
   return block;
 }
 
-/** Body of one `CREATE OR REPLACE FUNCTION "<name>"()` declaration. */
-function functionBody(name: string): string {
+/**
+ * Body of one `CREATE OR REPLACE FUNCTION "<name>"()` declaration. `sql`
+ * defaults to the BILL-001 foundation migration because that is where every
+ * invoice function is DECLARED; a body later replaced by an additive migration
+ * is read from that migration's SQL instead (TD-023 reads the header guard from
+ * `INVOICE_GUARD_SQL`).
+ */
+function functionBody(name: string, sql: string = BILLING_SQL): string {
   const marker = `CREATE OR REPLACE FUNCTION "${name}"()`;
-  const start = BILLING_SQL.indexOf(marker);
+  const start = sql.indexOf(marker);
   expect(start, `function ${name} must exist`).toBeGreaterThan(-1);
 
-  const rest = BILLING_SQL.slice(start + marker.length);
+  const rest = sql.slice(start + marker.length);
   const end = rest.indexOf("$$ LANGUAGE plpgsql;");
   expect(end, `function ${name} must close with a plpgsql language clause`).toBeGreaterThan(-1);
   return rest.slice(0, end);
@@ -413,7 +429,11 @@ describe("migration · invoice foundation (EPIC-14 BILL-001)", () => {
     // trigger would block the very transitions it exists to protect. It is
     // still not a hole: only `DRAFT -> CONFIRMED`, `DRAFT -> CANCELLED` and
     // `CONFIRMED -> CANCELLED` pass.
-    const body = functionBody("invoice_no_update_unless_permitted_transition");
+    //
+    // The body is read from TD-023's additive migration, which is the APPLIED
+    // definition: the allow-list below is what the tightened guard must still
+    // enforce verbatim.
+    const body = functionBody("invoice_no_update_unless_permitted_transition", INVOICE_GUARD_SQL);
 
     // A cancelled invoice is terminal, and a draft is immutable from creation:
     // each has its own explicit rejection ahead of the three-clause predicate.
@@ -430,9 +450,126 @@ describe("migration · invoice foundation (EPIC-14 BILL-001)", () => {
     expect(body).toMatch(/ERRCODE = 'restrict_violation'/);
     expect(body).toMatch(/RETURN NEW;/);
 
+    // The TRIGGER declaration is NOT part of the tightening: it lives in the
+    // foundation migration, resolves the function by name, and must keep its
+    // `BEFORE UPDATE ... FOR EACH ROW` shape, so TD-023 recreates nothing.
     expect(BILLING_SQL).toMatch(
       /CREATE TRIGGER "invoice_no_update_unless_permitted_transition_trigger"\s+BEFORE UPDATE ON "invoice"\s+FOR EACH ROW EXECUTE FUNCTION "invoice_no_update_unless_permitted_transition"\(\)/
     );
+    expect(INVOICE_GUARD_SQL).not.toMatch(/CREATE TRIGGER/);
+  });
+
+  it("pins TD-023's ownership clause: a permitted transition may only change the columns it owns", () => {
+    // TD-023: `invoice_no_update_unless_permitted_transition` once inspected the
+    // status transition ONLY, so a permitted transition could silently rewrite
+    // the document's identity columns. Each clause below is asserted as an
+    // exact `IF ... THEN` / `RAISE` / `ERRCODE` / `END IF` block, so a clause
+    // that lost its raise, its predicate or its `restrict_violation` code is a
+    // failure rather than a silent pass.
+    const body = functionBody("invoice_no_update_unless_permitted_transition", INVOICE_GUARD_SQL);
+
+    const ownedByNothing = [
+      ["tenant_id", "a permitted transition cannot move an invoice to another tenant"],
+      ["id", "a permitted transition cannot change the invoice id"],
+      ["sale_id", "a permitted transition cannot re-point an invoice to another sale"],
+      ["customer_id", "a permitted transition cannot change the invoice customer"],
+      ["currency", "a permitted transition cannot change the invoice currency"],
+      ["series", "a permitted transition cannot change the invoice series"],
+      ["created_at", "a permitted transition cannot change the invoice creation timestamp"],
+    ] as const;
+    expect(ownedByNothing).toHaveLength(7);
+
+    for (const [column, message] of ownedByNothing) {
+      expect(body, column).toMatch(
+        new RegExp(
+          `IF NEW\\."${column}" IS DISTINCT FROM OLD\\."${column}" THEN\\s+RAISE EXCEPTION '${message}'\\s+USING ERRCODE = 'restrict_violation';\\s+END IF;`
+        )
+      );
+      // The raise sits INSIDE the clause: no clause may fall through silently.
+      const clauseStart = body.indexOf(`IF NEW."${column}" IS DISTINCT FROM`);
+      const clauseEnd = body.indexOf("END IF;", clauseStart);
+      expect(body.slice(clauseStart, clauseEnd), column).toContain("RAISE EXCEPTION");
+    }
+
+    // `confirmed_at` is owned by `DRAFT -> CONFIRMED` ALONE. That exception is
+    // what keeps a cancellation from moving the original confirmation time
+    // while still letting the confirmation stamp it.
+    expect(body).toMatch(
+      /IF NEW\."confirmed_at" IS DISTINCT FROM OLD\."confirmed_at"\s+AND NOT \(OLD\."status" = 'DRAFT' AND NEW\."status" = 'CONFIRMED'\) THEN\s+RAISE EXCEPTION 'a permitted transition cannot change the invoice confirmation timestamp'\s+USING ERRCODE = 'restrict_violation';\s+END IF;/
+    );
+
+    // The columns the transition DOES own stay free, so none of them gains a
+    // comparison: Prisma writes `updated_at` on confirm and on cancel, and
+    // `cancelled_at`/`cancel_reason` are exactly what the cancellation writes
+    // (the CHECKs already tie both to `CANCELLED`). `number` is owned by
+    // `invoice_number_never_reallocated` and `status` by the allow-list, so the
+    // tightened guard adds no second authority over either.
+    for (const column of ["updated_at", "cancelled_at", "cancel_reason", "number", "status"]) {
+      expect(body, column).not.toMatch(new RegExp(`IS DISTINCT FROM OLD\\."${column}"`));
+    }
+
+    // Every rejection is a `restrict_violation` and the success path is still
+    // `RETURN NEW`: three transition clauses plus the eight ownership clauses.
+    expect([...body.matchAll(/RAISE EXCEPTION/g)]).toHaveLength(11);
+    expect([...body.matchAll(/IS DISTINCT FROM/g)]).toHaveLength(8);
+    expect(body).toMatch(/RETURN NEW;/);
+    expect(body).toMatch(/ERRCODE = 'restrict_violation'/);
+  });
+
+  it("tightens the header guard additively: it replaces one function body and nothing else (TD-023)", () => {
+    // A replacement migration must not quietly become a schema change. Exactly
+    // ONE function body is replaced, no table is altered (the `ALTER TABLE`
+    // target set is EMPTY), no column, index, constraint or trigger is created,
+    // no row is written and nothing is dropped.
+    const replacedFunctions = [
+      ...INVOICE_GUARD_SQL.matchAll(/CREATE OR REPLACE FUNCTION "([a-z_]+)"/g),
+    ].map(([, name]) => name);
+    expect(replacedFunctions).toEqual(["invoice_no_update_unless_permitted_transition"]);
+
+    const alteredTables = [...INVOICE_GUARD_SQL.matchAll(/ALTER TABLE "([a-z_]+)"/g)].map(
+      ([, table]) => table
+    );
+    expect(alteredTables).toEqual([]);
+
+    expect(INVOICE_GUARD_SQL).not.toMatch(/^\s*CREATE TABLE\b/im);
+    expect(INVOICE_GUARD_SQL).not.toMatch(/^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/im);
+    expect(INVOICE_GUARD_SQL).not.toMatch(/^\s*CREATE TRIGGER\b/im);
+    expect(INVOICE_GUARD_SQL).not.toMatch(/^\s*(CREATE|ALTER|DROP) TYPE\b/im);
+    expect(INVOICE_GUARD_SQL).not.toMatch(/\bINSERT\b/i);
+    expect(INVOICE_GUARD_SQL).not.toMatch(/\bDROP\b/i);
+    expect(INVOICE_GUARD_SQL).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(INVOICE_GUARD_SQL).not.toMatch(/\bTRUNCATE\b/i);
+    // No data mutation: the only UPDATE token may be inside the prose header
+    // that explains why no row is rewritten, never a real `UPDATE ... SET`.
+    expect(INVOICE_GUARD_SQL).not.toMatch(/\bUPDATE\s+[^\s]+\s+SET\b/i);
+    // Prisma wraps each migration in ONE transaction already; an explicit
+    // BEGIN/COMMIT would nest or split it.
+    expect(INVOICE_GUARD_SQL).not.toMatch(/^\s*(BEGIN|COMMIT)\s*;/im);
+
+    // The guard is replaced, never removed: the foundation migration still
+    // declares the original function AND the trigger that resolves it by name.
+    expect(BILLING_SQL).toMatch(
+      /CREATE OR REPLACE FUNCTION "invoice_no_update_unless_permitted_transition"\(\)/
+    );
+    expect(BILLING_SQL).toMatch(
+      /CREATE TRIGGER "invoice_no_update_unless_permitted_transition_trigger"/
+    );
+  });
+
+  it("classifies TD-023's replacement in the applied artifact", () => {
+    // The header prose carries the same four facts every additive migration in
+    // this slice does: what it does, that it is strictly additive, why the
+    // replacement is safe, and the data classification paragraph.
+    expect(INVOICE_GUARD_SQL).toMatch(/strictly additive/);
+    expect(INVOICE_GUARD_SQL).toMatch(/CREATE OR REPLACE FUNCTION/);
+    expect(INVOICE_GUARD_SQL).toMatch(/Data classification/);
+    expect(INVOICE_GUARD_SQL).toMatch(/CONFIDENTIAL/);
+    expect(INVOICE_GUARD_SQL).toMatch(/INTERNAL \(PRD §41\)/);
+    expect(INVOICE_GUARD_SQL).toMatch(/logs and audit carry ids and field names only/);
+    // TD-023 is the record this migration closes, and the trigger is explicitly
+    // NOT recreated because it resolves the function by name.
+    expect(INVOICE_GUARD_SQL).toMatch(/TD-023/);
+    expect(INVOICE_GUARD_SQL).toMatch(/is NOT recreated/);
   });
 
   it("never reallocates an allocated number", () => {
