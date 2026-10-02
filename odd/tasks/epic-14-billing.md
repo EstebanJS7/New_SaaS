@@ -868,6 +868,51 @@ BILL-003 closed.
   outcome is therefore only satisfiable in the weaker replay-safe-rendering
   sense, and W3 must say so rather than tick it as written.
 
+### BILL-004 W2 — RDD native review (ESCALATED, not closed)
+
+- Lineage `review-eb548b67172897d8`, candidate `feb344d..ef5e1c4`, 18 paths,
+  2367 changed lines, tier medium, one lens (`review-reliability`). The provider
+  derived one lens because the change is front-end TypeScript, not a process
+  boundary — so the parent read the diff itself, which is how the navigation
+  change and the no-arithmetic property were verified independently.
+- The review raised `R3-001` (**CRITICAL**): the surface passed one shared
+  confirm/cancel mutation state to whichever invoice was selected, so after a
+  failure or while pending, a selection change could render the previous
+  invoice's error, pending label or late success outcome. **The same defect
+  class EPIC-13 had already corrected in the Cash surface.**
+- Correction: `d946d4a` binds each command's pending state, error and outcome to
+  the invoice its `variables` name, renders an outcome only while its invoice is
+  selected, and resets settled command state on a selection change while leaving
+  an in-flight command alone. Four scenarios are asserted with observable
+  assertions: pending plus switch, failed cancel plus switch, a late resolution
+  that does not render on the other invoice, and returning that shows its own
+  settled outcome.
+- The correction plan was refused once because the range measured **226** lines
+  against a budget of 200: a formatting-only commit to this file (`68ce18c`) had
+  landed **inside** the correction range. `b3238cf` tightened the test
+  scaffolding to **196** changed lines with every scenario still covered, and
+  the plan was then admitted.
+- **The review is escalated, not closed.** The `targeted_validation_required`
+  slot refused at admission twice —
+  `admitted targeted-validator evidence does not match its request and digests`
+  (in ~1.8s, too fast for a real validator run, so the relay appears to reuse a
+  stale artifact) and then `native-operation-failed` with
+  `lineage_created: false` — and the authority then escalated to the terminal
+  stop `native_stop_required` with
+  `escalation: { cause: "targeted_validator_rejected", finding_ids: ["R3-001"] }`.
+  No verdict was authored, and per the stop table this is terminal: the
+  maintainer inspects the authority or disables the review switch for this
+  clone.
+- Consequence to carry forward honestly: this candidate has **no closed review
+  verdict**. The correction is committed, pushed and verified by every gate plus
+  the four regression scenarios, but the review outcome for it is _escalated_,
+  not approved. Delivery is unaffected because a review outcome never authorizes
+  delivery; the PR body must state the escalation rather than imply approval.
+- Two process defects of this session, both recorded so they are not repeated:
+  committing a file before its formatter step had actually run (`ef5e1c4`
+  shipped an unformatted tracking file that CI's format check would have
+  rejected), and letting an unrelated commit sit inside a correction range.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
