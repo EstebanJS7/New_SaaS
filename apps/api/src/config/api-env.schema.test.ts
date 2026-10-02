@@ -91,6 +91,7 @@ describe("apiEnv branding production gate", () => {
     const result = apiEnv({
       ...BASE_ENV,
       NODE_ENV: "production",
+      FISCAL_PROVIDER: "fake",
       BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
       BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
     });
@@ -161,6 +162,38 @@ describe("readBrandingAssetDeliveryConfig non-production fallback", () => {
   });
 });
 
+describe("apiEnv fiscal provider selection", () => {
+  it("accepts the closed fake provider and rejects unknown values", () => {
+    expect(apiEnv({ ...BASE_ENV, FISCAL_PROVIDER: "fake" }).success).toBe(true);
+    expect(apiEnv({ ...BASE_ENV, FISCAL_PROVIDER: "unknown" }).success).toBe(false);
+  });
+
+  it("requires an explicit provider in production and accepts fake", () => {
+    const missing = apiEnv({
+      ...BASE_ENV,
+      NODE_ENV: "production",
+      BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
+      BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
+    });
+    expect(missing.success).toBe(false);
+    if (!missing.success) expect(missing.error).toContain("FISCAL_PROVIDER");
+
+    expect(
+      apiEnv({
+        ...BASE_ENV,
+        NODE_ENV: "production",
+        FISCAL_PROVIDER: "fake",
+        BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
+        BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
+      }).success
+    ).toBe(true);
+  });
+
+  it("allows the provider to be unset outside production", () => {
+    expect(apiEnv({ ...BASE_ENV, NODE_ENV: "development" }).success).toBe(true);
+  });
+});
+
 describe("apiEnv production storage gate", () => {
   const PRODUCTION_BUCKET = "newsaas-branding-assets";
 
@@ -168,6 +201,7 @@ describe("apiEnv production storage gate", () => {
   const productionBase = {
     ...BASE_ENV,
     NODE_ENV: "production",
+    FISCAL_PROVIDER: "fake",
     BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
     BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
   };
