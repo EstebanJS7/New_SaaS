@@ -168,6 +168,8 @@ model Tenant {
   invoices                    Invoice[]
   invoiceLines                InvoiceLine[]
   invoiceNumberSequences      InvoiceNumberSequence[]
+  /// EPIC-15 FiscalDocument records owned by this tenant.
+  fiscalDocuments             FiscalDocument[]
 
   @@map("tenant")
 }
@@ -2381,6 +2383,9 @@ model Invoice {
   /// Tenant list lookup: `(tenant_id, status)` serves the status-filtered
   /// invoice list without a second scan.
   @@index([tenantId, status])
+  /// Fiscal documents reference invoices through the composite tenant-ownership FK.
+  fiscalDocuments FiscalDocument[]
+
   @@map("invoice")
 }
 
@@ -2474,6 +2479,88 @@ model InvoiceNumberSequence {
   /// One counter per (tenant, series): the allocation scope of DEC-039.
   @@unique([tenantId, series])
   @@map("invoice_number_sequence")
+}
+
+// ---------------------------------------------------------------------------
+// EPIC-15 Fiscal data foundation (FISC-002, DEC-046/049/050). This is a
+// separate tenant-scoped aggregate linked to immutable Billing invoices only
+// through composite ownership; no fiscal state or fiscal fields are added to
+// Invoice. No route, provider, worker, settings or seed is introduced here.
+// ---------------------------------------------------------------------------
+
+/// Fiscal provider identifiers (PRD §22). Values are appended, never reordered
+/// or removed. Evolve additively only.
+enum FiscalProvider {
+  THIRD_PARTY
+  SIFEN_DIRECT
+  FAKE
+
+  @@map("fiscal_provider")
+}
+
+/// Internal fiscal lifecycle (SIFEN.md, DEC-051), excluding SIGNING until a
+/// real adapter defines that stage. Values are appended, never reordered or
+/// removed. Evolve additively only.
+enum FiscalDocumentStatus {
+  PENDING
+  QUEUED
+  SENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+  ERROR
+  CANCEL_PENDING
+  CANCELLED
+
+  @@map("fiscal_document_status")
+}
+
+/// Tenant-scoped provider submission record. A partial unique index permits
+/// only one non-cancelled row per source invoice; cancellation explicitly
+/// releases that key. Retries update this same row; no attempts table exists.
+/// No invoice series, number, currency, customer or money snapshot is duplicated:
+/// confirmed invoices are immutable, so consumers read the request data through
+/// the composite tenant-ownership FK. No secret material is stored.
+/// Data classification: provider references (externalId, cdc, storage keys) and
+/// request/response snapshots are CONFIDENTIAL; status and attempt counters are
+/// INTERNAL (PRD §41). Provider snapshots/errors must be sanitized; logs and
+/// audit carry IDs and field names only.
+model FiscalDocument {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId  String @map("tenant_id") @db.Uuid
+  invoiceId String @map("invoice_id") @db.Uuid
+
+  provider FiscalProvider
+  status   FiscalDocumentStatus @default(PENDING)
+
+  externalId String? @map("external_id")
+  cdc        String?
+
+  xmlStorageKey  String? @map("xml_storage_key")
+  kudeStorageKey String? @map("kude_storage_key")
+
+  requestSnapshot  Json? @map("request_snapshot")
+  responseSnapshot Json? @map("response_snapshot")
+
+  attemptCount     Int       @default(0) @map("attempt_count")
+  lastAttemptAt    DateTime? @map("last_attempt_at") @db.Timestamptz(3)
+  lastErrorCode    String?   @map("last_error_code")
+  lastErrorMessage String?   @map("last_error_message")
+  submittedAt      DateTime? @map("submitted_at") @db.Timestamptz(3)
+  resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(3)
+  cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  invoice Invoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status])
+  @@index([tenantId, invoiceId])
+  @@map("fiscal_document")
 }
 
 // ---------------------------------------------------------------------------
