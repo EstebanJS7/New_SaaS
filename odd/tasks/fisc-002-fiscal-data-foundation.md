@@ -219,14 +219,15 @@ functions plus triggers. Additive only: no `DROP`, no `INSERT`, no
       gates and bump the frozen ownership-key counter 22 → 23.
 - [x] T4 — Add the live-PostgreSQL `EPIC-15 fiscal data foundation` block with
       constraint, partial-index, trigger and cross-tenant probes. Written as 22
-      cases; execution blocked because no PostgreSQL is reachable in this
-      environment.
-- [ ] T5 — Verify: database suite, live-PostgreSQL suite, `db:generate`,
-      `db:deploy`, `typecheck`, `lint`, `format-check`; then native review. The
-      database suite (19 files / 407 tests), `db:generate`, `typecheck` (14/14),
-      `lint` (14/14), `build` (9/9) and `format-check` passed; the
-      live-PostgreSQL suite and `db:deploy` remain blocked by the missing
-      database and are the slice's only open verification item.
+      cases, then executed once PostgreSQL was reachable: 15 of them failed and
+      the five causes were fixed, which also split the attempt-count case into
+      an INSERT probe and an UPDATE probe. Final: 23 cases, all passing.
+- [x] T5 — Verify: database suite, live-PostgreSQL suite, `db:generate`,
+      `db:deploy`, `typecheck`, `lint`, `format-check`; then native review. All
+      green: database 19 files / 407 tests, `db:deploy` 30 migrations,
+      live-PostgreSQL 176/176, `typecheck` 14/14, `lint` 14/14, `build` 9/9,
+      `format-check` clean. Three native review rounds, all approved and
+      acknowledged.
 
 T1 is owned by the delegated writer, which pinned the contract into the story
 file in the same commit as the schema it describes.
@@ -275,6 +276,23 @@ file in the same commit as the schema it describes.
   detector available, so its advisories must be read as candidate defects to
   verify rather than as style notes to record. Three review rounds were needed
   to surface what one live run would have shown in seconds.
+
+## Execution round (the gate that three review rounds could not replace)
+
+Once a local PostgreSQL was reachable, `db:deploy` applied 30 migrations and the
+fiscal block ran: **15 of 22 cases failed**. Every failure was a real defect
+that reading and three 4-lens review rounds had not caught. The five causes —
+Prisma's multi-line render, an invoice fixture colliding on
+`UNIQUE (tenant_id, series, number)`, untyped parameters, a CHECK probed on a
+path its own trigger preempts, and two wrong catalogue expectations — are
+detailed in the Story's `### What executing the gate changed`.
+
+Final state: 23 fiscal cases, 176/176 for the whole live-PostgreSQL suite.
+
+**Lesson to carry into FISC-003+**: for a slice that ships a database artifact,
+the executable gate is not "nice to have" — it is the only reviewer that finds
+this class of defect. When it is unavailable, treat the slice as unverified and
+say so, rather than letting three green review rounds stand in for a run.
 
 ## Notes
 

@@ -15615,10 +15615,20 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     let fiscalDocumentAId: string;
     let fiscalDocumentBaseline: number;
 
+    /**
+     * The database's PRIMARY message only.
+     *
+     * Prisma forwards the server's whole render inside one backtick pair: the
+     * `ERROR: <primary>` line, an embedded newline, and a `DETAIL: Failing row
+     * contains (...)` line that echoes every column value. Comparing a probe to
+     * the primary message exactly is what keeps an assertion from depending on
+     * row values — and from passing or failing for the wrong reason.
+     */
     const databaseMessage = (error: unknown): string => {
       const text = error instanceof Error ? error.message : String(error);
       const match = /Message: `([\s\S]*?)`/.exec(text);
-      return (match ? match[1] : text).replace(/^ERROR: /, "");
+      const serverRender = (match ? match[1] : text).replace(/^ERROR: /, "");
+      return serverRender.split("\n")[0];
     };
 
     const captureDatabaseMessage = async (probe: () => Promise<unknown>): Promise<string> => {
@@ -15672,6 +15682,19 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       return id;
     };
 
+    /**
+     * Monotonic invoice identity for the rows this block creates.
+     *
+     * `invoice` enforces `UNIQUE (tenant_id, series, number)` on a non-cancelled
+     * row and this suite shares one tenant across blocks, so a case that needs
+     * its own invoice cannot reuse the fixture's `A/1`.
+     */
+    let fiscalInvoiceSequence = 0;
+    const nextFiscalInvoiceNumber = (): number => {
+      fiscalInvoiceSequence += 1;
+      return 1000 + fiscalInvoiceSequence;
+    };
+
     const insertRawFiscalInvoice = async (
       tx: Prisma.TransactionClient,
       tenantId: string,
@@ -15694,7 +15717,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         ) VALUES (
           ${id}::uuid, ${tenantId}::uuid, ${saleId}::uuid,
           ${options.customerId ?? null}::uuid, 'PYG', ${options.status ?? "CONFIRMED"}::invoice_status,
-          ${options.series ?? "A"}, ${options.number === undefined ? 1 : options.number}::int,
+          ${options.series ?? "A"}, ${options.number === undefined ? nextFiscalInvoiceNumber() : options.number}::int,
           ${options.confirmedAt === undefined ? new Date() : options.confirmedAt}::timestamptz,
           ${options.cancelledAt ?? null}::timestamptz, ${options.cancelReason ?? null}
         )
@@ -15846,10 +15869,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         rows.map((row) => [row.conname, normalizeIndexPredicate(row.definition)])
       );
       expect(defs.get("fiscal_document_attempt_count_non_negative")).toBe(
-        "CHECK((attempt_count>=(0)::integer))"
+        "CHECK((attempt_count>=0))"
       );
       expect(defs.get("fiscal_document_cancelled_at_iff_cancelled")).toBe(
-        "CHECK(((cancelled_atISNULL)=(status<>'CANCELLED'::fiscal_document_status)))"
+        "CHECK(((cancelled_atISNULL)=(status<>'CANCELLED')))"
       );
       const externalIdConstraint = await prisma.$queryRaw<{ exists: boolean }[]>`
         SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fiscal_document_external_id_iff_resolved') AS exists
@@ -15910,21 +15933,18 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     }, 30_000);
 
     it("releases the partial unique key only after cancellation", async () => {
-      // Two distinct rejections plus one admitted insert, so three isolated
-      // transactions: an aborted transaction cannot host the next probe.
-      await inRolledBackTransaction(async (tx) => {
-        const databaseRejection = await captureDatabaseMessage(() =>
-          insertRawFiscalDocument(tx, tenantAId, fiscalInvoiceAId)
-        );
-        expect(databaseRejection).toContain("duplicate key value violates unique constraint");
-      });
-
+      // A rejection and an admitted insert cannot share a transaction: PostgreSQL
+      // aborts the transaction on the first failed statement. The unique violation
+      // is read through `captureRawRejection` because Prisma forwards the server's
+      // DETAIL line (`Key (...) already exists.`) rather than the constraint
+      // sentence a `captureDatabaseMessage` probe would compare against.
       await inRolledBackTransaction(async (tx) => {
         const rejection = await captureRawRejection(() =>
           insertRawFiscalDocument(tx, tenantAId, fiscalInvoiceAId)
         );
         expect(rejection.sqlState).toBe("23505");
         expect(rejection.message).toContain("Key (tenant_id, invoice_id)=");
+        expect(rejection.message).toContain("already exists");
       });
 
       await inRolledBackTransaction(async (tx) => {
@@ -15938,7 +15958,24 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
     }, 30_000);
 
-    it("rejects negative attempt counts with the named CHECK", async () => {
+    it("rejects a negative attempt count at the named CHECK on insert", async () => {
+      // The CHECK is reachable on INSERT only: on UPDATE the monotonic trigger
+      // always preempts it, because a BEFORE UPDATE trigger runs before the row's
+      // CHECK constraints and every decrease from a stored non-negative count is
+      // a decrease. The UPDATE path is probed separately below.
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const message = await captureDatabaseMessage(() =>
+          insertRawFiscalDocument(tx, tenantAId, invoice, { attemptCount: -1 })
+        );
+        expect(message).toBe(
+          'new row for relation "fiscal_document" violates check constraint "fiscal_document_attempt_count_non_negative"'
+        );
+      });
+    }, 30_000);
+
+    it("rejects a decreasing attempt_count at the monotonic trigger", async () => {
       await inRolledBackTransaction(async (tx) => {
         const message = await captureDatabaseMessage(
           () => tx.$executeRaw`
@@ -15946,9 +15983,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           WHERE "id" = ${fiscalDocumentAId}::uuid
         `
         );
-        expect(message).toBe(
-          'new row for relation "fiscal_document" violates check constraint "fiscal_document_attempt_count_non_negative"'
-        );
+        expect(message).toBe("a fiscal document attempt_count cannot decrease");
       });
     }, 30_000);
 
@@ -16028,19 +16063,22 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     }, 30_000);
 
     it.each([
-      ["tenant_id", () => tenantBId],
-      ["id", () => randomUUID()],
-      ["invoice_id", () => randomUUID()],
-      ["provider", () => "FAKE"],
-      ["created_at", () => new Date(0)],
+      ["tenant_id", () => tenantBId, "uuid"],
+      ["id", () => randomUUID(), "uuid"],
+      ["invoice_id", () => randomUUID(), "uuid"],
+      ["provider", () => "FAKE", "fiscal_provider"],
+      ["created_at", () => new Date(0), "timestamptz"],
     ])(
       "rejects changing immutable identity field %s",
-      async (column, value) => {
+      async (column, value, cast) => {
         await inRolledBackTransaction(async (tx) => {
           const next = value();
+          // The cast is required: a parameter reaches PostgreSQL as text, and
+          // without it the assignment target's type rejects the statement before
+          // any trigger can run.
           const message = await captureDatabaseMessage(() =>
             tx.$executeRawUnsafe(
-              `UPDATE "fiscal_document" SET "${column}" = $1 WHERE "id" = $2::uuid`,
+              `UPDATE "fiscal_document" SET "${column}" = $1::${cast} WHERE "id" = $2::uuid`,
               next,
               fiscalDocumentAId
             )

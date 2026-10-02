@@ -4,7 +4,7 @@ type: tech-debt
 title:
   Local verification of applied FISC-002 schema is impossible without a
   reachable PostgreSQL
-status: open
+status: resolved
 severity: low
 related_epics:
   - EPIC-15
@@ -61,14 +61,31 @@ The two guards corrected during implementation (the dropped external-id CHECK
 and the narrowed cancellation trigger) were exactly this class of defect and
 were caught by reading rather than by execution, which is evidence for the risk.
 
-## Re-evaluation / Exit Criteria
+## Resolution (2026-10-02, same day)
 
-Close when either:
+Resolved by making a local PostgreSQL reachable again: `pnpm services:up`
+started `newsaas-postgres` and `newsaas-redis`, and the gate then executed for
+real.
 
-- a merged CI receipt shows `Database migrations` green with the FISC-002
-  migration applied and the fiscal live-PostgreSQL block executed; or
-- the local environment documents a working PostgreSQL provisioning path for
-  data-foundation slices.
+```text
+pnpm --filter @newsaas/database db:deploy
+  -> 30 migrations applied, including 20261002000001_fiscal_data_foundation
+pnpm --filter @newsaas/api test:live-pg
+  -> 176 passed (176), was 153 before the slice (+23 fiscal cases)
+```
+
+The first run of the fiscal block found **15 failures in the 22 written cases**
+— signature of the debt this record described. Five distinct causes, all fixed
+and re-run green: a `databaseMessage` that compared against the server's whole
+render (including the `DETAIL: Failing row contains (...)` line), an invoice
+fixture that collided on `UNIQUE (tenant_id, series, number)`, untyped
+parameters in the identity probes, a CHECK probed on a path where its own
+trigger preempts it, and two wrong catalogue expectations.
+
+What remains, and is now recorded rather than open: the working path is
+`pnpm services:up` (Docker Compose on port 5433), and `DATABASE_URL` must be
+exported **without** `?schema=public` because the provisioning helper passes a
+derived URL to `psql` (the adjacent [[TD-021]]).
 
 ## Related
 

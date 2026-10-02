@@ -62,9 +62,10 @@ Billing aggregate.
       field); the enforcement that actually strips provider payloads before
       persistence is FISC-003's `FakeFiscalProvider` sanitization contract.
 - [x] Schema tests and live-PostgreSQL probes cover constraints, tenant
-      isolation and rejected cross-tenant references. The probes are written and
-      reviewed but **not executed**: this environment has no reachable
-      PostgreSQL (see `## Verification`).
+      isolation and rejected cross-tenant references. Evidence: 4 textual gates
+      plus **23 executed live-PostgreSQL cases**; the whole suite is 176/176 and
+      the migration applies as `20261002000001_fiscal_data_foundation` (30
+      migrations total).
 - [x] Seed-count and route-contract probes are reconciled if new fiscal keys or
       settings are added. Nothing was added, so nothing moved: the pinned probes
       stay at `permissions: 56` and `featureCodes: 12` ([[DEC-040]] already
@@ -176,20 +177,52 @@ pnpm --filter @newsaas/database test  -> 19 files / 407 tests passed
                                           +4 cases in schema-fiscal.test.ts)
 pnpm --filter @newsaas/database db:generate
                                      -> Prisma Client v6.19.3 generated
-pnpm typecheck                        -> 14/14 tasks successful
-pnpm lint                             -> 14/14 tasks successful
-pnpm build                            -> 9/9 tasks successful
-pnpm format-check                     -> all matched files use Prettier code style
+pnpm --filter @newsaas/database db:deploy
+                                     -> 30 migrations applied to the local
+                                        PostgreSQL 16 database, including
+                                        `20261002000001_fiscal_data_foundation`
+pnpm --filter @newsaas/api test:live-pg
+                                     -> 176 passed (176), was 153 before this
+                                        slice (+23 fiscal cases). The fiscal
+                                        block alone: 23 passed (23).
+pnpm typecheck / lint / build / format-check
+                                     -> 14/14, 14/14, 9/9, clean
 
-NOT EXECUTED — blocked by the environment, not by the code:
-live-PostgreSQL suite (`pnpm test:live-pg`) and `db:deploy` both require a
-reachable PostgreSQL. This environment has none: Docker is not available in the
-WSL distro, the installed PostgreSQL 16 cluster is DOWN, and starting it needs a
-sudo password that is unavailable. The suite was therefore NOT run and the
-migration was NOT applied to any database, so the applied-schema shape, the
-trigger rejections and the 22 fiscal cases are written, reviewed and
-typechecked but unproven at runtime. Closing this gate requires a live database;
-it is recorded as the slice's open verification item rather than a silent gap.
+TDD: disabled by `openspec/config.yaml` (`strict_tdd: false`,
+`rules.apply.tdd: false`); RED/GREEN lifecycle not active.
+```
+
+### What executing the gate changed
+
+The live-PostgreSQL block was first run only after a local PostgreSQL became
+reachable, and that run found **15 failures in the 22 written cases** — every
+one a defect that reading and three review rounds had not caught. Five distinct
+causes, all fixed:
+
+1. `databaseMessage` compared against the server's whole render, which includes
+   a newline and a `DETAIL: Failing row contains (...)` line, so every
+   exact-message assertion failed. It now keeps the primary message only, which
+   also stops row values from reaching an assertion.
+2. `insertRawFiscalInvoice` defaulted to `series 'A', number 1`; `invoice`
+   enforces `UNIQUE (tenant_id, series, number)` and the suite shares one
+   tenant, so every case that created its own invoice collided with the fixture.
+   Numbers now come from a block-local monotonic counter.
+3. The identity probes passed an untyped parameter, so PostgreSQL rejected the
+   statement with
+   `column "tenant_id" is of type uuid but expression is of type text` before
+   any trigger could run. Each probe now casts explicitly.
+4. The `attempt_count >= 0` CHECK is unreachable on UPDATE: the monotonic
+   trigger runs before the row's CHECK constraints and every decrease from a
+   stored non-negative count is a decrease. The CHECK is now probed where it is
+   actually reachable (INSERT) and the UPDATE path is probed against the
+   trigger. The block gained a case: 22 → 23.
+5. Two catalogue expectations were wrong about what PostgreSQL stores:
+   `CHECK((attempt_count>=0))` carries no integer cast, and the cancellation
+   predicate keeps no enum cast.
+
+This is the concrete cost of the deferred gate that [[TD-027]] recorded, and the
+reason that record existed rather than a silent gap.
+
 ```
 
 ## Tests Added
@@ -217,9 +250,6 @@ it is recorded as the slice's open verification item rather than a silent gap.
 
 ## Known Limitations
 
-- **The live-PostgreSQL gate is unexecuted.** No PostgreSQL was reachable in the
-  implementation environment, so the migration was never applied and the 22
-  fiscal cases never ran. This is the slice's single open verification item.
 - No provider execution and no route until later fiscal stories; the
   `fiscal.invoice.issue` permission is still consumed by no route.
 - No storage prefix or artifact write exists yet; `STORAGE_KEY_PREFIXES` still
@@ -259,9 +289,9 @@ helper.
 
 ## Technical Debt
 
-- [[TD-027]] — local verification of the applied schema is impossible without a
-  reachable PostgreSQL, so the live-PostgreSQL gate is produced by CI rather
-  than locally. The Story stays `review` until that receipt exists.
+- No new slice-specific technical debt. [[TD-027]] recorded the unexecuted
+  live-PostgreSQL gate as environment debt and is now `resolved`: the migration
+  applied, the suite ran, and the 23 fiscal cases pass.
 
 ## Review record
 
@@ -315,3 +345,4 @@ The remaining advisories are recorded and not actioned:
 ## Completion Notes
 
 _Status must remain non-done until all required gates pass._
+```
