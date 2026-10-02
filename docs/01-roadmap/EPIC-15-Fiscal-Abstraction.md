@@ -63,7 +63,9 @@ to prove the Core abstraction.
 
 ## Progress
 
-- **[[FISC-002]] Fiscal data foundation — `review`.** Implemented on
+- **[[FISC-002]] Fiscal data foundation — `done`.** Closed on 2026-10-02 with
+  the scope pull request #96 and the slice pull request #97, CI run
+  **`37050111481`** green on both required checks. Implemented on
   `feat/epic-15-fiscal-data-foundation` as the additive `FiscalDocument`
   persistence foundation: `enum FiscalProvider` with PRD §22's three values,
   `enum FiscalDocumentStatus` with the SIFEN lifecycle minus `SIGNING`, the
@@ -93,10 +95,12 @@ to prove the Core abstraction.
   treated as candidate defects rather than style notes — which was correct,
   since they exposed a broken `[\\s\\S]` regex, two rejected probes sharing an
   aborted transaction, a case named "for every status" that probed one, and four
-  cases creating a second invoice for the fixture sale. When the executable gate
-  finally ran it still found **15 failures in 22 cases**, which is this slice's
-  durable lesson: for a database artifact, review is not a substitute for
-  execution. [[TD-027]] recorded the deferred gate and is now `resolved`.
+  cases creating a second invoice for the fixture sale. A fourth round
+  (`review-2c9359c3812696e8`) approved the correction that followed. When the
+  executable gate finally ran it still found **15 failures in 22 cases**, which
+  is this slice's durable lesson: for a database artifact, review is not a
+  substitute for execution. [[TD-027]] recorded the deferred gate and is now
+  `resolved`.
 
 ## Scope
 

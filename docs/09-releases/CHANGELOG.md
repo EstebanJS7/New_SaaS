@@ -6,6 +6,31 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-15 — Fiscal Abstraction (FISC-002, data foundation only):
+  - The additive `FiscalDocument` persistence foundation the Fiscal boundary
+    rests on: `enum FiscalProvider` with PRD §22's `THIRD_PARTY`, `SIFEN_DIRECT`
+    and `FAKE`, and `enum FiscalDocumentStatus` with the SIFEN lifecycle minus
+    `SIGNING` — the XAdES signing stage PRD §23 defers to a real adapter.
+  - A tenant-scoped `fiscal_document` with the `(tenant_id, id)` ownership key,
+    a composite RESTRICT foreign key to `invoice`, provider/external-id/CDC
+    fields, private XML/KuDE storage references, sanitized request/response
+    snapshots and attempt/error counters. It duplicates no invoice series,
+    number, currency, customer or money: a confirmed invoice is immutable, so
+    the provider request is read through the composite ownership key.
+  - Two named CHECKs (`attempt_count >= 0` and the cancellation biconditional
+    `(cancelled_at IS NULL) = (status <> 'CANCELLED')`) and five structural
+    triggers: no delete, cancelled immutable, identity immutable, provider
+    references write-once and attempts monotonic.
+  - One non-cancelled fiscal document per invoice, enforced by the partial
+    unique index `(tenant_id, invoice_id) WHERE status <> 'CANCELLED'`, mirrored
+    from the invoice-per-sale index so re-issuing requires an explicit
+    cancellation rather than a silent second document.
+  - Deliberately NOT in this slice: no API, route, worker, provider, settings
+    namespace or seed change. The status transition allow-list belongs to
+    FISC-004, so an `APPROVED` or `REJECTED` document is still updatable at the
+    database level until then. Fiscal state stays off `Invoice` by decision
+    ([[DEC-042]], [[DEC-046]]).
+
 - EPIC-14 — Billing:
   - The invoice aggregate PRD §21 requires: a tenant-scoped `invoice` with the
     `DRAFT`/`CONFIRMED`/`CANCELLED` lifecycle, an immutable `invoice_line`
