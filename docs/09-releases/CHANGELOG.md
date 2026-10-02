@@ -6,6 +6,43 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-14 — Billing:
+  - The invoice aggregate PRD §21 requires: a tenant-scoped `invoice` with the
+    `DRAFT`/`CONFIRMED`/`CANCELLED` lifecycle, an immutable `invoice_line`
+    snapshot copied verbatim from the frozen sale lines, and a per-tenant
+    `invoice_number_sequence`. One **live** invoice per sale is a PARTIAL unique
+    index, so a cancelled invoice releases its sale for a corrected replacement.
+  - `POST /invoices`: creates a `DRAFT` invoice from exactly one completed sale,
+    copying the sale's frozen snapshot verbatim, describing each line with the
+    catalog item's name, and refusing rather than truncating a name over 200
+    characters. The invoice stores no header totals: the API projects them from
+    its own immutable lines, so Billing never computes money.
+  - `GET /invoices` (with a status filter) and `GET /invoices/:id`, both
+    tenant-scoped, so a foreign or unknown identifier is a byte-equivalent
+    `404`.
+  - `POST /invoices/:id/confirm`: locks the invoice, gates on `DRAFT`, allocates
+    the number with ONE atomic statement that also creates the tenant's counter
+    row, and co-commits one audit row. A retried confirmation replays the same
+    number without advancing the counter.
+  - `POST /invoices/:id/cancel`: cancels a `DRAFT` or `CONFIRMED` invoice with a
+    required reason, keeping the allocated number and the original confirmation
+    timestamp. `CANCELLED` is terminal, and no payment, cash, stock or fiscal
+    record is touched.
+  - A tightened header guard: a permitted transition can no longer rewrite the
+    invoice's tenant, identity, sale, customer, currency, series or creation
+    timestamp, so a cancellation cannot silently re-point a document.
+  - The staff Billing workspace at `/app/billing` — the invoice list with its
+    status filter, the detail with the snapshot lines and the API's projected
+    totals, create-from-a-completed-sale, confirm and cancel with a reason, the
+    full loading/empty/error/success/permission-denied/entitlement-denied state
+    coverage, and a capability-gated navigation entry — over an `/api/billing`
+    proxy that allowlists exactly the five routes and forwards staff cookie
+    context only.
+  - Deliberately NOT in this epic: fiscal documents, providers and submission
+    (EPIC-15/EPIC-16), the portal invoice surface (deferred), printed or
+    exported documents, reports, notification delivery, standalone invoicing
+    without a completed sale, and sale reversal or payment refund ([[TD-018]]).
+
 - EPIC-13 — Cash:
   - The remaining PRD §20 cash movement kinds (`REFUND`, `INCOME`, `EXPENSE`,
     `WITHDRAWAL`, `DEPOSIT`, `ADJUSTMENT`) appended to the existing `SALE`

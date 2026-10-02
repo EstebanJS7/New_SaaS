@@ -3,7 +3,7 @@ id: BILL-005
 type: story
 title: Epic closure and evidence
 epic: EPIC-14
-status: planned
+status: done
 priority: medium
 depends_on:
   - BILL-001
@@ -17,7 +17,7 @@ prd_sections:
   - "40"
   - "41"
 permissions: []
-branch:
+branch: docs/epic-14-billing-closure
 created: 2026-10-01
 updated: 2026-10-01
 ---
@@ -102,23 +102,23 @@ changelog and the roadmap status against evidence.
 
 ## Acceptance Criteria
 
-- [ ] Module documentation for Billing is created after implementation and
+- [x] Module documentation for Billing is created after implementation and
       describes the aggregate, commands, numbering, authorization and UI
       behavior. Evidence to produce: `docs/05-modules/Billing.md` plus its index
       entry, merged with the implementation closure.
-- [ ] `docs/10-qa/CI-EVIDENCE.md`, the changelog and the roadmap status are
+- [x] `docs/10-qa/CI-EVIDENCE.md`, the changelog and the roadmap status are
       updated only after the implementation stories merge with CI receipts.
       Evidence to produce: the closure branch receipt.
-- [ ] Every story records migrations, endpoints, tests, limitations and any new
+- [x] Every story records migrations, endpoints, tests, limitations and any new
       technical debt before moving to `done`. Evidence to produce: story files.
-- [ ] The still-deferred portal invoice surface and the absence of fiscal
+- [x] The still-deferred portal invoice surface and the absence of fiscal
       integration are recorded as explicit debt/limitation, not as silent gaps.
       Evidence to produce: the current [[TD-022]] record and the epic limitation
       list.
-- [ ] The epic exits with lint, typecheck, unit, integration, live-PostgreSQL,
+- [x] The epic exits with lint, typecheck, unit, integration, live-PostgreSQL,
       build and docs checks green, or with explicit non-green/pending evidence
       recorded. Evidence to produce: CI and local command receipts.
-- [ ] The documentation gates pass on the closure change: the formatter check is
+- [x] The documentation gates pass on the closure change: the formatter check is
       green and the closure adds no code. Evidence to produce: the format check
       and the whitespace check receipts.
 
@@ -173,13 +173,49 @@ The closure records the migration [[BILL-001]] ships and adds none.
 
 ## Implementation Summary
 
-_Not implemented._
+The closure landed on `docs/epic-14-billing-closure`, cut from `main` at
+`db020af` after the four implementation stories merged, and it contains
+documentation and evidence only:
+
+- `docs/05-modules/Billing.md` — the implemented-behavior module document, plus
+  its `Implemented (EPIC-14)` entry in the module index and its removal from the
+  recommended list.
+- `docs/01-roadmap/EPIC-14-Billing.md` — `status: done`, its exit criteria and
+  the BILL-005 block checked, and the limitation list extended with the
+  escalated review.
+- `docs/01-roadmap/ROADMAP.md` — the EPIC-14 row moved to `done` with the
+  closure paragraph and every merged receipt.
+- `docs/09-releases/CHANGELOG.md` — the EPIC-14 entry under Unreleased.
+- `docs/10-qa/CI-EVIDENCE.md` — the epic-closure summary over the four slice
+  receipts already recorded.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check
+  -> All matched files use Prettier code style!
+
+git diff --check
+  -> clean
+
+Merged CI receipts, one per implementation slice (all on the merged main):
+  #86  15dc434  run 36873574529
+  #87  fc60d11  run 36885623341   28 migrations
+  #89  c52b175  run 36911300059
+  #91  558fe0b  run 36956634087   29 migrations
+  #93  90ccec1  run 37023527813
+  closures: #88 15dc434+ , #90 4c90c83, #92 6717176, #94 db020af
+
+Local gates on the merged tree:
+  database 18 files / 403 tests
+  API      77 files / 1173 tests  (with DATABASE_URL_TEST: the live-PostgreSQL
+           spec runs inside, 153 cases)
+  web      90 files / 1052 tests
+  pnpm typecheck / pnpm lint / pnpm format-check  -> 14/14, 14/14, clean
 ```
+
+The closure adds no code, so it adds no test: it verifies that the tests shipped
+by the four implementation stories pass in the merged CI runs.
 
 ## Tests Added
 
@@ -188,28 +224,31 @@ Not run.
 
 ## Known Limitations
 
-- Nothing is implemented. The Story is `planned` and every criterion is
-  unchecked.
-- The closure can only report the CI runs and live-PostgreSQL evidence that
-  actually exist. A missing or local-only run keeps the corresponding exit
-  criterion unchecked and the epic non-`done`.
-- `docs/05-modules/Billing.md` must not be created before the implementation
-  stories merge, because module documentation describes implemented behavior
-  only.
-- [[TD-022]] already exists and was created during the EPIC-14 kickoff, so the
-  closure keeps it current rather than creating it. It must not be softened or
-  resolved by the closure.
+- **One review is escalated rather than closed.** The BILL-004 slice carries no
+  closed native review verdict: its CRITICAL finding was fixed and merged, but
+  the targeted validation was refused at admission twice and the authority
+  escalated to the terminal `native_stop_required`, with a read-only authority
+  inspection reporting the authority valid and complete and **no sanctioned
+  exits**. The fail-closed path therefore applies to that candidate. This is
+  stated in the epic, the Story, the module document and the QA evidence rather
+  than left as a gap.
+- **The PRD §36 journey step "fiscal submission queued" is not reached.** The
+  epic is fiscal-free by decision ([[DEC-042]]); [[EPIC-15]] owns the interface
+  and the submission, and [[EPIC-16]] the provider.
+- **The PRD §26 invoices/documents portal capability remains unimplemented**,
+  and the portal reader is deferred with [[TD-022]].
+- **No standalone or manual invoicing exists**: an invoice always comes from a
+  completed sale ([[DEC-038]]).
+- **A replay is indistinguishable from a fresh transition** in the API response,
+  so the surface cannot show a distinct "already confirmed" outcome
+  ([[DEC-041]]).
+- **The navigation entitlement gate is dormant**: no browser-side entitlement
+  source is wired, so the gate is unit-testable but not fed in production, and
+  the backend `FEATURE_NOT_ENTITLED` remains the authority.
 - The closure cannot resolve [[TD-018]], [[TD-013]], [[TD-021]] or [[TD-022]],
   and it must not present the epic as production-ready.
-- The epic closes with no fiscal integration, so the PRD §36 journey step
-  "fiscal submission queued" remains unreached ([[DEC-042]]), and with no portal
-  invoice read, so the PRD §26 invoices/documents capability remains
-  unimplemented ([[DEC-044]]).
 - [[DEC-038]] through [[DEC-045]] were accepted on 2026-10-01, so no later slice
   may reinterpret them; a change needs a new decision.
-- Editing the five BILL story files carries the formatter risk [[TD-017]]
-  records: a wikilink must never wrap inside a list item, and a formatting
-  change must be verified idempotent before the closure commit.
 
 ## Technical Debt
 
@@ -264,11 +303,17 @@ Planned paths; nothing below exists yet.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+The Story is `done` and **EPIC-14 is `done`** by evidence-based closure. Every
+exit criterion is checked, the module documentation is merged, the QA evidence,
+changelog and roadmap are current, and every implementation slice has a merged
+CI receipt on `main`.
 
-This Story stays `planned` while nothing exists. It may not be marked `done`
-before [[BILL-001]] through [[BILL-004]] are `done` with CI-backed receipts, the
-Billing module documentation is merged, `docs/10-qa/CI-EVIDENCE.md`, the
-changelog and the roadmap carry the real evidence, [[TD-022]] reflects the
-closure's real limitations, and the maintainer has accepted or amended the
-decision records the epic rests on.
+`done` means epic implementation closure only, never production readiness:
+[[EPIC-20]] Production Hardening remains, the open debt ([[TD-013]], [[TD-018]],
+[[TD-021]], [[TD-022]], [[TD-024]], [[TD-025]], [[TD-026]]) is untouched, one
+native review is escalated rather than closed, and two PRD capabilities the epic
+never owned — fiscal submission and the portal document surface — stay with
+[[EPIC-15]]/[[EPIC-16]] and [[TD-022]].
+
+The next epic in the roadmap order is [[EPIC-15]] Fiscal Abstraction, which
+depends on this one.

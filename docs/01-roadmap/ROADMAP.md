@@ -22,7 +22,7 @@ updated: 2026-09-27
 | EPIC-11 | Suppliers/Purchases                |    done | EPIC-10                   |
 | EPIC-12 | POS/Payments                       |    done | EPIC-09, EPIC-10          |
 | EPIC-13 | Cash                               |    done | EPIC-12                   |
-| EPIC-14 | Billing                            | planned | EPIC-12                   |
+| EPIC-14 | Billing                            |    done | EPIC-12                   |
 | EPIC-15 | Fiscal Abstraction                 | planned | EPIC-14                   |
 | EPIC-16 | Fiscal Third-party Adapter         | planned | EPIC-15                   |
 | EPIC-17 | Notifications                      | planned | EPIC-07                   |
@@ -90,6 +90,21 @@ writer complies with its protocol.
 ## Architecture baseline
 
 Architecture freeze: PRD v1.3. Structural changes require an accepted ADR.
+
+[[EPIC-14]] Billing moved to `done` on 2026-10-02 after its four implementation
+Stories merged with the required CI checks green: the scope and Decisions as PR
+#86 (`15dc434`), BILL-001 as PR #87 (`fc60d11`, run `36885623341`), BILL-002 as
+PR #89 (`c52b175`, run `36911300059`), BILL-003 as PR #91 (`558fe0b`, run
+`36956634087`) and BILL-004 as PR #93 (`90ccec1`, run `37023527813`), with their
+closures as PR #88, #90, #92 and #94. `done` means epic implementation closure
+only: the local gates passed (database 18 files / 403 tests, API 77 files / 1173
+tests with the live-PostgreSQL spec included, web 90 files / 1052 tests), the
+API live-PostgreSQL suite grew from 142 to **153 cases** including two FORCED
+concurrency overlaps, and the applied schema reports **29 migrations** with a
+`permission` count of **56**. It is **never** production readiness: [[EPIC-20]]
+Production Hardening and the open Tech Debt items remain, and one review of the
+BILL-004 slice is **escalated rather than closed**, so that candidate carries no
+verdict and the fail-closed path applies.
 
 [[EPIC-13]] Cash moved to `done` on 2026-10-01, merged as PR #84
 (`feat/epic-13-cash-data-foundation`, merge commit `5058d59`) with CI run
