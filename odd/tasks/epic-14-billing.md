@@ -932,6 +932,17 @@ BILL-003 closed.
 - Closure counters for BILL-005 are unchanged by this Story: no migration, no
   seed and no API change.
 
+### BILL-004 — merged and closed
+
+- Pull request **#93** merged as `90ccec1`.
+- The merged-receipt gate is run `37023527813` on `main` at `90ccec1`: both
+  required checks `success`.
+- [[BILL-004]] moved to `done` with its twelve acceptance criteria checked and
+  the epic's own block ticked; the replay-outcome limitation and the escalated
+  review stay recorded in the Story, the epic and the CI evidence.
+- The epic stays `planned`: [[BILL-005]] remains, and [[TD-018]], [[TD-024]],
+  [[TD-025]] and [[TD-026]] stay open.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)

@@ -1083,6 +1083,7 @@ This section is the machine-generated receipt for the merged slice and is
 | BILL-001 invoice data foundation             | #87          | `fc60d11`    | [`36885623341`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36885623341) | `Database migrations` 1m7s, `Lint, Typecheck, Test, Build` 4m25s on merged main      |
 | BILL-002 invoice creation and read API       | #89          | `c52b175`    | [`36911300059`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36911300059) | `Database migrations` success, `Lint, Typecheck, Test, Build` success on merged main |
 | BILL-003 invoice confirm and cancel commands | #91          | `558fe0b`    | [`36956634087`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36956634087) | `Database migrations` success, `Lint, Typecheck, Test, Build` success on merged main |
+| BILL-004 staff billing surface               | #93          | `90ccec1`    | [`37023527813`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37023527813) | `Database migrations` success, `Lint, Typecheck, Test, Build` success on merged main |
 
 The scope records landed first because CI's required checks only run for pull
 requests targeting the default branch: #86 merged as `15dc434` and #87 as
@@ -1186,6 +1187,43 @@ correction: `review-b795346140ce8fe1` (the guard tightening),
 (the cancel command and the live coverage). W2's `R3-CONCURRENCY-COVERAGE`
 advisory became W3's obligation and is discharged by the two forced overlaps.
 [[TD-023]] is `resolved`.
+
+### BILL-004 staff billing surface
+
+Pull request #93's own receipt before the merge was run
+[`37023003187`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37023003187)
+at the branch head: `Database migrations` 1m35s and
+`Lint, Typecheck, Test, Build` 3m54s, including the format check that confirms
+the tracking file reached `main` formatted.
+
+Local evidence:
+
+- the authenticated `/api/billing` proxy and the typed client, allowlisting
+  exactly the five shipped operations and forwarding staff cookie context only,
+  with no synthesized tenant or permission header and no `PATCH`, `PUT` or
+  `DELETE`;
+- the workspace: the invoice list with its status filter, the detail with the
+  snapshot lines and the API's projected totals, the create-from-sale flow,
+  confirm and cancel with a reason, the page and the capability-gated navigation
+  entry;
+- **no money arithmetic in the client**, verified by a grep over every non-test
+  module whose only hit is a comment saying there is none;
+- the web suite grew from 81 files / 940 tests to **90 files / 1052 tests**, and
+  the focused billing and shell suites to 104 tests, covering every state branch
+  including the entitlement denial, the permission refusal and a backend `404`
+  rendered as an error rather than as data;
+- `pnpm typecheck` and `pnpm lint` were 14/14 and `pnpm format-check` clean.
+
+The native review of this slice raised one **CRITICAL** finding — the surface
+shared one confirm/cancel mutation state across invoices, so a selection change
+could carry the previous invoice's error, pending label or late outcome onto
+another, the same defect class EPIC-13 corrected in Cash — and the correction is
+merged with four regression scenarios. **The review itself is escalated, not
+closed**: the targeted validation was refused at admission twice and the
+authority escalated to the terminal `native_stop_required` with cause
+`targeted_validator_rejected`, with a read-only inspection reporting the
+authority valid and complete and no sanctioned exits. The candidate therefore
+carries no closed verdict and the fail-closed path applies.
 
 This section is the machine-generated receipt for the merged slice and is
 **not** a production-readiness statement.

@@ -179,11 +179,12 @@ implemented EPIC-14 behavior.
   consecutive numbers — rather than a timing assumption. The Story is `done`;
   the epic stays `planned` until [[BILL-004]] and [[BILL-005]] land.
 
-- **[[BILL-004]] Staff billing surface — `review`.** Implemented on
-  `feat/epic-14-billing-staff-surface`: `feb344d` adds the authenticated
-  `/api/billing` proxy and the typed client, `ef5e1c4` adds the workspace with
-  its list, detail and create panels, the display, validation and outcome
-  helpers, the page and the capability-gated navigation entry, and
+- **[[BILL-004]] Staff billing surface — `done`.** Merged as pull request #93
+  (`90ccec1`) with run `37023527813` green on both required checks on the merged
+  `main`. Implemented on `feat/epic-14-billing-staff-surface`: `feb344d` adds
+  the authenticated `/api/billing` proxy and the typed client, `ef5e1c4` adds
+  the workspace with its list, detail and create panels, the display, validation
+  and outcome helpers, the page and the capability-gated navigation entry, and
   `d946d4a`/`b3238cf` apply the bounded correction of the CRITICAL finding the
   native review raised. Verification passed locally: the focused suites 104
   tests, the web suite **90 files / 1052 tests** (was 81 / 940), `typecheck` and
@@ -193,8 +194,8 @@ implemented EPIC-14 behavior.
   was refused at admission twice and the authority escalated to the terminal
   `native_stop_required`, with a read-only inspection reporting the authority
   valid and complete and **no sanctioned exits**. The candidate therefore
-  carries no closed verdict and the fail-closed path applies. The Story stays
-  `review` until its pull request merges with a CI receipt.
+  carries no closed verdict and the fail-closed path applies. The Story is
+  `done`; the epic stays `planned` until [[BILL-005]] lands.
 
 ## Scope
 
@@ -340,27 +341,27 @@ planned evidence that will close it.
 
 ### BILL-004 — Staff billing surface
 
-- [ ] Staff can list invoices with a status filter, open one invoice's detail
+- [x] Staff can list invoices with a status filter, open one invoice's detail
       with its snapshot lines and totals, create an invoice from a completed
       sale, confirm it and cancel it with a reason. Evidence: the Billing pages
       and their tests.
-- [ ] The UI covers loading, empty, error, success, permission-denied and
+- [x] The UI covers loading, empty, error, success, permission-denied and
       entitlement-denied states, and backend authorization remains the
       authority. Evidence: the state-branch coverage listed in the Story.
-- [ ] The client module lives in a Billing-owned route directory behind a
+- [x] The client module lives in a Billing-owned route directory behind a
       `/api/billing` proxy that allowlists only the Billing routes and forwards
       staff cookie context only. Evidence: the proxy tests and the allowlist.
-- [ ] The navigation entry is gated behind the `billing` capability as far as
+- [x] The navigation entry is gated behind the `billing` capability as far as
       the existing shell supports, with the dormant-gate limitation recorded.
       Evidence: the `requiredFeature` declaration, its visibility tests and the
       recorded limitation.
-- [ ] The surface displays server-computed values as returned, performs no money
+- [x] The surface displays server-computed values as returned, performs no money
       arithmetic and shows no fiscal state. Evidence: the detail-panel tests and
       the absence of arithmetic in the client module.
-- [ ] Reusable UI uses semantic design tokens only, with no Veterinary-specific
+- [x] Reusable UI uses semantic design tokens only, with no Veterinary-specific
       brand literal. Evidence: the shared control classes and the `@newsaas/ui`
       primitives.
-- [ ] No portal route, printable document or export is added. Evidence: the
+- [x] No portal route, printable document or export is added. Evidence: the
       route-contract probe still failing on the deferred portal roots.
 
 ### BILL-005 — Epic closure and evidence

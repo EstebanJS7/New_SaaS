@@ -3,7 +3,7 @@ id: BILL-004
 type: story
 title: Staff billing surface
 epic: EPIC-14
-status: review
+status: done
 priority: high
 depends_on:
   - BILL-002
@@ -249,6 +249,15 @@ git diff --numstat ef5e1c4..HEAD   (the review correction range)
   -> 196 changed lines, against the review's 200-line budget
 ```
 
+CI (pull request #93, run 37023003187) -> Database migrations: pass (1m35s) ->
+Lint, Typecheck, Test, Build: pass (3m54s)
+
+CI (merged main, head 90ccec1, run 37023527813) - the merged-receipt gate ->
+Database migrations: success; 29 migrations applied to a fresh database -> Lint,
+Typecheck, Test, Build: success -> pull request #93 merged as 90ccec1
+
+```
+
 ## Tests Added
 
 - `apps/web/src/app/api/billing/[[...path]]/route.test.ts` — 27 cases: the
@@ -350,24 +359,36 @@ Changed:
 
 ## Completion Notes
 
-The Story is `review`, not `done`: implementation, the local gates and the
-regression coverage are complete on `feat/epic-14-billing-staff-surface`, but no
-CI receipt exists yet because the pull request is not open. It moves to `done`
-when the branch's pull request merges with both required checks green, together
-with the QA evidence entry.
+The Story is `done`. Every acceptance criterion is checked, the surface is merged,
+its states are covered by named tests, the proxy and client boundaries are pinned,
+and the local gates and the **merged** CI run are green.
 
-**Its native review is escalated, not closed.** Lineage
-`review-eb548b67172897d8` raised one CRITICAL finding — the surface shared one
-confirm/cancel mutation state across invoices, so a selection change could carry
-the previous invoice's error, pending label or late outcome onto another — and
-that correction is applied, committed and verified. The review could not be
-closed because the targeted-validation slot was refused at admission twice and
-the authority escalated to the terminal `native_stop_required` with cause
+Evidence of closure:
+
+- pull request #93 merged as `90ccec1`;
+- run
+  [`37023527813`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37023527813)
+  on the merged `main` at `90ccec1` concluded `success` on both required checks,
+  and its `migrations` job applied all **29** migrations to a fresh database;
+- the slice receipt before the merge was run `37023003187`, whose format-check
+  step confirms the tracking file was formatted before it reached `main`;
+- the QA evidence entry is recorded in `docs/10-qa/CI-EVIDENCE.md`.
+
+**Its native review stayed escalated, not closed.** Lineage
+`review-eb548b67172897d8` raised the CRITICAL finding and its correction is applied
+and merged, but the targeted-validation slot was refused at admission twice and the
+authority escalated to the terminal `native_stop_required` with cause
 `targeted_validator_rejected`. A read-only authority inspection reports the
-authority `valid` and `complete` with **no sanctioned exits**, so nothing is
-left to repair or to exit through, and no verdict was authored.
+authority valid and complete with **no sanctioned exits**, and no verdict was
+authored. This candidate therefore carries no closed review verdict, and the
+fail-closed path applies: a separate verifier is re-enabled for it rather than the
+review-credit discount. Delivery was unaffected, because a review outcome never
+authorizes delivery.
 
-The consequence is recorded rather than hidden: this candidate has **no closed
-review verdict**, and the fail-closed path applies — a separate verifier is
-re-enabled for it instead of the review-credit discount. Delivery is unaffected,
-because a review outcome never authorizes delivery.
+What remains for the epic: [[BILL-005]] owns the module documentation and the epic
+closure. [[TD-018]], [[TD-024]], [[TD-025]] and [[TD-026]] stay open.
+
+`done` here means implementation closure for this slice only. It is **not** a
+production-readiness statement: the epic stays `planned`, [[EPIC-20]] Production
+Hardening remains, and the open debt is untouched.
+```
