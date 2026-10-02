@@ -706,6 +706,31 @@ after BILL-002 closed.
 - The eight-route family is now complete in the route-contract probe: the frozen
   inventory and the per-route permission map hold all four `billing` routes.
 
+### BILL-003 W3 — RDD native review (closed, approved)
+
+- Lineage `review-7752615080dcd223`, candidate range `9579931..16fe4ec`, 9
+  paths, 1439 changed lines, tier **high**, **four lenses**; **approved** with
+  no correction, authority burned.
+- The relay refused the risk lens' payload at admission TWICE with a truncated
+  JSON envelope (`3 arrays opened, 2 closed`, preserving the payload under
+  `.git/gentle-ai/rejected-results/`). Nothing was consumed
+  (`submitted_reviewers: 0`) and the preserved bytes contained a complete
+  verdict — the defect is in the envelope, not the review. Following the
+  provider: fresh STATUS, re-run only the reoffered slots, **never resubmit
+  refused bytes**. The third attempt submitted all four.
+- `R3-1` (WARNING, `billing.zod.ts:65`) flagged the `.trim().min(1)` ordering on
+  the cancel reason: if Zod validated the untrimmed value, a whitespace-only
+  reason would pass the API and then fail the database CHECK as a 500-class
+  error instead of the stable `400`. **Verified empirically rather than
+  assumed**: a probe against the installed Zod 3.24 shows `"   "`, `""` and
+  `"\t\n "` are all REJECTED and `"ok"` is accepted trimmed, so the check runs
+  on the trimmed value and the advisory is informational. The ordering is subtle
+  enough that it is recorded, so a later reader does not "fix" it into a bug by
+  moving `.min(1)` before `.trim()`.
+- Three readability suggestions (`live-pg-isolation.e2e-spec.ts:14911-14915`,
+  `in-memory-database.ts:612-614`, `billing.integration.test.ts:728-734`) are
+  informational comment and naming polish.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
