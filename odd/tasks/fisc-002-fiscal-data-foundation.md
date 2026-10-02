@@ -265,6 +265,17 @@ file in the same commit as the schema it describes.
 - Consequence: the follow-up work unit is a NEW candidate and needs its own
   preflight, as the contract requires.
 
+- Native review of the second candidate closed **approved and acknowledged** on
+  lineage `review-49e414ffad03db30` (4 lenses, 0 corrections, 4 advisories). One
+  advisory exposed a real setup defect: four cases built their document on
+  `fiscalSaleAId`, whose live invoice slot the fixture invoice already holds, so
+  they would have failed at setup on `invoice_tenant_id_sale_id_key`. All four
+  now create their own sale.
+- Lesson: with no executable database, adversarial review is the only defect
+  detector available, so its advisories must be read as candidate defects to
+  verify rather than as style notes to record. Three review rounds were needed
+  to surface what one live run would have shown in seconds.
+
 ## Notes
 
 - Base commit `59a5002` (the kickoff docs). Branch

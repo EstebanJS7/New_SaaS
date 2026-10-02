@@ -16010,7 +16010,12 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
     it("rejects payload updates to a CANCELLED document", async () => {
       await inRolledBackTransaction(async (tx) => {
-        const invoice = await insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId);
+        // Its own sale: the fixture invoice already holds this sale's live
+        // invoice slot at the `invoice_tenant_id_sale_id_key` partial index, so
+        // reusing `fiscalSaleAId` here would reject the setup insert instead of
+        // exercising the cancelled-document trigger.
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
         const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "PENDING" });
         await tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'CANCELLED', "cancelled_at" = now() WHERE "id" = ${id}::uuid`;
         const message = await captureDatabaseMessage(
@@ -16053,7 +16058,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       "allows setting %s once and rejects rewriting it",
       async (column, rejection) => {
         await inRolledBackTransaction(async (tx) => {
-          const invoice = await insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId);
+          // Its own sale, for the same reason as the cancelled-document case.
+          const sale = await insertRawFiscalSale(tx, tenantAId);
+          const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
           const id = await insertRawFiscalDocument(tx, tenantAId, invoice);
           await tx.$executeRawUnsafe(
             `UPDATE "fiscal_document" SET "${column}" = $1 WHERE "id" = $2::uuid`,
@@ -16075,7 +16082,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
     it("rejects decreasing attempt_count and admits an increase", async () => {
       await inRolledBackTransaction(async (tx) => {
-        const invoice = await insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId);
+        // Its own sale, for the same reason as the cancelled-document case.
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
         const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { attemptCount: 1 });
         await expect(
           tx.$executeRaw`UPDATE "fiscal_document" SET "attempt_count" = 2 WHERE "id" = ${id}::uuid`
@@ -16105,7 +16114,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     it("admits the documented submission approval and cancellation path", async () => {
       await inRolledBackTransaction(async (tx) => {
         // This exact path is what the two corrected guards protect: the dropped external-id CHECK would have rejected the final step, and the broad terminal-immutability guard would have rejected it too.
-        const invoice = await insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId);
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
         const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "PENDING" });
         await expect(
           tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SUBMITTED', "external_id" = 'provider-1' WHERE "id" = ${id}::uuid`

@@ -235,6 +235,28 @@ it is recorded as the slice's open verification item rather than a silent gap.
 - No attempt history table exists: `attempt_count`, the last-error pair and the
   audit trail carry retry history instead.
 
+## Second review round
+
+The follow-up work unit was reviewed as a new candidate and also closed
+**approved and acknowledged** on lineage `review-49e414ffad03db30` (revision
+`sha256:b539b70bfd0e1c5ed67be211fb14d342362684338a1e71ec696a87e69fae15b1`), four
+lenses, zero corrections, four advisories. One of those advisories pointed at a
+real setup defect that a run would have caught immediately and that is now
+fixed:
+
+- Four cases created their own fiscal document on `fiscalSaleAId`, whose live
+  invoice slot the fixture invoice already holds at the
+  `invoice_tenant_id_sale_id_key` partial index. Every one of them would have
+  failed at its setup statement with a duplicate-key violation instead of
+  reaching the trigger, CHECK or transition under test. Each now creates its own
+  sale as well, which is why the block-wide check for
+  `insertRawFiscalInvoice(tx, tenantAId, fiscalSaleAId)` is empty.
+
+The three remaining advisories from this round are informational and recorded
+rather than actioned: two are readability notes on the `enumDocComment` helper
+and the cancelled-document case, and one is a reliability suggestion on the same
+helper.
+
 ## Technical Debt
 
 - [[TD-027]] — local verification of the applied schema is impossible without a
