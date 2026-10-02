@@ -762,6 +762,77 @@ after BILL-002 closed.
 - The epic stays `planned`: [[BILL-004]] and [[BILL-005]] remain, and
   [[TD-018]], [[TD-024]], [[TD-025]], [[TD-026]] stay open.
 
+## BILL-004 — staff billing surface (work units)
+
+Branch: `feat/epic-14-billing-staff-surface`, cut from `main` at `6717176` after
+BILL-003 closed.
+
+### Pinned slice contract (parent-owned)
+
+- Mirror the EPIC-13 Cash surface exactly, because it is the shipped precedent:
+  a Billing-owned route directory `apps/web/src/app/(app)/app/billing/` with the
+  client module, the panels, the display/validation helpers and their tests, and
+  an authenticated Next.js proxy at `apps/web/src/app/api/billing/[[...path]]/`.
+- The proxy allowlists **only** the four Billing routes (`POST /invoices`,
+  `GET /invoices`, `GET /invoices/:id`, `POST /invoices/:id/confirm`,
+  `POST /invoices/:id/cancel`) and forwards **staff cookie context only**. It
+  forwards no client-supplied tenant identifier, and it must reject a
+  non-allowlisted path before reaching the API.
+- The surface displays server-computed values as returned: **no money arithmetic
+  in the client**, and the totals come from the API's projection. No fiscal
+  state is displayed, because none exists.
+- States to cover, each with a test: loading, empty, error, success,
+  permission-denied and entitlement-denied, plus the distinct command outcomes
+  (a confirm replay, a conflict, a cancel replay).
+- The navigation entry is
+  `{ href: "/app/billing", label: "Billing", requiredFeature: "billing" }` with
+  the dormant-gate limitation recorded, and semantic design tokens only.
+- **No portal route, no printable document and no export.** The route-contract
+  probe's deferred portal roots must keep failing on `/portal/invoices`.
+- Backend authorization remains the authority: the permission-denied and
+  entitlement-denied branches are UX affordances only, and a backend `404` must
+  render as an error state rather than as data.
+
+### Work units
+
+- [x] W1 — the proxy and the client transport: the `/api/billing` route with its
+      allowlist and its tests, plus `billing-api.ts` and its tests.
+- [ ] W2 — the surface: the list panel with the status filter, the detail panel,
+      the create-from-sale flow, the confirm and cancel actions, the page, the
+      navigation entry and the full state coverage.
+- [ ] W3 — docs reconciliation: the story record, the epic progress entry and
+      the counters.
+
+### BILL-004 W1 — staff proxy and client transport
+
+- Four new files, `2049` insertions and no deletions: the proxy
+  `apps/web/src/app/api/billing/[[...path]]/route.ts` (429 lines) with its suite
+  (807), and the client `apps/web/src/app/(app)/app/billing/billing-api.ts`
+  (398) with its suite (415). Roughly two thirds are tests.
+- The proxy allowlists exactly the five shipped operations with their methods,
+  forwards **staff cookie context only** (no `x-tenant-id`, no `authorization`,
+  no synthesized permission header), rejects an out-of-allowlist path, method
+  mismatch, out-of-contract query or malformed path before contacting the API,
+  and exports no `PATCH`, `PUT` or `DELETE` — so no invoice can be patched or
+  deleted through it.
+- Two decisions the worker flagged, both accepted: the payload-free `confirm`
+  body is **never read or forwarded** rather than refused, because the API
+  declares no `@Body()` there and inventing a rejection message would add a
+  [[TD-013]] divergence — note the cash precedent does not cover this case,
+  since `POST /cash/sessions/:id/close` does carry a counted-amount body; and a
+  single segment after `/invoices/` is an opaque id, so an export-shaped path is
+  forwarded and refused by the API's own validation, which is the shipped cash
+  behaviour and is pinned by a test.
+- The client mirrors `cash-api.ts`: five typed helpers, the DTO-exact
+  `Invoice`/`InvoiceLine` types with money and quantity as exact strings and
+  **no arithmetic**, and failure predicates that keep `403`, `404` and `409`
+  distinguishable so the surface can branch.
+- Gates: the focused suites 43 tests; the web suite **83 files / 983 tests**
+  passed (was 81 / 940); `pnpm typecheck` and `pnpm lint` 14/14;
+  `pnpm format-check` clean. The parent re-ran the focused and full web suites
+  and prettier, and read the allowlist, the cookie boundary and the client
+  types.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
