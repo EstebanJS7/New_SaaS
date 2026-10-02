@@ -800,7 +800,7 @@ BILL-003 closed.
 - [x] W2 — the surface: the list panel with the status filter, the detail panel,
       the create-from-sale flow, the confirm and cancel actions, the page, the
       navigation entry and the full state coverage.
-- [ ] W3 — docs reconciliation: the story record, the epic progress entry and
+- [x] W3 — docs reconciliation: the story record, the epic progress entry and
       the counters.
 
 ### BILL-004 W1 — staff proxy and client transport
@@ -912,6 +912,25 @@ BILL-003 closed.
   committing a file before its formatter step had actually run (`ef5e1c4`
   shipped an unformatted tracking file that CI's format check would have
   rejected), and letting an unrelated commit sit inside a correction range.
+
+### BILL-004 W3 — documentation reconciliation
+
+- [[BILL-004]] moved to `review` with its twelve acceptance criteria checked;
+  like BILL-003 it carried no stale invariant wording.
+- **One scope item is satisfied only in the weaker sense and is recorded as
+  such**: the Story's In Scope asks for the distinct command outcomes including
+  a confirm and cancel replay, but the API returns the same `200` body for a
+  fresh transition and a replay with no discriminant in the DTO ([[DEC-041]]),
+  so the surface renders a replay safely and cannot print "already confirmed". A
+  conflict is a real `409` and is shown as such. This is now a Known Limitation,
+  not a silently ticked criterion.
+- The implementation, verification, tests, limitations, debt, files and
+  completion sections describe what shipped, including the CRITICAL finding, its
+  correction and the four regression scenarios.
+- **The escalated review is recorded in the Story, the epic and here**, so
+  [[BILL-005]] cannot present the epic as having closed every review.
+- Closure counters for BILL-005 are unchanged by this Story: no migration, no
+  seed and no API change.
 
 ## Evidence
 

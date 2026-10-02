@@ -179,6 +179,23 @@ implemented EPIC-14 behavior.
   consecutive numbers — rather than a timing assumption. The Story is `done`;
   the epic stays `planned` until [[BILL-004]] and [[BILL-005]] land.
 
+- **[[BILL-004]] Staff billing surface — `review`.** Implemented on
+  `feat/epic-14-billing-staff-surface`: `feb344d` adds the authenticated
+  `/api/billing` proxy and the typed client, `ef5e1c4` adds the workspace with
+  its list, detail and create panels, the display, validation and outcome
+  helpers, the page and the capability-gated navigation entry, and
+  `d946d4a`/`b3238cf` apply the bounded correction of the CRITICAL finding the
+  native review raised. Verification passed locally: the focused suites 104
+  tests, the web suite **90 files / 1052 tests** (was 81 / 940), `typecheck` and
+  `lint` 14/14, `format-check` clean, and the correction range at 196 changed
+  lines against the review's 200-line budget. **Its native review is escalated,
+  not closed**: the CRITICAL was found and fixed, but the targeted validation
+  was refused at admission twice and the authority escalated to the terminal
+  `native_stop_required`, with a read-only inspection reporting the authority
+  valid and complete and **no sanctioned exits**. The candidate therefore
+  carries no closed verdict and the fail-closed path applies. The Story stays
+  `review` until its pull request merges with a CI receipt.
+
 ## Scope
 
 - Add the tenant-scoped `Invoice` aggregate with the PRD §21 states `DRAFT`,
