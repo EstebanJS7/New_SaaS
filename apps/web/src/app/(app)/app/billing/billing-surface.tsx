@@ -86,7 +86,7 @@ export function BillingSurface(): JSX.Element {
     onSuccess: (invoice) => {
       // The draft the API just created is the one the operator now inspects.
       setOutcome(null);
-      setSelectedInvoiceId(invoice.id);
+      selectInvoice(invoice.id);
       cacheInvoice(invoice);
     },
   });
@@ -111,6 +111,35 @@ export function BillingSurface(): JSX.Element {
       cacheInvoice(invoice);
     },
   });
+
+  /**
+   * The invoice each command's state belongs to. `variables` is the input of the
+   * most recent call, so it names the invoice its pending state, its error and
+   * its returned representation were produced for; comparing it with the current
+   * selection keeps one invoice's command from rendering on another. A late
+   * result for the invoice the operator left stays bound to that invoice instead
+   * of following the selection.
+   */
+  const confirmInvoiceId = confirmMutation.variables ?? null;
+  const cancelInvoiceId = cancelMutation.variables?.id ?? null;
+  const selectedOutcome =
+    outcome !== null && outcome.invoice.id === selectedInvoiceId ? outcome : null;
+
+  /**
+   * Moves the selection to one invoice. A command that already settled drops its
+   * state here, so a refusal cannot follow the operator to another invoice or
+   * resurface on its own; a command still in flight keeps its state, so its own
+   * invoice still shows the pending label and keeps its action disabled.
+   */
+  function selectInvoice(id: string | null): void {
+    setSelectedInvoiceId(id);
+    if (!confirmMutation.isPending) {
+      confirmMutation.reset();
+    }
+    if (!cancelMutation.isPending) {
+      cancelMutation.reset();
+    }
+  }
 
   const readError = invoicesQuery.error ?? detailQuery.error;
 
@@ -159,10 +188,7 @@ export function BillingSurface(): JSX.Element {
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
         selectedInvoiceId={selectedInvoiceId}
-        onSelectInvoice={(invoice) => {
-          setOutcome(null);
-          setSelectedInvoiceId(invoice.id);
-        }}
+        onSelectInvoice={(invoice) => selectInvoice(invoice.id)}
       />
 
       <InvoiceDetailPanel
@@ -179,17 +205,17 @@ export function BillingSurface(): JSX.Element {
           }
           await confirmMutation.mutateAsync(selectedInvoiceId);
         }}
-        isConfirming={confirmMutation.isPending}
-        confirmError={confirmMutation.error}
+        isConfirming={confirmInvoiceId === selectedInvoiceId && confirmMutation.isPending}
+        confirmError={confirmInvoiceId === selectedInvoiceId ? confirmMutation.error : null}
         onCancel={async (reason) => {
           if (selectedInvoiceId === null) {
             return;
           }
           await cancelMutation.mutateAsync({ id: selectedInvoiceId, reason });
         }}
-        isCancelling={cancelMutation.isPending}
-        cancelError={cancelMutation.error}
-        outcome={outcome}
+        isCancelling={cancelInvoiceId === selectedInvoiceId && cancelMutation.isPending}
+        cancelError={cancelInvoiceId === selectedInvoiceId ? cancelMutation.error : null}
+        outcome={selectedOutcome}
       />
 
       <CreateInvoicePanel

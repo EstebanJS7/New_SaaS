@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   INVOICE_CUSTOMER_REQUIRED_MESSAGE,
+  INVOICE_NOT_CANCELLABLE_MESSAGE,
   INVOICE_NOT_DRAFT_MESSAGE,
   INVOICE_SALE_ALREADY_INVOICED_MESSAGE,
   type Invoice,
@@ -57,6 +58,27 @@ const CANCELLED_INVOICE: Invoice = {
   cancelReason: "Duplicated",
 };
 
+/** A second live invoice, so a selection switch has somewhere else to go. */
+const SECOND_DRAFT_INVOICE: Invoice = {
+  ...DRAFT_INVOICE,
+  id: "88888888-8888-4888-8888-888888888888",
+  saleId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+};
+
+interface DeferredResponse {
+  readonly promise: Promise<Response>;
+  readonly resolve: (value: Response) => void;
+}
+
+/** A command response the test releases only when it decides the command settles. */
+function deferredResponse(): DeferredResponse {
+  let resolve!: (value: Response) => void;
+  const promise = new Promise<Response>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -72,7 +94,7 @@ function resolveUrl(input: RequestInfo | URL): string {
   return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 }
 
-type Responder = (url: string, init?: RequestInit) => Response;
+type Responder = (url: string, init?: RequestInit) => Response | Promise<Response>;
 
 interface FetchHandlers {
   readonly list?: Responder;
@@ -412,5 +434,112 @@ describe("BillingSurface commands", () => {
         expect(body).not.toMatch(/tenantId/);
       }
     }
+  });
+});
+
+describe("BillingSurface command isolation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Selects the first invoice of a two-invoice list and starts its confirm.
+   * Returns once that confirm is in flight.
+   */
+  async function startPendingConfirm(): Promise<void> {
+    const selectButtons = await screen.findAllByRole("button", { name: "Select invoice" });
+    fireEvent.click(selectButtons[0]);
+    await screen.findByTestId("invoice-line");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm invoice" }));
+    await screen.findByRole("button", { name: "Confirming invoice..." });
+  }
+
+  /** Moves the selection to the invoice that is not currently selected. */
+  async function switchInvoice(): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: "Select invoice" }));
+    await screen.findByTestId("invoice-line");
+  }
+
+  it("keeps an in-flight confirm off the invoice the operator switched to", async () => {
+    const pendingConfirm = deferredResponse();
+    installFetch({
+      list: () => jsonResponse([DRAFT_INVOICE, SECOND_DRAFT_INVOICE]),
+      detail: (url) =>
+        jsonResponse(url.endsWith(DRAFT_INVOICE.id) ? DRAFT_INVOICE : SECOND_DRAFT_INVOICE),
+      confirm: () => pendingConfirm.promise,
+    });
+
+    renderSurface();
+    await startPendingConfirm();
+    await switchInvoice();
+
+    // The second invoice shows neither the first invoice's pending label nor its
+    // outcome, and its own confirm action is offered and enabled.
+    expect(screen.queryByRole("button", { name: "Confirming invoice..." })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("invoice-confirmed")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm invoice" })).toBeEnabled();
+  });
+
+  it("keeps a refused cancel off the invoice the operator switched to", async () => {
+    installFetch({
+      list: () => jsonResponse([CONFIRMED_INVOICE, SECOND_DRAFT_INVOICE]),
+      detail: (url) =>
+        jsonResponse(url.endsWith(DRAFT_INVOICE.id) ? CONFIRMED_INVOICE : SECOND_DRAFT_INVOICE),
+      cancel: () => errorResponse("CONFLICT", INVOICE_NOT_CANCELLABLE_MESSAGE, 409),
+    });
+
+    renderSurface();
+    const selectButtons = await screen.findAllByRole("button", { name: "Select invoice" });
+    fireEvent.click(selectButtons[0]);
+    await screen.findByTestId("invoice-line");
+    fireEvent.change(screen.getByLabelText("Cancellation reason"), {
+      target: { value: "Duplicated" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel invoice" }));
+    expect(await screen.findByTestId("invoice-cancel-error")).toHaveTextContent(
+      "Only a draft or confirmed invoice can be cancelled"
+    );
+
+    await switchInvoice();
+
+    expect(screen.queryByTestId("invoice-cancel-error")).not.toBeInTheDocument();
+  });
+
+  it("does not carry a late confirm outcome onto another invoice, and keeps it on its own", async () => {
+    const pendingConfirm = deferredResponse();
+    let confirmed = false;
+    installFetch({
+      list: () =>
+        jsonResponse(
+          confirmed
+            ? [CONFIRMED_INVOICE, SECOND_DRAFT_INVOICE]
+            : [DRAFT_INVOICE, SECOND_DRAFT_INVOICE]
+        ),
+      detail: (url) => {
+        if (!url.endsWith(DRAFT_INVOICE.id)) {
+          return jsonResponse(SECOND_DRAFT_INVOICE);
+        }
+        return jsonResponse(confirmed ? CONFIRMED_INVOICE : DRAFT_INVOICE);
+      },
+      confirm: () => pendingConfirm.promise,
+    });
+
+    renderSurface();
+    await startPendingConfirm();
+    await switchInvoice();
+
+    // The first invoice's command succeeds only after the operator moved on.
+    confirmed = true;
+    pendingConfirm.resolve(jsonResponse(CONFIRMED_INVOICE));
+
+    // Its success settles while the second invoice is selected: that invoice
+    // never renders the first one's outcome.
+    await screen.findByText(/Confirmed invoice A-12/);
+    expect(screen.queryByTestId("invoice-confirmed")).not.toBeInTheDocument();
+    expect(screen.getByTestId("invoice-status")).toHaveTextContent("Draft");
+
+    // Returning to the first invoice shows its own settled outcome.
+    await switchInvoice();
+    expect(await screen.findByTestId("invoice-confirmed")).toHaveTextContent("numbered A-12");
   });
 });
