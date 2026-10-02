@@ -15,6 +15,28 @@ function functionBody(name: string): string {
   return body.slice(body.indexOf("BEGIN"), body.indexOf("$$ LANGUAGE plpgsql;"));
 }
 
+/**
+ * Returns the contiguous `///` doc-comment block immediately above `enum <name>`.
+ * Scoping the additive-evolution assertion to the enum's OWN comment keeps it
+ * from passing on some other model's text elsewhere in the schema.
+ */
+function enumDocComment(name: string): string {
+  const marker = `enum ${name}`;
+  const index = SCHEMA.indexOf(marker);
+  expect(index, `${marker} exists in the schema`).toBeGreaterThan(-1);
+  const lines = SCHEMA.slice(0, index).split("\n");
+  const comment: string[] = [];
+  for (let i = lines.length - 2; i >= 0; i -= 1) {
+    const line = lines[i].trim();
+    if (!line.startsWith("///")) break;
+    comment.unshift(line.replace(/^\/\/\/\s?/, ""));
+  }
+  // The block wraps across lines, so join it into one logical sentence before
+  // matching; otherwise the assertion only holds when the wrap happens to fall
+  // where the pattern expects.
+  return comment.join(" ");
+}
+
 describe("migration · fiscal data foundation (EPIC-15 FISC-002)", () => {
   it("creates exactly the additive fiscal_document table", () => {
     const created = [...FISCAL_SQL.matchAll(/CREATE TABLE "([a-z_]+)"/g)].map(([, name]) => name);
@@ -33,9 +55,13 @@ describe("migration · fiscal data foundation (EPIC-15 FISC-002)", () => {
     expect(FISCAL_SQL).toMatch(
       /CREATE TYPE "fiscal_document_status" AS ENUM \('PENDING', 'QUEUED', 'SENDING', 'SUBMITTED', 'APPROVED', 'REJECTED', 'ERROR', 'CANCEL_PENDING', 'CANCELLED'\)/
     );
-    expect(SCHEMA).toMatch(
-      /Values are appended, never reordered or removed\. Evolve additively only\./
-    );
+    // Scoped to each fiscal enum's own doc comment: a global schema match would
+    // also pass if the evolution rule were written on some unrelated model.
+    for (const name of ["FiscalProvider", "FiscalDocumentStatus"]) {
+      expect(enumDocComment(name), name).toMatch(
+        /Values are appended, never reordered or removed\. Evolve additively only\./
+      );
+    }
     expect(
       FISCAL_SQL.indexOf('CREATE UNIQUE INDEX "fiscal_document_tenant_id_id_key"')
     ).toBeLessThan(FISCAL_SQL.indexOf("fiscal_document_tenant_id_invoice_id_fkey"));

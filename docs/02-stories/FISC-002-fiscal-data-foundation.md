@@ -237,7 +237,46 @@ it is recorded as the slice's open verification item rather than a silent gap.
 
 ## Technical Debt
 
-- None planned.
+- [[TD-027]] — local verification of the applied schema is impossible without a
+  reachable PostgreSQL, so the live-PostgreSQL gate is produced by CI rather
+  than locally. The Story stays `review` until that receipt exists.
+
+## Review record
+
+The native review of this slice closed **approved and acknowledged** on lineage
+`review-55a6586fdf5cc2c2` (revision
+`sha256:84f8bb173babb35986e5480f8dd93d529f4ca1d133ebbe2b0fd5a307604a0785`), with
+four lenses and no correction budget consumed. All nine findings were advisory
+and none opened a correction. Four were actionable and were fixed in the
+follow-up work unit rather than deferred:
+
+- `R2-regex-escape` — the block's `databaseMessage` used `[\\s\\S]` instead of
+  `[\s\S]`, a character class that matches a literal backslash or the letters
+  `s`/`S`. It would have failed to extract Prisma's wrapped message, so every
+  exact-message assertion in the block would have failed on first execution.
+- `R3-001` — the partial-index case ran two rejected probes plus one admitted
+  insert in a single transaction. PostgreSQL aborts a transaction on the first
+  failed statement, so the second probe would have observed `25P02` instead of
+  `23505`. It now uses one rolled-back transaction per rejection.
+- `R2-delete-status-name` — the case claimed to probe deletion "for every
+  status" while probing one. It now really covers `PENDING`, `SUBMITTED`,
+  `APPROVED` and `CANCELLED`, each on its own sale and invoice because the
+  invoice partial index admits one live invoice per sale.
+- `R2-enum-doc-comment-scope` — the additive-evolution assertion matched the
+  whole schema, so it would have passed even if the fiscal enums lacked the
+  comment. It is now scoped to each fiscal enum's own doc comment.
+
+The remaining advisories are recorded and not actioned:
+
+- `R3-002` and `R4-live-pg-fixture-residue` — the block's `beforeAll` commits
+  its fixture rows, so they persist in the test database. This deliberately
+  matches the shipped EPIC-12/EPIC-14 blocks, whose fixtures are committed the
+  same way; changing it here would make FISC-002 inconsistent with the file's
+  established pattern for no behavioural gain.
+- `R3-003` — an advisory on the block opening.
+- `R4-unexecuted-db-gate-marked-complete` — the live-PostgreSQL AC is checked
+  while its execution is unproven. That is exactly why [[TD-027]] exists and why
+  this Story is `review`, not `done`.
 
 ## Decisions / ADRs
 

@@ -15601,6 +15601,12 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
    * so every probe is a direct database statement at the migration's exact
    * shape. Every mutation runs in a transaction that is deliberately rolled
    * back; the final count case verifies that no probe row survived.
+   *
+   * PostgreSQL aborts an entire transaction on the first failed statement, so a
+   * case that must observe TWO different rejections uses ONE rolled-back
+   * transaction per rejection: a second probe in an already-aborted transaction
+   * would observe `25P02 current transaction is aborted` instead of the
+   * constraint under test.
    */
   describe("EPIC-15 fiscal data foundation", () => {
     const FISCAL_ROLLBACK_SENTINEL = "live-pg-fiscal-rollback";
@@ -15611,7 +15617,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
     const databaseMessage = (error: unknown): string => {
       const text = error instanceof Error ? error.message : String(error);
-      const match = /Message: `([\\s\\S]*?)`/.exec(text);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
       return (match ? match[1] : text).replace(/^ERROR: /, "");
     };
 
@@ -15904,16 +15910,24 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     }, 30_000);
 
     it("releases the partial unique key only after cancellation", async () => {
+      // Two distinct rejections plus one admitted insert, so three isolated
+      // transactions: an aborted transaction cannot host the next probe.
       await inRolledBackTransaction(async (tx) => {
         const databaseRejection = await captureDatabaseMessage(() =>
           insertRawFiscalDocument(tx, tenantAId, fiscalInvoiceAId)
         );
         expect(databaseRejection).toContain("duplicate key value violates unique constraint");
+      });
+
+      await inRolledBackTransaction(async (tx) => {
         const rejection = await captureRawRejection(() =>
           insertRawFiscalDocument(tx, tenantAId, fiscalInvoiceAId)
         );
         expect(rejection.sqlState).toBe("23505");
         expect(rejection.message).toContain("Key (tenant_id, invoice_id)=");
+      });
+
+      await inRolledBackTransaction(async (tx) => {
         await tx.$executeRaw`
           UPDATE "fiscal_document" SET "status" = 'CANCELLED'::fiscal_document_status,
             "cancelled_at" = now() WHERE "id" = ${fiscalDocumentAId}::uuid
@@ -15967,14 +15981,31 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     }, 30_000);
 
     it("rejects fiscal document deletion for every status", async () => {
-      await inRolledBackTransaction(async (tx) => {
-        const message = await captureDatabaseMessage(
-          () => tx.$executeRaw`
-          DELETE FROM "fiscal_document" WHERE "id" = ${fiscalDocumentAId}::uuid
-        `
-        );
-        expect(message).toBe("a fiscal document cannot be deleted; cancel it instead");
-      });
+      // Every status really is probed, each in its own transaction and on its
+      // OWN sale and invoice: the invoice partial index admits one live invoice
+      // per sale, so reusing a fixture invoice would reject the setup insert
+      // rather than exercise the delete trigger.
+      for (const [status, cancelledAt] of [
+        ["PENDING", null],
+        ["SUBMITTED", null],
+        ["APPROVED", null],
+        ["CANCELLED", new Date()],
+      ] as const) {
+        await inRolledBackTransaction(async (tx) => {
+          const sale = await insertRawFiscalSale(tx, tenantAId);
+          const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+          const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+            status,
+            cancelledAt,
+          });
+          const message = await captureDatabaseMessage(
+            () => tx.$executeRaw`
+            DELETE FROM "fiscal_document" WHERE "id" = ${id}::uuid
+          `
+          );
+          expect(message, status).toBe("a fiscal document cannot be deleted; cancel it instead");
+        });
+      }
     }, 30_000);
 
     it("rejects payload updates to a CANCELLED document", async () => {

@@ -253,6 +253,18 @@ file in the same commit as the schema it describes.
 - The parent corrected two contract defects it had pinned itself; both are
   recorded above in the `## Pinned technical contract` section.
 
+## Review record
+
+- Native review of the first candidate closed **approved and acknowledged** on
+  lineage `review-55a6586fdf5cc2c2` (4 lenses, 0 corrections, 9 advisory
+  findings). Four advisories were actionable defects and were fixed in a
+  follow-up work unit: the `[\\s\\S]` regex that would have broken every
+  exact-message assertion, the two-rejections-in-one-aborted-transaction case,
+  the "for every status" case that probed one status, and the schema-wide enum
+  doc-comment assertion. See the Story's `## Review record` for the full triage.
+- Consequence: the follow-up work unit is a NEW candidate and needs its own
+  preflight, as the contract requires.
+
 ## Notes
 
 - Base commit `59a5002` (the kickoff docs). Branch
