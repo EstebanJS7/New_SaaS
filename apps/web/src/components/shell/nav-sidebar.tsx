@@ -16,14 +16,15 @@ export interface NavLink {
  * Real staff destinations shipped so far. Business entries land with their
  * epics (Customers in EPIC-04, Patients in EPIC-05, Agenda in EPIC-07, Catalog
  * in EPIC-09, Suppliers and Purchases in EPIC-11, the POS in EPIC-12, Cash in
- * EPIC-13); the placeholder labels below remain chrome-only until a later epic
- * supplies a real surface.
+ * EPIC-13, Billing in EPIC-14); the placeholder labels below remain chrome-only
+ * until a later epic supplies a real surface.
  *
- * The POS and Cash are the entries with a capability requirement: DEC-026 gates
- * the sale surface on the seeded `sales` feature code and DEC-037 gates the Cash
- * workspace on the seeded `cash` feature code, so each entry declares its
- * requirement and the shell hides it when it knows the tenant lacks the
- * capability.
+ * The POS, Cash and Billing entries are the ones with a capability requirement:
+ * DEC-026 gates the sale surface on the seeded `sales` feature code, DEC-037
+ * gates the Cash workspace on the seeded `cash` feature code and DEC-040 gates
+ * the Billing workspace on the seeded `billing` feature code, so each entry
+ * declares its requirement and the shell hides it when it knows the tenant lacks
+ * the capability.
  */
 export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/customers", label: "Customers" },
@@ -33,6 +34,7 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/purchases", label: "Purchases" },
   { href: "/app/sales", label: "POS", requiredFeature: "sales" },
   { href: "/app/cash", label: "Cash", requiredFeature: "cash" },
+  { href: "/app/billing", label: "Billing", requiredFeature: "billing" },
   { href: "/app/agenda", label: "Agenda" },
 ];
 
@@ -86,9 +88,9 @@ interface NavSidebarProps {
  * Patients (EPIC-05), Catalog (EPIC-09), Suppliers and Purchases (EPIC-11), the
  * POS (EPIC-12), Cash (EPIC-13) and Agenda (EPIC-07) are real `next/link`
  * destinations declared with no client-side permission gate, because the API is
- * the only authorization authority and answers `403` on its own. The POS and
- * Cash entries additionally declare their `sales`/`cash` capability so the shell
- * can hide them when it knows the tenant lacks them.
+ * the only authorization authority and answers `403` on its own. The POS, Cash
+ * and Billing entries additionally declare their `sales`/`cash`/`billing`
+ * capability so the shell can hide them when it knows the tenant lacks them.
  */
 export function NavSidebar({ entitlements }: NavSidebarProps = {}): JSX.Element {
   return (
