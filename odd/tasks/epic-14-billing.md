@@ -943,6 +943,27 @@ BILL-003 closed.
 - The epic stays `planned`: [[BILL-005]] remains, and [[TD-018]], [[TD-024]],
   [[TD-025]] and [[TD-026]] stay open.
 
+### BILL-005 — EPIC-14 closure
+
+- The closure branch `docs/epic-14-billing-closure` was cut from `main` at
+  `db020af` after BILL-004 merged, and contains documentation and evidence only.
+- Created `docs/05-modules/Billing.md` (the implemented-behavior module
+  document) and registered it under `Implemented (EPIC-14)` in the module index,
+  removing it from the recommended list.
+- `docs/01-roadmap/EPIC-14-Billing.md` is `done` with its exit criteria and the
+  BILL-005 block checked; `docs/01-roadmap/ROADMAP.md` moved the EPIC-14 row to
+  `done` with the closure paragraph; `docs/09-releases/CHANGELOG.md` gained the
+  EPIC-14 entry; `docs/10-qa/CI-EVIDENCE.md` gained the epic-closure summary.
+- **The closure records two things rather than smoothing them over**: the native
+  review of the BILL-004 slice is escalated and not closed, so that candidate
+  carries no verdict; and the epic is fiscal-free by decision, so the PRD §36
+  "fiscal submission queued" step is not reached until [[EPIC-15]]/[[EPIC-16]].
+- Final counters: **29 migrations**, `permission` count **56**, live-PostgreSQL
+  **153 cases**, database 18 files / 403 tests, API 77 files / 1173 tests, web
+  90 files / 1052 tests.
+- Open debt carried forward: [[TD-013]], [[TD-018]], [[TD-021]], [[TD-022]],
+  [[TD-024]], [[TD-025]], [[TD-026]].
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)

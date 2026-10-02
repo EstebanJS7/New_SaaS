@@ -1225,5 +1225,20 @@ authority escalated to the terminal `native_stop_required` with cause
 authority valid and complete and no sanctioned exits. The candidate therefore
 carries no closed verdict and the fail-closed path applies.
 
+### EPIC-14 closure
+
+EPIC-14 Billing closed on 2026-10-02 with a merged CI receipt per slice: the
+scope and Decisions as #86, and BILL-001 (#87), BILL-002 (#89), BILL-003 (#91)
+and BILL-004 (#93), each with its closure pull request. The merged `main` runs
+are `36885623341`, `36911300059`, `36956634087` and `37023527813`, all green on
+both required checks, and the applied schema reports **29 migrations** with a
+`permission` count of **56** and the live-PostgreSQL suite at **153 cases**.
+
+Two things this closure records rather than smooths over: the native review of
+the BILL-004 slice is **escalated and not closed**, so that candidate carries no
+verdict and the fail-closed path applies; and the epic is fiscal-free by
+decision, so the PRD §36 journey step "fiscal submission queued" is not reached
+until [[EPIC-15]] and [[EPIC-16]].
+
 This section is the machine-generated receipt for the merged slice and is
 **not** a production-readiness statement.

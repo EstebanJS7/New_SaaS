@@ -2,7 +2,7 @@
 id: EPIC-14
 type: epic
 title: Billing
-status: planned
+status: done
 priority: high
 depends_on:
   - EPIC-12
@@ -21,7 +21,7 @@ prd_sections:
   - "40"
   - "41"
 created: 2026-10-01
-updated: 2026-10-01
+updated: 2026-10-02
 ---
 
 # EPIC-14 — Billing
@@ -366,20 +366,20 @@ planned evidence that will close it.
 
 ### BILL-005 — Epic closure and evidence
 
-- [ ] Module documentation for Billing is created after implementation and
+- [x] Module documentation for Billing is created after implementation and
       describes the aggregate, commands, numbering, authorization and UI
       behavior. Evidence to produce: `docs/05-modules/Billing.md` plus its index
       entry, merged with the implementation closure.
-- [ ] `docs/10-qa/CI-EVIDENCE.md`, the changelog and the roadmap status are
+- [x] `docs/10-qa/CI-EVIDENCE.md`, the changelog and the roadmap status are
       updated only after the implementation stories merge with CI receipts.
       Evidence to produce: the closure branch receipt.
-- [ ] Every story records migrations, endpoints, tests, limitations and any new
+- [x] Every story records migrations, endpoints, tests, limitations and any new
       technical debt before moving to `done`. Evidence to produce: story files.
-- [ ] The still-deferred portal invoice surface and the absence of fiscal
+- [x] The still-deferred portal invoice surface and the absence of fiscal
       integration are recorded as explicit debt/limitation, not as silent gaps.
       Evidence to produce: the current [[TD-022]] record and the epic limitation
       list.
-- [ ] The epic exits with lint, typecheck, unit, integration, live-PostgreSQL,
+- [x] The epic exits with lint, typecheck, unit, integration, live-PostgreSQL,
       build and docs checks green, or with explicit non-green/pending evidence
       recorded. Evidence to produce: CI and local command receipts.
 
@@ -412,18 +412,18 @@ planned evidence that will close it.
 
 ## Exit Criteria
 
-- [ ] Every Story — [[BILL-001]], [[BILL-002]], [[BILL-003]], [[BILL-004]] and
+- [x] Every Story — [[BILL-001]], [[BILL-002]], [[BILL-003]], [[BILL-004]] and
       [[BILL-005]] — is `done` with acceptance criteria checked and evidence
       recorded.
-- [ ] The Billing API exposes explicit `confirm` and `cancel` commands, with no
+- [x] The Billing API exposes explicit `confirm` and `cancel` commands, with no
       generic status patch, no delete and no edit of a confirmed record.
-- [ ] Tenant isolation, authorization, capability gates, audit, numbering and
+- [x] Tenant isolation, authorization, capability gates, audit, numbering and
       immutable-snapshot invariants are covered at the API and live-PostgreSQL
       levels, including a real concurrency case for confirm.
-- [ ] The staff Billing surface covers the operational flow with documented UX
+- [x] The staff Billing surface covers the operational flow with documented UX
       states and semantic design-token usage.
-- [ ] Module documentation, QA evidence, changelog and roadmap are current.
-- [ ] Required checks are green for the merged work units, or explicit
+- [x] Module documentation, QA evidence, changelog and roadmap are current.
+- [x] Required checks are green for the merged work units, or explicit
       non-green/pending evidence is recorded.
 
 ## Decisions / ADRs
