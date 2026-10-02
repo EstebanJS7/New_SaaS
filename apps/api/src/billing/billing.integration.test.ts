@@ -696,10 +696,10 @@ describe("Billing HTTP boundary — invoice creation (EPIC-14 BILL-002)", () => 
       .set("Cookie", fixture.a.actor.cookie)
       .expect(200);
 
-    // W2 ships the confirm transition, so it is now a REAL route and is proven
-    // by the confirmation suite below. The immutability fence is everything that
-    // still MUTATES an existing document without a dedicated command, plus every
-    // generic status route; `cancel` stays a 404 until BILL-003 W3.
+    // BILL-003 ships the confirm and cancel transitions, so BOTH are now REAL
+    // routes proven by their own suites. The immutability fence is everything
+    // that still MUTATES an existing document without a dedicated command, plus
+    // every generic status route.
     for (const [method, path] of [
       ["patch", `/invoices/${invoiceId}`],
       ["put", `/invoices/${invoiceId}`],
@@ -707,7 +707,6 @@ describe("Billing HTTP boundary — invoice creation (EPIC-14 BILL-002)", () => 
       ["patch", "/invoices"],
       ["put", "/invoices"],
       ["delete", "/invoices"],
-      ["post", `/invoices/${invoiceId}/cancel`],
     ] as const) {
       await supertest(booted.app.getHttpServer())
         [method](path)
@@ -725,12 +724,15 @@ describe("Billing HTTP boundary — invoice creation (EPIC-14 BILL-002)", () => 
 });
 
 /**
- * The repository read the W3 routes will use is exercised here through its REAL
- * caller, because a fake capability can only be called faithful once the code
- * that depends on it exists (the R3-1 advisory). This proves the in-memory
- * `invoice.findFirst` honours the tenant predicate and the position-ordered
- * `lines` include the repository actually asks for, and that the ONE shared
- * invoice 404 message masks a foreign id exactly like an unknown one.
+ * The repository seams the BILL-003 commands use are exercised here through
+ * their REAL caller shape, because a fake capability can only be called faithful
+ * once the code that depends on it exists (the R3-1 advisory). This proves the
+ * in-memory `invoice.findFirst` honours the tenant predicate and the
+ * position-ordered `lines` include the repository actually asks for, that the
+ * ONE shared invoice 404 message masks a foreign id exactly like an unknown one,
+ * and that `markCancelled`'s conditional `DRAFT`-or-`CONFIRMED` write returns an
+ * affected count (with `0` for a terminal, foreign or unknown id) while writing
+ * only the cancellation columns.
  */
 describe("Billing repository — tenant-scoped invoice read (R3-1 fidelity)", () => {
   let booted: BootedTestApp;
@@ -831,6 +833,83 @@ describe("Billing repository — tenant-scoped invoice read (R3-1 fidelity)", ()
         code: "NOT_FOUND",
         message: INVOICE_NOT_FOUND_MESSAGE,
       });
+    });
+  });
+
+  it("applies the DRAFT-or-CONFIRMED cancellation gate as an affected count and retains number/confirmedAt", async () => {
+    const draftSale = fixture.seedSale(fixture.a);
+    const draft = booted.db.prisma.invoice.create({
+      data: {
+        tenantId: fixture.a.tenant.id,
+        saleId: draftSale.id,
+        customerId: null,
+        currency: "PYG",
+        lines: { create: [] },
+      },
+    });
+    // A CONFIRMED row with an allocated number and an original confirmation
+    // timestamp: the cancellation must retain BOTH verbatim (DEC-039, DEC-043).
+    const confirmedSale = fixture.seedSale(fixture.a);
+    const confirmed = booted.db.prisma.invoice.create({
+      data: {
+        tenantId: fixture.a.tenant.id,
+        saleId: confirmedSale.id,
+        customerId: null,
+        currency: "PYG",
+        status: "CONFIRMED",
+        series: "A",
+        number: 7,
+        confirmedAt: new Date("2099-01-01T00:00:00.000Z"),
+        lines: { create: [] },
+      },
+    });
+    const foreignSale = fixture.seedSale(fixture.b);
+    const foreign = booted.db.prisma.invoice.create({
+      data: {
+        tenantId: fixture.b.tenant.id,
+        saleId: foreignSale.id,
+        customerId: null,
+        currency: "PYG",
+        lines: { create: [] },
+      },
+    });
+
+    const repository = booted.app.get(BillingRepository);
+    const context = booted.app.get(RequestContextService);
+
+    await context.run("billing-repository-cancel", async () => {
+      context.setTenantMembership({
+        tenantId: fixture.a.tenant.id,
+        membershipId: randomUUID(),
+        roleId: randomUUID(),
+        roleCode: "OWNER",
+      });
+
+      // The conditional write affects exactly ONE admissible row and writes the
+      // terminal status, the timestamp and the reason — nothing else.
+      expect(await repository.markCancelled(confirmed.id, "Issued by mistake")).toBe(1);
+      const cancelledConfirmed = booted.db.tables.invoices.get(confirmed.id);
+      expect(cancelledConfirmed?.status).toBe("CANCELLED");
+      expect(cancelledConfirmed?.cancelReason).toBe("Issued by mistake");
+      expect(cancelledConfirmed?.cancelledAt).not.toBeNull();
+      // The allocated number and the ORIGINAL confirmation timestamp are kept.
+      expect(cancelledConfirmed?.number).toBe(7);
+      expect(cancelledConfirmed?.confirmedAt?.toISOString()).toBe("2099-01-01T00:00:00.000Z");
+
+      // A DRAFT needs no number and acquires none.
+      expect(await repository.markCancelled(draft.id, "Mistaken customer")).toBe(1);
+      expect(booted.db.tables.invoices.get(draft.id)?.status).toBe("CANCELLED");
+      expect(booted.db.tables.invoices.get(draft.id)?.number).toBeNull();
+
+      // A terminal `CANCELLED` row is OUTSIDE the gate: ZERO affected rows, which
+      // is the lost-race backstop the service maps to the stable `409`.
+      expect(await repository.markCancelled(confirmed.id, "Second attempt")).toBe(0);
+      expect(booted.db.tables.invoices.get(confirmed.id)?.cancelReason).toBe("Issued by mistake");
+
+      // A FOREIGN id affects ZERO rows: the tenant predicate rides in the write.
+      expect(await repository.markCancelled(foreign.id, "Cross-tenant")).toBe(0);
+      expect(booted.db.tables.invoices.get(foreign.id)?.status).toBe("DRAFT");
+      expect(await repository.markCancelled(randomUUID(), "Unknown")).toBe(0);
     });
   });
 
@@ -1406,5 +1485,248 @@ describe("Billing HTTP boundary — invoice confirmation (EPIC-14 BILL-003 W2)",
     expect(second.number).toBe(first.number! + 1);
     // The counter now points at the NEXT number to allocate.
     expect(sequenceFor(fixture.a.tenant.id)?.nextValue).toBe(second.number! + 1);
+  });
+});
+
+/**
+ * The W3 cancellation command over the REAL HTTP boundary: the locked read, the
+ * `DRAFT`-or-`CONFIRMED` gate, the terminal `CANCELLED` write with the retained
+ * number and the original confirmation timestamp, the co-committed audit row
+ * and the replay-by-state contract (DEC-041, DEC-043). The in-memory boundary
+ * cannot prove the row-lock serialization, so the durable concurrent-confirm
+ * overlap and the live cross-tenant/authorization evidence stay
+ * live-PostgreSQL-owned (BILL-003 W3).
+ */
+describe("Billing HTTP boundary — invoice cancellation (EPIC-14 BILL-003 W3)", () => {
+  let booted: BootedTestApp;
+  let fixture: BillingHttpFixture;
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    fixture = seedBillingHttp(booted.db);
+  });
+
+  afterAll(async () => {
+    await booted.close();
+  });
+
+  const DEFAULT_CANCEL_REASON = "Mistaken document";
+
+  const postInvoice = (cookie: string, saleId: string) =>
+    supertest(booted.app.getHttpServer()).post("/invoices").set("Cookie", cookie).send({ saleId });
+
+  const confirmInvoice = (cookie: string, id: string) =>
+    supertest(booted.app.getHttpServer()).post(`/invoices/${id}/confirm`).set("Cookie", cookie);
+
+  const cancelInvoice = (
+    cookie: string,
+    id: string,
+    body: Record<string, unknown> = { reason: DEFAULT_CANCEL_REASON }
+  ) =>
+    supertest(booted.app.getHttpServer())
+      .post(`/invoices/${id}/cancel`)
+      .set("Cookie", cookie)
+      .send(body);
+
+  /** Audit rows of ONE action targeting one invoice — the per-mutation count. */
+  function auditsWithAction(invoiceId: string, action: string): AuditLogRow[] {
+    return auditsForTarget(booted, invoiceId).filter((row) => row.action === action);
+  }
+
+  async function createDraft(owner: BillingTenant): Promise<InvoiceDto> {
+    return (await postInvoice(owner.actor.cookie, fixture.seedSale(owner).id).expect(201))
+      .body as InvoiceDto;
+  }
+
+  it("cancels a DRAFT invoice with the reason echoed, no number and one co-committed audit row", async () => {
+    const created = await createDraft(fixture.a);
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const response = await cancelInvoice(fixture.a.actor.cookie, created.id, {
+      reason: "Mistaken customer",
+    }).expect(200);
+    const body = response.body as InvoiceDto;
+    expect(Object.keys(body).sort()).toEqual([...INVOICE_RESPONSE_KEYS].sort());
+    expect("tenantId" in body).toBe(false);
+    expect(body.id).toBe(created.id);
+    expect(body.status).toBe("CANCELLED");
+    expect(body.series).toBe("A");
+    // A draft had no number, and cancellation never allocates one (DEC-039).
+    expect(body.number).toBeNull();
+    expect(body.confirmedAt).toBeNull();
+    expect(body.cancelledAt).not.toBeNull();
+    expect(body.cancelReason).toBe("Mistaken customer");
+
+    // The response is exactly the STORED document, co-committed with its audit.
+    const stored = booted.db.tables.invoices.get(created.id);
+    expect(stored?.status).toBe("CANCELLED");
+    expect(stored?.number).toBeNull();
+    expect(stored?.cancelledAt?.toISOString()).toBe(body.cancelledAt);
+    expect(stored?.cancelReason).toBe("Mistaken customer");
+
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+    const rows = auditsWithAction(created.id, "invoice.cancelled");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe("invoice.cancelled");
+    expect(rows[0].targetType).toBe("invoice");
+    expect(rows[0].tenantId).toBe(fixture.a.tenant.id);
+    expect(rows[0].actorUserProfileId).toBe(fixture.a.actor.profile.id);
+    expect(rows[0].metadata).toEqual({
+      schemaVersion: BILLING_DTO_SCHEMA_VERSION,
+      changedFields: ["status", "cancelledAt", "cancelReason"],
+    });
+  });
+
+  it("cancelling a CONFIRMED invoice retains the number and its original confirmation timestamp", async () => {
+    const created = await createDraft(fixture.a);
+    const confirmed = (await confirmInvoice(fixture.a.actor.cookie, created.id).expect(200))
+      .body as InvoiceDto;
+    expect(confirmed.number).not.toBeNull();
+    const confirmedAtBefore = confirmed.confirmedAt;
+
+    const response = await cancelInvoice(fixture.a.actor.cookie, created.id, {
+      reason: "Wrong totals",
+    }).expect(200);
+    const body = response.body as InvoiceDto;
+    expect(body.status).toBe("CANCELLED");
+    // The allocated number is RETAINED, never released or reallocated (DEC-043).
+    expect(body.number).toBe(confirmed.number);
+    // The original confirmation time is untouched by the cancellation.
+    expect(body.confirmedAt).toBe(confirmedAtBefore);
+    expect(body.cancelledAt).not.toBeNull();
+    expect(body.cancelReason).toBe("Wrong totals");
+
+    const stored = booted.db.tables.invoices.get(created.id);
+    expect(stored?.status).toBe("CANCELLED");
+    expect(stored?.number).toBe(confirmed.number);
+    expect(stored?.confirmedAt?.toISOString()).toBe(confirmedAtBefore);
+
+    // Exactly ONE audit row per real transition: one confirm and one cancel.
+    expect(auditsWithAction(created.id, "invoice.confirmed")).toHaveLength(1);
+    expect(auditsWithAction(created.id, "invoice.cancelled")).toHaveLength(1);
+  });
+
+  it("replays an already CANCELLED invoice with the SAME body and no second audit row", async () => {
+    const created = await createDraft(fixture.a);
+    const firstResponse = await cancelInvoice(fixture.a.actor.cookie, created.id, {
+      reason: "First reason",
+    }).expect(200);
+    const first = firstResponse.body as InvoiceDto;
+    const auditsAfterFirst = booted.db.tables.audits.size;
+
+    // A DIFFERENT reason on the retry: the replay returns the ORIGINAL document
+    // unchanged, so the stored reason is never rewritten.
+    const replay = await cancelInvoice(fixture.a.actor.cookie, created.id, {
+      reason: "Second reason",
+    }).expect(200);
+    const body = replay.body as InvoiceDto;
+    expect(body.status).toBe("CANCELLED");
+    expect(body.cancelReason).toBe(first.cancelReason);
+    expect(body.cancelledAt).toBe(first.cancelledAt);
+    // Byte-identical representation: the replay writes nothing at all.
+    expect(replay.text).toBe(firstResponse.text);
+
+    expect(booted.db.tables.audits.size).toBe(auditsAfterFirst);
+    expect(auditsWithAction(created.id, "invoice.cancelled")).toHaveLength(1);
+    expect(booted.db.tables.invoices.get(created.id)?.cancelReason).toBe("First reason");
+  });
+
+  it("rejects a blank, whitespace-only, missing, over-long or extra-key body with 400 and no residue", async () => {
+    const draft = await createDraft(fixture.a);
+    const sizesBefore = tableSizes(booted.db);
+
+    const invalidBodies: readonly Record<string, unknown>[] = [
+      {},
+      { reason: "" },
+      { reason: "   " },
+      { reason: "\t\n " },
+      { reason: "n".repeat(501) },
+      { reason: "Fine", tenantId: fixture.a.tenant.id },
+      { reason: "Fine", status: "CANCELLED" },
+      { reason: 12 },
+      { reason: null },
+    ];
+    for (const body of invalidBodies) {
+      const response = await cancelInvoice(fixture.a.actor.cookie, draft.id, body).expect(400);
+      expect((response.body as ErrorDto).error.code, JSON.stringify(body)).toBe(
+        "VALIDATION_FAILED"
+      );
+    }
+
+    // No rejection persisted anything: no state transition and no audit row.
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.invoices.get(draft.id)?.status).toBe("DRAFT");
+
+    // The column width is the exact upper bound: 500 characters is admitted.
+    const boundary = await cancelInvoice(fixture.a.actor.cookie, draft.id, {
+      reason: "n".repeat(500),
+    }).expect(200);
+    expect((boundary.body as InvoiceDto).cancelReason).toHaveLength(500);
+  });
+
+  it("masks a foreign and an unknown invoice id as a byte-equivalent 404 on cancel and persists nothing", async () => {
+    const foreign = (
+      await postInvoice(fixture.b.actor.cookie, fixture.seedSale(fixture.b).id).expect(201)
+    ).body as InvoiceDto;
+    const sizesBefore = tableSizes(booted.db);
+
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.a.actor.cookie,
+      method: "POST",
+      nonexistentUrl: `/invoices/${randomUUID()}/cancel`,
+      foreignUrl: `/invoices/${foreign.id}/cancel`,
+      body: { reason: DEFAULT_CANCEL_REASON },
+      forbiddenIdentifiers: [foreign.id, foreign.saleId, fixture.b.tenant.id],
+    });
+
+    const probe = await cancelInvoice(fixture.a.actor.cookie, foreign.id).expect(404);
+    expect((probe.body as ErrorDto).error.code).toBe("NOT_FOUND");
+    expect((probe.body as ErrorDto).error.message).toBe(INVOICE_NOT_FOUND_MESSAGE);
+
+    // Neither tenant's rows moved and the foreign invoice is untouched.
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    expect(booted.db.tables.invoices.get(foreign.id)?.status).toBe("DRAFT");
+  });
+
+  it("requires billing.cancel and the billing entitlement, persisting nothing when denied", async () => {
+    const draftA = await createDraft(fixture.a);
+    // Tenant C is unentitled, so its draft is seeded directly (the create route
+    // is itself gated on the entitlement).
+    const draftC = booted.db.prisma.invoice.create({
+      data: {
+        tenantId: fixture.c.tenant.id,
+        saleId: fixture.seedSale(fixture.c).id,
+        customerId: null,
+        currency: "PYG",
+        status: "DRAFT",
+        series: "A",
+        lines: { create: [] },
+      },
+    });
+    const sizesBefore = tableSizes(booted.db);
+
+    // A member of A whose role has NO billing key.
+    const none = await cancelInvoice(fixture.noPermission.cookie, draftA.id).expect(403);
+    expect((none.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    // A member of A with `billing.read` only: cancel is still a 403.
+    const readOnly = await cancelInvoice(fixture.readOnly.cookie, draftA.id).expect(403);
+    expect((readOnly.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    // Tenant C holds the FULL matrix but no entitlement: gated FIRST.
+    const unentitled = await cancelInvoice(fixture.c.actor.cookie, draftC.id).expect(403);
+    expect((unentitled.body as ErrorDto).error.code).toBe("FEATURE_NOT_ENTITLED");
+    expect((unentitled.body as ErrorDto).error.message).toBe(BILLING_FEATURE_NOT_ENTITLED_MESSAGE);
+
+    // …and a malformed id is the stable 400 for a permissioned actor.
+    const malformed = await supertest(booted.app.getHttpServer())
+      .post("/invoices/not-a-uuid/cancel")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ reason: DEFAULT_CANCEL_REASON })
+      .expect(400);
+    expect((malformed.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+
+    expect(booted.db.tables.invoices.get(draftA.id)?.status).toBe("DRAFT");
+    expect(booted.db.tables.invoices.get(draftC.id)?.status).toBe("DRAFT");
+    expect(tableSizes(booted.db)).toEqual(sizesBefore);
   });
 });

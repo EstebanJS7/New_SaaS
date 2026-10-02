@@ -197,12 +197,13 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /cash/sessions/:id/close",
   // EPIC-14 BILL-002 — the invoice creation command plus the read surface W3
   // added: the filtered list and the id read. EPIC-14 BILL-003 W2 adds the
-  // explicit confirm transition. Still no PATCH, no PUT, no DELETE and no
-  // cancel route: W3 owns the cancellation command.
+  // explicit confirm transition and W3 completes the four-route family with the
+  // cancellation command. Still no PATCH, no PUT and no DELETE.
   "GET /invoices",
   "GET /invoices/:id",
   "POST /invoices",
   "POST /invoices/:id/confirm",
+  "POST /invoices/:id/cancel",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -414,20 +415,21 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-14 BILL-002/BILL-003 W2 invoice surface. Every route MUST declare exactly
+ * EPIC-14 BILL-002/BILL-003 invoice surface. Every route MUST declare exactly
  * its single billing tier: `billing.create` for the creation command,
- * `billing.read` for both reads and `billing.confirm` for the confirmation
- * transition. A route decorated with another billing tier (or none) fails by
- * name, which the permission-less 403 sweep cannot catch. BILL-003 W3's
- * `billing.cancel` key must never appear until its command ships. There is
- * deliberately no `PATCH`, no `PUT`, no `DELETE` and no generic status route:
- * the invoice is immutable from creation (DEC-038, DEC-043).
+ * `billing.read` for both reads, `billing.confirm` for the confirmation
+ * transition and `billing.cancel` for the cancellation command. A route
+ * decorated with another billing tier (or none) fails by name, which the
+ * permission-less 403 sweep cannot catch. There is deliberately no `PATCH`, no
+ * `PUT`, no `DELETE` and no generic status route: the invoice is immutable from
+ * creation and its lifecycle is the two explicit commands (DEC-038, DEC-043).
  */
 const BILLING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /invoices": BILLING_PERMISSIONS.read,
   "GET /invoices/:id": BILLING_PERMISSIONS.read,
   "POST /invoices": BILLING_PERMISSIONS.create,
   "POST /invoices/:id/confirm": BILLING_PERMISSIONS.confirm,
+  "POST /invoices/:id/cancel": BILLING_PERMISSIONS.cancel,
 };
 
 describe("route-contract probe (deny-by-default)", () => {

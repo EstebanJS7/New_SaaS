@@ -605,11 +605,19 @@ export interface InvoiceRow extends InvoiceHeaderRow {
   lines: InvoiceLineRow[];
 }
 
+/**
+ * Status predicate the in-memory invoice delegates accept: one lifecycle value
+ * (the confirm gate) or the `in` set the cancellation gate needs, because cancel
+ * is admitted from BOTH `DRAFT` and `CONFIRMED` (DEC-043). Mirrors the
+ * repository's own {@link InvoiceStatusRow} union without importing it.
+ */
+export type InvoiceStatusFilter = InvoiceStatusRow | { in: readonly InvoiceStatusRow[] };
+
 /** Predicate fields the in-memory invoice reads/writes are allowed to build. */
 export interface InvoiceWhere {
   id?: string;
   tenantId?: string;
-  status?: InvoiceStatusRow;
+  status?: InvoiceStatusFilter;
 }
 
 /** Ordering clauses the in-memory invoice list accepts. */
@@ -1435,16 +1443,24 @@ export interface IsolationDatabase {
       /** Tenant/status-filtered list count for the paginated read. */
       count: (args?: { where?: InvoiceWhere }) => number;
       /**
-       * Filter-shaped conditional header transition the confirm command applies
-       * (BILL-003). Mirrors the real delegate's `updateMany`: a tenant-
-       * predicate-shaped update whose `status` predicate is the DRAFT gate, and
-       * which writes only `status`, `number` and `confirmedAt` (plus the
-       * `updatedAt` the `@updatedAt` column owns). Returns the affected count so
-       * a zero-row result is a lost race rather than a silent success.
+       * Filter-shaped conditional header transition the confirm and cancel
+       * commands apply (BILL-003). Mirrors the real delegate's `updateMany`: a
+       * tenant-predicate-shaped update whose `status` predicate is the state
+       * gate, and which writes only the columns the owning transition owns —
+       * `status`, `number` and `confirmedAt` for confirm, `status`,
+       * `cancelledAt` and `cancelReason` for cancel — plus the `updatedAt` the
+       * `@updatedAt` column owns. Returns the affected count so a zero-row
+       * result is a lost race rather than a silent success.
        */
       updateMany: (args: {
         where: InvoiceWhere;
-        data: { status?: InvoiceStatusRow; number?: number; confirmedAt?: Date };
+        data: {
+          status?: InvoiceStatusRow;
+          number?: number;
+          confirmedAt?: Date;
+          cancelledAt?: Date;
+          cancelReason?: string;
+        };
       }) => { count: number };
     };
     /**
@@ -2260,6 +2276,19 @@ function assertInvoiceTenantScope(where: InvoiceWhere): void {
   if (where.tenantId === undefined) {
     throw new Error("invoice header reads require a tenantId predicate (tenant-isolation guard)");
   }
+}
+
+/**
+ * True when a stored invoice status satisfies the delegate's status predicate.
+ * A bare literal is an equality gate (confirm) and `{ in }` is a set gate
+ * (cancel), exactly like the real Prisma filter union.
+ */
+function matchesInvoiceStatus(
+  status: InvoiceStatusRow,
+  filter: InvoiceStatusFilter | undefined
+): boolean {
+  if (filter === undefined) return true;
+  return typeof filter === "string" ? status === filter : filter.in.includes(status);
 }
 
 /**
@@ -3484,7 +3513,7 @@ export function createIsolationDatabase(): IsolationDatabase {
             (candidate) =>
               (where.id === undefined || candidate.id === where.id) &&
               candidate.tenantId === where.tenantId &&
-              (where.status === undefined || candidate.status === where.status)
+              matchesInvoiceStatus(candidate.status, where.status)
           ) ?? null;
         if (!header) return null;
         return {
@@ -3498,7 +3527,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             candidate.tenantId === where.tenantId &&
-            (where.status === undefined || candidate.status === where.status)
+            matchesInvoiceStatus(candidate.status, where.status)
         );
         const ordered = orderBy === undefined ? headers : orderInvoices(headers, orderBy);
         return ordered.map((header) => ({
@@ -3598,7 +3627,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where?.id === undefined || candidate.id === where.id) &&
             (where?.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where?.status === undefined || candidate.status === where.status)
+            matchesInvoiceStatus(candidate.status, where?.status)
         ).length,
       updateMany: ({ where, data }) => {
         // Tenant-scoped BY CONSTRUCTION, exactly like the header reads: a
@@ -3609,13 +3638,15 @@ export function createIsolationDatabase(): IsolationDatabase {
         for (const candidate of invoiceTable.values()) {
           if (where.id !== undefined && candidate.id !== where.id) continue;
           if (candidate.tenantId !== where.tenantId) continue;
-          if (where.status !== undefined && candidate.status !== where.status) continue;
-          // Only the three columns the confirm transition owns are writable; a
-          // request for the invoice identity, currency or series has no shape in
-          // this delegate. `updatedAt` is the `@updatedAt` column.
+          if (!matchesInvoiceStatus(candidate.status, where.status)) continue;
+          // Only the columns an invoice transition owns are writable; a request
+          // for the invoice identity, currency or series has no shape in this
+          // delegate. `updatedAt` is the `@updatedAt` column.
           if (data.status !== undefined) candidate.status = data.status;
           if (data.number !== undefined) candidate.number = data.number;
           if (data.confirmedAt !== undefined) candidate.confirmedAt = data.confirmedAt;
+          if (data.cancelledAt !== undefined) candidate.cancelledAt = data.cancelledAt;
+          if (data.cancelReason !== undefined) candidate.cancelReason = data.cancelReason;
           candidate.updatedAt = new Date();
           count += 1;
         }

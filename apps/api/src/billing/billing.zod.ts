@@ -39,6 +39,40 @@ export type CreateInvoiceInput = z.infer<typeof createInvoiceBody>;
  */
 export const INVOICE_STATUS_VALUES = Object.freeze(["DRAFT", "CONFIRMED", "CANCELLED"] as const);
 
+/**
+ * The `invoice.cancel_reason` column upper bound (`VARCHAR(500)` plus the
+ * `invoice_cancel_reason_present` CHECK). The DTO mirrors the column exactly so
+ * Node and PostgreSQL reject the same reasons.
+ */
+export const INVOICE_CANCEL_REASON_MAX_LENGTH = 500;
+
+/**
+ * Cancel payload (DEC-043): the required reason and NOTHING else. The reason is
+ * TRIMMED before the length checks — the shipped cash-movement reason precedent
+ * — so a whitespace-only string is rejected as empty rather than stored, and the
+ * trimmed value is what the command persists and echoes. `.strict()` rejects
+ * unknown keys, explicitly including `tenantId` (resolved server-side from the
+ * request context, never caller authority), `status` (server-owned lifecycle),
+ * `cancelledAt` and `cancelReason` (both written only by the command). A
+ * missing, blank, whitespace-only, over-long or extra key is the stable `400
+ * VALIDATION_FAILED` through the controller's `parseInput`; the database CHECK
+ * `invoice_cancel_reason_present` stays the backstop, never the first line.
+ */
+export const cancelInvoiceBody = z
+  .object({
+    reason: z
+      .string()
+      .trim()
+      .min(1, "An invoice cancel reason is required.")
+      .max(
+        INVOICE_CANCEL_REASON_MAX_LENGTH,
+        `An invoice cancel reason must be at most ${INVOICE_CANCEL_REASON_MAX_LENGTH} characters.`
+      ),
+  })
+  .strict();
+
+export type CancelInvoiceInput = z.infer<typeof cancelInvoiceBody>;
+
 /** Invoice-addressed path parameter; a non-UUID is `400 VALIDATION_FAILED`. */
 export const invoiceIdParam = z.object({ id: z.string().uuid() });
 

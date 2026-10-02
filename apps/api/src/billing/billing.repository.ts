@@ -95,11 +95,21 @@ export interface InvoiceCreateData {
   readonly lines: readonly InvoiceLineWriteData[];
 }
 
+/**
+ * Status predicate the tenant-scoped invoice reads and the `updateMany`
+ * transitions may build: one lifecycle value (the confirm gate) or the `in` set
+ * the cancellation gate needs, because cancellation is admitted from BOTH
+ * `DRAFT` and `CONFIRMED` (DEC-043). Declared as a local union so this boundary
+ * stays decoupled from the generated client namespace.
+ */
+export type InvoiceStatusFilter =
+  InvoiceStatusValue | { readonly in: readonly InvoiceStatusValue[] };
+
 /** Predicate fields the tenant-scoped invoice reads are allowed to build. */
 export interface InvoiceWhere {
   id?: string;
   tenantId: string;
-  status?: InvoiceStatusValue;
+  status?: InvoiceStatusFilter;
 }
 
 /**
@@ -169,10 +179,22 @@ export interface InvoiceDelegate {
    * filter-shaped update, exactly like the sale `complete` backstop, so the
    * stored status itself is the guard. `@updatedAt` writes `updated_at`, which
    * is why it is not part of `data`; `confirmedAt` is written ONLY here.
+   *
+   * BILL-003 W3's cancellation reuses this ONE delegate: its `status` predicate
+   * is the `in` set `{ DRAFT, CONFIRMED }` and its `data` writes only
+   * `cancelledAt` and `cancelReason` — never `number` or `confirmedAt`, which
+   * belong to the confirmation (the W1 header guard rejects a transition that
+   * moves a column it does not own).
    */
   updateMany: (args: {
     where: InvoiceWhere;
-    data: { status?: InvoiceStatusValue; number?: number; confirmedAt?: Date };
+    data: {
+      status?: InvoiceStatusValue;
+      number?: number;
+      confirmedAt?: Date;
+      cancelledAt?: Date;
+      cancelReason?: string;
+    };
   }) => Promise<{ count: number }>;
 }
 
@@ -403,6 +425,31 @@ export class BillingRepository {
     const result = await client.invoice.updateMany({
       where: { id, tenantId, status: "DRAFT" },
       data: { status: "CONFIRMED", number, confirmedAt: new Date() },
+    });
+    return result.count;
+  }
+
+  /**
+   * Applies the terminal `CANCELLED` transition of one invoice of the caller's
+   * active tenant, writing the cancellation timestamp and the reason (DEC-043).
+   *
+   * This write is the BACKSTOP of the cancellation serialization, not its
+   * primary mechanism: {@link lockById}'s header row lock is what makes a
+   * concurrent second command observe the committed status. The write is still
+   * conditional on the STORED status being `DRAFT` or `CONFIRMED`, so if that
+   * status were ever not admissible the statement affects zero rows; the caller
+   * maps that to the stable `409` instead of treating it as a success. Only
+   * `status`, `cancelled_at` and `cancel_reason` are written — the W1 header
+   * guard rejects a transition that moves a column it does not own — so the
+   * allocated `number` and the original `confirmed_at` are RETAINED verbatim
+   * (DEC-039, DEC-043), and `updated_at` is handled by `@updatedAt`.
+   */
+  async markCancelled(id: string, reason: string, tx?: BillingTx): Promise<number> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    const result = await client.invoice.updateMany({
+      where: { id, tenantId, status: { in: ["DRAFT", "CONFIRMED"] } },
+      data: { status: "CANCELLED", cancelledAt: new Date(), cancelReason: reason },
     });
     return result.count;
   }

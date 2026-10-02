@@ -545,7 +545,7 @@ after BILL-002 closed.
 - [x] W2 — the confirm command: the locked read, the atomic allocation, the
       state write, the audit, the replay, the route pin and the integration
       cases.
-- [ ] W3 — the cancel command: the reason contract, the two-state gate, the
+- [x] W3 — the cancel command: the reason contract, the two-state gate, the
       terminal write, the audit, the replay, the route pin, the integration
       cases and the live-PostgreSQL command block including the
       concurrent-confirm overlap.
@@ -668,6 +668,43 @@ after BILL-002 closed.
   `git_command_failed` / `Needed a single revision` and a `not_started` mutation
   outcome. The composed value was recovered from the issued START command and
   the call succeeded. Never type a provider-composed selector: copy it.
+
+### BILL-003 W3 — cancel command and the durable command coverage
+
+- `POST /invoices/:id/cancel` behind `billing.cancel`: a `.strict()` body whose
+  `reason` must be non-blank after trimming and at most 500 characters, with the
+  database's `invoice_cancel_reason_present` CHECK as the backstop rather than
+  the first line. Same shape as confirm: lock the header, read it post-lock so a
+  foreign or unknown id is the shared byte-equivalent `404`, replay an already
+  `CANCELLED` invoice unchanged with no write and no second audit row, otherwise
+  the conditional `WHERE status IN ('DRAFT','CONFIRMED')` write whose zero-row
+  result is the lost-race `409`.
+- The reason TEXT never enters the audit trail: the metadata carries the field
+  names `status`, `cancelledAt`, `cancelReason` and nothing else. The allocated
+  number and the original `confirmed_at` survive a confirmed cancellation, which
+  is the transition the W1 guard explicitly admits.
+- **`R3-CONCURRENCY-COVERAGE` is closed, and better than the obligation asked.**
+  The live block forces a GENUINE overlap on the SAME invoice by having a
+  dedicated transaction hold the exact header row lock the command takes first,
+  reading the row's `ctid` so it cannot move, and using `waitForRowLockWaiters`
+  against that exact `(relation, page, tuple)` so BOTH confirmations are
+  provably parked before either can read the status or allocate: the
+  interleaving is decided by the database boundary, not by timing. It then
+  asserts exactly ONE number across both responses, one header holding it, the
+  counter advanced **exactly once** and exactly one audit row.
+- It also adds a SECOND forced overlap, on the tenant's
+  `invoice_number_sequence` row, proving two DIFFERENT invoices confirmed
+  concurrently receive two DISTINCT consecutive numbers. That is the atomicity
+  of the allocation statement itself, which the header lock cannot cover.
+- Size: `1355` added / `45` removed across 8 files, of which 734 insertions are
+  the live-PostgreSQL block. Gates: the focused suite **32 tests** (was 25); the
+  API suite **77 files / 1173 tests passed** with `DATABASE_URL_TEST` exported,
+  because the live-PostgreSQL spec then runs inside it (1020 + 153); the
+  separate live-PostgreSQL run **153 passed** (was 144, so this slice adds 9);
+  `pnpm typecheck` and `pnpm lint` 14/14; `pnpm format-check` clean. The parent
+  re-ran all four and read the cancel transaction and the two overlap probes.
+- The eight-route family is now complete in the route-contract probe: the frozen
+  inventory and the per-route permission map hold all four `billing` routes.
 
 ## Evidence
 
