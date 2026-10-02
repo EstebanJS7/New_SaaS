@@ -1077,11 +1077,12 @@ This section is the machine-generated receipt for the merged slice and is
 
 ## EPIC-14 Billing
 
-| Slice                                  | Pull request | Merge commit | CI run                                                                           | Checks                                                                               |
-| -------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Scope, plans and accepted decisions    | #86          | `15dc434`    | [`36873574529`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36873574529) | `Database migrations` 1m14s, `Lint, Typecheck, Test, Build` 4m21s                    |
-| BILL-001 invoice data foundation       | #87          | `fc60d11`    | [`36885623341`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36885623341) | `Database migrations` 1m7s, `Lint, Typecheck, Test, Build` 4m25s on merged main      |
-| BILL-002 invoice creation and read API | #89          | `c52b175`    | [`36911300059`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36911300059) | `Database migrations` success, `Lint, Typecheck, Test, Build` success on merged main |
+| Slice                                        | Pull request | Merge commit | CI run                                                                           | Checks                                                                               |
+| -------------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Scope, plans and accepted decisions          | #86          | `15dc434`    | [`36873574529`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36873574529) | `Database migrations` 1m14s, `Lint, Typecheck, Test, Build` 4m21s                    |
+| BILL-001 invoice data foundation             | #87          | `fc60d11`    | [`36885623341`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36885623341) | `Database migrations` 1m7s, `Lint, Typecheck, Test, Build` 4m25s on merged main      |
+| BILL-002 invoice creation and read API       | #89          | `c52b175`    | [`36911300059`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36911300059) | `Database migrations` success, `Lint, Typecheck, Test, Build` success on merged main |
+| BILL-003 invoice confirm and cancel commands | #91          | `558fe0b`    | [`36956634087`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36956634087) | `Database migrations` success, `Lint, Typecheck, Test, Build` success on merged main |
 
 The scope records landed first because CI's required checks only run for pull
 requests targeting the default branch: #86 merged as `15dc434` and #87 as
@@ -1151,6 +1152,40 @@ correction required: `review-01c7a12dc4e54144` (the in-memory boundary),
 `review-4fe1a95e416b6b45` (the creation path) and `review-d918081c81315de7` (the
 read surface, four lenses). Their advisories are recorded as [[TD-024]],
 [[TD-025]] and [[TD-026]].
+
+### BILL-003 invoice confirm and cancel commands
+
+Pull request #91's own receipt before the merge was run
+[`36956282465`](https://github.com/EstebanJS7/New_SaaS/actions/runs/36956282465)
+at the branch head: `Database migrations` 1m11s and
+`Lint, Typecheck, Test, Build` 4m17s.
+
+Local evidence, reproduced by the `migrations` job on a fresh database:
+
+- `POST /invoices/:id/confirm` and `POST /invoices/:id/cancel`, completing the
+  four-route `billing` family, plus the additive migration
+  `20261001000002_invoice_header_guard_tightening` applied as the **29th**;
+- the allocation is one atomic statement that also creates the tenant's counter
+  row, so a fresh tenant's first invoice is number 1;
+- both commands are replay-safe by state with no idempotency key, and the
+  confirm replay is asserted to leave the counter **unadvanced**;
+- the database suite grew to **18 files / 403 tests** and the live-PostgreSQL
+  suite from 142 to **153 cases**, adding the two FORCED overlaps: a
+  same-invoice concurrent confirm proving one number, one audit row and one
+  counter advance, and a counter-row overlap proving two different invoices
+  receive two distinct consecutive numbers. An unproven overlap throws rather
+  than passing as a sequential race;
+- the tightened guard is proven two-sided, and the pre-fix body was re-armed on
+  a throwaway database to show the tampering statement was previously ADMITTED,
+  which is the discrimination evidence that the gap was real;
+- `pnpm typecheck` and `pnpm lint` were 14/14 and `pnpm format-check` clean.
+
+Three RDD native reviews closed **approved** with the authority burned and no
+correction: `review-b795346140ce8fe1` (the guard tightening),
+`review-2b1723416d0631b5` (the confirm command) and `review-7752615080dcd223`
+(the cancel command and the live coverage). W2's `R3-CONCURRENCY-COVERAGE`
+advisory became W3's obligation and is discharged by the two forced overlaps.
+[[TD-023]] is `resolved`.
 
 This section is the machine-generated receipt for the merged slice and is
 **not** a production-readiness statement.

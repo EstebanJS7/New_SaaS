@@ -750,6 +750,18 @@ after BILL-002 closed.
   live-PostgreSQL **153 cases** (was 142 at the start of the epic), database
   suite 18 files / 403 tests, and the `permission` count unchanged at **56**.
 
+### BILL-003 — merged and closed
+
+- Pull request **#91** merged as `558fe0b`.
+- The merged-receipt gate is run `36956634087` on `main` at `558fe0b`: both
+  required checks `success`, with all **29** migrations applied to a fresh
+  database.
+- [[BILL-003]] moved to `done` with its twelve acceptance criteria checked and
+  the epic's own block ticked, and [[TD-023]] is `resolved`.
+- `docs/10-qa/CI-EVIDENCE.md` gained the BILL-003 row and section.
+- The epic stays `planned`: [[BILL-004]] and [[BILL-005]] remain, and
+  [[TD-018]], [[TD-024]], [[TD-025]], [[TD-026]] stay open.
+
 ## Evidence
 
 ### BILL-001 W1 — invoice data foundation (schema, migration, schema gate)
