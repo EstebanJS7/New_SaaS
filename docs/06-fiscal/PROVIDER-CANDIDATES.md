@@ -101,7 +101,70 @@ Source: <https://goekua.com.py/api-docs.html>.
 | Docs style    | Field-level mapping to the DNIT _manual técnico_ by page number (e.g. "Campo iTipTra - Página 66 del manual técnico")                                                                    |
 | Pricing       | "Conocé el Plan API y solicitá tu cotización" — quote based                                                                                                                              |
 
-## Recommendation: Fisnodo
+## Decision
+
+The maintainer chose **GOEKUA** on 2026-10-03. This section records that choice
+with its consequences, because two of them change what the epic must build.
+
+### Additional GOEKUA facts retrieved after the choice
+
+Source: <https://goekua.com.py/planes.html>, retrieved 2026-10-03.
+
+- Plans: Express **Gs. 85.000/mes** (hasta 30 documentos), Básico (hasta 2.000),
+  Intermedio (4.000), and the **API plan**, "a cotizar": "La tarifa de entrada
+  es desde **Gs. 110.000/mes por hasta 200 llamadas**, y de ahí escala según el
+  volumen", where "una llamada es un documento electrónico emitido o recibido".
+- Homologation: "Todos los planes de GOEKUA están **homologados** para timbrar y
+  transmitir tus documentos tributarios electrónicos directamente al SIFEN…
+  GOEKUA se encarga de esa integración".
+- Signing certificate: GOEKUA offers to manage the **firma digital F1** by
+  video-identification, typically 48–72 business hours, with a stated **Gs.
+  350.000** cost.
+- **No sandbox of its own was found.** The only published test environment is
+  DNIT's own _Guía de Pruebas para e-kuatia_, which GOEKUA consumes internally
+  as an homologated transmitter.
+
+### Consequence 1 — the signing certificate must not cross our boundary
+
+`POST /api/certificate/upload` accepts the `.p12`/`.pfx` **and its password**.
+Uploading it from our system would mean holding and transmitting RESTRICTED
+material, which is exactly what `ENGINEERING-RULES.md` forbids for application
+records and what `D1`'s `credentialRef` design exists to avoid.
+
+GOEKUA's own video-identification path removes the problem: the tenant manages
+its certificate with GOEKUA, and **our system holds only the API key**. That is
+the recommended path and the one this epic should implement; the certificate
+never enters our code, our database or our logs.
+
+### Consequence 2 — no sandbox changes the test evidence
+
+There is no GOEKUA test environment to integrate against. The adapter therefore
+needs two layers of evidence: deterministic recorded fixtures for CI (contract
+pinned to the published documentation), plus a documented manual verification
+run against a real environment by the maintainer. Until that run happens, the
+adapter's real-environment behavior is a **recorded limitation**, not a claim.
+
+### Consequence 3 — polling, which extends the provider port (ADR)
+
+GOEKUA has no webhooks. Its model is `POST /api/electronic-document/generate-* `
+followed by `GET /api/electronic-document/{cdc}` to learn the outcome, with
+status values
+`APPROVED, REJECTED, IN_REVIEW, INUTILIZATION, FORWARDING, FORWARDED, CANCELED`.
+
+Our `FiscalProviderPort` has only `issue` and `cancel`, so a poll-based provider
+needs a third capability — a status query — and the worker needs a
+reconciliation poll for documents left pending. That is a **change to the Fiscal
+Provider boundary**, which `DOCUMENTATION-RULES.md` names as an ADR case. It
+also needs a pinned mapping from GOEKUA's vocabulary onto our lifecycle
+(`IN_REVIEW`, `FORWARDING` and `FORWARDED` all collapse to our `SUBMITTED`;
+`CANCELED` is our `CANCELLED`).
+
+## Recommendation (superseded by the decision above)
+
+The analysis below recommended Fisnodo. It is retained because the reasoning is
+still the yardstick for the two consequences above: GOEKUA needs a certificate
+handling decision, a different test strategy and a port extension, and each of
+those is a cost the recommendation was trying to avoid.
 
 The deciding factor is not features in the abstract but **how little of our
 boundary would have to be bent**:

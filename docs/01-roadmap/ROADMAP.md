@@ -24,7 +24,7 @@ updated: 2026-09-27
 | EPIC-13 | Cash                               |    done | EPIC-12                   |
 | EPIC-14 | Billing                            |    done | EPIC-12                   |
 | EPIC-15 | Fiscal Abstraction                 |    done | EPIC-14                   |
-| EPIC-16 | Fiscal Third-party Adapter         | planned | EPIC-15                   |
+| EPIC-16 | SIFEN Direct                       | planned | EPIC-15                   |
 | EPIC-17 | Notifications                      | planned | EPIC-07                   |
 | EPIC-18 | Dashboards/Reports                 | planned | prior domains             |
 | EPIC-19 | Imports                            | planned | EPIC-04, EPIC-05          |
