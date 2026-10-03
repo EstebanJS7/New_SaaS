@@ -326,8 +326,13 @@ recorded non-action):
       root typecheck 16/16, lint 16/16, format clean, seed reapplied
       (`permissions: 57`, `rolePermissions: 193`), live PostgreSQL **213 passed
       (213)**.
-- [ ] T5b — FISC-005b: the `/app/fiscal` staff surface and its `/api/fiscal`
-      proxy.
+- [x] T5b-1 — FISC-005b: the web client layer (`fiscal-api`, `fiscal-display`,
+      `fiscal-validation`, `fiscal-outcome`), the `/api/fiscal` proxy and the
+      nav entry, with their colocated tests. Evidence: this work unit's commit.
+      Gates green: web 95 files / 1071 tests, web typecheck/lint/`next build`
+      clean, root `pnpm test` 17/17, typecheck 16/16, lint 16/16, format clean.
+- [ ] T5b-2 — FISC-005b: the `/app/fiscal` workspace — `page.tsx`, the surface
+      and the three panels, with their colocated tests.
 - [ ] T6 — FISC-005b: module docs, TD-029, advisory triage, CI evidence,
       changelog, roadmap and the EPIC-15 closure.
 
@@ -502,6 +507,17 @@ apps/web/src/components/shell/nav-sidebar.tsx
 
 ### T5b pinned details
 
+The slice is split into two work units because it is the largest of the story:
+**T5b-1** is the client layer, the proxy and the nav (no rendering), and
+**T5b-2** is the workspace that consumes them. Both are part of the same
+FISC-005b PR.
+
+- The client talks only to `/api/fiscal/...`. The proxy prefix is `/api/fiscal`
+  and the remainder is the upstream path, so the four calls are:
+  `GET /api/fiscal/fiscal-documents` (optional `?status=`),
+  `GET /api/fiscal/fiscal-documents/:id`, `POST /api/fiscal/fiscal-documents`
+  body `{ invoiceId }`, and `POST /api/fiscal/fiscal-documents/:id/cancel` body
+  `{ reason }`.
 - Replicate the Billing template exactly: `page.tsx` is a server component
   rendering one `"use client"` surface, with no guard and no metadata; the proxy
   is the `[[...path]]` shape-classifier (prefix constant, method-aware path
