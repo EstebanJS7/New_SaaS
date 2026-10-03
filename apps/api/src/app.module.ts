@@ -12,6 +12,7 @@ import { CommonModule } from "./common/common.module.js";
 import { ContextModule } from "./context/context.module.js";
 import { CustomersModule } from "./customers/customers.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
+import { FiscalModule } from "./fiscal/fiscal.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { InventoryModule } from "./inventory/inventory.module.js";
 import { PatientsModule } from "./patients/patients.module.js";
@@ -82,6 +83,9 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // after Cash so the dependency direction reads top-down. Registered BEFORE
     // PortalModule, which must stay last.
     BillingModule,
+    // EPIC-15 Fiscal provider composition root; no APP_GUARD, so it does not
+    // affect guard order. Keep before PortalModule, which must stay last.
+    FiscalModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.

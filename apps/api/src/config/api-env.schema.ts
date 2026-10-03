@@ -17,6 +17,13 @@ export const DEV_BRANDING_ASSET_PUBLIC_BASE_URL = "http://localhost:3001";
 /** Minimum length required for the branding asset secret in production. */
 export const PRODUCTION_BRANDING_ASSET_SECRET_MIN_LENGTH = 32;
 
+/**
+ * Closed set of accepted `FISCAL_PROVIDER` values. EPIC-16 appends
+ * `"third_party"`. Exported so the composition root's factory validates against
+ * this list rather than a second copy of it.
+ */
+export const FISCAL_PROVIDER_ENV_VALUES = Object.freeze(["fake"] as const);
+
 /** Hosts that are not reachable from a public portal and are rejected in production. */
 const LOCAL_BRANDING_ASSET_HOSTS: ReadonlySet<string> = new Set([
   "localhost",
@@ -47,6 +54,12 @@ function hostnameOf(url: string): string | null {
 export const apiEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+    /**
+     * Closed provider set for EPIC-15; EPIC-16 adds "third_party". Declared as a
+     * shared constant so the composition root's factory validates against the
+     * SAME list instead of a drift-prone copy.
+     */
+    FISCAL_PROVIDER: z.enum(FISCAL_PROVIDER_ENV_VALUES).optional(),
     API_HOST: z.string().min(1).default("0.0.0.0"),
     API_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
     DATABASE_URL: z.string().min(1),
@@ -100,6 +113,17 @@ export const apiEnvSchema = z
     STORAGE_S3_KEY_PREFIX: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === "production" && env.FISCAL_PROVIDER === undefined) {
+      // No production fiscal provider exists until EPIC-16; silently emitting
+      // non-fiscal documents is worse than failing fast. Explicit fake is the
+      // dedicated-demo path documented in docs/03-architecture/DEMO-TENANT.md.
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["FISCAL_PROVIDER"],
+        message: "FISCAL_PROVIDER is required in production.",
+      });
+    }
+
     if (env.NODE_ENV !== "production") {
       return;
     }
