@@ -131,21 +131,124 @@ lists the namespace; leaving it unregistered with a recorded reason is honest,
 and registering it with an empty closed schema would be config surface with no
 consumer.
 
-## Pinned technical contract (binding on the writer)
+## Pinned technical contract (D1-D6 accepted 2026-10-03)
 
-To be pinned in full once D1-D6 are settled. The shape is already known from the
-shipped precedents:
+### FISC-005a — files
 
-- the guard migration is additive, `CREATE OR REPLACE FUNCTION` only, and must
-  not relax any of the six existing guards;
-- the Fiscal cancellation command is a `POST /fiscal-documents/:id/cancel` route
-  gated on `fiscal.invoice.issue` (no new permission key, so the seed probes
-  stay at `permissions: 56`) with a required reason, mirroring
-  `POST /invoices/:id/cancel`;
-- the staff surface mirrors the shipped Cash and Billing workspaces, with the
-  full state coverage and semantic tokens only;
-- the closure updates `docs/05-modules/Fiscal.md`, CI evidence, changelog and
-  roadmap only with real receipts.
+```text
+packages/fiscal/src/fiscal-provider.port.ts        + cancel request/result, port method
+packages/fiscal/src/fake-fiscal.provider.ts        + cancelOutcomes script
+packages/database/prisma/migrations/20261004000001_fiscal_document_cancellation_guard/migration.sql
+packages/database/src/schema-fiscal-cancellation-guard.test.ts
+apps/api/src/fiscal/fiscal.service.ts              + cancel command, + hasLiveDocumentForInvoice
+apps/api/src/fiscal/fiscal.controller.ts           + POST /fiscal-documents/:id/cancel
+apps/api/src/fiscal/fiscal.repository.ts           + document lock/find/update for cancel
+apps/api/src/fiscal/fiscal.zod.ts                  + cancel body { reason }
+apps/api/src/billing/billing.service.ts            cancel consults Fiscal
+apps/api/src/billing/billing.module.ts             imports FiscalModule
+apps/api/test/live-pg-isolation.e2e-spec.ts        + cancellation probes
+```
+
+### Port addition (D4)
+
+```ts
+interface FiscalCancelRequest {
+  readonly fiscalDocumentId: string;
+  readonly tenantId: string;
+  readonly provider: FiscalProviderId;
+  readonly reason: string;
+  readonly externalId: string | null;
+  readonly cdc: string | null;
+}
+type FiscalCancelOutcome =
+  | "CANCELLED"
+  | "CANCEL_PENDING"
+  | "REJECTED"
+  | "CONFIGURATION_ERROR"
+  | "TRANSIENT_FAILURE";
+interface FiscalCancelResult {
+  readonly outcome: FiscalCancelOutcome;
+  readonly reasonCode: string | null;
+  readonly reason: string | null;
+  readonly retryAfterMs: number | null;
+  readonly providerRequest: unknown; // RAW; sanitized before persistence
+  readonly providerResponse: unknown; // RAW
+  readonly resolvedAt: string;
+}
+```
+
+`isRetryableOutcome` is reused unchanged — it already admits exactly
+`TRANSIENT_FAILURE`, and every `FiscalCancelOutcome` literal is an issue outcome
+literal. One retryability predicate, not two. The fake gains
+`cancelOutcomes?: readonly FiscalCancelOutcome[]`, defaulting to
+`["CANCELLED"]`, consumed by the same ordered-script rule as `outcomes`.
+
+### Guard migration (D3)
+
+Additive, hand-written, sorting after `20261003000001`.
+`CREATE OR REPLACE FUNCTION` only, and it must not relax any of the six existing
+guards. New edges:
+
+```text
+PENDING | QUEUED | ERROR | REJECTED -> CANCELLED
+SUBMITTED | APPROVED                -> CANCEL_PENDING
+CANCEL_PENDING                      -> CANCELLED
+```
+
+`SENDING -> CANCELLED` stays excluded. The `resolved_at` implication and the
+never-clear clauses stay as they are; `cancelled_at` must be set on every edge
+into `CANCELLED`, which the FISC-002 biconditional already enforces. The schema
+test mirrors `schema-fiscal-transition-guard.test.ts`, including its per-edge
+matcher that accepts both the `= 'X'` and `IN (...)` forms.
+
+### The Fiscal cancel command
+
+`POST /fiscal-documents/:id/cancel`, `@RequirePermissions` on the existing
+`fiscal.invoice.issue` (no new key, so the seed probes stay at
+`permissions: 56`), body `{ reason }` — required, non-blank, length-capped —
+mirroring `POST /invoices/:id/cancel`. Gate order as everywhere else:
+entitlement → permission → actor, all outside the transaction.
+
+Then one transaction: lock the document `FOR UPDATE`; `404` when absent or
+cross-tenant; a document already `CANCELLED` replays the same representation
+(`200`); a document in `SENDING` is a stable `409` because a worker holds the
+claim; otherwise ask the provider port, then apply the outcome through the
+graph: `CANCELLED` → `CANCELLED` with `cancelled_at`; `CANCEL_PENDING` →
+`CANCEL_PENDING`; `REJECTED`/`CONFIGURATION_ERROR` → a `409` carrying the
+provider's reason code, with the document left where it was and the reason
+stored in `last_error_*`; `TRANSIENT_FAILURE` → `ERROR`. This is a synchronous
+command, so the caller sees the failure rather than a queued retry. One audit
+row per attempt: `fiscal.document.cancellation_requested` on success,
+`fiscal.document.cancellation_failed` on a refusal.
+
+### The Billing hand-off (D2, D5)
+
+`FiscalService.hasLiveDocumentForInvoice(invoiceId)` is a tenant-scoped read of
+the live (non-`CANCELLED`) document for an invoice, used by
+`BillingService.cancel` **before** it performs its own transition: a live
+document means a stable `409` whose exported message names the Fiscal
+cancellation route. `BillingModule` imports `FiscalModule`; the dependency stays
+one-way because Fiscal reads invoices through its own repository and never
+imports Billing.
+
+The boundary test's Billing rule changes from "imports nothing from `fiscal/`"
+to "imports the Fiscal application boundary only, never a concrete provider",
+and its case name and comment must say so.
+
+### What FISC-005a must NOT do
+
+- No status write outside the graph, no `attempt_count` reset, no delete.
+- No `fiscal-ui` namespace (D6): the surface needs no configurable value, and a
+  namespace with no consumer is config surface for its own sake. Record that in
+  the story's Known Limitations with PRD §38 named.
+- No provider `cancel` call from Billing: Billing asks Fiscal, Fiscal asks the
+  provider.
+
+### FISC-005b — deferred to its own PR
+
+The `fiscal-ui` decision is settled (not shipped); the remaining work is the
+staff surface, `docs/05-modules/Fiscal.md`, CI evidence, changelog, roadmap and
+the epic closure, with the four TD-028 advisories listed as closure follow-ups.
 
 ## Deferred items that belong in the closure list
 
