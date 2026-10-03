@@ -18,6 +18,7 @@
     "@nestjs/core": "^11.0.16",
     "@newsaas/config": "workspace:*",
     "@newsaas/database": "workspace:*",
+    "@newsaas/fiscal": "workspace:*",
     "@newsaas/shared": "workspace:*",
     "@newsaas/storage": "workspace:*",
     "bullmq": "^5.46.1",

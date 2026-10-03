@@ -35,15 +35,17 @@ function concreteProviderImports(source: string): string[] {
   );
 }
 
-function fiscalImports(source: string): string[] {
-  return importSpecifiers(source).filter((specifier) => /(?:^|\/)fiscal\//.test(specifier));
+function packageFiscalImports(source: string): string[] {
+  return importSpecifiers(source).filter((specifier) => specifier === "@newsaas/fiscal");
 }
 
 describe("Fiscal source boundary", () => {
   const files = walkSourceFiles(API_SRC);
 
   it("extracts every supported import form", () => {
-    const target = "../fiscal/fake-fiscal.provider.js";
+    // The realistic bypass this rule guards is a deep path INTO the package,
+    // since the barrel only exports the port, the module and the dev/test fake.
+    const target = "../../../packages/fiscal/src/fake-fiscal.provider.js";
     expect(concreteProviderImports(`import { x } from "${target}";`)).toEqual([target]);
     expect(concreteProviderImports(`import "${target}";`)).toEqual([target]);
     expect(concreteProviderImports(`await import("${target}");`)).toEqual([target]);
@@ -54,7 +56,7 @@ describe("Fiscal source boundary", () => {
     expect(files.length, "source walk must find API files").toBeGreaterThan(0);
   });
 
-  it("keeps the concrete fake provider inside the Fiscal module", () => {
+  it("keeps the concrete fake provider inside apps/api/src/fiscal/", () => {
     const violations: string[] = [];
     for (const file of files) {
       if (file.startsWith(join(API_SRC, "fiscal"))) continue;
@@ -68,19 +70,33 @@ describe("Fiscal source boundary", () => {
     ).toEqual([]);
   });
 
-  it("keeps Billing free of Fiscal imports until FISC-004", () => {
-    // FISC-004 changes this rule to: Billing imports the port only.
-    const billingDir = join(API_SRC, "billing");
-    const billingFiles = walkSourceFiles(billingDir);
+  it("keeps API imports of the shared package inside the Fiscal composition area", () => {
     const violations: string[] = [];
-    for (const file of billingFiles) {
-      for (const specifier of fiscalImports(readFileSync(file, "utf8"))) {
+    for (const file of files) {
+      if (file.startsWith(join(API_SRC, "fiscal"))) continue;
+      for (const specifier of packageFiscalImports(readFileSync(file, "utf8"))) {
         violations.push(`${file}: ${specifier}`);
       }
     }
     expect(
       violations,
-      `scanned ${files.length} API source files; Billing must not import fiscal/ yet`
+      `scanned ${files.length} API source files; @newsaas/fiscal imports must stay in fiscal/`
+    ).toEqual([]);
+  });
+
+  it("keeps Billing free of the Fiscal package", () => {
+    // DEC-047 makes Fiscal the owner of the issue command; Billing imports nothing from this boundary.
+    const billingDir = join(API_SRC, "billing");
+    const billingFiles = walkSourceFiles(billingDir);
+    const violations: string[] = [];
+    for (const file of billingFiles) {
+      for (const specifier of packageFiscalImports(readFileSync(file, "utf8"))) {
+        violations.push(`${file}: ${specifier}`);
+      }
+    }
+    expect(
+      violations,
+      `scanned ${files.length} API source files; Billing must not import @newsaas/fiscal`
     ).toEqual([]);
   });
 });

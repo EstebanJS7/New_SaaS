@@ -25,6 +25,7 @@
     "@nestjs/platform-fastify": "^11.0.16",
     "@newsaas/config": "workspace:*",
     "@newsaas/database": "workspace:*",
+    "@newsaas/fiscal": "workspace:*",
     "@newsaas/shared": "workspace:*",
     "@newsaas/storage": "workspace:*",
     "argon2": "^0.45.1",
