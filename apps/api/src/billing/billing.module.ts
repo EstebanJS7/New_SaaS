@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { AuditModule } from "../audit/audit.module.js";
 import { ContextModule } from "../context/context.module.js";
 import { EntitlementsModule } from "../entitlements/entitlements.module.js";
+import { FiscalModule } from "../fiscal/fiscal.module.js";
 import { RbacModule } from "../rbac/rbac.module.js";
 import { SaleRepository } from "../sales/sales.repository.js";
 import { SettingsModule } from "../settings/settings.module.js";
@@ -30,9 +31,20 @@ import { BillingService } from "./billing.service.js";
  * surface IS entitlement-gated on the already-seeded `billing` feature code
  * (DEC-040): the entitlement is asserted before the granular permission on every
  * route including reads.
+ *
+ * Billing consumes the Fiscal APPLICATION boundary for the DEC-051 hand-off;
+ * this dependency is one-way because Fiscal never imports Billing, and Billing
+ * still never imports `@newsaas/fiscal` nor a concrete provider.
  */
 @Module({
-  imports: [ContextModule, RbacModule, AuditModule, SettingsModule, EntitlementsModule],
+  imports: [
+    ContextModule,
+    AuditModule,
+    SettingsModule,
+    EntitlementsModule,
+    FiscalModule,
+    RbacModule,
+  ],
   controllers: [BillingController],
   providers: [BillingRepository, SaleRepository, BillingService],
 })

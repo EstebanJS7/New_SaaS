@@ -40,7 +40,14 @@ interface FiscalWhere {
   invoiceId?: string;
   status?: FiscalDocumentStatus | { in: readonly FiscalDocumentStatus[] } | { not: "CANCELLED" };
 }
-export interface FiscalRepositoryTx {
+export interface FiscalDocumentReadTx {
+  fiscalDocument: {
+    findFirst(args: {
+      where: { tenantId: string; invoiceId: string; status: { not: "CANCELLED" } };
+    }): Promise<{ id: string } | null>;
+  };
+}
+export interface FiscalRepositoryTx extends FiscalDocumentReadTx {
   $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>;
   invoice: {
     findFirst(args: {
@@ -136,6 +143,18 @@ export class FiscalRepository {
     return tx.fiscalDocument.findFirst({
       where: { tenantId: this.context.requireTenantId(), invoiceId, status: { not: "CANCELLED" } },
     });
+  }
+  /**
+   * Tenant-scoped "does this invoice have a live (non-CANCELLED) document?"
+   * read for a caller that owns its own transaction handle (Billing, DEC-051).
+   * Accepts the minimal {@link FiscalDocumentReadTx} so the caller never imports
+   * the Fiscal persistence surface.
+   */
+  async hasLiveDocument(invoiceId: string, tx: FiscalDocumentReadTx): Promise<boolean> {
+    const row = await tx.fiscalDocument.findFirst({
+      where: { tenantId: this.context.requireTenantId(), invoiceId, status: { not: "CANCELLED" } },
+    });
+    return row !== null;
   }
   async create(
     data: { invoiceId: string; provider: string },

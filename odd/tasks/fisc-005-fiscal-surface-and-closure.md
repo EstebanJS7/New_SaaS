@@ -271,12 +271,18 @@ overlap guard is not unit-covered because its queue only exists after
       schema and live-PostgreSQL probes. Evidence: `297007d`. Live-PostgreSQL
       execution of the probes is still owed (see T4b); Docker was down in the
       WSL distro when T3 landed.
-- [ ] T4a — FISC-005a: the Fiscal cancellation command
+- [x] T4a — FISC-005a: the Fiscal cancellation command
       (`POST     /fiscal-documents/:id/cancel`), the repository lock/read/update
-      surface it needs, and its integration coverage.
-- [ ] T4b — FISC-005a: the Billing hand-off (`hasLiveDocumentForInvoice`), the
+      surface it needs, and its integration coverage. Evidence: `5b3b564`. Gates
+      green: API 1050 tests / 80 files, root `pnpm test` 17/17, typecheck 16/16,
+      lint 16/16, format clean.
+- [x] T4b — FISC-005a: the Billing hand-off (`hasLiveDocumentForInvoice`), the
       Billing boundary rule, its integration coverage and the live-PostgreSQL
-      execution of the FISC-005a probes.
+      execution of the FISC-005a probes. Evidence: this work unit's commit.
+      Gates green: API 1056 tests / 80 files, root `pnpm test` 17/17, typecheck
+      16/16, lint 16/16, format clean, `db:deploy` 32 migrations applied, live
+      PostgreSQL **213 passed (213)** with the FISC-005a cancellation-edge
+      probes executed locally for the first time.
 - [ ] T5 — FISC-005b: the staff fiscal surface.
 - [ ] T6 — FISC-005b: module docs, CI evidence, changelog, roadmap, epic
       closure.
@@ -344,11 +350,27 @@ overlap guard is not unit-covered because its queue only exists after
   replay branch, so it serializes with `FiscalService.issue` (which locks the
   same invoice header before creating the document). A check outside the
   transaction would leave the create window open.
-- `BillingTx` gains the one `fiscalDocument.findFirst` read it needs, so the
-  transaction handle type-checks on both the real client and the in-memory
-  boundary; Billing still never imports `@newsaas/fiscal`.
+- The transaction handle is shared through a **minimal structural read type**,
+  not through the Fiscal package: `fiscal.repository.ts` exports
+  `FiscalDocumentReadTx = { fiscalDocument: { findFirst } }`,
+  `FiscalRepositoryTx` extends it, `findLiveDocument` takes it, and
+  `hasLiveDocumentForInvoice` accepts it optionally. Billing declares its own
+  `fiscalDocument` read delegate locally (no import from `fiscal/`), so the
+  dependency stays a read seam and Billing still never imports
+  `@newsaas/fiscal`.
+- `FiscalService.hasLiveDocumentForInvoice` asserts NO entitlement and NO
+  permission: Billing has already applied both gates on its own path. It is a
+  pure tenant-scoped read.
+- `FiscalModule` gains `exports: [FiscalService]`; `BillingModule` imports
+  `FiscalModule`. The dependency stays one-way (Fiscal never imports Billing).
 - The blocked message is a stable `409` that names the Fiscal cancellation
   route. It is exported and asserted byte-exactly in the integration test.
+- The boundary test's Billing rule becomes: Billing may import ONLY the Fiscal
+  **application boundary** (`../fiscal/fiscal.service.js`,
+  `../fiscal/fiscal.module.js`) and must never import `@newsaas/fiscal` nor a
+  concrete provider. The existing `@newsaas/fiscal` rule stays in force and
+  keeps its own case; a new case allowlists the application-boundary modules by
+  path.
 
 ## Notes
 

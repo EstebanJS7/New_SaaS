@@ -22,6 +22,7 @@ import {
   FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE,
   type FiscalDocumentRow,
   type FiscalDocumentStatus,
+  type FiscalDocumentReadTx,
   type FiscalRepositoryTx,
 } from "./fiscal.repository.js";
 import { FISCAL_PERMISSIONS } from "./fiscal.permissions.js";
@@ -113,6 +114,15 @@ export class FiscalService {
     @Inject(FISCAL_PROVIDER) private readonly provider: FiscalProviderPort,
     @Inject(FISCAL_SUBMISSION_PRODUCER) private readonly producer: FiscalSubmissionProducer
   ) {}
+
+  /**
+   * Tenant-scoped read of the invoice's live (non-CANCELLED) fiscal document.
+   * Billing has already asserted the entitlement and the permission on its own
+   * path, so this asserts NEITHER: it is a pure read seam (D5).
+   */
+  async hasLiveDocumentForInvoice(invoiceId: string, tx?: FiscalDocumentReadTx): Promise<boolean> {
+    return this.repository.hasLiveDocument(invoiceId, tx ?? this.repository.client);
+  }
 
   async cancel(id: string, reason: string): Promise<FiscalDocumentResponse> {
     await this.assertFiscalEnabled();

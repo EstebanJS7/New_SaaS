@@ -8,6 +8,7 @@ import {
   type AuditLogRow,
   type CatalogItemRow,
   type CustomerRow,
+  type FiscalDocumentRow,
   type IsolationDatabase,
   type SaleRow,
   type SaleStatusRow,
@@ -25,6 +26,7 @@ import {
   BILLING_FEATURE_NOT_ENTITLED_MESSAGE,
   INVOICE_CUSTOMER_REQUIRED_MESSAGE,
   INVOICE_LINE_DESCRIPTION_TOO_LONG_MESSAGE,
+  INVOICE_HAS_LIVE_FISCAL_DOCUMENT_MESSAGE,
   INVOICE_NOT_DRAFT_MESSAGE,
   INVOICE_SALE_ALREADY_INVOICED_MESSAGE,
   INVOICE_SALE_NOT_COMPLETED_MESSAGE,
@@ -1533,10 +1535,79 @@ describe("Billing HTTP boundary — invoice cancellation (EPIC-14 BILL-003 W3)",
     return auditsForTarget(booted, invoiceId).filter((row) => row.action === action);
   }
 
+  function seedFiscalDocument(invoice: InvoiceDto, status: FiscalDocumentRow["status"]): void {
+    const now = new Date();
+    const document: FiscalDocumentRow = {
+      id: randomUUID(),
+      tenantId: fixture.a.tenant.id,
+      invoiceId: invoice.id,
+      provider: "FAKE",
+      status,
+      attemptCount: 0,
+      externalId: null,
+      cdc: null,
+      lastErrorCode: null,
+      cancelledAt: status === "CANCELLED" ? now : null,
+      lastErrorMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    booted.db.tables.fiscalDocuments.set(document.id, document);
+  }
+
   async function createDraft(owner: BillingTenant): Promise<InvoiceDto> {
     return (await postInvoice(owner.actor.cookie, fixture.seedSale(owner).id).expect(201))
       .body as InvoiceDto;
   }
+
+  it("blocks a CONFIRMED invoice while its QUEUED fiscal document is live", async () => {
+    const created = await createDraft(fixture.a);
+    await confirmInvoice(fixture.a.actor.cookie, created.id).expect(200);
+    seedFiscalDocument(created, "QUEUED");
+    const auditsBefore = auditsWithAction(created.id, "invoice.cancelled").length;
+
+    const response = await cancelInvoice(fixture.a.actor.cookie, created.id).expect(409);
+    expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((response.body as ErrorDto).error.message).toBe(
+      INVOICE_HAS_LIVE_FISCAL_DOCUMENT_MESSAGE
+    );
+    expect(booted.db.tables.invoices.get(created.id)?.status).toBe("CONFIRMED");
+    expect(booted.db.tables.invoices.get(created.id)?.cancelReason).toBeNull();
+    expect(auditsWithAction(created.id, "invoice.cancelled")).toHaveLength(auditsBefore);
+  });
+
+  it("allows cancellation after Fiscal cancels the document", async () => {
+    const created = await createDraft(fixture.a);
+    await confirmInvoice(fixture.a.actor.cookie, created.id).expect(200);
+    seedFiscalDocument(created, "CANCELLED");
+    const auditsBefore = auditsWithAction(created.id, "invoice.cancelled").length;
+
+    const response = await cancelInvoice(fixture.a.actor.cookie, created.id).expect(200);
+    expect((response.body as InvoiceDto).status).toBe("CANCELLED");
+    expect(auditsWithAction(created.id, "invoice.cancelled")).toHaveLength(auditsBefore + 1);
+  });
+
+  it("blocks a DRAFT invoice while its fiscal document is live", async () => {
+    const draft = await createDraft(fixture.a);
+    seedFiscalDocument(draft, "QUEUED");
+
+    const response = await cancelInvoice(fixture.a.actor.cookie, draft.id).expect(409);
+    expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect((response.body as ErrorDto).error.message).toBe(
+      INVOICE_HAS_LIVE_FISCAL_DOCUMENT_MESSAGE
+    );
+    expect(booted.db.tables.invoices.get(draft.id)?.status).toBe("DRAFT");
+    expect(booted.db.tables.invoices.get(draft.id)?.cancelReason).toBeNull();
+  });
+
+  it("cancels an invoice with no fiscal document as before", async () => {
+    const draft = await createDraft(fixture.a);
+    const auditsBefore = auditsWithAction(draft.id, "invoice.cancelled").length;
+
+    const response = await cancelInvoice(fixture.a.actor.cookie, draft.id).expect(200);
+    expect((response.body as InvoiceDto).status).toBe("CANCELLED");
+    expect(auditsWithAction(draft.id, "invoice.cancelled")).toHaveLength(auditsBefore + 1);
+  });
 
   it("cancels a DRAFT invoice with the reason echoed, no number and one co-committed audit row", async () => {
     const created = await createDraft(fixture.a);

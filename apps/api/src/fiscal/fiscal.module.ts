@@ -16,11 +16,13 @@ import {
  * The concrete implementation is created only in the shared Fiscal provider
  * module; this remains the API-side composition root for API-owned providers
  * and the fiscal submission producer. EPIC-16 replaces the fake selection
- * with a real adapter.
+ * with a real adapter. Billing consumes this application service as its
+ * one-way read seam for the DEC-051 cancellation hand-off.
  */
 @Module({
   imports: [FiscalProviderModule, ContextModule, RbacModule, AuditModule, EntitlementsModule],
   controllers: [FiscalController],
+  exports: [FiscalService],
   providers: [
     FiscalRepository,
     FiscalService,

@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const API_SRC = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const BILLING_FISCAL_APPLICATION_BOUNDARY = [
+  "../fiscal/fiscal.service.js",
+  "../fiscal/fiscal.module.js",
+] as const;
 
 function walkSourceFiles(dir: string): string[] {
   const files: string[] = [];
@@ -84,8 +88,8 @@ describe("Fiscal source boundary", () => {
     ).toEqual([]);
   });
 
-  it("keeps Billing free of the Fiscal package", () => {
-    // DEC-047 makes Fiscal the owner of the issue command; Billing imports nothing from this boundary.
+  it("keeps Billing off the shared Fiscal provider package (DEC-051)", () => {
+    // Billing consumes the Fiscal application boundary for DEC-051; this keeps its own package ban.
     const billingDir = join(API_SRC, "billing");
     const billingFiles = walkSourceFiles(billingDir);
     const violations: string[] = [];
@@ -96,7 +100,42 @@ describe("Fiscal source boundary", () => {
     }
     expect(
       violations,
-      `scanned ${files.length} API source files; Billing must not import @newsaas/fiscal`
+      `scanned ${billingFiles.length} Billing source files; Billing must not import @newsaas/fiscal`
+    ).toEqual([]);
+  });
+
+  it("allows Billing imports only from the Fiscal application boundary", () => {
+    const billingDir = join(API_SRC, "billing");
+    const billingFiles = walkSourceFiles(billingDir);
+    const violations: string[] = [];
+    for (const file of billingFiles) {
+      for (const specifier of importSpecifiers(readFileSync(file, "utf8"))) {
+        if (
+          specifier.startsWith("../fiscal/") &&
+          !(BILLING_FISCAL_APPLICATION_BOUNDARY as readonly string[]).includes(specifier)
+        ) {
+          violations.push(`${file}: ${specifier}`);
+        }
+      }
+    }
+    expect(
+      violations,
+      `scanned ${billingFiles.length} Billing source files; only Fiscal application boundary imports are allowed`
+    ).toEqual([]);
+  });
+
+  it("keeps concrete Fiscal provider imports out of Billing", () => {
+    const billingDir = join(API_SRC, "billing");
+    const billingFiles = walkSourceFiles(billingDir);
+    const violations: string[] = [];
+    for (const file of billingFiles) {
+      for (const specifier of concreteProviderImports(readFileSync(file, "utf8"))) {
+        violations.push(`${file}: ${specifier}`);
+      }
+    }
+    expect(
+      violations,
+      `scanned ${billingFiles.length} Billing source files; concrete provider imports are forbidden`
     ).toEqual([]);
   });
 });
