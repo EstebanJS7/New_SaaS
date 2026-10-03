@@ -275,18 +275,30 @@ both already exist, so the pinned probes stay at `permissions: 56` and
 
 ## Tasks
 
-- [ ] T1 — Pin this contract into the FISC-004 story file.
+- [x] T1 — Pin this contract into the FISC-004 story file.
 - [x] T2 — Create `packages/fiscal` and move the port, fake, sanitizer and their
       tests from `apps/api/src/fiscal/`; keep `apps/api/src/fiscal/` for the API
       side. Reconcile imports, the boundary test and any package wiring.
-- [ ] T3 — Add the queue contract, the API producer and the worker consumer.
+- [x] T3 — Add the queue contract, the API producer and the worker consumer. The
+      worker handler and its outcome mapping shipped with it, because the
+      consumer has no purpose without one.
 - [ ] T4 — Add the transition-guard migration plus its schema and
       live-PostgreSQL probes.
 - [ ] T5 — Add the Fiscal repository, service, controller, DTO, zod schema,
       permissions and module wiring; pin the route in the route-contract probe.
-- [ ] T6 — Add the worker handler and its outcome mapping, with tests.
+- [x] T6 — Add the worker handler and its outcome mapping, with tests.
 - [ ] T7 — Verify: focused suites, `pnpm test`, `db:deploy`, live-PostgreSQL,
       `typecheck`, `lint`, `build`, `format-check`; then the native review.
+
+## Harness consequence worth remembering
+
+Adding a provider whose factory requires `REDIS_URL` breaks every suite that
+boots `AppModule` unless the test harness overrides it. `FiscalModule`'s
+producer did exactly that: **33 API test files failed** until
+`apps/api/test/support/boot-test-app.ts` and the live-PostgreSQL spec gained a
+recording fake plus a token-identity pin, mirroring what the branding cleanup
+producer already required. Any future Redis-backed provider must do the same in
+the same commit.
 
 ## Environment note
 

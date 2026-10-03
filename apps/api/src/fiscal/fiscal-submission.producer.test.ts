@@ -36,12 +36,13 @@ describe("BullMqFiscalSubmissionProducer", () => {
 
   it("closes the queue then quits the owned connection exactly once", async () => {
     const teardownOrder: string[] = [];
-    const close = vi.fn().mockImplementation(async () => {
+    const close = vi.fn().mockImplementation(() => {
       teardownOrder.push("close");
+      return Promise.resolve();
     });
-    const quit = vi.fn().mockImplementation(async () => {
+    const quit = vi.fn().mockImplementation(() => {
       teardownOrder.push("quit");
-      return "OK";
+      return Promise.resolve("OK");
     });
     const disconnect = vi.fn();
     const producer = new BullMqFiscalSubmissionProducer(

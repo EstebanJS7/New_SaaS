@@ -28,6 +28,11 @@ import {
   BRANDING_RESET_CLEANUP_PRODUCER,
   type CleanupProducer,
 } from "../src/branding/branding-reset-cleanup.producer.js";
+import {
+  FISCAL_SUBMISSION_PRODUCER,
+  type FiscalSubmissionProducer,
+} from "../src/fiscal/fiscal-submission.producer.js";
+import type { FiscalSubmissionJob } from "@newsaas/fiscal";
 
 interface ErrorEnvelope {
   error: { code: string };
@@ -749,6 +754,15 @@ interface RecordingCleanupProducer extends CleanupProducer {
   readonly enqueued: string[];
 }
 
+/**
+ * Records fiscal submission jobs instead of touching Redis. Required for the
+ * same reason as the cleanup producer above: `FiscalModule`'s factory requires
+ * `REDIS_URL`, so without this override `AppModule` would fail to compile.
+ */
+interface RecordingFiscalSubmissionProducer extends FiscalSubmissionProducer {
+  readonly enqueued: FiscalSubmissionJob[];
+}
+
 function adminDatabaseUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
   url.pathname = "/postgres";
@@ -1248,6 +1262,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     },
   };
 
+  const fiscalSubmissionProducer: RecordingFiscalSubmissionProducer = {
+    enqueued: [],
+    enqueue: (document) => {
+      fiscalSubmissionProducer.enqueued.push(document);
+      return Promise.resolve();
+    },
+  };
+
   beforeAll(async () => {
     previousDatabaseUrl = process.env.DATABASE_URL;
     baseDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL ?? "";
@@ -1280,6 +1302,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       })
       .overrideProvider(BRANDING_RESET_CLEANUP_PRODUCER)
       .useValue(cleanupProducer)
+      .overrideProvider(FISCAL_SUBMISSION_PRODUCER)
+      .useValue(fiscalSubmissionProducer)
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -1441,6 +1465,12 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     // Token-identity pin: the suite must resolve the recording fake, proving the
     // Redis-backed producer factory never ran during AppModule compilation.
     expect(app.get(BRANDING_RESET_CLEANUP_PRODUCER)).toBe(cleanupProducer);
+  });
+
+  it("injects the test-only fiscal submission producer", () => {
+    // Same pin for the fiscal producer: its factory also requires REDIS_URL, so
+    // resolving the recording fake proves the Redis-backed factory never ran.
+    expect(app.get(FISCAL_SUBMISSION_PRODUCER)).toBe(fiscalSubmissionProducer);
   });
 
   it("creates tenant A customer/address/contact over real HTTP", async () => {
