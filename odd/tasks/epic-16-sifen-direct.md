@@ -143,7 +143,25 @@ candidate 1 exists.
 
 - [ ] T1 — Write FISC-006..FISC-014 as Story files and register the epic in the
       roadmap and the module README.
-- [ ] T2 — FISC-006: the DNIT baseline revalidation (docs-only, cited sources).
+- [x] T2 — FISC-006: the DNIT baseline revalidation (docs-only, cited sources).
+      Evidence: this work unit's commit. `docs/06-fiscal/SIFEN-BASELINE.md` plus
+      the `FISC-006` Story. Nine official artifacts retrieved 2026-10-03: the
+      **Manual Técnico v150** (217 pages), the **Guía de Pruebas e-kuatia** (12
+      pages), **Notas Técnicas 23/24/25**, the **XSD directory**, `DE_v150.xsd`
+      and `xmldsig-core-schema.xsd`, and the documentation/tables indexes. That
+      pins the full signature profile, the certificate standard (F1/F2), the
+      transport stack, every service endpoint, the three-state result model, the
+      deadlines, the CDC-reuse rule and the timbrado/series model. Open and
+      recorded: Notas Técnicas 26/27, `DE_Types_v150.xsd`, the WSDLs, the
+      `dCodRes` catalogue, the tables and the QR/CSC details. **Contingency is
+      answered, not missing**: the manual removed its own contingency section as
+      "en etapa de definición". Correction kept in the record: a first pass
+      concluded the manual and the Notas Técnicas "were not retrieved" because
+      the inline fetch returned only a title, when the PDFs had in fact been
+      extracted in full; the baseline and the Story were rewritten, and the
+      retrieval sizes are recorded in the Story's verification block so the
+      claim is checkable.
+
 - [ ] T3 — FISC-007: tenant signing material + ADR.
 - [ ] T4 — FISC-008: DTE XML + XSD validation.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
