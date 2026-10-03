@@ -110,6 +110,8 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   DEC-016/DEC-026 read-wide/write-to-the-owning-roles shape, moving the
  *   seeded catalog 52 -> 56. No `billing.update` key exists because the invoice
  *   is immutable from creation (DEC-038), so there is no edit route to protect.
+ * - FISC-005b adds `fiscal.read`, read-wide to all six roles, moving the
+ *   seeded catalog 56 -> 57.
  *   The pre-existing `fiscal.invoice.issue` stays a Fiscal capability consumed
  *   by no EPIC-14 route and reserved for EPIC-15 (DEC-040).
  */
@@ -124,6 +126,7 @@ export const PERMISSION_SEEDS = [
   { key: "inventory.stock.adjust", name: "Adjust stock" },
   { key: "cash.session.close", name: "Close cash sessions" },
   { key: "fiscal.invoice.issue", name: "Issue fiscal invoices" },
+  { key: "fiscal.read", name: "Read fiscal documents" },
   { key: "users.membership.manage", name: "Manage staff memberships" },
   { key: "scheduling.appointment.read", name: "Read appointments" },
   { key: "scheduling.appointment.manage", name: "Manage appointments" },
@@ -264,6 +267,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.complete",
     "cash.movement.create",
     "billing.read",
+    "fiscal.read",
     "billing.create",
     "billing.confirm",
     "billing.cancel",
@@ -322,6 +326,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.complete",
     "cash.movement.create",
     "billing.read",
+    "fiscal.read",
     "billing.create",
     "billing.confirm",
     "billing.cancel",
@@ -345,6 +350,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.read",
     "cash.read",
     "billing.read",
+    "fiscal.read",
   ],
   RECEPTIONIST: [
     "inventory.stock.read",
@@ -366,6 +372,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.read",
     "cash.read",
     "billing.read",
+    "fiscal.read",
   ],
   CASHIER: [
     "cash.session.close",
@@ -384,6 +391,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.complete",
     "cash.movement.create",
     "billing.read",
+    "fiscal.read",
     "billing.create",
     "billing.confirm",
     "billing.cancel",
@@ -411,6 +419,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "sales.read",
     "cash.read",
     "billing.read",
+    "fiscal.read",
   ],
 };
 

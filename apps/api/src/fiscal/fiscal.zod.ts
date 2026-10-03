@@ -22,3 +22,21 @@ export const cancelFiscalDocumentBody = z
   .strict();
 export type CancelFiscalDocumentInput = z.infer<typeof cancelFiscalDocumentBody>;
 export const fiscalDocumentIdParam = z.object({ id: z.string().uuid() });
+
+export const FISCAL_DOCUMENT_STATUS_VALUES = Object.freeze([
+  "PENDING",
+  "QUEUED",
+  "SENDING",
+  "SUBMITTED",
+  "APPROVED",
+  "REJECTED",
+  "ERROR",
+  "CANCEL_PENDING",
+  "CANCELLED",
+] as const);
+
+/** No implicit default filter and no pagination, matching the shipped list precedent. */
+export const fiscalDocumentListQuery = z
+  .object({ status: z.enum(FISCAL_DOCUMENT_STATUS_VALUES).optional() })
+  .strict();
+export type FiscalDocumentListInput = z.infer<typeof fiscalDocumentListQuery>;

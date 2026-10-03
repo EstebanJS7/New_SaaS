@@ -320,8 +320,12 @@ recorded non-action):
       16/16, lint 16/16, format clean, `db:deploy` 32 migrations applied, live
       PostgreSQL **213 passed (213)** with the FISC-005a cancellation-edge
       probes executed locally for the first time.
-- [ ] T5a — FISC-005b: the API fiscal read contract (`fiscal.read` + list +
-      detail + the DTO's `cancelledAt`).
+- [x] T5a — FISC-005b: the API fiscal read contract (`fiscal.read` + list +
+      detail + the DTO's `cancelledAt`). Evidence: this work unit's commit.
+      Gates green: database 21 files / 416 tests, API 81 files / 1068 tests,
+      root typecheck 16/16, lint 16/16, format clean, seed reapplied
+      (`permissions: 57`, `rolePermissions: 193`), live PostgreSQL **213 passed
+      (213)**.
 - [ ] T5b — FISC-005b: the `/app/fiscal` staff surface and its `/api/fiscal`
       proxy.
 - [ ] T6 — FISC-005b: module docs, TD-029, advisory triage, CI evidence,

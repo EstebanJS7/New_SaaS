@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Query } from "@nestjs/common";
 import { DomainError } from "@newsaas/shared";
 import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
@@ -8,12 +8,28 @@ import { FiscalService } from "./fiscal.service.js";
 import {
   cancelFiscalDocumentBody,
   createFiscalDocumentBody,
+  fiscalDocumentListQuery,
   fiscalDocumentIdParam,
 } from "./fiscal.zod.js";
 
 @Controller("fiscal-documents")
 export class FiscalController {
   constructor(private readonly fiscal: FiscalService) {}
+
+  @Get()
+  @RequirePermissions(FISCAL_PERMISSIONS.read)
+  async list(@Query() query: unknown): Promise<FiscalDocumentResponse[]> {
+    return this.fiscal.list(
+      parseInput(fiscalDocumentListQuery, query, "Invalid fiscal document filters.")
+    );
+  }
+
+  @Get(":id")
+  @RequirePermissions(FISCAL_PERMISSIONS.read)
+  async get(@Param() params: unknown): Promise<FiscalDocumentResponse> {
+    const { id } = parseInput(fiscalDocumentIdParam, params, "Invalid fiscal document id.");
+    return this.fiscal.get(id);
+  }
 
   @Post(":id/cancel")
   @HttpCode(200)

@@ -10,4 +10,5 @@ export interface FiscalDocumentResponse {
   readonly lastErrorCode: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly cancelledAt: string | null;
 }

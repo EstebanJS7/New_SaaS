@@ -42,6 +42,7 @@ interface FiscalDocumentDto {
   lastErrorCode: string | null;
   createdAt: string;
   updatedAt: string;
+  cancelledAt: string | null;
 }
 
 const RESPONSE_KEYS = [
@@ -55,6 +56,7 @@ const RESPONSE_KEYS = [
   "lastErrorCode",
   "createdAt",
   "updatedAt",
+  "cancelledAt",
 ];
 
 interface FiscalTenant {
@@ -300,6 +302,179 @@ describe("Fiscal HTTP boundary — cancel command", () => {
     const invalidPath = await cancel(entitled.actor.cookie, "not-a-uuid").expect(400);
     expect((invalidPath.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
     expect(booted.fiscalProvider.cancelRequests).toHaveLength(providerBefore);
+  });
+});
+
+describe("Fiscal HTTP boundary — read commands", () => {
+  let booted: BootedTestApp;
+  let entitled: FiscalTenant;
+  let unentitled: FiscalTenant;
+  let forbidden: FiscalTenant;
+  let foreign: FiscalTenant;
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    const seedReadTenant = (label: string, isEntitled: boolean, readPermission: boolean) => {
+      const suffix = randomUUID().slice(0, 8);
+      const tenant = booted.db.prisma.tenant.create({
+        data: { slug: `fiscal-read-${label}-${suffix}`, name: `Fiscal read ${label}` },
+      });
+      const keys = readPermission
+        ? [FISCAL_PERMISSIONS.issue, FISCAL_PERMISSIONS.read]
+        : [FISCAL_PERMISSIONS.issue];
+      const role = seedRoleWithKeys(
+        booted.db,
+        `FISCAL_READ_${label}_${suffix}`,
+        `Fiscal read ${label}`,
+        keys
+      );
+      const actor = seedRbacActor(booted.db, {
+        email: `fiscal-read-${label}-${suffix}@isolation.test`,
+        tenantId: tenant.id,
+        roleId: role.role.id,
+      });
+      if (isEntitled) {
+        const feature = booted.db.prisma.featureCode.create({ data: { code: "fiscal" } });
+        booted.db.prisma.tenantEntitlement.create({
+          data: { tenantId: tenant.id, featureCodeId: feature.id },
+        });
+      }
+      return { tenant, actor };
+    };
+    entitled = seedReadTenant("a", true, true);
+    unentitled = seedReadTenant("b", false, true);
+    forbidden = seedReadTenant("c", true, false);
+    foreign = seedReadTenant("d", true, true);
+  });
+
+  afterAll(async () => {
+    await booted.close();
+  });
+
+  function document(
+    tenantId: string,
+    status: FiscalDocumentRow["status"],
+    createdAt: Date
+  ): FiscalDocumentRow {
+    const invoice = seedInvoice(booted, tenantId, "CONFIRMED");
+    const row: FiscalDocumentRow = {
+      id: randomUUID(),
+      tenantId,
+      invoiceId: invoice.id,
+      provider: "FAKE",
+      status,
+      attemptCount: 0,
+      externalId: "provider-read-123",
+      cdc: "cdc-read-456",
+      lastErrorCode: null,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    booted.db.tables.fiscalDocuments.set(row.id, row);
+    return row;
+  }
+
+  const getDocuments = (cookie: string, query = "") =>
+    supertest(booted.app.getHttpServer()).get(`/fiscal-documents${query}`).set("Cookie", cookie);
+  const getDocument = (cookie: string, id: string) =>
+    supertest(booted.app.getHttpServer()).get(`/fiscal-documents/${id}`).set("Cookie", cookie);
+
+  it("lists only the caller tenant's newest-first documents with the allowlisted DTO", async () => {
+    const first = document(entitled.tenant.id, "QUEUED", new Date("2100-01-01T00:00:00.000Z"));
+    const second = document(entitled.tenant.id, "APPROVED", new Date("2101-01-01T00:00:00.000Z"));
+    const foreignRow = document(foreign.tenant.id, "QUEUED", new Date("2102-01-01T00:00:00.000Z"));
+
+    const response = await getDocuments(entitled.actor.cookie).expect(200);
+    const rows = response.body as FiscalDocumentDto[];
+    expect(rows[0].id).toBe(second.id);
+    expect(rows[1].id).toBe(first.id);
+    expect(rows.map((row) => row.id)).not.toContain(foreignRow.id);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual([...RESPONSE_KEYS].sort());
+      expect("requestSnapshot" in row).toBe(false);
+      expect("responseSnapshot" in row).toBe(false);
+      expect("tenantId" in row).toBe(false);
+    }
+    expect(response.text).not.toContain(foreignRow.id);
+  });
+
+  it("honours the status filter and leaves omitted status unfiltered", async () => {
+    const queued = document(entitled.tenant.id, "QUEUED", new Date("2103-01-01T00:00:00.000Z"));
+    const approved = document(entitled.tenant.id, "APPROVED", new Date("2104-01-01T00:00:00.000Z"));
+    const allCallerRows = [...booted.db.tables.fiscalDocuments.values()].filter(
+      (row) => row.tenantId === entitled.tenant.id
+    );
+    expect(new Set(allCallerRows.map((row) => row.status)).size).toBeGreaterThan(1);
+
+    const queuedRows = (await getDocuments(entitled.actor.cookie, "?status=QUEUED").expect(200))
+      .body as FiscalDocumentDto[];
+    expect(queuedRows.map((row) => row.id)).toContain(queued.id);
+    expect(queuedRows.map((row) => row.id)).not.toContain(approved.id);
+    expect(queuedRows.every((row) => row.status === "QUEUED")).toBe(true);
+
+    const unfiltered = (await getDocuments(entitled.actor.cookie).expect(200))
+      .body as FiscalDocumentDto[];
+    expect(unfiltered).toHaveLength(allCallerRows.length);
+    expect(unfiltered.map((row) => row.id)).toContain(queued.id);
+    expect(unfiltered.map((row) => row.id)).toContain(approved.id);
+  });
+
+  it("returns an issued document by id with the issue response representation", async () => {
+    const invoice = seedInvoice(booted, entitled.tenant.id, "CONFIRMED");
+    const issued = await issue(booted, entitled.actor.cookie, invoice.id).expect(201);
+    const issuedBody = issued.body as FiscalDocumentDto;
+    const fetched = await getDocument(entitled.actor.cookie, issuedBody.id).expect(200);
+    const fetchedBody = fetched.body as FiscalDocumentDto;
+    expect(Object.keys(fetchedBody).sort()).toEqual([...RESPONSE_KEYS].sort());
+    expect(fetched.text).toBe(issued.text);
+  });
+
+  it("masks unknown and foreign document ids as byte-equivalent 404s", async () => {
+    const foreignRow = document(foreign.tenant.id, "QUEUED", new Date());
+    const statusBefore = foreignRow.status;
+    const errorBefore = foreignRow.lastErrorCode;
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: entitled.actor.cookie,
+      method: "GET",
+      nonexistentUrl: `/fiscal-documents/${randomUUID()}`,
+      foreignUrl: `/fiscal-documents/${foreignRow.id}`,
+      forbiddenIdentifiers: [foreignRow.id, foreign.tenant.id],
+    });
+    const unknown = await getDocument(entitled.actor.cookie, randomUUID()).expect(404);
+    expect((unknown.body as ErrorDto).error.message).toBe(FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE);
+    expect(foreignRow.status).toBe(statusBefore);
+    expect(foreignRow.lastErrorCode).toBe(errorBefore);
+  });
+
+  it("checks fiscal entitlement before fiscal.read permission", async () => {
+    const noEntitlement = await getDocuments(unentitled.actor.cookie).expect(403);
+    expect((noEntitlement.body as ErrorDto).error.code).toBe("FEATURE_NOT_ENTITLED");
+    expect((noEntitlement.body as ErrorDto).error.message).toBe(
+      FISCAL_FEATURE_NOT_ENTITLED_MESSAGE
+    );
+
+    const noPermission = await getDocuments(forbidden.actor.cookie).expect(403);
+    expect((noPermission.body as ErrorDto).error.code).toBe("FORBIDDEN");
+  });
+
+  it("rejects unknown query keys, invalid statuses and non-UUID path ids", async () => {
+    const unknownQuery = await getDocuments(entitled.actor.cookie, "?unexpected=value").expect(400);
+    expect((unknownQuery.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    const invalidStatus = await getDocuments(entitled.actor.cookie, "?status=NOT_A_STATUS").expect(
+      400
+    );
+    expect((invalidStatus.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    const invalidId = await getDocument(entitled.actor.cookie, "not-a-uuid").expect(400);
+    expect((invalidId.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("does not append audit rows for list or get reads", async () => {
+    const row = document(entitled.tenant.id, "QUEUED", new Date());
+    const auditsBefore = booted.db.tables.audits.size;
+    await getDocuments(entitled.actor.cookie).expect(200);
+    await getDocument(entitled.actor.cookie, row.id).expect(200);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
   });
 });
 
