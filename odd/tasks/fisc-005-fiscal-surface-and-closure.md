@@ -299,6 +299,37 @@ recorded non-action):
 - `R4-BILLING-CANCEL-CONFLICT-VS-404` (SUGGESTION).
 - `R4-CANCEL-RETRY-UNBOUNDED` (WARNING).
 
+### FISC-005b native review record (closed, as a chain)
+
+The whole FISC-005b slice exceeded the native reviewer's context budget: the
+`START` on base `3dcb5dd` failed with `lens_context_budget_exceeded`, no
+authority was created and nothing was burned. The provider's continuation was to
+split it into a chained sequence of smaller reviewable commits, so the slice was
+reviewed as four candidates, each on its own work unit:
+
+| Candidate                     | Base → head           | Lineage                   | Tier             | Verdict             | Advisories |
+| ----------------------------- | --------------------- | ------------------------- | ---------------- | ------------------- | ---------- |
+| Read contract (T5a)           | `3dcb5dd` → `4349916` | `review-dd26b5d31ff25018` | medium, one lens | approved            | 4          |
+| Client, proxy and nav (T5b-1) | `4349916` → `68be9c2` | `review-b67e9dfd40dbb1d1` | medium, one lens | approved            | 3          |
+| Workspace (T5b-2)             | `68be9c2` → `1218f6e` | `review-0a69015d0b17a603` | medium, one lens | approved            | 4          |
+| Documentation closure (T6)    | `1218f6e` → `94a1f02` | `review-1e4e88ad5b246a46` | low, no lenses   | approved on `START` | 0          |
+
+Every authority was burned with its exact acknowledgement. The first three
+candidates each needed **one retried reviewer run**: the host relay produced a
+malformed payload (`reviewer payload contains no complete JSON object`) or an
+internally inconsistent one (`inspection.status: "completed"` while the evidence
+reported the candidate could not be inspected). Neither refusal consumed the
+lens slot, and the retry on the reoffered slot was admitted each time.
+
+Their eleven advisories are informational and are recorded in [[TD-030]]
+theme 6. Two are WARNINGs and both sit in the workspace's cancel-command state,
+which is where the FISC-005a advisories also pointed.
+
+**Lesson for the next slice**: a ~940-line, 10-to-13-file work unit is the
+practical ceiling for one reviewer run at this tier. Anything larger must be
+committed as reviewable units and reviewed as a chain, or it cannot be reviewed
+at all.
+
 ## Tasks
 
 - [x] T1 — Get the nod on D1-D6, then pin the full contract. Evidence: `e489dab`

@@ -88,6 +88,51 @@ entitled-but-unpermissioned one, with the provider never called.
   because the queue only exists after `onModuleInit`.
 - `R3-SUBMITTED-NOT-AUDITED` (WARNING) — a `SUBMITTED` outcome is not audited.
 
+### 6. The FISC-005b chain advisories (eleven, all informational)
+
+Locations are the reviewed revision's line numbers. Two are WARNINGs and both
+sit in the workspace's cancel-command state, the same place the FISC-005a
+advisories pointed, so the two sets are worth reading together.
+
+**Read contract (`review-dd26b5d31ff25018`, tier medium)**
+
+- `R3-list-unbounded` (WARNING, `apps/api/src/fiscal/fiscal.zod.ts:41-44`) — the
+  list has no pagination; this is the Fiscal instance of [[TD-026]].
+- `R3-get-non-tx-read` (SUGGESTION, `fiscal.service.ts:189-194`) — the by-id
+  read runs outside a transaction.
+- `R3-list-determinism-tiebreak` (SUGGESTION,
+  `apps/api/test/support/in-memory-database.ts:3583-3596`) — the in-memory
+  list's `createdAt` tiebreak.
+- `R3-read-entitlement-before-permission` (SUGGESTION,
+  `fiscal.integration.test.ts:487-495`) — the read gate order's coverage.
+
+**Client, proxy and nav (`review-b67e9dfd40dbb1d1`, tier medium)**
+
+- `R3-REQID-STRIP` (SUGGESTION,
+  `apps/web/src/app/api/fiscal/[[...path]]/route.ts:132-154`) — how the proxy
+  handles `x-request-id`.
+- `R3-CHANGED-PATH-LITERAL` (SUGGESTION,
+  `apps/web/src/app/api/fiscal/[[...path]]/route.test.ts:196-209`) — a literal
+  in the changed-path case.
+- `R3-FISCAL-NAV-FEATURE` (SUGGESTION,
+  `apps/web/src/components/shell/nav-sidebar.tsx:38`) — the Fiscal nav entry's
+  declarative feature gate, which is dormant exactly like Billing's.
+
+**Workspace (`review-0a69015d0b17a603`, tier medium)**
+
+- `R3-cancel-error-identity` (WARNING,
+  `apps/web/src/app/(app)/app/fiscal/fiscal-surface.tsx:82`) — the cancel error
+  is bound to the selected document's identity.
+- `R3-cancel-inflight-selection-swap` (WARNING,
+  `apps/web/src/app/(app)/app/fiscal/fiscal-surface.tsx:85`) — switching the
+  selected document while a cancel is in flight.
+- `R3-detail-error-folding` (SUGGESTION,
+  `apps/web/src/app/(app)/app/fiscal/fiscal-surface.tsx:92`) — how the detail
+  error folds into the read error.
+- `R3-issue-clears-on-select` (SUGGESTION,
+  `apps/web/src/app/(app)/app/fiscal/fiscal-surface.tsx:132`) — selecting a row
+  resets a settled issue mutation.
+
 ## Why It Is Safe to Defer
 
 - Every advisory is explicitly **non-blocking**: neither review offered a
@@ -108,11 +153,14 @@ affects data integrity.
 
 Re-open when a writer next touches `apps/api/src/fiscal/fiscal.service.ts`,
 `apps/api/src/billing/billing.repository.ts`,
-`apps/api/src/billing/billing.service.ts` or
-`apps/api/test/support/boot-test-app.ts`, or when [[EPIC-16]] adds the real
-provider — whichever comes first. At that point the theme-1 case should be added
-outright and the remaining items triaged again, since a real provider changes
-what "provider identity in the audit" and "snapshot on cancellation" are worth.
+`apps/api/src/billing/billing.service.ts`,
+`apps/api/test/support/boot-test-app.ts` or
+`apps/web/src/app/(app)/app/fiscal/fiscal-surface.tsx`, or when [[EPIC-16]] adds
+the real provider — whichever comes first. At that point the theme-1 case should
+be added outright and the remaining items triaged again, since a real provider
+changes what "provider identity in the audit" and "snapshot on cancellation" are
+worth, and the two workspace WARNINGs in theme 6 should be settled with the
+cancel-state rework they imply.
 
 ## Related
 

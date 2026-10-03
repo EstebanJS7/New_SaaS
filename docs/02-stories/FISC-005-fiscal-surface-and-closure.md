@@ -275,9 +275,14 @@ trigger actually fires.
 Closed 2026-10-03 with both required CI checks green on run `37155574081`, the
 live-PostgreSQL gate executed locally and in CI (213 cases), and the FISC-005a
 native review closed approved with its one CRITICAL corrected before approval.
-FISC-005b's own slice was not put through a native review: the epic's surface
-and read work was covered by the FISC-005a lineage's closure, and the story
-records that rather than implying a verdict it does not have.
+FISC-005b's slice was too large for a single native review
+(`lens_context_budget_exceeded`, no authority created), so it closed as a
+**chain of four approved candidates**: the read contract
+(`review-dd26b5d31ff25018`), the client layer with its proxy and nav entry
+(`review-b67e9dfd40dbb1d1`), the workspace (`review-0a69015d0b17a603`) and the
+documentation closure (`review-1e4e88ad5b246a46`, `risk_tier: low`, no lenses).
+The first three each needed one retried reviewer run after a malformed
+host-relay payload. The eleven advisories they left are recorded in [[TD-030]].
 
 The PRs are #102 (FISC-005a, merged state decided by ordinary repository policy)
 and #103 (FISC-005b, stacked and green).

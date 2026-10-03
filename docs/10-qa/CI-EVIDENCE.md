@@ -1350,15 +1350,17 @@ role grants.
 
 What this closure records rather than smooths over:
 
-- **One slice's review is escalated, not closed.** FISC-004's targeted
-  validation was refused at admission and `inspect-authority` reported
-  `sanctioned_exits: []`, so that candidate carries no verdict — the same
-  terminal shape BILL-004 recorded in EPIC-14. The FISC-005a lineage, by
-  contrast, closed **approved** after one candidate-caused CRITICAL was
-  corrected and validated.
-- **FISC-005b has no native review of its own.** Its read contract and surface
-  were covered by the FISC-005a lineage's closure; the story records that
-  instead of implying a verdict it does not have.
+- **One slice's review is escalated, not closed, and another needed a chain.**
+  FISC-004's targeted validation was refused at admission and
+  `inspect-authority` reported `sanctioned_exits: []`, so that candidate carries
+  no verdict — the same terminal shape BILL-004 recorded in EPIC-14. The
+  FISC-005a lineage closed **approved** after one candidate-caused CRITICAL was
+  corrected and validated, and FISC-005b's slice was too large for a single
+  review (`lens_context_budget_exceeded`), so it closed as a **chain of four
+  approved candidates**: `review-dd26b5d31ff25018` (read contract),
+  `review-b67e9dfd40dbb1d1` (client, proxy and nav), `review-0a69015d0b17a603`
+  (workspace) and `review-1e4e88ad5b246a46` (documentation, `risk_tier: low`, no
+  lenses). Eleven advisories from that chain are recorded in [[TD-030]].
 - **No real provider exists.** `SIFEN_DIRECT`, XAdES signing and KuDE rendering
   were never implemented, because PRD §23 forbids implementing SIFEN details
   from memory. [[EPIC-16]] owns the production adapter.
