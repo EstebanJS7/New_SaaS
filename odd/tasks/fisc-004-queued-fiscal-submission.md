@@ -287,8 +287,46 @@ both already exist, so the pinned probes stay at `permissions: 56` and
 - [ ] T5 — Add the Fiscal repository, service, controller, DTO, zod schema,
       permissions and module wiring; pin the route in the route-contract probe.
 - [x] T6 — Add the worker handler and its outcome mapping, with tests.
-- [ ] T7 — Verify: focused suites, `pnpm test`, `db:deploy`, live-PostgreSQL,
+- [x] T7 — Verify: focused suites, `pnpm test`, `db:deploy`, live-PostgreSQL,
       `typecheck`, `lint`, `build`, `format-check`; then the native review.
+
+## Native review record
+
+Lineage `review-e255dae700e4dbd5`, tier high, four lenses, frozen budget 200.
+
+Four reviewers submitted. The provider then required a refuter, which confirmed
+**two CRITICAL findings, both `causal_disposition: introduced`**:
+
+- **R4-1 (deterministic)** — the enqueue had no bound. The producer set
+  `maxRetriesPerRequest: null`, the worker setting, which keeps retrying a
+  command indefinitely instead of rejecting; and the command awaits the enqueue
+  on the HTTP path, so a Redis outage turned every `POST /fiscal-documents` into
+  a hung request. Fixed on both axes: fail-fast producer connection options
+  (`maxRetriesPerRequest: 2`, `enableOfflineQueue: false`, 2s `connectTimeout`)
+  and a 2s deadline around `queue.add`.
+- **R4-2 (inferential)** — a committed claim could strand a document forever.
+  The handler commits `SENDING` before calling the provider and `SENDING` was in
+  the no-retry set, so a worker that died in between left the row claimed with
+  no writer and every redelivery no-opped. Fixed with a **claim lease**: past
+  five minutes an abandoned claim may be taken over, and the takeover is a
+  compare-and-swap on the observed `lastAttemptAt`, so two workers cannot both
+  win it.
+
+Correction committed as `8f3a4bc`, 190 diff lines against the 200 budget.
+
+**The review is escalated, not closed.** The targeted validation was refused at
+admission three times — twice with the exact bound slot, once with the outer
+object — each returning `capture-binding-rejected`. A read-only
+`gentle-ai review inspect-authority` then reported the authority `valid: true`,
+`complete: true`, `entry_diagnostics: []` and **`sanctioned_exits: []`**. No
+sanctioned continuation exists, so the candidate carries no closed verdict and
+the fail-closed path applies. This is the same terminal shape BILL-004 recorded
+in EPIC-14, recorded here rather than smoothed over.
+
+Consequence for the sweep: R4-2's lease makes the stall recoverable in band, but
+it does **not** remove the need for the reconciliation sweep that D5 defers — a
+document whose BullMQ retries are exhausted still needs an out-of-band requeue.
+The lease narrows the window; the sweep closes it.
 
 ## Harness consequence worth remembering
 

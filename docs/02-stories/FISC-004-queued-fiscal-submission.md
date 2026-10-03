@@ -201,7 +201,36 @@ Not run.
 
 ## Technical Debt
 
-- None planned.
+- **A reconciliation sweep is owed.** A document whose BullMQ retries are
+  exhausted has no out-of-band requeue: the lease added by the native review's
+  R4-2 correction makes an abandoned claim recoverable in band, but it does not
+  replace the sweep. The shipped template is the branding cleanup's
+  reconciliation service.
+- The issue command's enqueue failure leaves the document `QUEUED` and surfaces
+  a `500`; with the R4-1 correction the failure is prompt rather than a hang,
+  but the operator path to re-drive that document is the sweep above or
+  [[FISC-005]]'s manual retry.
+
+## Review record
+
+The native review closed **escalated, not approved**. Lineage
+`review-e255dae700e4dbd5` (tier high, four lenses) had all four reviewers submit
+and a refuter confirm two CRITICAL findings, both introduced by this slice:
+
+- `R4-1` — the producer's enqueue had no bound (`maxRetriesPerRequest: null`
+  plus an awaited `add` on the HTTP path), so a Redis outage hung every issue
+  request. Fixed with fail-fast connection options and a 2s `queue.add`
+  deadline.
+- `R4-2` — a committed `SENDING` claim could strand a document forever. Fixed
+  with a five-minute claim lease whose takeover is a compare-and-swap on the
+  observed `lastAttemptAt`.
+
+The correction is commit `8f3a4bc`, 190 diff lines against the 200 budget. The
+targeted validation was then refused at admission three times, and a read-only
+`gentle-ai review inspect-authority` reported the authority valid and complete
+with **no sanctioned exits**, so no sanctioned continuation exists and the
+candidate carries no closed verdict. This is the terminal shape BILL-004
+recorded in EPIC-14.
 
 ## Decisions / ADRs
 
