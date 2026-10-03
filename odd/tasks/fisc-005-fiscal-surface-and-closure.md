@@ -209,16 +209,19 @@ matcher that accepts both the `= 'X'` and `IN (...)` forms.
 mirroring `POST /invoices/:id/cancel`. Gate order as everywhere else:
 entitlement → permission → actor, all outside the transaction.
 
-Then one transaction: lock the document `FOR UPDATE`; `404` when absent or
-cross-tenant; a document already `CANCELLED` replays the same representation
-(`200`); a document in `SENDING` is a stable `409` because a worker holds the
-claim; otherwise ask the provider port, then apply the outcome through the
-graph: `CANCELLED` → `CANCELLED` with `cancelled_at`; `CANCEL_PENDING` →
-`CANCEL_PENDING`; `REJECTED`/`CONFIGURATION_ERROR` → a `409` carrying the
-provider's reason code, with the document left where it was and the reason
-stored in `last_error_*`; `TRANSIENT_FAILURE` → `ERROR`. This is a synchronous
-command, so the caller sees the failure rather than a queued retry. One audit
-row per attempt: `fiscal.document.cancellation_requested` on success,
+Then a short transaction that locks the document `FOR UPDATE` and classifies it;
+`404` when absent or cross-tenant; a document already `CANCELLED` replays the
+same representation (`200`); a document in `SENDING` is a stable `409` because a
+worker holds the claim. The provider `cancel` call then runs OUTSIDE any
+transaction, and a second transaction applies the outcome through a conditional
+write pinned to the observed status (see the T4a pinned details below for the
+final, guard-compatible mapping): `CANCELLED` → `CANCELLED` with `cancelled_at`;
+`CANCEL_PENDING` → `CANCEL_PENDING`; `REJECTED`/`CONFIGURATION_ERROR` and
+`TRANSIENT_FAILURE` → the document stays where it was, the reason is stored in
+`last_error_*`, and the caller gets a `409` carrying the provider's reason code.
+This is a synchronous command, so the caller sees the failure rather than a
+queued retry. One audit row per attempt:
+`fiscal.document.cancellation_requested` on success,
 `fiscal.document.cancellation_failed` on a refusal.
 
 ### The Billing hand-off (D2, D5)
@@ -261,14 +264,91 @@ overlap guard is not unit-covered because its queue only exists after
 
 ## Tasks
 
-- [ ] T1 — Get the nod on D1-D6, then pin the full contract.
-- [ ] T2 — FISC-005a: `cancel` on the port and the fake.
-- [ ] T3 — FISC-005a: the guard's cancellation edges, additive migration plus
-      schema and live-PostgreSQL probes.
-- [ ] T4 — FISC-005a: the Fiscal cancellation command and the Billing hand-off.
+- [x] T1 — Get the nod on D1-D6, then pin the full contract. Evidence: `e489dab`
+      (contract + D1-D6), `7cfeb68` (FISC-005a contract).
+- [x] T2 — FISC-005a: `cancel` on the port and the fake. Evidence: `590eab4`.
+- [x] T3 — FISC-005a: the guard's cancellation edges, additive migration plus
+      schema and live-PostgreSQL probes. Evidence: `297007d`. Live-PostgreSQL
+      execution of the probes is still owed (see T4b); Docker was down in the
+      WSL distro when T3 landed.
+- [ ] T4a — FISC-005a: the Fiscal cancellation command
+      (`POST     /fiscal-documents/:id/cancel`), the repository lock/read/update
+      surface it needs, and its integration coverage.
+- [ ] T4b — FISC-005a: the Billing hand-off (`hasLiveDocumentForInvoice`), the
+      Billing boundary rule, its integration coverage and the live-PostgreSQL
+      execution of the FISC-005a probes.
 - [ ] T5 — FISC-005b: the staff fiscal surface.
 - [ ] T6 — FISC-005b: module docs, CI evidence, changelog, roadmap, epic
       closure.
+
+### T4a pinned details (the contract above is ambiguous here; these win)
+
+- The document read after the `FOR UPDATE` lock is by **id**, tenant-scoped, and
+  must accept a `404` for unknown and cross-tenant ids, byte-equivalent. The
+  shared message is a new `FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE` naming the
+  document (the existing invoice-source `FISCAL_DOCUMENT_NOT_FOUND_MESSAGE` must
+  not be reused, and must not be renamed).
+- The lock is
+  `SELECT "id" FROM "fiscal_document" WHERE "tenant_id" = $1 AND "id" = $2 FOR UPDATE`.
+- Every status write goes through ONE conditional `updateMany` whose `where`
+  pins the **observed** status, so a lost race is a zero-row result, never a
+  blind write. The write sets `cancelledAt` on every edge into `CANCELLED` and
+  `lastErrorCode`/`lastErrorMessage` on the refusal paths (document stays put).
+- `CANCELLED` observed is a `200` **replay**: the same DTO, no write entering,
+  no audit row. `SENDING` observed is a stable `409` with its own message,
+  before any provider call.
+- **The provider call is NOT inside a database transaction** (AGENTS.md:
+  "External fiscal calls must happen outside long-running database
+  transactions"). The command is therefore three phases: **(A)** a short
+  transaction that locks the document `FOR UPDATE`, reads it tenant-scoped and
+  classifies it; **(B)** the provider `cancel` call, outside any transaction;
+  **(C)** one transaction that applies the outcome through the single
+  conditional `updateMany` pinned to the observed status (a zero-row CAS is a
+  lost race -> stable `409`) and co-commits the audit row.
+- **`TRANSIENT_FAILURE` does NOT move the document to `ERROR`** (maintainer
+  decision, 2026-10-03). The pinned D3 graph admits `ERROR` only from `SENDING`
+  and `SUBMITTED`, so a general `-> ERROR` mapping is not implementable without
+  widening the already-reviewed guard. A transient failure instead leaves the
+  document in its observed status, stores `last_error_*`, and returns a stable
+  `409` carrying the provider reason code: the command is synchronous and
+  retryable by re-issuing it. No guard change, no migration.
+- Outcome mapping, final:
+
+  ```text
+  CANCELLED            -> status CANCELLED,      cancelled_at set, 200, audit ..._requested
+  CANCEL_PENDING       -> status CANCEL_PENDING,                   200, audit ..._requested
+  REJECTED             -> status unchanged, last_error_* set,      409, audit ..._failed
+  CONFIGURATION_ERROR  -> status unchanged, last_error_* set,      409, audit ..._failed
+  TRANSIENT_FAILURE    -> status unchanged, last_error_* set,      409, audit ..._failed
+  ```
+
+- Reason text is scrubbed (`[\r\n\t]+` -> space) and length-capped exactly like
+  the worker's `MAX_ERROR_LENGTH = 500`; the audit metadata carries field NAMES
+  and the outcome only, never the reason text.
+- `resolvedAt`/provider snapshots are NOT persisted by the cancel command in
+  T4a: the cancel result has no `externalId`/`cdc` to add, and the snapshots are
+  the submission path's evidence. Record this as a deliberate narrowness.
+- The response DTO (`FiscalDocumentResponse`) is **unchanged**: no `cancelledAt`
+  and no `lastErrorMessage` are exposed by this slice, so the existing issue
+  integration test's `RESPONSE_KEYS` allowlist stays valid.
+- The `409` refusals must NOT be thrown from inside a transaction: the outcome
+  write and the audit row commit FIRST (phase C returns a discriminated result),
+  and the `DomainError` is thrown after that transaction resolves. Throwing
+  inside would roll back the `last_error_*` write and the audit row the contract
+  requires to persist.
+
+### T4b pinned details
+
+- `hasLiveDocumentForInvoice(invoiceId, tx?)` is read **inside** the Billing
+  cancellation transaction, immediately AFTER `lockById` and the `CANCELLED`
+  replay branch, so it serializes with `FiscalService.issue` (which locks the
+  same invoice header before creating the document). A check outside the
+  transaction would leave the create window open.
+- `BillingTx` gains the one `fiscalDocument.findFirst` read it needs, so the
+  transaction handle type-checks on both the real client and the in-memory
+  boundary; Billing still never imports `@newsaas/fiscal`.
+- The blocked message is a stable `409` that names the Fiscal cancellation
+  route. It is exported and asserted byte-exactly in the integration test.
 
 ## Notes
 

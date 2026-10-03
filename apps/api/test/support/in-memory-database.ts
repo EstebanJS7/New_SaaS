@@ -581,6 +581,8 @@ export interface FiscalDocumentRow {
   externalId: string | null;
   cdc: string | null;
   lastErrorCode: string | null;
+  cancelledAt?: Date | null;
+  lastErrorMessage?: string | null;
   createdAt: Date;
   updatedAt: Date;
   requestSnapshot?: unknown;
@@ -1492,14 +1494,34 @@ export interface IsolationDatabase {
     };
     fiscalDocument: {
       findFirst: (args: {
-        where: { tenantId: string; invoiceId: string; status: { not: "CANCELLED" } };
+        where: {
+          tenantId: string;
+          id?: string;
+          invoiceId?: string;
+          status?:
+            | FiscalDocumentStatusRow
+            | { not: "CANCELLED" }
+            | { in: readonly FiscalDocumentStatusRow[] };
+        };
       }) => FiscalDocumentRow | null;
       create: (args: {
         data: { tenantId: string; invoiceId: string; provider: string; status: "PENDING" };
       }) => FiscalDocumentRow;
       updateMany: (args: {
-        where: { id: string; tenantId: string; status: FiscalDocumentStatusRow };
-        data: { status: FiscalDocumentStatusRow };
+        where: {
+          id: string;
+          tenantId: string;
+          status:
+            | FiscalDocumentStatusRow
+            | { not: "CANCELLED" }
+            | { in: readonly FiscalDocumentStatusRow[] };
+        };
+        data: {
+          status?: FiscalDocumentStatusRow;
+          cancelledAt?: Date;
+          lastErrorCode?: string | null;
+          lastErrorMessage?: string | null;
+        };
       }) => { count: number };
     };
     /**
@@ -2598,6 +2620,12 @@ export function createIsolationDatabase(): IsolationDatabase {
       // before its post-lock status read. Same modelling as the sale/purchase
       // locks above; the real concurrent-confirm interleaving is proven against
       // live PostgreSQL (BILL-003 W3).
+      if (text.includes('"fiscal_document"') && text.includes("FOR UPDATE")) {
+        const [tenantId, documentId] = values as string[];
+        const document = fiscalDocumentTable.get(documentId);
+        if (document?.tenantId !== tenantId) return Promise.resolve([]);
+        return Promise.resolve([{ id: documentId }]);
+      }
       if (text.includes('"invoice"') && text.includes("FOR UPDATE")) {
         const [tenantId, invoiceId] = values as string[];
         const header = invoiceTable.get(invoiceId);
@@ -3554,8 +3582,14 @@ export function createIsolationDatabase(): IsolationDatabase {
           [...fiscalDocumentTable.values()].find(
             (row) =>
               row.tenantId === where.tenantId &&
-              row.invoiceId === where.invoiceId &&
-              row.status !== "CANCELLED"
+              (where.id === undefined || row.id === where.id) &&
+              (where.invoiceId === undefined || row.invoiceId === where.invoiceId) &&
+              (where.status === undefined ||
+                (typeof where.status === "string"
+                  ? row.status === where.status
+                  : "not" in where.status
+                    ? row.status !== where.status.not
+                    : where.status.in.includes(row.status)))
           ) ?? null
         );
       },
@@ -3591,10 +3625,18 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (
             row.id !== where.id ||
             row.tenantId !== where.tenantId ||
-            (where.status !== undefined && row.status !== where.status)
+            (where.status !== undefined &&
+              (typeof where.status === "string"
+                ? row.status !== where.status
+                : "not" in where.status
+                  ? row.status === where.status.not
+                  : !where.status.in.includes(row.status)))
           )
             continue;
-          row.status = data.status;
+          if (data.status !== undefined) row.status = data.status;
+          if ("cancelledAt" in data) row.cancelledAt = data.cancelledAt;
+          if ("lastErrorCode" in data) row.lastErrorCode = data.lastErrorCode ?? null;
+          if ("lastErrorMessage" in data) row.lastErrorMessage = data.lastErrorMessage ?? null;
           row.updatedAt = new Date();
           count += 1;
         }

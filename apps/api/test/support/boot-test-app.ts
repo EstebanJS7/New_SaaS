@@ -19,6 +19,15 @@ import {
 // means the isolation suites exercise the exact guard chain that ships —
 // AuthGuard and TenantActiveGuard in their real registration order.
 import { AppModule } from "../../src/app.module.js";
+import {
+  createFakeFiscalProvider,
+  FISCAL_PROVIDER,
+  type FiscalCancelOutcome,
+  type FiscalCancelRequest,
+  type FiscalIssueOutcome,
+  type FiscalIssueRequest,
+  type FiscalProviderPort,
+} from "@newsaas/fiscal";
 import type { FiscalSubmissionJob } from "@newsaas/fiscal";
 import { createIsolationDatabase, type IsolationDatabase } from "./in-memory-database.js";
 
@@ -38,6 +47,15 @@ export interface RecordingFiscalSubmissionProducer extends FiscalSubmissionProdu
   readonly enqueued: FiscalSubmissionJob[];
 }
 
+export interface ScriptableFiscalProvider extends FiscalProviderPort {
+  /** Replaces the ordered cancel script; the last element repeats for later calls. */
+  scriptCancel(outcomes: readonly FiscalCancelOutcome[]): void;
+  /** Replaces the ordered issue script; the last element repeats for later calls. */
+  scriptIssue(outcomes: readonly FiscalIssueOutcome[]): void;
+  readonly cancelRequests: FiscalCancelRequest[];
+  readonly issueRequests: FiscalIssueRequest[];
+}
+
 export interface BootedTestApp {
   app: NestFastifyApplication;
   db: IsolationDatabase;
@@ -45,6 +63,7 @@ export interface BootedTestApp {
   cleanupProducer: RecordingCleanupProducer;
   /** Records fiscal submission jobs so tests can assert one enqueue per issue. */
   fiscalSubmissionProducer: RecordingFiscalSubmissionProducer;
+  fiscalProvider: ScriptableFiscalProvider;
   /** Serialized pino lines captured during the test (leak scans, debugging). */
   logLines: () => string[];
   close: () => Promise<void>;
@@ -91,6 +110,29 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     },
   };
 
+  const cancelRequests: FiscalCancelRequest[] = [];
+  const issueRequests: FiscalIssueRequest[] = [];
+  let fakeProvider = createFakeFiscalProvider();
+  const fiscalProvider: ScriptableFiscalProvider = {
+    provider: "FAKE",
+    cancelRequests,
+    issueRequests,
+    scriptCancel: (outcomes) => {
+      fakeProvider = createFakeFiscalProvider({ cancelOutcomes: outcomes });
+    },
+    scriptIssue: (outcomes) => {
+      fakeProvider = createFakeFiscalProvider({ outcomes });
+    },
+    cancel: (request) => {
+      cancelRequests.push(request);
+      return fakeProvider.cancel(request);
+    },
+    issue: (request) => {
+      issueRequests.push(request);
+      return fakeProvider.issue(request);
+    },
+  };
+
   const captured: string[] = [];
   const stream: DestinationStream = {
     write(message: string): void {
@@ -118,6 +160,8 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     .useValue(cleanupProducer)
     .overrideProvider(FISCAL_SUBMISSION_PRODUCER)
     .useValue(fiscalSubmissionProducer)
+    .overrideProvider(FISCAL_PROVIDER)
+    .useValue(fiscalProvider)
     .compile();
 
   const app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -131,6 +175,7 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     db,
     cleanupProducer,
     fiscalSubmissionProducer,
+    fiscalProvider,
     logLines: (): string[] => captured,
     close: (): Promise<void> => app.close(),
   };
