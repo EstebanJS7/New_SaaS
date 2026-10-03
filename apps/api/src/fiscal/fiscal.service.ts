@@ -25,8 +25,12 @@ import {
   type FiscalDocumentReadTx,
   type FiscalRepositoryTx,
 } from "./fiscal.repository.js";
-import { FISCAL_PERMISSIONS } from "./fiscal.permissions.js";
-import { FISCAL_DTO_SCHEMA_VERSION, type CreateFiscalDocumentInput } from "./fiscal.zod.js";
+import { FISCAL_PERMISSIONS, type FiscalPermission } from "./fiscal.permissions.js";
+import {
+  FISCAL_DTO_SCHEMA_VERSION,
+  type CreateFiscalDocumentInput,
+  type FiscalDocumentListInput,
+} from "./fiscal.zod.js";
 
 export const FISCAL_FEATURE_NOT_ENTITLED_MESSAGE =
   "Fiscal features are not enabled for this tenant.";
@@ -140,6 +144,7 @@ function toResponse(row: FiscalDocumentRow): FiscalDocumentResponse {
     lastErrorCode: row.lastErrorCode,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    cancelledAt: row.cancelledAt?.toISOString() ?? null,
   };
 }
 
@@ -165,10 +170,31 @@ export class FiscalService {
     return this.repository.hasLiveDocument(invoiceId, tx ?? this.repository.client);
   }
 
+  /**
+   * Tenant-scoped, unaudited list. Gate order: fiscal entitlement, then fiscal.read.
+   */
+  async list(input: FiscalDocumentListInput): Promise<FiscalDocumentResponse[]> {
+    await this.assertFiscalEnabled();
+    await this.requirePermission(FISCAL_PERMISSIONS.read);
+    const rows = await this.repository.list(input.status, this.repository.client);
+    return rows.map(toResponse);
+  }
+
+  /**
+   * Tenant-scoped, unaudited detail read. Gate order: fiscal entitlement, then fiscal.read.
+   */
+  async get(id: string): Promise<FiscalDocumentResponse> {
+    await this.assertFiscalEnabled();
+    await this.requirePermission(FISCAL_PERMISSIONS.read);
+    const row = await this.repository.findDocument(id, this.repository.client);
+    if (!row) throw new DomainError("NOT_FOUND", FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE);
+    return toResponse(row);
+  }
+
   /** Cancels a fiscal document; the synchronous provider call is deadline-bounded. */
   async cancel(id: string, reason: string): Promise<FiscalDocumentResponse> {
     await this.assertFiscalEnabled();
-    await this.requirePermission();
+    await this.requirePermission(FISCAL_PERMISSIONS.issue);
     const actorUserProfileId = this.context.requireUserProfileId();
     const observed = await this.prisma.$transaction(async (tx) => {
       await this.repository.lockDocument(id, tx);
@@ -238,7 +264,7 @@ export class FiscalService {
 
   async issue(input: CreateFiscalDocumentInput): Promise<FiscalDocumentResponse> {
     await this.assertFiscalEnabled();
-    await this.requirePermission();
+    await this.requirePermission(FISCAL_PERMISSIONS.issue);
     const actorUserProfileId = this.context.requireUserProfileId();
     const tenantId = this.context.requireTenantId();
     const row = await this.prisma.$transaction(async (tx) => {
@@ -287,9 +313,9 @@ export class FiscalService {
     if (!(await this.entitlements.has(tenantId, "fiscal")))
       throw new DomainError("FEATURE_NOT_ENTITLED", FISCAL_FEATURE_NOT_ENTITLED_MESSAGE);
   }
-  private async requirePermission(): Promise<void> {
+  private async requirePermission(permission: FiscalPermission): Promise<void> {
     const permissions = await this.permissionResolver.resolveForActiveRequest();
-    if (!permissions.has(FISCAL_PERMISSIONS.issue))
+    if (!permissions.has(permission))
       throw new DomainError("FORBIDDEN", "The required fiscal permission is missing.");
   }
 }

@@ -2,7 +2,7 @@
 id: EPIC-15
 type: epic
 title: Fiscal Abstraction
-status: planned
+status: done
 priority: high
 depends_on:
   - EPIC-14
@@ -17,7 +17,7 @@ prd_sections:
   - "40"
   - "41"
 created: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-03
 ---
 
 # EPIC-15 — Fiscal Abstraction
@@ -101,6 +101,61 @@ to prove the Core abstraction.
   is this slice's durable lesson: for a database artifact, review is not a
   substitute for execution. [[TD-027]] recorded the deferred gate and is now
   `resolved`.
+
+- **[[FISC-003]] Fiscal provider port and deterministic fake — `done`.** Closed
+  via pull request #99. The application boundary the epic rests on: a provider
+  port with a normalized outcome taxonomy, a deterministic `FakeFiscalProvider`,
+  a fail-closed snapshot sanitizer, the composition root that selects the
+  implementation, and the source-text rule that keeps concrete providers out of
+  every other domain. Two lineages closed approved with zero corrections. One
+  correction to the pinned contract: the port declares its own frozen provider
+  vocabulary instead of importing the Prisma enum, because `@newsaas/database`
+  keeps `@prisma/client` private — and a port should not depend on generated
+  persistence types anyway.
+
+- **[[FISC-004]] Queued fiscal submission — `done`.** Closed via pull request
+  #100, with the live-PostgreSQL gate executed both locally and in CI. Extracted
+  `packages/fiscal` so the worker can consume the same boundary, added the queue
+  contract with the deterministic `jobId = fiscal-submit:<documentId>`, the API
+  producer with a 2 s deadline and fail-fast Redis options, the worker consumer
+  and handler with a five-minute claim lease, the status transition guard, and
+  the explicit `POST /fiscal-documents` command. Two CRITICAL findings the
+  refuter confirmed were fixed before merge: a Redis outage could hang every
+  issue request, and a worker dying between the `SENDING` claim and the provider
+  call could strand a document permanently. The targeted validation was refused
+  at admission and `inspect-authority` reported `sanctioned_exits: []`, so this
+  slice's review is **escalated, not closed** — the same terminal shape BILL-004
+  recorded in EPIC-14, and it is recorded rather than smoothed over.
+
+- **[[TD-028]] Fiscal submission recovery sweep — `resolved`.** Closed via pull
+  request #101. `recoverStaleFiscalSubmissions` selects `QUEUED`/`ERROR`
+  documents older than a five-minute window in batches of 100, and
+  `redriveFiscalSubmission` removes a terminal job before re-adding it, because
+  a deterministic `jobId` plus `removeOnFail: false` would otherwise make the
+  re-add a silent BullMQ dedupe no-op. No status write, so no migration and no
+  guard extension. Four advisories were recorded rather than actioned and are
+  now listed in [[TD-030]].
+
+- **[[FISC-005]] Fiscal surface and epic closure — `done`.** Closed 2026-10-03
+  in two PRs under one story. **FISC-005a** (pull request #102) added `cancel`
+  to the provider port and the fake, the guard's cancellation edges as an
+  additive migration, the synchronous `POST /fiscal-documents/:id/cancel`, and
+  the [[DEC-051]] Billing hand-off. **FISC-005b** (pull request #103) added the
+  read-wide `fiscal.read` key with the list and detail reads, the `/app/fiscal`
+  workspace with its client layer and `/api/fiscal` proxy, and
+  `docs/05-modules/Fiscal.md`. The FISC-005a native review (lineage
+  `review-2768c9087a428449`, tier high, four lenses) closed **approved** after
+  one candidate-caused CRITICAL — an unbounded provider cancel call — was
+  corrected and validated.
+
+  Three contract decisions were taken during implementation and recorded rather
+  than silently applied: `TRANSIENT_FAILURE` does not move a cancellation to
+  `ERROR` because the accepted graph does not admit that edge; no retry route
+  ships because none was ever accepted ([[TD-029]]); and no `fiscal-ui` settings
+  namespace ships because the surface needs no configurable value (`D6`).
+
+  [[TD-030]] records the review advisories from FISC-005a and TD-028 with
+  dispositions, and [[TD-029]] records the missing operator-triggered re-drive.
 
 ## Scope
 

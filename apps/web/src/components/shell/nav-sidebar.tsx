@@ -35,6 +35,7 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/sales", label: "POS", requiredFeature: "sales" },
   { href: "/app/cash", label: "Cash", requiredFeature: "cash" },
   { href: "/app/billing", label: "Billing", requiredFeature: "billing" },
+  { href: "/app/fiscal", label: "Fiscal", requiredFeature: "fiscal" },
   { href: "/app/agenda", label: "Agenda" },
 ];
 

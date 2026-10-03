@@ -207,6 +207,9 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /invoices/:id/cancel",
   // EPIC-15 FISC-004 — explicit fiscal submission command.
   "POST /fiscal-documents",
+  // FISC-005b / D7 — tenant-scoped fiscal read contract.
+  "GET /fiscal-documents",
+  "GET /fiscal-documents/:id",
   // EPIC-15 FISC-005a — explicit fiscal cancellation command (same permission
   // as issue: no new key, so the seeded permission count stays at 56).
   "POST /fiscal-documents/:id/cancel",
@@ -431,6 +434,8 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  * creation and its lifecycle is the two explicit commands (DEC-038, DEC-043).
  */
 const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /fiscal-documents": FISCAL_PERMISSIONS.read,
+  "GET /fiscal-documents/:id": FISCAL_PERMISSIONS.read,
   "POST /fiscal-documents": FISCAL_PERMISSIONS.issue,
   // FISC-005a reuses `fiscal.invoice.issue` for cancellation: no new key is
   // introduced, so the seeded permission count stays at 56.

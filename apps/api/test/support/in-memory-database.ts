@@ -1493,6 +1493,10 @@ export interface IsolationDatabase {
       }) => { count: number };
     };
     fiscalDocument: {
+      findMany: (args: {
+        where: { tenantId: string; status?: FiscalDocumentStatusRow };
+        orderBy: { createdAt: "desc" };
+      }) => FiscalDocumentRow[];
       findFirst: (args: {
         where: {
           tenantId: string;
@@ -3576,6 +3580,20 @@ export function createIsolationDatabase(): IsolationDatabase {
       },
     },
     fiscalDocument: {
+      findMany: ({ where, orderBy }) => {
+        if (!where.tenantId) throw new Error("fiscal document reads require a tenantId predicate");
+        return [...fiscalDocumentTable.values()]
+          .filter(
+            (row) =>
+              row.tenantId === where.tenantId &&
+              (where.status === undefined || row.status === where.status)
+          )
+          .sort((left, right) => {
+            const createdOrder = right.createdAt.getTime() - left.createdAt.getTime();
+            if (createdOrder !== 0) return createdOrder;
+            return orderBy.createdAt === "desc" ? left.id.localeCompare(right.id) : 0;
+          });
+      },
       findFirst: ({ where }) => {
         if (!where.tenantId) throw new Error("fiscal document reads require a tenantId predicate");
         return (

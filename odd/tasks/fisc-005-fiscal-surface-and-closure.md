@@ -299,6 +299,55 @@ recorded non-action):
 - `R4-BILLING-CANCEL-CONFLICT-VS-404` (SUGGESTION).
 - `R4-CANCEL-RETRY-UNBOUNDED` (WARNING).
 
+### FISC-005b native review record (closed, as a chain)
+
+The whole FISC-005b slice exceeded the native reviewer's context budget: the
+`START` on base `3dcb5dd` failed with `lens_context_budget_exceeded`, no
+authority was created and nothing was burned. The provider's continuation was to
+split it into a chained sequence of smaller reviewable commits, so the slice was
+reviewed as four candidates, each on its own work unit:
+
+| Candidate                     | Base → head           | Lineage                   | Tier             | Verdict             | Advisories |
+| ----------------------------- | --------------------- | ------------------------- | ---------------- | ------------------- | ---------- |
+| Read contract (T5a)           | `3dcb5dd` → `4349916` | `review-dd26b5d31ff25018` | medium, one lens | approved            | 4          |
+| Client, proxy and nav (T5b-1) | `4349916` → `68be9c2` | `review-b67e9dfd40dbb1d1` | medium, one lens | approved            | 3          |
+| Workspace (T5b-2)             | `68be9c2` → `1218f6e` | `review-0a69015d0b17a603` | medium, one lens | approved            | 4          |
+| Documentation closure (T6)    | `1218f6e` → `94a1f02` | `review-1e4e88ad5b246a46` | low, no lenses   | approved on `START` | 0          |
+
+Every authority was burned with its exact acknowledgement. The first three
+candidates each needed **one retried reviewer run**: the host relay produced a
+malformed payload (`reviewer payload contains no complete JSON object`) or an
+internally inconsistent one (`inspection.status: "completed"` while the evidence
+reported the candidate could not be inspected). Neither refusal consumed the
+lens slot, and the retry on the reoffered slot was admitted each time.
+
+Their eleven advisories are informational and are recorded in [[TD-030]]
+theme 6. Two are WARNINGs and both sit in the workspace's cancel-command state,
+which is where the FISC-005a advisories also pointed.
+
+**Lesson for the next slice**: a ~940-line, 10-to-13-file work unit is the
+practical ceiling for one reviewer run at this tier. Anything larger must be
+committed as reviewable units and reviewed as a chain, or it cannot be reviewed
+at all.
+
+### Coverage of the docs-only commits
+
+Two commits were made _after_ the authority of their own slice had been burned,
+so neither was inside a reviewed range. Both are documentation-only and both
+closed `approved` on their own `START` call at `risk_tier: low` with
+`lenses_required: false`, consuming no reviewer runs:
+
+| Commit                                | Base → head           | Lineage                   | Files / lines |
+| ------------------------------------- | --------------------- | ------------------------- | ------------- |
+| `3dcb5dd` record the FISC-005a review | `fab9758` → `3dcb5dd` | `review-8c6b6d127300fc97` | 1 / 37        |
+| `81cad92` record the chained review   | `94a1f02` → `81cad92` | `review-44af3b7d678edae0` | 4 / 120       |
+
+With those two, **every commit on both branches is inside a closed review**:
+`e489dab`..`fab9758` and `e5ec074`..`94a1f02` in the five lineages above, plus
+the two low-tier docs closures. The commit that carries this very paragraph is
+itself a documentation-only candidate and is closed the same way, so the record
+does not claim a verdict it does not have.
+
 ## Tasks
 
 - [x] T1 — Get the nod on D1-D6, then pin the full contract. Evidence: `e489dab`
@@ -320,9 +369,31 @@ recorded non-action):
       16/16, lint 16/16, format clean, `db:deploy` 32 migrations applied, live
       PostgreSQL **213 passed (213)** with the FISC-005a cancellation-edge
       probes executed locally for the first time.
-- [ ] T5 — FISC-005b: the staff fiscal surface.
-- [ ] T6 — FISC-005b: module docs, CI evidence, changelog, roadmap, epic
-      closure.
+- [x] T5a — FISC-005b: the API fiscal read contract (`fiscal.read` + list +
+      detail + the DTO's `cancelledAt`). Evidence: this work unit's commit.
+      Gates green: database 21 files / 416 tests, API 81 files / 1068 tests,
+      root typecheck 16/16, lint 16/16, format clean, seed reapplied
+      (`permissions: 57`, `rolePermissions: 193`), live PostgreSQL **213 passed
+      (213)**.
+- [x] T5b-1 — FISC-005b: the web client layer (`fiscal-api`, `fiscal-display`,
+      `fiscal-validation`, `fiscal-outcome`), the `/api/fiscal` proxy and the
+      nav entry, with their colocated tests. Evidence: this work unit's commit.
+      Gates green: web 95 files / 1071 tests, web typecheck/lint/`next build`
+      clean, root `pnpm test` 17/17, typecheck 16/16, lint 16/16, format clean.
+- [x] T5b-2 — FISC-005b: the `/app/fiscal` workspace — `page.tsx`, the surface
+      and the three panels, with their colocated tests. Evidence: this work
+      unit's commit. Gates green: web 99 files / 1087 tests, web
+      typecheck/lint/`next build` clean, root `pnpm test` 17/17, typecheck
+      16/16, lint 16/16, build 10/10, format clean.
+- [x] T6 — FISC-005b: module docs, TD-029, advisory triage, CI evidence,
+      changelog, roadmap and the EPIC-15 closure. Evidence: this work unit's
+      commit. `docs/05-modules/Fiscal.md` (and its README registration),
+      `TD-029`, `TD-030` (the advisory triage), the story closure, the CHANGELOG
+      entry, the ROADMAP row and closure paragraph, the epic doc, and the
+      CI-EVIDENCE `## EPIC-15 Fiscal Abstraction` section with the slice table
+      and the closure. Receipts: PR #102 run `37150885463` (203 live-PG cases)
+      and PR #103 run `37155574081` (213 live-PG cases), both green on both
+      required checks.
 
 ### T4a pinned details (the contract above is ambiguous here; these win)
 
@@ -408,6 +479,153 @@ recorded non-action):
   concrete provider. The existing `@newsaas/fiscal` rule stays in force and
   keeps its own case; a new case allowlists the application-boundary modules by
   path.
+
+## FISC-005b pinned contract (maintainer decisions, 2026-10-03)
+
+The read-only mapping of the EPIC-14 Billing template surfaced a blocking gap:
+`FiscalController` exposes only the two POST commands, there is no `fiscal.read`
+key and `FiscalService`/`FiscalRepository` have no list or by-id read. The three
+maintainer decisions below close that gap; D6 (no `fiscal-ui` namespace) stands.
+
+### D7 — the fiscal read contract (accepted)
+
+- A new permission key `fiscal.read` ("Read fiscal documents") joins the
+  reference seed, so the seeded permission count moves **56 → 57** and the probe
+  in `packages/database/src/reference-seed.test.ts` moves with it. Read is
+  granted to all six roles, mirroring the read-wide `billing.read` shape of
+  DEC-040.
+- `GET /fiscal-documents` — tenant-scoped list, newest first (`createdAt desc`),
+  a **strict** optional `status` filter with no implicit default, and no
+  pagination (the shipped sales/cash/invoice list precedent).
+- `GET /fiscal-documents/:id` — tenant-scoped detail; unknown and cross-tenant
+  ids are byte-equivalent `404`s.
+- Gate order on both reads: `fiscal` entitlement → `fiscal.read`, then actor.
+- `FiscalDocumentResponse` gains **`cancelledAt: string | null`** and nothing
+  else. `requestSnapshot`/`responseSnapshot` stay CONFIDENTIAL and are never
+  returned.
+
+### D8 — no retry route (accepted)
+
+DEC-052 names "issue/retry/cancel", but no retry route was ever accepted or
+shipped; the TD-028 sweep re-drives internally on a five-minute window.
+FISC-005b ships **no** retry route and records `docs/08-tech-debt/TD-029` for
+the missing operator-triggered re-drive.
+
+### D9 — the surface lives at `/app/fiscal` (accepted)
+
+`/app/fiscal` owns the issue panel, the list and the detail with the cancel
+action. Billing gains no fiscal action beyond the DEC-051 `409`.
+
+### T5a — files
+
+```text
+packages/database/src/reference-seed.ts              + fiscal.read key and its six role grants
+packages/database/src/reference-seed.test.ts         probe 56 -> 57
+apps/api/src/fiscal/fiscal.permissions.ts            + read key
+apps/api/src/fiscal/fiscal.dto.ts                    + cancelledAt
+apps/api/src/fiscal/fiscal.zod.ts                    + list query, + id param
+apps/api/src/fiscal/fiscal.repository.ts             + list + by-id read
+apps/api/src/fiscal/fiscal.service.ts                + list + get, gate order
+apps/api/src/fiscal/fiscal.controller.ts             + GET routes
+apps/api/src/fiscal/fiscal.integration.test.ts       + read cases
+apps/api/src/rbac/route-contract.probe.test.ts       + 2 routes, + permission map
+```
+
+### T5a pinned details
+
+- The by-id read reuses `findDocument(id, tx)`; the list is a NEW tenant-scoped
+  repository method (`findMany`-shaped, optional `status` filter,
+  `createdAt desc`) — the repository must not gain a cross-tenant read.
+- The list query schema is `.strict()` with a single optional `status` enum; an
+  unknown key or a non-enum status is the stable `400 VALIDATION_FAILED`.
+- The permission key literal is `fiscal.read`; the seed's role grants follow the
+  existing read-wide shape (all six roles).
+- The route-contract probe needs BOTH pins: `EXPECTED_ROUTE_INVENTORY` gains
+  `GET /fiscal-documents` and `GET /fiscal-documents/:id`, and
+  `FISCAL_PERMISSION_BY_ROUTE` gains both mapped to `fiscal.read`.
+- Read audit: **no** audit row. Reads are never audited in this codebase.
+- The list/detail DTO is the SAME allowlist as the issue response plus
+  `cancelledAt`; do not add a second DTO shape.
+
+### T5b — files
+
+```text
+apps/web/src/app/(app)/app/fiscal/page.tsx
+apps/web/src/app/(app)/app/fiscal/fiscal-api.ts
+apps/web/src/app/(app)/app/fiscal/fiscal-display.ts
+apps/web/src/app/(app)/app/fiscal/fiscal-validation.ts
+apps/web/src/app/(app)/app/fiscal/fiscal-outcome.tsx
+apps/web/src/app/(app)/app/fiscal/fiscal-surface.tsx
+apps/web/src/app/(app)/app/fiscal/fiscal-list-panel.tsx
+apps/web/src/app/(app)/app/fiscal/fiscal-detail-panel.tsx
+apps/web/src/app/(app)/app/fiscal/issue-fiscal-document-panel.tsx
+apps/web/src/app/api/fiscal/[[...path]]/route.ts
+apps/web/src/components/shell/nav-sidebar.tsx
++ colocated tests for every new module
+```
+
+### T5b pinned details
+
+The slice is split into two work units because it is the largest of the story:
+**T5b-1** is the client layer, the proxy and the nav (no rendering), and
+**T5b-2** is the workspace that consumes them. Both are part of the same
+FISC-005b PR.
+
+- The client talks only to `/api/fiscal/...`. The proxy prefix is `/api/fiscal`
+  and the remainder is the upstream path, so the four calls are:
+  `GET /api/fiscal/fiscal-documents` (optional `?status=`),
+  `GET /api/fiscal/fiscal-documents/:id`, `POST /api/fiscal/fiscal-documents`
+  body `{ invoiceId }`, and `POST /api/fiscal/fiscal-documents/:id/cancel` body
+  `{ reason }`.
+- Replicate the Billing template exactly: `page.tsx` is a server component
+  rendering one `"use client"` surface, with no guard and no metadata; the proxy
+  is the `[[...path]]` shape-classifier (prefix constant, method-aware path
+  shape, query allowlist, body key-set contract forwarded byte-for-byte,
+  `STAFF_SESSION_COOKIE` from `@/lib/session-cookie`, only the cookie and
+  `x-request-id` forwarded, `notFound`/`invalidPath`/`invalidBody`/
+  `unauthenticated` envelopes matching the API byte-for-byte,
+  `cache: "no-store"`).
+- The surface pins its OWN runtime status mirror (`FISCAL_DOCUMENT_STATUSES`)
+  because `FiscalDocumentResponse.status` is a plain `string`; do NOT import the
+  API's server-side union. This is the `INVOICE_STATUSES` precedent, and the
+  display test must assert the mirror.
+- Reuse only `Button` and `Card*` from `@newsaas/ui`, plus the semantic tokens
+  the Billing template uses. No brand literal, no arbitrary-value class, no
+  remote font. The display test mirrors Billing's token assertion
+  (`not.toMatch(/#[0-9a-f]{3,8}/i)`, `not.toMatch(/\[[^\]]+\]/)`).
+- Do NOT replicate `billing-display.ts`'s cross-feature import of
+  `formatWireAmount`; Fiscal has no money field.
+- State coverage is an acceptance criterion: loading, empty, error, success,
+  permission-denied (`FORBIDDEN`) and entitlement-denied
+  (`FEATURE_NOT_ENTITLED`), each with its own `data-testid`.
+- The nav entry is
+  `{ href: "/app/fiscal", label: "Fiscal", requiredFeature: "fiscal" }`, and
+  `nav-sidebar.test.tsx` hard-codes the entry count, the positional
+  destructuring, the href array and the `visibleNavLinks` negative list, so all
+  four must move with it. The gate stays declarative-only because
+  `(app)/layout.tsx` passes no entitlements — that is the shipped Billing
+  behavior and must be recorded in the module doc's limitations.
+- The web suite has **no** shared test-helper module: helpers are file-local,
+  `global.fetch` is replaced by `vi.fn()`, and pure modules carry a
+  `/** @vitest-environment node */` docblock.
+- The cancel action needs the document's cancellable states only; `SENDING` and
+  `CANCELLED` are not cancellable, and the surface must render the API's `409`
+  message rather than inventing its own rule.
+
+### T6 — closure scope
+
+- `docs/05-modules/Fiscal.md` (mirroring `Billing.md`'s ten sections) and the
+  `docs/05-modules/README.md` "Implemented (EPIC-15)" block.
+- `docs/08-tech-debt/TD-029-*.md` for the missing operator-triggered re-drive.
+- Triage of the fourteen FISC-005a advisories and the four TD-028 advisories:
+  each is actioned, turned into a Tech Debt item, or explicitly not actioned
+  with a reason.
+- `docs/10-qa/CI-EVIDENCE.md`, `docs/09-releases/CHANGELOG.md`,
+  `docs/01-roadmap/ROADMAP.md`, `docs/01-roadmap/EPIC-15-Fiscal-Abstraction.md`
+  and `docs/02-stories/FISC-005-fiscal-surface-and-closure.md` — all only with
+  real executed evidence.
+- The CI-EVIDENCE heading anomaly must be resolved deliberately: there is no
+  `## EPIC-15` heading today and the FISC-002 receipt sits under `## EPIC-14`.
 
 ## Notes
 

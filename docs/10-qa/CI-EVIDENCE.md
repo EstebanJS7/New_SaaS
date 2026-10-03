@@ -1243,6 +1243,19 @@ until [[EPIC-15]] and [[EPIC-16]].
 This section is the machine-generated receipt for the merged slice and is
 **not** a production-readiness statement.
 
+## EPIC-15 Fiscal Abstraction
+
+| Slice                                               | Pull request | Merge commit | CI run                                                                           | Checks                                                                |
+| --------------------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Kickoff, planned stories and accepted decisions     | #96          | `0891353`    | [`37050111481`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37050111481) | `Database migrations` success, `Lint, Typecheck, Test, Build` success |
+| FISC-002 fiscal data foundation                     | #97          | `4934246`    | [`37050111481`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37050111481) | `Database migrations` success, `Lint, Typecheck, Test, Build` success |
+| FISC-002 closure receipt                            | #98          | `83abe73`    | [`37050111481`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37050111481) | `Database migrations` success, `Lint, Typecheck, Test, Build` success |
+| FISC-003 provider port and deterministic fake       | #99          | `b4b9f46`    | [`37095190065`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37095190065) | `Database migrations` success, `Lint, Typecheck, Test, Build` success |
+| FISC-004 queued fiscal submission and issue command | #100         | `ac61c1a`    | [`37134127474`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37134127474) | `Database migrations` success, `Lint, Typecheck, Test, Build` success |
+| TD-028 fiscal submission recovery sweep             | #101         | `3944fca`    | [`37140948084`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37140948084) | `Database migrations` success, `Lint, Typecheck, Test, Build` success |
+| FISC-005a cancellation command and Billing hand-off | #102         | open         | [`37150885463`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37150885463) | `Database migrations` 1m17s, `Lint, Typecheck, Test, Build` 4m52s     |
+| FISC-005b read contract and staff surface           | #103         | open         | [`37155574081`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37155574081) | `Database migrations` 1m11s, `Lint, Typecheck, Test, Build` 3m58s     |
+
 ### EPIC-15 FISC-002 — Fiscal data foundation
 
 FISC-002 closed on 2026-10-02 with the scope pull request #96 and the slice pull
@@ -1285,3 +1298,76 @@ approved and acknowledged with no correction (`review-55a6586fdf5cc2c2`,
 `review-49e414ffad03db30`, `review-a26929649a8d3a16`,
 `review-2c9359c3812696e8`), which is exactly why the first point matters: review
 did not find those 15 defects and execution did.
+
+### EPIC-15 FISC-003 to FISC-005 — provider boundary, submission, cancellation and surface
+
+CI run **`37155574081`** (PR #103, FISC-005b) is green on both required checks
+and is the epic's final receipt:
+
+```text
+Database migrations
+  32 migrations found in prisma/migrations
+  All migrations have been successfully applied.
+  counts after first seed:  {"roles":6,"permissions":57,"featureCodes":12,"plans":1,
+                             "rolePermissions":193,"planCapabilities":12,"species":6,
+                             "breeds":9,"taxRates":3}
+  counts after second seed: identical
+  LIVE MIGRATION VERIFICATION PASSED
+  Live PostgreSQL application-path isolation: 213 passed (213)
+
+Lint, Typecheck, Test, Build -> SUCCESS
+  database 21 files / 416 tests; fiscal 5 / 50; worker 9 / 72;
+  API 81 files / 1068 tests passed (213 skipped without DATABASE_URL_TEST);
+  web 99 files / 1087 tests
+```
+
+The FISC-005a receipt (PR #102, run **`37150885463`**) is green on both required
+checks and reported **203 passed (203)** on the live-PostgreSQL suite, before
+the read contract added its own cases. The seeded catalog moved **56 → 57**
+permissions and **187 → 193** role grants, and the applied schema carries **32
+migrations** including `20261003000001_fiscal_document_transition_guard` and
+`20261004000001_fiscal_document_cancellation_guard`.
+
+The live-PostgreSQL suite executed the FISC-005a cancellation edges for the
+first time in this epic — per-edge admission, the
+`APPROVED -> CANCEL_PENDING -> CANCELLED` path that keeps its resolution
+timestamp, and the `CANCELLED`-source probe that records which same-timing
+`BEFORE` trigger actually fires.
+
+Local gates reproduced before the push: `pnpm test` 17/17, `pnpm typecheck`
+16/16, `pnpm lint` 16/16, `pnpm build` 10/10, `pnpm format-check` clean,
+`db:deploy` 32 migrations, `db:seed` `permissions: 57` / `rolePermissions: 193`,
+and `test:live-pg` **213 passed (213)**.
+
+### EPIC-15 closure
+
+EPIC-15 Fiscal Abstraction closed on 2026-10-03 with a CI receipt per slice:
+#96–#98 (FISC-002, run `37050111481`), #99 (FISC-003, run `37095190065`), #100
+(FISC-004, run `37134127474`), #101 (TD-028, run `37140948084`), #102
+(FISC-005a, run `37150885463`) and #103 (FISC-005b, run `37155574081`). The
+merged tree carries **32 migrations**, **57** seeded permissions and **193**
+role grants.
+
+What this closure records rather than smooths over:
+
+- **One slice's review is escalated, not closed, and another needed a chain.**
+  FISC-004's targeted validation was refused at admission and
+  `inspect-authority` reported `sanctioned_exits: []`, so that candidate carries
+  no verdict — the same terminal shape BILL-004 recorded in EPIC-14. The
+  FISC-005a lineage closed **approved** after one candidate-caused CRITICAL was
+  corrected and validated, and FISC-005b's slice was too large for a single
+  review (`lens_context_budget_exceeded`), so it closed as a **chain of four
+  approved candidates**: `review-dd26b5d31ff25018` (read contract),
+  `review-b67e9dfd40dbb1d1` (client, proxy and nav), `review-0a69015d0b17a603`
+  (workspace) and `review-1e4e88ad5b246a46` (documentation, `risk_tier: low`, no
+  lenses). Eleven advisories from that chain are recorded in [[TD-030]].
+- **No real provider exists.** `SIFEN_DIRECT`, XAdES signing and KuDE rendering
+  were never implemented, because PRD §23 forbids implementing SIFEN details
+  from memory. [[EPIC-16]] owns the production adapter.
+- **Three gaps are recorded, not hidden**: no operator-triggered re-drive
+  ([[TD-029]]), no `fiscal-ui` settings namespace ([[DEC-052]]), and the portal
+  fiscal document surface still deferred ([[TD-022]]). The review advisories
+  from FISC-005a and TD-028 are recorded with dispositions in [[TD-030]].
+
+This section is the machine-generated receipt for the merged slices and is
+**not** a production-readiness statement.

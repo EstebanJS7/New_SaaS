@@ -339,6 +339,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "sales.read",
       "cash.read",
       "billing.read",
+      "fiscal.read",
     ]);
     for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
       for (const key of [
@@ -742,8 +743,8 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // EPIC-13 CASH-002 adds `cash.movement.create` (DEC-034), the standalone
       // non-sale movement command key, moving the seeded catalog 51 -> 52.
       // EPIC-14 BILL-001 adds the four `billing.*` keys (DEC-040), moving it
-      // 52 -> 56.
-      permissions: 56,
+      // 52 -> 56. FISC-005b adds read-wide `fiscal.read` (D7), moving 56 -> 57.
+      permissions: 57,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

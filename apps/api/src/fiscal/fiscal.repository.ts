@@ -31,6 +31,7 @@ export interface FiscalDocumentRow {
   lastErrorCode: string | null;
   createdAt: Date;
   updatedAt: Date;
+  cancelledAt?: Date | null;
   requestSnapshot?: unknown;
   responseSnapshot?: unknown;
 }
@@ -57,6 +58,10 @@ export interface FiscalRepositoryTx extends FiscalDocumentReadTx {
   };
   fiscalDocument: {
     findFirst(args: { where: FiscalWhere }): Promise<FiscalDocumentRow | null>;
+    findMany(args: {
+      where: { tenantId: string; status?: FiscalDocumentStatus };
+      orderBy: { createdAt: "desc" };
+    }): Promise<FiscalDocumentRow[]>;
     create(args: {
       data: { tenantId: string; invoiceId: string; provider: string; status: "PENDING" };
     }): Promise<FiscalDocumentRow>;
@@ -101,6 +106,18 @@ export class FiscalRepository {
   async lockDocument(id: string, tx: FiscalRepositoryTx): Promise<void> {
     const tenantId = this.context.requireTenantId();
     await tx.$queryRaw`SELECT "id" FROM "fiscal_document" WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid FOR UPDATE`;
+  }
+  async list(
+    status: FiscalDocumentStatus | undefined,
+    tx: FiscalRepositoryTx
+  ): Promise<FiscalDocumentRow[]> {
+    return tx.fiscalDocument.findMany({
+      where: {
+        tenantId: this.context.requireTenantId(),
+        ...(status !== undefined ? { status } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+    });
   }
   async findDocument(id: string, tx: FiscalRepositoryTx): Promise<FiscalDocumentRow | null> {
     return tx.fiscalDocument.findFirst({

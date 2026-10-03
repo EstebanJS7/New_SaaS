@@ -69,9 +69,6 @@ Purchases.md
 Recommended files:
 
 ```text
-Sales.md
-Cash.md
-Fiscal.md
 Notifications.md
 ```
 
@@ -91,4 +88,10 @@ Implemented (EPIC-14):
 
 ```text
 Billing.md
+```
+
+Implemented (EPIC-15):
+
+```text
+Fiscal.md
 ```

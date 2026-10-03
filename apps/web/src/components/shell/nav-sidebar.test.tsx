@@ -3,16 +3,16 @@ import { render, screen, within } from "@testing-library/react";
 import { NavSidebar, visibleNavLinks, NAV_LINKS } from "./nav-sidebar";
 
 describe("NavSidebar", () => {
-  it("renders the Customers, Patients, Catalog, Suppliers, Purchases, POS, Cash, Billing and Agenda links plus labeled placeholder entries", () => {
+  it("renders the Customers, Patients, Catalog, Suppliers, Purchases, POS, Cash, Billing, Fiscal and Agenda links plus labeled placeholder entries", () => {
     render(<NavSidebar />);
 
     const sidebar = screen.getByTestId("nav-sidebar");
     expect(within(sidebar).getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
 
     const entries = within(sidebar).getAllByTestId("nav-entry");
-    expect(entries).toHaveLength(12);
+    expect(entries).toHaveLength(13);
 
-    const [customers, patients, catalog, suppliers, purchases, pos, cash, billing, agenda] =
+    const [customers, patients, catalog, suppliers, purchases, pos, cash, billing, fiscal, agenda] =
       entries;
     expect(customers.tagName).toBe("A");
     expect(customers.getAttribute("href")).toBe("/app/customers");
@@ -46,11 +46,15 @@ describe("NavSidebar", () => {
     expect(billing.getAttribute("href")).toBe("/app/billing");
     expect(billing.textContent).toBe("Billing");
 
+    expect(fiscal.tagName).toBe("A");
+    expect(fiscal.getAttribute("href")).toBe("/app/fiscal");
+    expect(fiscal.textContent).toBe("Fiscal");
+
     expect(agenda.tagName).toBe("A");
     expect(agenda.getAttribute("href")).toBe("/app/agenda");
     expect(agenda.textContent).toBe("Agenda");
 
-    for (const entry of entries.slice(9)) {
+    for (const entry of entries.slice(10)) {
       expect(entry.tagName).toBe("BUTTON");
       expect((entry as HTMLButtonElement).type).toBe("button");
       expect(entry.textContent).toMatch(/^Section [a-z]+$/i);
@@ -61,7 +65,7 @@ describe("NavSidebar", () => {
     const { container } = render(<NavSidebar />);
 
     const links = [...container.querySelectorAll("a")];
-    expect(links).toHaveLength(9);
+    expect(links).toHaveLength(10);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/app/customers",
       "/app/patients",
@@ -71,6 +75,7 @@ describe("NavSidebar", () => {
       "/app/sales",
       "/app/cash",
       "/app/billing",
+      "/app/fiscal",
       "/app/agenda",
     ]);
     // Billing is a real destination now; the placeholders stay chrome-only and
@@ -85,6 +90,7 @@ describe("NavSidebar", () => {
     expect(screen.getByRole("link", { name: "POS" })).toHaveAttribute("href", "/app/sales");
     expect(screen.getByRole("link", { name: "Cash" })).toHaveAttribute("href", "/app/cash");
     expect(screen.getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/app/billing");
+    expect(screen.getByRole("link", { name: "Fiscal" })).toHaveAttribute("href", "/app/fiscal");
   });
 
   it("hides the gated POS, Cash and Billing entries when the tenant is known to lack every capability", () => {
@@ -93,6 +99,7 @@ describe("NavSidebar", () => {
     expect(screen.queryByRole("link", { name: "POS" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Cash" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Fiscal" })).not.toBeInTheDocument();
     // The ungated destinations are untouched by the gate.
     expect(screen.getByRole("link", { name: "Purchases" })).toHaveAttribute(
       "href",
@@ -128,6 +135,13 @@ describe("NavSidebar", () => {
     expect(screen.queryByRole("link", { name: "Cash" })).not.toBeInTheDocument();
   });
 
+  it("shows the Fiscal entry when the tenant is known to hold the fiscal capability", () => {
+    render(<NavSidebar entitlements={["fiscal"]} />);
+
+    expect(screen.getByRole("link", { name: "Fiscal" })).toHaveAttribute("href", "/app/fiscal");
+    expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
+  });
+
   it("gates only entries that declare a capability requirement", () => {
     const gated = visibleNavLinks(NAV_LINKS, ["veterinary"]);
     const hrefs = gated.map((link) => link.href);
@@ -135,6 +149,7 @@ describe("NavSidebar", () => {
     expect(hrefs).not.toContain("/app/sales");
     expect(hrefs).not.toContain("/app/cash");
     expect(hrefs).not.toContain("/app/billing");
+    expect(hrefs).not.toContain("/app/fiscal");
     expect(hrefs).toContain("/app/purchases");
   });
 });
