@@ -234,11 +234,11 @@ and that is exactly where the removal-versus-dedupe logic lives:
 ## Tasks
 
 - [ ] T1 — Create `TD-028` and pin this contract into the tracker.
-- [ ] T2 — Add `fiscalSubmissionJobId` to the queue contract and correct the
+- [x] T2 — Add `fiscalSubmissionJobId` to the queue contract and correct the
       `removeOnFail` comment.
-- [ ] T3 — Add the constants, the pure function and the Nest service.
-- [ ] T4 — Add the suite, including the transport-layer cases.
-- [ ] T5 — Register the service and verify: focused suite, `pnpm test`,
+- [x] T3 — Add the constants, the pure function and the Nest service.
+- [x] T4 — Add the suite, including the transport-layer cases.
+- [x] T5 — Register the service and verify: focused suite, `pnpm test`,
       `typecheck`, `lint`, `build`, `format-check`; then the native review.
 
 ## Notes

@@ -8,6 +8,7 @@ import { BrandingResetCleanupReconciliationService } from "./branding-reset-clea
 import { RedisHealthService } from "./redis/redis-health.service.js";
 import { FiscalSubmissionConsumer } from "./fiscal-submission/fiscal-submission.consumer.js";
 import { FiscalSubmissionHandler } from "./fiscal-submission/fiscal-submission.handler.js";
+import { FiscalSubmissionRecoveryService } from "./fiscal-submission/fiscal-recovery.service.js";
 
 /**
  * Worker deployable module.
@@ -26,6 +27,7 @@ import { FiscalSubmissionHandler } from "./fiscal-submission/fiscal-submission.h
     BrandingResetCleanupReconciliationService,
     FiscalSubmissionHandler,
     FiscalSubmissionConsumer,
+    FiscalSubmissionRecoveryService,
   ],
 })
 export class WorkerModule {}

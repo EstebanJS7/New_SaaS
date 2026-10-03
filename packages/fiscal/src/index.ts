@@ -29,11 +29,13 @@ export type {
 } from "./fiscal-snapshot.sanitizer.js";
 export { FiscalProviderModule } from "./fiscal-provider.module.js";
 // The queue contract lives here because both deployables share it.
+// Export the identity helper so the producer and recovery sweep cannot disagree about job identity.
 export {
   FISCAL_SUBMISSION_BACKOFF_DELAY_MS,
   FISCAL_SUBMISSION_JOB,
   FISCAL_SUBMISSION_MAX_ATTEMPTS,
   FISCAL_SUBMISSION_QUEUE,
+  fiscalSubmissionJobId,
   fiscalSubmissionJobOptions,
 } from "./fiscal-submission.queue.js";
 export type { FiscalSubmissionJob } from "./fiscal-submission.queue.js";
