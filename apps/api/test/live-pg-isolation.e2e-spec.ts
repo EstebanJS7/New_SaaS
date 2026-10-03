@@ -16179,9 +16179,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
     }, 30_000);
 
-    it("admits the documented submission approval and cancellation path", async () => {
+    it("admits the documented submission path through approval", async () => {
       await inRolledBackTransaction(async (tx) => {
-        // This exact path is what the two corrected guards protect: the dropped external-id CHECK would have rejected the final step, and the broad terminal-immutability guard would have rejected it too.
+        // This walk protects the two FISC-002 corrections: the dropped
+        // external-id CHECK would have rejected a resolved document that keeps
+        // its provider reference, and the broad terminal guard would have made
+        // the resolved states unreachable. Cancellation belongs to FISC-005, so
+        // the FISC-004 guard rejects every transition out of APPROVED until that
+        // slice extends it; that rejected edge is pinned separately below.
         const sale = await insertRawFiscalSale(tx, tenantAId);
         const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
         const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "PENDING" });
@@ -16189,10 +16194,138 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SUBMITTED', "external_id" = 'provider-1' WHERE "id" = ${id}::uuid`
         ).resolves.toBe(1);
         await expect(
-          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'APPROVED' WHERE "id" = ${id}::uuid`
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'APPROVED', "resolved_at" = now() WHERE "id" = ${id}::uuid`
         ).resolves.toBe(1);
+        const [resolved] = await tx.$queryRaw<
+          { external_id: string | null; resolved_at: Date | null }[]
+        >`
+          SELECT "external_id", "resolved_at" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(resolved?.external_id).toBe("provider-1");
+        expect(resolved?.resolved_at).not.toBeNull();
+      });
+    }, 30_000);
+
+    it.each([
+      ["PENDING", "QUEUED", false],
+      ["PENDING", "SENDING", false],
+      ["QUEUED", "SENDING", false],
+      ["SENDING", "SUBMITTED", false],
+      ["SENDING", "APPROVED", true],
+      ["SENDING", "REJECTED", true],
+      ["SENDING", "ERROR", false],
+      ["SUBMITTED", "APPROVED", true],
+      ["SUBMITTED", "REJECTED", true],
+      ["SUBMITTED", "ERROR", false],
+      ["ERROR", "SENDING", false],
+    ] as const)(
+      "admits the pinned transition %s -> %s",
+      async (from, to, setsResolved) => {
+        await inRolledBackTransaction(async (tx) => {
+          const sale = await insertRawFiscalSale(tx, tenantAId);
+          const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+          const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: from });
+          const resolvedClause = setsResolved ? ', "resolved_at" = now()' : "";
+          await expect(
+            tx.$executeRawUnsafe(
+              `UPDATE "fiscal_document" SET "status" = $1::fiscal_document_status${resolvedClause} WHERE "id" = $2::uuid`,
+              to,
+              id
+            )
+          ).resolves.toBe(1);
+        });
+      },
+      30_000
+    );
+
+    it.each([
+      ["APPROVED", "CANCELLED", null],
+      ["APPROVED", "PENDING", null],
+      ["PENDING", "APPROVED", null],
+      ["PENDING", "REJECTED", null],
+      ["QUEUED", "SUBMITTED", null],
+      ["SUBMITTED", "SENDING", null],
+      ["ERROR", "APPROVED", null],
+      ["CANCELLED", "PENDING", new Date()],
+    ] as const)(
+      "rejects the unpinned transition %s -> %s",
+      async (from, to, cancelledAt) => {
+        await inRolledBackTransaction(async (tx) => {
+          const sale = await insertRawFiscalSale(tx, tenantAId);
+          const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+          const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+            status: from,
+            cancelledAt,
+          });
+          const message = await captureDatabaseMessage(() =>
+            tx.$executeRawUnsafe(
+              `UPDATE "fiscal_document" SET "status" = $1::fiscal_document_status WHERE "id" = $2::uuid`,
+              to,
+              id
+            )
+          );
+          // The message names both states, never a stored value.
+          expect(message).toBe(`fiscal document transition from ${from} to ${to} is not allowed`);
+        });
+      },
+      30_000
+    );
+
+    it("requires resolved_at exactly when entering a resolved status", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "SENDING" });
+        const message = await captureDatabaseMessage(
+          () =>
+            tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'APPROVED' WHERE "id" = ${id}::uuid`
+        );
+        expect(message).toBe(
+          "fiscal document resolved_at is required when entering APPROVED or REJECTED"
+        );
+      });
+    }, 30_000);
+
+    it.each([
+      ["external_id", "'provider-1'", "a fiscal document external_id is write-once"],
+      ["cdc", "'cdc-1'", "a fiscal document cdc is write-once"],
+      ["submitted_at", "now()", "fiscal document submitted_at cannot be cleared"],
+      ["resolved_at", "now()", "fiscal document resolved_at cannot be cleared"],
+    ] as const)(
+      "never clears %s once set",
+      async (column, setValue, expectedMessage) => {
+        await inRolledBackTransaction(async (tx) => {
+          const sale = await insertRawFiscalSale(tx, tenantAId);
+          const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+          const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "SENDING" });
+          await tx.$executeRawUnsafe(
+            `UPDATE "fiscal_document" SET "${column}" = ${setValue} WHERE "id" = $1::uuid`,
+            id
+          );
+          const message = await captureDatabaseMessage(() =>
+            tx.$executeRawUnsafe(
+              `UPDATE "fiscal_document" SET "${column}" = NULL WHERE "id" = $1::uuid`,
+              id
+            )
+          );
+          // `external_id` and `cdc` are already write-once in FISC-002, and that
+          // trigger fires first because PostgreSQL orders same-timing triggers by
+          // name. `submitted_at` and `resolved_at` are guarded only here, so the
+          // two columns assert different messages — deliberately, so the probe
+          // records which guard actually protects each one.
+          expect(message).toBe(expectedMessage);
+        });
+      },
+      30_000
+    );
+
+    it("still admits a same-status update that only touches attempt_count", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "SENDING" });
         await expect(
-          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'CANCELLED', "cancelled_at" = now(), "resolved_at" = now() WHERE "id" = ${id}::uuid`
+          tx.$executeRaw`UPDATE "fiscal_document" SET "attempt_count" = 1 WHERE "id" = ${id}::uuid`
         ).resolves.toBe(1);
       });
     }, 30_000);
