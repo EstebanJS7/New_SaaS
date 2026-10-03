@@ -33,6 +33,7 @@ interface DocumentFixture {
   readonly provider: "FAKE";
   readonly status: Status;
   readonly attemptCount: number;
+  readonly lastAttemptAt: Date | null;
 }
 
 /**
@@ -47,7 +48,11 @@ interface SetupResult {
   readonly updates: { where: unknown; data: Record<string, unknown> }[];
 }
 
-function setup(status: Status = "PENDING", outcome: FiscalIssueOutcome = "APPROVED"): SetupResult {
+function setup(
+  status: Status = "PENDING",
+  outcome: FiscalIssueOutcome = "APPROVED",
+  lastAttemptAt: Date | null = null
+): SetupResult {
   const document: DocumentFixture = {
     id: job.fiscalDocumentId,
     tenantId: job.tenantId,
@@ -55,6 +60,7 @@ function setup(status: Status = "PENDING", outcome: FiscalIssueOutcome = "APPROV
     provider: "FAKE" as const,
     status,
     attemptCount: 2,
+    lastAttemptAt,
   };
   const line = {
     description: "Consultation",
@@ -164,12 +170,32 @@ describe("FiscalSubmissionHandler", () => {
   it.each(["APPROVED", "REJECTED", "CANCELLED", "SENDING", "SUBMITTED"] as const)(
     "does not resubmit %s",
     async (status) => {
-      const { handler, issue, updates } = setup(status);
+      // A fresh claim is the one case where a `SENDING` row is off limits: it
+      // belongs to another worker that is still inside its lease.
+      const { handler, issue, updates } = setup(status, "APPROVED", new Date());
       await handler.handle(job);
       expect(issue).not.toHaveBeenCalled();
       expect(updates).toHaveLength(0);
     }
   );
+
+  it("takes over an abandoned SENDING claim", async () => {
+    // A worker that died between committing `SENDING` and writing a result leaves
+    // the row claimed forever: the transition guard admits no other exit, and the
+    // reconciliation sweep is deferred. Past the lease a redelivery must be able
+    // to take it over, or the document is stalled silently and permanently.
+    const abandoned = new Date(Date.now() - 10 * 60_000);
+    const { handler, issue, updates } = setup("SENDING", "APPROVED", abandoned);
+    await handler.handle(job);
+    expect(issue).toHaveBeenCalledOnce();
+    expect(updates[0]?.data).toMatchObject({ status: "SENDING" });
+    // The re-claim is a compare-and-swap on the OBSERVED lease timestamp, so two
+    // workers that both see the same abandoned claim cannot both win it.
+    expect(updates[0]?.where).toMatchObject({
+      status: "SENDING",
+      lastAttemptAt: abandoned,
+    });
+  });
 
   it("no-ops when the document is missing", async () => {
     const state = setup();

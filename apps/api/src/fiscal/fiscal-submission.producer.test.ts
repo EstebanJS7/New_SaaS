@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { FISCAL_SUBMISSION_JOB, fiscalSubmissionJobOptions } from "@newsaas/fiscal";
-import { BullMqFiscalSubmissionProducer } from "./fiscal-submission.producer.js";
+import {
+  BullMqFiscalSubmissionProducer,
+  FISCAL_SUBMISSION_PRODUCER_REDIS_OPTIONS,
+} from "./fiscal-submission.producer.js";
 
 const document = { fiscalDocumentId: "document-1", tenantId: "tenant-1" };
 
@@ -24,6 +27,34 @@ describe("BullMqFiscalSubmissionProducer", () => {
       backoff: { type: "exponential", delay: 1_000 },
       removeOnComplete: true,
       removeOnFail: false,
+    });
+  });
+
+  it("bounds the enqueue so an unreachable Redis cannot hang the request", async () => {
+    // The command awaits this on the HTTP path, so an `add` that never settles
+    // must reject rather than hold a Nest handler and a Fastify connection open
+    // until the client gives up.
+    vi.useFakeTimers();
+    try {
+      const add = vi.fn(() => new Promise<never>(() => undefined));
+      const producer = new BullMqFiscalSubmissionProducer({ add } as unknown as Queue);
+      const pending = producer.enqueue(document);
+      const assertion = expect(pending).rejects.toThrow(/enqueue exceeded/);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pins fail-fast producer connection options", () => {
+    // `maxRetriesPerRequest: null` is the worker setting; for a producer on a
+    // request path it keeps retrying indefinitely instead of rejecting, and an
+    // offline queue would buffer commands against a connection that is not ready.
+    expect(FISCAL_SUBMISSION_PRODUCER_REDIS_OPTIONS).toEqual({
+      maxRetriesPerRequest: 2,
+      enableOfflineQueue: false,
+      connectTimeout: 2_000,
     });
   });
 

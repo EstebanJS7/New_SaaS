@@ -30,6 +30,7 @@ interface FiscalDocumentRecord {
   readonly provider: FiscalProviderId;
   readonly status: FiscalStatus;
   readonly attemptCount: number;
+  readonly lastAttemptAt: Date | null;
 }
 
 interface FiscalLineRecord {
@@ -55,7 +56,14 @@ interface FiscalDocumentDelegate {
     where: { id: string; tenantId: string };
   }): Promise<FiscalDocumentRecord | null>;
   updateMany(args: {
-    where: { id: string; tenantId: string; status: { in: readonly FiscalStatus[] } };
+    where: {
+      id: string;
+      tenantId: string;
+      /** Either a claimable set, or one observed status for a lease CAS. */
+      status: { in: readonly FiscalStatus[] } | FiscalStatus;
+      /** Present only on a stale-claim compare-and-swap. */
+      lastAttemptAt?: Date | null;
+    };
     data: Record<string, unknown>;
   }): Promise<{ count: number }>;
 }
@@ -95,14 +103,35 @@ export function mapOutcomeToStatus(outcome: FiscalIssueOutcome): OutcomeStatusMa
 }
 
 const MAX_ERROR_LENGTH = 500;
-const ACTIVE_STATUSES: readonly FiscalStatus[] = ["PENDING", "QUEUED", "ERROR"];
-const NO_RETRY_STATUSES: readonly FiscalStatus[] = [
+
+/**
+ * Statuses this handler must never touch again: the document is resolved, or the
+ * provider owns it and a later callback decides.
+ */
+const PROVIDER_OWNED_OR_TERMINAL: readonly FiscalStatus[] = [
   "APPROVED",
   "REJECTED",
   "CANCELLED",
-  "SENDING",
   "SUBMITTED",
 ];
+
+/** Statuses a delivery may claim. */
+const CLAIMABLE_STATUSES: readonly FiscalStatus[] = ["PENDING", "QUEUED", "ERROR"];
+
+/**
+ * How long a committed `SENDING` claim is honoured.
+ *
+ * The claim is committed before the provider call, so a worker that dies in
+ * between — restart, OOM kill, container reschedule — leaves the row in
+ * `SENDING` with no writer. The transition guard admits no other exit from
+ * `SENDING`, and the reconciliation sweep is deferred technical debt, so without
+ * a lease the document is stalled permanently and silently: every redelivered
+ * job would no-op and report success.
+ *
+ * Past this age the claim is treated as abandoned and a delivery may take it
+ * over, which is the only in-band recovery available until the sweep lands.
+ */
+const CLAIM_LEASE_MS = 5 * 60_000;
 
 @Injectable()
 export class FiscalSubmissionHandler {
@@ -117,15 +146,35 @@ export class FiscalSubmissionHandler {
     });
     if (!document) return;
 
-    if (NO_RETRY_STATUSES.includes(document.status)) {
-      // This guard stops a redelivered job from double-submitting to the provider.
+    if (PROVIDER_OWNED_OR_TERMINAL.includes(document.status)) {
+      return;
+    }
+    if (document.status === "SENDING" && !this.isClaimAbandoned(document)) {
+      // A fresh claim belongs to another worker, so this is a duplicate delivery
+      // and must not call the provider again.
       return;
     }
 
     const attemptCount = document.attemptCount + 1;
     const startedAt = new Date();
+    // A stale `SENDING` is re-claimed by compare-and-swap on the observed lease
+    // timestamp, so two workers that both see the same abandoned claim cannot
+    // both win it. A `SENDING` row is never claimed by status alone.
+    const claimWhere =
+      document.status === "SENDING"
+        ? {
+            id: document.id,
+            tenantId: document.tenantId,
+            status: "SENDING" as const,
+            lastAttemptAt: document.lastAttemptAt,
+          }
+        : {
+            id: document.id,
+            tenantId: document.tenantId,
+            status: { in: CLAIMABLE_STATUSES },
+          };
     const claimed = await this.prisma.fiscalDocument.updateMany({
-      where: { id: document.id, tenantId: document.tenantId, status: { in: ACTIVE_STATUSES } },
+      where: claimWhere,
       data: { status: "SENDING", attemptCount: { increment: 1 }, lastAttemptAt: startedAt },
     });
     if (claimed.count !== 1) return;
@@ -232,6 +281,11 @@ export class FiscalSubmissionHandler {
         metadata: { outcome: result.outcome, attemptCount },
       });
     });
+  }
+
+  private isClaimAbandoned(document: FiscalDocumentRecord): boolean {
+    if (document.lastAttemptAt === null) return true;
+    return Date.now() - document.lastAttemptAt.getTime() > CLAIM_LEASE_MS;
   }
 
   private truncate(value: string | null): string | null {
