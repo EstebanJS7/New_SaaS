@@ -6,6 +6,7 @@ import { DomainError } from "@newsaas/shared";
 import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
+import { FiscalService } from "../fiscal/fiscal.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { SaleRepository, type SaleLineRow, type SaleTx } from "../sales/sales.repository.js";
 import { TenantSettingsService } from "../settings/tenant-settings.service.js";
@@ -104,6 +105,16 @@ export const INVOICE_NOT_DRAFT_MESSAGE = "Only a draft invoice can be confirmed.
  */
 export const INVOICE_NOT_CANCELLABLE_MESSAGE =
   "Only a draft or confirmed invoice can be cancelled.";
+
+/**
+ * Stable `409 CONFLICT` for a cancellation blocked by a live (non-`CANCELLED`)
+ * fiscal document (DEC-051). The message names the Fiscal cancellation route
+ * because only Fiscal can release the invoice's slot at the partial unique
+ * index; the check runs inside the cancellation transaction after the invoice
+ * header lock.
+ */
+export const INVOICE_HAS_LIVE_FISCAL_DOCUMENT_MESSAGE =
+  "This invoice has a live fiscal document; cancel it through POST /fiscal-documents/:id/cancel first.";
 
 /**
  * Stable `409 CONFLICT` message for a copied line description that does not fit
@@ -382,7 +393,8 @@ export class BillingService {
     private readonly entitlements: EntitlementsService,
     private readonly requestContext: RequestContextService,
     private readonly permissionResolver: PermissionResolver,
-    private readonly audit: AuditWriter
+    private readonly audit: AuditWriter,
+    private readonly fiscal: FiscalService
   ) {}
 
   /**
@@ -621,9 +633,13 @@ export class BillingService {
    *    - `CANCELLED` is a REPLAY (DEC-041): the row is returned UNCHANGED, with
    *      no write and no second audit row, so a retry never rewrites the reason
    *      or appends a duplicate trail entry;
-   *    - `DRAFT` or `CONFIRMED` applies the conditional terminal transition; a
-   *      zero-row result is a lost race and the stable `409`, never a silent
-   *      success;
+   *    - `DRAFT` or `CONFIRMED` first checks for a live Fiscal document after
+   *      the replay branch and before any write; a live document is a stable
+   *      `409` directing the operator to Fiscal's cancellation route. The replay
+   *      is deliberately checked first because a cancelled invoice cannot have
+   *      a live document;
+   *    - then applies the conditional terminal transition; a zero-row result is
+   *      a lost race and the stable `409`, never a silent success;
    * 3. appends exactly ONE audit row on a REAL transition;
    * 4. re-reads the invoice and returns its allowlisted DTO with
    *    `status: "CANCELLED"`, its retained `number`, its untouched
@@ -655,6 +671,15 @@ export class BillingService {
       // no rewritten reason and no second audit row (DEC-041).
       if (locked.status === "CANCELLED") {
         return locked;
+      }
+
+      // A live fiscal document still holds the invoice's slot at the partial unique
+      // index and only Fiscal can release it (DEC-051). This read rides INSIDE the
+      // transaction, after the invoice header lock, so it serializes with
+      // FiscalService.issue, which locks the same invoice header before creating the
+      // document; a check outside the transaction would leave that window open.
+      if (await this.fiscal.hasLiveDocumentForInvoice(id, tx)) {
+        throw new DomainError("CONFLICT", INVOICE_HAS_LIVE_FISCAL_DOCUMENT_MESSAGE);
       }
 
       // The conditional `WHERE status IN ('DRAFT', 'CONFIRMED')` write is the

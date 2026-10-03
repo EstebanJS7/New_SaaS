@@ -15766,19 +15766,21 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         cdc?: string | null;
         attemptCount?: number;
         cancelledAt?: Date | null;
+        resolvedAt?: Date | null;
       } = {}
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
         INSERT INTO "fiscal_document" (
           "id", "tenant_id", "invoice_id", "provider", "status", "external_id",
-          "cdc", "attempt_count", "cancelled_at"
+          "cdc", "attempt_count", "cancelled_at", "resolved_at"
         ) VALUES (
           ${id}::uuid, ${tenantId}::uuid, ${invoiceId}::uuid,
           ${options.provider ?? "THIRD_PARTY"}::fiscal_provider,
           ${options.status ?? "PENDING"}::fiscal_document_status,
           ${options.externalId ?? null}, ${options.cdc ?? null},
-          ${options.attemptCount ?? 0}, ${options.cancelledAt ?? null}::timestamptz
+          ${options.attemptCount ?? 0}, ${options.cancelledAt ?? null}::timestamptz,
+          ${options.resolvedAt ?? null}::timestamptz
         )
       `;
       return id;
@@ -16227,45 +16229,95 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     }, 30_000);
 
     it.each([
-      ["PENDING", "QUEUED", false],
-      ["PENDING", "SENDING", false],
-      ["QUEUED", "SENDING", false],
-      ["SENDING", "SUBMITTED", false],
-      ["SENDING", "APPROVED", true],
-      ["SENDING", "REJECTED", true],
-      ["SENDING", "ERROR", false],
-      ["SUBMITTED", "APPROVED", true],
-      ["SUBMITTED", "REJECTED", true],
-      ["SUBMITTED", "ERROR", false],
-      ["ERROR", "SENDING", false],
+      ["PENDING", "QUEUED", false, false],
+      ["PENDING", "SENDING", false, false],
+      ["QUEUED", "SENDING", false, false],
+      ["SENDING", "SUBMITTED", false, false],
+      ["SENDING", "APPROVED", true, false],
+      ["SENDING", "REJECTED", true, false],
+      ["SENDING", "ERROR", false, false],
+      ["SUBMITTED", "APPROVED", true, false],
+      ["SUBMITTED", "REJECTED", true, false],
+      ["SUBMITTED", "ERROR", false, false],
+      ["ERROR", "SENDING", false, false],
+      // FISC-005a cancellation edges. Every edge into CANCELLED must carry
+      // `cancelled_at`, which the FISC-002 biconditional enforces; an edge into
+      // CANCEL_PENDING does not.
+      ["PENDING", "CANCELLED", false, true],
+      ["QUEUED", "CANCELLED", false, true],
+      ["ERROR", "CANCELLED", false, true],
+      ["REJECTED", "CANCELLED", false, true],
+      ["SUBMITTED", "CANCEL_PENDING", false, false],
+      ["APPROVED", "CANCEL_PENDING", false, false],
+      ["CANCEL_PENDING", "CANCELLED", false, true],
     ] as const)(
       "admits the pinned transition %s -> %s",
-      async (from, to, setsResolved) => {
+      async (from, to, setsResolved, setsCancelled) => {
         await inRolledBackTransaction(async (tx) => {
           const sale = await insertRawFiscalSale(tx, tenantAId);
           const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+          // A resolved source needs its own resolution timestamp, because the
+          // FISC-004 implication requires it on entry to APPROVED/REJECTED and
+          // the never-clear clause keeps it from then on.
+          const sourceResolved = from === "APPROVED" || from === "REJECTED";
           const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: from });
+          if (sourceResolved) {
+            await tx.$executeRaw`UPDATE "fiscal_document" SET "resolved_at" = now() WHERE "id" = ${id}::uuid`;
+          }
           const resolvedClause = setsResolved ? ', "resolved_at" = now()' : "";
+          const cancelledClause = setsCancelled ? ', "cancelled_at" = now()' : "";
           await expect(
             tx.$executeRawUnsafe(
-              `UPDATE "fiscal_document" SET "status" = $1::fiscal_document_status${resolvedClause} WHERE "id" = $2::uuid`,
+              `UPDATE "fiscal_document" SET "status" = $1::fiscal_document_status${resolvedClause}${cancelledClause} WHERE "id" = $2::uuid`,
               to,
               id
             )
           ).resolves.toBe(1);
+          if (sourceResolved) {
+            // The cancellation must not erase the resolution evidence.
+            const [row] = await tx.$queryRaw<{ resolved_at: Date | null }[]>`
+              SELECT "resolved_at" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+            `;
+            expect(row?.resolved_at).not.toBeNull();
+          }
         });
       },
       30_000
     );
 
+    it("walks APPROVED -> CANCEL_PENDING -> CANCELLED keeping its resolution", async () => {
+      // The exact path the `resolved_at` implication was chosen for: a
+      // biconditional would have made this illegal, because a cancelled document
+      // keeps the timestamp of the resolution it already had.
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "APPROVED" });
+        await tx.$executeRaw`UPDATE "fiscal_document" SET "resolved_at" = now() WHERE "id" = ${id}::uuid`;
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'CANCEL_PENDING' WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'CANCELLED', "cancelled_at" = now() WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        const [row] = await tx.$queryRaw<{ status: string; resolved_at: Date | null }[]>`
+          SELECT "status", "resolved_at" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(row?.status).toBe("CANCELLED");
+        expect(row?.resolved_at).not.toBeNull();
+      });
+    }, 30_000);
+
     it.each([
-      ["APPROVED", "CANCELLED", null],
       ["APPROVED", "PENDING", null],
+      ["SENDING", "CANCELLED", null],
       ["PENDING", "APPROVED", null],
       ["PENDING", "REJECTED", null],
       ["PENDING", "SUBMITTED", null],
+      ["PENDING", "CANCEL_PENDING", null],
       ["QUEUED", "SUBMITTED", null],
       ["SUBMITTED", "SENDING", null],
+      ["CANCEL_PENDING", "APPROVED", null],
       ["ERROR", "APPROVED", null],
     ] as const)(
       "rejects the unpinned transition %s -> %s",

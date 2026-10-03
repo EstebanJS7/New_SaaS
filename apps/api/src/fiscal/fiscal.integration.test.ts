@@ -3,18 +3,28 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import supertest from "supertest";
 import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-app.js";
 import { expectCrossTenant404 } from "../../test/support/expect-cross-tenant-404.js";
-import type { AuditLogRow, TenantRow } from "../../test/support/in-memory-database.js";
+import type {
+  AuditLogRow,
+  FiscalDocumentRow,
+  TenantRow,
+} from "../../test/support/in-memory-database.js";
 import {
   seedRbacActor,
   seedRoleWithKeys,
   type RbacActor,
 } from "../../test/support/rbac-fixture.js";
 import { FISCAL_PERMISSIONS } from "./fiscal.permissions.js";
-import { FISCAL_DOCUMENT_NOT_FOUND_MESSAGE } from "./fiscal.repository.js";
+import {
+  FISCAL_DOCUMENT_NOT_FOUND_MESSAGE,
+  FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE,
+} from "./fiscal.repository.js";
 import {
   FISCAL_DOCUMENT_ALREADY_ISSUED_MESSAGE,
   FISCAL_FEATURE_NOT_ENTITLED_MESSAGE,
   FISCAL_INVOICE_NOT_CONFIRMED_MESSAGE,
+  FISCAL_DOCUMENT_CANCEL_SENDING_MESSAGE,
+  FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION,
+  FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION,
 } from "./fiscal.service.js";
 
 interface ErrorDto {
@@ -107,6 +117,191 @@ const issue = (booted: BootedTestApp, cookie: string, invoiceId: string) =>
     .post("/fiscal-documents")
     .set("Cookie", cookie)
     .send({ invoiceId });
+
+describe("Fiscal HTTP boundary — cancel command", () => {
+  let booted: BootedTestApp;
+  let entitled: FiscalTenant;
+  let foreign: FiscalTenant;
+  let unentitled: FiscalTenant;
+  let forbidden: FiscalTenant;
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    entitled = seedTenant(booted, "cancel-a", true, true);
+    foreign = seedTenant(booted, "cancel-b", true, true);
+    unentitled = seedTenant(booted, "cancel-c", false, true);
+    forbidden = seedTenant(booted, "cancel-d", true, false);
+  });
+  afterAll(async () => booted.close());
+
+  function document(tenantId: string, status: FiscalDocumentRow["status"] = "QUEUED") {
+    const invoice = seedInvoice(booted, tenantId, "CONFIRMED");
+    const now = new Date();
+    const row: FiscalDocumentRow = {
+      id: randomUUID(),
+      tenantId,
+      invoiceId: invoice.id,
+      provider: "FAKE",
+      status,
+      attemptCount: 0,
+      externalId: "provider-123",
+      cdc: "cdc-456",
+      lastErrorCode: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    booted.db.tables.fiscalDocuments.set(row.id, row);
+    return row;
+  }
+  const cancel = (
+    cookie: string,
+    id: string,
+    body: Record<string, unknown> = { reason: "operator request" }
+  ) =>
+    supertest(booted.app.getHttpServer())
+      .post(`/fiscal-documents/${id}/cancel`)
+      .set("Cookie", cookie)
+      .send(body);
+
+  it("cancels a QUEUED document and audits exactly one request", async () => {
+    const queued = document(entitled.tenant.id);
+    booted.fiscalProvider.scriptCancel(["CANCELLED"]);
+    const jobsBefore = booted.fiscalSubmissionProducer.enqueued.length;
+    const providerBefore = booted.fiscalProvider.cancelRequests.length;
+    const auditsBefore = auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION).length;
+    const success = await cancel(entitled.actor.cookie, queued.id).expect(200);
+    const body = success.body as FiscalDocumentDto;
+    expect(body.status).toBe("CANCELLED");
+    expect(Object.keys(body).sort()).toEqual([...RESPONSE_KEYS].sort());
+    expect(auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION)).toHaveLength(
+      auditsBefore + 1
+    );
+    expect(booted.fiscalSubmissionProducer.enqueued).toHaveLength(jobsBefore);
+    expect(booted.fiscalProvider.cancelRequests).toHaveLength(providerBefore + 1);
+    const request = booted.fiscalProvider.cancelRequests.at(-1);
+    expect(request?.fiscalDocumentId).toBe(queued.id);
+    expect(request?.reason).toBe("operator request");
+    expect(request?.externalId).toBe("provider-123");
+    expect(request?.cdc).toBe("cdc-456");
+  });
+
+  it("replays an already CANCELLED document without provider call or audit", async () => {
+    const cancelled = document(entitled.tenant.id, "CANCELLED");
+    booted.fiscalProvider.scriptCancel(["REJECTED"]);
+    const providerBefore = booted.fiscalProvider.cancelRequests.length;
+    const auditsBefore = auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION).length;
+    const response = await cancel(entitled.actor.cookie, cancelled.id).expect(200);
+    const body = response.body as FiscalDocumentDto;
+    expect(body.status).toBe("CANCELLED");
+    expect(Object.keys(body).sort()).toEqual([...RESPONSE_KEYS].sort());
+    expect(auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION)).toHaveLength(
+      auditsBefore
+    );
+    expect(booted.fiscalProvider.cancelRequests).toHaveLength(providerBefore);
+  });
+
+  it("rejects a SENDING document before provider call or audit", async () => {
+    const sending = document(entitled.tenant.id, "SENDING");
+    booted.fiscalProvider.scriptCancel(["CANCELLED"]);
+    const providerBefore = booted.fiscalProvider.cancelRequests.length;
+    const auditBefore = booted.db.tables.audits.size;
+    const response = await cancel(entitled.actor.cookie, sending.id).expect(409);
+    expect((response.body as ErrorDto).error.message).toBe(FISCAL_DOCUMENT_CANCEL_SENDING_MESSAGE);
+    expect(booted.fiscalProvider.cancelRequests).toHaveLength(providerBefore);
+    expect(booted.db.tables.audits.size).toBe(auditBefore);
+  });
+
+  it("persists and audits a REJECTED provider outcome while preserving document status", async () => {
+    const row = document(entitled.tenant.id, "APPROVED");
+    booted.fiscalProvider.scriptCancel(["REJECTED"]);
+    const failedBefore = auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION).length;
+    const response = await cancel(entitled.actor.cookie, row.id).expect(409);
+    expect((response.body as ErrorDto).error.message).toBe("Simulated rejected");
+    expect(row.status).toBe("APPROVED");
+    expect(row.lastErrorCode).toBe("FAKE_REJECTED");
+    expect(row.lastErrorMessage).toBe("Simulated rejected");
+    expect(auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION)).toHaveLength(
+      failedBefore + 1
+    );
+  });
+
+  it("persists a TRANSIENT_FAILURE without moving the document to ERROR", async () => {
+    const row = document(entitled.tenant.id, "APPROVED");
+    booted.fiscalProvider.scriptCancel(["TRANSIENT_FAILURE"]);
+    const failedBefore = auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION).length;
+    const response = await cancel(entitled.actor.cookie, row.id).expect(409);
+    expect((response.body as ErrorDto).error.message).toBe("Simulated transient_failure");
+    expect(row.status).toBe("APPROVED");
+    expect(row.status).not.toBe("ERROR");
+    expect(row.lastErrorCode).toBe("FAKE_TRANSIENT_FAILURE");
+    expect(auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION)).toHaveLength(
+      failedBefore + 1
+    );
+  });
+
+  it("accepts CANCEL_PENDING for an APPROVED document", async () => {
+    const row = document(entitled.tenant.id, "APPROVED");
+    booted.fiscalProvider.scriptCancel(["CANCEL_PENDING"]);
+    const requestedBefore = auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION).length;
+    const response = await cancel(entitled.actor.cookie, row.id).expect(200);
+    expect((response.body as FiscalDocumentDto).status).toBe("CANCEL_PENDING");
+    expect(auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION)).toHaveLength(
+      requestedBefore + 1
+    );
+  });
+
+  it("masks unknown and foreign document ids as equivalent 404s", async () => {
+    const foreignRow = document(foreign.tenant.id);
+    booted.fiscalProvider.scriptCancel(["CANCELLED"]);
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: entitled.actor.cookie,
+      method: "POST",
+      nonexistentUrl: `/fiscal-documents/${randomUUID()}/cancel`,
+      foreignUrl: `/fiscal-documents/${foreignRow.id}/cancel`,
+      body: { reason: "operator request" },
+      forbiddenIdentifiers: [foreignRow.id, foreign.tenant.id],
+    });
+    expect(foreignRow.status).toBe("QUEUED");
+    const unknown = await cancel(entitled.actor.cookie, randomUUID()).expect(404);
+    expect((unknown.body as ErrorDto).error.message).toBe(FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE);
+    expect(foreignRow.status).toBe("QUEUED");
+  });
+
+  it("checks entitlement before permission without provider calls or audit writes", async () => {
+    booted.fiscalProvider.scriptCancel(["CANCELLED"]);
+    const providerBefore = booted.fiscalProvider.cancelRequests.length;
+    const auditBefore = booted.db.tables.audits.size;
+    const noEntitlement = await cancel(unentitled.actor.cookie, randomUUID()).expect(403);
+    expect((noEntitlement.body as ErrorDto).error.code).toBe("FEATURE_NOT_ENTITLED");
+    expect((noEntitlement.body as ErrorDto).error.message).toBe(
+      FISCAL_FEATURE_NOT_ENTITLED_MESSAGE
+    );
+    const noPermission = await cancel(forbidden.actor.cookie, randomUUID()).expect(403);
+    expect((noPermission.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    expect(booted.fiscalProvider.cancelRequests).toHaveLength(providerBefore);
+    expect(booted.db.tables.audits.size).toBe(auditBefore);
+  });
+
+  it("rejects invalid cancel bodies and non-UUID path ids", async () => {
+    booted.fiscalProvider.scriptCancel(["CANCELLED"]);
+    const providerBefore = booted.fiscalProvider.cancelRequests.length;
+    const validationId = randomUUID();
+    const invalidBodies = [
+      {},
+      { reason: "" },
+      { reason: "   " },
+      { reason: "x".repeat(501) },
+      { reason: "ok", status: "CANCELLED" },
+    ];
+    for (const body of invalidBodies) {
+      const response = await cancel(entitled.actor.cookie, validationId, body).expect(400);
+      expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    }
+    const invalidPath = await cancel(entitled.actor.cookie, "not-a-uuid").expect(400);
+    expect((invalidPath.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+    expect(booted.fiscalProvider.cancelRequests).toHaveLength(providerBefore);
+  });
+});
 
 describe("Fiscal HTTP boundary — issue command", () => {
   let booted: BootedTestApp;

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createFakeFiscalProvider } from "./fake-fiscal.provider.js";
-import type { FiscalIssueRequest, FiscalIssueResult } from "./fiscal-provider.port.js";
+import type {
+  FiscalCancelRequest,
+  FiscalCancelResult,
+  FiscalIssueRequest,
+  FiscalIssueResult,
+} from "./fiscal-provider.port.js";
 
 const request: FiscalIssueRequest = {
   fiscalDocumentId: "document-1",
@@ -15,6 +20,21 @@ async function issue(
   provider: ReturnType<typeof createFakeFiscalProvider>
 ): Promise<FiscalIssueResult> {
   return provider.issue(request);
+}
+
+const cancelRequest: FiscalCancelRequest = {
+  fiscalDocumentId: "document-1",
+  tenantId: "tenant-1",
+  provider: "FAKE",
+  reason: "Operator request",
+  externalId: "fake-1",
+  cdc: null,
+};
+
+async function cancel(
+  provider: ReturnType<typeof createFakeFiscalProvider>
+): Promise<FiscalCancelResult> {
+  return provider.cancel(cancelRequest);
 }
 
 describe("FakeFiscalProvider", () => {
@@ -63,6 +83,63 @@ describe("FakeFiscalProvider", () => {
     } else {
       expect(result.reasonCode).toMatch(/^FAKE_[A-Z_]+$/);
       expect(result.externalId).toBeNull();
+    }
+  });
+
+  it("consumes cancellation outcomes in order and repeats the last entry", async () => {
+    const provider = createFakeFiscalProvider({ cancelOutcomes: ["CANCEL_PENDING", "CANCELLED"] });
+    expect((await cancel(provider)).outcome).toBe("CANCEL_PENDING");
+    expect((await cancel(provider)).outcome).toBe("CANCELLED");
+    expect((await cancel(provider)).outcome).toBe("CANCELLED");
+  });
+
+  it("defaults cancellation to CANCELLED, including an empty script", async () => {
+    expect((await cancel(createFakeFiscalProvider())).outcome).toBe("CANCELLED");
+    const provider = createFakeFiscalProvider({ cancelOutcomes: [] });
+    expect((await cancel(provider)).outcome).toBe("CANCELLED");
+    expect((await cancel(provider)).outcome).toBe("CANCELLED");
+  });
+
+  it.each([
+    ["CANCELLED", null, null],
+    ["CANCEL_PENDING", null, null],
+    ["REJECTED", "FAKE_REJECTED", null],
+    ["CONFIGURATION_ERROR", "FAKE_CONFIGURATION_ERROR", null],
+    ["TRANSIENT_FAILURE", "FAKE_TRANSIENT_FAILURE", 1_000],
+  ] as const)("returns the required cancellation shape for %s", async (outcome, code, retry) => {
+    const result = await cancel(createFakeFiscalProvider({ cancelOutcomes: [outcome] }));
+    expect(result.outcome).toBe(outcome);
+    expect(result.reasonCode).toBe(code);
+    expect(result.reason === null).toBe(code === null);
+    expect(result.retryAfterMs).toBe(retry);
+  });
+
+  it("keeps issue and cancellation scripts on independent counters", async () => {
+    const provider = createFakeFiscalProvider({
+      outcomes: ["APPROVED", "REJECTED"],
+      cancelOutcomes: ["CANCEL_PENDING", "CANCELLED"],
+    });
+    expect((await issue(provider)).outcome).toBe("APPROVED");
+    expect((await cancel(provider)).outcome).toBe("CANCEL_PENDING");
+    expect((await cancel(provider)).outcome).toBe("CANCELLED");
+    expect((await issue(provider)).outcome).toBe("REJECTED");
+  });
+
+  it("uses the injected clock for cancellation", async () => {
+    const result = await cancel(
+      createFakeFiscalProvider({ clock: () => new Date("2026-01-02T03:04:05.000Z") })
+    );
+    expect(result.resolvedAt).toBe("2026-01-02T03:04:05.000Z");
+  });
+
+  it("returns cancellation JSON payloads without protocol artefacts", async () => {
+    const result = await cancel(createFakeFiscalProvider());
+    for (const payload of [result.providerRequest, result.providerResponse]) {
+      expect(payload).toBeTypeOf("object");
+      expect(payload).not.toBeNull();
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toMatch(/<\/?[a-z][^>]*>/i);
+      expect(serialized).not.toMatch(/xml|signature|certificate|private.?key|cdc/i);
     }
   });
 

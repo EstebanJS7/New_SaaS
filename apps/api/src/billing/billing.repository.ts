@@ -225,6 +225,19 @@ export interface BillingCatalogItemDelegate {
 }
 
 /**
+ * The one Fiscal read Billing's cancellation transaction needs: "does this
+ * invoice have a live fiscal document?" Declared structurally so the real
+ * Prisma client and the in-memory boundary both satisfy it, and so Billing
+ * keeps its one-way dependency on the Fiscal APPLICATION boundary only
+ * (DEC-051, D5) — it never imports the Fiscal package or its persistence types.
+ */
+export interface BillingFiscalDocumentReadDelegate {
+  findFirst(args: {
+    where: { tenantId: string; invoiceId: string; status: { not: "CANCELLED" } };
+  }): Promise<{ id: string } | null>;
+}
+
+/**
  * The delegate set this repository touches. Doubles as the optional transaction
  * seam: the audited service passes its open transaction handle here so the
  * invoice, its lines and its audit row co-commit.
@@ -232,6 +245,7 @@ export interface BillingCatalogItemDelegate {
 export interface BillingTx extends BillingRawClient {
   invoice: InvoiceDelegate;
   catalogItem: BillingCatalogItemDelegate;
+  fiscalDocument: BillingFiscalDocumentReadDelegate;
 }
 
 /** Single stable message behind every invoice 404 — byte-equivalence by construction. */

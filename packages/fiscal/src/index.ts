@@ -12,6 +12,9 @@ export {
   isRetryableOutcome,
 } from "./fiscal-provider.port.js";
 export type {
+  FiscalCancelOutcome,
+  FiscalCancelRequest,
+  FiscalCancelResult,
   FiscalIssueLine,
   FiscalIssueOutcome,
   FiscalIssueRequest,

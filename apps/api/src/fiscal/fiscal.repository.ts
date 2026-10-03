@@ -38,9 +38,16 @@ interface FiscalWhere {
   id?: string;
   tenantId: string;
   invoiceId?: string;
-  status?: FiscalDocumentStatus | { in: readonly FiscalDocumentStatus[] };
+  status?: FiscalDocumentStatus | { in: readonly FiscalDocumentStatus[] } | { not: "CANCELLED" };
 }
-export interface FiscalRepositoryTx {
+export interface FiscalDocumentReadTx {
+  fiscalDocument: {
+    findFirst(args: {
+      where: { tenantId: string; invoiceId: string; status: { not: "CANCELLED" } };
+    }): Promise<{ id: string } | null>;
+  };
+}
+export interface FiscalRepositoryTx extends FiscalDocumentReadTx {
   $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>;
   invoice: {
     findFirst(args: {
@@ -49,18 +56,22 @@ export interface FiscalRepositoryTx {
     }): Promise<FiscalInvoiceRow | null>;
   };
   fiscalDocument: {
-    findFirst(args: {
-      where: { tenantId: string; invoiceId: string; status: { not: "CANCELLED" } };
-    }): Promise<FiscalDocumentRow | null>;
+    findFirst(args: { where: FiscalWhere }): Promise<FiscalDocumentRow | null>;
     create(args: {
       data: { tenantId: string; invoiceId: string; provider: string; status: "PENDING" };
     }): Promise<FiscalDocumentRow>;
     updateMany(args: {
       where: FiscalWhere;
-      data: { status: FiscalDocumentStatus };
+      data: {
+        status?: FiscalDocumentStatus;
+        cancelledAt?: Date;
+        lastErrorCode?: string | null;
+        lastErrorMessage?: string | null;
+      };
     }): Promise<{ count: number }>;
   };
 }
+export const FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE = "Fiscal document was not found.";
 export const FISCAL_DOCUMENT_NOT_FOUND_MESSAGE = "Fiscal document source invoice was not found.";
 export const FISCAL_DOCUMENT_ALREADY_ISSUED_MESSAGE =
   "A fiscal document has already been issued for this invoice.";
@@ -87,6 +98,32 @@ export class FiscalRepository {
     private readonly context: RequestContextService
   ) {}
 
+  async lockDocument(id: string, tx: FiscalRepositoryTx): Promise<void> {
+    const tenantId = this.context.requireTenantId();
+    await tx.$queryRaw`SELECT "id" FROM "fiscal_document" WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid FOR UPDATE`;
+  }
+  async findDocument(id: string, tx: FiscalRepositoryTx): Promise<FiscalDocumentRow | null> {
+    return tx.fiscalDocument.findFirst({
+      where: { tenantId: this.context.requireTenantId(), id },
+    });
+  }
+  async applyCancellation(
+    id: string,
+    observedStatus: FiscalDocumentStatus,
+    write: {
+      status?: FiscalDocumentStatus;
+      cancelledAt?: Date;
+      lastErrorCode?: string | null;
+      lastErrorMessage?: string | null;
+    },
+    tx: FiscalRepositoryTx
+  ): Promise<number> {
+    const result = await tx.fiscalDocument.updateMany({
+      where: { id, tenantId: this.context.requireTenantId(), status: observedStatus },
+      data: write,
+    });
+    return result.count;
+  }
   async lockInvoice(id: string, tx: FiscalRepositoryTx): Promise<void> {
     const tenantId = this.context.requireTenantId();
     await tx.$queryRaw`SELECT "id" FROM "invoice" WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${id}::uuid FOR UPDATE`;
@@ -106,6 +143,18 @@ export class FiscalRepository {
     return tx.fiscalDocument.findFirst({
       where: { tenantId: this.context.requireTenantId(), invoiceId, status: { not: "CANCELLED" } },
     });
+  }
+  /**
+   * Tenant-scoped "does this invoice have a live (non-CANCELLED) document?"
+   * read for a caller that owns its own transaction handle (Billing, DEC-051).
+   * Accepts the minimal {@link FiscalDocumentReadTx} so the caller never imports
+   * the Fiscal persistence surface.
+   */
+  async hasLiveDocument(invoiceId: string, tx: FiscalDocumentReadTx): Promise<boolean> {
+    const row = await tx.fiscalDocument.findFirst({
+      where: { tenantId: this.context.requireTenantId(), invoiceId, status: { not: "CANCELLED" } },
+    });
+    return row !== null;
   }
   async create(
     data: { invoiceId: string; provider: string },

@@ -75,12 +75,51 @@ export interface FiscalIssueResult {
   readonly resolvedAt: string;
 }
 
+/** Request to cancel a provider document using its provider identity and reason. */
+export interface FiscalCancelRequest {
+  readonly fiscalDocumentId: string;
+  readonly tenantId: string;
+  readonly provider: FiscalProviderId;
+  readonly reason: string;
+  readonly externalId: string | null;
+  readonly cdc: string | null;
+  /**
+   * Optional abort signal. The caller has already enforced a deadline, so an
+   * adapter that can abandon the provider call should do so when this fires;
+   * an adapter that ignores it still gets a bounded caller, because the Fiscal
+   * command races the call against its own deadline.
+   */
+  readonly signal?: AbortSignal;
+}
+
+/** Outcomes a provider can produce while cancelling a fiscal document. */
+export type FiscalCancelOutcome =
+  "CANCELLED" | "CANCEL_PENDING" | "REJECTED" | "CONFIGURATION_ERROR" | "TRANSIENT_FAILURE";
+
+/**
+ * Cancellation result. Raw provider payloads must be sanitized by the Fiscal
+ * boundary before persistence.
+ */
+export interface FiscalCancelResult {
+  readonly outcome: FiscalCancelOutcome;
+  readonly reasonCode: string | null;
+  readonly reason: string | null;
+  readonly retryAfterMs: number | null;
+  /** RAW provider request; sanitize at the Fiscal boundary before persistence. */
+  readonly providerRequest: unknown;
+  /** RAW provider response; sanitize at the Fiscal boundary before persistence. */
+  readonly providerResponse: unknown;
+  readonly resolvedAt: string;
+}
+
 export interface FiscalProviderPort {
   readonly provider: FiscalProviderId;
   issue(request: FiscalIssueRequest): Promise<FiscalIssueResult>;
+  /** DEC-048 assigns both capabilities to the epic; FISC-003 deferred cancel to its flow-owning slice. */
+  cancel(request: FiscalCancelRequest): Promise<FiscalCancelResult>;
 }
 
 /** DEC-049 makes every outcome except TRANSIENT_FAILURE terminal. */
-export function isRetryableOutcome(outcome: FiscalIssueOutcome): boolean {
+export function isRetryableOutcome(outcome: FiscalIssueOutcome | FiscalCancelOutcome): boolean {
   return outcome === "TRANSIENT_FAILURE";
 }
