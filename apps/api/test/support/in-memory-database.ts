@@ -560,6 +560,33 @@ export type InvoiceStatusRow = "DRAFT" | "CONFIRMED" | "CANCELLED";
  * immutability triggers and the never-reallocated-number trigger) stays
  * live-PostgreSQL-owned, exactly like the sale/payment/ledger boundaries.
  */
+export type FiscalDocumentStatusRow =
+  | "PENDING"
+  | "QUEUED"
+  | "SENDING"
+  | "SUBMITTED"
+  | "APPROVED"
+  | "REJECTED"
+  | "ERROR"
+  | "CANCEL_PENDING"
+  | "CANCELLED";
+
+export interface FiscalDocumentRow {
+  id: string;
+  tenantId: string;
+  invoiceId: string;
+  provider: string;
+  status: FiscalDocumentStatusRow;
+  attemptCount: number;
+  externalId: string | null;
+  cdc: string | null;
+  lastErrorCode: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  requestSnapshot?: unknown;
+  responseSnapshot?: unknown;
+}
+
 export interface InvoiceHeaderRow {
   id: string;
   tenantId: string;
@@ -1463,6 +1490,18 @@ export interface IsolationDatabase {
         };
       }) => { count: number };
     };
+    fiscalDocument: {
+      findFirst: (args: {
+        where: { tenantId: string; invoiceId: string; status: { not: "CANCELLED" } };
+      }) => FiscalDocumentRow | null;
+      create: (args: {
+        data: { tenantId: string; invoiceId: string; provider: string; status: "PENDING" };
+      }) => FiscalDocumentRow;
+      updateMany: (args: {
+        where: { id: string; tenantId: string; status: FiscalDocumentStatusRow };
+        data: { status: FiscalDocumentStatusRow };
+      }) => { count: number };
+    };
     /**
      * Numbering counter the confirm transaction advances (DEC-039). Present now
      * so BILL-003 does not have to reopen the boundary; BILL-002 writes no row.
@@ -1864,6 +1903,7 @@ export interface IsolationDatabase {
     invoices: Map<string, InvoiceHeaderRow>;
     invoiceLines: Map<string, InvoiceLineRow>;
     invoiceNumberSequences: Map<string, InvoiceNumberSequenceRow>;
+    fiscalDocuments: Map<string, FiscalDocumentRow>;
     cashRegisters: Map<string, CashRegisterRow>;
     cashSessions: Map<string, CashSessionRow>;
     cashMovements: Map<string, CashMovementRow>;
@@ -2385,6 +2425,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const invoiceTable = new Map<string, InvoiceHeaderRow>();
   const invoiceLineTable = new Map<string, InvoiceLineRow>();
   const invoiceNumberSequenceTable = new Map<string, InvoiceNumberSequenceRow>();
+  const fiscalDocumentTable = new Map<string, FiscalDocumentRow>();
   // EPIC-12 POS-002: the register/session tables the cash surface touches. The
   // movement table is MODELLED (so the inertness probe can diff it) but nothing
   // in EPIC-12 writes a row — POS-003 does, and EPIC-13 owns the other kinds.
@@ -2441,6 +2482,7 @@ export function createIsolationDatabase(): IsolationDatabase {
     payments: paymentTable,
     idempotencyRecords: idempotencyRecordTable,
     invoices: invoiceTable,
+    fiscalDocuments: fiscalDocumentTable,
     invoiceLines: invoiceLineTable,
     invoiceNumberSequences: invoiceNumberSequenceTable,
     cashRegisters: cashRegisterTable,
@@ -3505,6 +3547,60 @@ export function createIsolationDatabase(): IsolationDatabase {
         return created;
       },
     },
+    fiscalDocument: {
+      findFirst: ({ where }) => {
+        if (!where.tenantId) throw new Error("fiscal document reads require a tenantId predicate");
+        return (
+          [...fiscalDocumentTable.values()].find(
+            (row) =>
+              row.tenantId === where.tenantId &&
+              row.invoiceId === where.invoiceId &&
+              row.status !== "CANCELLED"
+          ) ?? null
+        );
+      },
+      create: ({ data }) => {
+        if (
+          [...fiscalDocumentTable.values()].some(
+            (row) =>
+              row.tenantId === data.tenantId &&
+              row.invoiceId === data.invoiceId &&
+              row.status !== "CANCELLED"
+          )
+        ) {
+          throw uniqueConstraintError("FiscalDocument", "fiscal_document_tenant_id_invoice_id_key");
+        }
+        const now = new Date();
+        const created: FiscalDocumentRow = {
+          id: randomUUID(),
+          ...data,
+          attemptCount: 0,
+          externalId: null,
+          cdc: null,
+          lastErrorCode: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        fiscalDocumentTable.set(created.id, created);
+        return created;
+      },
+      updateMany: ({ where, data }) => {
+        if (!where.tenantId) throw new Error("fiscal document writes require a tenantId predicate");
+        let count = 0;
+        for (const row of fiscalDocumentTable.values()) {
+          if (
+            row.id !== where.id ||
+            row.tenantId !== where.tenantId ||
+            (where.status !== undefined && row.status !== where.status)
+          )
+            continue;
+          row.status = data.status;
+          row.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
     invoice: {
       findFirst: ({ where, include }) => {
         assertInvoiceTenantScope(where);
@@ -4516,6 +4612,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       invoices: invoiceTable,
       invoiceLines: invoiceLineTable,
       invoiceNumberSequences: invoiceNumberSequenceTable,
+      fiscalDocuments: fiscalDocumentTable,
       cashRegisters: cashRegisterTable,
       cashSessions: cashSessionTable,
       cashMovements: cashMovementTable,

@@ -269,6 +269,9 @@ recorded:
 
 ## Files / Modules
 
+- FISC-004 moved the provider port, fake, sanitizer and provider module into
+  `packages/fiscal` so the worker deployable can consume the same boundary; the
+  API keeps its own composition root.
 - `apps/api/src/fiscal/fiscal-provider.port.ts`
 - `apps/api/src/fiscal/fake-fiscal.provider.ts`
 - `apps/api/src/fiscal/fiscal-snapshot.sanitizer.ts`

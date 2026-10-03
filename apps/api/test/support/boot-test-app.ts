@@ -11,10 +11,15 @@ import {
   BRANDING_RESET_CLEANUP_PRODUCER,
   type CleanupProducer,
 } from "../../src/branding/branding-reset-cleanup.producer.js";
+import {
+  FISCAL_SUBMISSION_PRODUCER,
+  type FiscalSubmissionProducer,
+} from "../../src/fiscal/fiscal-submission.producer.js";
 // PRODUCTION composition: booting AppModule (not a hand-picked module subset)
 // means the isolation suites exercise the exact guard chain that ships —
 // AuthGuard and TenantActiveGuard in their real registration order.
 import { AppModule } from "../../src/app.module.js";
+import type { FiscalSubmissionJob } from "@newsaas/fiscal";
 import { createIsolationDatabase, type IsolationDatabase } from "./in-memory-database.js";
 
 /** Test double that records enqueued intent ids instead of touching Redis. */
@@ -22,11 +27,24 @@ export interface RecordingCleanupProducer extends CleanupProducer {
   readonly enqueued: string[];
 }
 
+/**
+ * Test double that records fiscal submission jobs instead of touching Redis.
+ *
+ * `FiscalModule`'s producer factory requires `REDIS_URL`, so without this
+ * override every suite that boots `AppModule` would fail to compile — the same
+ * reason the branding producer above is overridden.
+ */
+export interface RecordingFiscalSubmissionProducer extends FiscalSubmissionProducer {
+  readonly enqueued: FiscalSubmissionJob[];
+}
+
 export interface BootedTestApp {
   app: NestFastifyApplication;
   db: IsolationDatabase;
   /** Records reset-cleanup enqueues so tests can assert `jobId=intentId`. */
   cleanupProducer: RecordingCleanupProducer;
+  /** Records fiscal submission jobs so tests can assert one enqueue per issue. */
+  fiscalSubmissionProducer: RecordingFiscalSubmissionProducer;
   /** Serialized pino lines captured during the test (leak scans, debugging). */
   logLines: () => string[];
   close: () => Promise<void>;
@@ -65,6 +83,14 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     },
   };
 
+  const fiscalSubmissionProducer: RecordingFiscalSubmissionProducer = {
+    enqueued: [],
+    enqueue: (document) => {
+      fiscalSubmissionProducer.enqueued.push(document);
+      return Promise.resolve();
+    },
+  };
+
   const captured: string[] = [];
   const stream: DestinationStream = {
     write(message: string): void {
@@ -90,6 +116,8 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     .useValue(db.storage)
     .overrideProvider(BRANDING_RESET_CLEANUP_PRODUCER)
     .useValue(cleanupProducer)
+    .overrideProvider(FISCAL_SUBMISSION_PRODUCER)
+    .useValue(fiscalSubmissionProducer)
     .compile();
 
   const app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -102,6 +130,7 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     app,
     db,
     cleanupProducer,
+    fiscalSubmissionProducer,
     logLines: (): string[] => captured,
     close: (): Promise<void> => app.close(),
   };

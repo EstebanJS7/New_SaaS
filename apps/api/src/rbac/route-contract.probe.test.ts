@@ -13,6 +13,7 @@ import { PURCHASES_PERMISSIONS } from "../purchases/purchases.permissions.js";
 import { SALES_PERMISSIONS } from "../sales/sales.permissions.js";
 import { CASH_PERMISSIONS } from "../cash/cash.permissions.js";
 import { BILLING_PERMISSIONS } from "../billing/billing.permissions.js";
+import { FISCAL_PERMISSIONS } from "../fiscal/fiscal.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -204,6 +205,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /invoices",
   "POST /invoices/:id/confirm",
   "POST /invoices/:id/cancel",
+  // EPIC-15 FISC-004 — explicit fiscal submission command.
+  "POST /fiscal-documents",
   // EPIC-08 WU4B — staff booking-request decisions (OFF the /portal surface)
   "GET /booking-requests",
   "POST /booking-requests/:id/approve",
@@ -424,6 +427,10 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  * `PUT`, no `DELETE` and no generic status route: the invoice is immutable from
  * creation and its lifecycle is the two explicit commands (DEC-038, DEC-043).
  */
+const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "POST /fiscal-documents": FISCAL_PERMISSIONS.issue,
+};
+
 const BILLING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /invoices": BILLING_PERMISSIONS.read,
   "GET /invoices/:id": BILLING_PERMISSIONS.read,
@@ -682,6 +689,29 @@ describe("route-contract probe (deny-by-default)", () => {
         report.push(`UNDECLARED CASH ROUTE: ${route}`);
       }
     }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY fiscal route to its single intended granular fiscal.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/fiscal-documents"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(FISCAL_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) report.push(`MISSING FISCAL ROUTE: ${route}`);
+      else if (actual.length !== 1 || actual[0] !== expected)
+        report.push(
+          `WRONG FISCAL PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+    }
+    for (const route of actualByRoute.keys())
+      if (!(route in FISCAL_PERMISSION_BY_ROUTE)) report.push(`UNDECLARED FISCAL ROUTE: ${route}`);
     expect(report).toEqual([]);
   });
 
