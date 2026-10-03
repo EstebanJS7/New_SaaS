@@ -331,8 +331,11 @@ recorded non-action):
       nav entry, with their colocated tests. Evidence: this work unit's commit.
       Gates green: web 95 files / 1071 tests, web typecheck/lint/`next build`
       clean, root `pnpm test` 17/17, typecheck 16/16, lint 16/16, format clean.
-- [ ] T5b-2 — FISC-005b: the `/app/fiscal` workspace — `page.tsx`, the surface
-      and the three panels, with their colocated tests.
+- [x] T5b-2 — FISC-005b: the `/app/fiscal` workspace — `page.tsx`, the surface
+      and the three panels, with their colocated tests. Evidence: this work
+      unit's commit. Gates green: web 99 files / 1087 tests, web
+      typecheck/lint/`next build` clean, root `pnpm test` 17/17, typecheck
+      16/16, lint 16/16, build 10/10, format clean.
 - [ ] T6 — FISC-005b: module docs, TD-029, advisory triage, CI evidence,
       changelog, roadmap and the EPIC-15 closure.
 
