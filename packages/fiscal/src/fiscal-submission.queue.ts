@@ -16,15 +16,22 @@ export interface FiscalSubmissionJob {
   readonly tenantId: string;
 }
 
+/** Returns the deterministic BullMQ identity for a fiscal document submission. */
+export function fiscalSubmissionJobId(fiscalDocumentId: string): string {
+  return `fiscal-submit:${fiscalDocumentId}`;
+}
+
 /**
  * Deterministic jobId makes queue dedupe and the document's partial unique
  * index agree on what "the same logical request" means (DEC-049).
- * removeOnFail is deliberately false, unlike the branding precedent: failed
- * submissions are operator evidence and FISC-005's manual retry reads them.
+ * removeOnFail remains false: the database row (lastErrorCode,
+ * lastErrorMessage, attemptCount) and the SYSTEM audit rows written per attempt
+ * are the failure of record. The queue's failed set is a convenience for a
+ * human inspecting the queue before the sweep runs.
  */
 export function fiscalSubmissionJobOptions(fiscalDocumentId: string) {
   return {
-    jobId: `fiscal-submit:${fiscalDocumentId}`,
+    jobId: fiscalSubmissionJobId(fiscalDocumentId),
     attempts: FISCAL_SUBMISSION_MAX_ATTEMPTS,
     backoff: {
       type: "exponential" as const,
