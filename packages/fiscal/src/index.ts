@@ -28,3 +28,12 @@ export type {
   SanitizedProviderSnapshot,
 } from "./fiscal-snapshot.sanitizer.js";
 export { FiscalProviderModule } from "./fiscal-provider.module.js";
+// The queue contract lives here because both deployables share it.
+export {
+  FISCAL_SUBMISSION_BACKOFF_DELAY_MS,
+  FISCAL_SUBMISSION_JOB,
+  FISCAL_SUBMISSION_MAX_ATTEMPTS,
+  FISCAL_SUBMISSION_QUEUE,
+  fiscalSubmissionJobOptions,
+} from "./fiscal-submission.queue.js";
+export type { FiscalSubmissionJob } from "./fiscal-submission.queue.js";
