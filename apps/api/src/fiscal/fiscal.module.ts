@@ -1,5 +1,12 @@
 import { Module } from "@nestjs/common";
+import { FiscalController } from "./fiscal.controller.js";
+import { FiscalRepository } from "./fiscal.repository.js";
+import { FiscalService } from "./fiscal.service.js";
 import { FiscalProviderModule } from "@newsaas/fiscal";
+import { AuditModule } from "../audit/audit.module.js";
+import { ContextModule } from "../context/context.module.js";
+import { EntitlementsModule } from "../entitlements/entitlements.module.js";
+import { RbacModule } from "../rbac/rbac.module.js";
 import {
   createBullMqFiscalSubmissionProducer,
   FISCAL_SUBMISSION_PRODUCER,
@@ -12,8 +19,11 @@ import {
  * with a real adapter.
  */
 @Module({
-  imports: [FiscalProviderModule],
+  imports: [FiscalProviderModule, ContextModule, RbacModule, AuditModule, EntitlementsModule],
+  controllers: [FiscalController],
   providers: [
+    FiscalRepository,
+    FiscalService,
     {
       provide: FISCAL_SUBMISSION_PRODUCER,
       useFactory: () => {
