@@ -330,6 +330,24 @@ practical ceiling for one reviewer run at this tier. Anything larger must be
 committed as reviewable units and reviewed as a chain, or it cannot be reviewed
 at all.
 
+### Coverage of the docs-only commits
+
+Two commits were made _after_ the authority of their own slice had been burned,
+so neither was inside a reviewed range. Both are documentation-only and both
+closed `approved` on their own `START` call at `risk_tier: low` with
+`lenses_required: false`, consuming no reviewer runs:
+
+| Commit                                | Base → head           | Lineage                   | Files / lines |
+| ------------------------------------- | --------------------- | ------------------------- | ------------- |
+| `3dcb5dd` record the FISC-005a review | `fab9758` → `3dcb5dd` | `review-8c6b6d127300fc97` | 1 / 37        |
+| `81cad92` record the chained review   | `94a1f02` → `81cad92` | `review-44af3b7d678edae0` | 4 / 120       |
+
+With those two, **every commit on both branches is inside a closed review**:
+`e489dab`..`fab9758` and `e5ec074`..`94a1f02` in the five lineages above, plus
+the two low-tier docs closures. The commit that carries this very paragraph is
+itself a documentation-only candidate and is closed the same way, so the record
+does not claim a verdict it does not have.
+
 ## Tasks
 
 - [x] T1 — Get the nod on D1-D6, then pin the full contract. Evidence: `e489dab`
