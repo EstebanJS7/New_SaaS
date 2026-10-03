@@ -15943,7 +15943,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(normalizeIndexPredicate(partial!.predicate!)).toBe("status<>'CANCELLED'");
     }, 30_000);
 
-    it("proves all five structural triggers fire BEFORE their expected events", async () => {
+    it("proves all six structural triggers fire BEFORE their expected events", async () => {
       const rows = await prisma.$queryRaw<{ tgname: string; timing: string; event: string }[]>`
         SELECT tg.tgname,
           CASE WHEN (tg.tgtype & 2) = 2 THEN 'BEFORE' ELSE 'OTHER' END AS timing,
@@ -15957,6 +15957,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         ["fiscal_document_identity_immutable_trigger", "UPDATE"],
         ["fiscal_document_provider_refs_write_once_trigger", "UPDATE"],
         ["fiscal_document_attempts_monotonic_trigger", "UPDATE"],
+        ["fiscal_document_transition_guard_trigger", "UPDATE"],
       ];
       expect(rows.map((row) => [row.tgname, row.event]).sort()).toEqual(expected.sort());
       expect(rows.every((row) => row.timing === "BEFORE")).toBe(true);
@@ -15978,11 +15979,18 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
 
       await inRolledBackTransaction(async (tx) => {
-        await tx.$executeRaw`
-          UPDATE "fiscal_document" SET "status" = 'CANCELLED'::fiscal_document_status,
-            "cancelled_at" = now() WHERE "id" = ${fiscalDocumentAId}::uuid
-        `;
-        await expect(insertRawFiscalDocument(tx, tenantAId, fiscalInvoiceAId)).resolves.toEqual(
+        // The fixture is INSERTED already cancelled rather than updated into that
+        // state: the transition guard admits no edge into `CANCELLED` until
+        // FISC-005, so an update would be rejected before the partial index is
+        // ever consulted.
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+        });
+        expect(id).toEqual(expect.any(String));
+        await expect(insertRawFiscalDocument(tx, tenantAId, invoice)).resolves.toEqual(
           expect.any(String)
         );
       });
@@ -16017,13 +16025,16 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
     }, 30_000);
 
-    it("rejects CANCELLED without cancelled_at", async () => {
+    it("rejects CANCELLED without cancelled_at at the named CHECK on insert", async () => {
+      // The CHECK is reachable on INSERT only. On UPDATE the transition guard
+      // rejects every edge into `CANCELLED` until FISC-005, so the CHECK can no
+      // longer be reached through an update at all — the same shape the
+      // attempt-count CHECK took once the monotonic trigger existed.
       await inRolledBackTransaction(async (tx) => {
-        const message = await captureDatabaseMessage(
-          () => tx.$executeRaw`
-          UPDATE "fiscal_document" SET "status" = 'CANCELLED'::fiscal_document_status
-          WHERE "id" = ${fiscalDocumentAId}::uuid
-        `
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const message = await captureDatabaseMessage(() =>
+          insertRawFiscalDocument(tx, tenantAId, invoice, { status: "CANCELLED" })
         );
         expect(message).toBe(
           'new row for relation "fiscal_document" violates check constraint "fiscal_document_cancelled_at_iff_cancelled"'
@@ -16078,11 +16089,15 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         // Its own sale: the fixture invoice already holds this sale's live
         // invoice slot at the `invoice_tenant_id_sale_id_key` partial index, so
         // reusing `fiscalSaleAId` here would reject the setup insert instead of
-        // exercising the cancelled-document trigger.
+        // exercising the cancelled-document trigger. The row is inserted already
+        // cancelled because the transition guard admits no edge into `CANCELLED`
+        // until FISC-005.
         const sale = await insertRawFiscalSale(tx, tenantAId);
         const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
-        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "PENDING" });
-        await tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'CANCELLED', "cancelled_at" = now() WHERE "id" = ${id}::uuid`;
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+        });
         const message = await captureDatabaseMessage(
           () => tx.$executeRaw`
           UPDATE "fiscal_document" SET "last_error_code" = 'changed' WHERE "id" = ${id}::uuid
@@ -16184,14 +16199,19 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         // This walk protects the two FISC-002 corrections: the dropped
         // external-id CHECK would have rejected a resolved document that keeps
         // its provider reference, and the broad terminal guard would have made
-        // the resolved states unreachable. Cancellation belongs to FISC-005, so
-        // the FISC-004 guard rejects every transition out of APPROVED until that
-        // slice extends it; that rejected edge is pinned separately below.
+        // the resolved states unreachable. It follows the pinned graph and so
+        // goes through SENDING: `PENDING -> SUBMITTED` is deliberately NOT an
+        // edge. Cancellation belongs to FISC-005, so the FISC-004 guard rejects
+        // every transition out of APPROVED until that slice extends it; that
+        // rejected edge is pinned separately below.
         const sale = await insertRawFiscalSale(tx, tenantAId);
         const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
         const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "PENDING" });
         await expect(
-          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SUBMITTED', "external_id" = 'provider-1' WHERE "id" = ${id}::uuid`
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SENDING' WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SUBMITTED', "external_id" = 'provider-1', "submitted_at" = now() WHERE "id" = ${id}::uuid`
         ).resolves.toBe(1);
         await expect(
           tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'APPROVED', "resolved_at" = now() WHERE "id" = ${id}::uuid`
@@ -16243,10 +16263,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       ["APPROVED", "PENDING", null],
       ["PENDING", "APPROVED", null],
       ["PENDING", "REJECTED", null],
+      ["PENDING", "SUBMITTED", null],
       ["QUEUED", "SUBMITTED", null],
       ["SUBMITTED", "SENDING", null],
       ["ERROR", "APPROVED", null],
-      ["CANCELLED", "PENDING", new Date()],
     ] as const)(
       "rejects the unpinned transition %s -> %s",
       async (from, to, cancelledAt) => {
@@ -16270,6 +16290,26 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       },
       30_000
     );
+
+    it("rejects CANCELLED as a source state at the cancellation guard", async () => {
+      // A `CANCELLED` row is rejected before the transition guard runs at all:
+      // PostgreSQL fires same-timing BEFORE triggers in name order, and
+      // `fiscal_document_cancelled_immutable_trigger` sorts first. So this probe
+      // records which guard actually protects a CANCELLED source state.
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+        });
+        const message = await captureDatabaseMessage(
+          () =>
+            tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'PENDING' WHERE "id" = ${id}::uuid`
+        );
+        expect(message).toBe("a cancelled fiscal document cannot be updated");
+      });
+    }, 30_000);
 
     it("requires resolved_at exactly when entering a resolved status", async () => {
       await inRolledBackTransaction(async (tx) => {
