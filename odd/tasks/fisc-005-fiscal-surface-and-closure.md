@@ -262,6 +262,43 @@ skipped re-drive is counted as requeued), `R3-MISSING-OVERLAP-TEST` (the sweep's
 overlap guard is not unit-covered because its queue only exists after
 `onModuleInit`), and `R3-SUBMITTED-NOT-AUDITED`.
 
+### FISC-005a native review record (closed)
+
+Lineage `review-2768c9087a428449`, tier **high**, four lenses, 24 changed files,
+1482 original changed lines, correction budget 200. **Closed `approved`**; the
+exact acknowledgement burned the authority (`authority: burned`, evidence
+`gentle-ai.review-acknowledged/v1`, delivery left to ordinary repository
+policy).
+
+One candidate-caused CRITICAL was confirmed by the refuter and corrected before
+approval: `R4-PROVIDER-CALL-NO-BOUND` — the synchronous cancel called the
+provider with no timeout, deadline or abort signal. Correction `fab9758` (153
+diff lines, inside the 200 budget) adds an optional `AbortSignal` to
+`FiscalCancelRequest` and the exported `cancelWithinDeadline` helper, which
+bounds the call at `FISCAL_CANCEL_TIMEOUT_MS = 10_000` and reports a retryable
+`TRANSIENT_FAILURE` through the existing refusal path. A targeted validator
+approved it on the last admitted event.
+
+The fourteen advisory findings below are **non-blocking and informational**.
+They are explicitly separate later work and never a reason to re-run review on
+this candidate; the closure slice must triage them (action, Tech Debt item, or
+recorded non-action):
+
+- `R1-CANCEL-GATE-ORDER-NOT-COVERED` (WARNING) — no integration case asserts
+  entitlement-before-permission on the cancel route.
+- `R1-CANCEL-REASON-ECHO-UNSCRUBBED-IN-ERROR` (SUGGESTION).
+- `R1-PROVIDER-SNAPSHOT-NOT-PERSISTED` (SUGGESTION) — the deliberate narrowness
+  recorded in T4a.
+- `R2-BOOT-PROVIDER-MUTABLE-BINDING` (SUGGESTION).
+- `R2-SENDING-BRANCH-NO-AUDIT-CONTEXT` (SUGGESTION).
+- `R2-STRUCTURAL-READ-MIRROR` (SUGGESTION).
+- `R2-UNNAMED-MAGIC-500` (SUGGESTION) — the `scrub` cap.
+- `R3-001` (WARNING), `R3-002` (WARNING), `R3-003` (SUGGESTION), `R3-004`
+  (SUGGESTION).
+- `R4-AUDIT-METADATA-NO-PROVIDER-IDENTITY` (SUGGESTION).
+- `R4-BILLING-CANCEL-CONFLICT-VS-404` (SUGGESTION).
+- `R4-CANCEL-RETRY-UNBOUNDED` (WARNING).
+
 ## Tasks
 
 - [x] T1 — Get the nod on D1-D6, then pin the full contract. Evidence: `e489dab`
