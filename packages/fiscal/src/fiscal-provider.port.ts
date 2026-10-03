@@ -83,6 +83,13 @@ export interface FiscalCancelRequest {
   readonly reason: string;
   readonly externalId: string | null;
   readonly cdc: string | null;
+  /**
+   * Optional abort signal. The caller has already enforced a deadline, so an
+   * adapter that can abandon the provider call should do so when this fires;
+   * an adapter that ignores it still gets a bounded caller, because the Fiscal
+   * command races the call against its own deadline.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** Outcomes a provider can produce while cancelling a fiscal document. */

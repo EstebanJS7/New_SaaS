@@ -44,6 +44,10 @@ export const FISCAL_PROVIDER_UNRECOGNISED_MESSAGE = "The stored fiscal provider 
 export const FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION =
   "fiscal.document.cancellation_requested";
 export const FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION = "fiscal.document.cancellation_failed";
+/** Deadline for one synchronous provider cancel call. */
+export const FISCAL_CANCEL_TIMEOUT_MS = 10_000;
+export const FISCAL_CANCEL_TIMEOUT_REASON_CODE = "FISCAL_CANCEL_TIMEOUT";
+export const FISCAL_CANCEL_TIMEOUT_REASON = "The fiscal provider did not respond in time.";
 
 export interface FiscalCancellationWrite {
   readonly status?: FiscalDocumentStatus;
@@ -51,6 +55,43 @@ export interface FiscalCancellationWrite {
   readonly lastErrorCode: string | null;
   readonly lastErrorMessage: string | null;
   readonly accepted: boolean;
+}
+
+/**
+ * Bounds ONE provider cancel call.
+ *
+ * A hung provider must never turn a staff cancellation into an unbounded open
+ * request: past the deadline the call is abandoned and reported as a retryable
+ * `TRANSIENT_FAILURE`, which the shared {@link mapFiscalCancelOutcome} mapping
+ * already persists as `last_error_*` with NO status change and a
+ * `fiscal.document.cancellation_failed` audit row. The timer is always cleared,
+ * so a fast provider leaves no pending handle behind.
+ */
+export async function cancelWithinDeadline(
+  call: (signal: AbortSignal) => Promise<FiscalCancelResult>,
+  deadlineMs: number
+): Promise<FiscalCancelResult> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<FiscalCancelResult>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({
+        outcome: "TRANSIENT_FAILURE",
+        reasonCode: FISCAL_CANCEL_TIMEOUT_REASON_CODE,
+        reason: FISCAL_CANCEL_TIMEOUT_REASON,
+        retryAfterMs: deadlineMs,
+        providerRequest: null,
+        providerResponse: null,
+        resolvedAt: new Date().toISOString(),
+      });
+    }, deadlineMs);
+  });
+  try {
+    return await Promise.race([call(controller.signal), deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function scrub(value: string | null): string | null {
@@ -124,6 +165,7 @@ export class FiscalService {
     return this.repository.hasLiveDocument(invoiceId, tx ?? this.repository.client);
   }
 
+  /** Cancels a fiscal document; the synchronous provider call is deadline-bounded. */
   async cancel(id: string, reason: string): Promise<FiscalDocumentResponse> {
     await this.assertFiscalEnabled();
     await this.requirePermission();
@@ -137,14 +179,20 @@ export class FiscalService {
     if (observed.status === "CANCELLED") return toResponse(observed);
     if (observed.status === "SENDING")
       throw new DomainError("CONFLICT", FISCAL_DOCUMENT_CANCEL_SENDING_MESSAGE);
-    const result = await this.provider.cancel({
-      fiscalDocumentId: observed.id,
-      tenantId: observed.tenantId,
-      provider: this.toProviderId(observed.provider),
-      reason,
-      externalId: observed.externalId,
-      cdc: observed.cdc,
-    });
+    // Phase B — provider call, OUTSIDE any transaction, bounded by a deadline.
+    const result = await cancelWithinDeadline(
+      (signal) =>
+        this.provider.cancel({
+          fiscalDocumentId: observed.id,
+          tenantId: observed.tenantId,
+          provider: this.toProviderId(observed.provider),
+          reason,
+          externalId: observed.externalId,
+          cdc: observed.cdc,
+          signal,
+        }),
+      FISCAL_CANCEL_TIMEOUT_MS
+    );
     const applied = await this.prisma.$transaction(async (tx) => {
       const write = mapFiscalCancelOutcome(result, new Date());
       const count = await this.repository.applyCancellation(
