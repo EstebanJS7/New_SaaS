@@ -97,7 +97,9 @@ function setup(
     resolvedAt: "2026-01-02T03:05:00.000Z",
   };
   const issue = vi.fn(() => Promise.resolve(result));
-  const provider = { provider: "FAKE", issue } as FiscalProviderPort;
+  // The submission handler never cancels, but the port now requires the method.
+  const cancel = vi.fn(() => Promise.reject(new Error("cancel is not used by the handler")));
+  const provider = { provider: "FAKE", issue, cancel } as FiscalProviderPort;
   const tx = {
     fiscalDocument: { updateMany },
     auditLog: {

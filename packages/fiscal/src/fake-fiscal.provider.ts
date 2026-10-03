@@ -1,5 +1,8 @@
 import type { FiscalProviderId } from "./fiscal-provider.port.js";
 import type {
+  FiscalCancelOutcome,
+  FiscalCancelRequest,
+  FiscalCancelResult,
   FiscalIssueOutcome,
   FiscalIssueRequest,
   FiscalIssueResult,
@@ -8,6 +11,7 @@ import type {
 
 export interface FakeFiscalProviderOptions {
   readonly outcomes?: readonly FiscalIssueOutcome[];
+  readonly cancelOutcomes?: readonly FiscalCancelOutcome[];
   readonly externalIdPrefix?: string;
   readonly clock?: () => Date;
 }
@@ -16,14 +20,38 @@ export interface FakeFiscalProviderOptions {
 export class FakeFiscalProvider implements FiscalProviderPort {
   readonly provider: FiscalProviderId = "FAKE";
   private calls = 0;
+  private cancelCalls = 0;
   private readonly outcomes: readonly FiscalIssueOutcome[];
+  private readonly cancelOutcomes: readonly FiscalCancelOutcome[];
   private readonly externalIdPrefix: string;
   private readonly clock: () => Date;
 
   constructor(options: FakeFiscalProviderOptions = {}) {
     this.outcomes = options.outcomes?.length ? options.outcomes : ["APPROVED"];
+    this.cancelOutcomes = options.cancelOutcomes?.length ? options.cancelOutcomes : ["CANCELLED"];
     this.externalIdPrefix = options.externalIdPrefix ?? "fake";
     this.clock = options.clock ?? (() => new Date());
+  }
+
+  cancel(_request: FiscalCancelRequest): Promise<FiscalCancelResult> {
+    this.cancelCalls += 1;
+    const outcome =
+      this.cancelOutcomes[Math.min(this.cancelCalls - 1, this.cancelOutcomes.length - 1)];
+    const hasReason =
+      outcome === "REJECTED" ||
+      outcome === "CONFIGURATION_ERROR" ||
+      outcome === "TRANSIENT_FAILURE";
+    const reasonCode = hasReason ? `FAKE_${outcome}` : null;
+    const retryAfterMs = outcome === "TRANSIENT_FAILURE" ? 1_000 : null;
+    return Promise.resolve({
+      outcome,
+      reasonCode,
+      reason: reasonCode === null ? null : `Simulated ${outcome.toLowerCase()}`,
+      retryAfterMs,
+      providerRequest: { kind: "fake", outcome },
+      providerResponse: { kind: "fake", outcome, reasonCode, retryAfterMs },
+      resolvedAt: this.clock().toISOString(),
+    });
   }
 
   issue(_request: FiscalIssueRequest): Promise<FiscalIssueResult> {
