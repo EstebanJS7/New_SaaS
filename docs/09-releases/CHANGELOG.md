@@ -6,6 +6,54 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-15 — Fiscal Abstraction (FISC-003 to FISC-005, completing the epic):
+  - The reusable Core Fiscal boundary: a provider port with a normalized outcome
+    taxonomy (`APPROVED`, `REJECTED`, `FUNCTIONAL_REJECTION`,
+    `CONFIGURATION_ERROR`, `TRANSIENT_FAILURE`), a deterministic
+    `FakeFiscalProvider` with ordered scripts and no invented SIFEN artifact, a
+    fail-closed snapshot sanitizer that redacts rather than throws, and a
+    composition root that refuses to select a fake in production.
+  - Queued fiscal submission: `POST /fiscal-documents` commits the document as
+    `QUEUED` and enqueues one BullMQ job with the deterministic identity
+    `fiscal-submit:<documentId>` after the commit, with a 2 s enqueue deadline
+    and fail-fast Redis options so a Redis outage cannot hang an HTTP request.
+  - The worker handler claims the document with a compare-and-set into
+    `SENDING`, calls the provider outside any transaction, sanitizes both raw
+    payloads before persisting, writes one SYSTEM audit row per attempt and
+    rethrows on a transient failure so the bounded backoff owns the retry. A
+    five-minute claim lease recovers a worker that dies between the claim and
+    the call.
+  - The recovery sweep `recoverStaleFiscalSubmissions` plus
+    `redriveFiscalSubmission`: it re-drives `QUEUED` and `ERROR` documents older
+    than a five-minute window in batches of 100, removing a terminal job before
+    re-adding it because a deterministic job ID plus `removeOnFail: false` would
+    otherwise make the re-add a silent no-op.
+  - The status transition guard, extended additively by the cancellation edges.
+    `SENDING -> CANCELLED` stays excluded because a worker holds that claim, and
+    `resolved_at` is an implication rather than a biconditional, which is what
+    keeps `APPROVED -> CANCEL_PENDING -> CANCELLED` legal while the resolution
+    timestamp survives.
+  - `POST /fiscal-documents/:id/cancel`: a synchronous, deadline-bounded command
+    behind the existing `fiscal.invoice.issue`. `CANCELLED` replays as `200`, a
+    `SENDING` document is a stable `409`, and a refusal is thrown after the
+    outcome write commits so `last_error_*` and the audit row persist.
+  - The [[DEC-051]] hand-off: Billing consults a Fiscal read inside its own
+    cancellation transaction, so any live fiscal document blocks the invoice
+    cancellation with a `409` naming the Fiscal cancellation route. The
+    dependency stays one-way and Billing never imports the Fiscal package.
+  - The fiscal read contract: a read-wide `fiscal.read` key for all six roles,
+    `GET /fiscal-documents` with a strict optional status filter, and
+    `GET /fiscal-documents/:id`. Reads are unaudited and the seeded catalog
+    moves 56 → 57 permissions and 187 → 193 role grants.
+  - The `/app/fiscal` staff workspace: the document list, the detail with the
+    cancel form, and the issue panel, through the `/api/fiscal` proxy, covering
+    loading, empty, error, success, permission-denied and entitlement-denied
+    states, with a declarative `requiredFeature: "fiscal"` navigation entry.
+  - Deliberately NOT in this epic: no real SIFEN or third-party provider, no
+    XAdES signing or KuDE rendering (PRD §23, [[EPIC-16]]), no
+    operator-triggered retry route ([[TD-029]]), no `fiscal-ui` settings
+    namespace ([[DEC-052]]), and no portal fiscal document surface ([[TD-022]]).
+
 - EPIC-15 — Fiscal Abstraction (FISC-002, data foundation only):
   - The additive `FiscalDocument` persistence foundation the Fiscal boundary
     rests on: `enum FiscalProvider` with PRD §22's `THIRD_PARTY`, `SIFEN_DIRECT`

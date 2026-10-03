@@ -336,8 +336,15 @@ recorded non-action):
       unit's commit. Gates green: web 99 files / 1087 tests, web
       typecheck/lint/`next build` clean, root `pnpm test` 17/17, typecheck
       16/16, lint 16/16, build 10/10, format clean.
-- [ ] T6 — FISC-005b: module docs, TD-029, advisory triage, CI evidence,
-      changelog, roadmap and the EPIC-15 closure.
+- [x] T6 — FISC-005b: module docs, TD-029, advisory triage, CI evidence,
+      changelog, roadmap and the EPIC-15 closure. Evidence: this work unit's
+      commit. `docs/05-modules/Fiscal.md` (and its README registration),
+      `TD-029`, `TD-030` (the advisory triage), the story closure, the CHANGELOG
+      entry, the ROADMAP row and closure paragraph, the epic doc, and the
+      CI-EVIDENCE `## EPIC-15 Fiscal Abstraction` section with the slice table
+      and the closure. Receipts: PR #102 run `37150885463` (203 live-PG cases)
+      and PR #103 run `37155574081` (213 live-PG cases), both green on both
+      required checks.
 
 ### T4a pinned details (the contract above is ambiguous here; these win)
 

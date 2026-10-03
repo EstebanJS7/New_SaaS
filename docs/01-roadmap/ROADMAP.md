@@ -23,7 +23,7 @@ updated: 2026-09-27
 | EPIC-12 | POS/Payments                       |    done | EPIC-09, EPIC-10          |
 | EPIC-13 | Cash                               |    done | EPIC-12                   |
 | EPIC-14 | Billing                            |    done | EPIC-12                   |
-| EPIC-15 | Fiscal Abstraction                 | planned | EPIC-14                   |
+| EPIC-15 | Fiscal Abstraction                 |    done | EPIC-14                   |
 | EPIC-16 | Fiscal Third-party Adapter         | planned | EPIC-15                   |
 | EPIC-17 | Notifications                      | planned | EPIC-07                   |
 | EPIC-18 | Dashboards/Reports                 | planned | prior domains             |
@@ -90,6 +90,21 @@ writer complies with its protocol.
 ## Architecture baseline
 
 Architecture freeze: PRD v1.3. Structural changes require an accepted ADR.
+
+[[EPIC-15]] Fiscal Abstraction moved to `done` on 2026-10-03 after its five
+Stories closed with the required CI checks green. The kickoff and Decisions were
+PR #96, FISC-002 PRs #97 and #98, FISC-003 PR #99, FISC-004 PR #100, the TD-028
+recovery sweep PR #101, FISC-005a PR #102 (run `37150885463`, live-PostgreSQL
+203 cases) and FISC-005b PR #103 (run `37155574081`, live-PostgreSQL **213
+passed (213)**). The merged tree carries **32 migrations**, a seeded catalog of
+57 permissions and 193 role grants, and a green `pnpm test`/`typecheck`/`lint`/
+`build`/`format-check` set. EPIC-15 delivered the reusable Core Fiscal boundary
+and deliberately stopped before any real provider: [[EPIC-16]] owns the
+production adapter, and `SIFEN_DIRECT`, XAdES signing and KuDE rendering were
+never implemented from memory (PRD §23). No `fiscal-ui` settings namespace
+ships, no retry route ships ([[TD-029]]), and the portal fiscal document surface
+stays deferred ([[TD-022]]). This is an epic-closure record, **never** a
+production readiness claim.
 
 [[EPIC-14]] Billing moved to `done` on 2026-10-02 after its four implementation
 Stories merged with the required CI checks green: the scope and Decisions as PR
