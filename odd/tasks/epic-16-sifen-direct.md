@@ -3,8 +3,8 @@ feature: epic-16-sifen-direct
 epic: EPIC-16
 status: in-progress
 created: 2026-10-03
-updated: 2026-10-03
-branch: docs/epic-16-fiscal-third-party-kickoff
+updated: 2026-10-04
+branch: feat/epic-16-fisc-007-signing-material
 ---
 
 # EPIC-16 SIFEN Direct — ODD task tracker
@@ -57,6 +57,34 @@ January 2026** onward to adhere to SIFEN; its article 3 points at _Decreto n.°
   deployable**.
 - Data classification: the tenant's private key and its password are
   **RESTRICTED**; a DTE's fiscal content is at least CONFIDENTIAL.
+
+## Decisions taken by the maintainer (2026-10-04) — FISC-007
+
+Recorded in [[DEC-053]] and [[ADR-005]]:
+
+1. **Envelope encryption in PostgreSQL.** A platform master key from environment
+   wraps a per-secret data key; AES-256-GCM; ciphertext in our own
+   `tenant_secret` table. No new deployable, no external custody dependency. The
+   cost is recorded, not hidden: we own the key, and losing it loses the ability
+   to sign.
+2. **The operator uploads a PKCS#12 plus its password.** Verified constraint:
+   Node's `crypto.createPrivateKey` cannot open a PKCS#12 in any form, so the
+   container needs a parser.
+3. **The material enters through audited staff API routes** behind one new
+   permission.
+4. **Parser dependency: `pkijs` + `asn1js`** (BSD-3-Clause, npm provenance
+   published, runs on Node's built-in WebCrypto). Rejected: `node-forge` (a
+   November 2025 ASN.1 advisory in its 1.4.0 line, and a library the FISC-009
+   signing path does not use) and deferring the parse to FISC-009 (which would
+   leave the password alive for the material's lifetime and let an operator
+   upload an unvalidated container).
+
+**Derived consequences the maintainer accepted explicitly**: the password is
+never persisted (one secret per material, not two); retirement destroys the
+stored key in the same transaction while the row survives as the record;
+rotation is an upload that retires the previous material; `tenant_secret` rows
+are tenant-scoped at the database level; the master key is a versioned key ring
+so a KEK rotation does not need a data migration.
 
 ## Decisions taken by the maintainer (2026-10-03)
 
@@ -141,8 +169,12 @@ candidate 1 exists.
 
 ## Tasks
 
-- [ ] T1 — Write FISC-006..FISC-014 as Story files and register the epic in the
-      roadmap and the module README.
+- [~] T1 — Write FISC-006..FISC-014 as Story files and register the epic in the
+  roadmap and the module README. FISC-006 and **FISC-007** exist; the epic doc
+  and the roadmap row are updated to `in-progress`. FISC-008..FISC-014 are
+  written as each one is approached, so their contracts are pinned against the
+  baseline rather than invented ahead of time. The module README gains its
+  EPIC-16 section when FISC-007's module doc lands.
 - [x] T2 — FISC-006: the DNIT baseline revalidation (docs-only, cited sources).
       Evidence: this work unit's commit. `docs/06-fiscal/SIFEN-BASELINE.md` plus
       the `FISC-006` Story. Nine official artifacts retrieved 2026-10-03: the
@@ -162,7 +194,14 @@ candidate 1 exists.
       retrieval sizes are recorded in the Story's verification block so the
       claim is checkable.
 
-- [ ] T3 — FISC-007: tenant signing material + ADR.
+- [ ] T3 — **FISC-007: tenant signing material + ADR — in progress.** Contract
+      pinned in `docs/02-stories/FISC-007-tenant-signing-material.md`,
+      authorized by [[ADR-005]] and [[DEC-053]], both `accepted` on 2026-10-04.
+      The `pkijs`/`asn1js` recipe and the dependency provenance were verified
+      empirically before pinning (Node cannot open a PKCS#12; the extraction
+      path was proven end to end against an OpenSSL-generated container,
+      including `X509Certificate.checkPrivateKey` proving the key/certificate
+      pair). No code written yet.
 - [ ] T4 — FISC-008: DTE XML + XSD validation.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
@@ -173,7 +212,9 @@ candidate 1 exists.
 
 ## Notes
 
-- Base: merged `main` `4c02473` (EPIC-15 closed).
+- Base: merged `main` `b05d411` (PR #104 merged; FISC-006 landed). The "What
+  exists already" section below was verified on `4c02473` and remains accurate
+  for every item it lists.
 - The rename leaves ~20 older Story references to "EPIC-16 the provider" intact
   in substance; the one that became factually wrong (`FISC-003`'s
   `FISCAL_PROVIDER` closed set) is corrected.

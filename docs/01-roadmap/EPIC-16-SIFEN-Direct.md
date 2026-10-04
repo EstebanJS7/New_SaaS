@@ -2,7 +2,7 @@
 id: EPIC-16
 type: epic
 title: SIFEN Direct
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - EPIC-15
@@ -16,7 +16,7 @@ prd_sections:
   - "40"
   - "41"
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 ---
 
 # EPIC-16 — SIFEN Direct
@@ -78,10 +78,10 @@ word.
 - **XAdES signing** with the tenant's certificate, including the return of the
   `SIGNING` lifecycle state that [[DEC-047]] deliberately omitted while a fake
   stood in for the provider.
-- **The tenant's signing material in the `SecretStore`** — a private key and its
-  password are RESTRICTED material this system must hold and never log. This is
-  the opposite of the third-party plan, where the certificate stayed with the
-  vendor.
+- **The tenant's signing material in the `SecretStore`** — a private key this
+  system must hold and never log. The operator's PKCS#12 and its password are
+  the input; the password never persists ([[DEC-053]]). This is the opposite of
+  the third-party plan, where the certificate stayed with the vendor.
 - **The DNIT web services**: reception, query and events, with explicit handling
   of the asynchronous outcomes SIFEN produces.
 - **Timbrado and numbering ranges** per establishment, point of expedition and
@@ -135,7 +135,7 @@ word.
 | Story    | Scope                                                                                                                                             | Depends on         |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
 | FISC-006 | **SIFEN Direct scope and the DNIT baseline revalidation** — documentation only; the epic's precondition and the source of every protocol constant | —                  |
-| FISC-007 | **Tenant signing material**: the `SecretStore` boundary for a private key and password (RESTRICTED), rotation and removal                         | FISC-006           |
+| FISC-007 | **Tenant signing material**: the `SecretStore` boundary for the private key (RESTRICTED), rotation and removal — [[ADR-005]] + [[DEC-053]]        | FISC-006           |
 | FISC-008 | **DTE XML generation**, validated against the official XSDs                                                                                       | FISC-006           |
 | FISC-009 | **XAdES signing** and the return of the `SIGNING` lifecycle state                                                                                 | FISC-007, FISC-008 |
 | FISC-010 | **DNIT web services**: reception, query, events, and the asynchronous outcome model                                                               | FISC-008, FISC-009 |
@@ -175,22 +175,26 @@ FISC-006 and must not be written from memory.
 
 ## Decisions / ADRs
 
-Two architectural changes are foreseeable and each needs an **ADR**, because
-`DOCUMENTATION-RULES.md` names "change Fiscal Provider boundary" as an ADR case:
+Architectural changes need an **ADR**, because `DOCUMENTATION-RULES.md` names
+"change Fiscal Provider boundary" as an ADR case:
 
-1. **Holding the tenant's signing material.** EPIC-15's boundary assumed an
-   opaque credential reference. SIFEN Direct requires the private key and its
-   password inside our boundary, which changes what the Fiscal boundary is
-   responsible for and what classification and audit apply.
-2. **An XAdES signing dependency.** `AGENTS.md` requires a concrete requirement
-   before a new dependency; signing is one, but the choice of library, its
-   provenance and its update story are architectural.
-
-A third change is likely and should be assessed in the same pass:
-
-3. **An asynchronous status capability on the provider port.** SIFEN answers
-   asynchronously, so `issue` alone is not enough; the port needs a way to ask
-   what happened, and the worker needs a reconciliation path.
+1. **Holding the tenant's signing material — [[ADR-005]], `accepted`
+   2026-10-04.** EPIC-15's boundary assumed an opaque credential reference.
+   SIFEN Direct requires the private key inside our boundary, so [[ADR-005]]
+   introduces a reusable `SecretStore` capability with envelope encryption in
+   PostgreSQL and records what the Fiscal boundary is now responsible for. Its
+   product-level choices are [[DEC-053]]. It is the gate for [[FISC-007]].
+2. **An XAdES signing dependency — ADR-006, not yet written.** `AGENTS.md`
+   requires a concrete requirement before a new dependency; signing is one, but
+   the choice of library, its provenance and its update story are architectural.
+   It is the gate for [[FISC-009]]. Note that [[ADR-005]] already added `pkijs`
+   and `asn1js` for PKCS#12 parsing, which is a **different** requirement:
+   ADR-006 must state whether the signing path reuses that family or adds
+   another library.
+3. **An asynchronous status capability on the provider port — ADR-007, not yet
+   written.** SIFEN answers asynchronously, so `issue` alone is not enough; the
+   port needs a way to ask what happened, and the worker needs a reconciliation
+   path. It is the gate for [[FISC-012]].
 
 ## Technical Debt
 
