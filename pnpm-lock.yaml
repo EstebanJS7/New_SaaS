@@ -444,6 +444,30 @@ importers:
 
   packages/prettier-config: {}
 
+  packages/secret-store:
+    devDependencies:
+      '@newsaas/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@newsaas/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@newsaas/vitest-config':
+        specifier: workspace:*
+        version: link:../vitest-config
+      '@types/node':
+        specifier: ^22.14.1
+        version: 22.20.1
+      eslint:
+        specifier: ^9.24.0
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(tsx@4.23.12)
+
   packages/shared:
     dependencies:
       nanoid:

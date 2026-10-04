@@ -164,9 +164,31 @@ And `pfx.parseInternalValues` performs the PKCS#12 MAC integrity check by
 default, which is what makes a wrong password fail there rather than later; the
 adapter must not disable it.
 
+## The test fixture: built, not committed
+
+Two harness constraints shape this Story, and both were surfaced to the
+maintainer before any code was written.
+
+**The package is `packages/secret-store`, not `packages/secrets`.** The
+harness's path guard blocks any path segment literally named `secrets` and any
+`.pem`, `.key`, `.p12` or `.pfx` file, for `read`, `write` and `edit`. The
+maintainer chose the rename over disabling the guard, and `secret-store` is also
+[[ADR-005]]'s own vocabulary. Nothing about the boundary, the port or the
+behaviour changes with the name.
+
+**The PKCS#12 fixture is constructed in the test, not committed.** The same
+guard blocks a committed `.p12`, and a real container in the repository would be
+a credential-shaped artifact. The test builds its container in memory with
+pkijs's own PFX builder and feeds it to the parser, so the parser is still
+proven end to end against a real PKCS#12 structure with a real password. The
+cost is recorded honestly: a self-constructed container is **not** a PSC
+artifact, so [[FISC-013]] must validate the extraction against a real PSC-issued
+container during homologation, and that is an acceptance item there, not an
+assumption here.
+
 ## In Scope
 
-- `packages/secrets` (`@newsaas/secrets`): the `SecretStore` port, envelope
+- `packages/secret-store` (`@newsaas/secret-store`): the `SecretStore` port, envelope
   crypto, the versioned key-ring resolver, the envelope driver, the in-memory
   driver, the opaque key factory, and their unit tests.
 - Two additive tables plus one partial unique index, in one migration.
@@ -197,7 +219,7 @@ adapter must not disable it.
 
 ## Acceptance Criteria
 
-- [ ] `packages/secrets` exports a `SecretStore` port whose reads are
+- [ ] `packages/secret-store` exports a `SecretStore` port whose reads are
       tenant-scoped, and two drivers: an in-memory driver for tests and an
       envelope driver that encrypts with AES-256-GCM.
 - [ ] A key-ring resolver reads a versioned master-key list from environment and
@@ -382,16 +404,17 @@ Not run.
 
 Planned:
 
-- `packages/secrets` unit: envelope round-trip; wrong master key fails closed; a
+- `packages/secret-store` unit: envelope round-trip; wrong master key fails closed; a
   row under version 1 decrypts while version 2 is current; the key-ring parser
   rejects a malformed or missing current version; the in-memory driver is
   tenant-scoped; `createOpaqueSecretKey` is opaque.
-- `packages/secrets` unit: the persistent driver is never selected in production
+- `packages/secret-store` unit: the persistent driver is never selected in production
   and the refusal is the same shape `resolveFiscalProvider` uses.
-- `packages/fiscal` unit: PKCS#12 extraction against a committed fixture
-  container; wrong password; no certificate bag; two certificate bags; a
-  non-x509 `certId`; a non-RSA key; a 1024-bit key; a key that does not match
-  the certificate; an expired certificate.
+- `packages/fiscal` unit: PKCS#12 extraction against a container **constructed in
+  the test with pkijs** (see the fixture note above); wrong password; no
+  certificate bag; two certificate bags; a non-x509 `certId`; a non-RSA key; a
+  1024-bit key; a key that does not match the certificate; an expired
+  certificate.
 - API unit/integration: the three commands, the metadata-only shape, the
   password-never-persisted assertion, the private-key-never-returned assertion,
   the retire CAS and the `409` on a repeat, rotation retiring the previous
@@ -441,15 +464,15 @@ Planned:
 ## Files / Modules
 
 ```text
-packages/secrets/package.json
-packages/secrets/src/secret-store.port.ts
-packages/secrets/src/secret-envelope.ts
-packages/secrets/src/secret-key-ring.ts
-packages/secrets/src/envelope-secret-store.ts
-packages/secrets/src/in-memory-secret-store.ts
-packages/secrets/src/secret-keys.ts
-packages/secrets/src/index.ts
-packages/secrets/tsconfig.json / vitest config per the existing package shape
+packages/secret-store/package.json
+packages/secret-store/src/secret-store.port.ts
+packages/secret-store/src/secret-envelope.ts
+packages/secret-store/src/secret-key-ring.ts
+packages/secret-store/src/envelope-secret-store.ts
+packages/secret-store/src/in-memory-secret-store.ts
+packages/secret-store/src/secret-keys.ts
+packages/secret-store/src/index.ts
+packages/secret-store/tsconfig.json / vitest config per the existing package shape
 
 packages/fiscal/src/signing-material/pkcs12.ts
 packages/fiscal/src/signing-material/signing-material.types.ts

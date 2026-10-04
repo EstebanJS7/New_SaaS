@@ -133,7 +133,7 @@ its password, and it removes the password from every later signing call.
 
 ### Architecture
 
-- A new reusable platform capability: `packages/secrets`, with a `SecretStore`
+- A new reusable platform capability: `packages/secret-store`, with a `SecretStore`
   port, an envelope driver, an in-memory driver and a module — the same shape as
   `@newsaas/storage`. Fiscal consumes the port; it never reaches a concrete
   driver.
