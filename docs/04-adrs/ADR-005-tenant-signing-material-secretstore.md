@@ -40,7 +40,7 @@ is never logged, never returned and never reachable from a Git file.
 
 | Surface                                          | This ADR                                 | Explicitly out of scope             |
 | ------------------------------------------------ | ---------------------------------------- | ----------------------------------- |
-| `packages/secret-store` port, drivers, module      | Added                                    | —                                   |
+| `packages/secret-store` port, drivers, module    | Added                                    | —                                   |
 | `tenant_secret` table (ciphertext at rest)       | Added                                    | —                                   |
 | `tenant_fiscal_signing_material` table           | Added                                    | —                                   |
 | Fiscal upload / list / retire routes             | Added, behind a new permission           | A web UI for them (FISC-007 is API) |
