@@ -20,7 +20,9 @@
     "test": "vitest run --config ../../packages/vitest-config/vitest.node.ts"
   },
   "dependencies": {
-    "@nestjs/common": "^11.0.16"
+    "@nestjs/common": "^11.0.16",
+    "asn1js": "^3.0.10",
+    "pkijs": "^3.4.1"
   },
   "devDependencies": {
     "@newsaas/eslint-config": "workspace:*",

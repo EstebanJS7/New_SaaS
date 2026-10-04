@@ -180,49 +180,49 @@ behaviour changes with the name.
 guard blocks a committed `.p12`, and a real container in the repository would be
 a credential-shaped artifact.
 
-**BLOCKED — the in-test container builder does not yet produce a usable
-certificate.** Verified on 2026-10-04 with `pkijs@3.4.1` + `asn1js@3.0.10`:
+**RESOLVED 2026-10-04 — assembled in the test from base64 material.** The
+in-test builder does not produce a usable _certificate_: verified with
+`pkijs@3.4.1` + `asn1js@3.0.10`, `Certificate.sign(webCryptoKey, "SHA-256")`
+writes an invalid `signatureAlgorithm`, so both OpenSSL
+(`asn1_template_noexp_d2i: nested asn1 error: Field=algorithm, Type=X509_ALGOR`)
+and Node's `crypto.X509Certificate` reject it. Node cannot build an X.509
+certificate at all and a `.pem` fixture is blocked by the same guard, so the
+certificate cannot come from pkijs.
 
-- The container _assembles_:
-  `PKCS8ShroudedKeyBag.makeInternalValues({ password, contentEncryptionAlgorithm: { name: "AES-CBC", length: 256 }, hmacHashAlgorithm: "SHA-256", iterationCount })`,
-  a `CertBag` with `certId: "1.2.840.113549.1.9.22.1"`, a `SafeContents` of both
-  bags inside a `ContentInfo(DATA)`, an `AuthenticatedSafe`, then
-  `pfx.parsedValue = { integrityMode: 0, authenticatedSafe }` and
-  `pfx.makeInternalValues({ password, iterations, pbkdf2HashAlgorithm, hmacHashAlgorithm })`.
-  OpenSSL reads the result and extracts the private key
-  (`openssl pkcs12 ... -nocerts -noenc` prints a valid PKCS#8).
-- The **certificate** it contains is malformed.
-  `Certificate.sign(webCryptoKey, "SHA-256")` writes an invalid
-  `signatureAlgorithm`, so both OpenSSL
-  (`asn1_template_noexp_d2i: nested asn1 error: Field=algorithm, Type=X509_ALGOR`
-  plus `ossl_c2i_ASN1_OBJECT: invalid object encoding`) and Node's
-  `crypto.X509Certificate` reject it. Node cannot build an X.509 certificate at
-  all, and a `.pem` certificate fixture is blocked by the guard, so the
-  certificate cannot come from anywhere but pkijs.
+The maintainer's chosen resolution: **the container is still assembled in the
+test, and only the certificate and key come from committed base64 DER.**
 
-That is a blocker, not a detail: a fixture whose certificate no parser accepts
-cannot prove the parser. Three ways out, none of them taken yet:
+- `packages/fiscal/src/signing-material/pkcs12.fixture.ts` holds a throwaway,
+  self-signed RSA-2048 certificate and its matching key (valid 2026-2036,
+  `extendedKeyUsage = clientAuth` to mirror the baseline's dual use), generated
+  once with OpenSSL and labelled as replaceable test material.
+- The same module exports `buildTestPkcs12(...)`, which assembles the container
+  in memory with pkijs: a `PKCS8ShroudedKeyBag` (PBES2 / AES-256-CBC /
+  HMAC-SHA256), a `CertBag` with the X.509 `certId`, both inside a
+  `SafeContents` wrapped in a `ContentInfo(DATA)`, an `AuthenticatedSafe`, and a
+  MAC over the whole thing. The builder takes the key and the certificate list
+  as parameters, so the mismatch, key-size, missing-certificate, two-certificate
+  and non-X.509-certificate cases all come from the same fixture.
+- This is the path that was proven to work: OpenSSL reads the assembled
+  container and extracts its private key.
 
-1. **Assemble in the test from base64 material.** Keep the pkijs assembly path
-   above (which works) and take the _certificate and key_ from a throwaway pair
-   generated once with OpenSSL, stored base64 inside a `.ts` fixture module.
-   Zero blocked paths or extensions, a genuine certificate, and no reliance on
-   pkijs's certificate-signing path.
-2. **Generate the pair at test time with the `openssl` binary.** `openssl` is
-   present in the CI runner; the test would `execSync` it to build the PKCS#12
-   and skip when it is unavailable. Realistic artifacts, but it makes a unit
-   test depend on a system binary.
-3. **Fix the pkijs certificate construction** (set `signatureAlgorithm`
-   explicitly, or correct the crypto-engine OID wiring) and keep the pure pkijs
-   path. Most self-contained, least certain.
+The parser itself is `packages/fiscal/src/signing-material/pkcs12.ts`, and the
+certificate standard is enforced by `node:crypto` rather than by a second
+library: `createPrivateKey` for the PKCS#8 key,
+`X509Certificate.checkPrivateKey` to prove the pair,
+`asymmetricKeyDetails.modulusLength` for the pinned RSA minimum, and
+`validToDate` for expiry. Ten tests cover the happy path and every rejection,
+including a proof that the returned key loads with `node:crypto` and matches the
+returned certificate.
 
-Whichever is chosen, [[FISC-013]] must still validate the extraction against a
-real PSC-issued container during homologation. The test builds its container in
-memory with pkijs's own PFX builder and feeds it to the parser, so the parser is
-still proven end to end against a real PKCS#12 structure with a real password.
-The cost is recorded honestly: a self-constructed container is **not** a PSC
+One finding kept as a fact rather than smoothed over: pkijs rejects an
+unrecognised `CertBag.certId` while _parsing_, so a non-X.509 certificate lands
+on `INVALID_CONTAINER` before the parser's own `certId` guard runs. That guard
+stays as a second line of defence, and the test records the real path.
+
+**The cost, recorded honestly**: a self-assembled container is not a PSC
 artifact, so [[FISC-013]] must validate the extraction against a real PSC-issued
-container during homologation, and that is an acceptance item there, not an
+container during homologation. That is an acceptance item there, not an
 assumption here.
 
 ## In Scope
@@ -450,10 +450,12 @@ Planned:
 - `packages/secret-store` unit: the persistent driver is never selected in
   production and the refusal is the same shape `resolveFiscalProvider` uses.
 - `packages/fiscal` unit: PKCS#12 extraction against a container **assembled in
-  the test** (see the fixture note above — currently blocked); wrong password;
-  no certificate bag; two certificate bags; a non-x509 `certId`; a non-RSA key;
-  a 1024-bit key; a key that does not match the certificate; an expired
-  certificate.
+  the test** from the committed base64 fixture; wrong password; no certificate
+  bag; two certificate bags; a non-X.509 `certId`; a key that does not match the
+  certificate; a 1024-bit key; an expired certificate (proven by moving the
+  clock, not by shipping a second expired certificate); and a proof that the
+  returned key loads with `node:crypto` and matches the returned certificate.
+  **Delivered: 10 tests.**
 - API unit/integration: the three commands, the metadata-only shape, the
   password-never-persisted assertion, the private-key-never-returned assertion,
   the retire CAS and the `409` on a repeat, rotation retiring the previous

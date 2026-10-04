@@ -42,3 +42,19 @@ export {
   fiscalSubmissionJobOptions,
 } from "./fiscal-submission.queue.js";
 export type { FiscalSubmissionJob } from "./fiscal-submission.queue.js";
+// FISC-007: the PKCS#12 boundary that turns a PSC artifact into the certificate
+// and the RESTRICTED private key the secret store persists.
+export {
+  extractSigningMaterial,
+  MINIMUM_RSA_MODULUS_BITS,
+  PKCS12_CERT_BAG_ID,
+  PKCS12_KEY_BAG_ID,
+  PKCS12_SHROUDED_KEY_BAG_ID,
+  Pkcs12ExtractionError,
+  X509_CERTIFICATE_CERT_ID,
+} from "./signing-material/pkcs12.js";
+export type {
+  ExtractSigningMaterialArgs,
+  ExtractedSigningMaterial,
+  Pkcs12ExtractionFailure,
+} from "./signing-material/pkcs12.js";
