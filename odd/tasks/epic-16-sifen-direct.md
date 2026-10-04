@@ -194,14 +194,25 @@ candidate 1 exists.
       retrieval sizes are recorded in the Story's verification block so the
       claim is checkable.
 
-- [ ] T3 — **FISC-007: tenant signing material + ADR — in progress.** Contract
-      pinned in `docs/02-stories/FISC-007-tenant-signing-material.md`,
-      authorized by [[ADR-005]] and [[DEC-053]], both `accepted` on 2026-10-04.
-      The `pkijs`/`asn1js` recipe and the dependency provenance were verified
-      empirically before pinning (Node cannot open a PKCS#12; the extraction
-      path was proven end to end against an OpenSSL-generated container,
-      including `X509Certificate.checkPrivateKey` proving the key/certificate
-      pair). No code written yet.
+- [x] T3 — **FISC-007: tenant signing material + ADR — done 2026-10-04.**
+      Authorized by [[ADR-005]] and [[DEC-053]], both `accepted`. Six work
+      units: `bc2d010` (contract pin), `a06033e` (`packages/secret-store`),
+      `27b48b2` (persistence + composition root + env gate), `cd6fd87` (PKCS#12
+      boundary + fixture), `295cba3` (aggregate + permission + seed) and
+      `0c99af1` (HTTP surface + route pins). Root gates green: lint 18/18,
+      typecheck 18/18, test 19/19, build 11/11; secret-store 50, fiscal 60,
+      database 416, API 1105, live PostgreSQL 213/213; 33 migrations. **Three
+      defects were found by reading and by the tests, not by a gate:**
+      `as never` casts that discarded the port's structural verification;
+      rotation that retired a material without destroying its stored key
+      (contradicting D5); and a production refusal that the null-key-ring
+      short-circuit skipped entirely, so a production boot would have used the
+      in-memory driver. **A recorded plan had to change:** the PKCS#12 fixture
+      cannot be built purely in the test — pkijs writes an invalid certificate
+      `signatureAlgorithm`, and `.p12`/`.pem` files are blocked by the harness
+      path guard — so the maintainer chose base64 DER material plus in-test
+      assembly. **Open:** no CI receipt yet; the branch is unpushed, so the
+      epic's CI evidence is recorded when it is pushed.
 - [ ] T4 — FISC-008: DTE XML + XSD validation.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.

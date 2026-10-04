@@ -3,7 +3,7 @@ id: FISC-007
 type: story
 title: Tenant signing material in the SecretStore
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-006
@@ -258,50 +258,50 @@ assumption here.
 
 ## Acceptance Criteria
 
-- [ ] `packages/secret-store` exports a `SecretStore` port whose reads are
+- [x] `packages/secret-store` exports a `SecretStore` port whose reads are
       tenant-scoped, and two drivers: an in-memory driver for tests and an
       envelope driver that encrypts with AES-256-GCM.
-- [ ] A key-ring resolver reads a versioned master-key list from environment and
+- [x] A key-ring resolver reads a versioned master-key list from environment and
       a row encrypted under an older version still decrypts after a newer
       version becomes current. Covered by a unit test.
-- [ ] The production gate refuses to boot without a master key, and the module
+- [x] The production gate refuses to boot without a master key, and the module
       selection refuses to fall back to the in-memory driver in production — the
       duplicated-refusal shape `resolveFiscalProvider` already uses. Covered by
       a unit test.
-- [ ] A stored secret is never recoverable from the database without the master
+- [x] A stored secret is never recoverable from the database without the master
       key: an integration test asserts the persisted bytes do not contain the
       plaintext.
-- [ ] `POST /fiscal/signing-material` accepts a PKCS#12 plus its password,
+- [x] `POST /fiscal/signing-material` accepts a PKCS#12 plus its password,
       validates that the container's integrity check passes, that exactly one
       X.509 certificate bag is present, that the private key is RSA with a
       modulus of at least 2048 bits, that the key and the certificate match, and
       that the certificate has not expired. Each rejection has its own test.
-- [ ] The password is never persisted: an integration test asserts no row and no
+- [x] The password is never persisted: an integration test asserts no row and no
       log line contains it.
-- [ ] The private key is never returned: an integration test asserts no response
+- [x] The private key is never returned: an integration test asserts no response
       body of the three routes contains a private key marker.
-- [ ] The stored material is classified RESTRICTED in the schema comment and in
+- [x] The stored material is classified RESTRICTED in the schema comment and in
       the module documentation, and no log or audit payload carries it.
-- [ ] `GET /fiscal/signing-material` returns metadata only, never the private
+- [x] `GET /fiscal/signing-material` returns metadata only, never the private
       key, never the password and never the `credentialRef`.
-- [ ] `POST /fiscal/signing-material/:id/retire` requires a reason, transitions
+- [x] `POST /fiscal/signing-material/:id/retire` requires a reason, transitions
       `ACTIVE → RETIRED`, **deletes the stored key in the same transaction**,
       and writes an audit row. Repeating it on a retired material is a `409`.
-- [ ] A second upload for the same `(tenant, environment)` retires the previous
+- [x] A second upload for the same `(tenant, environment)` retires the previous
       material in the same transaction. Only one `ACTIVE` row per pair can
       exist, proven by the partial unique index under the live-PostgreSQL gate.
-- [ ] Every route requires authentication, tenant membership and the
+- [x] Every route requires authentication, tenant membership and the
       `fiscal.signing_material.manage` permission.
-- [ ] A cross-tenant read or retire returns `404`, never `403` and never data.
+- [x] A cross-tenant read or retire returns `404`, never `403` and never data.
       Covered by tenant-isolation tests.
-- [ ] The two pins in `apps/api/src/rbac/route-contract.probe.test.ts`
+- [x] The two pins in `apps/api/src/rbac/route-contract.probe.test.ts`
       (`EXPECTED_ROUTE_INVENTORY` and `FISCAL_PERMISSION_BY_ROUTE`) carry the
       three new routes.
-- [ ] The seed is idempotent at `permissions: 58` and `rolePermissions: 195`,
+- [x] The seed is idempotent at `permissions: 58` and `rolePermissions: 195`,
       granting the new key to `OWNER` and `ADMIN` only.
-- [ ] `docs/05-modules/Fiscal.md` documents the boundary, the classification and
+- [x] `docs/05-modules/Fiscal.md` documents the boundary, the classification and
       the three routes.
-- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
+- [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
 
 ## Domain Invariants
 
@@ -431,13 +431,103 @@ ciphertext.
 
 ## Implementation Summary
 
-_Not implemented._
+FISC-007 is implemented on `feat/epic-16-fisc-007-signing-material`, authorized
+by [[ADR-005]] and [[DEC-053]] (both accepted 2026-10-04), in five work units.
+
+**`packages/secret-store` (`@newsaas/secret-store`).** The port (`put`/`get`/
+`delete`/`has`, tenant-scoped, opaque keys), AES-256-GCM envelope crypto with a
+fresh per-secret data key wrapped by the current master key and a distinct AAD
+context per operation, a versioned key-ring parser that fails closed on every
+malformed input, an in-memory driver for tests, an opaque key factory, and the
+`resolveSecretStoreSelection` refusal that keeps the in-memory driver out of a
+production boot. No Nest module and no persistence import: the application is
+the composition root.
+
+**Persistence.** The additive migration `20261004000002_fiscal_signing_material`
+creates `tenant_secret` and `tenant_fiscal_signing_material`, two enums, three
+CHECK constraints and the partial unique index that permits one `ACTIVE`
+material per tenant and environment. `SecretsModule.forRoot()` is the app-side
+selection between the drivers; `PrismaService` satisfies the record client
+structurally, so no adapter class was needed. `apiEnvSchema` refuses to boot in
+production without `SECRET_STORE_MASTER_KEYS`.
+
+**The PKCS#12 boundary.** `extractSigningMaterial` turns the operator's
+container into the certificate PEM and the PKCS#8 private key PEM, with seven
+typed failure reasons. `pkijs` parses the container only; the certificate
+standard is enforced by `node:crypto` — `X509Certificate.checkPrivateKey` proves
+the pair, `modulusLength` enforces the pinned RSA minimum, `validToDate`
+enforces expiry. Nothing from the underlying library, the password or a key byte
+can reach a caller's message or a log.
+
+**The aggregate.** `FiscalSigningMaterialService.upload` parses outside any
+transaction, then rotates in one: it retires the previous `ACTIVE` material,
+**destroys its stored key**, seals the new key, creates the row and appends the
+audit row. `retire` uses a conditional `updateMany` pinned to `ACTIVE`, so a
+lost race is a `409`, and destroys the key in the same transaction. Unknown and
+foreign ids are both `404`. The projection is metadata only and exported as a
+mapper.
+
+**The HTTP surface.** Three routes behind the new
+`fiscal.signing_material.manage` permission: a multipart upload that reads every
+part rather than assuming order, a list, and a retire command. The permission is
+granted to `OWNER` and `ADMIN` only.
 
 ## Verification
 
 ```text
-Not run.
+Root gates (pnpm, whole workspace):
+  lint       18/18 tasks successful
+  typecheck  18/18 tasks successful
+  test       19/19 tasks successful
+  build      11/11 tasks successful
+  prettier   clean
+
+Focused:
+  packages/secret-store   5 files /  50 tests passed
+  packages/fiscal         6 files /  60 tests passed
+  packages/database      21 files / 416 tests passed
+  apps/api               84 files / 1105 tests passed (4 skipped files)
+  live PostgreSQL        test/live-pg-isolation.e2e-spec.ts — 213 passed (213)
+
+Migration:
+  prisma migrate deploy  33 migrations found; 20261004000002_fiscal_signing_material applied
+  prisma validate        the schema is valid
+
+Secret material checks:
+  the persisted row does not contain the plaintext (unit, live-shaped fake)
+  the password is absent from every row, secret and audit payload
+  the private key is absent from every route response and audit payload
+  no route body carries credentialRef or certificatePem
 ```
+
+## Tests Added
+
+- `packages/secret-store/src/*.test.ts` — 50 tests: envelope round-trip, AAD
+  non-interchangeability, wrong-key failure, an older key version still
+  decrypting under a newer current version, unknown-version failure, the
+  plaintext-absent-from-persistence assertion, tenant scoping, idempotent
+  delete, transaction pass-through, key-ring parsing failures and the production
+  refusal.
+- `packages/fiscal/src/signing-material/pkcs12.test.ts` — 10 tests: the happy
+  path, a key the runtime accepts and that matches the certificate, a wrong
+  password that is not echoed, a non-container file, a missing certificate, two
+  certificates, a non-X.509 certificate bag, a mismatched key, a 1024-bit key
+  and an expired certificate.
+- `apps/api/src/fiscal/signing-material/signing-material.service.test.ts` — 22
+  tests: exactly one stored secret keyed by `credentialRef`, the password never
+  persisted, rotation retiring the previous material **and destroying its key**,
+  the other environment untouched, the pinned audit payload, one message per
+  extraction failure, retirement destroying the key, the `409` on a repeat, the
+  `404` for unknown and foreign ids, the exact metadata key set, and the
+  entitlement-before-permission order for all three commands.
+- `apps/api/src/fiscal/signing-material/signing-material.integration.test.ts` —
+  4 tests over the booted app: upload and list with no secret field in the
+  serialized body, rotation and single retirement, `404` masking for unknown and
+  foreign ids plus `403` without the permission, and the `400`/`413` rejections.
+- `apps/api/src/config/api-env.schema.test.ts` — the production master-key gate.
+- `packages/database/src/schema-clinical.test.ts` and `reference-seed.test.ts` —
+  the ownership-key count and the seed volumes moved to 58 permissions and 195
+  role permissions.
 
 ## Tests Added
 
@@ -493,7 +583,10 @@ Planned:
 
 - The `/app/fiscal` panel for the three routes is follow-up work, tracked when
   the surface is designed.
-- A KEK rewrap command, if Key custody ever needs scheduled rotation.
+- A KEK rewrap command, if key custody ever needs scheduled rotation.
+- No debt item was created: nothing in this Story's scope was deferred. The
+  fixture's self-assembled nature is an acceptance item in [[FISC-013]], and the
+  PostgreSQL-only constraints are covered by the migration.
 
 ## Decisions / ADRs
 
