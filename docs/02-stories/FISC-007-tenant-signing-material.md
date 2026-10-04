@@ -178,19 +178,58 @@ behaviour changes with the name.
 
 **The PKCS#12 fixture is constructed in the test, not committed.** The same
 guard blocks a committed `.p12`, and a real container in the repository would be
-a credential-shaped artifact. The test builds its container in memory with
-pkijs's own PFX builder and feeds it to the parser, so the parser is still
-proven end to end against a real PKCS#12 structure with a real password. The
-cost is recorded honestly: a self-constructed container is **not** a PSC
+a credential-shaped artifact.
+
+**BLOCKED — the in-test container builder does not yet produce a usable
+certificate.** Verified on 2026-10-04 with `pkijs@3.4.1` + `asn1js@3.0.10`:
+
+- The container _assembles_:
+  `PKCS8ShroudedKeyBag.makeInternalValues({ password, contentEncryptionAlgorithm: { name: "AES-CBC", length: 256 }, hmacHashAlgorithm: "SHA-256", iterationCount })`,
+  a `CertBag` with `certId: "1.2.840.113549.1.9.22.1"`, a `SafeContents` of both
+  bags inside a `ContentInfo(DATA)`, an `AuthenticatedSafe`, then
+  `pfx.parsedValue = { integrityMode: 0, authenticatedSafe }` and
+  `pfx.makeInternalValues({ password, iterations, pbkdf2HashAlgorithm, hmacHashAlgorithm })`.
+  OpenSSL reads the result and extracts the private key
+  (`openssl pkcs12 ... -nocerts -noenc` prints a valid PKCS#8).
+- The **certificate** it contains is malformed.
+  `Certificate.sign(webCryptoKey, "SHA-256")` writes an invalid
+  `signatureAlgorithm`, so both OpenSSL
+  (`asn1_template_noexp_d2i: nested asn1 error: Field=algorithm, Type=X509_ALGOR`
+  plus `ossl_c2i_ASN1_OBJECT: invalid object encoding`) and Node's
+  `crypto.X509Certificate` reject it. Node cannot build an X.509 certificate at
+  all, and a `.pem` certificate fixture is blocked by the guard, so the
+  certificate cannot come from anywhere but pkijs.
+
+That is a blocker, not a detail: a fixture whose certificate no parser accepts
+cannot prove the parser. Three ways out, none of them taken yet:
+
+1. **Assemble in the test from base64 material.** Keep the pkijs assembly path
+   above (which works) and take the _certificate and key_ from a throwaway pair
+   generated once with OpenSSL, stored base64 inside a `.ts` fixture module.
+   Zero blocked paths or extensions, a genuine certificate, and no reliance on
+   pkijs's certificate-signing path.
+2. **Generate the pair at test time with the `openssl` binary.** `openssl` is
+   present in the CI runner; the test would `execSync` it to build the PKCS#12
+   and skip when it is unavailable. Realistic artifacts, but it makes a unit
+   test depend on a system binary.
+3. **Fix the pkijs certificate construction** (set `signatureAlgorithm`
+   explicitly, or correct the crypto-engine OID wiring) and keep the pure pkijs
+   path. Most self-contained, least certain.
+
+Whichever is chosen, [[FISC-013]] must still validate the extraction against a
+real PSC-issued container during homologation. The test builds its container in
+memory with pkijs's own PFX builder and feeds it to the parser, so the parser is
+still proven end to end against a real PKCS#12 structure with a real password.
+The cost is recorded honestly: a self-constructed container is **not** a PSC
 artifact, so [[FISC-013]] must validate the extraction against a real PSC-issued
 container during homologation, and that is an acceptance item there, not an
 assumption here.
 
 ## In Scope
 
-- `packages/secret-store` (`@newsaas/secret-store`): the `SecretStore` port, envelope
-  crypto, the versioned key-ring resolver, the envelope driver, the in-memory
-  driver, the opaque key factory, and their unit tests.
+- `packages/secret-store` (`@newsaas/secret-store`): the `SecretStore` port,
+  envelope crypto, the versioned key-ring resolver, the envelope driver, the
+  in-memory driver, the opaque key factory, and their unit tests.
 - Two additive tables plus one partial unique index, in one migration.
 - `pkijs` + `asn1js` as dependencies, and the PKCS#12 → (private key,
   certificate) extraction with its tests.
@@ -404,16 +443,16 @@ Not run.
 
 Planned:
 
-- `packages/secret-store` unit: envelope round-trip; wrong master key fails closed; a
-  row under version 1 decrypts while version 2 is current; the key-ring parser
-  rejects a malformed or missing current version; the in-memory driver is
-  tenant-scoped; `createOpaqueSecretKey` is opaque.
-- `packages/secret-store` unit: the persistent driver is never selected in production
-  and the refusal is the same shape `resolveFiscalProvider` uses.
-- `packages/fiscal` unit: PKCS#12 extraction against a container **constructed in
-  the test with pkijs** (see the fixture note above); wrong password; no
-  certificate bag; two certificate bags; a non-x509 `certId`; a non-RSA key; a
-  1024-bit key; a key that does not match the certificate; an expired
+- `packages/secret-store` unit: envelope round-trip; wrong master key fails
+  closed; a row under version 1 decrypts while version 2 is current; the
+  key-ring parser rejects a malformed or missing current version; the in-memory
+  driver is tenant-scoped; `createOpaqueSecretKey` is opaque.
+- `packages/secret-store` unit: the persistent driver is never selected in
+  production and the refusal is the same shape `resolveFiscalProvider` uses.
+- `packages/fiscal` unit: PKCS#12 extraction against a container **assembled in
+  the test** (see the fixture note above — currently blocked); wrong password;
+  no certificate bag; two certificate bags; a non-x509 `certId`; a non-RSA key;
+  a 1024-bit key; a key that does not match the certificate; an expired
   certificate.
 - API unit/integration: the three commands, the metadata-only shape, the
   password-never-persisted assertion, the private-key-never-returned assertion,
