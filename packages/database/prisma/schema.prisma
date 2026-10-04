@@ -170,6 +170,10 @@ model Tenant {
   invoiceNumberSequences      InvoiceNumberSequence[]
   /// EPIC-15 FiscalDocument records owned by this tenant.
   fiscalDocuments             FiscalDocument[]
+  /// EPIC-16 FISC-007 sealed tenant secrets, and the signing materials that
+  /// reference them (ADR-005).
+  tenantSecrets               TenantSecret[]
+  fiscalSigningMaterials      TenantFiscalSigningMaterial[]
 
   @@map("tenant")
 }
@@ -2561,6 +2565,101 @@ model FiscalDocument {
   @@index([tenantId, status])
   @@index([tenantId, invoiceId])
   @@map("fiscal_document")
+}
+
+/// Environment a signing material belongs to. `TEST` is the SIFEN homologation
+/// environment and `PRODUCTION` is the live one (SIFEN-BASELINE.md pins both
+/// hosts). Values are appended, never reordered or removed.
+enum FiscalSigningEnvironment {
+  TEST
+  PRODUCTION
+
+  @@map("fiscal_signing_environment")
+}
+
+/// `ACTIVE` is the only status a signing call may use; a `RETIRED` row is kept
+/// as the permanent record after its key material has been destroyed.
+/// Evolve additively only.
+enum FiscalSigningMaterialStatus {
+  ACTIVE
+  RETIRED
+
+  @@map("fiscal_signing_material_status")
+}
+
+/// RESTRICTED: one sealed tenant secret. The plaintext never reaches this
+/// table — only the AES-256-GCM ciphertext, the per-secret data key wrapped by
+/// the master key, and the master-key version that wrapped it (ADR-005). Rows
+/// are tenant-scoped so a key-composition bug cannot become a cross-tenant
+/// read; `key` is an opaque name, never a secret. No log, DTO or audit payload
+/// may carry any column of this table.
+model TenantSecret {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  key      String
+
+  algorithm   String
+  keyVersion  Int    @map("key_version")
+  wrappedKey  Bytes  @map("wrapped_key")
+  wrapIv      Bytes  @map("wrap_iv")
+  wrapAuthTag Bytes  @map("wrap_auth_tag")
+  ciphertext  Bytes
+  iv          Bytes
+  authTag     Bytes  @map("auth_tag")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, key])
+  @@unique([tenantId, id])
+  @@map("tenant_secret")
+}
+
+/// INTERNAL: a tenant's SIFEN signing material. The certificate is public
+/// material — it is transmitted inside every signed DE — so it is stored
+/// inline; the private key is RESTRICTED and lives behind `credentialRef` in
+/// `tenant_secret`. The password is never persisted (ADR-005/D6).
+///
+/// A partial unique index created in raw SQL by the migration permits at most
+/// one `ACTIVE` row per tenant and environment. Rotation retires the previous
+/// material in the same transaction; retirement destroys the stored key and
+/// keeps this row as the permanent record.
+model TenantFiscalSigningMaterial {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId    String                      @map("tenant_id") @db.Uuid
+  environment FiscalSigningEnvironment
+  status      FiscalSigningMaterialStatus @default(ACTIVE)
+
+  /// Opaque key into `tenant_secret`. Never returned by any DTO.
+  credentialRef String @map("credential_ref")
+
+  certificatePem               String   @map("certificate_pem") @db.Text
+  certificateSubject           String   @map("certificate_subject")
+  certificateSerial            String   @map("certificate_serial")
+  certificateFingerprintSha256 String   @map("certificate_fingerprint_sha256")
+  keyAlgorithm                 String   @map("key_algorithm")
+  notBefore                    DateTime @map("not_before") @db.Timestamptz(3)
+  notAfter                     DateTime @map("not_after") @db.Timestamptz(3)
+
+  /// Provenance only; the authoritative actor record is the audit row.
+  uploadedByUserProfileId String? @map("uploaded_by_user_profile_id") @db.Uuid
+
+  retiredAt              DateTime? @map("retired_at") @db.Timestamptz(3)
+  retiredByUserProfileId String?   @map("retired_by_user_profile_id") @db.Uuid
+  retirementReason       String?   @map("retirement_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status])
+  @@map("tenant_fiscal_signing_material")
 }
 
 // ---------------------------------------------------------------------------

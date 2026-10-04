@@ -15,11 +15,15 @@ const DEV_PUBLIC_BASE_URL = "http://localhost:3001";
 const PRODUCTION_SECRET = "p".repeat(64);
 const PRODUCTION_PUBLIC_BASE_URL = "https://api.example.test";
 
+/** A syntactically valid production master key ring: version 1, 32 random bytes. */
+const PRODUCTION_MASTER_KEYS = `1:${Buffer.alloc(32, 7).toString("base64")}`;
+
 describe("apiEnv branding production gate", () => {
   it("rejects a missing signing secret in production", () => {
     const result = apiEnv({
       ...BASE_ENV,
       NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
       BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
     });
 
@@ -33,6 +37,7 @@ describe("apiEnv branding production gate", () => {
     const result = apiEnv({
       ...BASE_ENV,
       NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
       BRANDING_ASSET_URL_SECRET: "short-secret",
       BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
     });
@@ -47,6 +52,7 @@ describe("apiEnv branding production gate", () => {
     const result = apiEnv({
       ...BASE_ENV,
       NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
       BRANDING_ASSET_URL_SECRET: DEV_INSECURE_SECRET,
       BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
     });
@@ -61,6 +67,7 @@ describe("apiEnv branding production gate", () => {
     const result = apiEnv({
       ...BASE_ENV,
       NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
       BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
     });
 
@@ -76,6 +83,7 @@ describe("apiEnv branding production gate", () => {
       const result = apiEnv({
         ...BASE_ENV,
         NODE_ENV: "production",
+        SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
         BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
         BRANDING_ASSET_PUBLIC_BASE_URL: baseUrl,
       });
@@ -91,6 +99,7 @@ describe("apiEnv branding production gate", () => {
     const result = apiEnv({
       ...BASE_ENV,
       NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
       FISCAL_PROVIDER: "fake",
       BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
       BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
@@ -153,6 +162,7 @@ describe("readBrandingAssetDeliveryConfig non-production fallback", () => {
   it("uses explicit production values", () => {
     const config = readBrandingAssetDeliveryConfig({
       NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
       BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
       BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
     });
@@ -172,6 +182,7 @@ describe("apiEnv fiscal provider selection", () => {
     const missing = apiEnv({
       ...BASE_ENV,
       NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
       BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
       BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
     });
@@ -182,6 +193,7 @@ describe("apiEnv fiscal provider selection", () => {
       apiEnv({
         ...BASE_ENV,
         NODE_ENV: "production",
+        SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
         FISCAL_PROVIDER: "fake",
         BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
         BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
@@ -201,6 +213,7 @@ describe("apiEnv production storage gate", () => {
   const productionBase = {
     ...BASE_ENV,
     NODE_ENV: "production",
+    SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
     FISCAL_PROVIDER: "fake",
     BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
     BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
@@ -304,6 +317,65 @@ describe("apiEnv production storage gate", () => {
       expect(result.env.STORAGE_S3_ENDPOINT).toBe("https://minio.example.test");
       expect(result.env.STORAGE_S3_REGION).toBe("sa-east-1");
       expect(result.env.STORAGE_S3_KEY_PREFIX).toBe("branding");
+    }
+  });
+});
+
+describe("apiEnv production secret-store gate", () => {
+  /** Valid production env with every gate satisfied, including the master key. */
+  const productionBase = {
+    ...BASE_ENV,
+    NODE_ENV: "production",
+    FISCAL_PROVIDER: "fake",
+    BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
+    BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
+    SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
+  };
+
+  it("rejects a missing SECRET_STORE_MASTER_KEYS in production", () => {
+    const { SECRET_STORE_MASTER_KEYS: _omitted, ...withoutMasterKey } = productionBase;
+    const result = apiEnv(withoutMasterKey);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("SECRET_STORE_MASTER_KEYS");
+    }
+  });
+
+  it.each(["", "   "])("rejects a blank SECRET_STORE_MASTER_KEYS (%j) in production", (keys) => {
+    const result = apiEnv({ ...productionBase, SECRET_STORE_MASTER_KEYS: keys });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("SECRET_STORE_MASTER_KEYS");
+    }
+  });
+
+  it("accepts a configured master key ring in production", () => {
+    const result = apiEnv(productionBase);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.SECRET_STORE_MASTER_KEYS).toBe(PRODUCTION_MASTER_KEYS);
+      expect(result.env.SECRET_STORE_MASTER_KEY_VERSION).toBeUndefined();
+    }
+  });
+
+  it("parses an explicit current master-key version", () => {
+    const result = apiEnv({ ...productionBase, SECRET_STORE_MASTER_KEY_VERSION: "1" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.SECRET_STORE_MASTER_KEY_VERSION).toBe("1");
+    }
+  });
+
+  it("leaves the master key optional outside production", () => {
+    const result = apiEnv(BASE_ENV);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.SECRET_STORE_MASTER_KEYS).toBeUndefined();
     }
   });
 });

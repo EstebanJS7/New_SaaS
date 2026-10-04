@@ -68,6 +68,9 @@ importers:
       '@newsaas/fiscal':
         specifier: workspace:*
         version: link:../../packages/fiscal
+      '@newsaas/secret-store':
+        specifier: workspace:*
+        version: link:../../packages/secret-store
       '@newsaas/shared':
         specifier: workspace:*
         version: link:../../packages/shared

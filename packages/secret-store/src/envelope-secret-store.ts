@@ -45,6 +45,15 @@ export class EnvelopeSecretStore implements SecretStore {
     return kek;
   }
 
+  /**
+   * Copies a crypto result into the persistence layer's byte shape. One small
+   * copy per field is the price of keeping `SecretRecordClient` structurally
+   * verified instead of casting the client to it.
+   */
+  private static toPersistedBytes(value: Buffer): Uint8Array<ArrayBuffer> {
+    return new Uint8Array(value);
+  }
+
   async put(args: SecretStorePutArgs): Promise<{ key: string }> {
     const dataKey = generateDataKey();
     const { wrappedKey, wrapIv, wrapAuthTag } = wrapDataKey({
@@ -59,12 +68,12 @@ export class EnvelopeSecretStore implements SecretStore {
         key: args.key,
         algorithm: SECRET_STORE_ALGORITHM,
         keyVersion: this.keyRing.currentVersion,
-        wrappedKey,
-        wrapIv,
-        wrapAuthTag,
-        ciphertext,
-        iv,
-        authTag,
+        wrappedKey: EnvelopeSecretStore.toPersistedBytes(wrappedKey),
+        wrapIv: EnvelopeSecretStore.toPersistedBytes(wrapIv),
+        wrapAuthTag: EnvelopeSecretStore.toPersistedBytes(wrapAuthTag),
+        ciphertext: EnvelopeSecretStore.toPersistedBytes(ciphertext),
+        iv: EnvelopeSecretStore.toPersistedBytes(iv),
+        authTag: EnvelopeSecretStore.toPersistedBytes(authTag),
       },
     });
 

@@ -110,12 +110,12 @@ describe("EnvelopeSecretStore", () => {
       key: "fsk_orphan",
       algorithm: "AES-256-GCM",
       keyVersion: 99,
-      wrappedKey: Buffer.alloc(32, 1),
-      wrapIv: Buffer.alloc(12, 1),
-      wrapAuthTag: Buffer.alloc(16, 1),
-      ciphertext: Buffer.alloc(8, 1),
-      iv: Buffer.alloc(12, 1),
-      authTag: Buffer.alloc(16, 1),
+      wrappedKey: new Uint8Array(32),
+      wrapIv: new Uint8Array(12),
+      wrapAuthTag: new Uint8Array(16),
+      ciphertext: new Uint8Array(8),
+      iv: new Uint8Array(12),
+      authTag: new Uint8Array(16),
     });
 
     expect(await store.has({ tenantId: TENANT, key: "fsk_orphan" })).toBe(true);

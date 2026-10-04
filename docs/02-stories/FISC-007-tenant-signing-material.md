@@ -477,8 +477,8 @@ packages/secret-store/tsconfig.json / vitest config per the existing package sha
 packages/fiscal/src/signing-material/pkcs12.ts
 packages/fiscal/src/signing-material/signing-material.types.ts
 
-apps/api/src/secrets/secrets.module.ts
-apps/api/src/secrets/prisma-secret-record.repository.ts
+apps/api/src/secret-store/secrets.module.ts
+apps/api/src/secret-store/secrets.module.test.ts
 apps/api/src/fiscal/signing-material/*.ts
 apps/api/src/config/api-env.schema.ts
 apps/api/src/fiscal/fiscal.permissions.ts

@@ -14,16 +14,25 @@
 /** Injection token for the runtime SecretStore implementation. */
 export const SECRET_STORE = Symbol("SECRET_STORE");
 
-/** The persisted shape of one sealed secret. Ciphertext only, never plaintext. */
+/**
+ * The persisted shape of one sealed secret. Ciphertext only, never plaintext.
+ *
+ * The byte fields are declared as `Uint8Array<ArrayBuffer>` because that is what
+ * the persistence layer accepts: Prisma types `Bytes` as `Uint8Array<ArrayBuffer>`
+ * while `Buffer` is `Uint8Array<ArrayBufferLike>`. Declaring the narrower shape
+ * keeps `PrismaService` structurally assignable to {@link SecretRecordClient} —
+ * a compile-time proof the boundary's client really is a client — instead of
+ * hiding the mismatch behind a cast.
+ */
 export interface SecretRecordRow {
   algorithm: string;
   keyVersion: number;
-  wrappedKey: Uint8Array;
-  wrapIv: Uint8Array;
-  wrapAuthTag: Uint8Array;
-  ciphertext: Uint8Array;
-  iv: Uint8Array;
-  authTag: Uint8Array;
+  wrappedKey: Uint8Array<ArrayBuffer>;
+  wrapIv: Uint8Array<ArrayBuffer>;
+  wrapAuthTag: Uint8Array<ArrayBuffer>;
+  ciphertext: Uint8Array<ArrayBuffer>;
+  iv: Uint8Array<ArrayBuffer>;
+  authTag: Uint8Array<ArrayBuffer>;
 }
 
 /**
