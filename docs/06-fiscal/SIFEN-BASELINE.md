@@ -501,12 +501,14 @@ flag and treat the rules as pending DNIT, or be reframed.
 6. The QR composition and the CSC's per-environment value.
 7. The tables' contents, and chapter 16's codifications.
 8. Whether the Prevalidador is usable in an automated pre-submission check.
-9. **How a test validates against the official XSDs without vendoring them.**
-   The schemas are copyrighted and §"Domain Invariants" of [[FISC-006]] forbids
-   committing them, so the validation strategy is a decision, not a detail:
-   fetch them in a dedicated job, derive a local subset, or validate against
-   them only where they are present. This is open as of 2026-10-04 and it blocks
-   [[FISC-008]]'s acceptance criterion, not its implementation.
+9. ~~How a test validates against the official XSDs without vendoring them.~~
+   **Resolved 2026-10-04 by the maintainer.** A dedicated CI job fetches the
+   three schemas, asserts each fetch (HTTP status and a minimum byte size) and
+   runs the schema-validation suite with the skip **disabled**, so a green run
+   cannot be the product of having validated nothing; a fetch that does not
+   produce all three fails the job rather than degrading to a skip, and the run
+   is recorded in `docs/10-qa/CI-EVIDENCE.md` with the artifact sizes and the
+   case count. See [[FISC-008]]'s "The validation strategy".
 
 Resolved since the first pass, and no longer open: the field-level types and
 enumerations (§21), the signature profile, the certificate standard and its

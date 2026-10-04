@@ -99,28 +99,45 @@ The schema states which values are legal; the Manual Técnico's tables state wha
 each one means. The tables' contents are still unread (§19 question 7), so this
 Story pins the allowed values and **must not invent semantics** for them.
 
-## The decision this Story needs before its acceptance criterion is reachable
+## The validation strategy — decided 2026-10-04
 
 The acceptance criterion is "a DTE XML validates against the official XSD before
-any submission", and the schemas are **copyrighted**. [[FISC-006]]'s domain
-invariants forbid committing them: "the retrieved artifacts are evidence, not
-vendored content".
+any submission", and the schemas are **copyrighted**: [[FISC-006]]'s domain
+invariants forbid committing them. The maintainer chose **fetching them in a
+dedicated CI job, with the evidence made mandatory** — §19 question 9 of
+`SIFEN-BASELINE.md` is resolved by this section.
 
-So the validation strategy is a real decision, recorded as §19 question 9 and
-left open on 2026-10-04:
+The shape, pinned:
 
-1. **Fetch in a dedicated job.** A CI job downloads the three schemas and runs
-   the validation suite against them; the suite skips when they are absent.
-   Truest to "official XSD", at the cost of a network dependency in one job.
-2. **Derive a local subset.** Commit a hand-written schema carrying only the
-   constraints this system must satisfy, derived from and cited against the
-   official one. No network, no vendoring — but it is our schema, not DNIT's, so
-   it can drift and it proves less.
-3. **Validate against the schemas where they are present**, i.e. option 1 with
-   the skip made explicit and the run recorded as evidence rather than assumed.
+1. **A dedicated CI job fetches the three official schemas** from
+   `https://ekuatia.set.gov.py/sifen/xsd/` — `DE_v150.xsd`, `DE_Types_v150.xsd`,
+   `xmldsig-core-schema.xsd` — into a job-local directory that is never
+   committed and never cached across runs.
+2. **The job asserts the fetch before it validates.** HTTP status and a minimum
+   byte size per file, because a captive-portal HTML error page is a 200 with
+   the wrong bytes. A fetch that does not produce all three schemas **fails the
+   job**; it does not degrade to a skip.
+3. **In that job the validation is required, not skippable.** The ordinary
+   developer and local run skips the schema-validation suite when the schemas
+   are absent, and that skip is explicit and visible. The dedicated job runs the
+   same suite with the skip disabled, so **a green run can never be the product
+   of having validated nothing**.
+4. **The run is recorded in `docs/10-qa/CI-EVIDENCE.md`** with the run id, the
+   revision, the three artifact sizes and the number of validation cases
+   executed — so the claim "it validates against the official XSD" is checkable
+   rather than asserted.
+5. **A missing schema is a gate failure, not a silent pass.** Without (2) and
+   (3) a green job would be indistinguishable from a job that validated nothing,
+   which is the failure mode this option exists to prevent.
 
-**This Story must not start its validation implementation until that choice is
-made**, because it determines the test architecture.
+The rejected alternatives, and why:
+
+- **Derive a local subset.** No network and no vendoring, but it is our schema,
+  not DNIT's, so it can drift from the official constraints and it proves less
+  than the thing the acceptance criterion names.
+- **Fetch in the ordinary test run.** It would make every developer run and
+  every unrelated CI job depend on DNIT being reachable, and a network failure
+  would look like a code failure.
 
 ## In Scope
 
@@ -171,10 +188,18 @@ made**, because it determines the test architecture.
 - [ ] Every enumerated field carries a value the schema allows, and no value is
       emitted that §21.5 does not record.
 - [ ] No validity date precedes 2018-05-01.
-- [ ] The generated document **validates against the official XSD** under the
-      strategy the maintainer chooses, and that validation runs in a gate.
+- [ ] A dedicated CI job fetches the three official schemas, asserts each fetch
+      (HTTP status and a minimum size), and runs the schema-validation suite
+      with the skip **disabled**, so a green run cannot be the product of
+      validating nothing.
+- [ ] The generated document validates against the official XSD in that job.
 - [ ] A malformed document fails that validation, so the gate is proven to
       discriminate rather than to pass everything.
+- [ ] The run is recorded in `docs/10-qa/CI-EVIDENCE.md` with the run id, the
+      revision, the three artifact sizes and the number of validation cases
+      executed.
+- [ ] A fetch that does not produce all three schemas fails the job rather than
+      degrading to a skip.
 - [ ] The generator is deterministic: the same invoice and the same clock
       produce byte-identical XML.
 - [ ] No fiscal content is logged at CONFIDENTIAL or above (PRD §41).
@@ -213,9 +238,8 @@ timbrado data; where that data is stored is FISC-011's scope.
 
 ## Implementation Summary
 
-_Not implemented._ The contract is pinned; the validation strategy decision is
-open and blocks the acceptance criterion, not the implementation of the
-generator.
+_Not implemented._ The contract is pinned and the validation strategy is
+decided, so nothing blocks the implementation any more.
 
 ## Verification
 
@@ -248,8 +272,10 @@ Planned, once the validation strategy is chosen:
   validation rules, so a later note may change what this Story encodes.
 - **The Manual's tables are unread**, so enumeration _semantics_ are not pinned
   — only the allowed values.
-- **The validation strategy is undecided** (§19 question 9), so the acceptance
-  criterion is not yet reachable.
+- **The validation gate depends on DNIT being reachable.** The dedicated job
+  fetches the schemas from `ekuatia.set.gov.py`; if DNIT is down the job fails
+  rather than skipping, which is deliberate but is a real external dependency of
+  the gate.
 - **The timbrado's storage model is not this Story's**, so the generator
   consumes a six-field sequence it does not own.
 

@@ -226,8 +226,10 @@ candidate 1 exists.
       enumerations, the scalar patterns for CDC/RUC/timbrado/series/document
       number/dates/money, and the `rDE` (4 children) and `tDE` (11 children)
       structures. **One decision blocks the acceptance criterion, not the
-      implementation**: the schemas are copyrighted and must not be vendored, so
-      the validation strategy is open (§19 question 9). **Still unretrieved:
+      implementation**: the schemas are copyrighted and must not be vendored.
+      **Decided 2026-10-04**: a dedicated CI job fetches the three schemas,
+      asserts each fetch, and runs the validation with the skip disabled, so a
+      green run cannot come from having validated nothing. **Still unretrieved:
       Notas Técnicas 26/27 and the Manual's tables**, so enumeration semantics
       are not pinned and a later note may change a validation rule.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
