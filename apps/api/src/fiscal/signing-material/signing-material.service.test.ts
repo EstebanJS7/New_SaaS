@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/require-await */
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { buildTestPkcs12, extractSigningMaterial, TEST_PKCS12_PASSWORD } from "@newsaas/fiscal";
+import { extractSigningMaterial } from "@newsaas/fiscal";
+import { buildTestPkcs12, TEST_PKCS12_PASSWORD } from "@newsaas/fiscal/testing";
 import { InMemorySecretStore } from "@newsaas/secret-store";
 import {
   FISCAL_SIGNING_MATERIAL_AMBIGUOUS_CERTIFICATE_MESSAGE,
@@ -384,6 +385,44 @@ describe("FiscalSigningMaterialService.upload", () => {
       code: "VALIDATION_FAILED",
       message: FISCAL_SIGNING_MATERIAL_AMBIGUOUS_CERTIFICATE_MESSAGE,
     });
+  });
+
+  it("stores a row whose secret fields are exactly the pinned shape", async () => {
+    const subject = makeSubject();
+    await subject.service.upload({
+      environment: "TEST",
+      container: await testContainer(),
+      password: TEST_PKCS12_PASSWORD,
+    });
+
+    const row = subject.rows[0];
+    // The certificate is public material and the private key is not: the row
+    // carries the PEM and an opaque reference, never the key itself.
+    expect(row.certificatePem).toMatch(/^-----BEGIN CERTIFICATE-----/);
+    expect(row.credentialRef).toMatch(/^fsk_/);
+    expect(Object.keys(row).sort()).toEqual(
+      [
+        "certificateFingerprintSha256",
+        "certificatePem",
+        "certificateSerial",
+        "certificateSubject",
+        "createdAt",
+        "credentialRef",
+        "environment",
+        "id",
+        "keyAlgorithm",
+        "notAfter",
+        "notBefore",
+        "retiredAt",
+        "retiredByUserProfileId",
+        "retirementReason",
+        "status",
+        "tenantId",
+        "updatedAt",
+        "uploadedByUserProfileId",
+      ].sort()
+    );
+    expect(JSON.stringify(row)).not.toContain("PRIVATE KEY");
   });
 
   it("maps a key that does not match the certificate to its own message", async () => {

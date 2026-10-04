@@ -42,6 +42,7 @@ export type Pkcs12ExtractionFailure =
   | "AMBIGUOUS_CERTIFICATE"
   | "UNSUPPORTED_KEY"
   | "KEY_CERTIFICATE_MISMATCH"
+  | "CERTIFICATE_NOT_YET_VALID"
   | "CERTIFICATE_EXPIRED";
 
 export class Pkcs12ExtractionError extends Error {
@@ -208,7 +209,12 @@ async function readPrivateKey(
  * Throws {@link Pkcs12ExtractionError} with a typed `failure` on every rejection
  * path: an unreadable container, a wrong password, a missing or ambiguous
  * certificate, a non-X.509 certificate bag, a missing or unsupported key, a key
- * that does not match the certificate, and an expired certificate.
+ * that does not match the certificate, a certificate that is not yet valid, and
+ * an expired certificate.
+ *
+ * Both ends of the validity window are enforced. A certificate that is not yet
+ * valid is refused here rather than accepted and discovered at the first
+ * signature, which is where DNIT would reject it.
  */
 export async function extractSigningMaterial(
   args: ExtractSigningMaterialArgs
@@ -240,6 +246,12 @@ export async function extractSigningMaterial(
   }
 
   const now = args.now ?? new Date();
+  // `validFromDate` is inclusive and `validToDate` is exclusive: a certificate
+  // is usable from the instant it becomes valid up to, but not including, the
+  // instant it expires.
+  if (certificate.validFromDate.getTime() > now.getTime()) {
+    fail("CERTIFICATE_NOT_YET_VALID", "The PKCS#12 certificate is not valid yet.");
+  }
   if (certificate.validToDate.getTime() <= now.getTime()) {
     fail("CERTIFICATE_EXPIRED", "The PKCS#12 certificate has expired.");
   }

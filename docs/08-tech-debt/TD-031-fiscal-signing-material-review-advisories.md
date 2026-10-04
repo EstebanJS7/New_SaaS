@@ -47,7 +47,8 @@ inside the lineage record is the authoritative wording.
 
 ## Debt
 
-Thirteen advisories, none blocking:
+Thirteen advisories, none blocking. Four are now resolved and marked below; the
+resolution is described under "Resolved — the four recommended-first items".
 
 ### From `review-79b1daf60f30935c` — `packages/secret-store`
 
@@ -98,11 +99,11 @@ test scaffolding in the package's public surface, and a subpath export
 
 ### From `review-7490892a52aa3fa8` — the HTTP surface
 
-| Id                            | Severity   | Location                                                                          |
-| ----------------------------- | ---------- | --------------------------------------------------------------------------------- |
-| `R3-FSTPART-CODEPREFIX`       | WARNING    | `apps/api/src/fiscal/signing-material/signing-material.pipe.ts:88-95`             |
-| `R3-NO-PROD-SIZE-CODE-TEST`   | WARNING    | `apps/api/src/fiscal/signing-material/signing-material.integration.test.ts:74-86` |
-| `R3-STORE-FIELD-NOT-ASSERTED` | SUGGESTION | `apps/api/src/fiscal/signing-material/signing-material.integration.test.ts:50-67` |
+| Id                            | Severity   | Location                                                                                                                                                |
+| ----------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `R3-FSTPART-CODEPREFIX`       | WARNING    | `apps/api/src/fiscal/signing-material/signing-material.pipe.ts:88-95`                                                                                   |
+| `R3-NO-PROD-SIZE-CODE-TEST`   | WARNING    | `apps/api/src/fiscal/signing-material/signing-material.integration.test.ts:74-86`                                                                       |
+| `R3-STORE-FIELD-NOT-ASSERTED` | SUGGESTION | `apps/api/src/fiscal/signing-material/signing-material.integration.test.ts:50-67` — **resolved** (the service test now asserts the row's exact key set) |
 
 `R3-FSTPART-CODEPREFIX` is the fragile one: the pipe decides "this is the
 multipart size error" by checking that the thrown error's `code` **starts with

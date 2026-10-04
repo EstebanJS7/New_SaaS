@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import supertest from "supertest";
-import { buildTestPkcs12, TEST_PKCS12_PASSWORD } from "@newsaas/fiscal";
+import { buildTestPkcs12, TEST_PKCS12_PASSWORD } from "@newsaas/fiscal/testing";
 import { bootTestApp, type BootedTestApp } from "../../../test/support/boot-test-app.js";
 import { seedRbacActor, seedRoleWithKeys } from "../../../test/support/rbac-fixture.js";
 import { FISCAL_PERMISSIONS } from "../fiscal.permissions.js";
@@ -157,6 +157,7 @@ describe("Fiscal signing material HTTP boundary", () => {
       .field("password", TEST_PKCS12_PASSWORD)
       .field("environment", "TEST")
       .expect(400);
+    // Above the per-route cap, refused by the pipe's own check.
     const oversized = Buffer.alloc(MAX_CONTAINER_BYTES + 1);
     await supertest(booted.app.getHttpServer())
       .post(API)
@@ -165,5 +166,32 @@ describe("Fiscal signing material HTTP boundary", () => {
       .field("environment", "TEST")
       .attach("file", oversized, { filename: "large.p12", contentType: "application/x-pkcs12" })
       .expect(413);
+  });
+
+  it("maps the global multipart ceiling to 413 rather than 500", async () => {
+    // Above the global Fastify ceiling (2 MiB, the largest branding asset), so
+    // @fastify/multipart itself raises FST_REQ_FILE_TOO_LARGE. This is the path
+    // that a code-prefix check missed, turning a size refusal into a 500.
+    const aboveGlobalCeiling = Buffer.alloc(2 * 1024 * 1024 + 1);
+
+    const refused = await supertest(booted.app.getHttpServer())
+      .post(API)
+      .set("Cookie", permitted.cookie)
+      .field("password", TEST_PKCS12_PASSWORD)
+      .field("environment", "TEST")
+      .attach("file", aboveGlobalCeiling, {
+        filename: "huge.p12",
+        contentType: "application/x-pkcs12",
+      })
+      .expect(413);
+
+    // The status alone does not prove the pipe mapped it: an unmapped Fastify
+    // 413 would also arrive as 413. The MESSAGE is what distinguishes the two
+    // paths, because the pipe's own refusal carries the domain's wording while
+    // a propagated framework error carries "request file too large".
+    expect(errorDto(refused).error).toMatchObject({
+      code: "PAYLOAD_TOO_LARGE",
+      message: "Signing container exceeds the maximum allowed upload size.",
+    });
   });
 });

@@ -192,7 +192,9 @@ certificate cannot come from pkijs.
 The maintainer's chosen resolution: **the container is still assembled in the
 test, and only the certificate and key come from committed base64 DER.**
 
-- `packages/fiscal/src/signing-material/pkcs12.fixture.ts` holds a throwaway,
+- `packages/fiscal/src/testing.ts` is the package's **test-only entry point**
+  (`@newsaas/fiscal/testing`); the fixture is not part of the package index.
+  `packages/fiscal/src/signing-material/pkcs12.fixture.ts` holds a throwaway,
   self-signed RSA-2048 certificate and its matching key (valid 2026-2036,
   `extendedKeyUsage = clientAuth` to mirror the baseline's dual use), generated
   once with OpenSSL and labelled as replaceable test material.
@@ -452,12 +454,14 @@ structurally, so no adapter class was needed. `apiEnvSchema` refuses to boot in
 production without `SECRET_STORE_MASTER_KEYS`.
 
 **The PKCS#12 boundary.** `extractSigningMaterial` turns the operator's
-container into the certificate PEM and the PKCS#8 private key PEM, with seven
-typed failure reasons. `pkijs` parses the container only; the certificate
-standard is enforced by `node:crypto` — `X509Certificate.checkPrivateKey` proves
-the pair, `modulusLength` enforces the pinned RSA minimum, `validToDate`
-enforces expiry. Nothing from the underlying library, the password or a key byte
-can reach a caller's message or a log.
+container into the certificate PEM and the PKCS#8 private key PEM, with eight
+typed failure reasons — including both ends of the certificate's validity
+window, so a certificate that is not yet valid is refused at upload rather than
+discovered at the first signature. `pkijs` parses the container only; the
+certificate standard is enforced by `node:crypto` —
+`X509Certificate.checkPrivateKey` proves the pair, `modulusLength` enforces the
+pinned RSA minimum, `validToDate` enforces expiry. Nothing from the underlying
+library, the password or a key byte can reach a caller's message or a log.
 
 **The aggregate.** `FiscalSigningMaterialService.upload` parses outside any
 transaction, then rotates in one: it retires the previous `ACTIVE` material,
@@ -581,9 +585,10 @@ Planned:
 
 ## Technical Debt
 
-- [[TD-031]] — the thirteen non-blocking advisories from this Story's review
-  chain, with the two certificate-check edges and the fixture export recommended
-  first.
+- [[TD-031]] — the review chain's thirteen non-blocking advisories. **Four are
+  resolved** (both certificate-check edges, the fixture export moved to
+  `@newsaas/fiscal/testing`, and the multipart size mapping, whose advisory
+  premise turned out to be false and is corrected there); nine remain.
 - The `/app/fiscal` panel for the three routes is follow-up work, tracked when
   the surface is designed.
 - A KEK rewrap command, if key custody ever needs scheduled rotation.
@@ -600,8 +605,10 @@ Planned:
 
 ## Review Record
 
-The native review closed as a **chain of seven approved candidates**, one per
-work unit, because the whole slice exceeds the reviewer's context budget:
+The native review closed as a **chain of eight approved candidates**, one per
+work unit, because the whole slice exceeds the reviewer's context budget. The
+eighth covers this closure commit and the formatting fix that followed the first
+CI run; a ninth closes the four recommended-first advisories:
 
 ```text
 b05d411..bc2d010  review-71824c524a5c9285  low     no lenses  approved on START

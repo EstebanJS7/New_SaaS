@@ -152,4 +152,43 @@ describe("extractSigningMaterial", () => {
       })
     ).rejects.toMatchObject({ failure: "CERTIFICATE_EXPIRED" });
   });
+
+  it("refuses a certificate that is not valid yet", async () => {
+    const container = await buildTestPkcs12({ password: TEST_PKCS12_PASSWORD });
+
+    // A certificate that is not yet valid is refused at upload rather than
+    // accepted and discovered at the first signature, where DNIT would reject it.
+    await expect(
+      extractSigningMaterial({
+        container: new Uint8Array(container),
+        password: TEST_PKCS12_PASSWORD,
+        now: new Date("2026-01-01T00:00:00.000Z"),
+      })
+    ).rejects.toMatchObject({ failure: "CERTIFICATE_NOT_YET_VALID" });
+  });
+
+  it("treats the validity window as inclusive at the start and exclusive at the end", async () => {
+    const container = await buildTestPkcs12({ password: TEST_PKCS12_PASSWORD });
+    const notBefore = new Date(TEST_CERTIFICATE_NOT_BEFORE);
+    const notAfter = new Date(TEST_CERTIFICATE_NOT_AFTER);
+    const readAt = (now: Date) =>
+      extractSigningMaterial({
+        container: new Uint8Array(container),
+        password: TEST_PKCS12_PASSWORD,
+        now,
+      });
+
+    // One millisecond before it becomes valid: refused.
+    await expect(readAt(new Date(notBefore.getTime() - 1))).rejects.toMatchObject({
+      failure: "CERTIFICATE_NOT_YET_VALID",
+    });
+    // Exactly at notBefore: usable.
+    await expect(readAt(notBefore)).resolves.toMatchObject({ keyAlgorithm: TEST_KEY_ALGORITHM });
+    // One millisecond before it expires: still usable.
+    await expect(readAt(new Date(notAfter.getTime() - 1))).resolves.toMatchObject({
+      keyAlgorithm: TEST_KEY_ALGORITHM,
+    });
+    // Exactly at notAfter: expired.
+    await expect(readAt(notAfter)).rejects.toMatchObject({ failure: "CERTIFICATE_EXPIRED" });
+  });
 });

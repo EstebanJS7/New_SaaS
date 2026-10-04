@@ -58,6 +58,8 @@ export type {
   ExtractedSigningMaterial,
   Pkcs12ExtractionFailure,
 } from "./signing-material/pkcs12.js";
+// The PKCS#12 test fixture is NOT exported here: test scaffolding is not part of
+// the package's public contract. It lives at `@newsaas/fiscal/testing`.
 export {
   buildTestPkcs12,
   TEST_PKCS12_PASSWORD,

@@ -87,12 +87,18 @@ export class SigningMaterialPipe {
   }
 
   private isMultipartSizeError(error: unknown): boolean {
+    // Detect by status, not by a code prefix. `@fastify/error` sets
+    // `statusCode` alongside `code`, and `@fastify/multipart` raises four
+    // different 413s: `FST_REQ_FILE_TOO_LARGE` (the file exceeds the global
+    // ceiling), `FST_FILES_LIMIT`, `FST_FIELDS_LIMIT` and `FST_PARTS_LIMIT`.
+    // Matching an `FST_PART` prefix caught only the last one, so an oversized
+    // file surfaced as a 500 instead of a 413; the status is the signal that
+    // survives a code rename.
     return (
       typeof error === "object" &&
       error !== null &&
-      "code" in error &&
-      typeof (error as { code?: unknown }).code === "string" &&
-      (error as { code: string }).code.startsWith("FST_PART")
+      "statusCode" in error &&
+      (error as { statusCode?: unknown }).statusCode === 413
     );
   }
 }
