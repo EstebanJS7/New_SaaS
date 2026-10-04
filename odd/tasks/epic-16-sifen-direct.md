@@ -229,9 +229,17 @@ candidate 1 exists.
       implementation**: the schemas are copyrighted and must not be vendored.
       **Decided 2026-10-04**: a dedicated CI job fetches the three schemas,
       asserts each fetch, and runs the validation with the skip disabled, so a
-      green run cannot come from having validated nothing. **Still unretrieved:
-      Notas Técnicas 26/27 and the Manual's tables**, so enumeration semantics
-      are not pinned and a later note may change a validation rule.
+      green run cannot come from having validated nothing. **Retrieval completed
+      2026-10-04**: baseline §22 carries the Manual's field-level rules (73
+      `D`-codes; the receptor block's conditional structure; the
+      test-environment literal for `dNomEmi`; the cross-field invariants), four
+      companion tables were fetched as official XSDs, and the Nota Técnica set
+      is **complete** (23-27; 27 is the latest, 28 is a 404). NT 26 excludes
+      four B2G validation rules and NT 27 amends the nomination _event_ format,
+      so **neither changes a DE rule FISC-008 must implement**. **Still open:
+      four table CONTENTS** (`D113` distritos, `D115` ciudades, `D104` régimen,
+      `D131` actividades económicas), which the generator needs to populate
+      those fields from a validated catalogue.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
