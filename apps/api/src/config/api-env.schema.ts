@@ -111,6 +111,21 @@ export const apiEnvSchema = z
     STORAGE_S3_ENDPOINT: z.string().optional(),
     STORAGE_S3_REGION: z.string().optional(),
     STORAGE_S3_KEY_PREFIX: z.string().optional(),
+    /**
+     * Versioned platform master keys for the tenant secret boundary, as
+     * `<version>:<base64-32-bytes>` entries (ADR-005). Optional in development
+     * and tests, where the in-memory driver is selected; REQUIRED in production
+     * by the gate below, because tenant signing material must never be held only
+     * in process memory. This value is a key, so it has no development default,
+     * is never logged, and its format is validated by the boundary's own
+     * fail-closed parser rather than a second copy here.
+     */
+    SECRET_STORE_MASTER_KEYS: z.string().optional(),
+    /**
+     * Master-key version new writes use. Optional: the highest declared version
+     * is current, so adding a key to the list is a complete rotation.
+     */
+    SECRET_STORE_MASTER_KEY_VERSION: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && env.FISCAL_PROVIDER === undefined) {
@@ -145,6 +160,18 @@ export const apiEnvSchema = z
         code: z.ZodIssueCode.custom,
         path: ["BRANDING_ASSET_PUBLIC_BASE_URL"],
         message: "BRANDING_ASSET_PUBLIC_BASE_URL must be a public origin in production.",
+      });
+    }
+
+    // Tenant signing material must live in an encrypted column, never in
+    // process memory. Without a master key the secret boundary silently selects
+    // the in-memory driver, so a production process would accept signing
+    // material it cannot persist or decrypt across restarts.
+    if ((env.SECRET_STORE_MASTER_KEYS ?? "").trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["SECRET_STORE_MASTER_KEYS"],
+        message: "SECRET_STORE_MASTER_KEYS is required in production.",
       });
     }
 

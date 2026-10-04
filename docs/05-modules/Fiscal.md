@@ -1,8 +1,8 @@
 ---
 type: module
 status: implemented
-epic: EPIC-15
-updated: 2026-10-03
+epic: EPIC-15 + EPIC-16
+updated: 2026-10-04
 ---
 
 # Fiscal
@@ -18,18 +18,22 @@ duplicates no invoice data and never imports Billing ([[DEC-046]], [[DEC-048]],
 
 Implemented by [[FISC-002]] (data foundation), [[FISC-003]] (provider port and
 fake), [[FISC-004]] (queued submission and the issue command), [[FISC-005]]
-(cancellation hand-off, read contract and staff surface) and [[TD-028]] (the
-recovery sweep). The documented behavior is implemented behavior, not a claim of
-production readiness: the only provider is a deterministic fake, and no real
-SIFEN adapter exists until [[EPIC-16]].
+(cancellation hand-off, read contract and staff surface), [[TD-028]] (the
+recovery sweep) and [[FISC-007]] (the tenant signing-material boundary). The
+documented behavior is implemented behavior, not a claim of production
+readiness: the only provider is a deterministic fake, and no real SIFEN adapter
+exists until the rest of [[EPIC-16]].
 
 ## Owned tables
 
-| Table                    | Purpose                                                                                                                                                                                                                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `fiscal_document`        | The tenant-scoped submission record: source `invoice_id`, `provider`, `status`, provider references (`external_id`, `cdc`), XML/KuDE storage keys, sanitized request/response snapshots, attempt counters, last-error fields and the `submitted_at` / `resolved_at` / `cancelled_at` timestamps. |
-| `fiscal_provider`        | The provider vocabulary enum: `THIRD_PARTY`, `SIFEN_DIRECT`, `FAKE`.                                                                                                                                                                                                                             |
-| `fiscal_document_status` | The lifecycle enum: `PENDING`, `QUEUED`, `SENDING`, `SUBMITTED`, `APPROVED`, `REJECTED`, `ERROR`, `CANCEL_PENDING`, `CANCELLED`. The SIFEN `SIGNING` stage is deliberately absent because XAdES signing is a real-adapter concern (PRD §23, [[DEC-047]]).                                        |
+| Table                                                           | Purpose                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fiscal_document`                                               | The tenant-scoped submission record: source `invoice_id`, `provider`, `status`, provider references (`external_id`, `cdc`), XML/KuDE storage keys, sanitized request/response snapshots, attempt counters, last-error fields and the `submitted_at` / `resolved_at` / `cancelled_at` timestamps.                |
+| `fiscal_provider`                                               | The provider vocabulary enum: `THIRD_PARTY`, `SIFEN_DIRECT`, `FAKE`.                                                                                                                                                                                                                                            |
+| `fiscal_document_status`                                        | The lifecycle enum: `PENDING`, `QUEUED`, `SENDING`, `SUBMITTED`, `APPROVED`, `REJECTED`, `ERROR`, `CANCEL_PENDING`, `CANCELLED`. The SIFEN `SIGNING` stage is deliberately absent because XAdES signing is a real-adapter concern (PRD §23, [[DEC-047]]).                                                       |
+| `tenant_secret`                                                 | **RESTRICTED.** One sealed tenant secret: the AES-256-GCM ciphertext, the per-secret data key wrapped by the platform master key, and the master-key version that wrapped it. No plaintext, no unwrapped key and no password is ever stored, and no log, DTO or audit payload may carry a column of this table. |
+| `tenant_fiscal_signing_material`                                | **INTERNAL.** The tenant's SIFEN certificate and its metadata, plus an opaque `credential_ref` into `tenant_secret` for the private key. A partial unique index permits at most one `ACTIVE` material per tenant and environment; retirement destroys the stored key and keeps the row as the record.           |
+| `fiscal_signing_environment` / `fiscal_signing_material_status` | The `TEST`/`PRODUCTION` environment enum and the `ACTIVE`/`RETIRED` status enum. Evolve additively only.                                                                                                                                                                                                        |
 
 `fiscal_document` is tenant-scoped, carries the composite `(tenant_id, id)`
 ownership key and a composite `RESTRICT` foreign key to `invoice`. It duplicates
@@ -39,18 +43,29 @@ tenant-ownership reference. Migrations: `20261002000001_fiscal_data_foundation`,
 `20261003000001_fiscal_document_transition_guard` and
 `20261004000001_fiscal_document_cancellation_guard`.
 
+`tenant_secret` and `tenant_fiscal_signing_material` are tenant-scoped with a
+composite `(tenant_id, id)` ownership key, and the secret table's reads are
+scoped by tenant so a key-composition bug cannot become a cross-tenant read.
+Migration: `20261004000002_fiscal_signing_material`. Three CHECK constraints
+hold the retirement biconditional, the mandatory retirement reason and the
+validity window; the one-`ACTIVE`-material rule is a partial unique index, which
+Prisma cannot express and the migration therefore creates in raw SQL.
+
 ## Routes
 
 Every route requires the `fiscal` entitlement and its listed permission; the
 entitlement is asserted before the granular permission, reads included. Tenant
 identity comes from authenticated server context, not caller input.
 
-| Route                               | Permission             | Contract                                                                                                                                                            |
-| ----------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /fiscal-documents`            | `fiscal.invoice.issue` | Create and queue a document from one confirmed in-tenant invoice (`201`); body carries the invoice reference only. A second live document is `409`.                 |
-| `GET /fiscal-documents`             | `fiscal.read`          | List tenant documents, ordered `createdAt desc`; optional `status` filter with no implicit default. There is no pagination.                                         |
-| `GET /fiscal-documents/:id`         | `fiscal.read`          | Read one document; foreign and unknown IDs share a byte-equivalent `404`.                                                                                           |
-| `POST /fiscal-documents/:id/cancel` | `fiscal.invoice.issue` | Cancel (`200`) with a required reason of at most 500 characters. An already cancelled document replays as `200`; a `SENDING` document is `409`. No idempotency key. |
+| Route                                      | Permission                       | Contract                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------ | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /fiscal-documents`                   | `fiscal.invoice.issue`           | Create and queue a document from one confirmed in-tenant invoice (`201`); body carries the invoice reference only. A second live document is `409`.                                                                                                                                                                                       |
+| `GET /fiscal-documents`                    | `fiscal.read`                    | List tenant documents, ordered `createdAt desc`; optional `status` filter with no implicit default. There is no pagination.                                                                                                                                                                                                               |
+| `GET /fiscal-documents/:id`                | `fiscal.read`                    | Read one document; foreign and unknown IDs share a byte-equivalent `404`.                                                                                                                                                                                                                                                                 |
+| `POST /fiscal-documents/:id/cancel`        | `fiscal.invoice.issue`           | Cancel (`200`) with a required reason of at most 500 characters. An already cancelled document replays as `200`; a `SENDING` document is `409`. No idempotency key.                                                                                                                                                                       |
+| `POST /fiscal/signing-material`            | `fiscal.signing_material.manage` | Load a signing material (`201`). `multipart/form-data` with `file` (a PKCS#12, at most 64 KiB), `password` and `environment` (`TEST`/`PRODUCTION`); part order is not assumed. A material already `ACTIVE` for that environment is retired and its stored key destroyed in the same transaction. Every rejection carries its own message. |
+| `GET /fiscal/signing-material`             | `fiscal.signing_material.manage` | List the tenant's materials, newest first. Metadata only: the `credentialRef`, the certificate PEM and the private key are never returned.                                                                                                                                                                                                |
+| `POST /fiscal/signing-material/:id/retire` | `fiscal.signing_material.manage` | Retire (`200`) with a required reason of at most 500 characters. The stored private key is destroyed in the same transaction and the row survives as the record. A repeat is `409`; an unknown or foreign id is a byte-equivalent `404`.                                                                                                  |
 
 There is no update, delete, retry, status patch or reopen route. Cancellation
 reuses `fiscal.invoice.issue` because no separate cancel key was accepted
@@ -223,6 +238,42 @@ can release the invoice's slot at the partial unique index. The transaction
 handle crosses the boundary through a minimal structural read type, so Billing
 never imports the Fiscal package or its persistence types.
 
+## The signing-material boundary
+
+SIFEN Direct makes this system the issuer, so the tenant's signing private key
+enters our boundary. [[ADR-005]] introduces a reusable `SecretStore` platform
+capability (`packages/secret-store`) and [[DEC-053]] records the choices behind
+it: envelope encryption in PostgreSQL, a PKCS#12 plus its password as the
+operator's artifact, and audited staff routes as the only entry point.
+
+The rules that hold:
+
+- **One stored secret per material.** The upload decrypts the container in
+  memory, validates it and keeps only the private key; the password has no
+  lifetime in the system.
+- **The certificate is public material.** It is transmitted inside every signed
+  DE, so it is stored inline with its metadata; the private key is RESTRICTED
+  and lives behind an opaque `credentialRef`.
+- **Retirement destroys the key.** A material moves `ACTIVE -> RETIRED` with an
+  actor, a timestamp and a reason, and its ciphertext is deleted in the same
+  transaction. Rotation applies the same rule to the material it replaces, so a
+  material out of service never keeps a usable key. Rolling back therefore means
+  re-uploading the operator's container, which the operator still holds.
+- **Nothing leaks.** The private key is never returned by a DTO, never placed in
+  `AuditLog.metadata`, never interpolated into an error message and never
+  logged, failure paths included. Audit rows carry identifiers only.
+- **The master key is a versioned ring.** `SECRET_STORE_MASTER_KEYS` plus
+  `SECRET_STORE_MASTER_KEY_VERSION`; new writes use the current version and
+  reads use the version recorded in the row, so a KEK rotation needs no data
+  migration. `apiEnvSchema` refuses to boot in production without a master key,
+  and the composition root refuses to fall back to the in-memory driver there.
+
+The container itself is parsed by `packages/fiscal`'s `extractSigningMaterial`,
+which uses `pkijs` only for PKCS#12 container parsing; the certificate standard
+is enforced by `node:crypto` (`X509Certificate.checkPrivateKey` for the pair,
+`modulusLength` for the pinned RSA minimum, `validToDate` for expiry). Node
+cannot open a PKCS#12 in any form, which is why that dependency exists at all.
+
 ## Staff surface
 
 `/app/fiscal` provides the status-filtered document list, the document detail
@@ -242,7 +293,12 @@ rule.
 ## Does Not Own
 
 - **A real fiscal provider, SIFEN Direct, XAdES signing or KuDE rendering** —
-  [[EPIC-16]]; PRD §23 forbids implementing protocol details from memory.
+  the rest of [[EPIC-16]]; PRD §23 forbids implementing protocol details from
+  memory.
+- **The secret-store capability itself** — a reusable platform boundary in
+  `packages/secret-store` ([[ADR-005]]); Fiscal consumes the port and never
+  reaches a concrete driver.
+- **Timbrado and numbering ranges** — [[FISC-011]].
 - **The invoice aggregate, its numbering or its transitions** — Billing,
   [[EPIC-14]] and [[DEC-042]].
 - **The portal fiscal document surface** — deferred ([[TD-022]]).
@@ -258,14 +314,18 @@ Accepted mutations write one co-committed audit row:
 `fiscal.document.cancellation_failed` from the API, and
 `fiscal.document.submitted`, `fiscal.document.submission_failed` and
 `fiscal.document.submission_requeued` from the worker with `actorType: SYSTEM`.
-Audit metadata carries a schema version, the outcome and field names only —
-never the cancellation reason text and never a provider payload. Reads are not
-audited.
+The signing-material commands write `fiscal.signing_material.uploaded` and
+`fiscal.signing_material.retired`. Audit metadata carries a schema version, the
+outcome and field names only — never the cancellation reason text, never a
+provider payload, never a certificate PEM, a private key or a `credentialRef`.
+Reads are not audited.
 
 Provider references (`external_id`, `cdc`, storage keys) and the
-request/response snapshots are CONFIDENTIAL; status, attempt counters and
-timestamps are INTERNAL (PRD §41). Logs and audit carry IDs and field names
-only.
+request/response snapshots are CONFIDENTIAL; status, attempt counters,
+timestamps and the signing certificate's metadata are INTERNAL (PRD §41). A
+tenant's signing private key is **RESTRICTED**: `tenant_secret` stores only
+ciphertext, the store never logs, and no DTO exposes it. Logs and audit carry
+IDs and field names only.
 
 ## Settings
 
@@ -282,11 +342,15 @@ because they are deployment concerns rather than tenant behavior.
   `schema-fiscal-cancellation-guard.test.ts` and `reference-seed.test.ts` —
   tables, constraints, the trigger catalogue, the transition graph per edge and
   the seed probes. Database suite: **21 files / 416 tests**.
-- `packages/fiscal/src/*` — the port, the fake's ordered scripts, the sanitizer
-  and the queue contract. Fiscal suite: **5 files / 50 tests**.
+- `packages/fiscal/src/*` — the port, the fake's ordered scripts, the sanitizer,
+  the queue contract and the PKCS#12 extraction with its base64 fixture. Fiscal
+  suite: **6 files / 60 tests**.
+- `packages/secret-store/src/*` — the port, the envelope crypto, the key ring,
+  the two drivers and the opaque key factory. Suite: **5 files / 50 tests**.
 - `apps/api/src/fiscal/*` — the issue, cancel and read integration suites (**21
+  cases**), the signing-material service (**22 cases**) and HTTP boundary (**4
   cases**), the boundary rule, the producer deadline and the module composition.
-  API suite: **81 files / 1068 tests**.
+  API suite: **84 files / 1105 tests**.
 - `apps/worker/src/fiscal-submission/*` — the handler's claim, lease, outcome
   mapping and audit, the consumer, and the recovery sweep. Worker suite: **9
   files / 72 tests**.
@@ -297,11 +361,28 @@ because they are deployment concerns rather than tenant behavior.
 - `apps/api/test/live-pg-isolation.e2e-spec.ts` — the applied schema, the
   trigger catalogue, the transition graph per edge including the cancellation
   edges, and the `APPROVED -> CANCEL_PENDING -> CANCELLED` path: **213 cases**.
+- The FISC-007 integration suite runs against the in-memory database double,
+  which now models `tenant_secret` and `tenant_fiscal_signing_material`. The
+  partial unique index and the CHECK constraints are enforced by PostgreSQL
+  only, so they are covered by the migration itself rather than by that suite.
 
 ## Known limitations
 
 - The only provider is a deterministic fake. No real SIFEN adapter, XML,
-  signature or KuDE exists until [[EPIC-16]].
+  signature or KuDE exists until the rest of [[EPIC-16]].
+- **We own the master key.** Losing `SECRET_STORE_MASTER_KEYS` makes every
+  stored private key unrecoverable. Backup and custody of that value are an
+  operational requirement the code cannot satisfy.
+- No KEK rewrap command ships: a rotation adds a version and old rows keep
+  decrypting with the version recorded in their row.
+- The in-memory secret driver is the development default, so a development
+  environment loses stored material on restart. The production refusal is what
+  keeps that from being a deployment risk.
+- The signing-material test fixture is a self-assembled PKCS#12, not a PSC
+  artifact, so [[FISC-013]] must validate the extraction against a real
+  PSC-issued container during homologation.
+- The signing material has no browser surface yet: the three routes are API-only
+  and a `/app/fiscal` panel is follow-up work.
 - There is no operator-triggered re-drive: a document whose attempts are spent
   waits for the sweep's five-minute window ([[TD-029]]).
 - No `fiscal-ui` settings namespace ships, so PRD §38's namespace is

@@ -21,6 +21,7 @@ import { PurchasesModule } from "./purchases/purchases.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
 import { SalesModule } from "./sales/sales.module.js";
 import { SchedulingModule } from "./scheduling/scheduling.module.js";
+import { SecretsModule } from "./secret-store/secrets.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
 import { SuppliersModule } from "./suppliers/suppliers.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
@@ -43,6 +44,11 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     AuditModule,
     EntitlementsModule,
     StorageModule.forRoot(),
+    // EPIC-16 FISC-007 tenant secret boundary: the application-side composition
+    // root that selects the driver (ADR-005). It adds no APP_GUARD, so its
+    // position carries no guard-ordering contract; kept next to StorageModule
+    // because it is the same kind of platform capability.
+    SecretsModule.forRoot(),
     BrandingModule,
     SettingsModule,
     CustomersModule,

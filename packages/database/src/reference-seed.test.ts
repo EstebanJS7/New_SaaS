@@ -744,7 +744,9 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // non-sale movement command key, moving the seeded catalog 51 -> 52.
       // EPIC-14 BILL-001 adds the four `billing.*` keys (DEC-040), moving it
       // 52 -> 56. FISC-005b adds read-wide `fiscal.read` (D7), moving 56 -> 57.
-      permissions: 57,
+      // FISC-007 adds `fiscal.signing_material.manage` for the two owning roles
+      // (DEC-053/ADR-005), moving 57 -> 58.
+      permissions: 58,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,
