@@ -81,7 +81,8 @@ Chapter map, which is the navigation key for every later Story:
 and its index was retrieved in full.
 
 **Documento Electrónico, v150:** `DE_v150.xsd`, `DE_Types_v150.xsd`,
-`DE_Ekuatiai_v150.xsd`.
+`DE_Ekuatiai_v150.xsd`. **All three DE schemas were retrieved on 2026-10-04,
+including `DE_Types_v150.xsd`; §21 records their field-level facts.**
 
 **Recepción, v150:** `siRecepDE_v150.xsd`, `siRecepDE_Ekuatiai_v150.xsd`,
 `siRecepRDE_v150.xsd`, `siRecepRDE_Ekuatiai_v150.xsd`, `WS_SiRecepDE_v150.xsd`.
@@ -490,20 +491,30 @@ flag and treat the rules as pending DNIT, or be reframed.
 
 1. **Notas Técnicas 26 and 27.** The portal lists them; their clauses are
    unknown, and they may amend what NT 23/24/25 left.
-2. `DE_Types_v150.xsd`: per-field lengths, patterns and enumerations.
+2. ~~`DE_Types_v150.xsd`: per-field lengths, patterns and enumerations.~~
+   **Resolved 2026-10-04 — see §21.** 140 `simpleType`s with their enumerations,
+   the scalar patterns, and the `rDE`/`tDE` structures are now pinned from the
+   official schema.
 3. The full `dCodRes` catalogue from chapter 12.
 4. The WSDL documents: SOAP actions, bindings, header requirements.
 5. The batch size limit for asynchronous reception.
 6. The QR composition and the CSC's per-environment value.
 7. The tables' contents, and chapter 16's codifications.
 8. Whether the Prevalidador is usable in an automated pre-submission check.
+9. **How a test validates against the official XSDs without vendoring them.**
+   The schemas are copyrighted and §"Domain Invariants" of [[FISC-006]] forbids
+   committing them, so the validation strategy is a decision, not a detail:
+   fetch them in a dedicated job, derive a local subset, or validate against
+   them only where they are present. This is open as of 2026-10-04 and it blocks
+   [[FISC-008]]'s acceptance criterion, not its implementation.
 
-Resolved since the first pass, and no longer open: the signature profile, the
-certificate standard and its F1/F2 types, the transport stack, the endpoint
-list, the result model and its three states, the deadlines, the CDC-reuse rule,
-the timbrado and numbering model, the test environment and its test data, the
-contingency question — answered by DNIT's own statement that it is undefined —
-and **the clauses of Notas Técnicas 23, 24 and 25**.
+Resolved since the first pass, and no longer open: the field-level types and
+enumerations (§21), the signature profile, the certificate standard and its
+F1/F2 types, the transport stack, the endpoint list, the result model and its
+three states, the deadlines, the CDC-reuse rule, the timbrado and numbering
+model, the test environment and its test data, the contingency question —
+answered by DNIT's own statement that it is undefined — and **the clauses of
+Notas Técnicas 23, 24 and 25**.
 
 ## 20. Consequences for the epic's Stories
 
@@ -547,3 +558,144 @@ Retrieved **2026-10-03**:
 Located but **not retrieved**, each an open question above: Notas Técnicas 26
 and 27, `DE_Types_v150.xsd`, the WSDL files, the best-practices guide for
 sending DE, and the Prevalidador.
+
+## 21. Field-level types and enumerations — `DE_Types_v150.xsd` (retrieved 2026-10-04)
+
+**[R]** This section closes open question 2 of §19. FISC-006 recorded
+`DE_Types_v150.xsd` as **not retrieved**, which is exactly the artifact
+[[FISC-008]] needs: without it, no per-field length, pattern or enumeration was
+pinned, and a generated DE could not be validated.
+
+**Retrieval record.** All three DE schemas were fetched from the official
+directory <https://ekuatia.set.gov.py/sifen/xsd/> on 2026-10-04, HTTP 200, and
+their bytes were inspected rather than trusted by name:
+
+```text
+DE_Types_v150.xsd          66,452 bytes   <- the previously-open artifact
+DE_v150.xsd                66,190 bytes   <- re-retrieved; FISC-006 recorded 66,117 chars
+xmldsig-core-schema.xsd    10,339 bytes   <- matches FISC-006 exactly
+```
+
+The bytes are **not vendored**. `docs/06-fiscal/SIFEN-BASELINE.md` records
+citations and structural facts, not DNIT's copyrighted schemas.
+
+**Shape.** `DE_Types_v150.xsd` declares **140 `simpleType`s and zero
+`complexType`s**; the structures live in `DE_v150.xsd`, which declares **49
+`complexType`s and no top-level element**. Both files set
+`elementFormDefault="qualified"` and
+`targetNamespace="http://ekuatia.set.gov.py/sifen/xsd"`.
+
+### 21.1 The document root
+
+`rDE` is a `complexType`, not an element, and has exactly four children, all
+required and ordered:
+
+```text
+rDE
+  dVerFor     [1..1]  pattern [1][5][0]   -> pinned to 150 by pattern, not by enumeration
+  DE          [1..1]  type tDE
+  (anonymous) [1..1]  the ds:Signature placeholder
+  gCamFuFD    [1..1]  type tgCamFuFD      -> outside the signature, as §4 records
+```
+
+### 21.2 The `DE` body
+
+`tDE` has eleven children, in this order:
+
+```text
+dDVId        [1..1]  tDVer      check digit of the CDC
+dFecFirma    [1..1]  fecHhmmss  pattern \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d
+dSisFact     [1..1]
+gOpeDE       [1..1]  tgCOpeDE   operation: emission type, security code, issuer info
+gTimb        [1..1]  tgDTim     timbrado
+gDatGralOpe  [1..1]  tgDaGOC    general operation data
+gDtipDE      [1..1]  tgDtipDE   document-type specific
+gTotSub      [0..1]  tgTotSub   totals
+gCamGen      [0..1]  tgCamGen   general fields
+gCamDEAsoc   [0..99] tgCamDEAsoc associated documents
+```
+
+`gCamDEAsoc` at `0..99` confirms §4's upper bound. The order is schema-enforced:
+a DE with the same children in a different order is invalid, not merely
+unconventional.
+
+### 21.3 Identity, numbering and date patterns
+
+| Type                       | Pattern / bounds                                                    | Note                                                                      |
+| -------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `tCDC`                     | `[0-9]{2}([0-9]{7}[0-9A-D])[0-9]{34}`, `length=44`                  | the CDC is 44 characters; position 10 admits `A`–`D`                      |
+| `tRuc`                     | `minLength=3`, `maxLength=8`, `[1-9][0-9]*[0-9A-D]?`                | the DV letter is optional here, unlike the certificate's `RUCXXXXXXXXX-X` |
+| `tDVer`                    | `[0-9]`                                                             | one digit; used by `dDVId` and by the version fields                      |
+| `tdEst` / `tdPunExp`       | `[0-9]{3}`, `minLength=3`                                           | establishment and expedition point are **zero-padded to three digits**    |
+| `tdNumDoc`                 | `length=7`, `0+[1-9][0-9]*\|[1-9]+[0-9]+`                           | exactly seven digits, no leading zeros beyond the padding rule            |
+| `tdSerieNum`               | `[A-Z]{2}`                                                          | matches §13's series rule                                                 |
+| `tdNumTim` (via `dNumTim`) | see the manual                                                      | the timbrado number                                                       |
+| `tFecAAAAMMDD`             | `[2-9][0-9]{3}([0][1-9]\|[1][0-2])([0][0-9]\|[1-2][0-9]\|[3][0-1])` | `AAAAMMDD`, no separators                                                 |
+| `tFecAAAAMMDDguion`        | same with `-`                                                       | `AAAA-MM-DD`                                                              |
+| `tFecDDMMAAAAguion`        | `DD-MM-AAAA`                                                        |                                                                           |
+| `fecHhmmss`                | `\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d`                                    | `dFecFirma`, **no timezone suffix and no fractional seconds**             |
+| `tdFeIniT` / `tdFeIniS`    | `date`, `minInclusive=2018-05-01`                                   | no validity date may precede the SIFEN start                              |
+| `dNomRazSocial`            | `minLength=4`, `maxLength=60`                                       |                                                                           |
+
+### 21.4 Money and quantity patterns
+
+Every monetary field is a **decimal with an explicit scale**, so the XML must
+carry the right number of fraction digits per field rather than a single house
+style:
+
+| Type              | totalDigits | fractionDigits | Bounds                          |
+| ----------------- | ----------- | -------------- | ------------------------------- |
+| `tMontoBase`      | 23          | 8              | `0 .. 999999999999999.99999999` |
+| `tMontoBase4`     | 19          | 4              | `0 .. 999999999999999.9999`     |
+| `tMontoBase6`     | 10          | 4              | `0 .. 999999.9999`              |
+| `tTipoCambioBase` | 9           | 4              | `0 < x < 99999.9999`            |
+| `tPorcDesc8`      | 11          | 8              | `0 .. 100`                      |
+| `tdTasaIVA`       | 2           | — (integer)    | `>= 0`                          |
+| `tdCantProSer`    | 18          | 8              | `0 .. 9999999999.99999999`      |
+
+### 21.5 Enumerations the emitted documents depend on
+
+Recorded as `type (base) -> values`, transcribed from the schema. Where the
+schema carries both a code and a description type, both are listed: the DE
+carries the code, the description type is what the manual's tables expand.
+
+```text
+tiTipEmi        (positiveInteger, pattern [1-2])   tdDesTipEmi: Normal, Contingencia
+tiTiDE          (integer, pattern 1|[4-7]|9|10)    tdDesTiDE: Factura electrónica,
+                                                   Autofactura, Nota de crédito,
+                                                   Nota de débito, Nota de remisión,
+                                                   Boleta de venta, Boleta resimple
+tiTipTra        (integer, 1..13)                   tdDesTiTran: 13 transaction types
+tiCondOpe       (integer, 1|2)                     tdDCondOpe: Contado, Crédito
+tiTiPago        (integer, 22 values incl. 99)      payment means
+tiAfecIVA       (positiveInteger, 1..4)            tdDesAfecIVA: Gravado IVA,
+                                                   Exonerado (Art. 100 - Ley 6380/2019),
+                                                   Exento, Gravado parcial
+tiNatRec       (integer, 1|2)                      tdDesNatVen: No contribuyente, Extranjero
+tiNatVen        (integer, 1|2)                     same two values
+tiTipDoc       (integer, 1..4)                     tdDtipDoc: Cédula paraguaya, Pasaporte,
+                                                   Cédula extranjera, Carnet de residencia
+tiTipDocRec    (integer, 1-6|9)                    receptor identity document
+tiIndPres      (integer, 1-6|9)                    presence indicator
+tiTipCont      (integer, 1|2)                      contributor type
+tiMotEmi       (noEmptyString, [1-8])              emission motive
+tiTImp         (integer, 1..5)                     tdDesTImp: IVA, ISC, Renta, Ninguno, IVA - Renta
+tiForProPa     (short, 1|2|9)                      payment form
+tiDenTarj      (integer, 1-6|99)                   card denomination
+tiTipIDRespDE  (integer, 1-4|9)                    responsible for the DE
+```
+
+### 21.6 What this still does not pin
+
+Two of §19's open questions survive this retrieval and they matter to
+[[FISC-008]]:
+
+- **Notas Técnicas 26 and 27** remain unretrieved. NT 23/24/25 already changed
+  receptor-identity validation and excluded a cancellation restriction, so a
+  later note may change a rule this schema encodes. The schema is the
+  _structure_; the notes are the _validation rules_, and FISC-008 must not treat
+  the schema as the whole answer.
+- **The tables' contents and chapter 16's codifications** are still unread, so
+  the _meaning_ of each enumeration value above is not yet recorded here beyond
+  the description types the schema itself carries. The schema gives the allowed
+  values; the manual's tables give what each value means for the issuer.

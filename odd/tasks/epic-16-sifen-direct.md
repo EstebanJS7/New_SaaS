@@ -217,7 +217,19 @@ candidate 1 exists.
       DEC-053 files and is recorded rather than smoothed over. **Review:** a
       chain of seven approved candidates, one per work unit, all approved; the
       thirteen non-blocking advisories are [[TD-031]].
-- [ ] T4 — FISC-008: DTE XML + XSD validation.
+- [ ] T4 — **FISC-008: DTE XML + XSD validation — contract pinned 2026-10-04.**
+      Story at `docs/02-stories/FISC-008-dte-xml.md`. **The retrieval FISC-006
+      left open is done**: `DE_Types_v150.xsd` was fetched from the official
+      directory (66,452 bytes, HTTP 200) together with `DE_v150.xsd` (66,190)
+      and `xmldsig-core-schema.xsd` (10,339), and its facts are recorded in
+      `docs/06-fiscal/SIFEN-BASELINE.md` §21 — 140 `simpleType`s with their
+      enumerations, the scalar patterns for CDC/RUC/timbrado/series/document
+      number/dates/money, and the `rDE` (4 children) and `tDE` (11 children)
+      structures. **One decision blocks the acceptance criterion, not the
+      implementation**: the schemas are copyrighted and must not be vendored, so
+      the validation strategy is open (§19 question 9). **Still unretrieved:
+      Notas Técnicas 26/27 and the Manual's tables**, so enumeration semantics
+      are not pinned and a later note may change a validation rule.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
