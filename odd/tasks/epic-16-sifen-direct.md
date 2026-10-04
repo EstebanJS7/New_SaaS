@@ -241,9 +241,14 @@ candidate 1 exists.
       FISC-008 must implement. **Still open**: `Tabla 1 – Tipo de Régimen`
       (`D104`) and `Tabla 3 – Actividades Económicas` (`D131`), which the Manual
       references but does not contain. **And a correction**: the Nota Técnica
-      set is **001-027, not 23-27** — only 23-27 are retrieved, so **001-022
-      remain unread**, and each is titled "Correcciones y ajustes sobre el MT
-      versión 150".
+      set is **001-027, not 23-27**. **All 27 were retrieved and profiled**
+      (baseline §22.10): eighteen touch DE fields and ten amend validations, and
+      **nine amend the receptor block alone** (`D200`/`D201`/`D202`/`D208`/
+      `D210`), which §22.3 pins from the 2019 Manual. So the receptor rules are
+      **provisional** — a correctness risk, not a completeness one — while the
+      structural contract (`rDE`/`tDE`, order, patterns, money scales) is
+      unaffected because the notes amend observations and validations, not the
+      schemas.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.

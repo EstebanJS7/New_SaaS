@@ -489,13 +489,14 @@ flag and treat the rules as pending DNIT, or be reframed.
 
 ## 19. Open questions
 
-1. **Notas Técnicas.** ~~26 and 27~~ retrieved 2026-10-04 (§22.7); **27 is the
-   latest** (28 returns HTTP 404). NT 26 excludes four B2G validation rules and
-   NT 27 amends the nomination _event_ format, so neither changes a DE rule that
-   [[FISC-008]] must implement. **But the set is 001–027, not 23–27**: the DNIT
-   documentation page lists all 27, and **001–022 remain unretrieved**. An
-   earlier claim here that the set was complete at 23–27 was wrong and is
-   corrected in §22.7.
+1. **Notas Técnicas.** All 27 (001–027) were retrieved and their text extracted
+   on 2026-10-04 — see §22.7 and §22.10. **27 is the latest** (28 returns HTTP
+   404). NT 26 excludes four B2G validation rules and NT 27 amends the
+   nomination _event_ format, so neither changes a DE rule [[FISC-008]] must
+   implement. **What remains open is their rule text**: eighteen notes touch DE
+   fields and ten amend validations, nine of them the receptor block, so the
+   rules in §22.3 and §22.4 are provisional. An earlier claim here that the set
+   was complete at 23–27 was wrong and is corrected in §22.7.
 2. ~~`DE_Types_v150.xsd`: per-field lengths, patterns and enumerations.~~
    **Resolved 2026-10-04 — see §21.** 140 `simpleType`s with their enumerations,
    the scalar patterns, and the `rDE`/`tDE` structures are now pinned from the
@@ -744,9 +745,11 @@ retrieved.** The DNIT documentation page lists every one of them
 (`/web/e-kuatia/documentacion-tecnica`). An earlier claim in this section that
 the set was "complete" at 23–27 was **wrong**: it was made after finding 26 and
 27 and a 404 for 28, without ever checking whether _earlier_ notes existed. They
-do, from 001. **Notas Técnicas 001–022 are unretrieved** and are recorded as an
-open question, because each one is titled "Correcciones y ajustes sobre el MT
-versión 150" and may amend a rule this vault treats as current.
+do, from 001. **All 27 were retrieved on 2026-10-04 and their text extracted**,
+and §22.10 profiles which of the earlier ones amend DE rules: **eighteen touch
+DE fields and ten amend validations**, including nine that touch the receptor
+block. The Manual's field-level rules are a 2019 baseline amended in part, so
+§22.3 and §22.4 are **provisional** until those notes are read field by field.
 
 ### 22.2 The Manual's field-level specification
 
@@ -917,10 +920,11 @@ identical, so they must not be shared as one constant.
 - The **batch size limit** for asynchronous reception.
 - The **QR composition** and the CSC's per-environment value.
 - Whether the **Prevalidador** is usable in an automated pre-submission check.
-- **Notas Técnicas 001–022** (§22.7). Twenty-two unretrieved notes, each titled
-  "Correcciones y ajustes sobre el MT versión 150". Any of them may amend a rule
-  this vault treats as current, so no rule recorded here should be treated as
-  final until they are read.
+- **The rule text of Notas Técnicas 001–022** (§22.10). All 27 notes are
+  retrieved and profiled, but their _rule text_ is not transcribed: eighteen of
+  them touch DE fields and ten amend validations, so §22.3 and §22.4 — read from
+  the 2019 Manual — are **provisional**. Nine notes amend the receptor block
+  alone.
 - **`Tabla 1 – Tipo de Régimen` (`D104`) and `Tabla 3 – Actividades Económicas`
   (`D131`)** (§22.6). Referenced by the Manual, absent from it, and absent from
   both e-kuatia pages.
@@ -991,3 +995,66 @@ PDF.
 3. **The KuDE specimen is evidence, not an algorithm.** A 44-digit example
    confirms the length and nothing else; deriving widths from it would be
    guessing.
+
+### 22.10 Notas Técnicas 001–022: which of them amend DE rules
+
+All 27 notes were retrieved on 2026-10-04 (001–027) and their text extracted
+locally. This section records the profile that matters to [[FISC-008]]: **which
+of the earlier notes touch the DE**, because §22.3 and §22.4 were read from the
+Manual Técnico, which is dated **10/09/2019**, and every note is titled
+"Correcciones y ajustes sobre el MT versión 150".
+
+**Eighteen of the twenty-seven touch DE fields, and ten amend validations.** The
+Manual's field-level rules are therefore a **2019 baseline that later notes have
+amended in part**, and none of them may be encoded as if it were current.
+
+| NT  | Date       | DE field codes it mentions                                                                              | Amends a validation?                           |
+| --- | ---------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| 001 | —          | D002, E711, E721                                                                                        | —                                              |
+| 002 | 16/07/2020 | **D200, D201, D202, D208, D210**                                                                        | —                                              |
+| 003 | 18/11/2020 | **D200, D202**, D213, D219, D223                                                                        | —                                              |
+| 004 | 29/12/2020 | none                                                                                                    | —                                              |
+| 005 | 09/02/2021 | D200, D204, E960, E965, E967                                                                            | —                                              |
+| 006 | 25/03/2021 | D010, D099                                                                                              | —                                              |
+| 007 | 01/02/2022 | none (KuDE)                                                                                             | —                                              |
+| 008 | 21/09/2021 | **D015, D017, D018**, E701                                                                              | —                                              |
+| 009 | 09/09/2021 | E700, E701, E708, E899                                                                                  | —                                              |
+| 010 | 04/02/2022 | **D010, D011, D012, D099, D140, D141, D142, D160, D200, D201, D202, D208, D219, D220, D299**, E500–E967 | —                                              |
+| 011 | 20/10/2022 | none (services)                                                                                         | —                                              |
+| 012 | 21/02/2023 | D010, **D015**, D022, D099                                                                              | **yes** — adds a currency validation on `D022` |
+| 013 | 20/03/2023 | D013, E730–E739                                                                                         | **yes** — adds fields and a validation         |
+| 014 | 20/03/2023 | **D208**                                                                                                | —                                              |
+| 015 | 14/08/2023 | none (events)                                                                                           | **yes** (events)                               |
+| 016 | 14/08/2023 | none (services)                                                                                         | —                                              |
+| 017 | 17/11/2023 | **D200, D221, D222, D223, D224, D299**                                                                  | —                                              |
+| 018 | 17/11/2023 | D010, D030, D031, D032, D040, D099                                                                      | adds a subgroup                                |
+| 019 | 17/11/2023 | none (events)                                                                                           | **yes** (events)                               |
+| 020 | 17/11/2023 | **D200, D202, D206, D299**, E820, E829                                                                  | **yes**                                        |
+| 021 | 29/12/2023 | **D011, D200, D208, D299**                                                                              | **yes**                                        |
+| 022 | 09/02/2024 | D030, D031, D040                                                                                        | **yes** — RG90 imputation                      |
+| 023 | 27/08/2024 | **D200, D201, D202, D208, D210**, E700–E899                                                             | **yes**                                        |
+| 024 | 17/12/2024 | **D011, D200, D208, D299**                                                                              | **yes**                                        |
+| 025 | 23/04/2024 | none                                                                                                    | **excludes** `GEC002c`                         |
+| 026 | 06/06/2025 | D202, E010–E899                                                                                         | **excludes** four B2G rules                    |
+| 027 | 09/03/2026 | none (event)                                                                                            | **yes** (event)                                |
+
+**The receptor block is the most amended part of the DE.** `D200`, `D201`,
+`D202`, `D208` and `D210` — the fields §22.3 pins — are touched by **NT 002,
+003, 010, 014, 017, 020, 021, 023 and 024**: nine notes, spanning 2020 to 2024.
+FISC-006 already recorded NT 24 amending `D208c` (code 1321) about the
+receptor's identity document type and a 7,000,000 threshold, and that is one of
+nine. **§22.3 must therefore be treated as a historical baseline, not as the
+current rule set**, until those nine notes are read field by field.
+
+The other DE areas with amendment history: the currency and exchange fields
+(`D015`, `D017`, `D018` — NT 008, and a new validation on `D022` in NT 012), the
+emitter's activity and imputation fields (`D030`, `D031`, `D040` — NT 018 and NT
+022), the item fields (`E700`–`E899` — NT 009, 010, 013, 023, 026), and the
+titles (`D011` — NT 021, 024).
+
+**What this section does and does not claim.** It claims, with the notes in
+hand, _which_ notes touch _which_ DE fields and which amend validations. It does
+**not** claim to have transcribed their rule text: that is the next work unit,
+and until it is done the rules in §22.3 and §22.4 are **provisional**. Recording
+the profile removes the dangerous state — a false confidence that the 2019
+Manual is current — without pretending the transcription is done.

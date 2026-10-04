@@ -216,10 +216,13 @@ The rejected alternatives, and why:
   in scope: `D111` departamento, `D113` distrito and `D115` ciudad come from the
   official `CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025` spreadsheet (18
   departamentos, 272 distritos unique nationally, 6,766 ciudades).
-- **Notas Técnicas 001–022.** The set is 001–027 and only 23–27 are retrieved.
-  Each note is titled "Correcciones y ajustes sobre el MT versión 150", so any
-  of the twenty-two may amend a rule this Story encodes. **No rule here should
-  be treated as final until they are read.**
+- **The rule text of Notas Técnicas 001–022.** All 27 notes (001–027) are
+  retrieved and profiled in §22.10, but their _rule text_ is not transcribed.
+  **Eighteen touch DE fields and ten amend validations, and nine amend the
+  receptor block alone** — `D200`, `D201`, `D202`, `D208`, `D210` — which is
+  exactly the block this Story's contract pins from the 2019 Manual. So the
+  receptor rules in this Story are **provisional**, and the generator must not
+  encode them as current until those nine notes are read field by field.
 - **The `dCodRes` catalogue**, which belongs to [[FISC-012]] rather than here.
 - **NT 24's receptor amendment is inherited, not re-derived**: NT 24 changed
   `D208c` (code 1321) about the receptor's identity document type and a
@@ -278,8 +281,13 @@ The rejected alternatives, and why:
 
 ## Domain Invariants
 
-- **No protocol constant without a cited official source.** If §21 does not
-  record a rule, this Story does not encode it.
+- **No protocol constant without a cited official source.**
+- **The receptor block's conditional rules are provisional.** §22.3 was read
+  from the Manual dated 10/09/2019, and §22.10 records nine Notas Técnicas that
+  amend it. The generator may implement the block's _shape_ (which fields exist
+  and where they sit), but its _conditions_ must be re-read against NT 002, 003,
+  010, 014, 017, 020, 021, 023 and 024 before they are treated as current. If
+  §21 does not record a rule, this Story does not encode it.
 - **The schemas are not vendored.** Citations and structural facts are recorded;
   DNIT's files are not committed.
 - **The XML is built from the confirmed invoice**, not from a re-derived money
@@ -342,10 +350,15 @@ Planned, once the validation strategy is chosen:
 - **`D104` régimen and `D131` actividades económicas are unpinned**, so the
   generator cannot populate those two fields from a validated catalogue. The
   geography fields are no longer a limitation.
-- **Notas Técnicas 001–022 are unretrieved**, and each is titled "Correcciones y
-  ajustes sobre el MT versión 150". This is the largest remaining uncertainty in
-  this Story: a later read of those notes may change a rule already encoded
-  here.
+- **The receptor block's rules are provisional.** They were read from the Manual
+  Técnico dated 10/09/2019, and **nine later Notas Técnicas amend that block**
+  (§22.10). This is the largest remaining uncertainty in this Story and it is a
+  correctness risk, not a completeness one: a rule encoded from the 2019 text
+  may already be superseded.
+- **The structural contract is unaffected.** The notes amend observations and
+  validations, not `DE_v150.xsd`/`DE_Types_v150.xsd`, so the `rDE`/`tDE`
+  structure, the child order, the patterns and the money scales this Story pins
+  remain current.
 - **NT 24's receptor amendment is inherited, not re-derived** — see the note in
   "Out of Scope".
 - **The CDC is not composed here.** Its composition and check-digit algorithm
