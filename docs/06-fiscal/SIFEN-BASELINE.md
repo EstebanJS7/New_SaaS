@@ -489,10 +489,13 @@ flag and treat the rules as pending DNIT, or be reframed.
 
 ## 19. Open questions
 
-1. ~~Notas Técnicas 26 and 27.~~ **Resolved 2026-10-04 — see §22.7.** Both were
-   retrieved; **27 is the latest** (28 returns HTTP 404). NT 26 excludes four
-   B2G validation rules; NT 27 amends the nomination _event_ format, not the DE.
-   Neither changes a DE rule that [[FISC-008]] must implement.
+1. **Notas Técnicas.** ~~26 and 27~~ retrieved 2026-10-04 (§22.7); **27 is the
+   latest** (28 returns HTTP 404). NT 26 excludes four B2G validation rules and
+   NT 27 amends the nomination _event_ format, so neither changes a DE rule that
+   [[FISC-008]] must implement. **But the set is 001–027, not 23–27**: the DNIT
+   documentation page lists all 27, and **001–022 remain unretrieved**. An
+   earlier claim here that the set was complete at 23–27 was wrong and is
+   corrected in §22.7.
 2. ~~`DE_Types_v150.xsd`: per-field lengths, patterns and enumerations.~~
    **Resolved 2026-10-04 — see §21.** 140 `simpleType`s with their enumerations,
    the scalar patterns, and the `rDE`/`tDE` structures are now pinned from the
@@ -501,13 +504,14 @@ flag and treat the rules as pending DNIT, or be reframed.
 4. The WSDL documents: SOAP actions, bindings, header requirements.
 5. The batch size limit for asynchronous reception.
 6. The QR composition and the CSC's per-environment value.
-7. ~~The tables' contents, and chapter 16's codifications.~~ **Partly resolved
-   2026-10-04 — see §22.2 and §22.6.** The Manual's field-level rules are now
-   recorded, including the receptor block's conditional structure and the
-   test-environment literal. Four companion tables are retrieved as official
-   XSDs. **Still open**: the _contents_ of `Tabla 2.1 Distritos`,
-   `Tabla 2.2 Ciudades`, `Tabla 1 Tipo de Régimen` and
-   `Tabla 3 Actividades Económicas`.
+7. ~~The tables' contents, and chapter 16's codifications.~~ **Mostly resolved
+   2026-10-04 — see §22.2 and §22.6.** The Manual's field-level rules are
+   recorded, four companion tables are retrieved as official XSDs, and the
+   **geography spreadsheet closes `D111`, `D113` and `D115`** (18 departamentos,
+   272 distritos unique nationally, 6,766 ciudades). **Still open**:
+   `Tabla 1 Tipo de Régimen` (`D104`) and `Tabla 3 Actividades Económicas`
+   (`D131`), which the Manual references but does not contain and which neither
+   e-kuatia page offers.
 8. Whether the Prevalidador is usable in an automated pre-submission check.
 9. ~~How a test validates against the official XSDs without vendoring them.~~
    **Resolved 2026-10-04 by the maintainer.** A dedicated CI job fetches the
@@ -735,7 +739,14 @@ Paises_v100.xsd                                    53,266 bytes
 
 The Notas Técnicas follow
 `https://www.dnit.gov.py/documents/20123/420595/NT_E_KUATIA_0NN_MT_V150.pdf`.
-**The Nota Técnica set is now complete**: 23, 24, 25, 26 and 27.
+**The Nota Técnica set is 001 to 027 — 27 notes — and only 23 to 27 are
+retrieved.** The DNIT documentation page lists every one of them
+(`/web/e-kuatia/documentacion-tecnica`). An earlier claim in this section that
+the set was "complete" at 23–27 was **wrong**: it was made after finding 26 and
+27 and a 404 for 28, without ever checking whether _earlier_ notes existed. They
+do, from 001. **Notas Técnicas 001–022 are unretrieved** and are recorded as an
+open question, because each one is titled "Correcciones y ajustes sobre el MT
+versión 150" and may amend a rule this vault treats as current.
 
 ### 22.2 The Manual's field-level specification
 
@@ -830,11 +841,32 @@ Four are published as official XSDs and were retrieved:
 | `Unidades_Medida_v141.xsd` | the unit-of-measure codes for the item lines |
 | `Paises_v100.xsd`          | the country codes                            |
 
-**Two tables are still not published as XSDs**: `Tabla 2.1 – Distritos` (`D113`)
-and `Tabla 2.2 – Ciudades` (`D115`). The Manual's field rows state only that
-they exist and where they apply; their contents come from the portal's tables
-index, whose contents remain unread. `Tabla 1 – Tipo de Régimen` (`D104`) and
-`Tabla 3 – Actividades Económicas` (`D131`) are in the same position.
+**The geography table is retrieved and closes `D111`, `D113` and `D115`.** It is
+published as a spreadsheet rather than an XSD:
+
+```text
+CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025__.xlsx   469,941 bytes
+  updated 03/November/2025, sourced from the INE geographic code 2022
+  7,735 data rows: 18 departamentos, 272 distritos,
+  6,766 ciudades/localidades, 1,104 barrios
+  columns: departamento (code, name), distrito (code, name),
+           ciudad/localidad (code, name), barrio (code, name)
+  distrito codes run 1-289 and are UNIQUE NATIONALLY, so D113 can be validated
+  as a national code; ciudad codes run 1-6,793
+```
+
+Both ranges sit inside the schema's bounds (`tcDisEmi` 1-4 digits, `tcCiuEmi`
+1-5 digits up to 99999), so the two sources agree.
+
+**Two tables remain unretrieved, and neither is on the tables page.**
+`Tabla 1 – Tipo de Régimen` (`D104`) and `Tabla 3 – Actividades Económicas`
+(`D131`) are referenced by the Manual's field rows but **the Manual does not
+contain them**: its text says only "Según Tabla 1 – Tipo de Régimen" and "Según
+Tabla 3 – Actividades Económicas". The tables page offers the geography
+spreadsheet and a Prevalidador, and the technical-documentation page offers the
+Notas Técnicas and the schema bundle — neither offers these two. They are
+therefore DNIT/RUC catalogues rather than SIFEN artifacts, and their retrieval
+path is the DNIT portal's RUC documentation, not the e-kuatia pages.
 
 ### 22.7 The Notas Técnicas 26 and 27
 
@@ -885,6 +917,13 @@ identical, so they must not be shared as one constant.
 - The **batch size limit** for asynchronous reception.
 - The **QR composition** and the CSC's per-environment value.
 - Whether the **Prevalidador** is usable in an automated pre-submission check.
+- **Notas Técnicas 001–022** (§22.7). Twenty-two unretrieved notes, each titled
+  "Correcciones y ajustes sobre el MT versión 150". Any of them may amend a rule
+  this vault treats as current, so no rule recorded here should be treated as
+  final until they are read.
+- **`Tabla 1 – Tipo de Régimen` (`D104`) and `Tabla 3 – Actividades Económicas`
+  (`D131`)** (§22.6). Referenced by the Manual, absent from it, and absent from
+  both e-kuatia pages.
 - **The CDC's composition and its check-digit algorithm** (§22.9). The Manual
   has the section but the composition is a visual element the PDF extraction
   dropped, and the digit-verifier document's URL now redirects to the DNIT

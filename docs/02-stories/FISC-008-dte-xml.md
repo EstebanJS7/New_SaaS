@@ -209,10 +209,17 @@ The rejected alternatives, and why:
 - **Any DNIT call, WSDL or SOAP action** — [[FISC-010]].
 - **The provider selection** — [[FISC-012]].
 - **KuDE rendering** — out of the epic's scope.
-- **Four table contents** (`D113` distritos, `D115` ciudades, `D104` régimen,
-  `D131` actividades económicas). The Manual states where they apply; their
-  values are unread, so the generator cannot populate those fields from a
-  validated catalogue yet.
+- **`Tabla 1 – Tipo de Régimen` (`D104`) and `Tabla 3 – Actividades Económicas`
+  (`D131`)**. The Manual references them but does not contain them, and neither
+  e-kuatia page offers them, so the generator cannot populate those two fields
+  from a validated catalogue yet. The **geography** tables are retrieved and are
+  in scope: `D111` departamento, `D113` distrito and `D115` ciudad come from the
+  official `CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025` spreadsheet (18
+  departamentos, 272 distritos unique nationally, 6,766 ciudades).
+- **Notas Técnicas 001–022.** The set is 001–027 and only 23–27 are retrieved.
+  Each note is titled "Correcciones y ajustes sobre el MT versión 150", so any
+  of the twenty-two may amend a rule this Story encodes. **No rule here should
+  be treated as final until they are read.**
 - **The `dCodRes` catalogue**, which belongs to [[FISC-012]] rather than here.
 - **NT 24's receptor amendment is inherited, not re-derived**: NT 24 changed
   `D208c` (code 1321) about the receptor's identity document type and a
@@ -332,9 +339,13 @@ Planned, once the validation strategy is chosen:
 
 ## Known Limitations
 
-- **Four table contents are unread** (`D113` distritos, `D115` ciudades, `D104`
-  régimen, `D131` actividades económicas), so the generator cannot populate
-  those fields from a validated catalogue yet.
+- **`D104` régimen and `D131` actividades económicas are unpinned**, so the
+  generator cannot populate those two fields from a validated catalogue. The
+  geography fields are no longer a limitation.
+- **Notas Técnicas 001–022 are unretrieved**, and each is titled "Correcciones y
+  ajustes sobre el MT versión 150". This is the largest remaining uncertainty in
+  this Story: a later read of those notes may change a rule already encoded
+  here.
 - **NT 24's receptor amendment is inherited, not re-derived** — see the note in
   "Out of Scope".
 - **The CDC is not composed here.** Its composition and check-digit algorithm

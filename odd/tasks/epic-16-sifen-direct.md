@@ -233,13 +233,17 @@ candidate 1 exists.
       2026-10-04**: baseline §22 carries the Manual's field-level rules (73
       `D`-codes; the receptor block's conditional structure; the
       test-environment literal for `dNomEmi`; the cross-field invariants), four
-      companion tables were fetched as official XSDs, and the Nota Técnica set
-      is **complete** (23-27; 27 is the latest, 28 is a 404). NT 26 excludes
-      four B2G validation rules and NT 27 amends the nomination _event_ format,
-      so **neither changes a DE rule FISC-008 must implement**. **Still open:
-      four table CONTENTS** (`D113` distritos, `D115` ciudades, `D104` régimen,
-      `D131` actividades económicas), which the generator needs to populate
-      those fields from a validated catalogue.
+      companion tables were fetched as official XSDs. **Geography closed**: the
+      official `CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025` spreadsheet
+      gives `D111`/`D113`/`D115` (18 departamentos, 272 distritos unique
+      nationally, 6,766 ciudades). NT 26 excludes four B2G validation rules and
+      NT 27 amends the nomination _event_ format, so neither changes a DE rule
+      FISC-008 must implement. **Still open**: `Tabla 1 – Tipo de Régimen`
+      (`D104`) and `Tabla 3 – Actividades Económicas` (`D131`), which the Manual
+      references but does not contain. **And a correction**: the Nota Técnica
+      set is **001-027, not 23-27** — only 23-27 are retrieved, so **001-022
+      remain unread**, and each is titled "Correcciones y ajustes sobre el MT
+      versión 150".
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
