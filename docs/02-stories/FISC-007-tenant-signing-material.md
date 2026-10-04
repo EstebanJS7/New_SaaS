@@ -588,7 +588,8 @@ Planned:
 - [[TD-031]] — the review chain's thirteen non-blocking advisories. **Four are
   resolved** (both certificate-check edges, the fixture export moved to
   `@newsaas/fiscal/testing`, and the multipart size mapping, whose advisory
-  premise turned out to be false and is corrected there); nine remain.
+  premise turned out to be false and is corrected there); eleven remain,
+  including the two suggestions the closing commit itself produced.
 - The `/app/fiscal` panel for the three routes is follow-up work, tracked when
   the surface is designed.
 - A KEK rewrap command, if key custody ever needs scheduled rotation.
