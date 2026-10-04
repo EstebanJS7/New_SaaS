@@ -1371,3 +1371,44 @@ What this closure records rather than smooths over:
 
 This section is the machine-generated receipt for the merged slices and is
 **not** a production-readiness statement.
+
+## EPIC-16 FISC-007 Tenant Signing Material
+
+FISC-007 landed as PR **#105** with one CI receipt. Both required checks are
+green on run
+[`37171089838`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37171089838),
+head `4e77aba`:
+
+```text
+Database migrations                     pass   1m06s
+Lint, Typecheck, Test, Build            pass   5m07s
+```
+
+The first run for this branch (`37170701222`) **failed** the quality job, and
+the failure is part of the record rather than smoothed over:
+`prettier --check .` flagged
+`docs/04-adrs/ADR-005-tenant-signing-material-secretstore.md` and
+`docs/07-decisions/DEC-053-tenant-fiscal-signing-material.md`. Both were
+reformatted in `4e77aba`. The cause was a scoping mistake, not a content
+mistake: the root `format-check` covers the whole repository, and formatting was
+verified with a narrowed path after those two files were edited again.
+
+What this receipt covers:
+
+- **33 migrations** applied, including `20261004000002_fiscal_signing_material`.
+- Seed idempotent at **58 permissions** and **195 role grants**; the new
+  `fiscal.signing_material.manage` is granted to `OWNER` and `ADMIN` only.
+- **Live PostgreSQL 213 passed (213)**.
+- Local suites at the same revision: secret-store 50, fiscal 60, database 416,
+  API 1105, and root lint/typecheck/test/build at 18/18, 18/18, 19/19 and 11/11.
+
+Native review: a **chain of seven approved candidates**, one per work unit,
+because the slice (5229 insertions across 52 files) is far over the reviewer's
+context budget. Two closed on the `START` call itself at `risk_tier: low` with
+no lenses; the other five each ran one `review-reliability` lens. The lineages
+are listed in [[TD-031]], together with the thirteen non-blocking advisories
+they produced.
+
+This section is the machine-generated receipt for the slice. It is **not** a
+production-readiness statement: the only provider is still a deterministic fake,
+and the tenant's signing material is held but not yet used to sign anything.

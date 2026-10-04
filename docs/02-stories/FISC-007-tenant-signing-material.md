@@ -581,12 +581,15 @@ Planned:
 
 ## Technical Debt
 
+- [[TD-031]] — the thirteen non-blocking advisories from this Story's review
+  chain, with the two certificate-check edges and the fixture export recommended
+  first.
 - The `/app/fiscal` panel for the three routes is follow-up work, tracked when
   the surface is designed.
 - A KEK rewrap command, if key custody ever needs scheduled rotation.
-- No debt item was created: nothing in this Story's scope was deferred. The
-  fixture's self-assembled nature is an acceptance item in [[FISC-013]], and the
-  PostgreSQL-only constraints are covered by the migration.
+- The fixture's self-assembled nature is an acceptance item in [[FISC-013]], and
+  the PostgreSQL-only constraints are covered by the migration rather than by
+  the in-memory suite.
 
 ## Decisions / ADRs
 
@@ -594,6 +597,26 @@ Planned:
 - [[DEC-053]] — Tenant fiscal signing material and the `SecretStore` boundary.
 - **[[ADR-006]] is not this Story.** It covers the XAdES signing dependency for
   [[FISC-009]].
+
+## Review Record
+
+The native review closed as a **chain of seven approved candidates**, one per
+work unit, because the whole slice exceeds the reviewer's context budget:
+
+```text
+b05d411..bc2d010  review-71824c524a5c9285  low     no lenses  approved on START
+bc2d010..a06033e  review-79b1daf60f30935c  medium  reliability  approved
+a06033e..27b48b2  review-f7839c7e4005e631  medium  reliability  approved
+27b48b2..cd6fd87  review-5f93fa36c0a8099f  medium  reliability  approved
+cd6fd87..295cba3  review-666627733d25cb22  medium  reliability  approved
+295cba3..0c99af1  review-7490892a52aa3fa8  medium  reliability  approved
+0c99af1..8c9e1c4  review-cfc13bac309f1db2  low     no lenses  approved on START
+```
+
+Every authority was burned with its exact acknowledgement. Thirteen non-blocking
+advisories are recorded in [[TD-031]]; none opened a correction and none reopens
+its candidate. The eighth candidate covers this closure commit and the
+formatting fix that followed the first CI run.
 
 ## Files / Modules
 

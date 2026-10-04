@@ -211,8 +211,12 @@ candidate 1 exists.
       cannot be built purely in the test — pkijs writes an invalid certificate
       `signatureAlgorithm`, and `.p12`/`.pem` files are blocked by the harness
       path guard — so the maintainer chose base64 DER material plus in-test
-      assembly. **Open:** no CI receipt yet; the branch is unpushed, so the
-      epic's CI evidence is recorded when it is pushed.
+      assembly. **CI receipt:** PR **#105**, run `37171089838` — both required
+      checks green (migrations 1m06s, quality 5m07s) at head `4e77aba`. The
+      first run (`37170701222`) failed `prettier --check .` on the ADR-005 and
+      DEC-053 files and is recorded rather than smoothed over. **Review:** a
+      chain of seven approved candidates, one per work unit, all approved; the
+      thirteen non-blocking advisories are [[TD-031]].
 - [ ] T4 — FISC-008: DTE XML + XSD validation.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
