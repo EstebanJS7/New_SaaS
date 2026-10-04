@@ -58,3 +58,18 @@ export type {
   ExtractedSigningMaterial,
   Pkcs12ExtractionFailure,
 } from "./signing-material/pkcs12.js";
+export {
+  buildTestPkcs12,
+  TEST_PKCS12_PASSWORD,
+  TEST_CERTIFICATE_SERIAL,
+  TEST_CERTIFICATE_SUBJECT,
+  TEST_CERTIFICATE_NOT_BEFORE,
+  TEST_CERTIFICATE_NOT_AFTER,
+  TEST_KEY_ALGORITHM,
+  testCertificateDer,
+  testPrivateKeyPkcs8Der,
+} from "./signing-material/pkcs12.fixture.js";
+export type {
+  TestPkcs12Certificate,
+  TestPkcs12Options,
+} from "./signing-material/pkcs12.fixture.js";

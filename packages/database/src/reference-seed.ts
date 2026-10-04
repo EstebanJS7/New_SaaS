@@ -111,7 +111,8 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   seeded catalog 52 -> 56. No `billing.update` key exists because the invoice
  *   is immutable from creation (DEC-038), so there is no edit route to protect.
  * - FISC-005b adds `fiscal.read`, read-wide to all six roles, moving the
- *   seeded catalog 56 -> 57.
+ *   seeded catalog 56 -> 57. FISC-007 adds signing-material management to the
+ *   two owning roles, bringing the catalog to 58.
  *   The pre-existing `fiscal.invoice.issue` stays a Fiscal capability consumed
  *   by no EPIC-14 route and reserved for EPIC-15 (DEC-040).
  */
@@ -204,6 +205,8 @@ export const PERMISSION_SEEDS = [
   { key: "billing.create", name: "Create invoices" },
   { key: "billing.confirm", name: "Confirm invoices" },
   { key: "billing.cancel", name: "Cancel invoices" },
+  // FISC-007: only owning roles manage tenant signing credentials.
+  { key: "fiscal.signing_material.manage", name: "Manage tenant fiscal signing material" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -271,6 +274,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.create",
     "billing.confirm",
     "billing.cancel",
+    "fiscal.signing_material.manage",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -330,6 +334,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.create",
     "billing.confirm",
     "billing.cancel",
+    "fiscal.signing_material.manage",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
