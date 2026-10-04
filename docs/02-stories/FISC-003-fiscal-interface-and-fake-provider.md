@@ -121,7 +121,7 @@ registry describes HTTP-mapped failures rather than provider outcomes.
 ### Configuration
 
 ```text
-FISCAL_PROVIDER   optional   closed set: "fake"   (EPIC-16 adds "third_party")
+FISCAL_PROVIDER   optional   closed set: "fake"   (EPIC-16 adds "sifen_direct")
 ```
 
 `NODE_ENV=production` with `FISCAL_PROVIDER` unset is refused at boot through
