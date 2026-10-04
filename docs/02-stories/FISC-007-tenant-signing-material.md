@@ -606,7 +606,7 @@ Planned:
 
 ## Review Record
 
-The native review closed as a **chain of eight approved candidates**, one per
+The native review closed as a **chain of nine approved candidates**, one per
 work unit, because the whole slice exceeds the reviewer's context budget. The
 eighth covers this closure commit and the formatting fix that followed the first
 CI run; a ninth closes the four recommended-first advisories:
@@ -619,9 +619,11 @@ a06033e..27b48b2  review-f7839c7e4005e631  medium  reliability  approved
 cd6fd87..295cba3  review-666627733d25cb22  medium  reliability  approved
 295cba3..0c99af1  review-7490892a52aa3fa8  medium  reliability  approved
 0c99af1..8c9e1c4  review-cfc13bac309f1db2  low     no lenses  approved on START
+8c9e1c4..ab3bad4  review-6d69b5d66f366ee1  low     no lenses  approved on START
+ab3bad4..e0d9661  review-d1cd99817d47a029  medium  reliability  approved
 ```
 
-Every authority was burned with its exact acknowledgement. Thirteen non-blocking
+Every authority was burned with its exact acknowledgement. Fifteen non-blocking
 advisories are recorded in [[TD-031]]; none opened a correction and none reopens
 its candidate. The eighth candidate covers this closure commit and the
 formatting fix that followed the first CI run.

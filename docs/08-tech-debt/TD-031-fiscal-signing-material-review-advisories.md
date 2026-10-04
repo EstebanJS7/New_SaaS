@@ -35,19 +35,21 @@ inside the lineage record is the authoritative wording.
 
 ## The chain
 
-| #   | Range              | Lineage                   | Tier   | Lenses      | Outcome             |
-| --- | ------------------ | ------------------------- | ------ | ----------- | ------------------- |
-| 1   | `b05d411..bc2d010` | `review-71824c524a5c9285` | low    | none        | approved on `START` |
-| 2   | `bc2d010..a06033e` | `review-79b1daf60f30935c` | medium | reliability | approved            |
-| 3   | `a06033e..27b48b2` | `review-f7839c7e4005e631` | medium | reliability | approved            |
-| 4   | `27b48b2..cd6fd87` | `review-5f93fa36c0a8099f` | medium | reliability | approved            |
-| 5   | `cd6fd87..295cba3` | `review-666627733d25cb22` | medium | reliability | approved            |
-| 6   | `295cba3..0c99af1` | `review-7490892a52aa3fa8` | medium | reliability | approved            |
-| 7   | `0c99af1..8c9e1c4` | `review-cfc13bac309f1db2` | low    | none        | approved on `START` |
+| #   | Range              | Lineage                   | Tier   | Lenses      | Outcome                                            |
+| --- | ------------------ | ------------------------- | ------ | ----------- | -------------------------------------------------- |
+| 1   | `b05d411..bc2d010` | `review-71824c524a5c9285` | low    | none        | approved on `START`                                |
+| 2   | `bc2d010..a06033e` | `review-79b1daf60f30935c` | medium | reliability | approved                                           |
+| 3   | `a06033e..27b48b2` | `review-f7839c7e4005e631` | medium | reliability | approved                                           |
+| 4   | `27b48b2..cd6fd87` | `review-5f93fa36c0a8099f` | medium | reliability | approved                                           |
+| 5   | `cd6fd87..295cba3` | `review-666627733d25cb22` | medium | reliability | approved                                           |
+| 6   | `295cba3..0c99af1` | `review-7490892a52aa3fa8` | medium | reliability | approved                                           |
+| 7   | `0c99af1..8c9e1c4` | `review-cfc13bac309f1db2` | low    | none        | approved on `START`                                |
+| 8   | `8c9e1c4..ab3bad4` | `review-6d69b5d66f366ee1` | low    | none        | approved on `START`                                |
+| 9   | `ab3bad4..e0d9661` | `review-d1cd99817d47a029` | medium | reliability | approved — closed the four recommended-first items |
 
 ## Debt
 
-Thirteen advisories, none blocking. Four are now resolved and marked below; the
+Fifteen advisories, none blocking. Four are resolved and marked below; the
 resolution is described under "Resolved — the four recommended-first items".
 
 ### From `review-79b1daf60f30935c` — `packages/secret-store`
@@ -67,12 +69,12 @@ resolution is described under "Resolved — the four recommended-first items".
 
 ### From `review-5f93fa36c0a8099f` — the PKCS#12 boundary
 
-| Id                       | Severity   | Location                                             |
-| ------------------------ | ---------- | ---------------------------------------------------- |
-| `R3-EXPIRY-BOUNDARY`     | WARNING    | `packages/fiscal/src/signing-material/pkcs12.ts:243` |
-| `R3-NOTBEFORE-UNCHECKED` | WARNING    | `packages/fiscal/src/signing-material/pkcs12.ts:244` |
-| `R3-PASSWORD-PREEMPTION` | SUGGESTION | `packages/fiscal/src/signing-material/pkcs12.ts:134` |
-| `R3-PLAIN-KEY-UNCHECKED` | WARNING    | `packages/fiscal/src/signing-material/pkcs12.ts:190` |
+| Id                       | Severity   | Location                                                            |
+| ------------------------ | ---------- | ------------------------------------------------------------------- |
+| `R3-EXPIRY-BOUNDARY`     | WARNING    | `packages/fiscal/src/signing-material/pkcs12.ts:243` — **resolved** |
+| `R3-NOTBEFORE-UNCHECKED` | WARNING    | `packages/fiscal/src/signing-material/pkcs12.ts:244` — **resolved** |
+| `R3-PASSWORD-PREEMPTION` | SUGGESTION | `packages/fiscal/src/signing-material/pkcs12.ts:134`                |
+| `R3-PLAIN-KEY-UNCHECKED` | WARNING    | `packages/fiscal/src/signing-material/pkcs12.ts:190`                |
 
 **Two of these deserve early attention rather than later**, because they are
 correctness edges in the certificate check rather than style:
@@ -85,9 +87,9 @@ correctness edges in the certificate check rather than style:
 
 ### From `review-666627733d25cb22` — the aggregate
 
-| Id     | Severity | Location                             |
-| ------ | -------- | ------------------------------------ |
-| `R3-1` | WARNING  | `packages/fiscal/src/index.ts:61-73` |
+| Id     | Severity | Location                                            |
+| ------ | -------- | --------------------------------------------------- |
+| `R3-1` | WARNING  | `packages/fiscal/src/index.ts:61-73` — **resolved** |
 
 This is the one worth acting on first: the package's **public index exports the
 PKCS#12 test fixture builder and its material** (`buildTestPkcs12`, `TEST_*`
@@ -101,7 +103,7 @@ test scaffolding in the package's public surface, and a subpath export
 
 | Id                            | Severity   | Location                                                                                                                                                |
 | ----------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `R3-FSTPART-CODEPREFIX`       | WARNING    | `apps/api/src/fiscal/signing-material/signing-material.pipe.ts:88-95`                                                                                   |
+| `R3-FSTPART-CODEPREFIX`       | WARNING    | `apps/api/src/fiscal/signing-material/signing-material.pipe.ts:88-95` — **resolved**                                                                    |
 | `R3-NO-PROD-SIZE-CODE-TEST`   | WARNING    | `apps/api/src/fiscal/signing-material/signing-material.integration.test.ts:74-86`                                                                       |
 | `R3-STORE-FIELD-NOT-ASSERTED` | SUGGESTION | `apps/api/src/fiscal/signing-material/signing-material.integration.test.ts:50-67` — **resolved** (the service test now asserts the row's exact key set) |
 
@@ -111,16 +113,72 @@ multipart size error" by checking that the thrown error's `code` **starts with
 a `413` into a `500`, and the existing test does not pin the production code
 path (`R3-NO-PROD-SIZE-CODE-TEST`).
 
+## Resolved — the four recommended-first items
+
+Closed on 2026-10-04, before [[FISC-008]] grew `@newsaas/fiscal`'s public
+surface, because all four live in files the next stories touch.
+
+**`R3-NOTBEFORE-UNCHECKED` — resolved.** `extractSigningMaterial` now enforces
+both ends of the validity window: a certificate whose `validFromDate` is in the
+future fails with the new `CERTIFICATE_NOT_YET_VALID` reason and its own
+operator message, instead of being accepted and discovered at the first
+signature.
+
+**`R3-EXPIRY-BOUNDARY` — resolved.** The window is now pinned as inclusive at
+the start and exclusive at the end, and a test proves all four instants: one
+millisecond before `notBefore` is refused, exactly at `notBefore` is usable, one
+millisecond before `notAfter` is usable, exactly at `notAfter` is expired.
+
+**`R3-1` — resolved.** The PKCS#12 fixture moved out of the package index into a
+test-only entry point: `packages/fiscal/src/testing.ts`, reachable as
+`@newsaas/fiscal/testing` through a new `exports` subpath. Test scaffolding is
+no longer part of the package's public contract.
+
+**`R3-FSTPART-CODEPREFIX` — resolved, with the advisory's premise corrected.**
+The premise was that a renamed Fastify error code would turn a size refusal into
+a 500. It would not, and this was verified rather than argued: with the old
+`FST_PART` prefix check in place, `@fastify/multipart`'s
+`FST_REQ_FILE_TOO_LARGE` propagated unmapped to the API's error handler, which
+already rendered it as a `413 PAYLOAD_TOO_LARGE` envelope. The status was never
+at risk.
+
+What _was_ true: the prefix check caught only `FST_PARTS_LIMIT` out of the four
+413 codes `@fastify/multipart` raises, so the mapping was dead for the case it
+was written for, and the response carried the generic wording rather than the
+domain's. Detection now uses `statusCode === 413`, which is what
+`@fastify/error` sets alongside `code`, and a test asserts the **message**
+rather than the status — because the status alone cannot distinguish a mapped
+refusal from a propagated one. Reverting the fix makes that test fail with
+`"Request payload is too large."`, which is the proof.
+
+### From `review-d1cd99817d47a029` — the advisory-closing commit
+
+| Id                          | Severity   | Location                                                           |
+| --------------------------- | ---------- | ------------------------------------------------------------------ |
+| `R3-MULTIPART-STATUS-BROAD` | SUGGESTION | `apps/api/src/fiscal/signing-material/signing-material.pipe.ts:96` |
+| `R3-VALIDFROM-BOUND`        | SUGGESTION | `packages/fiscal/src/signing-material/pkcs12.ts:252`               |
+
+`R3-MULTIPART-STATUS-BROAD` is the fair critique of the fix above: reading
+`statusCode === 413` is deliberately broad, so _any_ 413 from _any_ source
+inside the pipe would be reported as "the container exceeds the maximum allowed
+upload size". On this route the only 413 sources are the four multipart size
+limits, so the wording is accurate today — but that is an assumption rather than
+a check, and the tighter form (match the four `FST_*` size codes, with the
+status as a fallback) would say what it means.
+
 ## Disposition
 
-All thirteen are **accepted as debt**. None invalidates an acceptance criterion
-and none blocks FISC-007's closure. The two certificate-check edges
-(`R3-NOTBEFORE-UNCHECKED`, `R3-EXPIRY-BOUNDARY`) and the fixture export (`R3-1`)
-are the recommended first three when this item is scheduled; the `FST_PART`
-code-prefix dependency is the recommended fourth.
+**Four of fifteen resolved**; eleven remain accepted as debt. None of the
+fifteen invalidated an acceptance criterion and none blocked FISC-007's closure.
 
-Scheduling is not fixed here. [[EPIC-16]]'s later stories touch the same files
-([[FISC-009]] will sign with this material and [[FISC-013]] will re-validate the
-extraction against a real PSC container), so the natural moment to close the
-certificate-check edges is FISC-009, and the fixture-export boundary is a
-one-line change whenever the package's public surface is next touched.
+The eleven remaining are the two `secret-store` findings (`R3-001`, `R3-002`),
+`R3-003`, `R3-secrets-module-prod-guard`, `R3-apienv-superrefine-scope`,
+`R3-PASSWORD-PREEMPTION`, `R3-PLAIN-KEY-UNCHECKED`, `R3-NO-PROD-SIZE-CODE-TEST`
+(partly overtaken: the size mapping now has a message-level test through the
+production path), `R3-MULTIPART-STATUS-BROAD` and `R3-VALIDFROM-BOUND`. They are
+lower-value: style, defence-in-depth scoping, and test-shape suggestions.
+
+Scheduling is not fixed here. [[FISC-009]] will sign with this material, so it
+is the natural moment to re-read `R3-PLAIN-KEY-UNCHECKED` and the two
+`secret-store` findings; [[FISC-013]] re-validates the extraction against a real
+PSC container.
