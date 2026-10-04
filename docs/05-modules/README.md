@@ -95,3 +95,6 @@ Implemented (EPIC-15):
 ```text
 Fiscal.md
 ```
+
+`Fiscal.md` is a single module document: [[EPIC-16]] extended it with the tenant
+signing-material boundary ([[FISC-007]]) rather than adding a second file.

@@ -205,6 +205,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /invoices",
   "POST /invoices/:id/confirm",
   "POST /invoices/:id/cancel",
+  // EPIC-16 FISC-007 — tenant signing-material management.
+  "POST /fiscal/signing-material",
+  "GET /fiscal/signing-material",
+  "POST /fiscal/signing-material/:id/retire",
   // EPIC-15 FISC-004 — explicit fiscal submission command.
   "POST /fiscal-documents",
   // FISC-005b / D7 — tenant-scoped fiscal read contract.
@@ -434,6 +438,9 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  * creation and its lifecycle is the two explicit commands (DEC-038, DEC-043).
  */
 const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "POST /fiscal/signing-material": FISCAL_PERMISSIONS.signingMaterialManage,
+  "GET /fiscal/signing-material": FISCAL_PERMISSIONS.signingMaterialManage,
+  "POST /fiscal/signing-material/:id/retire": FISCAL_PERMISSIONS.signingMaterialManage,
   "GET /fiscal-documents": FISCAL_PERMISSIONS.read,
   "GET /fiscal-documents/:id": FISCAL_PERMISSIONS.read,
   "POST /fiscal-documents": FISCAL_PERMISSIONS.issue,
@@ -706,7 +713,11 @@ describe("route-contract probe (deny-by-default)", () => {
   it("maps EVERY fiscal route to its single intended granular fiscal.* permission", () => {
     const actualByRoute = new Map(
       inventory
-        .filter((entry) => entry.path.startsWith("/fiscal-documents"))
+        .filter(
+          (entry) =>
+            entry.path.startsWith("/fiscal-documents") ||
+            entry.path.startsWith("/fiscal/signing-material")
+        )
         .map((entry) => [
           `${entry.method} ${entry.path}`,
           entry.permissions === undefined ? [] : [...entry.permissions],
