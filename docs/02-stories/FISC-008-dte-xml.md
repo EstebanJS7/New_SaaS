@@ -87,6 +87,45 @@ invalid, not merely unconventional.
 | Quantity                         | `tdCantProSer`: 18/8, bounded                                                                                                                                                                                     |
 | Version                          | `dVerFor` and `tDVer`: a single digit; `dVerFor` is pinned to `150` by pattern                                                                                                                                    |
 
+### The receptor block — conditional, and a different enumeration
+
+§22.3 of the baseline pins the receptor's identity as **conditional on two other
+fields**, which no schema expresses:
+
+```text
+D201  iNatRec    1 = contribuyente, 2 = no contribuyente
+D202  iTiOpe     1..4  (D202 = 3 B2G, D202 = 4 B2C)
+D206  dRucRec    Obligatorio si D201 = 1 ; No informar si D201 = 2
+D207  dDVRec     Obligatorio si existe D206  (algoritmo módulo 11)
+D208  iTipIDRec  Obligatorio si D201 = 2 y D202 != 4 ; No informar si D201 = 1 o D202 = 4
+                 1 Cédula paraguaya  2 Pasaporte  3 Cédula extranjera
+                 4 Carnet de residencia  5 Innominado
+                 6 Tarjeta Diplomática de exoneración fiscal  9 Otro
+D209  dDTipIDRec Obligatorio si existe D208
+D210  dNumIDRec  Obligatorio si D201 = 2 y D202 != 4 ; innominado se completa con 0
+```
+
+**The receptor enumeration is not the schema's `tiTipDoc`.** `DE_Types_v150.xsd`
+restricts `tiTipDoc` to `[1-4]`; the Manual's receptor type adds `5 Innominado`,
+`6 Tarjeta Diplomática de exoneración fiscal` and `9`, which is the schema's
+`tiTipDocRec` (`[1-6]|9`). The generator uses the **receptor** enumeration for
+`D208` and must not share one constant with the emitter's.
+
+**A B2C document (`D202 = 4`) carries no identity document at all**, by the
+`No informar` rule.
+
+### The test-environment literal
+
+`D105 dNomEmi` carries a rule no schema encodes and that homologation depends on
+(§22.5):
+
+> "En caso de ambiente de prueba, debe contener obligatoriamente el literal «DE
+> generado en ambiente de prueba - sin valor comercial ni fiscal»"
+
+The generator emits that literal as the emitter's name whenever it builds a
+test-environment document. Without it the document is schema-valid and the test
+environment rejects it.
+
 ### Enumerations
 
 §21.5 records the enumerations the emitted documents depend on, transcribed from
@@ -164,11 +203,15 @@ The rejected alternatives, and why:
 - **Any DNIT call, WSDL or SOAP action** — [[FISC-010]].
 - **The provider selection** — [[FISC-012]].
 - **KuDE rendering** — out of the epic's scope.
-- **The Manual's table semantics.** The allowed values are pinned; what each
-  value means for the issuer is not, and is not invented here.
-- **Notas Técnicas 26 and 27.** Unretrieved. If one amends a validation rule,
-  this Story's rules change with it, and that is recorded as a risk rather than
-  assumed away.
+- **Four table contents** (`D113` distritos, `D115` ciudades, `D104` régimen,
+  `D131` actividades económicas). The Manual states where they apply; their
+  values are unread, so the generator cannot populate those fields from a
+  validated catalogue yet.
+- **The `dCodRes` catalogue**, which belongs to [[FISC-012]] rather than here.
+- **NT 24's receptor amendment is inherited, not re-derived**: NT 24 changed
+  `D208c` (code 1321) about the receptor's identity document type and a
+  7,000,000 threshold. NT 26 and 27 do not touch it, so FISC-006's record stands
+  and this Story implements the post-note rule.
 
 ## Acceptance Criteria
 
@@ -187,6 +230,18 @@ The rejected alternatives, and why:
       every quantity uses `tdCantProSer`'s scale.
 - [ ] Every enumerated field carries a value the schema allows, and no value is
       emitted that §21.5 does not record.
+- [ ] The receptor block follows its conditional rules: RUC and check digit when
+      `D201 = 1`, an identity document when `D201 = 2` and `D202 != 4`, and
+      **nothing** when `D202 = 4`.
+- [ ] `D208` uses the receptor enumeration (`tiTipDocRec`, which includes
+      `5 Innominado` and `6 Tarjeta Diplomática de exoneración fiscal`) and not
+      the emitter's `tiTipDoc`.
+- [ ] A test-environment document carries the exact literal "DE generado en
+      ambiente de prueba - sin valor comercial ni fiscal" as the emitter's name.
+- [ ] `dTiCam` is absent when the currency is PYG, and every item of a document
+      carries the same currency.
+- [ ] No B2G document is rejected for a missing `gCompPub`: NT 26 excluded those
+      rules (§22.7).
 - [ ] No validity date precedes 2018-05-01.
 - [ ] A dedicated CI job fetches the three official schemas, asserts each fetch
       (HTTP status and a minimum size), and runs the schema-validation suite
@@ -268,10 +323,11 @@ Planned, once the validation strategy is chosen:
 
 ## Known Limitations
 
-- **Notas Técnicas 26 and 27 are unretrieved.** NT 23/24/25 already changed
-  validation rules, so a later note may change what this Story encodes.
-- **The Manual's tables are unread**, so enumeration _semantics_ are not pinned
-  — only the allowed values.
+- **Four table contents are unread** (`D113` distritos, `D115` ciudades, `D104`
+  régimen, `D131` actividades económicas), so the generator cannot populate
+  those fields from a validated catalogue yet.
+- **NT 24's receptor amendment is inherited, not re-derived** — see the note in
+  "Out of Scope".
 - **The validation gate depends on DNIT being reachable.** The dedicated job
   fetches the schemas from `ekuatia.set.gov.py`; if DNIT is down the job fails
   rather than skipping, which is deliberate but is a real external dependency of
