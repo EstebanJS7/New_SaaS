@@ -885,3 +885,70 @@ identical, so they must not be shared as one constant.
 - The **batch size limit** for asynchronous reception.
 - The **QR composition** and the CSC's per-environment value.
 - Whether the **Prevalidador** is usable in an automated pre-submission check.
+- **The CDC's composition and its check-digit algorithm** (§22.9). The Manual
+  has the section but the composition is a visual element the PDF extraction
+  dropped, and the digit-verifier document's URL now redirects to the DNIT
+  multimedia portal. The modulus is named (módulo 11); the weights and the
+  remainder rule are not. Until they are pinned, the generator takes the CDC as
+  an input and does not compose it.
+
+### 22.9 The CDC and the security code
+
+Two fields the generator needs, with very different evidential status.
+
+**`dCodSeg` — the security code — is fully pinned** by the Manual's §10.3:
+
+> "Debe ser un número positivo de 9 dígitos. • Aleatorio. • Debe ser distinto
+> para cada DE y generado por un algoritmo de complejidad suficiente para evitar
+> la reproducción del valor. • Rango NO SECUENCIAL entre 000000001 y 999999999.
+> • No tener relación con ninguna información específica o directa del DE o del
+> emisor de manera a garantizar su seguridad. • **No debe ser igual al número de
+> documento campo `dNumDoc`**. • En caso de ser un número de menos de 9 dígitos
+> completar con 0 a la izquierda."
+
+So it is a random 9-digit value, zero-padded, never equal to the document
+number, and deliberately unrelated to the document or the issuer. `tdCodSeg` in
+`DE_Types_v150.xsd` restricts it to nine digits, so the two agree.
+
+**The CDC's composition is NOT pinned, and this is a gap rather than an
+answer.** The Manual has the section — §10.1 _"Estructura del código de control
+(CDC) de los DE"_ — and its text reads:
+
+> "Conformación del CDC. Para lograr una mayor comprensión se describe a
+> continuación un ejemplo de cómo generar un CDC: Consideraremos: … Por lo
+> tanto, el CDC estará conformado como sigue:"
+
+and then the composition itself is **absent from the extracted text**. It was a
+table or a diagram, and the PDF-to-text extraction dropped it entirely: the text
+jumps from "como sigue:" to the footnote. What survives is a **specimen** — the
+KuDE grouping example `0144 4444 0170 0100 1001 4528 2201 7012 5158 7326 0988`,
+which is 44 digits and confirms `tCDC`'s length, but not the field order or the
+widths behind it.
+
+The check digit is likewise only partly pinned. §10.2 says:
+
+> "Para el cálculo del dígito verificador del código de control se debe utilizar
+> el **módulo 11**, con el cual se determina su validez. La documentación acerca
+> de cómo generar este dígito, la cual se basa en la conformación antes
+> descripta, se encuentra en la siguiente dirección: [digito-verificador.pdf]"
+
+The modulus is named; the weight sequence, the treatment of the remainder and
+the rule for the resulting digit are in that external document, and **the URL is
+dead** — it now redirects to the DNIT multimedia portal rather than serving a
+PDF.
+
+**Consequences, recorded rather than worked around:**
+
+1. **The generator takes the CDC as an input**, validated against `tCDC`'s
+   length and pattern, and carries `dDVId` as supplied. It does not compose the
+   CDC and it does not compute the check digit. Composing them is a separate
+   concern that waits for a pinned algorithm — and it is the right seam anyway,
+   because the CDC is the document's identity while the XML is its
+   representation.
+2. **Two retrieval paths remain**, both cheap and both for the next attempt:
+   re-extract the Manual's page 56 with a table-aware or OCR extractor (the
+   composition is a visual element, not prose), and find the digit-verifier
+   document's current URL on the DNIT portal.
+3. **The KuDE specimen is evidence, not an algorithm.** A 44-digit example
+   confirms the length and nothing else; deriving widths from it would be
+   guessing.

@@ -186,9 +186,15 @@ The rejected alternatives, and why:
 - Field-level conformance: the identity, numbering, date, money, quantity and
   enumeration rules pinned above, each traced to §21.
 - Schema validation of the generated document, per the decision above.
-- The CDC: its 44-character composition and its check digit (`dDVId`), built
-  from the fields §13 pins (timbrado, establishment, expedition point, document
-  type, number, series).
+- **The CDC as a validated input**, not as a composed value. §22.9 records that
+  the Manual's §10.1 composition is a visual element the PDF extraction dropped
+  and that the digit-verifier document's URL is dead, so the composition and the
+  check-digit algorithm are **not pinned**. The generator validates the CDC
+  against `tCDC` and carries `dDVId` as supplied; composing them is a separate
+  concern that waits for a pinned algorithm.
+- The security code `dCodSeg`, whose rules **are** fully pinned by §10.3: nine
+  random digits, zero-padded, non-sequential, unrelated to the document or the
+  issuer, and never equal to `dNumDoc`.
 - The fixtures: a confirmed-invoice-to-DE fixture whose expected XML is pinned
   by the schema, not by a golden file written from our own output.
 
@@ -220,8 +226,11 @@ The rejected alternatives, and why:
 - [ ] The generator emits `DE` with its eleven children in schema order, with
       the required/optional cardinality the schema pins (`gTotSub` and `gCamGen`
       optional, `gCamDEAsoc` `0..99`).
-- [ ] The CDC is 44 characters and matches `tCDC`, and `dDVId` carries its check
-      digit.
+- [ ] The CDC is validated as 44 characters matching `tCDC`, and `dDVId` is
+      carried as supplied. **The generator does not compose the CDC nor compute
+      its check digit**, because §22.9 records that neither algorithm is pinned.
+- [ ] `dCodSeg` is nine random digits, zero-padded, non-sequential, unrelated to
+      the document and the issuer, and never equal to `dNumDoc`.
 - [ ] Establishment and expedition point are zero-padded to three digits; the
       document number is exactly seven digits; the series matches `[A-Z]{2}`.
 - [ ] `dFecFirma` matches `fecHhmmss` with no timezone suffix and no fractional
@@ -328,6 +337,12 @@ Planned, once the validation strategy is chosen:
   those fields from a validated catalogue yet.
 - **NT 24's receptor amendment is inherited, not re-derived** — see the note in
   "Out of Scope".
+- **The CDC is not composed here.** Its composition and check-digit algorithm
+  are unpinned (§22.9), so this Story validates a supplied CDC instead of
+  building one. That is a deliberate gap, not an oversight, and the two
+  retrieval paths are recorded: re-extract the Manual's page 56 with a
+  table-aware or OCR extractor, and find the digit-verifier document's current
+  URL.
 - **The validation gate depends on DNIT being reachable.** The dedicated job
   fetches the schemas from `ekuatia.set.gov.py`; if DNIT is down the job fails
   rather than skipping, which is deliberate but is a real external dependency of
