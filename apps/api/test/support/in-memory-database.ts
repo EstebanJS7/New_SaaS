@@ -589,6 +589,48 @@ export interface FiscalDocumentRow {
   responseSnapshot?: unknown;
 }
 
+/**
+ * FISC-007: one sealed tenant secret. RESTRICTED — the double stores the byte
+ * fields it is given and never inspects them, exactly like the real table.
+ */
+export interface TenantSecretRow {
+  id: string;
+  tenantId: string;
+  key: string;
+  algorithm: string;
+  keyVersion: number;
+  wrappedKey: Uint8Array;
+  wrapIv: Uint8Array;
+  wrapAuthTag: Uint8Array;
+  ciphertext: Uint8Array;
+  iv: Uint8Array;
+  authTag: Uint8Array;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** FISC-007: a tenant's SIFEN signing material, certificate metadata included. */
+export interface FiscalSigningMaterialRow {
+  id: string;
+  tenantId: string;
+  environment: "TEST" | "PRODUCTION";
+  status: "ACTIVE" | "RETIRED";
+  credentialRef: string;
+  certificatePem: string;
+  certificateSubject: string;
+  certificateSerial: string;
+  certificateFingerprintSha256: string;
+  keyAlgorithm: string;
+  notBefore: Date;
+  notAfter: Date;
+  uploadedByUserProfileId: string | null;
+  retiredAt: Date | null;
+  retiredByUserProfileId: string | null;
+  retirementReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface InvoiceHeaderRow {
   id: string;
   tenantId: string;
@@ -1529,6 +1571,44 @@ export interface IsolationDatabase {
       }) => { count: number };
     };
     /**
+     * FISC-007: the sealed-secret table the secret store writes through. The
+     * double never decrypts; it only stores and returns the byte fields.
+     */
+    tenantSecret: {
+      create: (args: {
+        data: Omit<TenantSecretRow, "id" | "createdAt" | "updatedAt">;
+      }) => TenantSecretRow;
+      findFirst: (args: { where: { tenantId: string; key: string } }) => TenantSecretRow | null;
+      deleteMany: (args: { where: { tenantId: string; key: string } }) => { count: number };
+    };
+    /** FISC-007: the tenant signing-material aggregate. */
+    tenantFiscalSigningMaterial: {
+      create: (args: {
+        data: Omit<FiscalSigningMaterialRow, "id" | "createdAt" | "updatedAt">;
+      }) => FiscalSigningMaterialRow;
+      findFirst: (args: {
+        where: {
+          tenantId: string;
+          id?: string;
+          environment?: "TEST" | "PRODUCTION";
+          status?: "ACTIVE" | "RETIRED";
+        };
+      }) => FiscalSigningMaterialRow | null;
+      findMany: (args: {
+        where: { tenantId: string };
+        orderBy: { createdAt: "desc" };
+      }) => FiscalSigningMaterialRow[];
+      updateMany: (args: {
+        where: { tenantId: string; id: string; status: "ACTIVE" };
+        data: {
+          status: "RETIRED";
+          retiredAt: Date;
+          retiredByUserProfileId: string | null;
+          retirementReason: string;
+        };
+      }) => { count: number };
+    };
+    /**
      * Numbering counter the confirm transaction advances (DEC-039). Present now
      * so BILL-003 does not have to reopen the boundary; BILL-002 writes no row.
      */
@@ -1930,6 +2010,8 @@ export interface IsolationDatabase {
     invoiceLines: Map<string, InvoiceLineRow>;
     invoiceNumberSequences: Map<string, InvoiceNumberSequenceRow>;
     fiscalDocuments: Map<string, FiscalDocumentRow>;
+    tenantSecrets: Map<string, TenantSecretRow>;
+    fiscalSigningMaterials: Map<string, FiscalSigningMaterialRow>;
     cashRegisters: Map<string, CashRegisterRow>;
     cashSessions: Map<string, CashSessionRow>;
     cashMovements: Map<string, CashMovementRow>;
@@ -2452,6 +2534,10 @@ export function createIsolationDatabase(): IsolationDatabase {
   const invoiceLineTable = new Map<string, InvoiceLineRow>();
   const invoiceNumberSequenceTable = new Map<string, InvoiceNumberSequenceRow>();
   const fiscalDocumentTable = new Map<string, FiscalDocumentRow>();
+  // EPIC-16 FISC-007: the sealed secrets and the signing materials that
+  // reference them. Both are written by the signing-material commands.
+  const tenantSecretTable = new Map<string, TenantSecretRow>();
+  const fiscalSigningMaterialTable = new Map<string, FiscalSigningMaterialRow>();
   // EPIC-12 POS-002: the register/session tables the cash surface touches. The
   // movement table is MODELLED (so the inertness probe can diff it) but nothing
   // in EPIC-12 writes a row — POS-003 does, and EPIC-13 owns the other kinds.
@@ -3661,6 +3747,95 @@ export function createIsolationDatabase(): IsolationDatabase {
         return { count };
       },
     },
+    tenantSecret: {
+      create: ({ data }) => {
+        if (!data.tenantId) throw new Error("tenant secret writes require a tenantId");
+        const now = new Date();
+        const row: TenantSecretRow = {
+          ...data,
+          id: randomUUID(),
+          createdAt: now,
+          updatedAt: now,
+        };
+        tenantSecretTable.set(row.id, row);
+        return row;
+      },
+      findFirst: ({ where }) => {
+        if (!where.tenantId) throw new Error("tenant secret reads require a tenantId predicate");
+        return (
+          [...tenantSecretTable.values()].find(
+            (row) => row.tenantId === where.tenantId && row.key === where.key
+          ) ?? null
+        );
+      },
+      deleteMany: ({ where }) => {
+        if (!where.tenantId) throw new Error("tenant secret writes require a tenantId predicate");
+        let count = 0;
+        for (const row of [...tenantSecretTable.values()]) {
+          if (row.tenantId !== where.tenantId || row.key !== where.key) continue;
+          tenantSecretTable.delete(row.id);
+          count += 1;
+        }
+        return { count };
+      },
+    },
+    tenantFiscalSigningMaterial: {
+      create: ({ data }) => {
+        if (!data.tenantId) throw new Error("signing material writes require a tenantId");
+        const now = new Date();
+        const row: FiscalSigningMaterialRow = {
+          ...data,
+          id: randomUUID(),
+          createdAt: now,
+          updatedAt: now,
+        };
+        fiscalSigningMaterialTable.set(row.id, row);
+        return row;
+      },
+      findFirst: ({ where }) => {
+        if (!where.tenantId) throw new Error("signing material reads require a tenantId predicate");
+        return (
+          [...fiscalSigningMaterialTable.values()].find(
+            (row) =>
+              row.tenantId === where.tenantId &&
+              (where.id === undefined || row.id === where.id) &&
+              (where.environment === undefined || row.environment === where.environment) &&
+              (where.status === undefined || row.status === where.status)
+          ) ?? null
+        );
+      },
+      findMany: ({ where, orderBy }) => {
+        if (!where.tenantId) throw new Error("signing material reads require a tenantId predicate");
+        return [...fiscalSigningMaterialTable.values()]
+          .filter((row) => row.tenantId === where.tenantId)
+          .sort((left, right) => {
+            const createdOrder = right.createdAt.getTime() - left.createdAt.getTime();
+            if (createdOrder !== 0) return createdOrder;
+            return orderBy.createdAt === "desc" ? left.id.localeCompare(right.id) : 0;
+          });
+      },
+      updateMany: ({ where, data }) => {
+        if (!where.tenantId)
+          throw new Error("signing material writes require a tenantId predicate");
+        let count = 0;
+        for (const row of fiscalSigningMaterialTable.values()) {
+          if (
+            row.id !== where.id ||
+            row.tenantId !== where.tenantId ||
+            row.status !== where.status
+          ) {
+            continue;
+          }
+          row.status = data.status;
+          row.retiredAt = data.retiredAt;
+          row.retiredByUserProfileId = data.retiredByUserProfileId;
+          row.retirementReason = data.retirementReason;
+          row.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
     invoice: {
       findFirst: ({ where, include }) => {
         assertInvoiceTenantScope(where);
@@ -4673,6 +4848,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       invoiceLines: invoiceLineTable,
       invoiceNumberSequences: invoiceNumberSequenceTable,
       fiscalDocuments: fiscalDocumentTable,
+      tenantSecrets: tenantSecretTable,
+      fiscalSigningMaterials: fiscalSigningMaterialTable,
       cashRegisters: cashRegisterTable,
       cashSessions: cashSessionTable,
       cashMovements: cashMovementTable,
