@@ -46,6 +46,8 @@ inside the lineage record is the authoritative wording.
 | 7   | `0c99af1..8c9e1c4` | `review-cfc13bac309f1db2` | low    | none        | approved on `START`                                |
 | 8   | `8c9e1c4..ab3bad4` | `review-6d69b5d66f366ee1` | low    | none        | approved on `START`                                |
 | 9   | `ab3bad4..e0d9661` | `review-d1cd99817d47a029` | medium | reliability | approved — closed the four recommended-first items |
+| 10  | `e0d9661..6e14101` | `review-ca4223f8b8b7f32a` | low    | none        | approved on `START`                                |
+| 11  | `6e14101..ceb22e3` | `review-67a69238826f76c7` | low    | none        | approved on `START`                                |
 
 ## Debt
 
@@ -165,6 +167,18 @@ upload size". On this route the only 413 sources are the four multipart size
 limits, so the wording is accurate today — but that is an assumption rather than
 a check, and the tighter form (match the four `FST_*` size codes, with the
 status as a fallback) would say what it means.
+
+## Termination of the review record
+
+Eleven candidates closed before this note was written, and the coverage is
+complete from `b05d411` to `ceb22e3`.
+
+Recording a closure is itself a docs change, so every recording commit is an
+unreviewed candidate in turn. The regress is terminated deliberately: the commit
+that carries **this** note is a docs-only candidate, closed separately as a
+low-tier `non_executable_only` review, and it is **not** recorded here again.
+Further edits to this file to record that closure are out of scope by
+construction.
 
 ## Disposition
 
