@@ -489,8 +489,10 @@ flag and treat the rules as pending DNIT, or be reframed.
 
 ## 19. Open questions
 
-1. **Notas Técnicas 26 and 27.** The portal lists them; their clauses are
-   unknown, and they may amend what NT 23/24/25 left.
+1. ~~Notas Técnicas 26 and 27.~~ **Resolved 2026-10-04 — see §22.7.** Both were
+   retrieved; **27 is the latest** (28 returns HTTP 404). NT 26 excludes four
+   B2G validation rules; NT 27 amends the nomination _event_ format, not the DE.
+   Neither changes a DE rule that [[FISC-008]] must implement.
 2. ~~`DE_Types_v150.xsd`: per-field lengths, patterns and enumerations.~~
    **Resolved 2026-10-04 — see §21.** 140 `simpleType`s with their enumerations,
    the scalar patterns, and the `rDE`/`tDE` structures are now pinned from the
@@ -499,7 +501,13 @@ flag and treat the rules as pending DNIT, or be reframed.
 4. The WSDL documents: SOAP actions, bindings, header requirements.
 5. The batch size limit for asynchronous reception.
 6. The QR composition and the CSC's per-environment value.
-7. The tables' contents, and chapter 16's codifications.
+7. ~~The tables' contents, and chapter 16's codifications.~~ **Partly resolved
+   2026-10-04 — see §22.2 and §22.6.** The Manual's field-level rules are now
+   recorded, including the receptor block's conditional structure and the
+   test-environment literal. Four companion tables are retrieved as official
+   XSDs. **Still open**: the _contents_ of `Tabla 2.1 Distritos`,
+   `Tabla 2.2 Ciudades`, `Tabla 1 Tipo de Régimen` and
+   `Tabla 3 Actividades Económicas`.
 8. Whether the Prevalidador is usable in an automated pre-submission check.
 9. ~~How a test validates against the official XSDs without vendoring them.~~
    **Resolved 2026-10-04 by the maintainer.** A dedicated CI job fetches the
@@ -511,12 +519,13 @@ flag and treat the rules as pending DNIT, or be reframed.
    case count. See [[FISC-008]]'s "The validation strategy".
 
 Resolved since the first pass, and no longer open: the field-level types and
-enumerations (§21), the signature profile, the certificate standard and its
-F1/F2 types, the transport stack, the endpoint list, the result model and its
-three states, the deadlines, the CDC-reuse rule, the timbrado and numbering
-model, the test environment and its test data, the contingency question —
-answered by DNIT's own statement that it is undefined — and **the clauses of
-Notas Técnicas 23, 24 and 25**.
+enumerations (§21), the field-level **rules** and the complete Nota Técnica set
+(§22), the signature profile, the certificate standard and its F1/F2 types, the
+transport stack, the endpoint list, the result model and its three states, the
+deadlines, the CDC-reuse rule, the timbrado and numbering model, the test
+environment and its test data, the contingency question — answered by DNIT's own
+statement that it is undefined — and **the clauses of Notas Técnicas 23, 24 and
+25**.
 
 ## 20. Consequences for the epic's Stories
 
@@ -701,3 +710,178 @@ Two of §19's open questions survive this retrieval and they matter to
   the _meaning_ of each enumeration value above is not yet recorded here beyond
   the description types the schema itself carries. The schema gives the allowed
   values; the manual's tables give what each value means for the issuer.
+
+## 22. Field-level rules and the complete Nota Técnica set (retrieved 2026-10-04)
+
+**[R]** This section closes open questions 1 and 7 of §19. It exists because the
+XSD alone is **not** enough to produce an acceptable DE: `DE_Types_v150.xsd`
+pins structure, lengths, patterns and allowed values, while the Manual Técnico
+pins the **conditional obligations and cross-field invariants** that SIFEN
+actually validates. A document built from the schema alone is schema-valid and
+still rejectable.
+
+### 22.1 Retrieval record
+
+```text
+Manual Técnico v150 (already retrieved by FISC-006)   181,808 chars   read locally
+Nota Técnica N° 26  06/06/2025  test 09/06/2025  prod 16/06/2025   152,348 bytes
+Nota Técnica N° 27  09/03/2026  test 09/03/2026  prod 09/03/2026   171,022 bytes
+Nota Técnica N° 28  HTTP 404 -> does not exist; 27 is the latest
+Departamentos_v141.xsd                              6,198 bytes
+Monedas_v150.xsd                                   57,236 bytes
+Unidades_Medida_v141.xsd                           27,240 bytes
+Paises_v100.xsd                                    53,266 bytes
+```
+
+The Notas Técnicas follow
+`https://www.dnit.gov.py/documents/20123/420595/NT_E_KUATIA_0NN_MT_V150.pdf`.
+**The Nota Técnica set is now complete**: 23, 24, 25, 26 and 27.
+
+### 22.2 The Manual's field-level specification
+
+The Manual carries **73 distinct `D`-code field identifiers** and **59 parseable
+field rows** of the shape
+
+```text
+<group> <D-code> <field> <description> <parent> <type> <length> <occurrence> <observations>
+```
+
+Each row's observations carry three things the schema does not: the field's
+**semantics**, its **conditional obligation**, and its **value meanings**.
+Extract them with a row-shape regex over the Manual text — a split on `D`-codes
+does not work, because a `D`-code also appears _inside_ other fields'
+observations as a cross-reference.
+
+### 22.3 The receptor block — the rules that shape the generator
+
+This is the highest-value finding of the retrieval. The receptor's identity is
+**conditional on two other fields**, and the Manual's document-type enumeration
+is **not** the schema's:
+
+```text
+D201  iNatRec    1 = contribuyente, 2 = no contribuyente
+D202  iTiOpe     1..4  (D202 = 3 is B2G, D202 = 4 is B2C)
+D206  dRucRec    Obligatorio si D201 = 1 ; No informar si D201 = 2
+D207  dDVRec     Obligatorio si existe el campo D206   (algoritmo módulo 11)
+D208  iTipIDRec  Obligatorio si D201 = 2 y D202 ≠ 4 ; No informar si D201 = 1 o D202 = 4
+                 1 = Cédula paraguaya   2 = Pasaporte   3 = Cédula extranjera
+                 4 = Carnet de residencia   5 = Innominado
+                 6 = Tarjeta Diplomática de exoneración fiscal   9 = Otro
+D209  dDTipIDRec Obligatorio si existe el campo D208
+D210  dNumIDRec  Obligatorio si D201 = 2 y D202 ≠ 4 ; "En caso de DE innominado, completar con 0 (cero)"
+```
+
+Two consequences worth naming:
+
+- **`D208` is a superset of the schema's `tiTipDoc`.** `DE_Types_v150.xsd`
+  restricts `tiTipDoc` to `[1-4]`; the Manual's receptor document type adds
+  `5 = Innominado`, `6 = Tarjeta Diplomática de exoneración fiscal` and `9`. The
+  schema's `tiTipDocRec` (`[1-6]|9`) is the one that matches. **The generator
+  must use the receptor enumeration, not the emitter's.**
+- **A B2C document (`D202 = 4`) carries no identity document at all**, by the
+  `No informar` rule. That is a rule no schema expresses.
+
+**Nota Técnica 24 already amended this block** (§16): it amends `D208c`
+(code 1321) about the receptor's identity document type and a 7,000,000
+threshold. Neither NT 26 nor NT 27 touches it, so the amended rule stands as
+FISC-006 recorded it.
+
+### 22.4 Other conditional and cross-field rules
+
+```text
+D011  iTipTra    Obligatorio si C002 = 1 o 4 ; No informar si C002 ≠ 1 o 4
+D012  dDesTipTra Obligatorio si existe el campo D011
+D018  dTiCam     Obligatorio si D017 = 1 ; No informar si D017 = 2 ; No informar si D015 = PYG
+D114  dDesDisEmi Obligatorio si existe el campo D113
+D222  dDesCiuRec Obligatorio si existe el campo D221
+D015  cMoneOpe   ISO 4217, and "Se requiere la misma moneda para todos los ítems del DE"
+D101  dRucEm     "Debe corresponder al RUC del certificado digital utilizado para firmar el DE"
+D102  dDVEmi     "Según algoritmo módulo 11"
+D104  cTipReg    "Según Tabla 1 – Tipo de Régimen"
+D108  dNumCas    "Si no tiene numeración, colocar 0 (cero)"
+D111  cDepEmi    "Según XSD de Departamentos"   -> Departamentos_v141.xsd
+D113  cDisEmi    "Según Tabla 2.1 – Distritos"
+D115  cCiuEmi    "Según Tabla 2.2 – Ciudades"
+D131  cActEco    "Según Tabla 3 – Actividades Económicas"
+D103  iTipCont   1 = Persona Física, 2 = Persona Jurídica
+D013  iTImp      1 = IVA, 2 = ISC, 3 = Renta, 4 = Ninguno, 5 = IVA - Renta
+```
+
+### 22.5 The test-environment rule
+
+`D105 dNomEmi` carries a rule that no schema encodes and that homologation
+depends on:
+
+> "En caso de ambiente de prueba, debe contener obligatoriamente el literal
+> **«DE generado en ambiente de prueba - sin valor comercial ni fiscal»**"
+
+The generator must emit that literal as the emitter's name whenever it builds a
+test-environment document. Without it the document is schema-valid and the test
+environment rejects it.
+
+### 22.6 The companion table schemas
+
+Four are published as official XSDs and were retrieved:
+
+| Schema                     | Pins                                         |
+| -------------------------- | -------------------------------------------- |
+| `Departamentos_v141.xsd`   | the department codes `D111 cDepEmi`          |
+| `Monedas_v150.xsd`         | the currency codes `D015 cMoneOpe`, ISO 4217 |
+| `Unidades_Medida_v141.xsd` | the unit-of-measure codes for the item lines |
+| `Paises_v100.xsd`          | the country codes                            |
+
+**Two tables are still not published as XSDs**: `Tabla 2.1 – Distritos` (`D113`)
+and `Tabla 2.2 – Ciudades` (`D115`). The Manual's field rows state only that
+they exist and where they apply; their contents come from the portal's tables
+index, whose contents remain unread. `Tabla 1 – Tipo de Régimen` (`D104`) and
+`Tabla 3 – Actividades Económicas` (`D131`) are in the same position.
+
+### 22.7 The Notas Técnicas 26 and 27
+
+**NT 26 — 06/06/2025, test 09/06/2025, production 16/06/2025.** It **excludes
+four validation rules**, all of them about public purchases (B2G):
+
+```text
+E020   1400  "Grupo de informaciones de Compras Públicas es obligatorio"      EXCLUDED
+E020a  1401  "no requerido para el tipo de operación"                          EXCLUDED
+E704   1800  "Código de DNCP - Nivel General es obligatorio para B2G"          EXCLUDED
+E705   1801  "Código de DNCP – Nivel Específico es obligatorio"                EXCLUDED
+```
+
+and it relaxes `E704 dDncpG` and `E705 dDncpE` from mandatory to
+`Opcional si D202 = 3`. **Consequence for FISC-008**: none of its rules apply to
+a B2C or B2B invoice. It matters only if the product ever issues a B2G document,
+and it means a B2G document must **not** be rejected for a missing `gCompPub`.
+
+**NT 27 — 09/03/2026, test and production 09/03/2026.** It amends the **Evento
+de Nominación de Factura Electrónica** — an _event_ format, not the DE:
+
+```text
+GENFE010  iTipIDRec    Obligatorio si GENFE004 = 2
+                       1 = Cédula paraguaya   2 = Pasaporte   3 = Cédula extranjera
+                       4 = Carnet de residencia
+                       6 = Tarjeta Diplomática de exoneración fiscal   9 = Otro
+GENFE011  dDTipIDRec   Obligatorio si existe el campo GENFE010
+```
+
+**Consequence for FISC-008**: none. NT 27 changes no DE field and no DE
+validation rule; it belongs to the events capability the epic's later stories
+own. It is recorded here so a future reader does not have to re-fetch it to
+learn that.
+
+One asymmetry worth noting: the **event's** receptor document type includes
+`6 = Tarjeta Diplomática de exoneración fiscal` and `9`, while the **DE's**
+`D208` includes `5 = Innominado` as well. The two enumerations are close but not
+identical, so they must not be shared as one constant.
+
+### 22.8 What remains open after this retrieval
+
+- **`Tabla 2.1 – Distritos` and `Tabla 2.2 – Ciudades` contents** (`D113`,
+  `D115`), plus `Tabla 1 – Tipo de Régimen` (`D104`) and
+  `Tabla 3 – Actividades Económicas` (`D131`). The Manual states where they
+  apply; their values come from the portal's tables, whose contents are unread.
+- The **full `dCodRes` catalogue** from chapter 12.
+- The **WSDL documents**: SOAP actions, bindings, header requirements.
+- The **batch size limit** for asynchronous reception.
+- The **QR composition** and the CSC's per-environment value.
+- Whether the **Prevalidador** is usable in an automated pre-submission check.
