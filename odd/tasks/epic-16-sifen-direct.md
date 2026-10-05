@@ -390,9 +390,13 @@ candidate 1 exists.
       inline in the Manual; the earlier claim was wrong) and it is **not** the
       CDC's composition any more (it is a picture of a table on page 56, and the
       Manual's worked example matches the KuDE specimen byte for byte). What is
-      still open: (1) the rule text of the non-receptor notes — **the material is
-      already on disk**, the 8 relevant notes total ~18 KB of extracted text at
-      `/tmp/sifen-xsd/nts/`, so this is a bounded transcription and not a
+      still open: (1) ~~the rule text of the non-receptor notes~~ — **CLOSED
+      2026-10-05**: the four areas are transcribed in baseline §22.12 (currency
+      and exchange, with NT 008's `F023` formulas and NT 012's `D022`/1213),
+      §22.13 (titles/transaction type, and NT 018's affected-obligations
+      subgroup with its new TABLA 12 catalogue plus `D031`/1220, `D032`/1221 and
+      NT 022's `D031a`/1222) and §22.14 (items, with NT 013's per-item IVA
+      formulas and their six validations). What remains is *code*, not
       retrieval; (2) `D131`'s activity catalogue, whose Manual link now returns
       an HTML portal shell; (3) the CDC's **check digit**, where the verifier
       document's URL serves the portal's HTML shell and one usable specimen is

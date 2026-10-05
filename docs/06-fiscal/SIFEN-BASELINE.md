@@ -1272,9 +1272,13 @@ titles (`D011` — NT 021, 024).
 
 **What this section does and does not claim.** It claims, with the notes in
 hand, _which_ notes touch _which_ DE fields and which amend validations. The
-receptor block's rule text **is** now transcribed, in §22.11. The other areas
-are not: currency and exchange, emitter activity and imputation, items and
-titles remain **provisional** until their notes are read the same way.
+receptor block's rule text **is** transcribed, in §22.11, and the four
+non-receptor areas were transcribed on 2026-10-05 in **§22.12** (currency and
+exchange), **§22.13** (titles, transaction type and affected obligations) and
+**§22.14** (items). **Every DE area this profile names now has its rule text
+recorded**, with one exception: the notes whose only effect is on _events_ — NT
+018's transport-update rules, NT 019 and NT 027 — which belong to [[FISC-010]]
+rather than to the DE.
 
 ### 22.11 The receptor block's current rules, with their amendment trail
 
@@ -1343,9 +1347,241 @@ D223 cCiuRec   Obligatorio si se informa D213 y D202 != 4 ; no informar si D202 
    why the `No informar` clause and those validations must not both be
    implemented.
 
-**What this section still does not claim.** It transcribes the receptor block's
-rules and their amendment trail, and it stops there. The other DE areas §22.10
-lists — currency and exchange (`D015`/`D017`/`D018`/`D022`), emitter activity
-and imputation (`D030`–`D040`), items (`E700`–`E899`) and titles (`D011`) — are
-profiled but **not yet transcribed**, so their rules in §22.4 remain
-provisional.
+**What this section does not claim.** It transcribes the receptor block's rules
+and their amendment trail, and it stops there. The other DE areas §22.10 lists —
+currency and exchange (`D015`/`D017`/`D018`/`D022`), emitter activity and
+imputation (`D030`–`D040`), items (`E700`–`E899`) and titles (`D011`) — were
+**transcribed on 2026-10-05 in §22.12, §22.13 and §22.14**, so §22.4's rules for
+them are no longer the only record. What no section here claims is that the
+_code_ implements them: §22.12's `D208c` correction and §22.14's item formulas
+are rules FISC-008's builder does not yet encode.
+
+### 22.12 Currency and exchange: `D015`, `D017`, `D018`, `D022`, `F023`
+
+**Transcribed 2026-10-05 from the note text.** §22.4 read these fields from the
+2019 Manual and §22.10 flagged them as provisional; this section closes that for
+currency and exchange, which is what a confirmed invoice's `currency` and any
+exchange rate must satisfy.
+
+**NT 008 (21/09/2021) rewrote `F023`'s formulas.** `F023 dTotalGs` is "Total
+general de la operación en Guaraníes" and the note gives it as an arithmetic
+rule rather than a free total:
+
+```text
+F023 dTotalGs   Total general de la operación en Guaraníes        N 1-15p(0-8)  0-1
+  Si D015 != PYG y D017 = 1  ->  corresponde al cálculo aritmético: F014 * D018
+  Si D015 != PYG y D017 = 2  ->  corresponde a la suma de todas las ocurrencias de EA009
+  No informar si D015 = PYG
+  Cuando C002 = 4 corresponde a F014
+```
+
+Two consequences that matter beyond `F023` itself:
+
+- **`D017` has two values, not one.** `1` means a single global rate and `2`
+  means per item — matching `tdCondTiCam`'s enumerations, which
+  `DE_Types_v150.xsd` states as `1 GLOBAL` and `2 POR ITEM`. So the conditional
+  rule in §22.4 ("`D018` obligatory if `D017 = 1`") applies to the global case
+  only; when `D017 = 2` the rate is per item.
+- **`F023` must NOT be informed when `D015 = PYG`.** So a PYG document has no
+  guaraníes total at all, and anything that compares against it has to switch
+  fields. §22.11's `D208c` is exactly that case — see the correction below.
+
+**NT 012 (21/02/2023) added one validation, `D022`/1213:**
+
+```text
+D022  Moneda de la operación no corresponde al tipo de documento informado   1213
+      Si el tipo de documento informado es Autofactura Electrónica (C002 = 4)
+      la moneda de la operación debe ser igual a PYG (D015 = PYG)
+      Observación: conforme al Dictamen DEINT N° 344 de 27/12/2022
+```
+
+**A correction to §22.11, from NT 021's and NT 024's own text.** §22.11 recorded
+`D208c`/1321 as "`D208` cannot be 5 when the total in guaraníes is >= 7,000,000
+(`F023 >= 7000000` or `F014 >= 7000000`)". The notes state the condition **field
+by field**, and it is not two alternatives for the same document:
+
+```text
+NT 021 (35.000.000) and NT 024 (7.000.000), verbatim:
+  "... no puede ser Innominado (D208 != 5) cuando el total general de la
+   operación EN GUARANÍES (cuando la moneda es EXTRANJERA) o el total general
+   de la operación (cuando la moneda es PYG) es mayor o igual a ..."
+```
+
+So it is **one field selected by the currency**: `F023` when `D015 != PYG`, and
+`F014` when `D015 = PYG` — which is consistent with NT 008's "`F023` no informar
+si `D015 = PYG`", because for a PYG document `F023` does not exist to compare.
+Reading the two field names as a disjunction would over-reject nothing but would
+also make the PYG case compare a field the document must not carry.
+
+**`dSisFact` has a second recorded value.** NT 010 gives it as
+`1 = Sistema de facturación del contribuyente, 2 = SIFEN solución gratuita`,
+while `DE_v150.xsd` constrains it with `maxInclusive value="1"`. FISC-008 emits
+`1`, which is correct for an issuer's own system, and the schema is the stricter
+authority; the discrepancy is recorded rather than resolved.
+
+### 22.13 Titles, transaction type and affected obligations: `D011`, `D012`, `D030`–`D040`
+
+**NT 010 (04/02/2022) pins the `D011` -> `D012` pairing**, which §21.5 recorded
+only as "13 transaction types":
+
+```text
+D011 iTipTra      Tipo de transacción        1..13
+D012 dDesTipTra   Descripción del tipo de transacción   A 5-39  0-1
+                  Obligatorio si existe el campo D011
+  1 "Venta de mercadería"                       8  "Donación"
+  2 "Prestación de servicios"                   9  "Anticipo"
+  3 "Mixto (Venta de mercadería y servicios)"   10 "Compra de productos"
+  4 "Venta de activo fijo"                      11 "Compra de servicios"
+  5 "Venta de divisas"                          12 "Venta de crédito fiscal"
+  6 "Compra de divisas"                         13 "Muestras médicas (Art. 3 RG 24/2014)"
+  7 "Promoción o entrega de muestras"
+```
+
+`13` is the value §22.11's `D208c` excludes from the `Innominado` prohibition,
+so this table and that validation are the same fact seen from two sides.
+
+**NT 018 (17/11/2023) added the affected-obligations subgroup and its
+catalogue.** Inside "campos inherentes a la operación comercial (`D010`-`D099`)"
+— which is `gOpeCom`, the same placement FISC-008's builder uses:
+
+```text
+D030 gOblAfe     Grupo de campos que identifican las obligaciones afectadas  D010  G  0-11
+D031 cOblAfe     Código de la obligación afectada        D030  N  3     1-1  Según Tabla 12
+D032 dDesOblAfe  Descripción de la obligación afectada   D030  A  21-65 1-1  Referente a D031
+```
+
+Note the occurrence bound: the note says **`0-11`** while `DE_v150.xsd` declares
+`gOblAfe` with `maxOccurs="12"`. The schema is the structural authority, so 12
+is the bound the validator enforces; the note's 11 is recorded here as the
+Manual's wording.
+
+**Two validations, both new in NT 018, and the catalogue they need:**
+
+```text
+D031  Código de la obligación afectada inexistente                        1220
+      Debe ser un código según la tabla 12 - Tipo de obligaciones
+D032  Descripción de la obligación afectada no corresponde al código      1221
+      Descripción no coincidente con lo informado en D031
+```
+
+```text
+TABLA 12 - TIPO DE OBLIGACIONES   (printed in NT 018, verbatim order)
+113  IMPUESTO A LA RENTA IRACIS - REGÍMENES ESPECIALES
+143  TRIBUTO UNICO MAQUILA
+211  IMPUESTO AL VALOR AGREGADO - GRAVADAS Y EXONERADAS - EXPORTADORES
+311  IMPUESTO SELECTIVO AL CONSUMO - GENERAL
+321  IMPUESTO SELECTIVO AL CONSUMO COMBUSTIBLES
+700  IMPUESTO A LA RENTA EMPRESARIAL - RÉGIMEN GENERAL
+701  IMPUESTO A LA RENTA EMPRESARIAL - SIMPLE
+703  IMPUESTO DE ZONA FRANCA
+702  IMPUESTO A LA RENTA EMPRESARIAL - RESIMPLE
+715  IMPUESTO A LA RENTA PERSONAL - SERVICIOS PERSONALES
+716  IMPUESTO A LA RENTA PERSONAL - RENTAS Y GANANCIAS DE CAPITAL
+```
+
+**NT 022 (09/02/2024) added one more, `D031a`/1222:** "Cuando se informa el
+campo `D031` no se permite repetir los códigos en el mismo documento."
+
+**What NT 018 also touches but this Story does not implement:** the same note
+adds eleven validations to the **transport-update event** (`GET022`-`GET030`,
+codes `4325`-`4335`) and one to `GET002`/`4336`. Those are event rules, not DE
+rules — [[FISC-010]]'s territory — and are recorded here only so a reader does
+not think they were missed.
+
+### 22.14 Items: `E700`-`E899`
+
+**Transcribed 2026-10-05.** This is the area WU-C's mapping needs most, because
+a confirmed invoice's lines become `gCamItem`.
+
+**The item's own fields, as last set by NT 009 (09/09/2021):**
+
+```text
+E701 dCodInt      Código interno                            A 1-50   1-1
+      "No se pueden tener ítems distintos de mercadería o servicio con el mismo
+       código interno en su catastro de productos o servicios. Este código se
+       puede repetir en el DE siempre que el producto o servicio sea el mismo."
+E708 dDesProSer   Descripción del producto y/o servicio     A 1-2000 1-1
+      "Equivalente a nombre del producto establecido en la RG 24/2019"
+```
+
+Both lengths are already what `DE_Types_v150.xsd` carries (`tdCodInt` 1-50, and
+`dDesProSer`'s inline `1-2000`), so NT 009 is **reflected in the current
+schema** — the two sources agree, and the note is the reason the widths are what
+they are.
+
+**NT 023 (27/08/2024) widened the quantity:**
+
+```text
+E711 dCantProSer  Cantidad del producto y/o servicio  N 1-10p(0-8) 1-1
+```
+
+`tdCantProSer` in the schema is `totalDigits=18, fractionDigits=8` bounded to
+`0..9999999999.99999999` — ten integer digits — so the schema and the note agree
+again.
+
+**NT 013 (20/03/2023) pins the per-item IVA arithmetic, with formulas.** This is
+the part that makes `gCamIVA` computable rather than guessed:
+
+```text
+E735 dBasGravIVA  Base gravada del IVA por ítem  N 1-15p(0-8) 1-1
+  Si E731 = 1 o 4  ->  [100 * EA008 * E733] / [10000 + (E734 * E733)]
+  Si E731 = 2 o 3  ->  0
+
+E737 dBasExe      Base Exenta por ítem           N 1-15p(0-8) 1-1   (NEW in NT 013)
+  Si E731 = 4      ->  [100 * EA008 * (100 - E733)] / [10000 + (E734 * E733)]
+  Si E731 = 1, 2 o 3 ->  0
+```
+
+and the totals those feed:
+
+```text
+F002 dSubExe  Subtotal de la operación exenta   N 1-15p(0-8) 0-1
+  Suma de todas las ocurrencias de EA008 cuando E731 = 3
+  + todas las ocurrencias de E737 cuando E731 = 4
+
+F004 dSub5    Subtotal con IVA incluido al 5%   N 1-15p(0-8) 0-1
+  Suma de EA008 cuando E734 = 5 y E731 = 1
+  + suma de (E735 + E736) cuando E734 = 5 y E731 = 4
+  No debe existir el campo si D013 != 1 o D013 != 5
+
+F005 dSub10   Subtotal con IVA incluido al 10%  N 1-15p(0-8) 0-1
+  Suma de EA008 cuando E734 = 10 y E731 = 1
+  + suma de (E735 + E736) cuando E734 = 10 y E731 = 4
+  No debe existir el campo si D013 != 1 o D013 != 5
+```
+
+**The validations that enforce them**, all from NT 013:
+
+| Id      | Code | Condition                                           |
+| ------- | ---- | --------------------------------------------------- |
+| `E735a` | 1910 | if `E734 = 5`, `E735` must equal the formula above  |
+| `E735b` | 1911 | if `E734 = 10`, `E735` must equal the formula above |
+| `E737`  | 1921 | `E737` must equal its formula, or 0                 |
+| `F002a` | 2353 | `F002` must equal the sum defined above             |
+| `F004a` | 2357 | `F004` must equal the sum defined above             |
+| `F005a` | 2359 | `F005` must equal the sum defined above             |
+
+Note `E731` is `iAfecIVA` (`1..4`) and `E734` is the IVA rate, so the formulas
+are keyed on the affectation and the rate — which is exactly the pair a
+confirmed invoice line's `rateCode` resolves to.
+
+**NT 010 also reshaped the merchandise-tracking subgroup `E750`-`E761`**
+(`E751 dNumLote` 1-80, `E756 dNomImp` 4-60, `E757 dDirImp` 1-255, `E758 dNumFir`
+20, `E759`/`E760 dNumReg`/`dNumRegEntCom` 1-20, `E761 dNomPro` 1-30), all `0-1`
+and tied to agrochemical registration obligations (RG 16/2019, RG 106/2021,
+SENAVE). **NT 023 also changed `E791 gGrupEner` to `0-9` occurrences and
+`E797 dConKwh` to `N 1-11p2`.** These are conditional subgroups of the item;
+they are recorded so the shapes are known, not because FISC-008 encodes their
+conditions.
+
+**NT 026 (06/06/2025) is already recorded in §22.7** and is the only item-area
+note whose effect is an _exclusion_: the four B2G/DNCP rules (`E020`/1400,
+`E020a`/1401, `E704`/1800, `E705`/1801) were removed, so a B2G document must not
+be rejected for a missing `gCompPub` or DNCP code.
+
+**What this closes, and what it does not.** The four non-receptor areas §22.10
+listed as provisional are now transcribed: currency and exchange (§22.12),
+titles and affected obligations (§22.13) and items (§22.14). **The rule text of
+Notas Técnicas 001–022 is therefore transcribed for every area FISC-008 or its
+mapping touches**, except the notes whose only effect is on events (NT 018's
+transport rules, NT 019, NT 027) — those belong to [[FISC-010]].

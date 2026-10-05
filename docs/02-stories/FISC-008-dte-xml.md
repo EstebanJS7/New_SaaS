@@ -274,12 +274,15 @@ The rejected alternatives, and why:
   `CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025` spreadsheet (18
   departamentos, 272 distritos unique nationally, 6,766 ciudades).
 - **The rule text of Notas Técnicas 001–022.** All 27 notes (001–027) are
-  retrieved and profiled in §22.10, but their _rule text_ is not transcribed
-  yet. **Eighteen touch DE fields and ten amend validations, and nine amend the
-  receptor block alone** — `D200`, `D201`, `D202`, `D208`, `D210` — which is
-  exactly the block this Story's contract pins from the 2019 Manual. The
-  receptor block is **no longer provisional** (§22.11 consolidates it); the
-  non-receptor areas are, and they are the remaining reason WU-C is blocked.
+  retrieved and profiled in §22.10, and the four non-receptor areas were
+  **transcribed on 2026-10-05** (§22.12–§22.14); what remains untranscribed is
+  the notes whose only effect is on _events_ (NT 018's transport rules, NT 019,
+  NT 027), which belong to [[FISC-010]]. **Eighteen touch DE fields and ten
+  amend validations, and nine amend the receptor block alone** — `D200`, `D201`,
+  `D202`, `D208`, `D210` — which is exactly the block this Story's contract pins
+  from the 2019 Manual. The receptor block is **no longer provisional** (§22.11
+  consolidates it); the non-receptor areas are, and they are the remaining
+  reason WU-C is blocked.
 - **The `dCodRes` catalogue**, which belongs to [[FISC-012]] rather than here.
 - **NT 24's receptor amendment is inherited, not re-derived**: NT 24 changed
   `D208c` (code 1321) about the receptor's identity document type and a
@@ -596,10 +599,21 @@ run meaningful is itself tested):
   returns an HTML portal shell. **WU-A validates `cActEco`'s shape
   (`[0-9A-Z]{1,8}`, `1..9` occurrences) and does not validate its values against
   a catalogue**, which is the honest half of the constraint.
-- **The non-receptor DE rules are provisional.** Currency and exchange, emitter
-  activity and imputation, items and titles were read from the 2019 Manual and
-  later notes amend them (§22.10), but their rule text is not yet transcribed.
-  The **receptor block is no longer a limitation**: §22.11 consolidates it.
+- **The non-receptor DE rules are transcribed but not implemented.** Currency
+  and exchange, titles/transaction type, affected obligations and items were
+  read from the 2019 Manual and amended by later notes; **their rule text is now
+  recorded** in baseline §22.12, §22.13 and §22.14. What is missing is the code:
+  §22.14's per-item IVA formulas and §22.13's `D031`/`D032` catalogue are not
+  encoded, and the currency rules in §22.12 are only partly enforced. **This is
+  WU-C's substance**, and it is no longer a retrieval gap — it is work.
+- **`D208c` is enforced more coarsely than §22.12 records it.** The note text
+  selects the field by currency — `F023` when `D015 != PYG`, `F014` when
+  `D015 = PYG` — and NT 008 adds that `F023` must not be informed at all for a
+  PYG document. The builder compares a single supplied `totalGuaranies` and only
+  when the caller supplies it, so **a PYG document is not checked against its
+  operation total, and the "`F023` must not exist for PYG" rule is not
+  enforced**. Recorded as a correction to make against the newly transcribed
+  rule, not silently left.
 - **`D206`/`D207` are enforced from §22.11's identification model, and the
   converse is not.** A contributor receptor (`D201 = 1`) must carry `dRucRec`
   and `dDVRec`, and must not carry an identity document. The reverse — refusing
