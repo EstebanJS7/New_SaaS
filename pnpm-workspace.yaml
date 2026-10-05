@@ -4,12 +4,18 @@ packages:
 # Native deps that must NOT run install scripts: argon2 loads its platform
 # prebuilt binary at runtime via node-gyp-build, so no toolchain is needed
 # and lifecycle scripts stay off.
+#
+# libxmljs2 (FISC-008 WU-B) is `true` for the opposite reason: it reaches its
+# prebuilt libxml2 binding through a `prebuild-install` postinstall, so the
+# script must run or `require("libxmljs2")` fails. It is a devDependency of
+# @newsaas/fiscal used only by the DTE XSD-validation suite.
 allowBuilds:
   "@prisma/client": true
   "@prisma/engines": true
   "@swc/core": true
   argon2: false
   esbuild: true
+  libxmljs2: true
   msgpackr-extract: true
   msw: true
   prisma: true

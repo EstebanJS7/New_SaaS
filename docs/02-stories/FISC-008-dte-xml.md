@@ -178,28 +178,49 @@ invariants forbid committing them. The maintainer chose **fetching them in a
 dedicated CI job, with the evidence made mandatory** — §19 question 9 of
 `SIFEN-BASELINE.md` is resolved by this section.
 
-The shape, pinned:
+The shape. **Items 1 and 4 were corrected on 2026-10-05** once the artifacts
+were actually inspected: it is seven schemas, not three, and a hermetic run
+needs the includes rewritten. The reasons are in baseline §21.7.
 
-1. **A dedicated CI job fetches the three official schemas** from
-   `https://ekuatia.set.gov.py/sifen/xsd/` — `DE_v150.xsd`, `DE_Types_v150.xsd`,
-   `xmldsig-core-schema.xsd` — into a job-local directory that is never
-   committed and never cached across runs.
+1. **A dedicated CI job fetches the seven official artifacts a full DE
+   validation needs** from `https://ekuatia.set.gov.py/sifen/xsd/` — the three
+   originally named (`DE_v150.xsd`, `DE_Types_v150.xsd`,
+   `xmldsig-core-schema.xsd`) plus the four `DE_v150.xsd` includes by absolute
+   URL (`Paises_v100.xsd`, `Departamentos_v141.xsd`, `Monedas_v150.xsd`,
+   `Unidades_Medida_v141.xsd`) — into a job-local directory that is never
+   committed and never cached across runs. The job then **rewrites the five
+   absolute `schemaLocation`s** to file names, because otherwise the validator
+   reaches DNIT at validation time and a co-located file is ignored: with the
+   network blocked, compilation fails with
+   `global component '{...}tCDC' not found`.
 2. **The job asserts the fetch before it validates.** HTTP status and a minimum
    byte size per file, because a captive-portal HTML error page is a 200 with
-   the wrong bytes. A fetch that does not produce all three schemas **fails the
-   job**; it does not degrade to a skip.
+   the wrong bytes; a schema-shape check catches what the size floor cannot. A
+   fetch that does not produce all seven artifacts **fails the job**; it does
+   not degrade to a skip.
 3. **In that job the validation is required, not skippable.** The ordinary
    developer and local run skips the schema-validation suite when the schemas
-   are absent, and that skip is explicit and visible. The dedicated job runs the
-   same suite with the skip disabled, so **a green run can never be the product
-   of having validated nothing**.
+   are absent, and that skip is explicit and visible — it names the directory
+   and the command that prepares it. The dedicated job runs the same suite with
+   the skip disabled, so **a green run can never be the product of having
+   validated nothing**.
 4. **The run is recorded in `docs/10-qa/CI-EVIDENCE.md`** with the run id, the
-   revision, the three artifact sizes and the number of validation cases
-   executed — so the claim "it validates against the official XSD" is checkable
-   rather than asserted.
+   revision, the artifact sizes and the number of validation cases executed — so
+   the claim "it validates against the official XSD" is checkable rather than
+   asserted.
 5. **A missing schema is a gate failure, not a silent pass.** Without (2) and
    (3) a green job would be indistinguishable from a job that validated nothing,
    which is the failure mode this option exists to prevent.
+6. **The validated document is addressed through a local five-line entry
+   schema**, because `DE_v150.xsd` declares no top-level element: `<rDE>` is a
+   `complexType`. The entry schema declares
+   `<xs:element name="rDE" type="rDE"/>` and `xs:include`s DNIT's file, so every
+   constraint is still DNIT's.
+7. **The validated signature is structural, not cryptographic.** The XSD's
+   `ds:SignatureType` requires `SignedInfo`, so the `<Signature/>` placeholder
+   this Story emits is schema-invalid and an unsigned DE cannot pass. The
+   fixture substitutes a block with the real structure and placeholder contents;
+   the real signature is [[FISC-009]]'s.
 
 The rejected alternatives, and why:
 
@@ -314,28 +335,53 @@ blocked on the non-receptor notes' rule text.
 - [x] No fiscal content is logged at CONFIDENTIAL or above (PRD §41). The
       builder has no logger.
 
-### Open — WU-B (the CI schema-validation job)
+### Rewritten — WU-B (the CI schema-validation job), approved 2026-10-05
 
-- [ ] `dCodSeg` is nine random digits, zero-padded, non-sequential, unrelated to
+The original wording said the job "fetches the three official schemas" and that
+"the generated document validates against the official XSD". Both were **checked
+against the published artifacts and both were wrong**: it is seven artifacts,
+not three, and an _unsigned_ DE cannot validate at all. The maintainer approved
+the rewrite below, and the reasons are in baseline §21.7.
+
+- [x] `dCodSeg` is nine random digits, zero-padded, non-sequential, unrelated to
       the document and the issuer, and never equal to `dNumDoc`. **WU-A enforces
       every decidable part** (nine digits, value ≥ 1, never equal to `dNumDoc`,
       zero-padding accepted) **and does not generate it**: randomness inside the
       builder would break the determinism criterion above. The generator belongs
-      where a random source exists.
-- [ ] A dedicated CI job fetches the three official schemas, asserts each fetch
-      (HTTP status and a minimum size), and runs the schema-validation suite
-      with the skip **disabled**, so a green run cannot be the product of
-      validating nothing.
-- [ ] The generated document validates against the official XSD in that job.
-- [ ] A malformed document fails that validation, so the gate is proven to
-      discriminate rather than to pass everything.
+      where a random source exists — still open.
+- [x] A dedicated CI job fetches **the seven official artifacts a full DE
+      validation needs** — the three originally named plus `Paises_v100.xsd`,
+      `Departamentos_v141.xsd`, `Monedas_v150.xsd` and
+      `Unidades_Medida_v141.xsd`, which `DE_v150.xsd` `xs:include`s — asserts
+      **each** fetch by HTTP status **and** a minimum byte size, and runs the
+      schema-validation suite with the skip **disabled**, so a green run cannot
+      be the product of validating nothing. _(`fetch-dte-schemas.mjs`, the
+      `xsd-validation` job)_
+- [x] The prepared directory is **hermetic**: the five absolute
+      `schemaLocation`s in the fetched `DE_v150.xsd` are rewritten to file
+      names, and a directory that still resolves anything over HTTP is refused
+      rather than validated. Proven by running the suite with the network
+      blocked.
+- [x] The generated document validates against the official XSD in that job,
+      **through a local five-line entry schema** that declares
+      `<xs:element name="rDE" type="rDE"/>` — necessary because `DE_v150.xsd`
+      declares no top-level element — and with a signature block that is
+      structurally complete while its contents are placeholders, because
+      `ds:SignatureType` requires `SignedInfo` and the real signature is
+      [[FISC-009]]'s.
+- [x] A malformed document fails that validation, so the gate is proven to
+      discriminate rather than to pass everything. Four negative cases: a
+      version other than `150`, the right children in the wrong order, the
+      unsigned `<Signature/>` placeholder, and a directory that cannot be used.
+- [x] A fetch that does not produce all seven schemas fails the job rather than
+      degrading to a skip, and the assertion is itself tested without a network:
+      a captive-portal HTML page, a short body, a non-200 status and a schema of
+      the wrong namespace each fail.
 - [ ] The run is recorded in `docs/10-qa/CI-EVIDENCE.md` with the run id, the
-      revision, the three artifact sizes and the number of validation cases
-      executed.
-- [ ] A fetch that does not produce all three schemas fails the job rather than
-      degrading to a skip.
-- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
-      WU-A's own gates are green; the Story-level gate closes with WU-B.
+      revision, the artifact sizes and the number of validation cases executed.
+      **Recorded locally** (seven sizes, 100 cases, the hermetic proof); the CI
+      run id follows the push and the PR, which the maintainer owns.
+- [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
 
 ### Open — WU-C (the invoice → request mapping)
 
@@ -417,14 +463,52 @@ as supplied (§22.9). `dCodSeg` is validated, never generated. `gDtipDE`,
 because their members are not transcribed and §22.10 marks those areas
 provisional.
 
-**Not this work unit.** The CI schema-validation job and the "validates against
-the official XSD" proofs are WU-B; the invoice → request mapping is WU-C and
-remains blocked.
+**WU-B — the validation gate — is implemented.** The acceptance criterion is now
+checkable rather than asserted:
+
+```text
+packages/fiscal/src/dte/xsd-artifacts.ts      the seven artifacts, the assertions, the rewrite
+packages/fiscal/src/dte/xsd-validator.ts      the entry schema and libxml2 validation
+packages/fiscal/src/dte/dte.fixture.ts        the schema-valid request + structural signature
+packages/fiscal/src/dte/xsd-artifacts.test.ts 9 cases, no network
+packages/fiscal/src/dte/xsd-validation.test.ts 7 cases, network-free when prepared
+packages/fiscal/scripts/fetch-dte-schemas.mjs the CI/local preparation CLI
+.github/workflows/ci.yml                      the dedicated `xsd-validation` job
+```
+
+The tooling is exported from `@newsaas/fiscal/testing`, not from the package
+index: it is scaffolding, and the prepared schemas are copyrighted artifacts
+that are never committed.
+
+**Two corrections to this Story's own wording came out of building it**, both
+verified against the published artifacts and both recorded in baseline §21.7:
+**it is seven schemas, not three** (`DE_v150.xsd` includes four companion tables
+and `DE_Types_v150.xsd`), and **an unsigned DE cannot validate at all**, because
+`ds:SignatureType` requires `SignedInfo`. The maintainer approved the rewrite.
+
+**Not this work unit.** The invoice → request mapping is WU-C and remains
+blocked.
 
 ## Verification
 
 ```text
-WU-A on feat/epic-16-fisc-008-dte-xml, 2026-10-05:
+WU-A + WU-B on feat/epic-16-fisc-008-dte-xml, 2026-10-05:
+
+  pnpm fetch:dte-schemas /tmp/dte-xsd-live
+    -> 7 official schemas fetched, sizes matching the 2026-10-04 retrieval
+    -> 5 absolute includes rewritten; 0 absolute URLs left in DE_v150.xsd
+
+  DTE_XSD_DIR=/tmp/dte-xsd-live DTE_XSD_REQUIRED=1 pnpm --filter @newsaas/fiscal test
+    -> 100 passed / 100 (30 of them new in WU-B), schema-validation suite RUNNING
+
+  same run with HTTP(S)_PROXY pointed at a dead port
+    -> 100 passed / 100: validation is hermetic, no network at validation time
+
+  no DTE_XSD_DIR (schemas absent, skip allowed)
+    -> 93 passed, 7 skipped, title names the directory and the preparing command
+
+  DTE_XSD_REQUIRED=1 with no schemas
+    -> FAILS, naming all seven missing artifacts
 
   pnpm --filter @newsaas/fiscal lint       pass
   pnpm --filter @newsaas/fiscal typecheck  pass
@@ -469,9 +553,36 @@ WU-A adds 22 cases in `packages/fiscal/src/dte/dte.builder.test.ts`:
 - Enumeration bounds outside §21.5, `gActEco` 1..9 and `gCamDEAsoc` 0..99.
 - Determinism and XML escaping.
 
-Still planned for WU-B: the generated document validates against the official
-schema, a malformed one does not, and the child-order case is proven by the
-schema rather than by string position.
+WU-B adds 16 more, in two files:
+
+`xsd-artifacts.test.ts` (9, **no network** — the assertion that makes a green
+run meaningful is itself tested):
+
+- The artifact list is exactly the seven names, and each recorded size is above
+  its floor.
+- A real schema body is accepted; a captive-portal HTML page is rejected.
+- A short body is rejected on size and a non-200 on status; a schema of the
+  wrong namespace is rejected as not a schema.
+- Absolute includes are rewritten, a relative one is left alone, and a document
+  that still resolves anything over HTTP is refused.
+- A complete fetch prepares all seven artifacts and a usable directory; **one
+  missing artifact fails the whole preparation** and leaves no usable directory
+  behind.
+- An unprepared directory is reported unusable with the missing names, and a
+  directory whose entry schema was never rewritten is flagged.
+
+`xsd-validation.test.ts` (7, network-free once prepared):
+
+- The prepared directory holds all seven artifacts.
+- **The built document validates against the official XSD**, once the signature
+  block is structurally complete.
+- **It does not validate with the unsigned `<Signature/>` placeholder** — the
+  error names the signature, which is why [[FISC-009]] exists.
+- A version other than `150` fails, and so does the right children in the wrong
+  order — proven by the schema rather than by string position.
+- A B2C receptor carrying an identity document is **both accepted by §22.11 and
+  schema-valid**, which §22.3's old clause would have refused.
+- An unusable directory is refused instead of reporting a pass.
 
 ## Known Limitations
 
@@ -511,10 +622,34 @@ schema rather than by string position.
   retrieval paths are recorded: re-extract the Manual's page 56 with a
   table-aware or OCR extractor, and find the digit-verifier document's current
   URL.
-- **The validation gate depends on DNIT being reachable.** The dedicated job
-  fetches the schemas from `ekuatia.set.gov.py`; if DNIT is down the job fails
-  rather than skipping, which is deliberate but is a real external dependency of
-  the gate.
+- **The validation gate depends on DNIT being reachable — once, at fetch time.**
+  The dedicated job fetches the schemas from `ekuatia.set.gov.py`; if DNIT is
+  down the job fails rather than skipping, which is deliberate but is a real
+  external dependency of the gate. **Validation itself is hermetic**: the five
+  absolute includes are rewritten to file names and the suite passes with the
+  network blocked, so DNIT being unreachable cannot make the validation half of
+  the job behave differently from the fetch half.
+- **The validated signature block is structural, not cryptographic.** The gate
+  cannot validate a document with the `<Signature/>` placeholder this Story
+  emits, because `ds:SignatureType` requires `SignedInfo`; the fixture
+  substitutes the real structure with base64-valid placeholder contents. The
+  gate therefore proves the _document_ is schema-valid given a well-formed
+  signature, and producing that signature is [[FISC-009]]'s. Recorded rather
+  than papered over.
+- **The entry point is a local five-line schema, not DNIT's.** `DE_v150.xsd`
+  declares no top-level element, so `<rDE>` has to be made addressable. The
+  entry schema declares nothing but the element and includes DNIT's file; a
+  reviewer who wants zero of our XSD can use DNIT's container protocol instead,
+  at the cost of validating a wrapper the sender does not send.
+- **The item area is supplied by the fixture, not by a typed group.** The XSD
+  requires only `dCodInt`, `dDesProSer`, `cUniMed`, `dDesUniMed` and
+  `dCantProSer` inside `gCamItem`, so the fixture supplies exactly those; the
+  Manual's conditional rules for items remain provisional per §22.10, and the
+  mapping from a confirmed invoice is WU-C's blocked work.
+- **`libxmljs2` is a native devDependency**, added on 2026-10-05 with the
+  maintainer's approval because a pure-JS validator would be a weaker engine and
+  a system `xmllint` would add a second reason for the suite to skip. It is
+  test-only: nothing in the package's production surface imports it.
 - **The timbrado's storage model is not this Story's**, so the generator
   consumes a six-field sequence it does not own.
 
@@ -565,17 +700,28 @@ are recorded rather than a paraphrase that would be ours, not theirs.
 ## Files / Modules
 
 ```text
-packages/fiscal/src/dte/dte.types.ts       the typed request and its constants
-packages/fiscal/src/dte/dte.rules.ts       the validators, one rule per cited section
-packages/fiscal/src/dte/dte.builder.ts     buildDteXml(request): string
+packages/fiscal/src/dte/dte.types.ts        the typed request and its constants
+packages/fiscal/src/dte/dte.rules.ts        the validators, one rule per cited section
+packages/fiscal/src/dte/dte.builder.ts      buildDteXml(request): string
 packages/fiscal/src/dte/dte.builder.test.ts
-packages/fiscal/src/index.ts               the package's public surface
-docs/06-fiscal/SIFEN-BASELINE.md           §21.5 enumerations, §21.6 the internal groups,
-                                           §22.9 the CDC/dCodSeg, §22.11 the receptor
-odd/tasks/epic-16-sifen-direct.md          the epic tracker, T4
+packages/fiscal/src/dte/xsd-artifacts.ts    the seven artifacts, assertions, include rewrite
+packages/fiscal/src/dte/xsd-artifacts.test.ts
+packages/fiscal/src/dte/xsd-validator.ts    the entry schema + libxml2 validation
+packages/fiscal/src/dte/xsd-validation.test.ts
+packages/fiscal/src/dte/dte.fixture.ts      the schema-valid fixture + structural signature
+packages/fiscal/src/index.ts                the package's public surface
+packages/fiscal/src/testing.ts              the scaffolding surface
+packages/fiscal/scripts/fetch-dte-schemas.mjs .github/workflows/ci.yml (xsd-validation)
+pnpm-workspace.yaml                         allowBuilds: libxmljs2
+docs/06-fiscal/SIFEN-BASELINE.md            §21.5 enumerations, §21.6 the internal groups,
+                                            §21.7 what validating requires,
+                                            §22.9 the CDC/dCodSeg, §22.11 the receptor
+docs/10-qa/CI-EVIDENCE.md                   the WU-B gate record
+odd/tasks/epic-16-sifen-direct.md           the epic tracker, T4
 ```
 
 ## Completion Notes
 
 _Status must remain non-`done` until every acceptance criterion and gate
-passes._
+passes._ WU-A and WU-B are implemented, gated and review-approved; **WU-C
+remains blocked**, so the Story stays `in-progress`.

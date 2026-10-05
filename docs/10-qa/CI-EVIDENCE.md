@@ -1,7 +1,7 @@
 ---
 type: qa
 status: active
-updated: 2026-09-27
+updated: 2026-10-05
 ---
 
 # CI Evidence
@@ -1412,3 +1412,99 @@ they produced.
 This section is the machine-generated receipt for the slice. It is **not** a
 production-readiness statement: the only provider is still a deterministic fake,
 and the tenant's signing material is held but not yet used to sign anything.
+
+## EPIC-16 FISC-008 WU-B DTE XSD Validation (2026-10-05)
+
+The acceptance criterion is "a DTE XML validates against the official XSD before
+any submission". The schemas are copyrighted and are **not vendored**, so a
+dedicated job (`xsd-validation`) fetches them into a job-local directory,
+asserts every artifact, and runs the schema-validation suite with **its skip
+disabled**, so a green run can never be the product of having validated nothing.
+
+**Status: the gate is implemented and proven locally. The CI run id is pending
+the push and the PR, which the maintainer owns.** Nothing below is a CI receipt
+yet, and this section says so rather than implying one.
+
+### Building the gate corrected two claims in the Story
+
+Both were checked against the published artifacts; both are now recorded in
+`docs/06-fiscal/SIFEN-BASELINE.md` §21.7 and the Story's acceptance criteria
+were rewritten with the maintainer's approval:
+
+1. **It is seven schemas, not three.** `DE_v150.xsd` `xs:include`s
+   `Paises_v100.xsd`, `Departamentos_v141.xsd`, `Monedas_v150.xsd`,
+   `Unidades_Medida_v141.xsd` and `DE_Types_v150.xsd`. Without those five the
+   schema does not compile at all.
+2. **An unsigned DE cannot validate.** `ds:Signature` is a `ds:SignatureType`
+   whose `SignedInfo` is required, so the `<Signature/>` placeholder the builder
+   emits is schema-invalid. The gate validates a document whose signature block
+   is structurally complete with placeholder contents; the real signature is
+   [[FISC-009]]'s.
+
+### The artifacts actually fetched, with their sizes
+
+`pnpm fetch:dte-schemas /tmp/dte-xsd-live`, 2026-10-05:
+
+```text
+DE_v150.xsd                    66190 bytes   -> 66005 after the include rewrite
+DE_Types_v150.xsd              66452 bytes
+xmldsig-core-schema.xsd        10339 bytes
+Paises_v100.xsd                53266 bytes
+Departamentos_v141.xsd          6198 bytes
+Monedas_v150.xsd               57236 bytes
+Unidades_Medida_v141.xsd       27240 bytes
+
+rewritten absolute includes: Paises_v100.xsd, Departamentos_v141.xsd,
+  Monedas_v150.xsd, Unidades_Medida_v141.xsd, DE_Types_v150.xsd
+absolute URLs left in DE_v150.xsd: 0
+```
+
+Every size matches the 2026-10-04 retrieval recorded in §21 and §22.1, which is
+the independent check that the fetched bytes are the same ones the vault's rules
+were read from.
+
+### Why the include rewrite is part of the gate
+
+Five of those includes are **absolute HTTPS URLs**, so a validator ignores the
+co-located files and reaches DNIT at validation time. Verified: with the network
+blocked, compilation fails with
+`global component '{http://ekuatia.set.gov.py/sifen/xsd}tCDC' not found`. The
+job therefore rewrites those five `schemaLocation`s to file names, and the
+validator **refuses** a directory that still resolves anything over HTTP rather
+than silently fetching.
+
+### The cases executed
+
+```text
+DTE_XSD_DIR=/tmp/dte-xsd-live DTE_XSD_REQUIRED=1 pnpm --filter @newsaas/fiscal test
+  -> 100 passed / 100        (30 new in WU-B: 22 builder cases + 9 fetch
+                              assertion cases + 7 schema-validation cases)
+
+same run with HTTP(S)_PROXY pointed at a dead port
+  -> 100 passed / 100        validation is hermetic: no network at validation time
+
+no DTE_XSD_DIR
+  -> 93 passed, 7 skipped    the skip names the directory and the preparing
+                             command in the suite title
+
+DTE_XSD_REQUIRED=1 with no prepared schemas
+  -> FAILS naming all seven missing artifacts, rather than skipping
+```
+
+The seven schema-validation cases: the prepared directory holds all seven
+artifacts; the built document validates once its signature block is structurally
+complete; it does **not** validate with the unsigned placeholder; a version
+other than `150` fails; the right children in the wrong order fail; a B2C
+receptor carrying an identity document is both §22.11-allowed and schema-valid;
+and an unusable directory is refused instead of reporting a pass.
+
+### What this gate does not prove
+
+- It does not prove the _content_ rules. The XSD pins structure, lengths,
+  patterns, facets and allowed values; the Manual's conditional obligations and
+  the Notas Técnicas' amendments are not in it. Those are the builder's
+  validators and the receptor block of §22.11.
+- It does not prove the item area. The XSD requires only five elements inside
+  `gCamItem`, and the fixture supplies exactly those; the mapping from a
+  confirmed invoice is WU-C's blocked work.
+- It is not a cryptographic signature check. The signature block is structural.

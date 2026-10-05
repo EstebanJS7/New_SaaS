@@ -746,15 +746,62 @@ wrong:**
    They are document-type-specific: `iCondOpe` sits in `gCamCond` and `iIndPres`
    in `gCamFE`, both inside `gDtipDE`.
 
-**What this still does not transcribe.** The members of `gDtipDE`, `gTotSub`,
-`gCamGen` and `gCamDEAsoc` are **not** recorded here. `gDtipDE` alone spans 11
-optional/required groups including `gCamItem` (`1..999`), and §22.10 records
-that the item, imputation and title areas are amended by Notas Técnicas whose
-rule text is not transcribed. A generator that typed them today would be
+**What this still does not transcribe.** The _optional_ members of `gDtipDE`,
+`gTotSub`, `gCamGen` and `gCamDEAsoc` are **not** recorded here. `gDtipDE` alone
+spans 11 optional/required groups including `gCamItem` (`1..999`), and §22.10
+records that the item, imputation and title areas are amended by Notas Técnicas
+whose rule text is not transcribed. A generator that typed them today would be
 encoding a provisional area, so FISC-008 carries them as caller-supplied ordered
 elements instead.
 
-### 21.7 What this still does not pin
+**The schema's own requirement inside `gDtipDE` is small, and that is worth
+recording because it is what makes a document validatable at all.** Of the 11
+groups, only `gCamItem` is required — `gCamFE`, `gCamAE`, `gCamNCDE`, `gCamNRE`,
+`gCamCond`, `gCamEsp`, `gTransp` and `gCamRDE` are all `minOccurs="0"` — and
+`tgCamItem` requires exactly five elements: `dCodInt`, `dDesProSer`, `cUniMed`,
+`dDesUniMed`, `dCantProSer`. Everything else in the item (`gValorItem`,
+`gCamIVA`, the discounts, the ISC) is optional _to the schema_, while the
+Manual's conditional rules for them stay provisional per §22.10. In the same way
+`gTotSub`, `gCamGen` and `gCamDEAsoc` are `minOccurs="0"` inside `tDE`, so a
+schema-valid DE may omit all three.
+
+### 21.7 What validating against these schemas actually requires
+
+**[R]** Three operational facts, each verified against the published artifacts
+while building the FISC-008 validation gate. They are recorded because each one
+silently breaks the naive version of "fetch the schemas and validate".
+
+1. **It is seven artifacts, not three.** `DE_v150.xsd` `xs:include`s
+   `Paises_v100.xsd`, `Departamentos_v141.xsd`, `Monedas_v150.xsd`,
+   `Unidades_Medida_v141.xsd` and `DE_Types_v150.xsd`; without those five the
+   schema does not compile at all. `xmldsig-core-schema.xsd` is a relative
+   `xs:import`. A directory holding only the three the Story names cannot
+   validate anything.
+2. **Co-locating them is not enough, because five of those includes are absolute
+   HTTPS URLs.** Verified: with the network blocked, compilation fails with
+   `global component '{http://ekuatia.set.gov.py/sifen/xsd}tCDC' not found` —
+   the local `DE_Types_v150.xsd` sitting next to `DE_v150.xsd` is ignored in
+   favour of the URL. A validator therefore reaches DNIT at validation time
+   unless the `schemaLocation`s are rewritten to file names first, which also
+   means a byte assertion only covers the artifacts that were actually used.
+3. **`DE_v150.xsd` declares no top-level element.** `rDE` is a `complexType` —
+   §21's Shape says so — so a bare `<rDE>` document has no element declaration
+   to validate against. Addressing it needs either DNIT's container protocol or
+   a local entry schema declaring `<xs:element name="rDE" type="rDE"/>` and
+   including the official file. FISC-008 takes the second path, because the
+   document it emits is a bare `<rDE>`, and every constraint still comes from
+   DNIT's bytes.
+
+**One consequence for the [[FISC-008]]/[[FISC-009]] boundary: an unsigned DE
+cannot validate.** The signature in §4's root shape is `ds:Signature`, whose
+type is `ds:SignatureType` with **`SignedInfo` required**, so `<Signature/>` is
+schema-invalid (`Missing child element(s). Expected 'ds:SignedInfo'`). The
+validation gate therefore validates a document whose signature block carries the
+real _structure_ — the two ordered transforms, the SHA-256 digest method,
+`X509Data/X509Certificate` — with placeholder contents. Producing the real
+signature is [[FISC-009]]'s work, not the gate's.
+
+### 21.8 What this still does not pin
 
 Two of §19's open questions survive this retrieval and they matter to
 [[FISC-008]]:

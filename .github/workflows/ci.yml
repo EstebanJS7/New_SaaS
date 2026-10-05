@@ -129,3 +129,51 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  xsd-validation:
+    # FISC-008 WU-B. The acceptance criterion is "a DTE XML validates against the
+    # official XSD before any submission". The schemas are copyrighted and are
+    # NOT vendored, so this job fetches the seven official artifacts into a
+    # job-local directory that is never committed and never cached across runs,
+    # asserts every one of them, and then runs the schema-validation suite with
+    # its skip DISABLED. A fetch that does not produce all seven fails the job
+    # rather than degrading to a skip, so a green run can never be the product
+    # of having validated nothing.
+    name: DTE XSD validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the fiscal package
+        run: pnpm build --filter=@newsaas/fiscal
+
+      - name: Fetch and assert the official DNIT schemas
+        # Fails unless all seven artifacts arrive with a 200 and a plausible
+        # size, and rewrites their absolute includes so the next step is
+        # hermetic.
+        env:
+          # Job-local, outside the workspace: never committed, never cached.
+          DTE_XSD_DIR: ${{ runner.temp }}/dte-xsd
+        run: pnpm --filter @newsaas/fiscal fetch:dte-schemas
+
+      - name: Validate the built DE against the official schemas
+        env:
+          DTE_XSD_DIR: ${{ runner.temp }}/dte-xsd
+          DTE_XSD_REQUIRED: "1"
+        run: pnpm --filter @newsaas/fiscal test

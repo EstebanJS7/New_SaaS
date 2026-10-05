@@ -338,14 +338,43 @@ candidate 1 exists.
       non-contributor — comes from §22.3's clause that §22.11 does not restate
       and NT 020's untranscribed text, so it is not encoded.
 
-      **WU-B, the CI validation job**: fetches the three official schemas into a
-      job-local directory, asserts each by HTTP status **and** a minimum byte
-      size, runs the schema-validation suite with the skip **disabled**, and
-      records the run in `docs/10-qa/CI-EVIDENCE.md` with the artifact sizes and
-      the case count; a fetch that does not produce all three fails the job.
-      **WU-C, the invoice -> request mapping**: **blocked** on the rule text of
-      the non-receptor notes (§22.10) and on `D104`/`D131`, whose tables the
-      Manual references but does not contain.
+      **WU-B, the CI validation job — done 2026-10-05.** A dedicated
+      `xsd-validation` job in `.github/workflows/ci.yml` fetches the official
+      schemas into `${{ runner.temp }}/dte-xsd`, asserts each artifact, and runs
+      the schema-validation suite with the skip **disabled**. The tooling lives
+      in `packages/fiscal/src/dte/xsd-artifacts.ts` (the artifact list, the
+      assertions, the include rewrite), `xsd-validator.ts` (the entry schema and
+      the libxml2 validation), `dte.fixture.ts` (the schema-valid request and
+      the structural signature), `scripts/fetch-dte-schemas.mjs` (the CLI) and
+      the two suites (`xsd-artifacts.test.ts` 9 cases without a network,
+      `xsd-validation.test.ts` 7 cases), exported from
+      `@newsaas/fiscal/testing` rather than the package index. **Two claims in
+      the Story's own wording were wrong and were corrected with the
+      maintainer's approval**: it is **seven schemas, not three**
+      (`DE_v150.xsd` `xs:include`s four companion tables and `DE_Types_v150.xsd`),
+      and **an unsigned DE cannot validate at all**, because `ds:SignatureType`
+      requires `SignedInfo` — so the gate validates a structurally complete
+      signature with placeholder contents, and the real signature is FISC-009's.
+      Both corrections are recorded in baseline **§21.7** together with the third
+      operational fact that made the naive job wrong: five of those includes are
+      **absolute HTTPS URLs**, so a co-located file is ignored and the validator
+      reaches DNIT at validation time — proven by a compile failure with the
+      network blocked. The job therefore rewrites them, and refuses a directory
+      that still resolves anything over HTTP. `libxmljs2` was added as a
+      **devDependency** (`allowBuilds: true` in `pnpm-workspace.yaml`, because
+      its prebuilt binding arrives through a postinstall) with the maintainer's
+      approval, chosen over a system `xmllint` so the suite has exactly one
+      reason to skip: the schemas being absent. **Evidence**: `pnpm
+      fetch:dte-schemas /tmp/dte-xsd-live` prepared 7 artifacts whose sizes match
+      the 2026-10-04 retrieval exactly, with 0 absolute URLs left; the suite at
+      **100 passed / 100** with `DTE_XSD_REQUIRED=1`, the same 100 with the
+      network blocked, 93 + 7 explicit skips with no schema directory, and a
+      hard failure naming all seven artifacts when required without them.
+      Recorded in `docs/10-qa/CI-EVIDENCE.md`; the CI run id follows the push and
+      the PR, which the maintainer owns. **WU-C, the invoice -> request
+      mapping**: **blocked** on the rule text of the non-receptor notes (§22.10)
+      and on `D104`/`D131`, whose tables the Manual references but does not
+      contain.
 
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
