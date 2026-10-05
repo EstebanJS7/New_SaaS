@@ -93,11 +93,15 @@ equation does not fix a variant.
   while the vault says the algorithm is unpinned, which is exactly the class of
   claim this epic exists to prevent.
 - **B. Keep it an input until a second specimen or the verifier document
-  arrives.** The mapper takes `cdc` and `dDVId`. The cheapest fix is a second
-  specimen, and the cheapest source of one is the same trick that recovered the
-  composition: **chapter 13's KuDE examples are graphics too**, so rendering
-  those pages is the next attempt. A second independent specimen would either
-  confirm the plain-sum variant or eliminate it.
+  arrives.** The mapper takes `cdc` and `dDVId`. **The second-specimen search
+  was run and came up empty**: chapter 13's KuDE examples were rendered as
+  images and they stop before the CDC, page 198 prints the display rule ("CDC en
+  once grupos de 4 posiciones") but no value, and the Guía de Pruebas has no
+  44-digit run at all. The whole retrieved corpus yields **one** usable
+  specimen. So the sources that remain are the verifier document under a current
+  URL, the Prevalidador, and — the reliable one — **[[FISC-013]]'s homologation
+  run**, which produces many real specimens and settles the variant by volume
+  instead of by argument.
 - **C. Compose it and let SIFEN reject a wrong DV.** Rejected: it spends a real
   document identity to learn something a rendered page can tell us for free.
 
