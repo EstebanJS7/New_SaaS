@@ -749,6 +749,12 @@ its authority is burned.
   implementation of approved scope.
 - **[[ADR-006]] belongs to [[FISC-009]]**, the signing dependency, and is not
   needed here.
+- **[[DEC-054]] is proposed (2026-10-05)** and puts WU-C's two open questions to
+  the maintainer: where the emitter fiscal profile and the timbrado live, and
+  whether the CDC is composed now or stays an input. Its recommendation is that
+  WU-C becomes a pure mapper taking
+  `(invoice snapshot, emitter profile, document identity)`, with FISC-011 owning
+  the profile's storage.
 - The validation strategy is a Decision, not an ADR, once chosen.
 - **WU-A added §21.6 to `SIFEN-BASELINE.md`.** The generator needs the members
   of `tDE`'s internal groups, and §21.2 only recorded `rDE` and `tDE`'s

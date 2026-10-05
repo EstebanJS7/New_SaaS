@@ -408,6 +408,16 @@ candidate 1 exists.
       measure, currency descriptions or exchange rate; `buildDteXml`/`DteRequest`
       have no production consumer yet (FISC-012's provider is the intended one).
 
+- [ ] T4b — **FISC-008 WU-C: the invoice -> request mapper — re-scoped and
+      proposed 2026-10-05, awaiting [[DEC-054]].** Two decisions are the
+      maintainer's: where the emitter fiscal profile and the timbrado live
+      (recommendation: FISC-011 owns storage, WU-C takes the profile as an
+      input) and whether the CDC is composed now (recommendation: not until a
+      second specimen or the verifier document arrives; the next attempt is to
+      render chapter 13's KuDE pages, which are graphics too). **One correction
+      is due before the mapper feeds it**: §22.12 records that `D208c` selects
+      `F023` or `F014` by currency and that NT 008 forbids `F023` for a PYG
+      document, while the builder compares a single supplied `totalGuaranies`.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
