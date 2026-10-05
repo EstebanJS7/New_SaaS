@@ -1053,8 +1053,81 @@ emitter's activity and imputation fields (`D030`, `D031`, `D040` — NT 018 and 
 titles (`D011` — NT 021, 024).
 
 **What this section does and does not claim.** It claims, with the notes in
-hand, _which_ notes touch _which_ DE fields and which amend validations. It does
-**not** claim to have transcribed their rule text: that is the next work unit,
-and until it is done the rules in §22.3 and §22.4 are **provisional**. Recording
-the profile removes the dangerous state — a false confidence that the 2019
-Manual is current — without pretending the transcription is done.
+hand, _which_ notes touch _which_ DE fields and which amend validations. The
+receptor block's rule text **is** now transcribed, in §22.11. The other areas
+are not: currency and exchange, emitter activity and imputation, items and
+titles remain **provisional** until their notes are read the same way.
+
+### 22.11 The receptor block's current rules, with their amendment trail
+
+§22.3 recorded the receptor block from the Manual. This section records it
+**consolidated through the nine notes that amend it**, and it is the section
+[[FISC-008]] must implement. Every rule below is quoted from the note that last
+touched it.
+
+**Field conditions, as last set by NT 023 (27/08/2024):**
+
+```text
+D208 iTipIDRec  Obligatorio si D201 = 2 y D202 != 4
+                No informar si D201 = 1
+                1 Cédula paraguaya  2 Pasaporte  3 Cédula extranjera
+                4 Carnet de residencia  5 Innominado
+                6 Tarjeta Diplomática de exoneración fiscal  9 Otro
+D210 dNumIDRec  Obligatorio si D201 = 2 y D202 != 4 ; No informar si D201 = 1
+                length 1-20 ; "En caso de DE innominado, completar con 0 (cero)"
+```
+
+**The one substantive delta from §22.3, and it matters.** The Manual and NT 002
+both read `No informar si D201 = 1 o D202=4`. **NT 023 removed the `o D202=4`
+clause**: the receptor's identity document is now forbidden _only_ when the
+receptor is a contributor. For a B2C document the field is neither required nor
+forbidden — and NT 010's `D208b` (1319) and NT 023's `D208f` (1333) are what
+actually constrain `Innominado` by operation type. Implementing §22.3's old
+condition would have made a B2C document with a receptor document invalid, which
+the current rules allow.
+
+**NT 003 (18/11/2020)** moved two geographic conditions onto the fields
+themselves and **excluded** the validations that used to enforce them:
+
+```text
+D219 cDepRec   Obligatorio si se informa D213 y D202 != 4 ; no informar si D202 = 4
+D223 cCiuRec   Obligatorio si se informa D213 y D202 != 4 ; no informar si D202 = 4
+  EXCLUDED: D219 / 1324  "Es obligatorio informar el departamento del receptor"
+  EXCLUDED: D223 / 1327  "Es obligatorio informar la ciudad del receptor"
+```
+
+**Validations in force, with the note that last set each:**
+
+| Id      | Code | Condition                                                                                                                                           | Last set by |
+| ------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `D202`  | 1300 | if the receptor is a non-contributor (`D201=2`), the operation type must be B2C (`D202=2`) or B2F (`D202=4`)                                        | NT 010      |
+| `D202b` | 1332 | if the receptor's RUC (`D206`) is an Organismo o Entidad del Estado, the operation type must be B2G (`D202=3`)                                      | NT 020      |
+| `D208b` | 1319 | `D208` cannot be `Innominado` (5) when `D202 != 2`                                                                                                  | NT 010      |
+| `D208c` | 1321 | if `D011 != 13` (not Muestras médicas), `D208` cannot be 5 when the total in guaraníes is **>= 7,000,000** (`F023 >= 7000000` or `F014 >= 7000000`) | **NT 024**  |
+| `D208e` | 1331 | if the document type is Nota de Crédito, Nota de Débito **or Nota de Remisión** (`C002 = 5, 6, 7`), `D208 != 5`                                     | **NT 023**  |
+| `D208f` | 1333 | `D208` cannot be 5 when `D202 != 2`                                                                                                                 | NT 023      |
+| `D210`  | 1314 | if `D201=2` and `D202 != 4`, the identity document number must be informed                                                                          | NT 023      |
+| `D220`  | 1325 | the receptor department description must match `D219`                                                                                               | NT 010      |
+| `D222`  | 1326 | the receptor district description must match `D221`                                                                                                 | NT 017      |
+| `D224`  | 1329 | the receptor city description must match `D223`                                                                                                     | NT 017      |
+
+**Two corrections to earlier records, both verified against the note text:**
+
+1. **NT 021 (29/12/2023) set `D208c`'s threshold at 35,000,000**, and **NT 024
+   (17/12/2024) lowered it to 7,000,000**, citing "el inciso ii), Numeral 2 del
+   Artículo N° 6 del Decreto N° 872/2023" while NT 021 cited Numeral 1.
+   FISC-006's record of "7,000,000" attributed to NT 24 was **correct**; this
+   retrieval confirms it and shows the intermediate value, so a reader who finds
+   NT 021 alone does not conclude that 35,000,000 is current.
+2. **NT 002 (16/07/2020) excluded `D208d` (1322) and `D210a` (1323)**, the two
+   validations that forbade the receptor document when `D201=1` or `D202=4`.
+   That is the same change NT 023 later completed at the field level, which is
+   why the `No informar` clause and those validations must not both be
+   implemented.
+
+**What this section still does not claim.** It transcribes the receptor block's
+rules and their amendment trail, and it stops there. The other DE areas §22.10
+lists — currency and exchange (`D015`/`D017`/`D018`/`D022`), emitter activity
+and imputation (`D030`–`D040`), items (`E700`–`E899`) and titles (`D011`) — are
+profiled but **not yet transcribed**, so their rules in §22.4 remain
+provisional.

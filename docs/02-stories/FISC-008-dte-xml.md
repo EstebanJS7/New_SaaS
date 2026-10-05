@@ -257,6 +257,13 @@ The rejected alternatives, and why:
       the emitter's `tiTipDoc`.
 - [ ] A test-environment document carries the exact literal "DE generado en
       ambiente de prueba - sin valor comercial ni fiscal" as the emitter's name.
+- [ ] The receptor block follows §22.11's consolidated rules, not §22.3's: RUC
+      and check digit when `D201 = 1`, an identity document when `D201 = 2` and
+      `D202 != 4`, and the identity document forbidden **only** when `D201 = 1`.
+- [ ] The receptor validations are enforced: `D202` (1300), `D202b` (1332),
+      `D208b` (1319), `D208c` (1321) with the **7,000,000** threshold NT 024
+      set, `D208e` (1331) including `C002 = 7`, `D208f` (1333) and `D210`
+      (1314).
 - [ ] `dTiCam` is absent when the currency is PYG, and every item of a document
       carries the same currency.
 - [ ] No B2G document is rejected for a missing `gCompPub`: NT 26 excluded those
@@ -282,12 +289,15 @@ The rejected alternatives, and why:
 ## Domain Invariants
 
 - **No protocol constant without a cited official source.**
-- **The receptor block's conditional rules are provisional.** §22.3 was read
-  from the Manual dated 10/09/2019, and §22.10 records nine Notas Técnicas that
-  amend it. The generator may implement the block's _shape_ (which fields exist
-  and where they sit), but its _conditions_ must be re-read against NT 002, 003,
-  010, 014, 017, 020, 021, 023 and 024 before they are treated as current. If
-  §21 does not record a rule, this Story does not encode it.
+- **The receptor block is implemented from §22.11, not from §22.3.** §22.3 is
+  the 2019 Manual's text, and nine Notas Técnicas amend that block; §22.11 is
+  the consolidated version with each rule quoted from the note that last set it.
+  **The generator must never read §22.3 for a receptor condition.**
+- **§22.3's `No informar si D201 = 1 o D202=4` clause is superseded.** NT 023
+  (27/08/2024) removed the `o D202=4` half, so the receptor's identity document
+  is forbidden only when the receptor is a contributor. Implementing the old
+  clause would reject a B2C document the current rules allow.
+- **If §21 or §22.11 does not record a rule, this Story does not encode it.**
 - **The schemas are not vendored.** Citations and structural facts are recorded;
   DNIT's files are not committed.
 - **The XML is built from the confirmed invoice**, not from a re-derived money
@@ -350,11 +360,10 @@ Planned, once the validation strategy is chosen:
 - **`D104` régimen and `D131` actividades económicas are unpinned**, so the
   generator cannot populate those two fields from a validated catalogue. The
   geography fields are no longer a limitation.
-- **The receptor block's rules are provisional.** They were read from the Manual
-  Técnico dated 10/09/2019, and **nine later Notas Técnicas amend that block**
-  (§22.10). This is the largest remaining uncertainty in this Story and it is a
-  correctness risk, not a completeness one: a rule encoded from the 2019 text
-  may already be superseded.
+- **The non-receptor DE rules are provisional.** Currency and exchange, emitter
+  activity and imputation, items and titles were read from the 2019 Manual and
+  later notes amend them (§22.10), but their rule text is not yet transcribed.
+  The **receptor block is no longer a limitation**: §22.11 consolidates it.
 - **The structural contract is unaffected.** The notes amend observations and
   validations, not `DE_v150.xsd`/`DE_Types_v150.xsd`, so the `rDE`/`tDE`
   structure, the child order, the patterns and the money scales this Story pins

@@ -244,11 +244,17 @@ candidate 1 exists.
       set is **001-027, not 23-27**. **All 27 were retrieved and profiled**
       (baseline §22.10): eighteen touch DE fields and ten amend validations, and
       **nine amend the receptor block alone** (`D200`/`D201`/`D202`/`D208`/
-      `D210`), which §22.3 pins from the 2019 Manual. So the receptor rules are
-      **provisional** — a correctness risk, not a completeness one — while the
-      structural contract (`rDE`/`tDE`, order, patterns, money scales) is
-      unaffected because the notes amend observations and validations, not the
-      schemas.
+      `D210`), which §22.3 pins from the 2019 Manual. **The receptor block's
+      rule text is now transcribed and consolidated** (baseline §22.11): NT 023
+      removed the `o D202=4` half of `D208`'s `No informar` clause, NT 024
+      lowered the `D208c`/1321 threshold from NT 021's 35,000,000 to
+      **7,000,000**, and NT 003 excluded the `D219`/`D223` validations in favour
+      of field conditions. The generator implements §22.11 and must never read
+      §22.3 for a receptor condition. The remaining provisional areas are the
+      non-receptor ones — currency/exchange, emitter activity/imputation, items
+      and titles — while the structural contract (`rDE`/`tDE`, order, patterns,
+      money scales) is unaffected because the notes amend observations and
+      validations, not the schemas.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
