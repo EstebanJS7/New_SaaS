@@ -255,23 +255,20 @@ candidate 1 exists.
       and titles — while the structural contract (`rDE`/`tDE`, order, patterns,
       money scales) is unaffected because the notes amend observations and
       validations, not the schemas. **Work units for the implementation**, in
-      order:
-
-      - **WU-A — the builder** (`packages/fiscal/src/dte/**`): a pure
-            `typed request -> XML string` function. `rDE` with its four children and
-            `tDE` with its eleven, in schema order; `dVerFor` pinned to 150; the CDC
-            as a **validated input** (never composed, per §22.9); `dCodSeg` per
-            §10.3; the per-field money scales; and the **receptor block from §22.11**
-            with its seven validations — never from §22.3.
-          - **WU-B — the CI validation job**: fetches the three official schemas into
-            a job-local directory, asserts each by HTTP status **and** a minimum byte
-            size, runs the schema-validation suite with the skip **disabled**, and
-            records the run in `docs/10-qa/CI-EVIDENCE.md` with the artifact sizes and
-            the case count. A fetch that does not produce all three fails the job.
-          - **WU-C — the invoice -> request mapping**: **blocked** on the rule text of
-            the non-receptor notes (§22.10) and on `D104`/`D131`, whose tables the
-            Manual references but does not contain.
-
+      order. **WU-A, the builder** (`packages/fiscal/src/dte/**`): a pure
+      `typed request -> XML string` function, with `rDE`'s four children and
+      `tDE`'s eleven in schema order, `dVerFor` pinned to 150, the CDC as a
+      **validated input** and never composed (per §22.9), `dCodSeg` per §10.3,
+      the per-field money scales, and the **receptor block from §22.11** with
+      its seven validations rather than from §22.3. **WU-B, the CI validation
+      job**: fetches the three official schemas into a job-local directory,
+      asserts each by HTTP status **and** a minimum byte size, runs the
+      schema-validation suite with the skip **disabled**, and records the run in
+      `docs/10-qa/CI-EVIDENCE.md` with the artifact sizes and the case count; a
+      fetch that does not produce all three fails the job. **WU-C, the invoice
+      -> request mapping**: **blocked** on the rule text of the non-receptor
+      notes (§22.10) and on `D104`/`D131`, whose tables the Manual references
+      but does not contain.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
