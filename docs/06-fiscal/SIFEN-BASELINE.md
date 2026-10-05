@@ -509,10 +509,11 @@ flag and treat the rules as pending DNIT, or be reframed.
    2026-10-04 — see §22.2 and §22.6.** The Manual's field-level rules are
    recorded, four companion tables are retrieved as official XSDs, and the
    **geography spreadsheet closes `D111`, `D113` and `D115`** (18 departamentos,
-   272 distritos unique nationally, 6,766 ciudades). **Still open**:
-   `Tabla 1 Tipo de Régimen` (`D104`) and `Tabla 3 Actividades Económicas`
-   (`D131`), which the Manual references but does not contain and which neither
-   e-kuatia page offers.
+   272 distritos unique nationally, 6,766 ciudades). ~~Still open~~: **`D104` is
+   retrieved (2026-10-05) — the Manual's TABLA 1 prints all eight régimenes
+   inline, see §22.6; the earlier "does not contain them" claim was wrong.**
+   `Tabla 3 Actividades Económicas` (`D131`) remains open: it is a link whose
+   target returns an HTML portal shell, not a service (see §22.6).
 8. Whether the Prevalidador is usable in an automated pre-submission check.
 9. ~~How a test validates against the official XSDs without vendoring them.~~
    **Resolved 2026-10-04 by the maintainer.** A dedicated CI job fetches the
@@ -851,6 +852,27 @@ DE fields and ten amend validations**, including nine that touch the receptor
 block. The Manual's field-level rules are a 2019 baseline amended in part, so
 §22.3 and §22.4 are **provisional** until those notes are read field by field.
 
+**How the Manual was read, and why it matters (2026-10-05).** The extraction
+method used for a PDF decides what this vault can see, and two families of
+content are invisible to a plain text extractor:
+
+- **Tables.** The Manual was re-fetched (HTTP 200, 5,204,470 bytes, 217 pages,
+  `https://www.dnit.gov.py/documents/20123/420592/Manual+T%C3%A9cnico+Versi%C3%B3n+150.pdf`)
+  and read with `pdfplumber`, which recovers the table bodies that the earlier
+  `pypdf` pass and the `fetch_content` extraction both dropped. **Chapter 15
+  _CODIFICACIONES_ exists and is mostly inline** — see §22.6, where the earlier
+  claim that the Manual "references but does not contain" those tables is
+  corrected.
+- **Embedded images.** The CDC's composition in §10.1 is not text and not a
+  ruled table: page 56 carries **four embedded images** (`extract_text` yields
+  684 characters, `lines: 0`, and `extract_tables()` returns nothing), two of
+  them exactly where the composition belongs. Rendering the page to an image and
+  reading it recovers the composition — see §22.9.
+
+The lesson, recorded because it cost two sessions and two false claims: **"the
+source does not contain it" and "the source does not pin it" are different
+claims, and only the second is safe to make after reading a PDF with one tool.**
+
 ### 22.2 The Manual's field-level specification
 
 The Manual carries **73 distinct `D`-code field identifiers** and **59 parseable
@@ -961,15 +983,51 @@ CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025__.xlsx   469,941 bytes
 Both ranges sit inside the schema's bounds (`tcDisEmi` 1-4 digits, `tcCiuEmi`
 1-5 digits up to 99999), so the two sources agree.
 
-**Two tables remain unretrieved, and neither is on the tables page.**
-`Tabla 1 – Tipo de Régimen` (`D104`) and `Tabla 3 – Actividades Económicas`
-(`D131`) are referenced by the Manual's field rows but **the Manual does not
-contain them**: its text says only "Según Tabla 1 – Tipo de Régimen" and "Según
-Tabla 3 – Actividades Económicas". The tables page offers the geography
-spreadsheet and a Prevalidador, and the technical-documentation page offers the
-Notas Técnicas and the schema bundle — neither offers these two. They are
-therefore DNIT/RUC catalogues rather than SIFEN artifacts, and their retrieval
-path is the DNIT portal's RUC documentation, not the e-kuatia pages.
+**`D104` is INLINE in the Manual, and an earlier claim here was wrong.** Chapter
+15 _CODIFICACIONES_ prints **TABLA 1 – TIPO DE REGIMEN** in full:
+
+```text
+1  Régimen de Turismo                 5  Ley N° 60/90
+2  Importador                         6  Régimen del Pequeño Productor
+3  Exportador                         7  Régimen del Mediano Productor
+4  Maquila                            8  Régimen Contable
+```
+
+That is exactly `tcTipReg`'s `[1-8]` from `DE_Types_v150.xsd`, so **`D104` is
+retrieved and needs no further search**. The earlier record said the Manual
+"references them but does not contain them": that conclusion came from reading
+the chapter-10 field rows that _point at_ the tables, and chapter 15 never
+appeared in the extracted text because the extractor dropped its tables.
+
+**`D131` is a link, and its target no longer answers as a service.** The Manual
+prints `TABLA 3 – ACTIVIDADES ECONÓMICAS` as
+`https://servicios.set.gov.py/eset-publico/consultarActividadEconomicaIService.do`,
+and that URL (with or without `?wsdl`) returns **HTTP 200 `text/html`, 10,190
+bytes — the Marangatu portal shell**, not a service descriptor. So the activity
+catalogue is still unretrieved, and its shape (`tcActEco`, `[0-9A-Z]{1,8}`) is
+all the schema gives. Retrieval path: the SET's Marangatu/RUC documentation, not
+an e-kuatia page.
+
+**What else chapter 15 prints inline**, all of it previously recorded as unread:
+
+- **TABLA 5 – CODIFICACIÓN DE UNIDADES DE MEDIDA** — code, representation and
+  description (e.g. `87 m Metros`, `77 UNI Unidad`, `625 Km`). The XSD
+  `Unidades_Medida_v141.xsd` (27,240 bytes) remains the better source: it is
+  machine-readable and carries all 64 values.
+- **TABLA 6 – CÓDIGOS DE AFECTACIÓN** — `1 Gravado IVA`,
+  `2 Exonerado (Art.83 - 125)`, `3 Exento`, `4 Gravado parcial`. **These
+  disagree with the schema, which wins**: `tiAfecIVA`'s descriptions say
+  `Exonerado (Art. 100 - Ley 6380/2019)`. The Manual is from 2019 and the law
+  changed, so the XSD's wording is the current one and the Manual's is
+  historical.
+- **TABLA 7 / TABLA 8 – ISC** (categories and rates), **TABLA 10 – INCOTERMS**
+  (11 codes), **TABLA 4 – países** = ISO 3166-1 alpha-3 (the XSD carries it).
+- **TABLA 2.1** points at the geography spreadsheet already retrieved in §22.6;
+  **TABLA 9** and **TABLA 11** are links.
+
+So the corrected picture is: **the only catalogue this vault still lacks is
+`D131`'s**, and the only table family still genuinely absent from the Manual is
+the one it replaces with a link.
 
 ### 22.7 The Notas Técnicas 26 and 27
 
@@ -1025,15 +1083,20 @@ identical, so they must not be shared as one constant.
   them touch DE fields and ten amend validations, so §22.3 and §22.4 — read from
   the 2019 Manual — are **provisional**. Nine notes amend the receptor block
   alone.
-- **`Tabla 1 – Tipo de Régimen` (`D104`) and `Tabla 3 – Actividades Económicas`
-  (`D131`)** (§22.6). Referenced by the Manual, absent from it, and absent from
-  both e-kuatia pages.
-- **The CDC's composition and its check-digit algorithm** (§22.9). The Manual
-  has the section but the composition is a visual element the PDF extraction
-  dropped, and the digit-verifier document's URL now redirects to the DNIT
-  multimedia portal. The modulus is named (módulo 11); the weights and the
-  remainder rule are not. Until they are pinned, the generator takes the CDC as
-  an input and does not compose it.
+- **`Tabla 1 – Tipo de Régimen` (`D104`)** — **CLOSED 2026-10-05**: the Manual's
+  TABLA 1 prints all eight régimenes inline and the earlier "absent from it"
+  claim was wrong (§22.6). **`Tabla 3 – Actividades Económicas` (`D131`)** stays
+  open: the Manual prints a link and that target now returns an HTML portal
+  shell (§22.6).
+- **The CDC's check-digit algorithm** (§22.9) — and only that. **The composition
+  is CLOSED 2026-10-05**: it is a picture of a table on page 56, recovered by
+  rendering the page, and the Manual's worked example decomposes into exactly
+  those widths and matches the KuDE specimen byte for byte. What remains is the
+  verifier: §10.2 names `módulo 11`, the verifier document's URL now serves the
+  portal's HTML shell, and the Manual plus all 27 Notas Técnicas contain **one
+  usable specimen**, which is not enough to fix a variant. Until it is pinned,
+  the generator takes the CDC and `dDVId` as inputs rather than publishing an
+  identity whose check digit it cannot verify.
 
 ### 22.9 The CDC and the security code
 
@@ -1053,22 +1116,53 @@ So it is a random 9-digit value, zero-padded, never equal to the document
 number, and deliberately unrelated to the document or the issuer. `tdCodSeg` in
 `DE_Types_v150.xsd` restricts it to nine digits, so the two agree.
 
-**The CDC's composition is NOT pinned, and this is a gap rather than an
-answer.** The Manual has the section — §10.1 _"Estructura del código de control
-(CDC) de los DE"_ — and its text reads:
+**The CDC's composition IS now pinned — recovered 2026-10-05 — and the earlier
+record here was wrong about why it looked absent.** The Manual has the section —
+§10.1 _"Estructura del código de control (CDC) de los DE"_ — and its text reads:
 
 > "Conformación del CDC. Para lograr una mayor comprensión se describe a
 > continuación un ejemplo de cómo generar un CDC: Consideraremos: … Por lo
 > tanto, el CDC estará conformado como sigue:"
 
-and then the composition itself is **absent from the extracted text**. It was a
-table or a diagram, and the PDF-to-text extraction dropped it entirely: the text
-jumps from "como sigue:" to the footnote. What survives is a **specimen** — the
-KuDE grouping example `0144 4444 0170 0100 1001 4528 2201 7012 5158 7326 0988`,
-which is 44 digits and confirms `tCDC`'s length, but not the field order or the
-widths behind it.
+and then the composition is **not text at all**. Page 56 carries **four embedded
+images** — `extract_text()` yields 684 characters, the page has `lines: 0`, and
+`extract_tables()` returns nothing — two of them exactly where the composition
+belongs. It is a **picture of a table**, which is why the first two extraction
+passes dropped it. Rendering the page and reading it gives the composition in
+full:
 
-The check digit is likewise only partly pinned. §10.2 says:
+```text
+Descripción             Campos   ID         Longitud   Observación
+Tipo de Documento       C002     iTiDE      2          completar con cero a la izquierda hasta 2 dígitos
+RUC del Emisor          D101     dRucEm     8          completar con ceros a la izquierda si es menor a 8
+DV del Emisor           D102     dDVEmi     1          Dígito Verificador del RUC del emisor
+Establecimiento         C005     dEst       3          Establecimiento
+Punto de Expedición     C006     dPunExp    3          Punto de Expedición en donde es emitido el DE
+Número de Documento     C007     dNumDoc    7          completar con ceros a la izquierda hasta 7 dígitos
+Tipo de Contribuyente   D103     iTipCont   1          Tipo de contribuyente, código correspondiente
+Fecha de Emisión        D002     dFeEmiDE   8          tomar el campo, solo el formato AAAAMMDD
+Tipo de Emisión         B002     iTipEmi    1          Tipo de emisión según lo establecido en el campo
+Código de Seguridad     B004     dCodSeg    9          número aleatorio generado conforme a este MT
+Dígito Verificador      A003     dDVId      1          resultado de aplicar el algoritmo Módulo 11
+Longitud del CDC                          44
+```
+
+**The Manual's own worked example decomposes exactly into those widths**, which
+is what turns the KuDE specimen from a length check into a decomposition:
+
+```text
+01 | 44444401 | 7 | 001 | 001 | 0014528 | 2 | 20170125 | 1 | 587326098 | 8
+1    2          3   4     5     6         7   8          9   10          11
+= 01444444017001001001452822017012515873260988   (44)
+```
+
+and that string is **byte-identical to the KuDE specimen §22.9 previously
+recorded as `0144 4444 0170 0100 1001 4528 2201 7012 5158 7326 0988`**, so the
+two sources corroborate each other. The widths sum to
+`2+8+1+3+3+7+1+8+1+9+1 = 44`, which is `tCDC`'s length.
+
+**The check digit is still NOT pinned, and it is now the ONLY part of the CDC
+that is not.** §10.2 says:
 
 > "Para el cálculo del dígito verificador del código de control se debe utilizar
 > el **módulo 11**, con el cual se determina su validez. La documentación acerca
@@ -1076,25 +1170,49 @@ The check digit is likewise only partly pinned. §10.2 says:
 > descripta, se encuentra en la siguiente dirección: [digito-verificador.pdf]"
 
 The modulus is named; the weight sequence, the treatment of the remainder and
-the rule for the resulting digit are in that external document, and **the URL is
-dead** — it now redirects to the DNIT multimedia portal rather than serving a
-PDF.
+the rule for the resulting digit live in that document, and **its published URL
+now serves an HTML portal page**:
+`https://www.set.gov.py/portal/PARAGUAY-SET/detail?content-id=/repository/collaboration/sites/PARAGUAY-SET/documents/herramientas/digito-verificador.pdf`
+returns **HTTP 200, `text/html`, 197,272 bytes**, with no reference to the
+document anywhere in it, and neither e-kuatia page links to it either.
+
+**How narrow the gap is.** A scan of the whole Manual and of all 27 Notas
+Técnicas for 44-digit runs finds only **three**, and two of them are unusable
+(the all-zero placeholder, and a truncated paste of the §7.2.2.1 signature
+example). That leaves **one usable specimen**, the worked example above, with
+`dDVId = 8`. Candidate variants were then tested against it:
+
+```text
+r = sum(digits) mod 11; DV = (r == 0) ? 0 : 11 - r        -> 8   matches
+weights 2..7 repeating FROM THE RIGHT, mod 11             -> 4
+weights 2..7 repeating FROM THE LEFT, mod 11              -> 0
+```
+
+So the plain-sum variant reproduces the specimen, and the RUC-style weighting
+does not — **but one equation does not fix a variant**, and the Manual never
+states which one it uses. Deriving the algorithm from a single data point is
+exactly the guessing this vault forbids, so the gap stays open. It is now
+narrowed from "nothing is known" to "`módulo 11` with one of a small number of
+variants, one of which reproduces the only specimen we have".
 
 **Consequences, recorded rather than worked around:**
 
-1. **The generator takes the CDC as an input**, validated against `tCDC`'s
-   length and pattern, and carries `dDVId` as supplied. It does not compose the
-   CDC and it does not compute the check digit. Composing them is a separate
-   concern that waits for a pinned algorithm — and it is the right seam anyway,
-   because the CDC is the document's identity while the XML is its
-   representation.
-2. **Two retrieval paths remain**, both cheap and both for the next attempt:
-   re-extract the Manual's page 56 with a table-aware or OCR extractor (the
-   composition is a visual element, not prose), and find the digit-verifier
-   document's current URL on the DNIT portal.
-3. **The KuDE specimen is evidence, not an algorithm.** A 44-digit example
-   confirms the length and nothing else; deriving widths from it would be
-   guessing.
+1. **The generator still takes the CDC and `dDVId` as inputs** — but the reason
+   has changed. It is no longer "we do not know how to build one"; it is that
+   **composing a CDC means publishing a document identity whose check digit we
+   cannot verify**, and an identity error is not recoverable by re-sending: the
+   Manual's §6.5 requires a rejected DE to be resubmitted with the SAME CDC. So
+   the seam stays where it is until the verifier document is retrieved or a
+   second independent specimen confirms a variant.
+2. **Two retrieval paths remain**, both cheap: find the `digito-verificador.pdf`
+   on the DNIT/SET portal under its current URL (the old one is now the portal
+   shell), and — if the Manual's KuDE chapter prints more worked CDCs than the
+   text scan could see, since those are graphics too — render chapter 13's pages
+   as images the same way page 56 was read here. **A second specimen is the
+   cheapest fix and a rendered page is the cheapest source of one.**
+3. **The composition is evidence and the specimen is now a decomposition.** The
+   field order and the widths no longer rest on inference: the Manual's table
+   and its worked example agree with each other and sum to 44.
 
 ### 22.10 Notas Técnicas 001–022: which of them amend DE rules
 

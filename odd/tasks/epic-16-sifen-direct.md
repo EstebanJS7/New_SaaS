@@ -238,37 +238,40 @@ candidate 1 exists.
       gives `D111`/`D113`/`D115` (18 departamentos, 272 distritos unique
       nationally, 6,766 ciudades). NT 26 excludes four B2G validation rules and
       NT 27 amends the nomination _event_ format, so neither changes a DE rule
-      FISC-008 must implement. **Still open**: `Tabla 1 – Tipo de Régimen`
-      (`D104`) and `Tabla 3 – Actividades Económicas` (`D131`), which the Manual
-      references but does not contain. **And a correction**: the Nota Técnica
-      set is **001-027, not 23-27**. **All 27 were retrieved and profiled**
-      (baseline §22.10): eighteen touch DE fields and ten amend validations, and
-      **nine amend the receptor block alone** (`D200`/`D201`/`D202`/`D208`/
-      `D210`), which §22.3 pins from the 2019 Manual. **The receptor block's
-      rule text is now transcribed and consolidated** (baseline §22.11): NT 023
-      removed the `o D202=4` half of `D208`'s `No informar` clause, NT 024
-      lowered the `D208c`/1321 threshold from NT 021's 35,000,000 to
-      **7,000,000**, and NT 003 excluded the `D219`/`D223` validations in favour
-      of field conditions. The generator implements §22.11 and must never read
-      §22.3 for a receptor condition. The remaining provisional areas are the
-      non-receptor ones — currency/exchange, emitter activity/imputation, items
-      and titles — while the structural contract (`rDE`/`tDE`, order, patterns,
-      money scales) is unaffected because the notes amend observations and
-      validations, not the schemas. **Work units for the implementation**, in
-      order. **WU-A, the builder** (`packages/fiscal/src/dte/**`): a pure
-      `typed request -> XML string` function, with `rDE`'s four children and
-      `tDE`'s eleven in schema order, `dVerFor` pinned to 150, the CDC as a
-      **validated input** and never composed (per §22.9), `dCodSeg` per §10.3,
-      the per-field money scales, and the **receptor block from §22.11** with
-      its seven validations rather than from §22.3. **WU-B, the CI validation
-      job**: fetches the three official schemas into a job-local directory,
-      asserts each by HTTP status **and** a minimum byte size, runs the
-      schema-validation suite with the skip **disabled**, and records the run in
-      `docs/10-qa/CI-EVIDENCE.md` with the artifact sizes and the case count; a
-      fetch that does not produce all three fails the job. **WU-C, the invoice
-      -> request mapping**: **blocked** on the rule text of the non-receptor
-      notes (§22.10) and on `D104`/`D131`, whose tables the Manual references
-      but does not contain.
+      FISC-008 must implement. **Still open**:
+      `Tabla 3 – Actividades Económicas` (`D131`), whose Manual link now returns
+      an HTML portal shell. **`D104` is CLOSED**: the Manual's TABLA 1 prints
+      all eight régimenes inline, and the earlier "references but does not
+      contain" claim was wrong — chapter 15 was invisible because the PDF
+      extractor dropped its tables (baseline §22.6). **And a correction**: the
+      Nota Técnica set is **001-027, not 23-27**. **All 27 were retrieved and
+      profiled** (baseline §22.10): eighteen touch DE fields and ten amend
+      validations, and **nine amend the receptor block alone**
+      (`D200`/`D201`/`D202`/`D208`/ `D210`), which §22.3 pins from the 2019
+      Manual. **The receptor block's rule text is now transcribed and
+      consolidated** (baseline §22.11): NT 023 removed the `o D202=4` half of
+      `D208`'s `No informar` clause, NT 024 lowered the `D208c`/1321 threshold
+      from NT 021's 35,000,000 to **7,000,000**, and NT 003 excluded the
+      `D219`/`D223` validations in favour of field conditions. The generator
+      implements §22.11 and must never read §22.3 for a receptor condition. The
+      remaining provisional areas are the non-receptor ones — currency/exchange,
+      emitter activity/imputation, items and titles — while the structural
+      contract (`rDE`/`tDE`, order, patterns, money scales) is unaffected
+      because the notes amend observations and validations, not the schemas.
+      **Work units for the implementation**, in order. **WU-A, the builder**
+      (`packages/fiscal/src/dte/**`): a pure `typed request -> XML string`
+      function, with `rDE`'s four children and `tDE`'s eleven in schema order,
+      `dVerFor` pinned to 150, the CDC as a **validated input** and never
+      composed (per §22.9), `dCodSeg` per §10.3, the per-field money scales, and
+      the **receptor block from §22.11** with its seven validations rather than
+      from §22.3. **WU-B, the CI validation job**: fetches the three official
+      schemas into a job-local directory, asserts each by HTTP status **and** a
+      minimum byte size, runs the schema-validation suite with the skip
+      **disabled**, and records the run in `docs/10-qa/CI-EVIDENCE.md` with the
+      artifact sizes and the case count; a fetch that does not produce all three
+      fails the job. **WU-C, the invoice -> request mapping**: **blocked** on
+      the rule text of the non-receptor notes (§22.10) and on `D104`/`D131`,
+      whose tables the Manual references but does not contain.
 - [~] T4 — **FISC-008: DTE XML + XSD validation — contract pinned 2026-10-04;
   WU-A implemented 2026-10-05.** Story at `docs/02-stories/FISC-008-dte-xml.md`.
   **The retrieval FISC-006 left open is done**: `DE_Types_v150.xsd` was fetched
@@ -290,22 +293,25 @@ candidate 1 exists.
   `D111`/`D113`/`D115` (18 departamentos, 272 distritos unique nationally, 6,766
   ciudades). NT 26 excludes four B2G validation rules and NT 27 amends the
   nomination _event_ format, so neither changes a DE rule FISC-008 must
-  implement. **Still open**: `Tabla 1 – Tipo de Régimen` (`D104`) and
-  `Tabla 3 – Actividades Económicas` (`D131`), which the Manual references but
-  does not contain. **And a correction**: the Nota Técnica set is **001-027, not
-  23-27**. **All 27 were retrieved and profiled** (baseline §22.10): eighteen
-  touch DE fields and ten amend validations, and **nine amend the receptor block
-  alone** (`D200`/`D201`/`D202`/`D208`/ `D210`), which §22.3 pins from the 2019
-  Manual. **The receptor block's rule text is now transcribed and consolidated**
-  (baseline §22.11): NT 023 removed the `o D202=4` half of `D208`'s
-  `No informar` clause, NT 024 lowered the `D208c`/1321 threshold from NT 021's
-  35,000,000 to **7,000,000**, and NT 003 excluded the `D219`/`D223` validations
-  in favour of field conditions. The generator implements §22.11 and must never
-  read §22.3 for a receptor condition. The remaining provisional areas are the
-  non-receptor ones — currency/exchange, emitter activity/imputation, items and
-  titles — while the structural contract (`rDE`/`tDE`, order, patterns, money
-  scales) is unaffected because the notes amend observations and validations,
-  not the schemas.
+  implement. **Still open**: `Tabla 3 – Actividades Económicas` (`D131`), whose
+  Manual link now returns an HTML portal shell. `D104` closed 2026-10-05 (TABLA
+  1 is inline in the Manual; see baseline §22.6). The CDC's **composition** also
+  closed 2026-10-05 — it is a picture of a table on page 56 and the Manual's
+  worked example matches the KuDE specimen byte for byte; only the check-digit
+  algorithm remains open. **And a correction**: the Nota Técnica set is
+  **001-027, not 23-27**. **All 27 were retrieved and profiled** (baseline
+  §22.10): eighteen touch DE fields and ten amend validations, and **nine amend
+  the receptor block alone** (`D200`/`D201`/`D202`/`D208`/ `D210`), which §22.3
+  pins from the 2019 Manual. **The receptor block's rule text is now transcribed
+  and consolidated** (baseline §22.11): NT 023 removed the `o D202=4` half of
+  `D208`'s `No informar` clause, NT 024 lowered the `D208c`/1321 threshold from
+  NT 021's 35,000,000 to **7,000,000**, and NT 003 excluded the `D219`/`D223`
+  validations in favour of field conditions. The generator implements §22.11 and
+  must never read §22.3 for a receptor condition. The remaining provisional
+  areas are the non-receptor ones — currency/exchange, emitter
+  activity/imputation, items and titles — while the structural contract
+  (`rDE`/`tDE`, order, patterns, money scales) is unaffected because the notes
+  amend observations and validations, not the schemas.
 
       **WU-A, the builder — done 2026-10-05.** `packages/fiscal/src/dte/**`
       (`dte.types.ts`, `dte.rules.ts`, `dte.builder.ts`, `dte.builder.test.ts`)
@@ -379,9 +385,24 @@ candidate 1 exists.
       closed **approved** and its authority is burned. The eight non-blocking
       advisories are **[[TD-032]]**, one of which caught a false case count in
       the Story's own CI record, now fixed. **WU-C, the invoice -> request
-      mapping**: **blocked** on the rule text of the non-receptor notes (§22.10)
-      and on `D104`/`D131`, whose tables the Manual references but does not
-      contain.
+      mapping**: **blocked**, but the blocker list was corrected on 2026-10-05
+      after a read-only investigation. It is **not** `D104` any more (TABLA 1 is
+      inline in the Manual; the earlier claim was wrong) and it is **not** the
+      CDC's composition any more (it is a picture of a table on page 56, and the
+      Manual's worked example matches the KuDE specimen byte for byte). What is
+      still open: (1) the rule text of the non-receptor notes — **the material is
+      already on disk**, the 8 relevant notes total ~18 KB of extracted text at
+      `/tmp/sifen-xsd/nts/`, so this is a bounded transcription and not a
+      retrieval; (2) `D131`'s activity catalogue, whose Manual link now returns
+      an HTML portal shell; (3) the CDC's **check digit**, where the verifier
+      document's URL serves the portal's HTML shell and one usable specimen is
+      not enough to fix a variant; and (4) the emitter fiscal profile and
+      timbrado, which **no model and no story currently hold** — that is FISC-011
+      plus a decision. An exploration of the invoice side found that a confirmed
+      invoice supplies lines, currency, `confirmedAt` and the customer, and
+      supplies none of the emitter identity, timbrado, coded geography, unit of
+      measure, currency descriptions or exchange rate; `buildDteXml`/`DteRequest`
+      have no production consumer yet (FISC-012's provider is the intended one).
 
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.

@@ -262,20 +262,24 @@ The rejected alternatives, and why:
 - **Any DNIT call, WSDL or SOAP action** — [[FISC-010]].
 - **The provider selection** — [[FISC-012]].
 - **KuDE rendering** — out of the epic's scope.
-- **`Tabla 1 – Tipo de Régimen` (`D104`) and `Tabla 3 – Actividades Económicas`
-  (`D131`)**. The Manual references them but does not contain them, and neither
-  e-kuatia page offers them, so the generator cannot populate those two fields
-  from a validated catalogue yet. The **geography** tables are retrieved and are
-  in scope: `D111` departamento, `D113` distrito and `D115` ciudad come from the
-  official `CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025` spreadsheet (18
+- **`Tabla 3 – Actividades Económicas` (`D131`)**. **`D104` left this list on
+  2026-10-05**: the Manual's TABLA 1 prints all eight régimenes inline, and the
+  earlier "references them but does not contain them" claim was wrong — it came
+  from reading the chapter-10 rows that point at the tables, while chapter 15
+  was invisible to the extractor (baseline §22.6). `D131` remains: the Manual
+  prints a link and that target now returns an HTML portal shell, so the
+  generator cannot validate `cActEco` against a catalogue yet. The **geography**
+  tables are retrieved and are in scope: `D111` departamento, `D113` distrito
+  and `D115` ciudad come from the official
+  `CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025` spreadsheet (18
   departamentos, 272 distritos unique nationally, 6,766 ciudades).
 - **The rule text of Notas Técnicas 001–022.** All 27 notes (001–027) are
-  retrieved and profiled in §22.10, but their _rule text_ is not transcribed.
-  **Eighteen touch DE fields and ten amend validations, and nine amend the
+  retrieved and profiled in §22.10, but their _rule text_ is not transcribed
+  yet. **Eighteen touch DE fields and ten amend validations, and nine amend the
   receptor block alone** — `D200`, `D201`, `D202`, `D208`, `D210` — which is
-  exactly the block this Story's contract pins from the 2019 Manual. So the
-  receptor rules in this Story are **provisional**, and the generator must not
-  encode them as current until those nine notes are read field by field.
+  exactly the block this Story's contract pins from the 2019 Manual. The
+  receptor block is **no longer provisional** (§22.11 consolidates it); the
+  non-receptor areas are, and they are the remaining reason WU-C is blocked.
 - **The `dCodRes` catalogue**, which belongs to [[FISC-012]] rather than here.
 - **NT 24's receptor amendment is inherited, not re-derived**: NT 24 changed
   `D208c` (code 1321) about the receptor's identity document type and a
@@ -586,11 +590,12 @@ run meaningful is itself tested):
 
 ## Known Limitations
 
-- **`D104` régimen and `D131` actividades económicas are unpinned**, so the
-  generator cannot populate those two fields from a validated catalogue. The
-  geography fields are no longer a limitation. **WU-A validates `cActEco`'s
-  shape (`[0-9A-Z]{1,8}`, `1..9` occurrences) and does not validate its values
-  against a catalogue**, which is the honest half of the constraint.
+- **`D104` régimen is retrieved; `D131` actividades económicas is not.** TABLA 1
+  prints all eight régimenes inline (baseline §22.6), so `D104` is no longer a
+  limitation. **`D131` still is**: the Manual prints a link whose target now
+  returns an HTML portal shell. **WU-A validates `cActEco`'s shape
+  (`[0-9A-Z]{1,8}`, `1..9` occurrences) and does not validate its values against
+  a catalogue**, which is the honest half of the constraint.
 - **The non-receptor DE rules are provisional.** Currency and exchange, emitter
   activity and imputation, items and titles were read from the 2019 Manual and
   later notes amend them (§22.10), but their rule text is not yet transcribed.
@@ -616,12 +621,20 @@ run meaningful is itself tested):
   remain current.
 - **NT 24's receptor amendment is inherited, not re-derived** — see the note in
   "Out of Scope".
-- **The CDC is not composed here.** Its composition and check-digit algorithm
-  are unpinned (§22.9), so this Story validates a supplied CDC instead of
-  building one. That is a deliberate gap, not an oversight, and the two
-  retrieval paths are recorded: re-extract the Manual's page 56 with a
-  table-aware or OCR extractor, and find the digit-verifier document's current
-  URL.
+- **The CDC is not composed here, and the reason changed on 2026-10-05.** Its
+  **composition is now pinned** (§22.9): it is a picture of a table on the
+  Manual's page 56, recovered by rendering the page, and the Manual's worked
+  example decomposes into exactly those widths and matches the KuDE specimen
+  byte for byte. What is still unpinned is **the check digit**: §10.2 names
+  `módulo 11`, the verifier document's URL now serves the portal's HTML shell,
+  and the Manual plus all 27 notes contain **one usable specimen** — enough to
+  show that a plain-sum variant reproduces it and the RUC-style weighting does
+  not, but not enough to fix a variant. So this Story validates a supplied CDC
+  instead of minting one, because composing it would publish a document identity
+  whose check digit cannot be verified, and the Manual's §6.5 requires a
+  rejected DE to be resubmitted with the **same** CDC. The cheapest fix is a
+  second specimen: chapter 13's KuDE examples are graphics too, so rendering
+  those pages the same way is the next attempt.
 - **The validation gate depends on DNIT being reachable — once, at fetch time.**
   The dedicated job fetches the schemas from `ekuatia.set.gov.py`; if DNIT is
   down the job fails rather than skipping, which is deliberate but is a real
@@ -758,3 +771,25 @@ odd/tasks/epic-16-sifen-direct.md           the epic tracker, T4
 _Status must remain non-`done` until every acceptance criterion and gate
 passes._ WU-A and WU-B are implemented, gated and review-approved; **WU-C
 remains blocked**, so the Story stays `in-progress`.
+
+**WU-C's blocker list was re-derived on 2026-10-05** by a read-only
+investigation, and two of the three items on it were wrong:
+
+- **`D104` is not blocked.** The Manual's TABLA 1 prints all eight régimenes
+  inline (baseline §22.6); the earlier "references but does not contain" claim
+  came from a PDF extractor that dropped chapter 15's tables.
+- **The CDC's composition is not blocked.** It is a picture of a table on page
+  56, recovered by rendering the page; the Manual's worked example decomposes
+  into exactly those widths and matches the KuDE specimen byte for byte (§22.9).
+  Only the **check digit** remains open.
+- **The non-receptor notes are not blocked, they are untranscribed.** The
+  material is already on disk: the eight relevant notes total ~18 KB of
+  extracted text.
+- **And there is a blocker that was not on the list**: the emitter fiscal
+  profile and the timbrado. A confirmed invoice supplies lines, currency,
+  `confirmedAt` and the customer; it supplies **none** of the emitter identity,
+  the timbrado sequence, coded geography, the unit of measure, currency
+  descriptions or the exchange rate. No model holds them and no story owns them,
+  so WU-C is re-scoped to take a **supplied** emitter/timbrado profile as an
+  input — the same seam the CDC uses — and where that profile is stored is a
+  decision that is recorded as a proposal, not taken here.
