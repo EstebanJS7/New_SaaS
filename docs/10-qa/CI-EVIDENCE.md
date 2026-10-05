@@ -1477,8 +1477,9 @@ than silently fetching.
 
 ```text
 DTE_XSD_DIR=/tmp/dte-xsd-live DTE_XSD_REQUIRED=1 pnpm --filter @newsaas/fiscal test
-  -> 100 passed / 100        (30 new in WU-B: 22 builder cases + 9 fetch
-                              assertion cases + 7 schema-validation cases)
+  -> 100 passed / 100        (16 new in WU-B: 9 fetch-assertion cases
+                              + 7 schema-validation cases. The other 22 are
+                              WU-A's builder cases.)
 
 same run with HTTP(S)_PROXY pointed at a dead port
   -> 100 passed / 100        validation is hermetic: no network at validation time

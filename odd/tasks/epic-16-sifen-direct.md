@@ -371,7 +371,14 @@ candidate 1 exists.
       network blocked, 93 + 7 explicit skips with no schema directory, and a
       hard failure naming all seven artifacts when required without them.
       Recorded in `docs/10-qa/CI-EVIDENCE.md`; the CI run id follows the push and
-      the PR, which the maintainer owns. **WU-C, the invoice -> request
+      the PR, which the maintainer owns. **Review**: native review
+      `review-7a00fe71a5c544dd`, tier **high**, four lenses.
+      `R2-control-flow` (`CRITICAL`) needed one bounded correction — its premise
+      did not reproduce, but the misreadable construct was removed in `580de4a`
+      (32 diff lines) and the targeted validator admitted it; the review then
+      closed **approved** and its authority is burned. The eight non-blocking
+      advisories are **[[TD-032]]**, one of which caught a false case count in
+      the Story's own CI record, now fixed. **WU-C, the invoice -> request
       mapping**: **blocked** on the rule text of the non-receptor notes (§22.10)
       and on `D104`/`D131`, whose tables the Manual references but does not
       contain.
@@ -391,6 +398,6 @@ candidate 1 exists.
 - The rename leaves ~20 older Story references to "EPIC-16 the provider" intact
   in substance; the one that became factually wrong (`FISC-003`'s
   `FISCAL_PROVIDER` closed set) is corrected.
-- Inherited debt: [[TD-029]] (operator re-drive, closed by FISC-012 against a
-  real primitive), [[TD-030]] (EPIC-15 review advisories), [[TD-026]] (unbounded
-  lists), [[TD-022]] (portal surface).
+- Inherited debt: [[TD-032]] (FISC-008 review advisories), [[TD-029]] (operator
+  re-drive, closed by FISC-012 against a real primitive), [[TD-030]] (EPIC-15
+  review advisories), [[TD-026]] (unbounded lists), [[TD-022]] (portal surface).

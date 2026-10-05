@@ -655,6 +655,8 @@ run meaningful is itself tested):
 
 ## Technical Debt
 
+- **[[TD-032]]** carries WU-B's eight non-blocking review advisories, with the
+  fetch having no timeout and no retry first in line.
 - None created by WU-A. The two gaps WU-A deliberately leaves open — a `dCodSeg`
   generator and the `D206` converse — are recorded above as known limitations
   with the source that would close each, not as debt.
@@ -682,6 +684,37 @@ which is consistent with the findings being informational rather than blocking.
 authority was burned by its acknowledgement and its detail is no longer
 retrievable, so the finding identity, lens, severity, disposition and location
 are recorded rather than a paraphrase that would be ours, not theirs.
+
+## Review Record — WU-B
+
+Native review `review-7a00fe71a5c544dd`, tier **high** (the CI job trips
+`shell_source`), **four lenses** (`risk`, `resilience`, `readability`,
+`reliability`), 16 changed files and 2129 original changed lines against base
+tree `554f456b`. It closed in two steps.
+
+**One `CRITICAL` and one bounded correction.** `R2-control-flow` (`readability`,
+`deterministic`, `introduced`) claimed that `inspectDteSchemas` records a
+missing artifact without avoiding the following size check, so `contents` would
+be read unassigned and the function would throw on the first absent file —
+breaking the explicit skip path. **That premise did not reproduce**: the
+`continue` was present in the frozen candidate, TypeScript strict mode rejects
+an unassigned use outright, and two cases already exercised the path. The
+correction landed anyway, in `580de4a`, because the flagged construct — a
+`continue` inside a `catch` — is exactly what got misread: `contents` is now a
+`const` of a never-throwing read, narrowed by an explicit guard before any use.
+A case was added beside it: removing one artifact and shrinking another must
+report **both**. 32 diff lines, inside the 200-line budget. The targeted
+validator admitted the correction and the review then closed `approved`.
+
+**Eight non-blocking findings**, all recorded in [[TD-032]]: three `WARNING`
+(`R3-001`, `R4-fetch-no-retry-timeout`, and `R2-evidence-count`), five
+`SUGGESTION`, none of which opened a correction. **One of them caught a factual
+error in this Story's own evidence**: the CI record claimed 30 new cases for
+WU-B when 22 of those are WU-A's; the real figure is 16, and the file is
+corrected. The most substantive remaining one is the fetch having no timeout and
+no retry, which is the first item in [[TD-032]]. The reviewer's prose is not
+reproduced here, for the same reason as above: a lineage's detail is gone once
+its authority is burned.
 
 ## Decisions / ADRs
 
