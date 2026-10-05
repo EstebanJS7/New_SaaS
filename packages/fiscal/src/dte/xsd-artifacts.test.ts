@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -155,6 +155,23 @@ describe("official schema artifacts", () => {
 
     expect(inspection.usable).toBe(false);
     expect(inspection.missing).toEqual(DTE_XSD_ARTIFACTS.map((artifact) => artifact.fileName));
+  });
+
+  it("keeps inspecting after an absent artifact instead of stopping at it", async () => {
+    const targetDir = await mkdtemp(join(tmpdir(), "dte-schemas-test-"));
+    const files = allSchemas();
+    await prepareDteSchemas({ targetDir, fetchImpl: stubFetch(files) });
+    // Remove one artifact and shrink another: a single absent file must not
+    // stop the walk, or the report would name the first gap and hide the rest.
+    await rm(join(targetDir, "Monedas_v150.xsd"));
+    await writeFile(join(targetDir, "Paises_v100.xsd"), "<xs:schema/>", "utf8");
+
+    await expect(inspectDteSchemas(targetDir)).resolves.toMatchObject({
+      usable: false,
+      missing: ["Monedas_v150.xsd"],
+      tooSmall: ["Paises_v100.xsd"],
+      unrewrittenIncludes: false,
+    });
   });
 
   it("flags a directory whose entry schema was never rewritten", async () => {

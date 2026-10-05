@@ -325,10 +325,15 @@ export async function inspectDteSchemas(directory: string): Promise<DteSchemaDir
   let unrewrittenIncludes = false;
 
   for (const artifact of DTE_XSD_ARTIFACTS) {
-    let contents: string;
-    try {
-      contents = await readFile(`${directory}/${artifact.fileName}`, "utf8");
-    } catch {
+    // An absent artifact must not throw: it is the ordinary "not prepared yet"
+    // state that makes the suite skip. `contents` is therefore a `const` of a
+    // never-throwing read, narrowed before any use, so no path can reach the
+    // size check without a value.
+    const contents: string | undefined = await readFile(
+      `${directory}/${artifact.fileName}`,
+      "utf8"
+    ).catch(() => undefined);
+    if (contents === undefined) {
       missing.push(artifact.fileName);
       continue;
     }
