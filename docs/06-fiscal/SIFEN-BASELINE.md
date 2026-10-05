@@ -1204,13 +1204,25 @@ variants, one of which reproduces the only specimen we have".
    Manual's §6.5 requires a rejected DE to be resubmitted with the SAME CDC. So
    the seam stays where it is until the verifier document is retrieved or a
    second independent specimen confirms a variant.
-2. **Two retrieval paths remain**, both cheap: find the `digito-verificador.pdf`
-   on the DNIT/SET portal under its current URL (the old one is now the portal
-   shell), and — if the Manual's KuDE chapter prints more worked CDCs than the
-   text scan could see, since those are graphics too — render chapter 13's pages
-   as images the same way page 56 was read here. **A second specimen is the
-   cheapest fix and a rendered page is the cheapest source of one.**
-3. **The composition is evidence and the specimen is now a decomposition.** The
+2. **There is no second specimen in the Manual, and that was checked rather than
+   assumed.** Chapter 13's KuDE examples were rendered as images the same way
+   page 56 was, and they carry the header (RUC, timbrado, document number), the
+   item table and the totals — **not the CDC**. Page 198 confirms the display
+   rule ("CDC en once grupos de 4 posiciones", eleven groups of four = 44) but
+   prints no value, and the cached Guía de Pruebas has no 44-digit run either:
+   it only describes the CDC as "Número de 44 dígitos generado dentro del
+   sistema del emisor". So the whole retrieved corpus yields **one** usable
+   specimen. The KuDE header example does independently corroborate a fact this
+   vault already records: its "Fecha de fin de vigencia" row is struck through,
+   which is consistent with the timbrado having no end-of-validity date.
+3. **Where a second specimen can actually come from**, in order of cost: the
+   `digito-verificador.pdf` under a current URL on the DNIT/SET portal (its
+   published URL now serves the portal shell, and no e-kuatia page links to it);
+   the **Prevalidador**, which must implement the check digit to validate a DE
+   at all; or — the reliable one — **a real approved DTE from [[FISC-013]]'s
+   homologation run**, which produces many specimens at once and settles the
+   variant by volume instead of by argument.
+4. **The composition is evidence and the specimen is now a decomposition.** The
    field order and the widths no longer rest on inference: the Manual's table
    and its worked example agree with each other and sum to 44.
 
