@@ -526,6 +526,28 @@ schema rather than by string position.
 - If the chosen validation strategy weakens the proof (option 2 of the
   strategy), that weakening is recorded as debt at that point rather than here.
 
+## Review Record — WU-A
+
+Native review `review-5f02ddd057fd6758`, tier **medium**, one lens
+(`review-reliability`), 8 changed files and 2201 original changed lines against
+base tree `5cd215f3`. **Closed `approved`**, and the acknowledgement burned its
+authority; delivery stays ordinary repository policy.
+
+Two **non-blocking** findings were recorded, both `WARNING` and both
+`informational` — neither opened a correction and neither reopens the review:
+
+| Id           | Lens        | Location                                             |
+| ------------ | ----------- | ---------------------------------------------------- |
+| `R3-D208C`   | reliability | `dte.rules.ts:444-455` (the `D208c` threshold check) |
+| `R3-DCODSEG` | reliability | `dte.rules.ts:216-224` (the `dCodSeg` check)         |
+
+Both locations are the two gaps this Story already records as known limitations,
+which is consistent with the findings being informational rather than blocking.
+**The reviewer's own message text is not reproduced here**: the lineage's
+authority was burned by its acknowledgement and its detail is no longer
+retrievable, so the finding identity, lens, severity, disposition and location
+are recorded rather than a paraphrase that would be ours, not theirs.
+
 ## Decisions / ADRs
 
 - No ADR is required for the generator: it encodes a cited protocol, which is an
