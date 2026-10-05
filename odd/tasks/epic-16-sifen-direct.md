@@ -3,8 +3,8 @@ feature: epic-16-sifen-direct
 epic: EPIC-16
 status: in-progress
 created: 2026-10-03
-updated: 2026-10-04
-branch: feat/epic-16-fisc-007-signing-material
+updated: 2026-10-05
+branch: feat/epic-16-fisc-008-dte-xml
 ---
 
 # EPIC-16 SIFEN Direct — ODD task tracker
@@ -269,6 +269,84 @@ candidate 1 exists.
       -> request mapping**: **blocked** on the rule text of the non-receptor
       notes (§22.10) and on `D104`/`D131`, whose tables the Manual references
       but does not contain.
+- [~] T4 — **FISC-008: DTE XML + XSD validation — contract pinned 2026-10-04;
+  WU-A implemented 2026-10-05.** Story at `docs/02-stories/FISC-008-dte-xml.md`.
+  **The retrieval FISC-006 left open is done**: `DE_Types_v150.xsd` was fetched
+  from the official directory (66,452 bytes, HTTP 200) together with
+  `DE_v150.xsd` (66,190) and `xmldsig-core-schema.xsd` (10,339), and its facts
+  are recorded in `docs/06-fiscal/SIFEN-BASELINE.md` §21 — 140 `simpleType`s
+  with their enumerations, the scalar patterns for
+  CDC/RUC/timbrado/series/document number/dates/money, and the `rDE` (4
+  children) and `tDE` (11 children) structures. **One decision blocks the
+  acceptance criterion, not the implementation**: the schemas are copyrighted
+  and must not be vendored. **Decided 2026-10-04**: a dedicated CI job fetches
+  the three schemas, asserts each fetch, and runs the validation with the skip
+  disabled, so a green run cannot come from having validated nothing.
+  **Retrieval completed 2026-10-04**: baseline §22 carries the Manual's
+  field-level rules (73 `D`-codes; the receptor block's conditional structure;
+  the test-environment literal for `dNomEmi`; the cross-field invariants), four
+  companion tables were fetched as official XSDs. **Geography closed**: the
+  official `CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025` spreadsheet gives
+  `D111`/`D113`/`D115` (18 departamentos, 272 distritos unique nationally, 6,766
+  ciudades). NT 26 excludes four B2G validation rules and NT 27 amends the
+  nomination _event_ format, so neither changes a DE rule FISC-008 must
+  implement. **Still open**: `Tabla 1 – Tipo de Régimen` (`D104`) and
+  `Tabla 3 – Actividades Económicas` (`D131`), which the Manual references but
+  does not contain. **And a correction**: the Nota Técnica set is **001-027, not
+  23-27**. **All 27 were retrieved and profiled** (baseline §22.10): eighteen
+  touch DE fields and ten amend validations, and **nine amend the receptor block
+  alone** (`D200`/`D201`/`D202`/`D208`/ `D210`), which §22.3 pins from the 2019
+  Manual. **The receptor block's rule text is now transcribed and consolidated**
+  (baseline §22.11): NT 023 removed the `o D202=4` half of `D208`'s
+  `No informar` clause, NT 024 lowered the `D208c`/1321 threshold from NT 021's
+  35,000,000 to **7,000,000**, and NT 003 excluded the `D219`/`D223` validations
+  in favour of field conditions. The generator implements §22.11 and must never
+  read §22.3 for a receptor condition. The remaining provisional areas are the
+  non-receptor ones — currency/exchange, emitter activity/imputation, items and
+  titles — while the structural contract (`rDE`/`tDE`, order, patterns, money
+  scales) is unaffected because the notes amend observations and validations,
+  not the schemas.
+
+      **WU-A, the builder — done 2026-10-05.** `packages/fiscal/src/dte/**`
+      (`dte.types.ts`, `dte.rules.ts`, `dte.builder.ts`, `dte.builder.test.ts`)
+      plus the re-export from `packages/fiscal/src/index.ts`: a pure
+      `typed request -> XML string` function with no clock, randomness or I/O,
+      `rDE`'s four children and `tDE`'s eleven in schema order, `dVerFor` = 150,
+      the CDC as a **validated input** never composed (§22.9), `dCodSeg`
+      validated per §10.3, the per-field money scales, and the **receptor block
+      from §22.11** with its seven validations (`1300`, `1332`, `1319`, `1321`,
+      `1331`, `1333`, `1314`) rather than from §22.3. **A wrong first pass was
+      caught and corrected**: the initial builder placed `iTipTra`, `iTImp`,
+      `cMoneOpe`, `dTiCam` and `iCondOpe` inside `gOpeDE` — a group membership
+      inferred rather than read. `DE_v150.xsd` (already retrieved, cached in
+      `/tmp`, never vendored) was re-read and **baseline §21.6 now transcribes
+      `tDE`'s internal groups** (`gOpeDE`, `gTimb`, `gDatGralOpe`, `gOpeCom`,
+      `gEmis`, `gDatRec`, `gCamFuFD`), so no emitted structure rests on an
+      assumption; the members of `gDtipDE`, `gTotSub`, `gCamGen` and
+      `gCamDEAsoc` stay untranscribed and are carried as caller-supplied ordered
+      elements. **Tests**: 22 new cases in `dte.builder.test.ts` — child order,
+      CDC, `dCodSeg`, widths, timestamps, money scales per type, currency,
+      the receptor conditions including the B2C case §22.3's old clause would
+      have rejected, the B2G `gCompPub` non-rule, the test-environment literal,
+      enum bounds, cardinality, determinism and escaping. **Gates**: fiscal
+      lint/typecheck/test (84 passed) /build green; root `format-check`, lint
+      (18/18), typecheck (18/18), test (19/19; API 1107 passed) and build
+      (11/11) green; live PostgreSQL **213/213**. **Two gaps recorded rather
+      than hidden**: `dCodSeg` is validated but not generated (randomness would
+      break the determinism criterion, so the generator belongs where a random
+      source exists), and the converse of `D206` — refusing a RUC on a
+      non-contributor — comes from §22.3's clause that §22.11 does not restate
+      and NT 020's untranscribed text, so it is not encoded.
+
+      **WU-B, the CI validation job**: fetches the three official schemas into a
+      job-local directory, asserts each by HTTP status **and** a minimum byte
+      size, runs the schema-validation suite with the skip **disabled**, and
+      records the run in `docs/10-qa/CI-EVIDENCE.md` with the artifact sizes and
+      the case count; a fetch that does not produce all three fails the job.
+      **WU-C, the invoice -> request mapping**: **blocked** on the rule text of
+      the non-receptor notes (§22.10) and on `D104`/`D131`, whose tables the
+      Manual references but does not contain.
+
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.

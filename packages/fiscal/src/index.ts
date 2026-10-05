@@ -75,3 +75,41 @@ export type {
   TestPkcs12Certificate,
   TestPkcs12Options,
 } from "./signing-material/pkcs12.fixture.js";
+// FISC-008 WU-A: pure typed request -> XML builder for unsigned SIFEN DTEs.
+export { buildDteXml } from "./dte/dte.builder.js";
+export { DteValidationError, assertValidDteRequest } from "./dte/dte.rules.js";
+export type { DteValidationFailure } from "./dte/dte.rules.js";
+export {
+  DTE_NAMESPACE,
+  DTE_XML_VERSION,
+  SIFEN_MIN_VALIDITY_DATE,
+  SIFEN_TEST_EMITTER_NAME,
+  XMLDSIG_NAMESPACE,
+} from "./dte/dte.types.js";
+export type {
+  DteActividadEconomica,
+  DteCamposFueraFirma,
+  DteCondicionAnticipo,
+  DteCondicionTipoCambio,
+  DteDatosGeneralesOperacion,
+  DteDecimalType,
+  DteEmisor,
+  DteEnumType,
+  DteIntegerType,
+  DteNaturalezaReceptor,
+  DteObligacionAfectada,
+  DteOperacionComercial,
+  DteOperationEmission,
+  DteReceptor,
+  DteRequest,
+  DteResponsableEmision,
+  DteTimbrado,
+  DteTipoContribuyente,
+  DteTipoDocumentoElectronico,
+  DteTipoDocumentoReceptor,
+  DteTipoEmision,
+  DteTipoImpuesto,
+  DteTipoOperacion,
+  DteTipoTransaccion,
+  DteXmlElement,
+} from "./dte/dte.types.js";

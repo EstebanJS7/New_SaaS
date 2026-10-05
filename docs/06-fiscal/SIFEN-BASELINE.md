@@ -701,7 +701,60 @@ tiDenTarj      (integer, 1-6|99)                   card denomination
 tiTipIDRespDE  (integer, 1-4|9)                    responsible for the DE
 ```
 
-### 21.6 What this still does not pin
+### 21.6 The DE's internal groups, in schema order
+
+**[R]** §21.1 and §21.2 give `rDE` and `tDE`; the members _inside_ `tDE`'s
+groups live in `DE_v150.xsd` and were not transcribed by §21.2, which is why
+[[FISC-008]]'s builder needed them. They are recorded here from the same
+retrieved artifact (66,190 bytes, HTTP 200, 2026-10-04), so no group membership
+in the generator rests on an assumption.
+
+```text
+gOpeDE   tgCOpeDE   iTipEmi, dDesTipEmi, dCodSeg, dInfoEmi?, dInfoFisc?
+         (matches §4's comment exactly: the security code lives HERE)
+gTimb    tgDTim     iTiDE, dDesTiDE, dNumTim, dEst, dPunExp, dNumDoc,
+                    dSerieNum?, dFeIniT
+gDatGralOpe tgDaGOC dFeEmiDE, gOpeCom?, gEmis, gDatRec
+gOpeCom  tgOpeCom   iTipTra?, dDesTipTra?, iTImp, dDesTImp, cMoneOpe,
+                    dDesMoneOpe, dCondTiCam?, dTiCam?, iCondAnt?,
+                    dDesCondAnt?, gOblAfe 0..12
+gEmis    tgEmis     dRucEm, dDVEmi, iTipCont, cTipReg?, dNomEmi,
+                    dNomFanEmi?, dDirEmi, dNumCas, dCompDir1?, dCompDir2?,
+                    cDepEmi, dDesDepEmi, cDisEmi?, dDesDisEmi?, cCiuEmi,
+                    dDesCiuEmi, dTelEmi, dEmailE, dDenSuc?, gActEco 1..9,
+                    gRespDE?
+gDatRec  tgDatRec   iNatRec, iTiOpe, cPaisRec, dDesPaisRe, iTiContRec?,
+                    dRucRec?, dDVRec?, iTipIDRec?, dDTipIDRec?, dNumIDRec?,
+                    dNomRec, dNomFanRec?, dDirRec?, dNumCasRec?, cDepRec?,
+                    dDesDepRec?, cDisRec?, dDesDisRec?, cCiuRec?,
+                    dDesCiuRec?, dTelRec?, dCelRec?, dEmailRec?, dCodCliente?
+gCamFuFD tgCamFuFD  dCarQR (100..600), dInfAdic? (1..5000)
+```
+
+**Three structural facts this resolves, each of which a generator can get
+wrong:**
+
+1. **`dCodSeg` lives in `gOpeDE`, not in a general-operations group**, and
+   `gOpeDE` carries nothing else beyond the emission type, its description and
+   two optional free-text fields.
+2. **`gDatGralOpe` is the wrapper**: `dFeEmiDE` first, then the optional
+   `gOpeCom`, then `gEmis` and `gDatRec`. The receptor block is `gDatRec`, and
+   inside it `dRucRec`/`dDVRec` precede `iTipIDRec`/`dDTipIDRec`/`dNumIDRec`.
+   `cPaisRec` and `dDesPaisRe` are **required** and sit between `iTiOpe` and the
+   optional `iTiContRec`.
+3. **`iCondOpe`/`dDCondOpe` and `iIndPres`/`dDesIndPres` are NOT in `gOpeCom`.**
+   They are document-type-specific: `iCondOpe` sits in `gCamCond` and `iIndPres`
+   in `gCamFE`, both inside `gDtipDE`.
+
+**What this still does not transcribe.** The members of `gDtipDE`, `gTotSub`,
+`gCamGen` and `gCamDEAsoc` are **not** recorded here. `gDtipDE` alone spans 11
+optional/required groups including `gCamItem` (`1..999`), and §22.10 records
+that the item, imputation and title areas are amended by Notas Técnicas whose
+rule text is not transcribed. A generator that typed them today would be
+encoding a provisional area, so FISC-008 carries them as caller-supplied ordered
+elements instead.
+
+### 21.7 What this still does not pin
 
 Two of §19's open questions survive this retrieval and they matter to
 [[FISC-008]]:

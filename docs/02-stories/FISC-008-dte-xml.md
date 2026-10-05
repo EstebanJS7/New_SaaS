@@ -13,7 +13,7 @@ prd_sections:
 permissions: []
 branch: feat/epic-16-fisc-008-dte-xml
 created: 2026-10-04
-updated: 2026-10-04
+updated: 2026-10-05
 ---
 
 # FISC-008 — DTE XML generation validated against the official XSDs
@@ -89,20 +89,24 @@ invalid, not merely unconventional.
 
 ### The receptor block — conditional, and a different enumeration
 
-§22.3 of the baseline pins the receptor's identity as **conditional on two other
-fields**, which no schema expresses:
+**§22.11 of the baseline pins the receptor's identity, not §22.3.** §22.3 is the
+2019 Manual's text, and nine Notas Técnicas amend that block; §22.11 is the
+consolidated version, with each rule quoted from the note that last set it. The
+field conditions below are **the ones NT 023 last set**:
 
 ```text
 D201  iNatRec    1 = contribuyente, 2 = no contribuyente
 D202  iTiOpe     1..4  (D202 = 3 B2G, D202 = 4 B2C)
 D206  dRucRec    Obligatorio si D201 = 1 ; No informar si D201 = 2
 D207  dDVRec     Obligatorio si existe D206  (algoritmo módulo 11)
-D208  iTipIDRec  Obligatorio si D201 = 2 y D202 != 4 ; No informar si D201 = 1 o D202 = 4
+D208  iTipIDRec  Obligatorio si D201 = 2 y D202 != 4
+                 No informar si D201 = 1        <- NT 023 REMOVED "o D202=4"
                  1 Cédula paraguaya  2 Pasaporte  3 Cédula extranjera
                  4 Carnet de residencia  5 Innominado
                  6 Tarjeta Diplomática de exoneración fiscal  9 Otro
 D209  dDTipIDRec Obligatorio si existe D208
-D210  dNumIDRec  Obligatorio si D201 = 2 y D202 != 4 ; innominado se completa con 0
+D210  dNumIDRec  Obligatorio si D201 = 2 y D202 != 4 ; No informar si D201 = 1
+                 length 1-20 ; innominado se completa con 0
 ```
 
 **The receptor enumeration is not the schema's `tiTipDoc`.** `DE_Types_v150.xsd`
@@ -111,8 +115,36 @@ restricts `tiTipDoc` to `[1-4]`; the Manual's receptor type adds `5 Innominado`,
 `tiTipDocRec` (`[1-6]|9`). The generator uses the **receptor** enumeration for
 `D208` and must not share one constant with the emitter's.
 
-**A B2C document (`D202 = 4`) carries no identity document at all**, by the
-`No informar` rule.
+**The identity document is forbidden only when `D201 = 1`.** The Manual and NT
+002 both read `No informar si D201 = 1 o D202=4`; NT 023 removed the second
+half. What actually constrains `Innominado` by operation type are `D208b`/1319
+and `D208f`/1333, not a blanket `D202 = 4` prohibition. **A B2C document
+(`D202 = 4`) may therefore carry an identity document**, and a generator that
+implemented §22.3's old clause would reject a document the current rules allow.
+
+The validations in force, each with the note that last set it, are the seven in
+§22.11: `D202`/1300, `D202b`/1332, `D208b`/1319, **`D208c`/1321 with the
+7,000,000 threshold NT 024 set** (NT 021 had 35,000,000), `D208e`/1331 including
+`C002 = 7`, `D208f`/1333 and `D210`/1314. NT 003 excluded `D219`/1324 and
+`D223`/1327 in favour of field conditions.
+
+### The DE's internal groups
+
+`rDE` and `tDE` are pinned by §21.1 and §21.2, but the members _inside_ `tDE`'s
+groups are pinned by §21.6, which records them from the same retrieved
+`DE_v150.xsd`:
+
+- `dCodSeg` lives in **`gOpeDE`**, which carries nothing else beyond the
+  emission type, its description and two optional free-text fields.
+- `gDatGralOpe` is the wrapper — `dFeEmiDE`, an optional `gOpeCom`, `gEmis` and
+  `gDatRec` — and the receptor block is **`gDatRec`**, where `dRucRec`/`dDVRec`
+  precede the identity-document triplet and `cPaisRec`/`dDesPaisRe` are
+  required.
+- `iCondOpe` and `iIndPres` are **not** in `gOpeCom`: they are
+  document-type-specific (`gCamCond` and `gCamFE`).
+- `gDtipDE`, `gTotSub`, `gCamGen` and `gCamDEAsoc` members are **not**
+  transcribed, so the generator carries them as caller-supplied ordered elements
+  rather than encoding a provisional area (§22.10).
 
 ### The test-environment literal
 
@@ -231,44 +263,65 @@ The rejected alternatives, and why:
 
 ## Acceptance Criteria
 
-- [ ] The generator emits `rDE` with its four children in schema order, all
-      required, `dVerFor` = 150.
-- [ ] The generator emits `DE` with its eleven children in schema order, with
+Work-unit boundaries, so a reader knows what is proven and what is not: **WU-A**
+is the builder (`packages/fiscal/src/dte/**`), **WU-B** is the CI
+schema-validation job, and **WU-C** is the invoice → request mapping, which is
+blocked on the non-receptor notes' rule text.
+
+### Satisfied by WU-A
+
+- [x] The generator emits `rDE` with its four children in schema order, all
+      required, `dVerFor` = 150. _(`dte.builder.test.ts`: structure)_
+- [x] The generator emits `DE` with its eleven children in schema order, with
       the required/optional cardinality the schema pins (`gTotSub` and `gCamGen`
       optional, `gCamDEAsoc` `0..99`).
-- [ ] The CDC is validated as 44 characters matching `tCDC`, and `dDVId` is
+- [x] The CDC is validated as 44 characters matching `tCDC`, and `dDVId` is
       carried as supplied. **The generator does not compose the CDC nor compute
       its check digit**, because §22.9 records that neither algorithm is pinned.
-- [ ] `dCodSeg` is nine random digits, zero-padded, non-sequential, unrelated to
-      the document and the issuer, and never equal to `dNumDoc`.
-- [ ] Establishment and expedition point are zero-padded to three digits; the
+- [x] Establishment and expedition point are zero-padded to three digits; the
       document number is exactly seven digits; the series matches `[A-Z]{2}`.
-- [ ] `dFecFirma` matches `fecHhmmss` with no timezone suffix and no fractional
-      seconds.
-- [ ] Every monetary field carries the fraction digits its own type pins, and
-      every quantity uses `tdCantProSer`'s scale.
-- [ ] Every enumerated field carries a value the schema allows, and no value is
+- [x] `dFecFirma` matches `fecHhmmss` with no timezone suffix and no fractional
+      seconds. The same rule is enforced on `dFeEmiDE`.
+- [x] Every monetary field carries the fraction digits its own type pins, and
+      every quantity uses `tdCantProSer`'s scale: `tMontoBase` 23/8,
+      `tMontoBase4` 19/4, `tMontoBase6` 10/4, `tTipoCambioBase` 9/4 strictly
+      positive, `tPorcDesc8` 11/8 bounded to 100, `tdTasaIVA` a 2-digit integer.
+      Money crosses as a string and is never parsed into a float: the bound and
+      threshold comparisons use exact decimal arithmetic over digit strings.
+- [x] Every enumerated field carries a value the schema allows, and no value is
       emitted that §21.5 does not record.
-- [ ] The receptor block follows its conditional rules: RUC and check digit when
-      `D201 = 1`, an identity document when `D201 = 2` and `D202 != 4`, and
-      **nothing** when `D202 = 4`.
-- [ ] `D208` uses the receptor enumeration (`tiTipDocRec`, which includes
-      `5 Innominado` and `6 Tarjeta Diplomática de exoneración fiscal`) and not
-      the emitter's `tiTipDoc`.
-- [ ] A test-environment document carries the exact literal "DE generado en
-      ambiente de prueba - sin valor comercial ni fiscal" as the emitter's name.
-- [ ] The receptor block follows §22.11's consolidated rules, not §22.3's: RUC
+- [x] The receptor block follows §22.11's consolidated rules, not §22.3's: RUC
       and check digit when `D201 = 1`, an identity document when `D201 = 2` and
       `D202 != 4`, and the identity document forbidden **only** when `D201 = 1`.
-- [ ] The receptor validations are enforced: `D202` (1300), `D202b` (1332),
+- [x] `D208` uses the receptor enumeration (`tiTipDocRec`, which includes
+      `5 Innominado` and `6 Tarjeta Diplomática de exoneración fiscal`) and not
+      the emitter's `tiTipDoc`.
+- [x] A test-environment document carries the exact literal "DE generado en
+      ambiente de prueba - sin valor comercial ni fiscal" as the emitter's name.
+      The literal is required in `test` and not imposed in `production`.
+- [x] The receptor validations are enforced: `D202` (1300), `D202b` (1332),
       `D208b` (1319), `D208c` (1321) with the **7,000,000** threshold NT 024
       set, `D208e` (1331) including `C002 = 7`, `D208f` (1333) and `D210`
       (1314).
-- [ ] `dTiCam` is absent when the currency is PYG, and every item of a document
-      carries the same currency.
-- [ ] No B2G document is rejected for a missing `gCompPub`: NT 26 excluded those
-      rules (§22.7).
-- [ ] No validity date precedes 2018-05-01.
+- [x] `dTiCam` is absent when the currency is PYG, and obligatory when
+      `dCondTiCam = 1` for any other currency (§22.4).
+- [x] No B2G document is rejected for a missing `gCompPub`: NT 26 excluded those
+      rules (§22.7). The generator encodes no `gCompPub` requirement at all.
+- [x] No validity date precedes 2018-05-01.
+- [x] The generator is deterministic: the same request produces byte-identical
+      XML. It has no ambient clock and no randomness, which is why `dFecFirma`
+      and `dCodSeg` enter as validated input rather than being generated here.
+- [x] No fiscal content is logged at CONFIDENTIAL or above (PRD §41). The
+      builder has no logger.
+
+### Open — WU-B (the CI schema-validation job)
+
+- [ ] `dCodSeg` is nine random digits, zero-padded, non-sequential, unrelated to
+      the document and the issuer, and never equal to `dNumDoc`. **WU-A enforces
+      every decidable part** (nine digits, value ≥ 1, never equal to `dNumDoc`,
+      zero-padding accepted) **and does not generate it**: randomness inside the
+      builder would break the determinism criterion above. The generator belongs
+      where a random source exists.
 - [ ] A dedicated CI job fetches the three official schemas, asserts each fetch
       (HTTP status and a minimum size), and runs the schema-validation suite
       with the skip **disabled**, so a green run cannot be the product of
@@ -281,9 +334,15 @@ The rejected alternatives, and why:
       executed.
 - [ ] A fetch that does not produce all three schemas fails the job rather than
       degrading to a skip.
-- [ ] The generator is deterministic: the same invoice and the same clock
-      produce byte-identical XML.
-- [ ] No fiscal content is logged at CONFIDENTIAL or above (PRD §41).
+- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
+      WU-A's own gates are green; the Story-level gate closes with WU-B.
+
+### Open — WU-C (the invoice → request mapping)
+
+- [ ] `dTiCam` is absent when the currency is PYG, and **every item of a
+      document carries the same currency**. The PYG half is enforced; the
+      per-item half cannot be until an item model exists, because `gCamItem` is
+      one of the groups whose members §21.6 records as untranscribed.
 - [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
 
 ## Domain Invariants
@@ -327,43 +386,119 @@ timbrado data; where that data is stored is FISC-011's scope.
 
 ## Implementation Summary
 
-_Not implemented._ The contract is pinned and the validation strategy is
-decided, so nothing blocks the implementation any more.
+**WU-A — the builder — is implemented.** `packages/fiscal/src/dte/**` holds the
+pure `typed request -> XML string` function and its validators:
+
+```text
+dte.types.ts    the request, the pinned enumerations and the quoted constants
+dte.rules.ts    DteValidationError + assertValidDteRequest, one rule per cited section
+dte.builder.ts  buildDteXml(request): string  — no clock, no randomness, no I/O
+dte.builder.test.ts  22 cases over the sections this Story pins
+```
+
+The public surface is exported from `packages/fiscal/src/index.ts`.
+
+**Structure.** `rDE`'s four children and `DE`'s eleven are emitted in schema
+order, `dVerFor` is the literal `150`, `dSisFact` is `1`, the `<Signature>`
+placeholder carries the xmldsig namespace on its own tag, and `gCamFuFD` is
+emitted outside `</DE>`. The internal groups follow §21.6, which is why
+`dCodSeg` sits inside `gOpeDE` and the receptor block inside `gDatGralOpe >`
+`gDatRec`.
+
+**The receptor is §22.11.** `D208`'s obligation is enforced for `D201 = 2` with
+`D202 != 4`, the identity document is forbidden **only** when `D201 = 1` — so a
+B2C document carrying one is accepted, which §22.3's old clause would have
+rejected — and the seven validations (`1300`, `1332`, `1319`, `1321`, `1331`,
+`1333`, `1314`) are enforced with NT 024's 7,000,000 threshold.
+
+**What is deliberately not here.** The CDC is validated and `dDVId` is carried
+as supplied (§22.9). `dCodSeg` is validated, never generated. `gDtipDE`,
+`gTotSub`, `gCamGen` and `gCamDEAsoc` are caller-supplied ordered element trees,
+because their members are not transcribed and §22.10 marks those areas
+provisional.
+
+**Not this work unit.** The CI schema-validation job and the "validates against
+the official XSD" proofs are WU-B; the invoice → request mapping is WU-C and
+remains blocked.
 
 ## Verification
 
 ```text
-Not run.
+WU-A on feat/epic-16-fisc-008-dte-xml, 2026-10-05:
+
+  pnpm --filter @newsaas/fiscal lint       pass
+  pnpm --filter @newsaas/fiscal typecheck  pass
+  pnpm --filter @newsaas/fiscal test       84 passed / 84 (22 of them new)
+  pnpm --filter @newsaas/fiscal build      pass
+
+  pnpm format-check                        pass (whole repo)
+  pnpm lint                                pass (18/18)
+  pnpm typecheck                           pass (18/18)
+  pnpm test                                pass (19/19; API 1107 passed, live-PG skipped)
+  pnpm build                               pass (11/11)
+  pnpm --filter @newsaas/api test:live-pg  213 passed / 213 (live PostgreSQL)
+
+  Not run: the XSD-validation suite and its CI job — that is WU-B.
 ```
 
 ## Tests Added
 
-Planned, once the validation strategy is chosen:
+WU-A adds 22 cases in `packages/fiscal/src/dte/dte.builder.test.ts`:
 
-- Schema conformance: the generated document validates against the official
-  schema, and a deliberately malformed document does not.
-- Child order: a document with the correct children in the wrong order is
-  rejected.
-- `dVerFor`: any value but 150 is rejected.
-- CDC: length and pattern, including position 10's `A`–`D` range, and the check
-  digit.
-- Zero-padding and widths: establishment, expedition point, document number,
-  series.
-- Timestamp shape: no timezone suffix, no fractional seconds.
-- Money scales: each monetary type's fraction digits, and the `tTipoCambioBase`
-  strictly-positive bound.
-- Enumeration bounds: a value outside each pinned enumeration is rejected.
-- Determinism: identical inputs produce byte-identical output.
+- Child order for `rDE` and `DE`, and that `DE` closes before the signature
+  placeholder and before `gCamFuFD`.
+- Schema order inside `gOpeDE`, `gTimb`, `gOpeCom`, `gEmis` and `gDatRec`.
+- CDC: length and pattern, including position 10's `A`–`D` range, and that
+  `dDVId` is carried verbatim rather than computed.
+- `dCodSeg`: nine digits, value ≥ 1, accepted zero-padding, and rejection when
+  it equals `dNumDoc`.
+- Widths and shapes: `dEst`, `dPunExp`, `dNumDoc`, `dNumTim`, `dSerieNum`, and
+  the 2018-05-01 lower bound on `dFeIniT`.
+- Timestamp shape on `dFecFirma` and `dFeEmiDE`: no timezone, no fractional
+  seconds.
+- Money scales per type, the `tTipoCambioBase` strictly-positive bound, the
+  `tPorcDesc8` ≤ 100 bound, `tdCantProSer`, and the integer-only `tdTasaIVA`.
+- Currency: `dTiCam` absent for PYG, obligatory for `dCondTiCam = 1` otherwise.
+- The receptor block: RUC + DV for a contributor; identity document forbidden
+  for `D201 = 1`; accepted for B2C; required for `D202 != 4`; `tiTipDocRec`
+  admitting 5 and 6 and rejecting 7; `D202`, `D202b`, `D208b`, `D208c` (both
+  sides of 7,000,000 and the `iTipTra = 13` escape), `D208e` and `D208f`.
+- B2G without `gCompPub` is not rejected.
+- The test-environment literal, required in `test` and not imposed in
+  `production`.
+- Enumeration bounds outside §21.5, `gActEco` 1..9 and `gCamDEAsoc` 0..99.
+- Determinism and XML escaping.
+
+Still planned for WU-B: the generated document validates against the official
+schema, a malformed one does not, and the child-order case is proven by the
+schema rather than by string position.
 
 ## Known Limitations
 
 - **`D104` régimen and `D131` actividades económicas are unpinned**, so the
   generator cannot populate those two fields from a validated catalogue. The
-  geography fields are no longer a limitation.
+  geography fields are no longer a limitation. **WU-A validates `cActEco`'s
+  shape (`[0-9A-Z]{1,8}`, `1..9` occurrences) and does not validate its values
+  against a catalogue**, which is the honest half of the constraint.
 - **The non-receptor DE rules are provisional.** Currency and exchange, emitter
   activity and imputation, items and titles were read from the 2019 Manual and
   later notes amend them (§22.10), but their rule text is not yet transcribed.
   The **receptor block is no longer a limitation**: §22.11 consolidates it.
+- **`D206`/`D207` are enforced from §22.11's identification model, and the
+  converse is not.** A contributor receptor (`D201 = 1`) must carry `dRucRec`
+  and `dDVRec`, and must not carry an identity document. The reverse — refusing
+  a RUC on a non-contributor — comes from §22.3's `No informar si D201 = 2`
+  clause, which §22.11 does not restate and NT 020 (the note that touched
+  `D206`) does not have its rule text transcribed for. **So a non-contributor
+  receptor carrying a RUC is emitted rather than refused**, by the rule "if §21
+  or §22.11 does not record a rule, do not encode it". Closing it needs NT 020's
+  text, the same work WU-C waits on.
+- **Description fields (`dDesTipTra`, `dDesTImp`, `dDesIndPres`, the geography
+  descriptions, `dDTipIDRec`) are not constrained to their XSD enumerations.**
+  `tdDes*` values are the Manual's tables' to explain and §21.5 transcribes
+  several of them abbreviated, so only the _code_ enums are enforced. A pairing
+  such as `iTipIDRec = 5` ⇒ `dDTipIDRec` = "Innominado" is **not** validated,
+  because neither §21 nor §22.11 states that mapping.
 - **The structural contract is unaffected.** The notes amend observations and
   validations, not `DE_v150.xsd`/`DE_Types_v150.xsd`, so the `rDE`/`tDE`
   structure, the child order, the patterns and the money scales this Story pins
@@ -385,8 +520,11 @@ Planned, once the validation strategy is chosen:
 
 ## Technical Debt
 
-- None created by the pin. If the chosen validation strategy weakens the proof
-  (option 2), that weakening is recorded as debt at that point rather than here.
+- None created by WU-A. The two gaps WU-A deliberately leaves open — a `dCodSeg`
+  generator and the `D206` converse — are recorded above as known limitations
+  with the source that would close each, not as debt.
+- If the chosen validation strategy weakens the proof (option 2 of the
+  strategy), that weakening is recorded as debt at that point rather than here.
 
 ## Decisions / ADRs
 
@@ -395,13 +533,24 @@ Planned, once the validation strategy is chosen:
 - **[[ADR-006]] belongs to [[FISC-009]]**, the signing dependency, and is not
   needed here.
 - The validation strategy is a Decision, not an ADR, once chosen.
+- **WU-A added §21.6 to `SIFEN-BASELINE.md`.** The generator needs the members
+  of `tDE`'s internal groups, and §21.2 only recorded `rDE` and `tDE`'s
+  top-level children. Rather than infer group membership, the same retrieved
+  `DE_v150.xsd` was re-read and its groups transcribed, so every structure the
+  builder emits cites the vault rather than an assumption. §21.6 states which
+  groups remain untranscribed.
 
 ## Files / Modules
 
 ```text
-packages/fiscal/src/dte/**            the generator and its types
-docs/06-fiscal/SIFEN-BASELINE.md      §21 is the source of record for every rule
-odd/tasks/epic-16-sifen-direct.md     the epic tracker
+packages/fiscal/src/dte/dte.types.ts       the typed request and its constants
+packages/fiscal/src/dte/dte.rules.ts       the validators, one rule per cited section
+packages/fiscal/src/dte/dte.builder.ts     buildDteXml(request): string
+packages/fiscal/src/dte/dte.builder.test.ts
+packages/fiscal/src/index.ts               the package's public surface
+docs/06-fiscal/SIFEN-BASELINE.md           §21.5 enumerations, §21.6 the internal groups,
+                                           §22.9 the CDC/dCodSeg, §22.11 the receptor
+odd/tasks/epic-16-sifen-direct.md          the epic tracker, T4
 ```
 
 ## Completion Notes
