@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDteXml } from "./dte.builder.js";
+import { buildDteRequestFromInvoice } from "./dte.mapper.js";
 import { validFacturaElectronicaRequest, withStructuralSignature } from "./dte.fixture.js";
 import {
   defaultDteSchemaDirectory,
@@ -108,6 +109,57 @@ describe.skipIf(skipped)(
       // The emitter literal is a §22.5 rule the schema does not encode, so it is
       // asserted here rather than left to the validator.
       expect(xml).toContain(`<dNomEmi>${SIFEN_TEST_EMITTER_NAME}</dNomEmi>`);
+    });
+
+    it("accepts a document the MAPPER built, not just the fixture", async () => {
+      // The mapping's own tests assert shape, and shape is not validity: an
+      // earlier version of `totalsElement` emitted six of `tgTotSub`'s ten
+      // required members, in the wrong order, and every builder test passed.
+      // This case is what makes that class of gap visible.
+      const { request } = buildDteRequestFromInvoice({
+        invoice: {
+          issuedAt: "2026-10-06T10:00:00",
+          currency: "PYG",
+          currencyDescription: "Guaraní",
+          lines: [
+            {
+              itemCode: "SKU001",
+              description: "Servicio de prueba",
+              unitOfMeasureCode: "77",
+              unitOfMeasureDescription: "UNI",
+              quantity: "1",
+              unitPrice: "100",
+              lineTotal: "110",
+              taxableBase: "100",
+              taxAmount: "10",
+              affectation: 1,
+              ivaRate: 10,
+            },
+          ],
+          receptor: validFacturaElectronicaRequest().gDatGralOpe.gDatRec,
+        },
+        profile: {
+          emitter: validFacturaElectronicaRequest().gDatGralOpe.gEmis,
+          timbrado: validFacturaElectronicaRequest().gTimb,
+          operation: { iTImp: 1, dDesTImp: "IVA", iTipTra: 1, dDesTipTra: "Venta de mercadería" },
+          emissionType: { code: 1, description: "Normal" },
+        },
+        identity: {
+          cdc: validFacturaElectronicaRequest().cdc,
+          dDVId: validFacturaElectronicaRequest().dDVId,
+          securityCode: "123456789",
+          environment: "test",
+        },
+        signatureTimestamp: "2026-10-06T10:00:05",
+        qrContent: validFacturaElectronicaRequest().gCamFuFD.dCarQR,
+      });
+      const result = await validateDeAgainstOfficialXsd(
+        withStructuralSignature(buildDteXml(request)),
+        schemaDirectory
+      );
+
+      expect(result.errors).toEqual([]);
+      expect(result.valid).toBe(true);
     });
 
     it("refuses an unusable directory instead of reporting a pass", async () => {

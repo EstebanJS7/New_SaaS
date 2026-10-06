@@ -27,6 +27,22 @@ export const TI_DE_VALUES = [1, 4, 5, 6, 7, 9, 10] as const;
 export const TIP_TRA_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] as const;
 /** §21.5 `/ tiTImp`: 1..5. */
 export const T_IMP_VALUES = [1, 2, 3, 4, 5] as const;
+/** `tiAfecIVA` (§21.5): 1..4. */
+export const AFEC_IVA_VALUES = [1, 2, 3, 4] as const;
+/**
+ * `tdDesAfecIVA`'s values and their pairing with the codes. **The schema states
+ * that pairing in its own comments** ("Corresponde al Codigo N del campo
+ * iAfecIVA"), so this is a schema-pinned mapping rather than a reading of the
+ * Manual's tables — which is why it is encoded while the `tdDes*` strings of
+ * other groups are not.
+ */
+export const AFEC_IVA_DESCRIPTIONS = {
+  1: "Gravado IVA",
+  2: "Exonerado (Art. 100 - Ley 6380/2019)",
+  3: "Exento",
+  4: "Gravado parcial (Grav- Exento)",
+} as const;
+
 /** §21.5 `/ tiTipCont`: 1|2. */
 export const TIP_CONT_VALUES = [1, 2] as const;
 /** §21.5 `/ tiNatRec`: 1|2. */
@@ -45,6 +61,7 @@ export type DteTipoDocumentoElectronico = (typeof TI_DE_VALUES)[number];
 export type DteTipoTransaccion = (typeof TIP_TRA_VALUES)[number];
 export type DteTipoImpuesto = (typeof T_IMP_VALUES)[number];
 export type DteTipoContribuyente = (typeof TIP_CONT_VALUES)[number];
+export type DteAfectacionIva = (typeof AFEC_IVA_VALUES)[number];
 export type DteNaturalezaReceptor = (typeof NAT_REC_VALUES)[number];
 export type DteTipoDocumentoReceptor = (typeof TIP_DOC_REC_VALUES)[number];
 export type DteTipoOperacion = (typeof TIP_OPE_VALUES)[number];
@@ -65,6 +82,7 @@ export type DteEnumType =
   | "tiTipTra"
   | "tiTImp"
   | "tiTipCont"
+  | "tiAfecIVA"
   | "tiNatRec"
   | "tiTiOpe"
   | "tiTipDocRec";

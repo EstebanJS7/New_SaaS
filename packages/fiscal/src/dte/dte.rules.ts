@@ -15,6 +15,7 @@
  */
 
 import {
+  AFEC_IVA_VALUES,
   COND_ANT_VALUES,
   COND_TI_CAM_VALUES,
   NAT_REC_VALUES,
@@ -122,6 +123,7 @@ const ENUM_VALUES = {
   tiTipTra: TIP_TRA_VALUES,
   tiTImp: T_IMP_VALUES,
   tiTipCont: TIP_CONT_VALUES,
+  tiAfecIVA: AFEC_IVA_VALUES,
   tiNatRec: NAT_REC_VALUES,
   tiTiOpe: TIP_OPE_VALUES,
   tiTipDocRec: TIP_DOC_REC_VALUES,

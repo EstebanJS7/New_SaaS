@@ -414,28 +414,52 @@ candidate 1 exists.
       measure, currency descriptions or exchange rate; `buildDteXml`/`DteRequest`
       have no production consumer yet (FISC-012's provider is the intended one).
 
-- [ ] T4b — **FISC-008 WU-C: the invoice -> request mapper — re-scoped and
-      proposed 2026-10-05, awaiting [[DEC-054]].** Two decisions are the
-      maintainer's: where the emitter fiscal profile and the timbrado live
-      (recommendation: FISC-011 owns storage, WU-C takes the profile as an
-      input) and whether the CDC is composed now (recommendation: not until a
-      second specimen or the verifier document arrives; the next attempt is to
-      render chapter 13's KuDE pages, which are graphics too — **that search was
-      run and it found THREE more — two in the Guía de Mejores Prácticas and one
-      in DNIT's `Estructura xml_DE.rar` example — taking the corpus to four
-      specimens, which **eliminated** the naive weighting family instead of
-      confirming a variant; four specimens cannot pin a longer period either, so
-      the verifier document or FISC-013's homologation run are what remain).
-      **The `D208c` correction is DONE** (2026-10-05): the request carries
-      `totalOperacion` (`F014`) and `totalGuaranies` (`F023`), the builder
-      selects by currency as §22.12 records, and it refuses `F023` for a PYG
-      document per NT 008.
+- [x] T4b — **FISC-008 WU-C: the invoice -> request mapper — DONE 2026-10-06.**
+      See **WU-C: the mapper** below.
+- [ ] T4b-old — **the invoice -> request mapper — re-scoped and proposed
+      2026-10-05, awaiting [[DEC-054]].** Two decisions are the maintainer's:
+      where the emitter fiscal profile and the timbrado live (recommendation:
+      FISC-011 owns storage, WU-C takes the profile as an input) and whether the
+      CDC is composed now (recommendation: not until a second specimen or the
+      verifier document arrives; the next attempt is to render chapter 13's KuDE
+      pages, which are graphics too — **that search was run and it found THREE
+      more — two in the Guía de Mejores Prácticas and one in DNIT's
+      `Estructura xml_DE.rar` example — taking the corpus to four specimens,
+      which **eliminated** the naive weighting family instead of confirming a
+      variant; four specimens cannot pin a longer period either, so the verifier
+      document or FISC-013's homologation run are what remain). **The `D208c`
+      correction is DONE** (2026-10-05): the request carries `totalOperacion`
+      (`F014`) and `totalGuaranies` (`F023`), the builder selects by currency as
+      §22.12 records, and it refuses `F023` for a PYG document per NT 008.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
+
+## WU-C: the mapper
+
+**DONE 2026-10-06.** `packages/fiscal/src/dte/dte.mapper.ts` holds
+`buildDteRequestFromInvoice({ invoice, profile, identity }) -> DteRequest`,
+pure: no I/O, no ambient clock, no tenant context. Authorized by [[DEC-054]]
+(accepted), whose option B gives the emitter fiscal profile's storage to
+FISC-011 — so the profile is an **input**, and the mapper is callable and
+testable today even though nothing in production supplies one yet.
+
+**The XSD case is the proof that mattered.** Putting the mapper's output through
+the schema-validation suite caught two real invalidities that no shape test
+could see: `totalsElement` emitted six of `tgTotSub`'s **ten** required members,
+in the wrong order, and `gValorItem` was missing its required `gValorRestaItem`.
+Both are fixed, and the case now runs in the same suite as the fixture's.
+
+**Two things it deliberately does not do**, both recorded in the module and in
+baseline §22.14: it does not re-derive tax (NT 013's formulas state no rounding
+rule, so the invoice's own `taxableBase`/`taxAmount` are carried rather than
+giving money a second source of truth), and it does not derive `F023` (NT 008
+defines it as `F014 * D018` with the same unpinned rounding, so a foreign
+currency supplies it). It always supplies the `D208c` total the currency names,
+which is the obligation `R3-D208C-OPTIN` placed on it.
 
 ## Review coverage
 

@@ -395,7 +395,27 @@ the rewrite below, and the reasons are in baseline §21.7.
       run id follows the push and the PR, which the maintainer owns.
 - [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
 
-### Open — WU-C (the invoice → request mapping)
+### Closed — WU-C (the invoice → request mapping), authorized by DEC-054
+
+- [x] `buildDteRequestFromInvoice({ invoice, profile, identity })` maps a
+      confirmed invoice snapshot, an emitter fiscal profile and a document
+      identity into a `DteRequest`, purely. **The profile is an input**:
+      [[DEC-054]] option B gives its storage to [[FISC-011]].
+- [x] **The mapper's output validates against the official XSD**, which is the
+      case that matters: shape assertions are not validity. It caught two real
+      invalidities the builder's tests could not see — `totalsElement` emitted
+      six of `tgTotSub`'s **ten** required members in the wrong order, and
+      `gValorItem` was missing its required `gValorRestaItem`.
+- [x] **`D208c` always gets its total** (`R3-D208C-OPTIN`): `totalOperacion`
+      (`F014`) for PYG and `totalGuaranies` (`F023`) otherwise, with a foreign
+      currency refused when `F023` is absent and PYG refused when it is present.
+- [x] **Tax is not re-derived.** NT 013's formulas state no rounding rule, so
+      the mapper carries the invoice's own `taxableBase`/`taxAmount` rather than
+      giving money a second source of truth.
+- [x] **Money is never a float**: `addDecimals` sums decimal strings exactly and
+      `scale` pads to a type's scale, refusing to round.
+
+### The original WU-C wording, kept for the trail
 
 - [ ] `dTiCam` is absent when the currency is PYG, and **every item of a
       document carries the same currency**. The PYG half is enforced; the

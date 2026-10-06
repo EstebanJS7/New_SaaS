@@ -2,7 +2,7 @@
 id: TD-032
 type: tech-debt
 title: FISC-008 DTE XML review advisories
-status: resolved
+status: open
 severity: medium
 related_epics:
   - EPIC-16
@@ -62,6 +62,43 @@ added assertions explains why they matter. **ACCEPTED as-is.** | | `R3-002`
 (TD-032 close review) | reliability | SUGGESTION |
 `packages/fiscal/src/dte/xsd-artifacts.ts:228` | The comment above
 `describeRejection` states what the function guarantees. **ACCEPTED as-is.** |
+
+| `R3-ASCII-CASE` | reliability | WARNING |
+`packages/fiscal/src/dte/dte.cdc.ts:96-98` | The ASCII substitution path, where
+a non-digit becomes `charCodeAt` before the weights are applied. **Accepted
+as-is**: the PL/SQL uppercases then takes `ASCII`, and so does this. | |
+`R3-BASEMAX` | reliability | WARNING |
+`packages/fiscal/src/dte/dte.cdc.ts:91-93` | The `baseMax < 2` guard. **Accepted
+as-is**: it refuses a base that would make every weight meaningless. | |
+`R3-CDC-DATE` | reliability | WARNING |
+`packages/fiscal/src/dte/dte.cdc.ts:142-144` | The date is shape-checked, not
+validity-checked. **Open, and it is bigger than the CDC** — see below. |
+
+## The one finding with a real failure mode: dates are shaped, never validated
+
+`R3-CDC-DATE` is right, and it is not confined to the CDC. Every date this Story
+handles is checked by a **regex**, so an impossible date passes everything:
+
+```text
+dte.rules.ts   FEC_HHMMSS_PATTERN = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$/   -> 2026-13-45T99:99:99 passes
+dte.rules.ts   YYYY_MM_DD_PATTERN = /^\d{4}-\d\d-\d\d$/                     -> 2026-13-45 passes
+dte.cdc.ts     emissionDate()     = /^[0-9]{8}$/                              -> 20261345 passes
+```
+
+**And the official schema does not catch it either**: `fecHhmmss` in
+`DE_Types_v150.xsd` is the same shape-only regex, so the WU-B gate would accept
+an impossible signature timestamp too. Only `tdFeIniT`/`tdFeIniS` are `xs:date`,
+where the schema does enforce it.
+
+Why it matters rather than being cosmetic: `dFecFirma` and `dFeEmiDE` sit inside
+the **signed** document, and the Manual's 72-hour transmission window and the
+receptor's 360-hour window are computed from them. An impossible timestamp is
+not a rejected document — it is an accepted one with a meaningless time.
+
+**The unit, when it is taken**: validate real calendar dates and real times in
+`dte.rules.ts` and in `emissionDate`, with the leap-year rule, and a test per
+field. It is a bounded unit and it is the only item in this file that changes
+behaviour rather than a message.
 
 ## Closed, and the treadmill recorded
 

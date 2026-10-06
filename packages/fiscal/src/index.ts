@@ -85,6 +85,25 @@ export {
   computeCdcCheckDigit,
 } from "./dte/dte.cdc.js";
 export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
+// FISC-008 WU-C: the invoice -> DteRequest mapper, with the profile supplied.
+export {
+  addDecimals,
+  buildDteRequestFromInvoice,
+  DTE_IVA_RATES,
+  emitterNameForEnvironment,
+  scale,
+} from "./dte/dte.mapper.js";
+export type {
+  ConfirmedInvoiceLineSnapshot,
+  ConfirmedInvoiceSnapshot,
+  DocumentIdentity,
+  DteIvaRate,
+  DteMappingInput,
+  EmitterFiscalProfile,
+  MappedDteRequest,
+  MappedDteTotals,
+} from "./dte/dte.mapper.js";
+export { AFEC_IVA_DESCRIPTIONS, AFEC_IVA_VALUES } from "./dte/dte.types.js";
 export { DteValidationError, assertValidDteRequest } from "./dte/dte.rules.js";
 export type { DteValidationFailure } from "./dte/dte.rules.js";
 export {
