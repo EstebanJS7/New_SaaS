@@ -503,9 +503,23 @@ inputs.
 
 ## Review coverage
 
-**FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head `f0cf14b`,
+**FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head `5897628`,
 `MERGEABLE/CLEAN`, all three checks green (the new `DTE XSD validation` job
 among them, now a required check on `main`).
+
+**Two candidates are NOT closed, and that is the honest state.**
+
+```text
+a06e7b7..e8677fe   the CDC composition   CLOSED   review-73d24aefb8544918
+a06e7b7..e8677fe   the mapper            ESCALATED review-d1934d6b6a6db4b0
+                                         (see "WU-C's review is ESCALATED")
+```
+
+The mapper's range is counted below as covered by a _candidate_, not by a
+closure: its review reached a confirmed CRITICAL, the correction was committed,
+and the targeted validator produced no verdict, which escalated the authority.
+Nothing further is submitted against it until the maintainer inspects the
+lineage or disables the review switch for this clone.
 
 **The coverage claim, stated precisely because it is checkable.** From `0479e67`
 to `f0cf14b` the branch is tiled by **18 closed ranges covering all 24
@@ -518,7 +532,8 @@ close `review-050847fbb8ae40c9`, and ten docs-only ranges that closed on the
 `review-5d015917b6866a9c`, `review-976a645a0e4beb8d`, `review-45e9783a54fbbaae`,
 `review-931b6ca48ff1f749`, `review-39b47f8a4dd53004`, `review-b4fee44aa678c49d`,
 `review-d81ec937ce380c03`, `review-81e01e2568c1ca79`, `review-d32a3cd1bc89bbe0`,
-`review-ca69f1e07a93b788`).
+`review-ca69f1e07a93b788`, `review-73d24aefb8544918` and the docs ranges after
+it).
 
 **Before `0479e67` there are 11 commits — the contract-pin and retrieval phase —
 and their coverage is recorded less well, which is stated rather than smoothed
