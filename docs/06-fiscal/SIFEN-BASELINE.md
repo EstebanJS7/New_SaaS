@@ -1176,24 +1176,59 @@ now serves an HTML portal page**:
 returns **HTTP 200, `text/html`, 197,272 bytes**, with no reference to the
 document anywhere in it, and neither e-kuatia page links to it either.
 
-**How narrow the gap is.** A scan of the whole Manual and of all 27 Notas
-Técnicas for 44-digit runs finds only **three**, and two of them are unusable
-(the all-zero placeholder, and a truncated paste of the §7.2.2.1 signature
-example). That leaves **one usable specimen**, the worked example above, with
-`dDVId = 8`. Candidate variants were then tested against it:
+**How narrow the gap is — and it got wider, then sharper (2026-10-06).** A scan
+of the Manual and all 27 Notas Técnicas finds three 44-digit runs, two unusable
+(the all-zero placeholder and a truncated paste of the §7.2.2.1 signature
+example), leaving the worked example above. The **Guía de Mejores Prácticas para
+la Gestión del Envío de DE** (retrieved 2026-10-06, 13 pages) contributed **two
+more**, and DNIT's **`Estructura xml_DE.rar`** bundle a **fourth** — the `Id` of
+its example document. All four decompose cleanly into the composition above,
+with plausible dates, which is itself a check on the widths:
 
 ```text
-r = sum(digits) mod 11; DV = (r == 0) ? 0 : 11 - r        -> 8   matches
-weights 2..7 repeating FROM THE RIGHT, mod 11             -> 4
-weights 2..7 repeating FROM THE LEFT, mod 11              -> 0
+Manual p56         01|44444401|7|001|001|0014528|2|20170125|1|587326098|8
+ddDVId = 8
+Guía p11           07|80025298|5|001|001|0003118|2|20240210|1|636156216|1
+ddDVId = 1
+Guía p12           01|02805208|0|001|001|0000136|2|20231001|1|164410818|6
+ddDVId = 6
+Estructura xml_DE  01|00000001|9|001|001|1000050|2|20200507|1|000000023|1
+ddDVId = 1
 ```
 
-So the plain-sum variant reproduces the specimen, and the RUC-style weighting
-does not — **but one equation does not fix a variant**, and the Manual never
-states which one it uses. Deriving the algorithm from a single data point is
-exactly the guessing this vault forbids, so the gap stays open. It is now
-narrowed from "nothing is known" to "`módulo 11` with one of a small number of
-variants, one of which reproduces the only specimen we have".
+Four specimens, and the result is an **elimination rather than a solution**:
+
+```text
+r = sum(digits) mod 11; DV = 0 if r<2 else 11-r        -> 8, 10, 5, 0  vs  8, 1, 6, 1  FAILS
+weights 2..7 from the right                            -> 4,  8, 2, ?                  FAILS
+weights 2..7 from the left                             -> 0,  9, 8, ?                  FAILS
+any weight sequence with weights 1..9 and period <= 3,
+  any phase, either direction, three remainder
+  conventions (0-if-r<2, 11-r, (11-r) mod 11)          -> NO SOLUTION AT ALL
+```
+
+The last line is the useful one. **The simple weight-sequence family is dead**:
+no sequence of up to three weights, applied from either end at any phase, under
+any of the three usual remainder conventions, reproduces the four official
+values. That is a real falsification and it is why the CDC is still not composed
+— not "we have only one specimen" but "the obvious algorithms are ruled out".
+
+**And four specimens still cannot pin a longer sequence, which is a property of
+the arithmetic and not of the search.** A period-`P` sequence has `P` unknowns
+and each specimen contributes one equation mod 11, so:
+
+| `P` | With four specimens                                                          |
+| --- | ---------------------------------------------------------------------------- |
+| 1–3 | overdetermined — **refutable, and refuted**                                  |
+| 4   | exactly determined — a fit exists **by construction, so it is not evidence** |
+| 5+  | underdetermined — **unfalsifiable with four specimens**                      |
+
+So the honest state is: `módulo 11` is named, the composition is pinned, the
+naive weightings are eliminated, and the algorithm itself needs either the
+verifier document or enough specimens to overdetermine a period-`P` sequence for
+whatever `P` it really uses. **Fitting a period-4 sequence to four points would
+be curve-fitting with zero degrees of freedom, which is exactly the guessing
+this vault forbids.**
 
 **Consequences, recorded rather than worked around:**
 
@@ -1204,17 +1239,25 @@ variants, one of which reproduces the only specimen we have".
    Manual's §6.5 requires a rejected DE to be resubmitted with the SAME CDC. So
    the seam stays where it is until the verifier document is retrieved or a
    second independent specimen confirms a variant.
-2. **There is no second specimen in the Manual, and that was checked rather than
-   assumed.** Chapter 13's KuDE examples were rendered as images the same way
-   page 56 was, and they carry the header (RUC, timbrado, document number), the
-   item table and the totals — **not the CDC**. Page 198 confirms the display
-   rule ("CDC en once grupos de 4 posiciones", eleven groups of four = 44) but
-   prints no value, and the cached Guía de Pruebas has no 44-digit run either:
-   it only describes the CDC as "Número de 44 dígitos generado dentro del
-   sistema del emisor". So the whole retrieved corpus yields **one** usable
-   specimen. The KuDE header example does independently corroborate a fact this
-   vault already records: its "Fecha de fin de vigencia" row is struck through,
-   which is consistent with the timbrado having no end-of-validity date.
+2. **There is no second specimen in the Manual — but there are three elsewhere,
+   and that was found rather than assumed.** Chapter 13's KuDE examples were
+   rendered as images the same way page 56 was, and they carry the header (RUC,
+   timbrado, document number), the item table and the totals — **not the CDC**.
+   Page 198 confirms the display rule ("CDC en once grupos de 4 posiciones",
+   eleven groups of four = 44) but prints no value, and the cached Guía de
+   Pruebas has no 44-digit run either. **The retrieval then found three more**:
+   two in the **Guía de Mejores Prácticas para la Gestión del Envío de DE**
+   (retrieved 2026-10-06, 13 pages), and one in DNIT's
+   **`Estructura xml_DE.rar`** bundle, whose example document carries its CDC in
+   the `Id` attribute. Four specimens in total, every one of them decomposing
+   cleanly into the composition above — and **no weight sequence of period ≤ 3
+   with weights 1..9, at any phase, in either direction, under any of three
+   remainder conventions, reproduces them**, which eliminates the naive family
+   outright. Four specimens cannot pin a longer period either; the table above
+   shows why. The KuDE header example also independently corroborates a fact
+   this vault already records: its "Fecha de fin de vigencia" row is struck
+   through, which is consistent with the timbrado having no end-of-validity
+   date.
 3. **Where a second specimen can actually come from**, in order of cost: the
    `digito-verificador.pdf` under a current URL on the DNIT/SET portal (its
    published URL now serves the portal shell, and no e-kuatia page links to it);

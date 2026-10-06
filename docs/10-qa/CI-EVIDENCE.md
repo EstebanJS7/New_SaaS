@@ -1421,9 +1421,46 @@ dedicated job (`xsd-validation`) fetches them into a job-local directory,
 asserts every artifact, and runs the schema-validation suite with **its skip
 disabled**, so a green run can never be the product of having validated nothing.
 
-**Status: the gate is implemented and proven locally. The CI run id is pending
-the push and the PR, which the maintainer owns.** Nothing below is a CI receipt
-yet, and this section says so rather than implying one.
+### The CI receipt (2026-10-06)
+
+PR **#106** (`feat/epic-16-fisc-008-dte-xml`), head **`dbbcc50`**, run
+[`37405674505`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37405674505).
+All three checks green, and **`DTE XSD validation` is a new job that had never
+run before this PR**:
+
+```text
+DTE XSD validation                      pass   0m35s
+Database migrations                     pass   1m08s
+Lint, Typecheck, Test, Build            pass   5m17s
+```
+
+That 35-second job is the whole gate end to end in a clean environment: it
+installs the workspace including `libxmljs2`'s native binding through
+`pnpm install --frozen-lockfile`, builds the fiscal package, fetches the seven
+official artifacts from DNIT, asserts each one, rewrites the absolute includes,
+and runs the schema-validation suite with `DTE_XSD_REQUIRED=1` — so the
+acceptance criterion "a DTE XML validates against the official XSD before any
+submission" now rests on a receipt rather than on a local run.
+
+**One admin step remains, and it is not automatic.** `DTE XSD validation` must
+be added to the required status checks on `main` alongside the other two, or the
+gate is optional. Until that setting changes, a red `xsd-validation` does not
+block a merge.
+
+### What the local evidence already showed
+
+The gate was proven locally before the PR; that evidence is kept because it
+covers cases CI does not:
+
+- the **hermetic** claim: the same suite passes with `HTTP(S)_PROXY` pointed at
+  a dead port, so validation never reaches the network;
+- the **skip** claim: with no schema directory the suite skips 7 cases and names
+  the directory and the preparing command in its title;
+- the **fail-closed** claim: with `DTE_XSD_REQUIRED=1` and no schemas it fails,
+  naming all seven missing artifacts, rather than skipping;
+- the **fetch assertion**: a captive-portal HTML page, a short body, a non-200
+  status and a schema of the wrong namespace each fail, tested without a
+  network.
 
 ### Building the gate corrected two claims in the Story
 

@@ -93,15 +93,19 @@ equation does not fix a variant.
   while the vault says the algorithm is unpinned, which is exactly the class of
   claim this epic exists to prevent.
 - **B. Keep it an input until a second specimen or the verifier document
-  arrives.** The mapper takes `cdc` and `dDVId`. **The second-specimen search
-  was run and came up empty**: chapter 13's KuDE examples were rendered as
-  images and they stop before the CDC, page 198 prints the display rule ("CDC en
-  once grupos de 4 posiciones") but no value, and the Guía de Pruebas has no
-  44-digit run at all. The whole retrieved corpus yields **one** usable
-  specimen. So the sources that remain are the verifier document under a current
-  URL, the Prevalidador, and — the reliable one — **[[FISC-013]]'s homologation
-  run**, which produces many real specimens and settles the variant by volume
-  instead of by argument.
+  arrives.** The mapper takes `cdc` and `dDVId`. **The specimen search was run,
+  and it found three more** — two in the Guía de Mejores Prácticas, one in
+  DNIT's `Estructura xml_DE.rar` example — taking the corpus from one to
+  **four** independent official specimens. The result **eliminated** the naive
+  family rather than confirming it: no weight sequence of period ≤ 3 with
+  weights 1..9, at any phase, in either direction, under any of three remainder
+  conventions, reproduces the four values. Four specimens also cannot pin a
+  longer period, because a period-`P` sequence has `P` unknowns and each
+  specimen is one equation mod 11 — so `P=4` fits **by construction**, with zero
+  degrees of freedom, and `P≥5` is unfalsifiable. The sources that remain are
+  the verifier document under a current URL, the Prevalidador, and — the
+  reliable one — **[[FISC-013]]'s homologation run**, which produces many real
+  specimens and overdetermines whatever sequence the algorithm actually uses.
 - **C. Compose it and let SIFEN reject a wrong DV.** Rejected: it spends a real
   document identity to learn something a rendered page can tell us for free.
 

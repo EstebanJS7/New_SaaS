@@ -415,11 +415,15 @@ candidate 1 exists.
       input) and whether the CDC is composed now (recommendation: not until a
       second specimen or the verifier document arrives; the next attempt is to
       render chapter 13's KuDE pages, which are graphics too — **that search was
-      run and came up empty**, so the verifier document or FISC-013's
-      homologation run are what remain). **The `D208c` correction is DONE**
-      (2026-10-05): the request carries `totalOperacion` (`F014`) and
-      `totalGuaranies` (`F023`), the builder selects by currency as §22.12
-      records, and it refuses `F023` for a PYG document per NT 008.
+      run and it found THREE more — two in the Guía de Mejores Prácticas and one
+      in DNIT's `Estructura xml_DE.rar` example — taking the corpus to four
+      specimens, which **eliminated** the naive weighting family instead of
+      confirming a variant; four specimens cannot pin a longer period either, so
+      the verifier document or FISC-013's homologation run are what remain).
+      **The `D208c` correction is DONE** (2026-10-05): the request carries
+      `totalOperacion` (`F014`) and `totalGuaranies` (`F023`), the builder
+      selects by currency as §22.12 records, and it refuses `F023` for a PYG
+      document per NT 008.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.

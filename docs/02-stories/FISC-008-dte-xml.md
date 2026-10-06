@@ -634,20 +634,27 @@ run meaningful is itself tested):
   remain current.
 - **NT 24's receptor amendment is inherited, not re-derived** — see the note in
   "Out of Scope".
-- **The CDC is not composed here, and the reason changed on 2026-10-05.** Its
-  **composition is now pinned** (§22.9): it is a picture of a table on the
-  Manual's page 56, recovered by rendering the page, and the Manual's worked
-  example decomposes into exactly those widths and matches the KuDE specimen
-  byte for byte. What is still unpinned is **the check digit**: §10.2 names
-  `módulo 11`, the verifier document's URL now serves the portal's HTML shell,
-  and the Manual plus all 27 notes contain **one usable specimen** — enough to
-  show that a plain-sum variant reproduces it and the RUC-style weighting does
-  not, but not enough to fix a variant. So this Story validates a supplied CDC
-  instead of minting one, because composing it would publish a document identity
-  whose check digit cannot be verified, and the Manual's §6.5 requires a
-  rejected DE to be resubmitted with the **same** CDC. The cheapest fix is a
-  second specimen: chapter 13's KuDE examples are graphics too, so rendering
-  those pages the same way is the next attempt.
+- **The CDC is not composed here, and the reason is now an elimination rather
+  than a single equation.** The **composition is pinned** (§22.9): it is a
+  picture of a table on the Manual's page 56, recovered by rendering the page,
+  and the Manual's worked example decomposes into exactly those widths and
+  matches the KuDE specimen byte for byte. The **check digit** is not: §10.2
+  names `módulo 11`, the verifier document's URL serves the portal's HTML shell,
+  and the retrieval found **four** independent official specimens — the Manual's
+  worked example, two in the Guía de Mejores Prácticas, and one in DNIT's
+  `Estructura xml_DE.rar` example. Every one of them decomposes cleanly into the
+  composition, and **no weight sequence of period ≤ 3 with weights 1..9, at any
+  phase, in either direction, under any of three remainder conventions,
+  reproduces the four values** — so the naive family is eliminated, not merely
+  unconfirmed. Four specimens still cannot pin a longer sequence: a period-`P`
+  sequence has `P` unknowns and each specimen is one equation mod 11, so `P=4`
+  fits by construction with zero degrees of freedom and `P≥5` is unfalsifiable.
+  **Fitting one to four points would be curve-fitting, not evidence.** So this
+  Story validates a supplied CDC instead of minting one, because composing it
+  would publish a document identity whose check digit cannot be verified, and
+  the Manual's §6.5 requires a rejected DE to be resubmitted with the **same**
+  CDC. The remaining sources are the verifier document, the Prevalidador, and
+  [[FISC-013]]'s homologation run, which produces many real specimens.
 - **The validation gate depends on DNIT being reachable — once, at fetch time.**
   The dedicated job fetches the schemas from `ekuatia.set.gov.py`; if DNIT is
   down the job fails rather than skipping, which is deliberate but is a real
