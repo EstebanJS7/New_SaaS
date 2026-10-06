@@ -300,6 +300,10 @@ describe("official schema artifacts", () => {
     await expect(inspectDteSchemas(targetDir)).resolves.toMatchObject({
       usable: false,
       unrewrittenIncludes: ["DE_v150.xsd"],
+      // The walk must still have reported the other six as present and
+      // correctly sized: naming the unrewritten file is only half the claim.
+      missing: [],
+      tooSmall: [],
     });
   });
 });

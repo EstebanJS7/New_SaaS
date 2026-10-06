@@ -224,18 +224,23 @@ async function fetchArtifactWithRetry(
   // A 5xx on the final attempt returns above; this path is reached only after a
   // transport failure, so `lastError` is set -- but the message does not depend
   // on that, because "no attempt produced a response" is also a real outcome.
-  const cause =
-    lastError === undefined
-      ? "no attempt produced a response"
-      : lastError instanceof Error
-        ? lastError.message
-        : typeof lastError === "string"
-          ? lastError
-          : "a non-Error rejection";
+  const cause = describeRejection(lastError);
+  const retryNote = sawAResponse ? " after a retried 5xx" : "";
   throw new DteSchemaError(
     "FETCH_FAILED",
-    `${url} failed after ${totalAttempts} attempt(s)${sawAResponse ? " (a 5xx was retried)" : ""}: ${cause}`
+    `${url} failed after ${totalAttempts} attempt(s)${retryNote}: ${cause}`
   );
+}
+
+/** A rejection's message, without ever stringifying an arbitrary object. */
+function describeRejection(error: unknown): string {
+  if (error === undefined) {
+    return "no attempt produced a response";
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return typeof error === "string" ? error : "a non-Error rejection";
 }
 
 /**

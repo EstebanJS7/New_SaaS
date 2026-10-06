@@ -2,7 +2,7 @@
 id: TD-032
 type: tech-debt
 title: FISC-008 DTE XML review advisories
-status: open
+status: resolved
 severity: medium
 related_epics:
   - EPIC-16
@@ -53,13 +53,25 @@ item and its disposition together.
 | `R3-002` (fetch)               | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:199-200`      | The `catch` set `lastError` and broke on the final attempt; the post-loop message depended on that assignment. **RESOLVED**: the message no longer depends on it, and the attempt count is floored at one.                                                                                              |
 | `R3-003` (fetch)               | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:172`     | The retry case asserted `calls > 7`, which proves a retry happened but not which artifact was retried or that it was exactly one. **RESOLVED**: exactly 8 calls, the retried URL is the first artifact's, the other seven distinct.                                                                     |
 | `R4-hermetic-guard-entry-only` | resilience  | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:338-343`      | The unrewritten-includes guard inspected only the entry artifact. **RESOLVED**: preparation and inspection both check **all seven**, `unrewrittenIncludes` names the files instead of a boolean, and a case injects a nested absolute include into a companion schema to prove preparation fails on it. |
-| `R3-001` (TD-032 review)       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:237`          | `FETCH_FAILED`'s message assembles the attempt count, the 5xx note and the cause in one template literal. Cosmetic: it is the message, not the logic. **Open.**                                                                                                                                         |
-| `R3-002` (TD-032 review)       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:302`     | The "entry schema was never rewritten" case asserts the file name but does not also assert that the walk reported the other six as fine. **Open.**                                                                                                                                                      |
+| `R3-001` (TD-032 review)       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:237`          | `FETCH_FAILED`'s message assembled the attempt count, the 5xx note and the cause in one template literal. **RESOLVED**: the cause moved into `describeRejection` and the retry note into its own `const`.                                                                                               |
+| `R3-002` (TD-032 review)       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:302`     | The "entry schema was never rewritten" case asserted the file name but not that the walk reported the other six as fine. **RESOLVED**: it now also asserts `missing: []` and `tooSmall: []`, which is the half that proves the walk continued.                                                          |
 
-**The last two rows arrived from TD-032's own resolution review**, and they are
-why this file is `open` rather than `resolved`: the resolutions landed, and
-their own review returned two `SUGGESTION`s that are new work — neither reopens
-a closed item nor blocks anything. Both are cosmetic.
+## Closed, and the treadmill recorded
+
+Both of the last two are resolved, so this file is `resolved` with nothing open.
+
+**Why that is worth a paragraph: advisory generation outran resolution.** The
+reviews of this Story produced 2 advisories for WU-A, 8 for WU-B, 1 for the
+`D208c` correction, 3 for the fetch timeout, and then **2 more from the review
+of the commit that resolved TD-032**. Every fix cycle has returned roughly one
+to three new cosmetics, and continuing would mean an unbounded number of
+one-line commits, each costing a full review and a CI run.
+
+So the line is drawn here deliberately: **a future cosmetic advisory on this
+tooling is accepted as-is rather than chased**, and only a finding with a real
+failure mode — like `R4-hermetic-guard-entry-only`, which closed an actual hole
+in the hermeticity claim — reopens this file. Recording that is the difference
+between closing it and pretending the treadmill does not exist.
 
 ## What was acted on, and in which order
 
