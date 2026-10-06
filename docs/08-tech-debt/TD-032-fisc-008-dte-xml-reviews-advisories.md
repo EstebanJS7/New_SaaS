@@ -56,9 +56,21 @@ item and its disposition together.
 | `R3-001` (TD-032 review)       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:237`          | `FETCH_FAILED`'s message assembled the attempt count, the 5xx note and the cause in one template literal. **RESOLVED**: the cause moved into `describeRejection` and the retry note into its own `const`.                                                                                               |
 | `R3-002` (TD-032 review)       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:302`     | The "entry schema was never rewritten" case asserted the file name but not that the walk reported the other six as fine. **RESOLVED**: it now also asserts `missing: []` and `tooSmall: []`, which is the half that proves the walk continued.                                                          |
 
+| `R3-001` (TD-032 close review) | reliability | SUGGESTION |
+`packages/fiscal/src/dte/xsd-artifacts.test.ts:303-306` | The comment above the
+added assertions explains why they matter. **ACCEPTED as-is.** | | `R3-002`
+(TD-032 close review) | reliability | SUGGESTION |
+`packages/fiscal/src/dte/xsd-artifacts.ts:228` | The comment above
+`describeRejection` states what the function guarantees. **ACCEPTED as-is.** |
+
 ## Closed, and the treadmill recorded
 
-Both of the last two are resolved, so this file is `resolved` with nothing open.
+Both of the last two are resolved, so this file is `resolved` with nothing open
+— and **the policy below was exercised immediately**, which is why it is written
+down rather than merely intended. The commit that closed TD-032 came back from
+its own review with **two more** `SUGGESTION`s (`R3-001` and `R3-002` in the
+table above). They are **accepted as-is**: both are comments that already say
+what the reviewer is asking them to say.
 
 **Why that is worth a paragraph: advisory generation outran resolution.** The
 reviews of this Story produced 2 advisories for WU-A, 8 for WU-B, 1 for the
