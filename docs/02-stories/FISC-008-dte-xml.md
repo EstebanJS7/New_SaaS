@@ -744,6 +744,15 @@ its authority is burned.
 
 ## Review Record — Post-WU-B corrections
 
+**A note on the live-PostgreSQL gate, because the two commit messages say it was
+not run.** Docker Desktop's engine was unreachable in this WSL distro when both
+changes were committed, so the gate could not start and each message says so
+rather than implying a green. It came back afterwards, and the gate was then run
+at `6b5513a` — whose **code is identical to `2335e3d`**, the only later commit
+being documentation — and passed **213/213**. So the honest state is: not run at
+commit time, run and green at the same code revision, and the ordering recorded
+rather than smoothed over.
+
 Two code changes landed after WU-B closed, each with its own review:
 
 - **`138a7f6` — the `D208c` currency selection.** `review-8d9b7cf45e039c2b`,
