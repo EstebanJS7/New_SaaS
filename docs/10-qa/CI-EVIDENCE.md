@@ -1447,6 +1447,35 @@ be added to the required status checks on `main` alongside the other two, or the
 gate is optional. Until that setting changes, a red `xsd-validation` does not
 block a merge.
 
+### The runs, including the one that failed (2026-10-06)
+
+```text
+37405674505  dbbcc50  success
+37406465787  154c8f4  success
+37409504100  77dc9b0  success
+37423994304  4e7488b  success
+37444326475  7cadfda  success
+37448663469  92d079f  FAILURE   <- the quality job failed on prettier --check
+37448960766  1481304  success
+```
+
+**`92d079f` is recorded rather than smoothed over, for the same reason
+FISC-007's first run is.** The commit added a long review-coverage record inside
+a task bullet, and **prettier does not converge on that shape in this repo's
+markdown**: it rewrites the continuation indentation into a form its own parser
+reformats again, adding four spaces per pass, so `prettier --check .` fails on a
+file that `prettier --write` just touched. The fix was the one this vault
+already documents — flatten it out of the nested bullet into its own section —
+and `1481304` is green.
+
+**And the mistake that let it through is the more useful half.** The commit was
+made while `pnpm format-check` was failing, because the check was piped to
+`tail` in a chained command and a pipeline's exit status is the last command's,
+not prettier's. That is the same _"a gate does not get chained, it gets
+checked"_ lesson this project already recorded for FISC-007, repeated. The
+`DTE XSD validation` job was green throughout; only the quality job went red,
+and only for this.
+
 ### What the local evidence already showed
 
 The gate was proven locally before the PR; that evidence is kept because it
