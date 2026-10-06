@@ -778,7 +778,22 @@ Two code changes landed after WU-B closed, each with its own review:
   lens, 5 files, 208 original changed lines), **closed `approved`** with three
   non-blocking `SUGGESTION`s (`R3-001`, `R3-002`, `R3-003`) about how the retry
   loop releases a discarded response and how precisely its case observes the
-  retry; all three are in [[TD-032]].
+  retry.
+- **Then [[TD-032]] was worked through to resolution**, which is why it reads
+  `resolved` rather than open. The substantive one was
+  `R4-hermetic-guard-entry-only`: only `DE_v150.xsd` is rewritten, so a
+  **nested** absolute include inside a companion schema survived the rewrite and
+  would have reached the network at validation time — a real hole in the
+  hermeticity claim, not a message to polish. Preparation and inspection now
+  check all seven artifacts, `unrewrittenIncludes` names the files instead of
+  printing a boolean, and a case injects a nested absolute include into
+  `DE_Types_v150.xsd` to prove preparation fails on it. The rest: a dedicated
+  `DIRECTORY_UNUSABLE` code, the discarded 5xx body drained before retrying, the
+  post-loop error message no longer depending on an assignment, and the retry
+  case asserting the exact count, the retried URL and the distinctness of the
+  other seven. The one advisory deliberately **not** "fixed" is
+  `R3-D208C-OPTIN`: making `D208c` mandatory would mean inventing a total when
+  the caller supplies none, so the obligation is recorded as WU-C's instead.
 
 ## Decisions / ADRs
 

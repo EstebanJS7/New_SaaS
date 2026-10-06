@@ -111,6 +111,7 @@ export const DTE_XSD_ENTRY_ARTIFACT = "DE_v150.xsd";
 export type DteSchemaFailure =
   | "ARTIFACT_MISSING"
   | "ARTIFACT_TOO_SMALL"
+  | "DIRECTORY_UNUSABLE"
   | "FETCH_FAILED"
   | "HTTP_STATUS"
   | "INCLUDES_NOT_REWRITTEN"
@@ -135,7 +136,13 @@ export interface DteSchemaDirectoryInspection {
   readonly directory: string;
   readonly missing: readonly string[];
   readonly tooSmall: readonly string[];
-  readonly unrewrittenIncludes: boolean;
+  /**
+   * The artifacts that still resolve a `schemaLocation` over HTTP. **Every**
+   * artifact is inspected, not only the entry one: a nested absolute include
+   * inside a companion schema would reach the network just as surely, and the
+   * entry-only version of this check could not see it.
+   */
+  readonly unrewrittenIncludes: readonly string[];
 }
 
 export interface PreparedDteSchemas {
@@ -192,24 +199,42 @@ async function fetchArtifactWithRetry(
   url: string,
   attempts = DTE_XSD_FETCH_ATTEMPTS
 ): Promise<{ readonly status: number; readonly ok: boolean; readonly body: string }> {
+  const totalAttempts = Math.max(1, attempts);
   let lastError: unknown;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  let sawAResponse = false;
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
     try {
       const response = await fetchImpl(url);
-      if (response.status >= 500 && attempt < attempts) {
+      sawAResponse = true;
+      if (response.status >= 500 && attempt < totalAttempts) {
+        // Drain the body before retrying. A discarded response whose stream is
+        // never read holds its socket until the collector gets to it, which is
+        // the wrong thing to leave behind in a loop that runs seven times.
+        await response.text().catch(() => undefined);
         continue;
       }
       return { status: response.status, ok: response.ok, body: await response.text() };
     } catch (error) {
       lastError = error;
-      if (attempt === attempts) {
+      if (attempt === totalAttempts) {
         break;
       }
     }
   }
+  // A 5xx on the final attempt returns above; this path is reached only after a
+  // transport failure, so `lastError` is set -- but the message does not depend
+  // on that, because "no attempt produced a response" is also a real outcome.
+  const cause =
+    lastError === undefined
+      ? "no attempt produced a response"
+      : lastError instanceof Error
+        ? lastError.message
+        : typeof lastError === "string"
+          ? lastError
+          : "a non-Error rejection";
   throw new DteSchemaError(
     "FETCH_FAILED",
-    `${url} failed after ${attempts} attempt(s): ${lastError instanceof Error ? lastError.message : String(lastError)}`
+    `${url} failed after ${totalAttempts} attempt(s)${sawAResponse ? " (a 5xx was retried)" : ""}: ${cause}`
   );
 }
 
@@ -356,6 +381,14 @@ export async function prepareDteSchemas(
   assertNoAbsoluteSchemaLocations(rewrittenEntry, DTE_XSD_ENTRY_ARTIFACT);
   contentsByFile.set(DTE_XSD_ENTRY_ARTIFACT, rewrittenEntry);
 
+  // Every artifact, not only the entry one: the rewrite above only touches
+  // `DE_v150.xsd`, so a nested absolute include inside a companion schema would
+  // survive it and reach the network at validation time. Failing here names the
+  // file while preparation is still the caller's context.
+  for (const [fileName, contents] of contentsByFile) {
+    assertNoAbsoluteSchemaLocations(contents, fileName);
+  }
+
   for (const [fileName, contents] of contentsByFile) {
     await writeFileImpl(`${options.targetDir}/${fileName}`, contents);
   }
@@ -368,7 +401,7 @@ export async function inspectDteSchemas(directory: string): Promise<DteSchemaDir
   const { readFile } = await import("node:fs/promises");
   const missing: string[] = [];
   const tooSmall: string[] = [];
-  let unrewrittenIncludes = false;
+  const unrewrittenIncludes: string[] = [];
 
   for (const artifact of DTE_XSD_ARTIFACTS) {
     // An absent artifact must not throw: it is the ordinary "not prepared yet"
@@ -386,16 +419,13 @@ export async function inspectDteSchemas(directory: string): Promise<DteSchemaDir
     if (Buffer.byteLength(contents, "utf8") < artifact.minimumBytes) {
       tooSmall.push(artifact.fileName);
     }
-    if (
-      artifact.fileName === DTE_XSD_ENTRY_ARTIFACT &&
-      /schemaLocation="https?:\/\//.test(contents)
-    ) {
-      unrewrittenIncludes = true;
+    if (/schemaLocation="https?:\/\//.test(contents)) {
+      unrewrittenIncludes.push(artifact.fileName);
     }
   }
 
   return {
-    usable: missing.length === 0 && tooSmall.length === 0 && !unrewrittenIncludes,
+    usable: missing.length === 0 && tooSmall.length === 0 && unrewrittenIncludes.length === 0,
     directory,
     missing,
     tooSmall,

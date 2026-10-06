@@ -35,7 +35,7 @@ describe.skipIf(skipped)(
         missing: inspection.missing,
         tooSmall: inspection.tooSmall,
         unrewrittenIncludes: inspection.unrewrittenIncludes,
-      }).toEqual({ usable: true, missing: [], tooSmall: [], unrewrittenIncludes: false });
+      }).toEqual({ usable: true, missing: [], tooSmall: [], unrewrittenIncludes: [] });
       expect(DTE_XSD_ARTIFACTS).toHaveLength(7);
     });
 
@@ -113,7 +113,7 @@ describe.skipIf(skipped)(
     it("refuses an unusable directory instead of reporting a pass", async () => {
       await expect(
         validateDeAgainstOfficialXsd("<rDE/>", "/definitely/not/a/schema/directory")
-      ).rejects.toThrow(/not usable/);
+      ).rejects.toMatchObject({ failure: "DIRECTORY_UNUSABLE" });
     });
   }
 );

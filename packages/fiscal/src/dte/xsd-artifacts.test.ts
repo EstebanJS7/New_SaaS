@@ -134,7 +134,7 @@ describe("official schema artifacts", () => {
       usable: true,
       missing: [],
       tooSmall: [],
-      unrewrittenIncludes: false,
+      unrewrittenIncludes: [],
     });
   });
 
@@ -155,13 +155,13 @@ describe("official schema artifacts", () => {
     const targetDir = await mkdtemp(join(tmpdir(), "dte-schemas-test-"));
     const files = allSchemas();
     const flaky = stubFetch(files);
-    let calls = 0;
+    const urls: string[] = [];
     const prepared = await prepareDteSchemas({
       targetDir,
       fetchImpl: (url) => {
-        calls += 1;
+        urls.push(url);
         // Fail the very first attempt at transport level, as a timeout does.
-        if (calls === 1) {
+        if (urls.length === 1) {
           return Promise.reject(new Error("The operation was aborted due to timeout"));
         }
         return flaky(url);
@@ -169,7 +169,30 @@ describe("official schema artifacts", () => {
     });
 
     expect(prepared.artifacts).toHaveLength(7);
-    expect(calls).toBeGreaterThan(7);
+    // Exactly one retry, and it was the FIRST artifact's URL that was retried --
+    // so the count and the identity are both asserted, not just "more than 7".
+    expect(urls).toHaveLength(8);
+    expect(urls[0]).toBe(urls[1]);
+    expect(urls[0]).toContain(DTE_XSD_ARTIFACTS[0].fileName);
+    expect(new Set(urls.slice(1)).size).toBe(7);
+  });
+
+  it("catches a nested absolute include in a companion schema while preparing", async () => {
+    const targetDir = await mkdtemp(join(tmpdir(), "dte-schemas-test-"));
+    const files = allSchemas();
+    // Only DE_v150.xsd is rewritten, so an absolute include inside a companion
+    // schema survives it and would reach the network at validation time.
+    files.set(
+      "DE_Types_v150.xsd",
+      schemaBody("DE_Types_v150.xsd").replace(
+        ">\n",
+        `>\n\t<xs:include schemaLocation="${DTE_XSD_BASE_URL}/Monedas_v150.xsd"/>\n`
+      )
+    );
+
+    await expect(
+      prepareDteSchemas({ targetDir, fetchImpl: stubFetch(files) })
+    ).rejects.toMatchObject({ failure: "INCLUDES_NOT_REWRITTEN" });
   });
 
   it("fails with FETCH_FAILED when every attempt fails at transport level", async () => {
@@ -257,7 +280,7 @@ describe("official schema artifacts", () => {
       usable: false,
       missing: ["Monedas_v150.xsd"],
       tooSmall: ["Paises_v100.xsd"],
-      unrewrittenIncludes: false,
+      unrewrittenIncludes: [],
     });
   });
 
@@ -276,7 +299,7 @@ describe("official schema artifacts", () => {
 
     await expect(inspectDteSchemas(targetDir)).resolves.toMatchObject({
       usable: false,
-      unrewrittenIncludes: true,
+      unrewrittenIncludes: ["DE_v150.xsd"],
     });
   });
 });

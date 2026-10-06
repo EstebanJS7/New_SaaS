@@ -62,10 +62,10 @@ export async function validateDeAgainstOfficialXsd(
   const inspection = await inspectDteSchemas(schemaDirectory);
   if (!inspection.usable) {
     throw new DteSchemaError(
-      "ARTIFACT_MISSING",
+      "DIRECTORY_UNUSABLE",
       `Schema directory ${schemaDirectory} is not usable: ` +
         `missing [${inspection.missing.join(", ")}], too small [${inspection.tooSmall.join(", ")}], ` +
-        `unrewritten includes: ${String(inspection.unrewrittenIncludes)}.`
+        `unrewritten includes [${inspection.unrewrittenIncludes.join(", ")}].`
     );
   }
 
