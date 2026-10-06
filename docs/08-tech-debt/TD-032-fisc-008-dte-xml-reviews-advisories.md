@@ -36,17 +36,26 @@ lines _are_; the reviewer's own artifact was the authoritative wording.
 
 ## The advisories
 
-| Id                             | Lens        | Severity   | Location                                                | What is at that location                                                                                                                         |
-| ------------------------------ | ----------- | ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `R1-001`                       | risk        | SUGGESTION | `pnpm-workspace.yaml:18`                                | `libxmljs2: true` — the allowed install script for the new native devDependency.                                                                 |
-| `R2-evidence-count`            | readability | WARNING    | `docs/10-qa/CI-EVIDENCE.md:1480`                        | A case count in the CI record. **The count was wrong and is corrected**: WU-B adds 16, not 30; the 22 builder cases are WU-A's.                  |
-| `R2-failure-code`              | readability | SUGGESTION | `packages/fiscal/src/dte/xsd-validator.ts:65`           | `ARTIFACT_MISSING` is thrown for any unusable directory, including one that is merely too small or unrewritten.                                  |
-| `R3-001`                       | reliability | WARNING    | `packages/fiscal/src/dte/xsd-artifacts.ts:309-310`      | The include rewrite followed by `assertNoAbsoluteSchemaLocations` on the entry artifact.                                                         |
-| `R3-002`                       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-validator.ts:63-69`        | The same unusable-directory guard as `R2-failure-code`.                                                                                          |
-| `R3-003`                       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:152-177` | The two "unprepared directory" cases.                                                                                                            |
-| `R4-fetch-no-retry-timeout`    | resilience  | WARNING    | `packages/fiscal/src/dte/xsd-artifacts.ts:166-168`      | `defaultFetch` calls `fetch(url)` with no timeout and no retry.                                                                                  |
-| `R3-D208C-OPTIN`               | reliability | SUGGESTION | `packages/fiscal/src/dte/dte.rules.ts:457-460`          | `D208c` is evaluated only when the caller supplies a total, so a request omitting both escapes the rule. From the D208c correction's own review. |
-| `R4-hermetic-guard-entry-only` | resilience  | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:338-343`      | The unrewritten-includes guard inspects only the entry artifact, not the other six.                                                              |
+| Id                          | Lens        | Severity   | Location                                                | What is at that location                                                                                                                         |
+| --------------------------- | ----------- | ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `R1-001`                    | risk        | SUGGESTION | `pnpm-workspace.yaml:18`                                | `libxmljs2: true` — the allowed install script for the new native devDependency.                                                                 |
+| `R2-evidence-count`         | readability | WARNING    | `docs/10-qa/CI-EVIDENCE.md:1480`                        | A case count in the CI record. **The count was wrong and is corrected**: WU-B adds 16, not 30; the 22 builder cases are WU-A's.                  |
+| `R2-failure-code`           | readability | SUGGESTION | `packages/fiscal/src/dte/xsd-validator.ts:65`           | `ARTIFACT_MISSING` is thrown for any unusable directory, including one that is merely too small or unrewritten.                                  |
+| `R3-001`                    | reliability | WARNING    | `packages/fiscal/src/dte/xsd-artifacts.ts:309-310`      | The include rewrite followed by `assertNoAbsoluteSchemaLocations` on the entry artifact.                                                         |
+| `R3-002`                    | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-validator.ts:63-69`        | The same unusable-directory guard as `R2-failure-code`.                                                                                          |
+| `R3-003`                    | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:152-177` | The two "unprepared directory" cases.                                                                                                            |
+| `R4-fetch-no-retry-timeout` | resilience  | WARNING    | `packages/fiscal/src/dte/xsd-artifacts.ts:166-168`      | `defaultFetch` calls `fetch(url)` with no timeout and no retry.                                                                                  |
+| `R3-D208C-OPTIN`            | reliability | SUGGESTION | `packages/fiscal/src/dte/dte.rules.ts:457-460`          | `D208c` is evaluated only when the caller supplies a total, so a request omitting both escapes the rule. From the D208c correction's own review. |
+| `R3-001` (fetch)            | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:196-200`      | The 5xx retry `continue`s without reading or cancelling the response body.                                                                       |
+| `R3-002` (fetch)            | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:199-200`      | The `catch` sets `lastError` and breaks on the final attempt; the error message built after the loop depends on that assignment having happened. |
+| `R3-003` (fetch)            | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:172`     | The retry case asserts `calls > 7`, which proves a retry happened but not which artifact was retried or that it was exactly one.                 |
+
+**The three `R3-*` fetch advisories came from the timeout work's own review**
+and are all `SUGGESTION`: the retry loop works, and each one is about how
+precisely it is observed or how cleanly it releases a discarded response. |
+`R4-hermetic-guard-entry-only` | resilience | SUGGESTION |
+`packages/fiscal/src/dte/xsd-artifacts.ts:338-343` | The unrewritten-includes
+guard inspects only the entry artifact, not the other six. |
 
 ## What is worth acting on, in order
 

@@ -758,7 +758,11 @@ Two code changes landed after WU-B closed, each with its own review:
   `AbortSignal.timeout(20s)` plus one bounded retry, with four cases covering
   the retry, the exhaustion, the 5xx-versus-404 split and the armed signal. The
   live fetch was re-run against DNIT and prepared all seven artifacts with the
-  same sizes.
+  same sizes. Its own review is `review-2d607ead610b3633` (tier medium, one
+  lens, 5 files, 208 original changed lines), **closed `approved`** with three
+  non-blocking `SUGGESTION`s (`R3-001`, `R3-002`, `R3-003`) about how the retry
+  loop releases a discarded response and how precisely its case observes the
+  retry; all three are in [[TD-032]].
 
 ## Decisions / ADRs
 
