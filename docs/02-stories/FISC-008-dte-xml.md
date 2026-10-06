@@ -634,27 +634,20 @@ run meaningful is itself tested):
   remain current.
 - **NT 24's receptor amendment is inherited, not re-derived** — see the note in
   "Out of Scope".
-- **The CDC is not composed here, and the reason is now an elimination rather
-  than a single equation.** The **composition is pinned** (§22.9): it is a
-  picture of a table on the Manual's page 56, recovered by rendering the page,
-  and the Manual's worked example decomposes into exactly those widths and
-  matches the KuDE specimen byte for byte. The **check digit** is not: §10.2
-  names `módulo 11`, the verifier document's URL serves the portal's HTML shell,
-  and the retrieval found **four** independent official specimens — the Manual's
-  worked example, two in the Guía de Mejores Prácticas, and one in DNIT's
-  `Estructura xml_DE.rar` example. Every one of them decomposes cleanly into the
-  composition, and **no weight sequence of period ≤ 3 with weights 1..9, at any
-  phase, in either direction, under any of three remainder conventions,
-  reproduces the four values** — so the naive family is eliminated, not merely
-  unconfirmed. Four specimens still cannot pin a longer sequence: a period-`P`
-  sequence has `P` unknowns and each specimen is one equation mod 11, so `P=4`
-  fits by construction with zero degrees of freedom and `P≥5` is unfalsifiable.
-  **Fitting one to four points would be curve-fitting, not evidence.** So this
-  Story validates a supplied CDC instead of minting one, because composing it
-  would publish a document identity whose check digit cannot be verified, and
-  the Manual's §6.5 requires a rejected DE to be resubmitted with the **same**
-  CDC. The remaining sources are the verifier document, the Prevalidador, and
-  [[FISC-013]]'s homologation run, which produces many real specimens.
+- **The CDC is not composed here, and that is now a scope decision rather than a
+  gap.** **Both halves are pinned as of 2026-10-06**: the composition (baseline
+  §22.9, recovered by rendering the Manual's page 56) and the **check digit** —
+  the document §10.2 cites lives on the DNIT domain and prints
+  `Pa_Calcular_Dv_11_A`: weights `2..11` from the right, restarting, with
+  `resto > 1 ? 11 - resto : 0`, and a non-digit replaced by its ASCII value. It
+  reproduces the Manual's worked CDC and the RUC check digit in all four example
+  documents. **What keeps the CDC an input is this Story's own acceptance
+  criterion**, which says the generator does not compose it "because §22.9
+  records that neither algorithm is pinned" — a premise that is now false.
+  Relaxing an approved criterion is the maintainer's call, and [[DEC-054]]
+  records it with a recommendation to compose it. Until then the builder
+  validates a supplied CDC and carries `dDVId` as supplied, which remains
+  correct behaviour — it is simply no longer the only option.
 - **The validation gate depends on DNIT being reachable — once, at fetch time.**
   The dedicated job fetches the schemas from `ekuatia.set.gov.py`; if DNIT is
   down the job fails rather than skipping, which is deliberate but is a real

@@ -398,9 +398,14 @@ candidate 1 exists.
       NT 022's `D031a`/1222) and §22.14 (items, with NT 013's per-item IVA
       formulas and their six validations). What remains is *code*, not
       retrieval; (2) `D131`'s activity catalogue, whose Manual link now returns
-      an HTML portal shell; (3) the CDC's **check digit**, where the verifier
-      document's URL serves the portal's HTML shell and one usable specimen is
-      not enough to fix a variant; and (4) the emitter fiscal profile and
+      an HTML portal shell; (3) ~~the CDC's **check digit**~~ — **CLOSED
+      2026-10-06**: the document §10.2 cites was found on the DNIT domain and
+      pins `Pa_Calcular_Dv_11_A` (weights 2..11 from the right, `resto > 1 ?
+      11 - resto : 0`, letters by ASCII), reproducing the Manual's worked CDC and
+      the RUC digit in all four example documents. **Composing it is now a scope
+      decision, not a gap** — the block is FISC-008's own acceptance criterion,
+      recorded in DEC-054 with a recommendation to compose it; and (4) the
+      emitter fiscal profile and
       timbrado, which **no model and no story currently hold** — that is FISC-011
       plus a decision. An exploration of the invoice side found that a confirmed
       invoice supplies lines, currency, `confirmedAt` and the customer, and

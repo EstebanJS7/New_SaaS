@@ -78,40 +78,54 @@ storage model is FISC-011's and should not be invented inside a mapping task.
 
 ### Q2 — Does the CDC get composed now, or stay an input?
 
-The composition is pinned. The **check digit is not**: §10.2 names `módulo 11`,
-the verifier document's URL now serves the portal's HTML shell, and the Manual
-plus all 27 Notas Técnicas contain **one usable specimen**, which shows that a
-plain-sum variant reproduces it and the RUC-style weighting does not — but one
-equation does not fix a variant.
+**This question changed on 2026-10-06: both halves of the CDC are now pinned.**
 
-- **A. Compose it, with the DV as a documented candidate variant.** The
-  composition is cited, the candidate is recorded as provisional, and the
-  document becomes self-contained. The risk is specific and severe: **the CDC is
-  the document's identity**, a wrong check digit makes the identity wrong, and
-  §6.5 means a rejected DE is resubmitted with the _same_ CDC — so the error is
-  not recoverable by resending. It would also make `dDVId` a computed value
-  while the vault says the algorithm is unpinned, which is exactly the class of
-  claim this epic exists to prevent.
-- **B. Keep it an input until a second specimen or the verifier document
-  arrives.** The mapper takes `cdc` and `dDVId`. **The specimen search was run,
-  and it found three more** — two in the Guía de Mejores Prácticas, one in
-  DNIT's `Estructura xml_DE.rar` example — taking the corpus from one to
-  **four** independent official specimens. The result **eliminated** the naive
-  family rather than confirming it: no weight sequence of period ≤ 3 with
-  weights 1..9, at any phase, in either direction, under any of three remainder
-  conventions, reproduces the four values. Four specimens also cannot pin a
-  longer period, because a period-`P` sequence has `P` unknowns and each
-  specimen is one equation mod 11 — so `P=4` fits **by construction**, with zero
-  degrees of freedom, and `P≥5` is unfalsifiable. The sources that remain are
-  the verifier document under a current URL, the Prevalidador, and — the
-  reliable one — **[[FISC-013]]'s homologation run**, which produces many real
-  specimens and overdetermines whatever sequence the algorithm actually uses.
-- **C. Compose it and let SIFEN reject a wrong DV.** Rejected: it spends a real
-  document identity to learn something a rendered page can tell us for free.
+- The **composition** was recovered on 2026-10-05. It is a picture of a table on
+  the Manual's page 56, obtained by rendering the page; the eleven fields with
+  their order and widths are in baseline §22.9, and the Manual's worked example
+  decomposes into exactly those widths and matches the KuDE specimen byte for
+  byte.
+- The **check digit** closed on 2026-10-06. The document §10.2 cites — whose
+  `set.gov.py` URL serves the portal's HTML shell — lives on the DNIT domain:
+  `dnit.gov.py/documents/20123/224893/Dígito+Verificador.pdf`, HTTP 200, 21,199
+  bytes, 3 pages. It prints `Pa_Calcular_Dv_11_A` in PL/SQL, Visual Basic and C:
+  **weights `2..11` from the right, restarting, with
+  `resto > 1 ? 11 - resto : 0`**, and a non-digit character replaced by its
+  ASCII value. It reproduces the Manual's own worked CDC and the **RUC** check
+  digit in all four example documents, including the two whose CDC digit does
+  not match — which is the signature of illustrative CDCs written by hand over
+  real RUCs, not of a wrong algorithm.
 
-**Recommendation: B, with the rendering attempt as the immediate next step.** If
-chapter 13 yields a second specimen that agrees with the plain-sum variant, the
-case for composing becomes strong and this decision can be revisited cheaply.
+So the honest framing is no longer "can we?" but "do we want to?". The options:
+
+- **A. Compose it now — RECOMMENDED.** Composing is a solved problem:
+  concatenate the eleven fields at their widths and apply the function to the
+  43-digit prefix. The document becomes self-contained and `dDVId` stops being
+  something a caller can get wrong. **This is a scope change**, and that is the
+  only reason it is not already done: FISC-008's acceptance criterion says the
+  generator does not compose the CDC nor compute its check digit "because §22.9
+  records that neither algorithm is pinned", and that premise is now false. The
+  criterion is approved, so relaxing it is the maintainer's call — not a
+  documentation edit, and not a silent implementation.
+- **B. Keep it an input indefinitely.** Defensible: the criterion is approved,
+  the field is an input either way, and the mapper can keep taking it. But the
+  reason has weakened from "we cannot" to "we have not decided to", and a caller
+  that supplies a wrong CDC is a failure mode we could now remove.
+- **C. Compose it and let SIFEN reject a wrong DV.** Rejected: the algorithm is
+  cited now, so a rejection teaches nothing, and the Manual's §6.5 means a
+  rejected DE is resubmitted with the **same** CDC — a wrong identity is not
+  repaired by resending.
+
+**A note on how this changed, kept because it is the lesson.** An earlier
+version of this decision argued for keeping the CDC as an input on the strength
+of an "elimination": four specimens, and no weight sequence of period ≤ 3 with
+weights 1..9 reproducing them. That search **never entered the space the real
+algorithm lives in** — weights up to **11**, period **10** — so it was true
+about a family the algorithm is not in, and it should not have been read as
+evidence that the check digit was unknowable. It was, in fact, retrievable the
+whole time: the Manual cites the document, and the document is one HTTP request
+away on the DNIT domain. **Searching harder for a _document_ beat reasoning
+harder about _specimens_.**
 
 ## The proposed WU-C scope, if both recommendations are accepted
 

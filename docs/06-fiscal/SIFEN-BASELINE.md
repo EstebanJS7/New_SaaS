@@ -1088,15 +1088,18 @@ identical, so they must not be shared as one constant.
   claim was wrong (§22.6). **`Tabla 3 – Actividades Económicas` (`D131`)** stays
   open: the Manual prints a link and that target now returns an HTML portal
   shell (§22.6).
-- **The CDC's check-digit algorithm** (§22.9) — and only that. **The composition
-  is CLOSED 2026-10-05**: it is a picture of a table on page 56, recovered by
-  rendering the page, and the Manual's worked example decomposes into exactly
-  those widths and matches the KuDE specimen byte for byte. What remains is the
-  verifier: §10.2 names `módulo 11`, the verifier document's URL now serves the
-  portal's HTML shell, and the Manual plus all 27 Notas Técnicas contain **one
-  usable specimen**, which is not enough to fix a variant. Until it is pinned,
-  the generator takes the CDC and `dDVId` as inputs rather than publishing an
-  identity whose check digit it cannot verify.
+- ~~**The CDC's composition and its check-digit algorithm** (§22.9)~~ — **BOTH
+  CLOSED 2026-10-06.** The **composition** was recovered on 2026-10-05: it is a
+  picture of a table on page 56, obtained by rendering the page, and the
+  Manual's worked example decomposes into exactly those widths and matches the
+  KuDE specimen byte for byte. The **check digit** closed on 2026-10-06 when the
+  document the Manual cites was found on the DNIT domain —
+  `Pa_Calcular_Dv_11_A`, weights `2..11` from the right and
+  `resto > 1 ? 11 - resto : 0` — and it reproduces the RUC check digit in all
+  four example documents and the Manual's own worked CDC. The generator still
+  takes the CDC as an input, but now because that is an approved acceptance
+  criterion rather than because the rule was unknown; [[DEC-054]] records the
+  scope change with a recommendation to compose it.
 
 ### 22.9 The CDC and the security code
 
@@ -1176,98 +1179,105 @@ now serves an HTML portal page**:
 returns **HTTP 200, `text/html`, 197,272 bytes**, with no reference to the
 document anywhere in it, and neither e-kuatia page links to it either.
 
-**How narrow the gap is — and it got wider, then sharper (2026-10-06).** A scan
-of the Manual and all 27 Notas Técnicas finds three 44-digit runs, two unusable
-(the all-zero placeholder and a truncated paste of the §7.2.2.1 signature
-example), leaving the worked example above. The **Guía de Mejores Prácticas para
-la Gestión del Envío de DE** (retrieved 2026-10-06, 13 pages) contributed **two
-more**, and DNIT's **`Estructura xml_DE.rar`** bundle a **fourth** — the `Id` of
-its example document. All four decompose cleanly into the composition above,
-with plausible dates, which is itself a check on the widths:
+**The check digit is PINNED, and it was pinned by the document the Manual cites
+— retrieved 2026-10-06.** §10.2 points at a "digito-verificador.pdf" whose
+`set.gov.py` URL now serves the portal's HTML shell. **The document is on the
+DNIT domain**, and it is the authoritative one:
 
 ```text
-Manual p56         01|44444401|7|001|001|0014528|2|20170125|1|587326098|8
-ddDVId = 8
-Guía p11           07|80025298|5|001|001|0003118|2|20240210|1|636156216|1
-ddDVId = 1
-Guía p12           01|02805208|0|001|001|0000136|2|20231001|1|164410818|6
-ddDVId = 6
-Estructura xml_DE  01|00000001|9|001|001|1000050|2|20200507|1|000000023|1
-ddDVId = 1
+https://www.dnit.gov.py/documents/20123/224893/Dígito+Verificador.pdf/fb9f86c8-245d-9dad-2dc1-ac3b3dc307a7
+HTTP 200, 21,199 bytes, 3 pages
 ```
 
-Four specimens, and the result is an **elimination rather than a solution**:
+It prints the same function in **PL/SQL, Visual Basic and C**. The PL/SQL is the
+reference:
+
+```sql
+CREATE OR REPLACE FUNCTION Pa_Calcular_Dv_11_A (
+  p_numero IN VARCHAR2, p_basemax IN NUMBER DEFAULT 11) RETURN NUMBER IS
+BEGIN
+  -- Cambia la ultima letra por ascii en caso que la cedula termine en letra
+  FOR i IN 1 .. LENGTH(p_numero) LOOP
+    v_caracter := UPPER(SUBSTR(p_numero,i,1));
+    IF ASCII(v_caracter) NOT BETWEEN 48 AND 57 THEN      -- not a digit: use ASCII
+      v_numero_al := v_numero_al || ASCII(v_caracter);
+    ELSE
+      v_numero_al := v_numero_al || v_caracter;
+    END IF;
+  END LOOP;
+  k := 2; v_total := 0;
+  FOR i IN REVERSE 1 .. LENGTH(v_numero_al) LOOP          -- from the RIGHT
+    IF k > p_basemax THEN k := 2; END IF;                 -- weights 2..11, then restart
+    v_numero_aux := TO_NUMBER(SUBSTR(v_numero_al,i,1));
+    v_total := v_total + (v_numero_aux * k);
+    k := k + 1;
+  END LOOP;
+  v_resto := MOD(v_total,11);
+  IF v_resto > 1 THEN v_digit := 11 - v_resto; ELSE v_Digit := 0; END IF;
+  RETURN v_Digit;
+END;
+```
+
+Read as a rule: **weights run `2,3,4,5,6,7,8,9,10,11` from the right and then
+restart** — `p_basemax` is 11, so `k` counts past 9 and a digit can be
+multiplied by 10 or 11. The remainder rule is `resto > 1 ? 11 - resto : 0`. A
+non-digit character is replaced by its **ASCII value**, which is exactly what
+the Manual's `A002` note already said for a RUC containing letters.
+
+**An earlier claim in this section was wrong, and the correction matters.** It
+said the naive weighting family was "eliminated" by four specimens. That
+elimination searched **weights 1..9 with period ≤ 3**, and the real algorithm
+uses **weights 2..11 with period 10** — a space the search never entered. So the
+elimination was true about a family the algorithm is not in, and it should never
+have been read as evidence that the check digit was unknowable. What it _did_
+establish is that the algorithm is not any short small-weight cycle, which is
+consistent with this one.
+
+**The corroboration, and why two specimens do not match.** The function above
+reproduces the **RUC's own check digit in all four documents** — including the
+two whose _CDC_ digit does not match:
 
 ```text
-r = sum(digits) mod 11; DV = 0 if r<2 else 11-r        -> 8, 10, 5, 0  vs  8, 1, 6, 1  FAILS
-weights 2..7 from the right                            -> 4,  8, 2, ?                  FAILS
-weights 2..7 from the left                             -> 0,  9, 8, ?                  FAILS
-any weight sequence with weights 1..9 and period <= 3,
-  any phase, either direction, three remainder
-  conventions (0-if-r<2, 11-r, (11-r) mod 11)          -> NO SOLUTION AT ALL
+                              RUC        RUC DV   CDC DV   CDC DV
+                              declared   computed declared computed
+Manual p56 (KuDE)             44444401   7   = 7   8   = 8
+Guía p11 (rejected batch id)  80025298   5   = 5   1   = 1
+Guía p12 (consultation dCDC)  02805208   0   = 0   6   ≠ 0
+Estructura xml_DE example     00000001   9   = 9   1   ≠ 9
 ```
 
-The last line is the useful one. **The simple weight-sequence family is dead**:
-no sequence of up to three weights, applied from either end at any phase, under
-any of the three usual remainder conventions, reproduces the four official
-values. That is a real falsification and it is why the CDC is still not composed
-— not "we have only one specimen" but "the obvious algorithms are ruled out".
+**Four of four RUC check digits match, and two of four CDC check digits do.**
+That is the signature of values that were never computed: the RUC inside each
+example is real, so its digit checks out, while the CDC was written by hand for
+the illustration. It is not the signature of a wrong algorithm — a wrong
+algorithm would not reproduce four independent RUC digits, one of them from the
+Manual's own worked example.
 
-**And four specimens still cannot pin a longer sequence, which is a property of
-the arithmetic and not of the search.** A period-`P` sequence has `P` unknowns
-and each specimen contributes one equation mod 11, so:
-
-| `P` | With four specimens                                                          |
-| --- | ---------------------------------------------------------------------------- |
-| 1–3 | overdetermined — **refutable, and refuted**                                  |
-| 4   | exactly determined — a fit exists **by construction, so it is not evidence** |
-| 5+  | underdetermined — **unfalsifiable with four specimens**                      |
-
-So the honest state is: `módulo 11` is named, the composition is pinned, the
-naive weightings are eliminated, and the algorithm itself needs either the
-verifier document or enough specimens to overdetermine a period-`P` sequence for
-whatever `P` it really uses. **Fitting a period-4 sequence to four points would
-be curve-fitting with zero degrees of freedom, which is exactly the guessing
-this vault forbids.**
+So the two "failures" are **evidence about the examples, not about the rule**,
+and the rule now rests on the official document plus five values that agree with
+it (the Manual's worked CDC and four RUC digits).
 
 **Consequences, recorded rather than worked around:**
 
-1. **The generator still takes the CDC and `dDVId` as inputs** — but the reason
-   has changed. It is no longer "we do not know how to build one"; it is that
-   **composing a CDC means publishing a document identity whose check digit we
-   cannot verify**, and an identity error is not recoverable by re-sending: the
-   Manual's §6.5 requires a rejected DE to be resubmitted with the SAME CDC. So
-   the seam stays where it is until the verifier document is retrieved or a
-   second independent specimen confirms a variant.
-2. **There is no second specimen in the Manual — but there are three elsewhere,
-   and that was found rather than assumed.** Chapter 13's KuDE examples were
-   rendered as images the same way page 56 was, and they carry the header (RUC,
-   timbrado, document number), the item table and the totals — **not the CDC**.
-   Page 198 confirms the display rule ("CDC en once grupos de 4 posiciones",
-   eleven groups of four = 44) but prints no value, and the cached Guía de
-   Pruebas has no 44-digit run either. **The retrieval then found three more**:
-   two in the **Guía de Mejores Prácticas para la Gestión del Envío de DE**
-   (retrieved 2026-10-06, 13 pages), and one in DNIT's
-   **`Estructura xml_DE.rar`** bundle, whose example document carries its CDC in
-   the `Id` attribute. Four specimens in total, every one of them decomposing
-   cleanly into the composition above — and **no weight sequence of period ≤ 3
-   with weights 1..9, at any phase, in either direction, under any of three
-   remainder conventions, reproduces them**, which eliminates the naive family
-   outright. Four specimens cannot pin a longer period either; the table above
-   shows why. The KuDE header example also independently corroborates a fact
-   this vault already records: its "Fecha de fin de vigencia" row is struck
-   through, which is consistent with the timbrado having no end-of-validity
-   date.
-3. **Where a second specimen can actually come from**, in order of cost: the
-   `digito-verificador.pdf` under a current URL on the DNIT/SET portal (its
-   published URL now serves the portal shell, and no e-kuatia page links to it);
-   the **Prevalidador**, which must implement the check digit to validate a DE
-   at all; or — the reliable one — **a real approved DTE from [[FISC-013]]'s
-   homologation run**, which produces many specimens at once and settles the
-   variant by volume instead of by argument.
-4. **The composition is evidence and the specimen is now a decomposition.** The
-   field order and the widths no longer rest on inference: the Manual's table
-   and its worked example agree with each other and sum to 44.
+1. **Both halves of the CDC are now pinned**, so composing one is a solved
+   problem: concatenate the eleven fields with their widths, then apply
+   `Pa_Calcular_Dv_11_A` to the 43-digit prefix. **What has NOT changed is
+   FISC-008's decision to take it as an input** — that is an acceptance
+   criterion of an already-approved work unit, and relaxing it is a scope change
+   for the maintainer, recorded in [[DEC-054]] with a recommendation to compose
+   it now that the rule is cited. It is not changed here by a documentation
+   edit.
+2. **The `dCodSeg` requirement is unaffected**: nine digits, zero-padded, never
+   equal to `dNumDoc`, and unrelated to the document. It stays random and it
+   stays an input to the pure builder.
+3. **The document is worth keeping in the retrieval record** because it is the
+   one the Manual cites and because its URL moved: `set.gov.py` now serves the
+   portal shell, while `dnit.gov.py/documents/20123/224893/` serves the PDF.
+4. **The two non-computed CDCs are worth naming as such**, so a future reader
+   who finds them does not conclude that the algorithm is ambiguous: they are
+   `01028052080001001000013622023100111644108186` (Guía p12) and
+   `01000000019001001100005022020050710000000231` (`Estructura xml_DE`), and in
+   both the RUC digit is real while the CDC digit is not.
 
 ### 22.10 Notas Técnicas 001–022: which of them amend DE rules
 
