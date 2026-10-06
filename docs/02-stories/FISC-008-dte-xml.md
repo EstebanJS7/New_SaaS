@@ -742,6 +742,24 @@ no retry, which is the first item in [[TD-032]]. The reviewer's prose is not
 reproduced here, for the same reason as above: a lineage's detail is gone once
 its authority is burned.
 
+## Review Record — Post-WU-B corrections
+
+Two code changes landed after WU-B closed, each with its own review:
+
+- **`138a7f6` — the `D208c` currency selection.** `review-8d9b7cf45e039c2b`,
+  tier medium, one lens (`review-reliability`), 6 files and 129 original changed
+  lines. **Closed `approved`**, authority burned. One non-blocking `SUGGESTION`:
+  `R3-D208C-OPTIN` (`dte.rules.ts:457-460`), which observes that `D208c` is
+  evaluated only when the caller supplies a total. That is the honest
+  consequence of the request carrying the totals rather than computing them, and
+  it is recorded in [[TD-032]] as an obligation on the WU-C mapper: it must
+  always supply one.
+- **The fetch timeout** — [[TD-032]]'s first item, resolved: a per-attempt
+  `AbortSignal.timeout(20s)` plus one bounded retry, with four cases covering
+  the retry, the exhaustion, the 5xx-versus-404 split and the armed signal. The
+  live fetch was re-run against DNIT and prepared all seven artifacts with the
+  same sizes.
+
 ## Decisions / ADRs
 
 - No ADR is required for the generator: it encodes a cited protocol, which is an

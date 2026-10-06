@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   assertArtifact,
   assertNoAbsoluteSchemaLocations,
+  defaultFetch,
   DTE_XSD_ARTIFACTS,
   DTE_XSD_BASE_URL,
+  DTE_XSD_FETCH_TIMEOUT_MS,
   DteSchemaError,
   inspectDteSchemas,
   prepareDteSchemas,
@@ -147,6 +149,91 @@ describe("official schema artifacts", () => {
     // Nothing was written: a partial fetch must not leave a directory behind.
     const inspection = await inspectDteSchemas(targetDir);
     expect(inspection.usable).toBe(false);
+  });
+
+  it("retries a transport failure once, then succeeds", async () => {
+    const targetDir = await mkdtemp(join(tmpdir(), "dte-schemas-test-"));
+    const files = allSchemas();
+    const flaky = stubFetch(files);
+    let calls = 0;
+    const prepared = await prepareDteSchemas({
+      targetDir,
+      fetchImpl: (url) => {
+        calls += 1;
+        // Fail the very first attempt at transport level, as a timeout does.
+        if (calls === 1) {
+          return Promise.reject(new Error("The operation was aborted due to timeout"));
+        }
+        return flaky(url);
+      },
+    });
+
+    expect(prepared.artifacts).toHaveLength(7);
+    expect(calls).toBeGreaterThan(7);
+  });
+
+  it("fails with FETCH_FAILED when every attempt fails at transport level", async () => {
+    const targetDir = await mkdtemp(join(tmpdir(), "dte-schemas-test-"));
+
+    await expect(
+      prepareDteSchemas({
+        targetDir,
+        fetchImpl: () => Promise.reject(new Error("socket hang up")),
+      })
+    ).rejects.toMatchObject({ failure: "FETCH_FAILED" });
+  });
+
+  it("retries a 5xx but never a 404", async () => {
+    const targetDir = await mkdtemp(join(tmpdir(), "dte-schemas-test-"));
+    const files = allSchemas();
+    const flaky = stubFetch(files);
+    let calls = 0;
+    await prepareDteSchemas({
+      targetDir,
+      fetchImpl: (url) => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.resolve({ status: 503, ok: false, text: () => Promise.resolve("busy") });
+        }
+        return flaky(url);
+      },
+    });
+    expect(calls).toBeGreaterThan(7);
+
+    // A 404 is an answer, not a blip: it must be reported without a retry.
+    const missingDir = await mkdtemp(join(tmpdir(), "dte-schemas-test-"));
+    let notFoundCalls = 0;
+    await expect(
+      prepareDteSchemas({
+        targetDir: missingDir,
+        fetchImpl: () => {
+          notFoundCalls += 1;
+          return Promise.resolve({ status: 404, ok: false, text: () => Promise.resolve("nope") });
+        },
+      })
+    ).rejects.toMatchObject({ failure: "HTTP_STATUS" });
+    expect(notFoundCalls).toBe(1);
+  });
+
+  it("arms a per-attempt timeout on the real fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    let seenSignal: unknown;
+    globalThis.fetch = ((_url: string, init?: { signal?: unknown }) => {
+      seenSignal = init?.signal;
+      return Promise.resolve({
+        status: 200,
+        ok: true,
+        text: () => Promise.resolve("<xs:schema/>"),
+      });
+    }) as unknown as typeof globalThis.fetch;
+
+    try {
+      expect(DTE_XSD_FETCH_TIMEOUT_MS).toBeGreaterThan(0);
+      await defaultFetch()("https://example.test/DE_v150.xsd");
+      expect(seenSignal).toBeInstanceOf(AbortSignal);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("reports an unprepared directory as unusable, naming what is missing", async () => {

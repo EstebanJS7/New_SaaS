@@ -111,6 +111,7 @@ export const DTE_XSD_ENTRY_ARTIFACT = "DE_v150.xsd";
 export type DteSchemaFailure =
   | "ARTIFACT_MISSING"
   | "ARTIFACT_TOO_SMALL"
+  | "FETCH_FAILED"
   | "HTTP_STATUS"
   | "INCLUDES_NOT_REWRITTEN"
   | "NOT_A_SCHEMA"
@@ -153,6 +154,18 @@ export type FetchLike = (url: string) => Promise<{
   text(): Promise<string>;
 }>;
 
+/**
+ * Per-attempt timeout. Without it a hung connection holds the CI job until the
+ * runner's own limit, which is a failure mode with no useful error message.
+ */
+export const DTE_XSD_FETCH_TIMEOUT_MS = 20_000;
+
+/**
+ * Total attempts per artifact. One retry, because a single network blip should
+ * not fail a gate whose whole point is that a red result means something.
+ */
+export const DTE_XSD_FETCH_ATTEMPTS = 2;
+
 export interface PrepareDteSchemasOptions {
   readonly targetDir: string;
   readonly baseUrl?: string;
@@ -163,8 +176,41 @@ export interface PrepareDteSchemasOptions {
   readonly writeFileImpl?: (path: string, contents: string) => Promise<void>;
 }
 
-function defaultFetch(): FetchLike {
-  return (url) => fetch(url);
+export function defaultFetch(timeoutMs = DTE_XSD_FETCH_TIMEOUT_MS): FetchLike {
+  return (url) => fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+}
+
+/**
+ * Fetches one artifact, retrying only what is worth retrying: a transport
+ * failure (including the timeout above) or a 5xx. A 4xx is an answer -- a 404
+ * means the artifact is not there -- and is returned for the caller's assertion
+ * to reject, and a 200 with the wrong bytes is not retried either, because
+ * retrying an assertion failure is how a wrong artifact gets papered over.
+ */
+async function fetchArtifactWithRetry(
+  fetchImpl: FetchLike,
+  url: string,
+  attempts = DTE_XSD_FETCH_ATTEMPTS
+): Promise<{ readonly status: number; readonly ok: boolean; readonly body: string }> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url);
+      if (response.status >= 500 && attempt < attempts) {
+        continue;
+      }
+      return { status: response.status, ok: response.ok, body: await response.text() };
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) {
+        break;
+      }
+    }
+  }
+  throw new DteSchemaError(
+    "FETCH_FAILED",
+    `${url} failed after ${attempts} attempt(s): ${lastError instanceof Error ? lastError.message : String(lastError)}`
+  );
 }
 
 /**
@@ -282,9 +328,9 @@ export async function prepareDteSchemas(
     let status = 200;
     let byteSource: "fetched" | "local" = "fetched";
     if (options.localDir === undefined) {
-      const response = await fetchImpl(`${baseUrl}/${artifact.fileName}`);
+      const response = await fetchArtifactWithRetry(fetchImpl, `${baseUrl}/${artifact.fileName}`);
       status = response.status;
-      contents = await response.text();
+      contents = response.body;
     } else {
       contents = await readFileImpl(`${options.localDir}/${artifact.fileName}`);
       byteSource = "local";
