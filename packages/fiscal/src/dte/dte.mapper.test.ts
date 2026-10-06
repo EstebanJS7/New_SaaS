@@ -90,7 +90,13 @@ describe("buildDteRequestFromInvoice", () => {
     expect(xml).toContain("<gCamItem>");
     expect(xml).toContain("<dCodInt>SKU001</dCodInt>");
     expect(xml).toContain("<dCodInt>SKU002</dCodInt>");
+    // `dTotOpe` is the OPERATION total: the sum of the subtotals, which includes
+    // the exempt line. Asserting only the returned object and one substring is
+    // what let a wrong dTotOpe ship, so the emitted element is asserted here.
+    expect(xml).toContain("<dTotOpe>160.50000000</dTotOpe>");
     expect(xml).toContain("<dTotGralOpe>160.50000000</dTotGralOpe>");
+    expect(xml).toContain("<dSubExe>50.50000000</dSubExe>");
+    expect(xml).toContain("<dSub10>110.00000000</dSub10>");
     expect(totals).toEqual({
       exempt: "50.50000000",
       five: "0.00000000",
@@ -148,6 +154,45 @@ describe("buildDteRequestFromInvoice", () => {
     expect(() => buildDteRequestFromInvoice(mappingInput({ totalGuaranies: "1000" }))).toThrow(
       DteValidationError
     );
+  });
+
+  it("keeps dTotOpe equal to the sum of the subtotals and to dTotGralOpe", () => {
+    // No discounts, no anticipos and no rounding, so the two totals must agree,
+    // and both must include the exempt line.
+    const { request, totals } = buildDteRequestFromInvoice(mappingInput());
+    const emitted = new Map(
+      (request.gTotSub ?? []).map((element) => [element.name, element.value])
+    );
+    const sum = addDecimals(addDecimals(totals.exempt, totals.five), totals.ten);
+
+    expect(emitted.get("dTotOpe")).toBe(sum);
+    expect(emitted.get("dTotGralOpe")).toBe(sum);
+    expect(emitted.get("dTotOpe")).not.toBe(emitted.get("dTotDesc"));
+  });
+
+  it("adds a partially taxed item's exempt base to dSubExe, per NT 013", () => {
+    const { totals } = buildDteRequestFromInvoice(
+      mappingInput({
+        invoice: {
+          ...mappingInput().invoice,
+          lines: [
+            line({
+              affectation: 4,
+              ivaRate: 10,
+              lineTotal: "100",
+              taxableBase: "60",
+              taxAmount: "6",
+              exemptBase: "40",
+            }),
+          ],
+        },
+      })
+    );
+
+    // F002 takes E737 (the exempt base) for E731 = 4, not the item's total.
+    expect(totals.exempt).toBe("40.00000000");
+    expect(totals.ten).toBe("100.00000000");
+    expect(totals.general).toBe("140.00000000");
   });
 
   it("refuses an invoice with no items", () => {

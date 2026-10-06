@@ -335,14 +335,17 @@ function computeTotals(lines: readonly ConfirmedInvoiceLineSnapshot[]): MappedDt
   let ten = "0";
   let taxableBase = "0";
   let taxAmount = "0";
-  let general = "0";
 
   for (const line of lines) {
     taxableBase = addDecimals(taxableBase, line.taxableBase);
     taxAmount = addDecimals(taxAmount, line.taxAmount);
-    general = addDecimals(general, line.lineTotal);
+    // NT 013: F002 is the sum of EA008 for an exempt item (E731 = 3) PLUS the sum
+    // of E737 -- the exempt base -- for a partially taxed one (E731 = 4).
     if (line.affectation === 3) {
       exempt = addDecimals(exempt, line.lineTotal);
+    }
+    if (line.affectation === 4) {
+      exempt = addDecimals(exempt, line.exemptBase ?? "0");
     }
     if (line.ivaRate === 5) {
       five = addDecimals(five, line.lineTotal);
@@ -352,13 +355,19 @@ function computeTotals(lines: readonly ConfirmedInvoiceLineSnapshot[]): MappedDt
     }
   }
 
+  // `dTotOpe` is the operation total BEFORE adjustments, so it is the sum of the
+  // subtotals -- not the taxed base, which silently drops an exempt line. This
+  // mapper applies no discount, no anticipo and no rounding, so `dTotGralOpe`
+  // equals it; deriving both from the same value is what stops them drifting.
+  const operationTotal = addDecimals(addDecimals(exempt, five), ten);
+
   return {
     exempt: scale(exempt, MONEY_SCALE, "F002"),
     five: scale(five, MONEY_SCALE, "F004"),
     ten: scale(ten, MONEY_SCALE, "F005"),
     taxableBase: scale(taxableBase, MONEY_SCALE, "taxableBase"),
     taxAmount: scale(taxAmount, MONEY_SCALE, "taxAmount"),
-    general: scale(general, MONEY_SCALE, "general"),
+    general: scale(operationTotal, MONEY_SCALE, "general"),
   };
 }
 
@@ -379,7 +388,10 @@ function totalsElement(totals: MappedDteTotals): readonly DteXmlElement[] {
     { name: "dSubExe", value: totals.exempt, decimalType: "tMontoBase" },
     { name: "dSub5", value: totals.five, decimalType: "tMontoBase" },
     { name: "dSub10", value: totals.ten, decimalType: "tMontoBase" },
-    { name: "dTotOpe", value: totals.taxableBase, decimalType: "tMontoBase" },
+    // The operation total before adjustments. Wiring this to the taxed base was
+    // the bug the review caught: an exempt line vanished from it, and it then
+    // differed from dTotGralOpe while every adjustment was zero.
+    { name: "dTotOpe", value: totals.general, decimalType: "tMontoBase" },
     { name: "dTotDesc", value: zero, decimalType: "tMontoBase" },
     { name: "dTotDescGlotem", value: zero, decimalType: "tMontoBase" },
     { name: "dTotAntItem", value: zero, decimalType: "tMontoBase" },
