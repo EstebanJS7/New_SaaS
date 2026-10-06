@@ -438,6 +438,59 @@ candidate 1 exists.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 
+## Two lineages are NOT closed, and the second one is why the fixes rest on argument
+
+The mapper's work needed **two review lineages**, and neither closed. Both are
+recorded here because an escalated or stuck authority is a state the maintainer
+has to see, not a green tick.
+
+```text
+review-d1934d6b6a6db4b0   the mapper            ESCALATED  (terminal stop)
+  reviewer   admitted a result
+  refuter    confirmed R3-DTOTOPE (inferential)
+  correction 65 lines, committed 6e4fe02
+  validator  native-operation-failed -- NO VERDICT
+  authority  ESCALATED, cause targeted_validator_rejected
+  transition stop / native_stop_required
+
+review-83755a14a6eda333   the correction, re-reviewed on its own
+  reviewer   found R3-001 (deterministic): affectation 4 double-counted its
+             exempt half because the rate subtotal took lineTotal instead of
+             E735 + E736, and F003 (dSubExo) was not emitted at all
+  correction 80 of 81 allowed diff lines, committed 0463066
+  validator  capture-binding-rejected TWICE, after a STATUS that reoffered the
+             identical slot -- the host relay cannot deliver it
+  authority  correction_required, awaiting a validation that will not run
+```
+
+**Both findings were real and both fixes are in.** The first (`dTotOpe` wired to
+the taxed base, so an exempt line vanished from the operation total) and the
+second (the rate subtotal taking `lineTotal` for a partially taxed item,
+double-counting its exempt half, plus `dSubExo` never being emitted). The
+routing is now by **affectation**, which is what NT 013 defines:
+
+```text
+F002 dSubExe  E731 = 3 -> EA008      E731 = 4 -> E737 (the exempt base)
+F003 dSubExo  E731 = 2 -> EA008
+F004 dSub5    E731 = 1 -> EA008      E731 = 4 -> E735 + E736
+F005 dSub10   E731 = 1 -> EA008      E731 = 4 -> E735 + E736
+dTotOpe       the sum of the subtotals, before adjustments
+```
+
+**What the fixes rest on, stated plainly.** Neither has a review verdict: the
+first lineage's validator failed, and the second's binding was rejected by the
+relay. So each rests on an argument I can check and on tests I can run — the
+schema's own ordering for `dTotOpe`, NT 013's field-by-field rule for the subt
+otals, and arithmetic that adds up by hand (106 = 60 + 6 + 40). The gates are
+green and CI is green, which is evidence about behaviour and not about review.
+
+**The maintainer's options**, per the provider's own continuation: inspect the
+lineages' authority, or disable the review switch for this clone
+(`gentle-ai review mode disable --scope clone`), after which ordinary repository
+policy decides delivery. Nothing is reset or recovered here: `RESET` and
+`RECOVER` are destructive and need an explicit decision with exact native
+inputs.
+
 ## WU-C: the mapper
 
 **DONE 2026-10-06.** `packages/fiscal/src/dte/dte.mapper.ts` holds
