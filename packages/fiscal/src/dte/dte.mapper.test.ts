@@ -99,6 +99,7 @@ describe("buildDteRequestFromInvoice", () => {
     expect(xml).toContain("<dSub10>110.00000000</dSub10>");
     expect(totals).toEqual({
       exempt: "50.50000000",
+      exonerated: "0.00000000",
       five: "0.00000000",
       ten: "110.00000000",
       taxableBase: "100.00000000",
@@ -170,8 +171,12 @@ describe("buildDteRequestFromInvoice", () => {
     expect(emitted.get("dTotOpe")).not.toBe(emitted.get("dTotDesc"));
   });
 
-  it("adds a partially taxed item's exempt base to dSubExe, per NT 013", () => {
-    const { totals } = buildDteRequestFromInvoice(
+  it("splits a partially taxed item by AFFECTATION, without double-counting it", () => {
+    // NT 013: for E731 = 4, F005 takes `E735 + E736` (taxed base + tax) and F002
+    // takes `E737` (the exempt base). Adding the item's TOTAL to F005 would count
+    // the exempt half twice, which is what the review caught. The three amounts
+    // are consistent with the item's total: 60 + 6 + 40 = 106.
+    const { request, totals } = buildDteRequestFromInvoice(
       mappingInput({
         invoice: {
           ...mappingInput().invoice,
@@ -179,7 +184,7 @@ describe("buildDteRequestFromInvoice", () => {
             line({
               affectation: 4,
               ivaRate: 10,
-              lineTotal: "100",
+              lineTotal: "106",
               taxableBase: "60",
               taxAmount: "6",
               exemptBase: "40",
@@ -189,10 +194,39 @@ describe("buildDteRequestFromInvoice", () => {
       })
     );
 
-    // F002 takes E737 (the exempt base) for E731 = 4, not the item's total.
     expect(totals.exempt).toBe("40.00000000");
-    expect(totals.ten).toBe("100.00000000");
-    expect(totals.general).toBe("140.00000000");
+    expect(totals.ten).toBe("66.00000000");
+    // The operation total is the item's total, and nothing is counted twice.
+    expect(totals.general).toBe("106.00000000");
+
+    const emitted = new Map(
+      (request.gTotSub ?? []).map((element) => [element.name, element.value])
+    );
+    expect(emitted.get("dSubExe")).toBe("40.00000000");
+    expect(emitted.get("dSub10")).toBe("66.00000000");
+    expect(emitted.get("dTotOpe")).toBe("106.00000000");
+    expect(emitted.get("dTotGralOpe")).toBe("106.00000000");
+    // An exonerated item (E731 = 2) has its own subtotal, F003. Routing only
+    // affectations 1, 3 and 4 would drop it silently, which is the same failure
+    // shape as the one this correction fixes.
+    const exonerated = buildDteRequestFromInvoice(
+      mappingInput({
+        invoice: {
+          ...mappingInput().invoice,
+          lines: [
+            line({
+              affectation: 2,
+              ivaRate: 0,
+              lineTotal: "20",
+              taxableBase: "0",
+              taxAmount: "0",
+            }),
+          ],
+        },
+      })
+    ).totals;
+    expect(exonerated.exonerated).toBe("20.00000000");
+    expect(exonerated.general).toBe("20.00000000");
   });
 
   it("refuses an invoice with no items", () => {

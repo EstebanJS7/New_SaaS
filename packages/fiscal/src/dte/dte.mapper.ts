@@ -151,6 +151,8 @@ export interface DteMappingInput {
 export interface MappedDteTotals {
   /** `F002 dSubExe`. */
   readonly exempt: string;
+  /** `F003 dSubExo`, the exonerated subtotal (affectation 2). */
+  readonly exonerated: string;
   /** `F004 dSub5`. */
   readonly five: string;
   /** `F005 dSub10`. */
@@ -336,22 +338,36 @@ function computeTotals(lines: readonly ConfirmedInvoiceLineSnapshot[]): MappedDt
   let taxableBase = "0";
   let taxAmount = "0";
 
+  let exonerated = "0";
   for (const line of lines) {
     taxableBase = addDecimals(taxableBase, line.taxableBase);
     taxAmount = addDecimals(taxAmount, line.taxAmount);
-    // NT 013: F002 is the sum of EA008 for an exempt item (E731 = 3) PLUS the sum
-    // of E737 -- the exempt base -- for a partially taxed one (E731 = 4).
+    // NT 013, field by field. The subtotal a line feeds depends on its
+    // AFFECTATION, not on its rate alone, and for a partially taxed item it is
+    // `E735 + E736` -- the taxed base plus the tax -- and NOT the item's total.
+    // Adding the total there double-counts the exempt half, which is what the
+    // review caught; `E737` goes to F002 and the rest of EA008 is not counted
+    // twice.
+    const rateContribution =
+      line.affectation === 4 ? addDecimals(line.taxableBase, line.taxAmount) : line.lineTotal;
+    if (line.affectation === 1 || line.affectation === 4) {
+      if (line.ivaRate === 5) {
+        five = addDecimals(five, rateContribution);
+      }
+      if (line.ivaRate === 10) {
+        ten = addDecimals(ten, rateContribution);
+      }
+    }
+    // F002 takes EA008 for an exempt item (E731 = 3) and E737 for a partially
+    // taxed one (E731 = 4). F003 (dSubExo) takes EA008 for an exonerated one.
     if (line.affectation === 3) {
       exempt = addDecimals(exempt, line.lineTotal);
     }
     if (line.affectation === 4) {
       exempt = addDecimals(exempt, line.exemptBase ?? "0");
     }
-    if (line.ivaRate === 5) {
-      five = addDecimals(five, line.lineTotal);
-    }
-    if (line.ivaRate === 10) {
-      ten = addDecimals(ten, line.lineTotal);
+    if (line.affectation === 2) {
+      exonerated = addDecimals(exonerated, line.lineTotal);
     }
   }
 
@@ -359,10 +375,11 @@ function computeTotals(lines: readonly ConfirmedInvoiceLineSnapshot[]): MappedDt
   // subtotals -- not the taxed base, which silently drops an exempt line. This
   // mapper applies no discount, no anticipo and no rounding, so `dTotGralOpe`
   // equals it; deriving both from the same value is what stops them drifting.
-  const operationTotal = addDecimals(addDecimals(exempt, five), ten);
+  const operationTotal = addDecimals(addDecimals(exempt, exonerated), addDecimals(five, ten));
 
   return {
     exempt: scale(exempt, MONEY_SCALE, "F002"),
+    exonerated: scale(exonerated, MONEY_SCALE, "F003"),
     five: scale(five, MONEY_SCALE, "F004"),
     ten: scale(ten, MONEY_SCALE, "F005"),
     taxableBase: scale(taxableBase, MONEY_SCALE, "taxableBase"),
@@ -386,6 +403,7 @@ function totalsElement(totals: MappedDteTotals): readonly DteXmlElement[] {
   const zero = "0.00000000";
   return [
     { name: "dSubExe", value: totals.exempt, decimalType: "tMontoBase" },
+    { name: "dSubExo", value: totals.exonerated, decimalType: "tMontoBase" },
     { name: "dSub5", value: totals.five, decimalType: "tMontoBase" },
     { name: "dSub10", value: totals.ten, decimalType: "tMontoBase" },
     // The operation total before adjustments. Wiring this to the taxed base was
