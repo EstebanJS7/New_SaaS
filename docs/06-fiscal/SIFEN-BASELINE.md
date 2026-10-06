@@ -1407,10 +1407,11 @@ D022  Moneda de la operación no corresponde al tipo de documento informado   12
       Observación: conforme al Dictamen DEINT N° 344 de 27/12/2022
 ```
 
-**A correction to §22.11, from NT 021's and NT 024's own text.** §22.11 recorded
-`D208c`/1321 as "`D208` cannot be 5 when the total in guaraníes is >= 7,000,000
-(`F023 >= 7000000` or `F014 >= 7000000`)". The notes state the condition **field
-by field**, and it is not two alternatives for the same document:
+**A correction to §22.11, from NT 021's and NT 024's own text — now
+implemented.** §22.11 recorded `D208c`/1321 as "`D208` cannot be 5 when the
+total in guaraníes is >= 7,000,000 (`F023 >= 7000000` or `F014 >= 7000000`)".
+The notes state the condition **field by field**, and it is not two alternatives
+for the same document:
 
 ```text
 NT 021 (35.000.000) and NT 024 (7.000.000), verbatim:
@@ -1423,7 +1424,10 @@ So it is **one field selected by the currency**: `F023` when `D015 != PYG`, and
 `F014` when `D015 = PYG` — which is consistent with NT 008's "`F023` no informar
 si `D015 = PYG`", because for a PYG document `F023` does not exist to compare.
 Reading the two field names as a disjunction would over-reject nothing but would
-also make the PYG case compare a field the document must not carry.
+also make the PYG case compare a field the document must not carry. FISC-008's
+builder now carries both fields on the request and selects by currency, and it
+refuses `F023` outright for a PYG document, so the rule and NT 008's field
+condition are both enforced.
 
 **`dSisFact` has a second recorded value.** NT 010 gives it as
 `1 = Sistema de facturación del contribuyente, 2 = SIFEN solución gratuita`,

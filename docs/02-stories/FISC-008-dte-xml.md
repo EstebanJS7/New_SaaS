@@ -606,14 +606,13 @@ run meaningful is itself tested):
   §22.14's per-item IVA formulas and §22.13's `D031`/`D032` catalogue are not
   encoded, and the currency rules in §22.12 are only partly enforced. **This is
   WU-C's substance**, and it is no longer a retrieval gap — it is work.
-- **`D208c` is enforced more coarsely than §22.12 records it.** The note text
-  selects the field by currency — `F023` when `D015 != PYG`, `F014` when
-  `D015 = PYG` — and NT 008 adds that `F023` must not be informed at all for a
-  PYG document. The builder compares a single supplied `totalGuaranies` and only
-  when the caller supplies it, so **a PYG document is not checked against its
-  operation total, and the "`F023` must not exist for PYG" rule is not
-  enforced**. Recorded as a correction to make against the newly transcribed
-  rule, not silently left.
+- ~~**`D208c` is enforced more coarsely than §22.12 records it.**~~ **Corrected
+  2026-10-05, once §22.12 transcribed the rule.** The note selects the field by
+  currency, and the request now carries both: `totalOperacion` (`F014`, compared
+  for a PYG document) and `totalGuaranies` (`F023`, compared otherwise, and
+  **refused** for a PYG document per NT 008). Both halves are covered by a case
+  that proves the selection — an `F014` at the threshold triggers the rule for
+  PYG and is ignored for a foreign currency, and the reverse for `F023`.
 - **`D206`/`D207` are enforced from §22.11's identification model, and the
   converse is not.** A contributor receptor (`D201 = 1`) must carry `dRucRec`
   and `dDVRec`, and must not carry an identity document. The reverse — refusing

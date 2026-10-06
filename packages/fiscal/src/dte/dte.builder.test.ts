@@ -63,7 +63,7 @@ function validRequest(overrides: Partial<DteRequest> = {}): DteRequest {
       },
     },
     gCamFuFD: { dCarQR: QR },
-    totalGuaranies: "1000",
+    totalOperacion: "1000",
   };
   return { ...base, ...overrides };
 }
@@ -303,10 +303,10 @@ describe("buildDteXml — money, quantity and currency (§21.4, §22.4)", () => 
 describe("buildDteXml — the receptor block (§22.11, NOT §22.3)", () => {
   function withReceptor(
     receptor: DteRequest["gDatGralOpe"]["gDatRec"],
-    totalGuaranies = "1000"
+    totalOperacion = "1000"
   ): DteRequest {
     return validRequest({
-      totalGuaranies,
+      totalOperacion,
       gDatGralOpe: { ...validRequest().gDatGralOpe, gDatRec: receptor },
     });
   }
@@ -483,7 +483,7 @@ describe("buildDteXml — the receptor block (§22.11, NOT §22.3)", () => {
     expect(
       buildDteXml(
         validRequest({
-          totalGuaranies: "7000000",
+          totalOperacion: "7000000",
           gDatGralOpe: {
             ...validRequest().gDatGralOpe,
             gOpeCom: {
@@ -496,6 +496,57 @@ describe("buildDteXml — the receptor block (§22.11, NOT §22.3)", () => {
         })
       )
     ).toContain("<iTipIDRec>5</iTipIDRec>");
+  });
+
+  it("selects D208c's total by currency: F014 for PYG, F023 otherwise", () => {
+    const innominado = {
+      iNatRec: 2 as const,
+      iTiOpe: 2 as const,
+      cPaisRec: "PRY",
+      dDesPaisRe: "Paraguay",
+      iTipIDRec: 5 as const,
+      dDTipIDRec: "Innominado",
+      dNumIDRec: "0",
+      dNomRec: "Sin nombre",
+    };
+    const pyg = (totals: Pick<DteRequest, "totalOperacion" | "totalGuaranies">): DteRequest =>
+      validRequest({
+        ...totals,
+        gDatGralOpe: { ...validRequest().gDatGralOpe, gDatRec: innominado },
+      });
+    const foreign = (totals: Pick<DteRequest, "totalOperacion" | "totalGuaranies">): DteRequest =>
+      validRequest({
+        ...totals,
+        gDatGralOpe: {
+          ...validRequest().gDatGralOpe,
+          gOpeCom: {
+            ...validRequest().gDatGralOpe.gOpeCom!,
+            cMoneOpe: "USD",
+            dCondTiCam: 1,
+            dTiCam: "7300.0000",
+          },
+          gDatRec: innominado,
+        },
+      });
+
+    // PYG: the rule names F014, so F014 at the threshold triggers it...
+    expect(failureOf(() => buildDteXml(pyg({ totalOperacion: "7000000" })))).toBe(
+      "INVALID_RECEPTOR"
+    );
+    // ...and below it does not.
+    expect(buildDteXml(pyg({ totalOperacion: "6999999" }))).toContain("<iTipIDRec>5</iTipIDRec>");
+    // PYG + F023 informed at all is a field-rule violation (NT 008), whether or
+    // not it is above the threshold.
+    expect(failureOf(() => buildDteXml(pyg({ totalGuaranies: "1000" })))).toBe("INVALID_CURRENCY");
+
+    // Foreign currency: the rule names F023, so F023 at the threshold triggers
+    // it and F014 is ignored.
+    expect(failureOf(() => buildDteXml(foreign({ totalGuaranies: "7000000" })))).toBe(
+      "INVALID_RECEPTOR"
+    );
+    expect(buildDteXml(foreign({ totalOperacion: "7000000", totalGuaranies: "1000" }))).toContain(
+      "<iTipIDRec>5</iTipIDRec>"
+    );
   });
 
   it("does not reject a B2G document for a missing gCompPub (NT 26 excluded those rules)", () => {

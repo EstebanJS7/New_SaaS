@@ -268,6 +268,15 @@ export interface DteRequest {
   /** `gCamDEAsoc` at `0..99`. */
   readonly gCamDEAsoc?: readonly (readonly DteXmlElement[])[];
   readonly gCamFuFD: DteCamposFueraFirma;
-  /** `F014`/`F023` in guaraníes, used only by the `D208c`/1321 threshold check. */
+  /**
+   * `F014 dTotGralOpe`, the operation's general total. `D208c`/1321 compares
+   * **this** field when the currency is PYG (§22.12).
+   */
+  readonly totalOperacion?: string;
+  /**
+   * `F023 dTotalGs`, the general total in guaraníes. `D208c`/1321 compares
+   * **this** field when the currency is not PYG, and NT 008 adds that it must
+   * **not** be informed at all when `D015 = PYG` (§22.12).
+   */
   readonly totalGuaranies?: string;
 }

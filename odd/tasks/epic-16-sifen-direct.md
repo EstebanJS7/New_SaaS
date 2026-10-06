@@ -414,10 +414,12 @@ candidate 1 exists.
       (recommendation: FISC-011 owns storage, WU-C takes the profile as an
       input) and whether the CDC is composed now (recommendation: not until a
       second specimen or the verifier document arrives; the next attempt is to
-      render chapter 13's KuDE pages, which are graphics too). **One correction
-      is due before the mapper feeds it**: §22.12 records that `D208c` selects
-      `F023` or `F014` by currency and that NT 008 forbids `F023` for a PYG
-      document, while the builder compares a single supplied `totalGuaranies`.
+      render chapter 13's KuDE pages, which are graphics too — **that search was
+      run and came up empty**, so the verifier document or FISC-013's
+      homologation run are what remain). **The `D208c` correction is DONE**
+      (2026-10-05): the request carries `totalOperacion` (`F014`) and
+      `totalGuaranies` (`F023`), the builder selects by currency as §22.12
+      records, and it refuses `F023` for a PYG document per NT 008.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.

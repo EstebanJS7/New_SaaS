@@ -300,6 +300,13 @@ function assertOperacionComercial(request: DteRequest): void {
       "dTiCam must not be informed when cMoneOpe is PYG."
     );
   }
+  // NT 008 (baseline §22.12): F023 "No informar si D015 = PYG".
+  if (commercial.cMoneOpe === "PYG" && request.totalGuaranies !== undefined) {
+    throw new DteValidationError(
+      "INVALID_CURRENCY",
+      "F023 totalGuaranies must not be informed when cMoneOpe is PYG; use totalOperacion (F014)."
+    );
+  }
   if (
     commercial.cMoneOpe !== "PYG" &&
     commercial.dCondTiCam === 1 &&
@@ -443,15 +450,22 @@ function assertReceptor(request: DteRequest): void {
     );
   }
   // D208c / 1321 (NT 024): threshold lowered from NT 021's 35,000,000.
+  // The note selects the field BY CURRENCY (baseline §22.12): F023 when the
+  // currency is foreign, F014 when it is PYG. It is not a disjunction, and NT 008
+  // makes F023 non-informable for PYG, so the PYG branch cannot use it.
   const iTipTra = request.gDatGralOpe.gOpeCom?.iTipTra;
+  const thresholdTotal =
+    request.gDatGralOpe.gOpeCom?.cMoneOpe === "PYG"
+      ? request.totalOperacion
+      : request.totalGuaranies;
   if (
     iTipTra !== 13 &&
-    request.totalGuaranies !== undefined &&
-    compareDecimals(request.totalGuaranies, "7000000") >= 0
+    thresholdTotal !== undefined &&
+    compareDecimals(thresholdTotal, "7000000") >= 0
   ) {
     throw new DteValidationError(
       "INVALID_RECEPTOR",
-      "D208c/1321 forbids Innominado at or above 7,000,000 guaraníes unless iTipTra = 13."
+      "D208c/1321 forbids Innominado at or above 7,000,000 unless iTipTra = 13."
     );
   }
 }
