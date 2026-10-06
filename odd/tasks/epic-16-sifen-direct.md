@@ -439,6 +439,7 @@ candidate 1 exists.
 - The rename leaves ~20 older Story references to "EPIC-16 the provider" intact
   in substance; the one that became factually wrong (`FISC-003`'s
   `FISCAL_PROVIDER` closed set) is corrected.
-- Inherited debt: [[TD-032]] (FISC-008 review advisories), [[TD-029]] (operator
-  re-drive, closed by FISC-012 against a real primitive), [[TD-030]] (EPIC-15
-  review advisories), [[TD-026]] (unbounded lists), [[TD-022]] (portal surface).
+- Inherited debt: [[TD-032]] (**resolved** — every advisory fixed or accepted
+  with a reason), [[TD-029]] (operator re-drive, closed by FISC-012 against a
+  real primitive), [[TD-030]] (EPIC-15 review advisories), [[TD-026]] (unbounded
+  lists), [[TD-022]] (portal surface).

@@ -688,8 +688,12 @@ run meaningful is itself tested):
 
 ## Technical Debt
 
-- **[[TD-032]]** carries WU-B's eight non-blocking review advisories, with the
-  fetch having no timeout and no retry first in line.
+- **[[TD-032]] is `resolved`** — every advisory from this Story's reviews is
+  either fixed or **accepted with a reason**, and the file records why the line
+  stops where it does: advisory generation outran resolution (2 + 8 + 1 + 3 +
+  2 + 2 across the cycles), so a future cosmetic finding on this tooling is
+  accepted rather than chased. Only a finding with a real failure mode reopens
+  it.
 - None created by WU-A. The two gaps WU-A deliberately leaves open — a `dCodSeg`
   generator and the `D206` converse — are recorded above as known limitations
   with the source that would close each, not as debt.
