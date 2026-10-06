@@ -438,12 +438,12 @@ candidate 1 exists.
 
 ## Review coverage
 
-**FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head `7cadfda`,
+**FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head `f0cf14b`,
 `MERGEABLE/CLEAN`, all three checks green (the new `DTE XSD validation` job
 among them, now a required check on `main`).
 
 **The coverage claim, stated precisely because it is checkable.** From `0479e67`
-to `7cadfda` the branch is tiled by **16 closed ranges covering all 20
+to `f0cf14b` the branch is tiled by **18 closed ranges covering all 24
 commits**, each with its own lineage and every one closed `approved`: WU-A
 `review-5f02ddd057fd6758`, WU-B `review-7a00fe71a5c544dd` (one bounded
 correction), the `D208c` correction `review-8d9b7cf45e039c2b`, the fetch timeout
@@ -452,7 +452,8 @@ close `review-050847fbb8ae40c9`, and ten docs-only ranges that closed on the
 `START` call itself (`review-c77f287fe241b1b3`, `review-df0c5fb76056a959`,
 `review-5d015917b6866a9c`, `review-976a645a0e4beb8d`, `review-45e9783a54fbbaae`,
 `review-931b6ca48ff1f749`, `review-39b47f8a4dd53004`, `review-b4fee44aa678c49d`,
-`review-d81ec937ce380c03`, `review-81e01e2568c1ca79`).
+`review-d81ec937ce380c03`, `review-81e01e2568c1ca79`, `review-d32a3cd1bc89bbe0`,
+`review-ca69f1e07a93b788`).
 
 **Before `0479e67` there are 11 commits — the contract-pin and retrieval phase —
 and their coverage is recorded less well, which is stated rather than smoothed
