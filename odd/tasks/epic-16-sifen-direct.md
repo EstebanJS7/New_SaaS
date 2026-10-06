@@ -424,47 +424,45 @@ candidate 1 exists.
       `totalOperacion` (`F014`) and `totalGuaranies` (`F023`), the builder
       selects by currency as §22.12 records, and it refuses `F023` for a PYG
       document per NT 008.
-- [ ] T4c — **FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head
-      `7cadfda`, `MERGEABLE/CLEAN`, all three checks green (the new
-      `DTE XSD validation` job among them, now a required check on `main`).
-
-      **The coverage claim, stated precisely because it is checkable.** From
-          `0479e67` to `7cadfda` the branch is tiled by **16 closed ranges covering
-          all 20 commits**, each with its own lineage and every one closed `approved`:
-          WU-A `review-5f02ddd057fd6758`, WU-B `review-7a00fe71a5c544dd` (one bounded
-          correction), the `D208c` correction `review-8d9b7cf45e039c2b`, the fetch
-          timeout `review-2d607ead610b3633`, the TD-032 resolution
-          `review-3d99274120684773`, its close `review-050847fbb8ae40c9`, and ten
-          docs-only ranges that closed on the `START` call itself
-          (`review-c77f287fe241b1b3`, `review-df0c5fb76056a959`,
-          `review-5d015917b6866a9c`, `review-976a645a0e4beb8d`,
-          `review-45e9783a54fbbaae`, `review-931b6ca48ff1f749`,
-          `review-39b47f8a4dd53004`, `review-b4fee44aa678c49d`,
-          `review-d81ec937ce380c03`, `review-81e01e2568c1ca79`).
-
-          **Before `0479e67` there are 11 commits — the contract-pin and retrieval
-          phase — and their coverage is recorded less well, which is stated rather
-          than smoothed over.** They are `34588d4`, `02b28bb`, `4ae17a3`, `75253ea`,
-          `902cce4`, `a3a6665`, `7892eef`, `33f982b`, `c866c9a`, `8e39b79` and
-          `0479e67`, all docs-only. They were reviewed as docs-only candidates in the
-          earlier session, whose record names seven lineages —
-          `review-8a6b94a896127f08`, `review-1a4ef19151b70257`,
-          `review-4d05cbbfec00788e`, `review-2fba8ef90d9e4e77`,
-          `review-229a93e0dbec3610`, `review-bf483d1599370639`,
-          `review-f814dc0d957abcf3` — for eight candidates, and the review store
-          holds all of them. **The eighth lineage's identity is not recoverable from
-          the repository**: the provider's per-lineage `target` is an opaque
-          `sha256:` identity, not a git tree, so the records cannot be matched back
-          to commits programmatically. That is a gap in this tracker's *record*, not
-          evidence that a review is missing, and the distinction is written down
-          instead of being resolved by guessing an id.
-
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
+
+## Review coverage
+
+**FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head `7cadfda`,
+`MERGEABLE/CLEAN`, all three checks green (the new `DTE XSD validation` job
+among them, now a required check on `main`).
+
+**The coverage claim, stated precisely because it is checkable.** From `0479e67`
+to `7cadfda` the branch is tiled by **16 closed ranges covering all 20
+commits**, each with its own lineage and every one closed `approved`: WU-A
+`review-5f02ddd057fd6758`, WU-B `review-7a00fe71a5c544dd` (one bounded
+correction), the `D208c` correction `review-8d9b7cf45e039c2b`, the fetch timeout
+`review-2d607ead610b3633`, the TD-032 resolution `review-3d99274120684773`, its
+close `review-050847fbb8ae40c9`, and ten docs-only ranges that closed on the
+`START` call itself (`review-c77f287fe241b1b3`, `review-df0c5fb76056a959`,
+`review-5d015917b6866a9c`, `review-976a645a0e4beb8d`, `review-45e9783a54fbbaae`,
+`review-931b6ca48ff1f749`, `review-39b47f8a4dd53004`, `review-b4fee44aa678c49d`,
+`review-d81ec937ce380c03`, `review-81e01e2568c1ca79`).
+
+**Before `0479e67` there are 11 commits — the contract-pin and retrieval phase —
+and their coverage is recorded less well, which is stated rather than smoothed
+over.** They are `34588d4`, `02b28bb`, `4ae17a3`, `75253ea`, `902cce4`,
+`a3a6665`, `7892eef`, `33f982b`, `c866c9a`, `8e39b79` and `0479e67`, all
+docs-only. They were reviewed as docs-only candidates in the earlier session,
+whose record names seven lineages — `review-8a6b94a896127f08`,
+`review-1a4ef19151b70257`, `review-4d05cbbfec00788e`, `review-2fba8ef90d9e4e77`,
+`review-229a93e0dbec3610`, `review-bf483d1599370639`, `review-f814dc0d957abcf3`
+— for eight candidates, and the review store holds all of them. **The eighth
+lineage's identity is not recoverable from the repository**: the provider's
+per-lineage `target` is an opaque `sha256:` identity, not a git tree, so the
+records cannot be matched back to commits programmatically. That is a gap in
+this tracker's _record_, not evidence that a review is missing, and the
+distinction is written down instead of being resolved by guessing an id.
 
 ## Notes
 
