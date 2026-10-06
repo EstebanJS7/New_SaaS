@@ -2,7 +2,7 @@
 id: TD-032
 type: tech-debt
 title: FISC-008 DTE XML review advisories
-status: resolved
+status: open
 severity: medium
 related_epics:
   - EPIC-16
@@ -53,6 +53,13 @@ item and its disposition together.
 | `R3-002` (fetch)               | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:199-200`      | The `catch` set `lastError` and broke on the final attempt; the post-loop message depended on that assignment. **RESOLVED**: the message no longer depends on it, and the attempt count is floored at one.                                                                                              |
 | `R3-003` (fetch)               | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:172`     | The retry case asserted `calls > 7`, which proves a retry happened but not which artifact was retried or that it was exactly one. **RESOLVED**: exactly 8 calls, the retried URL is the first artifact's, the other seven distinct.                                                                     |
 | `R4-hermetic-guard-entry-only` | resilience  | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:338-343`      | The unrewritten-includes guard inspected only the entry artifact. **RESOLVED**: preparation and inspection both check **all seven**, `unrewrittenIncludes` names the files instead of a boolean, and a case injects a nested absolute include into a companion schema to prove preparation fails on it. |
+| `R3-001` (TD-032 review)       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.ts:237`          | `FETCH_FAILED`'s message assembles the attempt count, the 5xx note and the cause in one template literal. Cosmetic: it is the message, not the logic. **Open.**                                                                                                                                         |
+| `R3-002` (TD-032 review)       | reliability | SUGGESTION | `packages/fiscal/src/dte/xsd-artifacts.test.ts:302`     | The "entry schema was never rewritten" case asserts the file name but does not also assert that the walk reported the other six as fine. **Open.**                                                                                                                                                      |
+
+**The last two rows arrived from TD-032's own resolution review**, and they are
+why this file is `open` rather than `resolved`: the resolutions landed, and
+their own review returned two `SUGGESTION`s that are new work — neither reopens
+a closed item nor blocks anything. Both are cosmetic.
 
 ## What was acted on, and in which order
 
