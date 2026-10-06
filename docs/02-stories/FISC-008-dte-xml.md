@@ -304,8 +304,13 @@ blocked on the non-receptor notes' rule text.
       the required/optional cardinality the schema pins (`gTotSub` and `gCamGen`
       optional, `gCamDEAsoc` `0..99`).
 - [x] The CDC is validated as 44 characters matching `tCDC`, and `dDVId` is
-      carried as supplied. **The generator does not compose the CDC nor compute
-      its check digit**, because §22.9 records that neither algorithm is pinned.
+      carried as supplied. ~~The generator does not compose the CDC nor compute
+      its check digit, because §22.9 records that neither algorithm is pinned.~~
+      **RELAXED 2026-10-06 by [[DEC-054]] (option A), because that premise
+      became false**: both halves are now pinned, and `composeCdc` /
+      `computeCdcCheckDigit` compose one — reproducing the Manual's own worked
+      CDC byte for byte. `buildDteXml` still takes `cdc` and `dDVId` as inputs,
+      so the identity stays the caller's decision.
 - [x] Establishment and expedition point are zero-padded to three digits; the
       document number is exactly seven digits; the series matches `[A-Z]{2}`.
 - [x] `dFecFirma` matches `fecHhmmss` with no timezone suffix and no fractional

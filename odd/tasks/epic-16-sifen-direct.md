@@ -403,11 +403,12 @@ candidate 1 exists.
       pins `Pa_Calcular_Dv_11_A` (weights 2..11 from the right, `resto > 1 ?
       11 - resto : 0`, letters by ASCII), reproducing the Manual's worked CDC and
       the RUC digit in all four example documents. **Composing it is now a scope
-      decision, not a gap** — the block is FISC-008's own acceptance criterion,
-      recorded in DEC-054 with a recommendation to compose it; and (4) the
-      emitter fiscal profile and
-      timbrado, which **no model and no story currently hold** — that is FISC-011
-      plus a decision. An exploration of the invoice side found that a confirmed
+      decision, not a gap** — and it was **TAKEN 2026-10-06**: [[DEC-054]] option
+      A is accepted, so `composeCdc`/`computeCdcCheckDigit` compose one and
+      reproduce the Manual's worked example byte for byte; and (4) the emitter
+      fiscal profile and timbrado, which **no model and no story currently
+      hold** — [[DEC-054]] option B is accepted, so **FISC-011 owns that storage**
+      and WU-C takes the profile as an input. An exploration of the invoice side found that a confirmed
       invoice supplies lines, currency, `confirmedAt` and the customer, and
       supplies none of the emitter identity, timbrado, coded geography, unit of
       measure, currency descriptions or exchange rate; `buildDteXml`/`DteRequest`

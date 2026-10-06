@@ -2,7 +2,7 @@
 id: DEC-054
 type: decision
 title: WU-C's scope, the emitter fiscal profile and the CDC's check digit
-status: proposed
+status: accepted
 date: 2026-10-05
 related_epics:
   - EPIC-16
@@ -164,4 +164,31 @@ the request.
 
 ## Status
 
-**Proposed.** Both questions are the maintainer's; nothing here is implemented.
+**ACCEPTED 2026-10-06.** The maintainer took both recommendations, in these
+words: _"hazlo como lo dijiste con el 1 y el 2"_ — option **B** for Q1 and
+option **A** for Q2.
+
+```text
+Q1  The emitter fiscal profile and the timbrado are FISC-011's to store.
+    WU-C ships as a pure mapper taking (invoice snapshot, emitter profile,
+    document identity) -> DteRequest, with the profile as an input.
+
+Q2  The CDC is composed. Both halves were pinned on 2026-10-06, so the
+    acceptance criterion whose premise had gone false is relaxed, and
+    `composeCdc` / `computeCdcCheckDigit` land in `packages/fiscal/src/dte/`.
+```
+
+**What each decision obliges, recorded so it is not re-litigated:**
+
+- **FISC-011 gains a named obligation**: it must hold the emitter fiscal profile
+  (RUC + check digit, razón social, address, coded geography, phone, email,
+  activities, contributor type, régimen) and not only the numbering ranges.
+  Until it does, WU-C's mapper is callable and testable but has no production
+  caller.
+- **The mapper must always supply a `D208c` total** (`R3-D208C-OPTIN`): `D208c`
+  is evaluated only when a total is present, so a mapper that omits both escapes
+  the rule silently.
+- **The builder's contract does not change.** `buildDteXml` still takes `cdc`
+  and `dDVId` as inputs and stays pure; composing is a separate pure function
+  the caller uses. That keeps the identity decision at the caller's boundary,
+  which is where it belongs, and keeps WU-A's reviewed contract intact.

@@ -77,6 +77,14 @@ export type {
 } from "./signing-material/pkcs12.fixture.js";
 // FISC-008 WU-A: pure typed request -> XML builder for unsigned SIFEN DTEs.
 export { buildDteXml } from "./dte/dte.builder.js";
+// FISC-008: the CDC's composition and its check digit, both pinned 2026-10-06.
+export {
+  CDC_CHECK_DIGIT_BASE_MAX,
+  CDC_FIELD_WIDTHS,
+  composeCdc,
+  computeCdcCheckDigit,
+} from "./dte/dte.cdc.js";
+export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
 export { DteValidationError, assertValidDteRequest } from "./dte/dte.rules.js";
 export type { DteValidationFailure } from "./dte/dte.rules.js";
 export {
