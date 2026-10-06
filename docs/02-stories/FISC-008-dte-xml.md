@@ -817,6 +817,44 @@ Two code changes landed after WU-B closed, each with its own review:
   `R3-D208C-OPTIN`: making `D208c` mandatory would mean inventing a total when
   the caller supplies none, so the obligation is recorded as WU-C's instead.
 
+## Review Record — WU-C (ESCALATED)
+
+Native review `review-d1934d6b6a6db4b0`, tier medium, one lens
+(`review-reliability`), 9 files and 883 original changed lines. **It did not
+close: the authority is `escalated`.**
+
+```text
+reviewer    admitted a result
+refuter     confirmed a CRITICAL: R3-DTOTOPE (inferential, introduced)
+correction  65 diff lines, committed as 6e4fe02
+validator   native-operation-failed -- produced NO VERDICT, mutated nothing
+authority   ESCALATED, cause targeted_validator_rejected
+transition  stop / native_stop_required   (terminal)
+```
+
+**The finding was correct.** `totalsElement` wired `dTotOpe` to the sum of the
+lines' `taxableBase`, so an exempt line contributed nothing to the operation
+total: the emitted `dTotOpe` was 100.00000000 while `dSubExe + dSub5 + dSub10`
+and `dTotGralOpe` were 160.50000000, and every adjustment member was zero — an
+internally inconsistent totals block, and the 50.50000000 exempt line had simply
+disappeared from the operation total. The correction makes `dTotOpe` the sum of
+the subtotals and derives `dTotGralOpe` from the same value, and it also
+completes NT 013's `F002` rule for a partially taxed item, which takes `E737`
+(the exempt base) rather than the item's total.
+
+**The finding also explains why the tests missed it**, which is the part worth
+keeping: they asserted the returned totals object and one `dTotGralOpe`
+substring, never the emitted `dTotOpe`, and the schema case proves type-validity
+only. Both are now asserted, including that `dTotOpe` equals the subtotal sum
+and `dTotGralOpe`.
+
+**The closure is missing because the validator produced no verdict**, so the fix
+rests on a structural argument rather than a review: in `tgTotSub`, `dTotOpe`
+sits after the subtotals and before the adjustment members, while `dTotGralOpe`
+sits after them. The maintainer's options are the provider's own: inspect the
+lineage's authority, or disable the review switch for this clone, after which
+ordinary policy decides delivery.
+
 ## Decisions / ADRs
 
 - No ADR is required for the generator: it encodes a cited protocol, which is an

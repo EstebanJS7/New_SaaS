@@ -461,6 +461,46 @@ defines it as `F014 * D018` with the same unpinned rounding, so a foreign
 currency supplies it). It always supplies the `D208c` total the currency names,
 which is the obligation `R3-D208C-OPTIN` placed on it.
 
+## WU-C's review is ESCALATED, not closed (2026-10-06)
+
+The mapper's candidate did **not** close. The chain, recorded because an
+escalated lineage is a state the maintainer has to see rather than a green tick:
+
+```text
+review-d1934d6b6a6db4b0   medium tier, review-reliability, 9 files / 883 lines
+  reviewer      admitted a result
+  refuter       provider_refuter_required -> CONFIRMED a CRITICAL
+  finding       R3-DTOTOPE (inferential, introduced)
+  correction    submitted as a 65-line plan, committed as 6e4fe02
+  validator     native-operation-failed -- NO VERDICT, nothing mutated
+  authority     ESCALATED, cause targeted_validator_rejected
+  transition    stop / native_stop_required   (terminal)
+```
+
+**The finding was right and the fix is in.** `totalsElement` wired `dTotOpe` to
+the sum of the lines' `taxableBase`, so an exempt line vanished from the
+operation total: the emitted `dTotOpe` was 100.00000000 while `dTotGralOpe` was
+160.50000000, with every adjustment member zero. `dTotOpe` is now the sum of the
+subtotals and `dTotGralOpe` derives from the same value. The same finding
+exposed that **NT 013's `F002` rule was half implemented**: for a partially
+taxed item (`E731 = 4`) it takes `E737`, the exempt base, and the mapper added
+nothing.
+
+**The validator produced no verdict, so the closure is missing — and that is
+stated, not papered over.** I re-derived the fix against the schema's own
+structure as the only available check: in `tgTotSub`, `dTotOpe` sits after the
+subtotals and **before** `dTotDesc`/`dTotAnt`/`dDescTotal`, while `dTotGralOpe`
+sits after them — so the operation total is the pre-adjustment total, and with
+zero adjustments the two must agree. That is a structural argument, not a
+review.
+
+**What the maintainer can do**, per the provider's own continuation: inspect the
+lineage's authority, or disable the review switch for this clone
+(`gentle-ai review mode disable --scope clone`), after which ordinary repository
+policy decides delivery. Nothing is reset or recovered here: `RESET` and
+`RECOVER` are destructive and need an explicit decision with exact native
+inputs.
+
 ## Review coverage
 
 **FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head `f0cf14b`,
