@@ -75,3 +75,75 @@ export type {
   TestPkcs12Certificate,
   TestPkcs12Options,
 } from "./signing-material/pkcs12.fixture.js";
+// FISC-008 WU-A: pure typed request -> XML builder for unsigned SIFEN DTEs.
+export { buildDteXml } from "./dte/dte.builder.js";
+// FISC-008: the CDC's composition and its check digit, both pinned 2026-10-06.
+export {
+  CDC_CHECK_DIGIT_BASE_MAX,
+  CDC_FIELD_WIDTHS,
+  composeCdc,
+  computeCdcCheckDigit,
+} from "./dte/dte.cdc.js";
+export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
+// FISC-008: the security code's generator, with its randomness injected.
+export {
+  generateSecurityCode,
+  SECURITY_CODE_DIGITS,
+  SECURITY_CODE_MAX_ATTEMPTS,
+} from "./dte/dte.codseg.js";
+export type { GeneratedSecurityCode, GenerateSecurityCodeArgs } from "./dte/dte.codseg.js";
+// FISC-008 WU-C: the invoice -> DteRequest mapper, with the profile supplied.
+export {
+  addDecimals,
+  buildDteRequestFromInvoice,
+  DTE_IVA_RATES,
+  emitterNameForEnvironment,
+  scale,
+} from "./dte/dte.mapper.js";
+export type {
+  ConfirmedInvoiceLineSnapshot,
+  ConfirmedInvoiceSnapshot,
+  DocumentIdentity,
+  DteIvaRate,
+  DteMappingInput,
+  EmitterFiscalProfile,
+  MappedDteRequest,
+  MappedDteTotals,
+} from "./dte/dte.mapper.js";
+export { AFEC_IVA_DESCRIPTIONS, AFEC_IVA_VALUES } from "./dte/dte.types.js";
+export { DteValidationError, assertValidDteRequest } from "./dte/dte.rules.js";
+export type { DteValidationFailure } from "./dte/dte.rules.js";
+export {
+  DTE_NAMESPACE,
+  DTE_XML_VERSION,
+  SIFEN_MIN_VALIDITY_DATE,
+  SIFEN_TEST_EMITTER_NAME,
+  XMLDSIG_NAMESPACE,
+} from "./dte/dte.types.js";
+export type {
+  DteActividadEconomica,
+  DteCamposFueraFirma,
+  DteCondicionAnticipo,
+  DteCondicionTipoCambio,
+  DteDatosGeneralesOperacion,
+  DteDecimalType,
+  DteEmisor,
+  DteEnumType,
+  DteIntegerType,
+  DteNaturalezaReceptor,
+  DteObligacionAfectada,
+  DteOperacionComercial,
+  DteOperationEmission,
+  DteReceptor,
+  DteRequest,
+  DteResponsableEmision,
+  DteTimbrado,
+  DteTipoContribuyente,
+  DteTipoDocumentoElectronico,
+  DteTipoDocumentoReceptor,
+  DteTipoEmision,
+  DteTipoImpuesto,
+  DteTipoOperacion,
+  DteTipoTransaccion,
+  DteXmlElement,
+} from "./dte/dte.types.js";

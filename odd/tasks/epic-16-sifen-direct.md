@@ -3,8 +3,8 @@ feature: epic-16-sifen-direct
 epic: EPIC-16
 status: in-progress
 created: 2026-10-03
-updated: 2026-10-04
-branch: feat/epic-16-fisc-007-signing-material
+updated: 2026-10-05
+branch: feat/epic-16-fisc-008-dte-xml
 ---
 
 # EPIC-16 SIFEN Direct — ODD task tracker
@@ -217,13 +217,243 @@ candidate 1 exists.
       DEC-053 files and is recorded rather than smoothed over. **Review:** a
       chain of seven approved candidates, one per work unit, all approved; the
       thirteen non-blocking advisories are [[TD-031]].
-- [ ] T4 — FISC-008: DTE XML + XSD validation.
+- [x] T4 — **FISC-008: DTE XML + XSD validation — DONE 2026-10-06.** Story
+      `status: done`. Three work units (WU-A builder, WU-B XSD gate, WU-C
+      mapper), plus the CDC composition, the security-code generator and the two
+      corrections the reviews made due. PR **#106**. The two unclosed lineages
+      and the open `R3-CDC-DATE` finding are recorded in the Story's Completion
+      Notes and in [[TD-032]]. Contract pinned 2026-10-04. Story at
+      `docs/02-stories/FISC-008-dte-xml.md`. **The retrieval FISC-006 left open
+      is done**: `DE_Types_v150.xsd` was fetched from the official directory
+      (66,452 bytes, HTTP 200) together with `DE_v150.xsd` (66,190) and
+      `xmldsig-core-schema.xsd` (10,339), and its facts are recorded in
+      `docs/06-fiscal/SIFEN-BASELINE.md` §21 — 140 `simpleType`s with their
+      enumerations, the scalar patterns for CDC/RUC/timbrado/series/document
+      number/dates/money, and the `rDE` (4 children) and `tDE` (11 children)
+      structures. **One decision blocks the acceptance criterion, not the
+      implementation**: the schemas are copyrighted and must not be vendored.
+      **Decided 2026-10-04**: a dedicated CI job fetches the three schemas,
+      asserts each fetch, and runs the validation with the skip disabled, so a
+      green run cannot come from having validated nothing. **Retrieval completed
+      2026-10-04**: baseline §22 carries the Manual's field-level rules (73
+      `D`-codes; the receptor block's conditional structure; the
+      test-environment literal for `dNomEmi`; the cross-field invariants), four
+      companion tables were fetched as official XSDs. **Geography closed**: the
+      official `CÓDIGO DE REFERENCIA GEOGRAFICA_NOVIEMBRE_2025` spreadsheet
+      gives `D111`/`D113`/`D115` (18 departamentos, 272 distritos unique
+      nationally, 6,766 ciudades). NT 26 excludes four B2G validation rules and
+      NT 27 amends the nomination _event_ format, so neither changes a DE rule
+      FISC-008 must implement. **Still open**:
+      `Tabla 3 – Actividades Económicas` (`D131`), whose Manual link now returns
+      an HTML portal shell. **`D104` is CLOSED**: the Manual's TABLA 1 prints
+      all eight régimenes inline, and the earlier "references but does not
+      contain" claim was wrong — chapter 15 was invisible because the PDF
+      extractor dropped its tables (baseline §22.6). **And a correction**: the
+      Nota Técnica set is **001-027, not 23-27**. **All 27 were retrieved and
+      profiled** (baseline §22.10): eighteen touch DE fields and ten amend
+      validations, and **nine amend the receptor block alone**
+      (`D200`/`D201`/`D202`/`D208`/ `D210`), which §22.3 pins from the 2019
+      Manual. **The receptor block's rule text is now transcribed and
+      consolidated** (baseline §22.11): NT 023 removed the `o D202=4` half of
+      `D208`'s `No informar` clause, NT 024 lowered the `D208c`/1321 threshold
+      from NT 021's 35,000,000 to **7,000,000**, and NT 003 excluded the
+      `D219`/`D223` validations in favour of field conditions. The generator
+      implements §22.11 and must never read §22.3 for a receptor condition. The
+      remaining provisional areas are the non-receptor ones — currency/exchange,
+      emitter activity/imputation, items and titles — while the structural
+      contract (`rDE`/`tDE`, order, patterns, money scales) is unaffected
+      because the notes amend observations and validations, not the schemas.
+      **Work units for the implementation**, in order. **WU-A, the builder**
+      (`packages/fiscal/src/dte/**`): a pure `typed request -> XML string`
+      function, with `rDE`'s four children and `tDE`'s eleven in schema order,
+      `dVerFor` pinned to 150, the CDC as a **validated input** and never
+      composed (per §22.9), `dCodSeg` per §10.3, the per-field money scales, and
+      the **receptor block from §22.11** with its seven validations rather than
+      from §22.3. **WU-B, the CI validation job**: fetches the three official
+      schemas into a job-local directory, asserts each by HTTP status **and** a
+      minimum byte size, runs the schema-validation suite with the skip
+      **disabled**, and records the run in `docs/10-qa/CI-EVIDENCE.md` with the
+      artifact sizes and the case count; a fetch that does not produce all three
+      fails the job. **WU-C, the invoice -> request mapping**: **blocked** on
+      the rule text of the non-receptor notes (§22.10) and on `D104`/`D131`,
+      whose tables the Manual references but does not contain.
+- [x] T4b — **FISC-008 WU-C: the invoice -> request mapper — DONE 2026-10-06.**
+      See **WU-C: the mapper** below.
 - [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
+
+## Two lineages are NOT closed, and the second one is why the fixes rest on argument
+
+The mapper's work needed **two review lineages**, and neither closed. Both are
+recorded here because an escalated or stuck authority is a state the maintainer
+has to see, not a green tick.
+
+```text
+review-d1934d6b6a6db4b0   the mapper            ESCALATED  (terminal stop)
+  reviewer   admitted a result
+  refuter    confirmed R3-DTOTOPE (inferential)
+  correction 65 lines, committed 6e4fe02
+  validator  native-operation-failed -- NO VERDICT
+  authority  ESCALATED, cause targeted_validator_rejected
+  transition stop / native_stop_required
+
+review-83755a14a6eda333   the correction, re-reviewed on its own
+  reviewer   found R3-001 (deterministic): affectation 4 double-counted its
+             exempt half because the rate subtotal took lineTotal instead of
+             E735 + E736, and F003 (dSubExo) was not emitted at all
+  correction 80 of 81 allowed diff lines, committed 0463066
+  validator  capture-binding-rejected TWICE, after a STATUS that reoffered the
+             identical slot -- the host relay cannot deliver it
+  authority  correction_required, awaiting a validation that will not run
+```
+
+**Both findings were real and both fixes are in.** The first (`dTotOpe` wired to
+the taxed base, so an exempt line vanished from the operation total) and the
+second (the rate subtotal taking `lineTotal` for a partially taxed item,
+double-counting its exempt half, plus `dSubExo` never being emitted). The
+routing is now by **affectation**, which is what NT 013 defines:
+
+```text
+F002 dSubExe  E731 = 3 -> EA008      E731 = 4 -> E737 (the exempt base)
+F003 dSubExo  E731 = 2 -> EA008
+F004 dSub5    E731 = 1 -> EA008      E731 = 4 -> E735 + E736
+F005 dSub10   E731 = 1 -> EA008      E731 = 4 -> E735 + E736
+dTotOpe       the sum of the subtotals, before adjustments
+```
+
+**And then the second correction DID get its verdict.** Because the workspace
+was clean and the provider offered a committed range, the correction was
+re-reviewed on its own as `82d484f..576c830` — a fresh lineage,
+`review-ba6218e187d42859`, medium tier, one lens — and **closed `approved`**
+with two non-blocking `WARNING`s and no correction required. So the subtotal fix
+and the record around it have a receipt.
+
+The two lineages above stay as they are. **The first correction (`dTotOpe`)
+still has no verdict of its own** — it was inside the escalated range, and the
+escalated lineage is terminal.
+
+**What the fixes rest on, stated plainly.** The subtotal fix has a review
+verdict now. The `dTotOpe` fix does not: its lineage's validator failed. So that
+one rests on an argument I can check and on tests I can run — the schema's own
+ordering for `dTotOpe`, NT 013's field-by-field rule for the subt otals, and
+arithmetic that adds up by hand (106 = 60 + 6 + 40). The gates are green and CI
+is green, which is evidence about behaviour and not about review.
+
+**The maintainer's options**, per the provider's own continuation: inspect the
+lineages' authority, or disable the review switch for this clone
+(`gentle-ai review mode disable --scope clone`), after which ordinary repository
+policy decides delivery. Nothing is reset or recovered here: `RESET` and
+`RECOVER` are destructive and need an explicit decision with exact native
+inputs.
+
+## WU-C: the mapper
+
+**DONE 2026-10-06.** `packages/fiscal/src/dte/dte.mapper.ts` holds
+`buildDteRequestFromInvoice({ invoice, profile, identity }) -> DteRequest`,
+pure: no I/O, no ambient clock, no tenant context. Authorized by [[DEC-054]]
+(accepted), whose option B gives the emitter fiscal profile's storage to
+FISC-011 — so the profile is an **input**, and the mapper is callable and
+testable today even though nothing in production supplies one yet.
+
+**The XSD case is the proof that mattered.** Putting the mapper's output through
+the schema-validation suite caught two real invalidities that no shape test
+could see: `totalsElement` emitted six of `tgTotSub`'s **ten** required members,
+in the wrong order, and `gValorItem` was missing its required `gValorRestaItem`.
+Both are fixed, and the case now runs in the same suite as the fixture's.
+
+**Two things it deliberately does not do**, both recorded in the module and in
+baseline §22.14: it does not re-derive tax (NT 013's formulas state no rounding
+rule, so the invoice's own `taxableBase`/`taxAmount` are carried rather than
+giving money a second source of truth), and it does not derive `F023` (NT 008
+defines it as `F014 * D018` with the same unpinned rounding, so a foreign
+currency supplies it). It always supplies the `D208c` total the currency names,
+which is the obligation `R3-D208C-OPTIN` placed on it.
+
+## WU-C's review is ESCALATED, not closed (2026-10-06)
+
+The mapper's candidate did **not** close. The chain, recorded because an
+escalated lineage is a state the maintainer has to see rather than a green tick:
+
+```text
+review-d1934d6b6a6db4b0   medium tier, review-reliability, 9 files / 883 lines
+  reviewer      admitted a result
+  refuter       provider_refuter_required -> CONFIRMED a CRITICAL
+  finding       R3-DTOTOPE (inferential, introduced)
+  correction    submitted as a 65-line plan, committed as 6e4fe02
+  validator     native-operation-failed -- NO VERDICT, nothing mutated
+  authority     ESCALATED, cause targeted_validator_rejected
+  transition    stop / native_stop_required   (terminal)
+```
+
+**The finding was right and the fix is in.** `totalsElement` wired `dTotOpe` to
+the sum of the lines' `taxableBase`, so an exempt line vanished from the
+operation total: the emitted `dTotOpe` was 100.00000000 while `dTotGralOpe` was
+160.50000000, with every adjustment member zero. `dTotOpe` is now the sum of the
+subtotals and `dTotGralOpe` derives from the same value. The same finding
+exposed that **NT 013's `F002` rule was half implemented**: for a partially
+taxed item (`E731 = 4`) it takes `E737`, the exempt base, and the mapper added
+nothing.
+
+**The validator produced no verdict for THAT lineage, and that is stated, not
+papered over.** I re-derived the fix against the schema's own structure as the
+only available check: in `tgTotSub`, `dTotOpe` sits after the subtotals and
+**before** `dTotDesc`/`dTotAnt`/`dDescTotal`, while `dTotGralOpe` sits after
+them — so the operation total is the pre-adjustment total, and with zero
+adjustments the two must agree. That was a structural argument, not a review.
+
+**And then the content got its receipt anyway — twice over.** Because the
+workspace was clean, the provider resolved a fresh committed range and two later
+lineages closed **`approved`**:
+
+```text
+review-ba6218e187d42859   the subtotal correction        approved
+review-d348e4bdb5bcd5b0   the mapper's current state      approved
+```
+
+The second one is the one that matters here: the provider resolved its base to
+the escalated lineage's own correction tree, so it reviewed the mapper's
+**current** content — `dte.mapper.ts` and `dte.mapper.test.ts` among the changed
+files — and closed `approved` with two non-blocking `WARNING`s. One of them,
+`R3-EPIC-DUP`, found **three duplicated sections in this very file**, which were
+a real defect from repeated scripted insertions and are now removed.
+
+**What that does and does not settle.** The mapper's content has a receipt; the
+escalated lineage's own authority is still terminal and untouched, and three
+commits (`e8677fe`, `6e4fe02`, `5897628`) remain outside any closed _range_
+although their content was reviewed. **The maintainer's options are unchanged**:
+inspect the lineage's authority, or disable the review switch for this clone
+(`gentle-ai review mode disable --scope clone`), after which ordinary repository
+policy decides delivery. Nothing is reset or recovered here: `RESET` and
+`RECOVER` are destructive and need an explicit decision with exact native
+inputs.
+
+## Review coverage
+
+**FISC-008 review coverage, verified 2026-10-06.** PR **#106**, head `5d09015`,
+`MERGEABLE/CLEAN`, all three checks green (`DTE XSD validation` among them, now
+a required check on `main`).
+
+**30 of the 33 commits from `0479e67` to HEAD are inside a closed range. The
+three that are not are named, not glossed:**
+
+```text
+e8677fe  feat(FISC-008): map a confirmed invoice to a DteRequest
+6e4fe02  fix(FISC-008): dTotOpe is the operation total, not the taxed base
+5897628  docs(FISC-008): record that WU-C's review is escalated, not closed
+```
+
+Those three are exactly the escalated range `a06e7b7..5897628`. **Their content
+was not left unexamined**: the subtotal correction that followed them was
+re-reviewed on its own as `82d484f..576c830` and **closed `approved`**, and the
+schema suite proves the mapper's output is valid. What is missing is a _closure_
+for that specific range, and the escalated lineage is where that lives —
+terminal, awaiting the maintainer.
+
+Every other range closed, and the lineages are named in the section above.
 
 ## Notes
 
@@ -233,6 +463,7 @@ candidate 1 exists.
 - The rename leaves ~20 older Story references to "EPIC-16 the provider" intact
   in substance; the one that became factually wrong (`FISC-003`'s
   `FISCAL_PROVIDER` closed set) is corrected.
-- Inherited debt: [[TD-029]] (operator re-drive, closed by FISC-012 against a
+- Inherited debt: [[TD-032]] (**resolved** — every advisory fixed or accepted
+  with a reason), [[TD-029]] (operator re-drive, closed by FISC-012 against a
   real primitive), [[TD-030]] (EPIC-15 review advisories), [[TD-026]] (unbounded
   lists), [[TD-022]] (portal surface).

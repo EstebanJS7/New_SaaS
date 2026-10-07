@@ -1,7 +1,7 @@
 ---
 type: qa
 status: active
-updated: 2026-09-27
+updated: 2026-10-05
 ---
 
 # CI Evidence
@@ -1412,3 +1412,166 @@ they produced.
 This section is the machine-generated receipt for the slice. It is **not** a
 production-readiness statement: the only provider is still a deterministic fake,
 and the tenant's signing material is held but not yet used to sign anything.
+
+## EPIC-16 FISC-008 WU-B DTE XSD Validation (2026-10-05)
+
+The acceptance criterion is "a DTE XML validates against the official XSD before
+any submission". The schemas are copyrighted and are **not vendored**, so a
+dedicated job (`xsd-validation`) fetches them into a job-local directory,
+asserts every artifact, and runs the schema-validation suite with **its skip
+disabled**, so a green run can never be the product of having validated nothing.
+
+### The CI receipt (2026-10-06)
+
+PR **#106** (`feat/epic-16-fisc-008-dte-xml`), head **`dbbcc50`**, run
+[`37405674505`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37405674505).
+All three checks green, and **`DTE XSD validation` is a new job that had never
+run before this PR**:
+
+```text
+DTE XSD validation                      pass   0m35s
+Database migrations                     pass   1m08s
+Lint, Typecheck, Test, Build            pass   5m17s
+```
+
+That 35-second job is the whole gate end to end in a clean environment: it
+installs the workspace including `libxmljs2`'s native binding through
+`pnpm install --frozen-lockfile`, builds the fiscal package, fetches the seven
+official artifacts from DNIT, asserts each one, rewrites the absolute includes,
+and runs the schema-validation suite with `DTE_XSD_REQUIRED=1` — so the
+acceptance criterion "a DTE XML validates against the official XSD before any
+submission" now rests on a receipt rather than on a local run.
+
+**One admin step remains, and it is not automatic.** `DTE XSD validation` must
+be added to the required status checks on `main` alongside the other two, or the
+gate is optional. Until that setting changes, a red `xsd-validation` does not
+block a merge.
+
+### The runs, including the one that failed (2026-10-06)
+
+```text
+37405674505  dbbcc50  success
+37406465787  154c8f4  success
+37409504100  77dc9b0  success
+37423994304  4e7488b  success
+37444326475  7cadfda  success
+37448663469  92d079f  FAILURE   <- the quality job failed on prettier --check
+37448960766  1481304  success
+```
+
+**`92d079f` is recorded rather than smoothed over, for the same reason
+FISC-007's first run is.** The commit added a long review-coverage record inside
+a task bullet, and **prettier does not converge on that shape in this repo's
+markdown**: it rewrites the continuation indentation into a form its own parser
+reformats again, adding four spaces per pass, so `prettier --check .` fails on a
+file that `prettier --write` just touched. The fix was the one this vault
+already documents — flatten it out of the nested bullet into its own section —
+and `1481304` is green.
+
+**And the mistake that let it through is the more useful half.** The commit was
+made while `pnpm format-check` was failing, because the check was piped to
+`tail` in a chained command and a pipeline's exit status is the last command's,
+not prettier's. That is the same _"a gate does not get chained, it gets
+checked"_ lesson this project already recorded for FISC-007, repeated. The
+`DTE XSD validation` job was green throughout; only the quality job went red,
+and only for this.
+
+### What the local evidence already showed
+
+The gate was proven locally before the PR; that evidence is kept because it
+covers cases CI does not:
+
+- the **hermetic** claim: the same suite passes with `HTTP(S)_PROXY` pointed at
+  a dead port, so validation never reaches the network;
+- the **skip** claim: with no schema directory the suite skips 7 cases and names
+  the directory and the preparing command in its title;
+- the **fail-closed** claim: with `DTE_XSD_REQUIRED=1` and no schemas it fails,
+  naming all seven missing artifacts, rather than skipping;
+- the **fetch assertion**: a captive-portal HTML page, a short body, a non-200
+  status and a schema of the wrong namespace each fail, tested without a
+  network.
+
+### Building the gate corrected two claims in the Story
+
+Both were checked against the published artifacts; both are now recorded in
+`docs/06-fiscal/SIFEN-BASELINE.md` §21.7 and the Story's acceptance criteria
+were rewritten with the maintainer's approval:
+
+1. **It is seven schemas, not three.** `DE_v150.xsd` `xs:include`s
+   `Paises_v100.xsd`, `Departamentos_v141.xsd`, `Monedas_v150.xsd`,
+   `Unidades_Medida_v141.xsd` and `DE_Types_v150.xsd`. Without those five the
+   schema does not compile at all.
+2. **An unsigned DE cannot validate.** `ds:Signature` is a `ds:SignatureType`
+   whose `SignedInfo` is required, so the `<Signature/>` placeholder the builder
+   emits is schema-invalid. The gate validates a document whose signature block
+   is structurally complete with placeholder contents; the real signature is
+   [[FISC-009]]'s.
+
+### The artifacts actually fetched, with their sizes
+
+`pnpm fetch:dte-schemas /tmp/dte-xsd-live`, 2026-10-05:
+
+```text
+DE_v150.xsd                    66190 bytes   -> 66005 after the include rewrite
+DE_Types_v150.xsd              66452 bytes
+xmldsig-core-schema.xsd        10339 bytes
+Paises_v100.xsd                53266 bytes
+Departamentos_v141.xsd          6198 bytes
+Monedas_v150.xsd               57236 bytes
+Unidades_Medida_v141.xsd       27240 bytes
+
+rewritten absolute includes: Paises_v100.xsd, Departamentos_v141.xsd,
+  Monedas_v150.xsd, Unidades_Medida_v141.xsd, DE_Types_v150.xsd
+absolute URLs left in DE_v150.xsd: 0
+```
+
+Every size matches the 2026-10-04 retrieval recorded in §21 and §22.1, which is
+the independent check that the fetched bytes are the same ones the vault's rules
+were read from.
+
+### Why the include rewrite is part of the gate
+
+Five of those includes are **absolute HTTPS URLs**, so a validator ignores the
+co-located files and reaches DNIT at validation time. Verified: with the network
+blocked, compilation fails with
+`global component '{http://ekuatia.set.gov.py/sifen/xsd}tCDC' not found`. The
+job therefore rewrites those five `schemaLocation`s to file names, and the
+validator **refuses** a directory that still resolves anything over HTTP rather
+than silently fetching.
+
+### The cases executed
+
+```text
+DTE_XSD_DIR=/tmp/dte-xsd-live DTE_XSD_REQUIRED=1 pnpm --filter @newsaas/fiscal test
+  -> 100 passed / 100        (16 new in WU-B: 9 fetch-assertion cases
+                              + 7 schema-validation cases. The other 22 are
+                              WU-A's builder cases.)
+
+same run with HTTP(S)_PROXY pointed at a dead port
+  -> 100 passed / 100        validation is hermetic: no network at validation time
+
+no DTE_XSD_DIR
+  -> 93 passed, 7 skipped    the skip names the directory and the preparing
+                             command in the suite title
+
+DTE_XSD_REQUIRED=1 with no prepared schemas
+  -> FAILS naming all seven missing artifacts, rather than skipping
+```
+
+The seven schema-validation cases: the prepared directory holds all seven
+artifacts; the built document validates once its signature block is structurally
+complete; it does **not** validate with the unsigned placeholder; a version
+other than `150` fails; the right children in the wrong order fail; a B2C
+receptor carrying an identity document is both §22.11-allowed and schema-valid;
+and an unusable directory is refused instead of reporting a pass.
+
+### What this gate does not prove
+
+- It does not prove the _content_ rules. The XSD pins structure, lengths,
+  patterns, facets and allowed values; the Manual's conditional obligations and
+  the Notas Técnicas' amendments are not in it. Those are the builder's
+  validators and the receptor block of §22.11.
+- It does not prove the item area. The XSD requires only five elements inside
+  `gCamItem`, and the fixture supplies exactly those; the mapping from a
+  confirmed invoice is WU-C's blocked work.
+- It is not a cryptographic signature check. The signature block is structural.

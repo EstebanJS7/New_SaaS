@@ -21,7 +21,8 @@
     "preflight:win": "infra/scripts/preflight.ps1",
     "services:up": "docker compose up -d",
     "services:down": "docker compose down",
-    "services:reset": "docker compose down -v"
+    "services:reset": "docker compose down -v",
+    "fetch:dte-schemas": "pnpm --filter @newsaas/fiscal build && pnpm --filter @newsaas/fiscal fetch:dte-schemas"
   },
   "devDependencies": {
     "@newsaas/eslint-config": "workspace:*",

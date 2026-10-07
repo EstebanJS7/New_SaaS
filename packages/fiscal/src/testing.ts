@@ -31,3 +31,44 @@ export type {
   TestPkcs12Certificate,
   TestPkcs12Options,
 } from "./signing-material/pkcs12.fixture.js";
+// FISC-008 WU-B: the DTE schema-validation fixture and the tooling that
+// prepares the official DNIT schemas for the dedicated CI job.
+// `testing.ts` (not the package index) on purpose: both are scaffolding, and the
+// prepared schemas are copyrighted artifacts that are never committed.
+export {
+  FIXTURE_CDC,
+  FIXTURE_DOCUMENT_NUMBER,
+  FIXTURE_QR,
+  FIXTURE_SECURITY_CODE,
+  STRUCTURAL_SIGNATURE,
+  validFacturaElectronicaRequest,
+  withStructuralSignature,
+} from "./dte/dte.fixture.js";
+export {
+  assertArtifact,
+  assertNoAbsoluteSchemaLocations,
+  defaultDteSchemaDirectory,
+  defaultFetch,
+  DTE_XSD_ARTIFACTS,
+  DTE_XSD_BASE_URL,
+  DTE_XSD_ENTRY_ARTIFACT,
+  DTE_XSD_FETCH_ATTEMPTS,
+  DTE_XSD_FETCH_TIMEOUT_MS,
+  DTE_XSD_FILE_NAMES,
+  DteSchemaError,
+  inspectDteSchemas,
+  prepareDteSchemas,
+  rewriteAbsoluteSchemaLocations,
+  SIFEN_XSD_NAMESPACE,
+  XMLDSIG_XSD_NAMESPACE,
+} from "./dte/xsd-artifacts.js";
+export type {
+  DteSchemaDirectoryInspection,
+  DteSchemaFailure,
+  DteXsdArtifact,
+  FetchLike,
+  PrepareDteSchemasOptions,
+  PreparedDteSchemas,
+} from "./dte/xsd-artifacts.js";
+export { buildDteEntrySchema, validateDeAgainstOfficialXsd } from "./dte/xsd-validator.js";
+export type { DteXsdValidationResult } from "./dte/xsd-validator.js";
