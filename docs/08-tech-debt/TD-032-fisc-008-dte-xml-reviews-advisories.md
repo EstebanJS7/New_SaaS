@@ -110,6 +110,16 @@ alone accepts `00000002` — which makes the comparison meaningful and the
 collision guard provably unreachable in contract. The guard stays, because the
 Manual states the rule and it is what makes an out-of-contract caller fail. |
 
+| `R3-CODSEG-CONTRACT` | reliability | WARNING |
+`packages/fiscal/src/dte/dte.codseg.ts:76-84` | The `dNumDoc` validation that
+now guards the collision comparison — the length check beside the pattern.
+**Accepted as-is.** | | `R3-CODSEG-DEADGUARD` | reliability | SUGGESTION |
+`packages/fiscal/src/dte/dte.codseg.ts:102-103` | The collision guard itself,
+which cannot fire for a well-formed seven-digit `dNumDoc` against a nine-digit
+code. **Accepted deliberately**: the Manual states the rule, the code says why
+it cannot fire, and it is what makes an out-of-contract caller fail instead of
+slipping through. |
+
 ## The one finding with a real failure mode: dates are shaped, never validated
 
 `R3-CDC-DATE` is right, and it is not confined to the CDC. Every date this Story
@@ -184,6 +194,19 @@ why it was chosen.
    total**.
 6. **`R2-evidence-count`** — corrected when it was found, because a wrong number
    in the evidence file is not a later-work item.
+
+## The security code: two rounds, the first finding real
+
+`generateSecurityCode` closed `approved` twice. The first round
+(`review-5948202c8a92013a`) found `R3-CODSEG-RANGE`, which was a **real bug of
+the same family as the two corrections before it: the generator and the
+validator disagreed** — it could return `000000000`, and `buildDteXml` refuses a
+value below
+
+1. Fixed by redrawing an all-zero candidate, which is now the reachable reason
+   the retry loop exists. The same round found the collision comparison across
+   unvalidated widths. The second round (`review-17f768ad29856a01`) found only
+   the two cosmetics above.
 
 ## The mapper's content is now closed, twice over
 
