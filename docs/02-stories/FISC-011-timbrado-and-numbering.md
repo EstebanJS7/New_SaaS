@@ -326,6 +326,17 @@ The bound is now `range_to + 1`, and the constraint is renamed
 `..._active_within_one_past_the_end` to say what it actually enforces: an ACTIVE
 range may be **spent and awaiting its rollover**.
 
+**And the fix is a NEW migration, not an edit — which its own review caught.**
+The first version edited `20261007000002` in place, and the review refused it as
+a `BLOCKER`: Prisma does not re-run applied migrations, so every database that
+had already run it would have kept the old bound and the defect would have
+survived in exactly the environments that matter.
+`20261007000003_fisc_011_range_spent_bound` now drops the old constraint and
+adds the correct one, and `20261007000002` is left as first written — a
+migration that has been applied is history. The static suite asserts both: the
+first migration still carries the bound it wrote, and the correction is what
+relaxes it.
+
 ### A defect this Story found in its own design
 
 The first draft enforced "the counter is never lowered" as a CHECK,

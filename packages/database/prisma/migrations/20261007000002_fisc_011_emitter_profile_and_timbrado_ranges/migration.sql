@@ -255,14 +255,12 @@ CREATE TABLE "fiscal_timbrado_range" (
   -- both implications: an operator may retire a range at any point in its life.
   CONSTRAINT "fiscal_timbrado_range_exhausted_has_run_out"
     CHECK ("status" <> 'EXHAUSTED' OR "next_number" > "range_to"),
-  -- An ACTIVE range may be SPENT but not yet rolled over, which is why the bound
-  -- is `range_to + 1` and not `range_to`. The counter holds the NEXT number to
-  -- hand out, so the claim that takes the last number increments it one past the
-  -- end — and the rollover happens on the next call, when the allocation finds it
-  -- spent. A bound of `range_to` would refuse that increment, making the LAST
-  -- number of every range impossible to issue.
-  CONSTRAINT "fiscal_timbrado_range_active_within_one_past_the_end"
-    CHECK ("status" <> 'ACTIVE' OR "next_number" <= "range_to" + 1)
+  -- SUPERSEDED by 20261007000003, which relaxes this bound to `range_to + 1`.
+  -- It is left as first written because a migration that has been applied is
+  -- history: editing it in place would leave every database that already ran it
+  -- with the old constraint, and the fix would only reach fresh ones.
+  CONSTRAINT "fiscal_timbrado_range_active_has_numbers_left"
+    CHECK ("status" <> 'ACTIVE' OR "next_number" <= "range_to")
 );
 
 -- The ownership keys must exist before any composite reference targets them.

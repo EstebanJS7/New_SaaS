@@ -69,13 +69,12 @@ describe("migration · timbrado and numbering ranges (EPIC-16 FISC-011)", () => 
     expect(SQL).toMatch(
       /CONSTRAINT "fiscal_timbrado_range_exhausted_has_run_out"\s+CHECK \("status" <> 'EXHAUSTED' OR "next_number" > "range_to"\)/
     );
-    // `range_to + 1`, not `range_to`: an ACTIVE range may be spent and awaiting
-    // its rollover, because the claim that takes the LAST number increments the
-    // counter one past the end. A `range_to` bound refused that increment and
-    // made the last number of every range impossible to issue — which is exactly
-    // what the live-PostgreSQL rollover case caught.
+    // The bound this migration first wrote. It is SUPERSEDED by
+    // `20261007000003`, and it stays as written because a migration that has been
+    // applied is history: editing it in place would leave every database that
+    // already ran it with the old constraint. The next case asserts the fix.
     expect(SQL).toMatch(
-      /CONSTRAINT "fiscal_timbrado_range_active_within_one_past_the_end"\s+CHECK \("status" <> 'ACTIVE' OR "next_number" <= "range_to" \+ 1\)/
+      /CONSTRAINT "fiscal_timbrado_range_active_has_numbers_left"\s+CHECK \("status" <> 'ACTIVE' OR "next_number" <= "range_to"\)/
     );
     // RETIRED appears in neither implication: an operator may retire a range at
     // any point in its life, so a third implication would be wrong.
@@ -173,6 +172,24 @@ describe("migration · timbrado and numbering ranges (EPIC-16 FISC-011)", () => 
     expect(SQL).toMatch(
       /CONSTRAINT "fiscal_establishment_district_pair_all_or_nothing"\s+CHECK \(\("district_code" IS NULL\) = \("district_name" IS NULL\)\)/
     );
+  });
+
+  it("relaxes the ACTIVE bound in a LATER migration rather than in place", () => {
+    // `range_to + 1`, not `range_to`: an ACTIVE range may be spent and awaiting
+    // its rollover, because the claim that takes the LAST number increments the
+    // counter one past the end. A `range_to` bound refused that increment and
+    // made the last number of every range impossible to issue — which is exactly
+    // what the live-PostgreSQL rollover case caught.
+    const correction = findMigration(loadMigrations(), "_fisc_011_range_spent_bound").sql;
+    expect(correction).toMatch(
+      /ALTER TABLE "fiscal_timbrado_range"\s+DROP CONSTRAINT "fiscal_timbrado_range_active_has_numbers_left";/
+    );
+    expect(correction).toMatch(
+      /ADD CONSTRAINT "fiscal_timbrado_range_active_within_one_past_the_end"\s+CHECK \("status" <> 'ACTIVE' OR "next_number" <= "range_to" \+ 1\);/
+    );
+    // And the first migration was NOT edited: its own bound is still there.
+    expect(SQL).toMatch(/"next_number" <= "range_to"\)/);
+    expect(SQL).not.toMatch(/"next_number" <= "range_to" \+ 1\)/);
   });
 
   it("does not store the department name, because the official schema enumerates it", () => {
