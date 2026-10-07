@@ -126,41 +126,66 @@ reason this Story has a counter and not a "free numbers" query.
 
 ## Acceptance Criteria
 
-- [ ] `fiscal_emitter_profile`, `fiscal_establishment` and
-      `fiscal_timbrado_range` exist, tenant-scoped, with the constraints that
-      make the invariants below unrepresentable when violated.
-- [ ] A tenant has **at most one** emitter profile, and a timbrado range is
+Evidence is named per criterion. A box is ticked only where the **merged** tree
+satisfies it, and the two that are not ticked are **unimplemented**, not merely
+unchecked — see Completion Notes.
+
+- [x] `fiscal_emitter_profile`, `fiscal_emitter_activity`,
+      `fiscal_establishment` and `fiscal_timbrado_range` exist, tenant-scoped,
+      with the constraints that make the invariants below unrepresentable when
+      violated. _(migration `20261007000002` and its `20261007000003`
+      correction; the live-PostgreSQL suite asserts each constraint in its own
+      rolled-back transaction)_
+- [x] A tenant has **at most one** emitter profile, and a timbrado range is
       unique on
-      `(tenant, establishment, expedition point, document type, series)`.
-- [ ] The allocation returns the next `dNumDoc` for a
+      `(tenant, establishment, expedition point, document type, series)`. _(the
+      index also carries the timbrado number, per the review's `R3-001` — the
+      Manual's identity starts with it)_
+- [x] The allocation returns the next `dNumDoc` for a
       `(establishment, point, document type)` and **never returns the same
-      number twice**, under concurrent callers.
-- [ ] The allocation is **monotonic**: a number is never reissued, and retiring
-      or exhausting a range never frees one.
-- [ ] When a range is exhausted, the allocation **advances to the next series in
+      number twice**, under concurrent callers. _(`allocation.test.ts`, "gives N
+      concurrent callers N distinct numbers"; the live-PostgreSQL case exercises
+      the compare-and-swap)_
+- [x] The allocation is **monotonic**: a number is never reissued, and retiring
+      or exhausting a range never frees one. _(the `BEFORE UPDATE` trigger plus
+      the static CHECK, both directions pinned against PostgreSQL 16)_
+- [x] When a range is exhausted, the allocation **advances to the next series in
       lexicographic order** (`null -> AA -> AB -> … -> AZ -> BA -> … -> ZZ`),
-      opening that series' row and marking the previous one `EXHAUSTED`. _(the
-      order itself is WU-B, done; the row work is WU-D)_
-- [ ] `ZZ` exhausted is a terminal state: the allocation fails with a named
-      failure rather than wrapping or reusing. _(WU-B returns `null` and refuses
-      any successor of `ZZ`; WU-D surfaces it as the allocation's failure)_
-- [ ] A series is **never skipped**: the allocation cannot produce a series that
-      is not the successor of the current one. _(WU-B's `assertSeriesSuccession`
-      makes the check local and loud; WU-D calls it)_
+      opening that series' row and marking the previous one `EXHAUSTED`. _(WU-D,
+      including the forty-rollover case)_
+- [x] `ZZ` exhausted is a terminal state: the allocation fails with a named
+      failure rather than wrapping or reusing. _(`SERIES_EXHAUSTED`; WU-B
+      returns `null` and refuses any successor of `ZZ`, WU-D surfaces it)_
+- [x] A series is **never skipped**: the allocation cannot produce a series that
+      is not the successor of the current one. _(WU-B's
+      `assertSeriesSuccession`, whose failure codes are asserted by test)_
 - [ ] `series_started_at` is **set once**, from the signature timestamp the
       caller supplies after signing, and a second call never overwrites it.
+      **NOT IMPLEMENTED.** The column exists and every write sets it `NULL`
+      (`timbrado.service.ts`, the rollover's `openSeries`); `TimbradoRangeStore`
+      exposes `findCurrentRange`, `claimNumber`, `closeRange` and `openSeries`,
+      and no operation sets a series start.
 - [x] A range that has allocated at least one number **cannot be deleted**, and
       its counter cannot be lowered. _(WU-C: the deletion is a trigger, and the
       counter's monotonicity is a trigger because a CHECK cannot see the old
       row)_
-- [ ] The assembled `EmitterFiscalProfile` satisfies
+- [x] The assembled `EmitterFiscalProfile` satisfies
       `buildDteRequestFromInvoice` for a fixture invoice: the mapper accepts it
-      with no change to the mapper.
+      with no change to the mapper. _(`emitter-profile.test.ts` builds the
+      request through the real mapper)_
 - [ ] The RUC in the profile is the one the certificate carries (§22.4) —
-      enforced or refused, never silently accepted.
-- [ ] Every route requires `fiscal.profile.manage`; a cross-tenant read or write
-      returns `404`.
-- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
+      enforced or refused, never silently accepted. **NOT IMPLEMENTED.** Nothing
+      compares the profile's `ruc` with the tenant's `ACTIVE` signing material;
+      `assembleEmitterProfile` emits what the row holds. Baseline §22.4's `D101`
+      states the rule: "Debe corresponder al RUC del certificado digital
+      utilizado para firmar el DE".
+- [x] Every route requires `fiscal.profile.manage`; a cross-tenant read or write
+      returns `404`. _(`apps/api/src/rbac/route-contract.probe.test.ts` pins the
+      permission on every route; the service refuses a caller without it, and a
+      range whose establishment is in another tenant, before the insert)_
+- [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
+      _(the branch's Verification block below; CI run `37679607152` green on all
+      three checks at PR #108)_
 
 ## Domain Invariants
 
@@ -180,22 +205,26 @@ reason this Story has a counter and not a "free numbers" query.
 ## API
 
 ```text
-POST   /fiscal/emitter-profile
+PUT    /fiscal/emitter-profile
 GET    /fiscal/emitter-profile
-PATCH  /fiscal/emitter-profile
 
-POST   /fiscal/establishments
 GET    /fiscal/establishments
-PATCH  /fiscal/establishments/:id
+POST   /fiscal/establishments
+PUT    /fiscal/establishments/:id
 
-POST   /fiscal/timbrado-ranges
 GET    /fiscal/timbrado-ranges
-PATCH  /fiscal/timbrado-ranges/:id
+POST   /fiscal/timbrado-ranges
 POST   /fiscal/timbrado-ranges/:id/retire
 ```
 
 Every one requires `fiscal.profile.manage`. Cross-tenant access to a resource id
 returns `404`.
+
+**The verbs are `PUT`, not `POST`/`PATCH`** — the story listed them wrongly and
+`apps/api/src/rbac/route-contract.probe.test.ts` is the record of what the
+controller actually exposes. **There is no update route for a range**: its
+identity and its counter are immutable once it has allocated a number, so the
+only lifecycle command is `retire`.
 
 **The allocation is deliberately not a route.** It is a service method
 [[FISC-012]] calls while building a DE; exposing it over HTTP would let a caller
@@ -720,16 +749,47 @@ already right, so it is recorded.
 ## Files / Modules
 
 ```text
-packages/database/prisma/schema.prisma        three tables and two enums
-packages/fiscal/src/timbrado/series.ts        the series order, pure
-packages/fiscal/src/timbrado/series.test.ts   21 cases
-packages/fiscal/src/dte/dte.rules.ts          exports SERIES_PATTERN, one source
-apps/api/src/fiscal/profile/**                routes, service, repository
-docs/06-fiscal/SIFEN-BASELINE.md              §13 carries the Manual's full text
-odd/tasks/epic-16-sifen-direct.md             the epic tracker, T7
+packages/database/prisma/schema.prisma            four tables, one enum, two migrations
+packages/fiscal/src/timbrado/series.ts            the series order, pure
+packages/fiscal/src/timbrado/allocation.ts        the allocation and its store port
+packages/fiscal/src/timbrado/emitter-profile.ts    assembleEmitterProfile for the mapper
+packages/fiscal/src/dte/dte.catalogues.ts         the descriptions, keyed by code
+packages/fiscal/src/dte/dte.rules.ts              exports SERIES_PATTERN, one source
+apps/api/src/fiscal/timbrado/**                   routes, service, repository, Prisma store
+docs/06-fiscal/SIFEN-BASELINE.md                  §13 carries the Manual's full text
+odd/tasks/epic-16-sifen-direct.md                 the epic tracker, T7
 ```
 
 ## Completion Notes
 
-_Status must remain non-`done` until every acceptance criterion and gate
-passes._
+**The Story is merged and it is not closed.** Merged as PR **#108**, merge
+commit `ffd08a1`, 2026-10-07, CI run **`37679607152`** green on all three checks
+(Database migrations, Lint/Typecheck/Test/Build, DTE XSD validation). The
+Verification block below is the branch's, recorded as it ran.
+
+**`story-finish` was not run.** `status` therefore stays `in-progress`, and the
+criteria are not ticked wholesale. Two of them are **unimplemented**, verified
+against the merged tree rather than inferred from the checkboxes:
+
+1. **`series_started_at` is set once, from the caller's signature timestamp.**
+   The column exists and every write sets it `NULL`; `TimbradoRangeStore`
+   exposes four operations and none of them sets a series start. The caller the
+   Story names is [[FISC-012]], which is where the signature timestamp exists.
+2. **The profile's RUC must be the certificate's RUC** (baseline §22.4, `D101`:
+   "Debe corresponder al RUC del certificado digital utilizado para firmar el
+   DE"). Nothing compares the two. The Story requires this to be _enforced or
+   refused, never silently accepted_, so it is open rather than satisfied by
+   omission — and it is enforceable today, because [[FISC-007]] already stores
+   the tenant's certificate per environment.
+
+The smallest completion is one work unit on this Story's surface: the set-once
+store operation plus its service method, and the profile-write refusal against
+the tenant's `ACTIVE` signing material. Both are ordinary additions; neither
+reopens a decision.
+
+**Two smaller documentation defects were corrected in the same pass**, each
+verified against the merged tree: the route table listed `POST`/`PATCH` verbs
+where the controller exposes `PUT` (and a `PATCH` on a range, which does not
+exist), and the Files/Modules block still said "three tables and two enums" and
+pointed at `apps/api/src/fiscal/profile/**`, neither of which is the shipped
+shape.

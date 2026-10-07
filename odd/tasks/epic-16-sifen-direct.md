@@ -3,8 +3,8 @@ feature: epic-16-sifen-direct
 epic: EPIC-16
 status: in-progress
 created: 2026-10-03
-updated: 2026-10-05
-branch: feat/epic-16-fisc-008-dte-xml
+updated: 2026-10-07
+branch: main
 ---
 
 # EPIC-16 SIFEN Direct — ODD task tracker
@@ -110,12 +110,23 @@ candidate 1 exists.
 
 1. **Holding the tenant's signing material.** Changes what the Fiscal boundary
    is responsible for: RESTRICTED storage, rotation, removal, and what may never
-   be logged or returned. → before FISC-007.
-2. **The XAdES signing dependency.** Which library, its provenance, its update
-   story and how it is pinned. → before FISC-009.
-3. **An asynchronous status capability on the provider port.** SIFEN answers
+   be logged or returned. → before FISC-007. **Resolved: [[ADR-005]] `accepted`
+   2026-10-04.**
+2. **The signing dependency.** Which library, its provenance, its update story
+   and how it is pinned. → before FISC-009. **Resolved: [[ADR-006]] `accepted`
+   2026-10-07** — `xml-crypto` 6.3.3, and the target is **XMLDSig**, which is
+   what SIFEN v150 asks for; the vault's "XAdES" wording traces to PRD §23 and
+   is recorded, not edited.
+3. **An asynchronous outcome capability on the provider port.** SIFEN answers
    asynchronously, so `issue` alone is insufficient; the port needs a status
-   query and the worker needs reconciliation. → before FISC-012.
+   query and the worker needs reconciliation. → **before FISC-010**, not
+   FISC-012: FISC-010 is the story that produces the asynchronous result, so the
+   port has to expose it before FISC-012 consumes it. Becomes **ADR-007**.
+4. **The SIFEN transport: SOAP over mutual TLS with the tenant's certificate,
+   and the client/parser dependency.** The adapter runs in the worker and must
+   authenticate as the tenant, so the boundary gains a per-call credential read
+   on a process-singleton provider, and an XML parser `packages/fiscal` does not
+   have today. → before FISC-010. Becomes **ADR-008**.
 
 ## Story plan
 
@@ -279,12 +290,14 @@ candidate 1 exists.
       whose tables the Manual references but does not contain.
 - [x] T4b — **FISC-008 WU-C: the invoice -> request mapper — DONE 2026-10-06.**
       See **WU-C: the mapper** below.
-- [ ] T5 — **FISC-009: XMLDSig signing + `SIGNING` + ADR-006 — STARTED
-      2026-10-07.** Story at `docs/02-stories/FISC-009-xmldsig-signing.md`,
-      contract pinned from baseline §5. **ADR-006 is ACCEPTED (2026-10-07):
-      `xml-crypto` 6.3.3 (MIT)**, a dependency of `packages/fiscal` only; its
-      four packages are all permissive and none is native. **The finding that
-      changes the vocabulary**: SIFEN v150 does **not** ask for XAdES. `XAdES`,
+- [x] T5 — **FISC-009: XMLDSig signing + `SIGNING` + ADR-006 — DONE
+      2026-10-07.** Merged as PR **#107**, merge commit **`e1a29d7`** (branch
+      `feat/epic-16-fisc-009-xmldsig-signing`); the Story is `status: done`.
+      Story at `docs/02-stories/FISC-009-xmldsig-signing.md`, contract pinned
+      from baseline §5. **ADR-006 is ACCEPTED (2026-10-07): `xml-crypto` 6.3.3
+      (MIT)**, a dependency of `packages/fiscal` only; its four packages are all
+      permissive and none is native. **The finding that changes the
+      vocabulary**: SIFEN v150 does **not** ask for XAdES. `XAdES`,
       `QualifyingProperties` and `SignedProperties` occur **zero times** in the
       three official schemas, and the Manual's §7.9 synthesis reads "Firma XML
       Digital Signature, Enveloped". The vault's "XAdES" wording traces to PRD
@@ -341,37 +354,48 @@ candidate 1 exists.
       the port and the fake provides. Recorded in the Story under "Why this
       acceptance criterion moved" and in the epic's FISC-012 row.
 - [ ] T6 — FISC-010: DNIT web services.
-- [ ] T7 — **FISC-011: timbrado and numbering ranges — STARTED 2026-10-07.**
-      Story at `docs/02-stories/FISC-011-timbrado-and-numbering.md`. **No ADR
-      needed**: the epic's ADR list carries only ADR-006 and ADR-007, and three
-      tenant-scoped tables plus a counter are a domain model, not an
-      architecture change. **The Manual's §10.5 was extracted in full (p. 59-60)
-      and it is richer than the baseline's summary** — three rules the baseline
-      did not carry, now recorded in `SIFEN-BASELINE.md` §13 verbatim: the
-      series order is **lexicographic** (`AA, AB, … AZ, BA, … ZZ`) and _"El
-      sistema validará la secuencialidad del uso de la serie"_; **the initial
-      range carries no series** until the whole `0000001`-`9999999` range is
-      consumed **per document type**; and **the series' start date is the DE's
-      digital-signature date-time**, which SIFEN takes on receipt — so the
-      allocation cannot know it, because the number is part of the CDC and the
-      CDC is signed afterwards. SIFEN approves only the previous, the same, or
-      the next series, which makes an out-of-order series a rejection rather
-      than a cosmetic difference. **The invariant that governs the allocation**:
-      §6.5 lets a rejected DE reuse the **same CDC**, and the number is part of
-      the CDC, so **a consumed number is never reused** — monotonic, like the
-      stock and cash ledgers. **Decided with the maintainer 2026-10-07**: three
-      tables (`fiscal_emitter_profile` + `fiscal_establishment` +
-      `fiscal_timbrado_range`), **automatic and audited** series advancement,
-      and HTTP routes behind a new `fiscal.profile.manage` permission with the
-      allocation as an **internal service**, not a route. **Work units**, in
-      order. **WU-A, the Story and the baseline correction** (this commit).
-      **WU-B, the pure series progression** (`packages/fiscal/src/timbrado/**`):
-      `null -> AA`, `AZ -> BA`, `ZZ -> terminal`, no `Ñ`, no skipping. **WU-C,
-      the schema**: the three tables, the two enums, the migration, the static
-      migration tests and the live-PostgreSQL proof. **WU-D, the allocation**:
-      the transactional compare-and-swap counter with the series rollover.
-      **WU-E, the surface**: the profile/establishment/range routes, the
-      permission, the audit and tenant isolation.
+- [~] T7 — **FISC-011: timbrado and numbering ranges — MERGED, NOT CLOSED
+  (2026-10-07).** Merged as PR **#108**, merge commit **`ffd08a1`**, CI run
+  `37679607152` green on all three checks (branch
+  `feat/epic-16-fisc-011-timbrado-numbering`). **`story-finish` was never run,
+  and two acceptance criteria are unimplemented rather than merely unchecked** —
+  verified against the merged tree: **(1)** `series_started_at` is set once from
+  the caller's signature timestamp: the column exists and every write sets it
+  `NULL`, and none of `TimbradoRangeStore`'s four operations sets a series
+  start; **(2)** the profile's RUC must be the certificate's RUC (baseline
+  §22.4, `D101`): nothing compares the two, and the assembler emits
+  `profile.ruc`. The smallest completion for both is one work unit on this
+  Story's surface — a set-once store operation plus service method, and the
+  refusal at profile write time. Story at
+  `docs/02-stories/FISC-011-timbrado-and-numbering.md`. **No ADR needed**: the
+  epic's ADR list carries only ADR-006 and ADR-007, and three tenant-scoped
+  tables plus a counter are a domain model, not an architecture change. **The
+  Manual's §10.5 was extracted in full (p. 59-60) and it is richer than the
+  baseline's summary** — three rules the baseline did not carry, now recorded in
+  `SIFEN-BASELINE.md` §13 verbatim: the series order is **lexicographic**
+  (`AA, AB, … AZ, BA, … ZZ`) and _"El sistema validará la secuencialidad del uso
+  de la serie"_; **the initial range carries no series** until the whole
+  `0000001`-`9999999` range is consumed **per document type**; and **the series'
+  start date is the DE's digital-signature date-time**, which SIFEN takes on
+  receipt — so the allocation cannot know it, because the number is part of the
+  CDC and the CDC is signed afterwards. SIFEN approves only the previous, the
+  same, or the next series, which makes an out-of-order series a rejection
+  rather than a cosmetic difference. **The invariant that governs the
+  allocation**: §6.5 lets a rejected DE reuse the **same CDC**, and the number
+  is part of the CDC, so **a consumed number is never reused** — monotonic, like
+  the stock and cash ledgers. **Decided with the maintainer 2026-10-07**: three
+  tables (`fiscal_emitter_profile` + `fiscal_establishment` +
+  `fiscal_timbrado_range`), **automatic and audited** series advancement, and
+  HTTP routes behind a new `fiscal.profile.manage` permission with the
+  allocation as an **internal service**, not a route. **Work units**, in order.
+  **WU-A, the Story and the baseline correction** (this commit). **WU-B, the
+  pure series progression** (`packages/fiscal/src/timbrado/**`): `null -> AA`,
+  `AZ -> BA`, `ZZ -> terminal`, no `Ñ`, no skipping. **WU-C, the schema**: the
+  three tables, the two enums, the migration, the static migration tests and the
+  live-PostgreSQL proof. **WU-D, the allocation**: the transactional
+  compare-and-swap counter with the series rollover. **WU-E, the surface**: the
+  profile/establishment/range routes, the permission, the audit and tenant
+  isolation.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
       **Inherits FISC-009's worker signing stage**: claim `SIGNING`, sign the DE
       with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to

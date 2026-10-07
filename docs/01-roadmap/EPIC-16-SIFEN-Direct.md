@@ -75,7 +75,8 @@ word.
   environment/certification requirements.
 - **DTE XML generation** against the official XSDs, schema-validated before
   submission, for the document types the product actually issues.
-- **XAdES signing** with the tenant's certificate, including the return of the
+- **XMLDSig signing** with the tenant's certificate ([[ADR-006]]: SIFEN v150
+  asks for XML Digital Signature, not XAdES), including the return of the
   `SIGNING` lifecycle state that [[DEC-047]] deliberately omitted while a fake
   stood in for the provider.
 - **The tenant's signing material in the `SecretStore`** — a private key this
@@ -113,8 +114,9 @@ word.
 - [ ] A tenant's signing material is stored as RESTRICTED material, never in
       plaintext, never in a log, never in an application record, and is
       removable and rotatable.
-- [ ] Signing produces a verifiable XAdES signature and drives the `SIGNING`
-      state.
+- [ ] Signing produces a verifiable XMLDSig signature and drives the `SIGNING`
+      state. ([[FISC-009]] implemented it against the profile of
+      `SIFEN-BASELINE.md` §5; the criterion stays open until the epic closes.)
 - [ ] The DNIT web services are called outside database transactions, with
       bounded retry for transient failures and no retry for functional or schema
       rejections (PRD §22).
@@ -158,8 +160,9 @@ FISC-006 and must not be written from memory.
   implements against.
 - A DNIT habilitación as an electronic issuer for the test tenant, and the
   certificate that goes with it, before FISC-013 can produce real evidence.
-- An XAdES signing capability. No such dependency exists in the repository
-  today; adding one needs an ADR (see below).
+- ~~An XAdES signing capability.~~ **Resolved by [[ADR-006]] `accepted`
+  2026-10-07**: `xml-crypto` 6.3.3 is a dependency of `packages/fiscal`, and the
+  target is XMLDSig.
 
 ## Exit Criteria
 
@@ -200,10 +203,20 @@ Architectural changes need an **ADR**, because `DOCUMENTATION-RULES.md` names
    PRD's text, which is **not edited**; the ADR and [[FISC-009]] record that the
    implementation target is the profile of `SIFEN-BASELINE.md` §5. It is the
    gate for [[FISC-009]].
-3. **An asynchronous status capability on the provider port — ADR-007, not yet
+3. **An asynchronous outcome capability on the provider port — ADR-007, not yet
    written.** SIFEN answers asynchronously, so `issue` alone is not enough; the
    port needs a way to ask what happened, and the worker needs a reconciliation
-   path. It is the gate for [[FISC-012]].
+   path. **It is the gate for [[FISC-010]], not [[FISC-012]]**: FISC-010 is the
+   story that produces the asynchronous result, so the port must expose it
+   before FISC-012 consumes it. The epic's earlier "before FISC-012" ordering
+   was corrected on 2026-10-07.
+4. **The SIFEN transport: SOAP over mutual TLS — ADR-008, not yet written.** The
+   adapter runs inside the worker and the test guide requires mutual
+   authentication with the taxpayer's certificate, so the boundary gains a
+   per-call credential read on a process-singleton provider, plus an XML parser
+   `packages/fiscal` does not have today: its production dependencies are
+   `@nestjs/common`, `asn1js`, `pkijs` and `xml-crypto`, and `libxmljs2` is a
+   dev dependency for the schema gate. It is the gate for [[FISC-010]].
 
 ## Technical Debt
 
