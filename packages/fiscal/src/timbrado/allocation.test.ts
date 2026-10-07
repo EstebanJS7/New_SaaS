@@ -76,7 +76,11 @@ class FakeRanges implements TimbradoRangeStore {
     return Promise.resolve(candidates[0] ? { ...candidates[0] } : null);
   }
 
-  claimNumber(args: { rangeId: string; expectedNextNumber: number }): Promise<boolean> {
+  claimNumber(args: {
+    key: { tenantId: string };
+    rangeId: string;
+    expectedNextNumber: number;
+  }): Promise<boolean> {
     const row = this.rows.find((candidate) => candidate.id === args.rangeId);
     if (!row) return Promise.resolve(false);
     // The compare-and-swap: a claim whose observed value has moved loses.
@@ -88,7 +92,7 @@ class FakeRanges implements TimbradoRangeStore {
     return Promise.resolve(true);
   }
 
-  closeRange(args: { rangeId: string }): Promise<boolean> {
+  closeRange(args: { key: { tenantId: string }; rangeId: string }): Promise<boolean> {
     const row = this.rows.find((candidate) => candidate.id === args.rangeId);
     if (row?.status !== "ACTIVE") return Promise.resolve(false);
     row.status = "EXHAUSTED";

@@ -117,11 +117,20 @@ export interface TimbradoRangeStore {
    * Consumes one number **if and only if** the counter still holds
    * `expectedNextNumber`. `false` means the caller lost the race and must
    * re-read; it must never fall back to an unconditional write.
+   *
+   * The key travels with the write rather than being held by the store, so every
+   * statement the adapter issues is tenant-scoped by the authority the caller
+   * already holds — the same rule the repositories follow, applied at the one
+   * place where a missing scope would cross tenants silently.
    */
-  claimNumber(args: { rangeId: string; expectedNextNumber: number }): Promise<boolean>;
+  claimNumber(args: {
+    readonly key: TimbradoRangeKey;
+    readonly rangeId: string;
+    readonly expectedNextNumber: number;
+  }): Promise<boolean>;
 
   /** Closes a spent range if and only if it is still ACTIVE. */
-  closeRange(args: { rangeId: string }): Promise<boolean>;
+  closeRange(args: { readonly key: TimbradoRangeKey; readonly rangeId: string }): Promise<boolean>;
 
   /**
    * Opens the successor series, inheriting the authorisation's span, validity
@@ -212,6 +221,7 @@ export async function allocateDocumentNumber(args: {
     }
 
     const claimed = await store.claimNumber({
+      key,
       rangeId: range.id,
       expectedNextNumber: range.nextNumber,
     });
@@ -267,7 +277,7 @@ async function rollOverSeries(args: {
     );
   }
 
-  const closed = await store.closeRange({ rangeId: range.id });
+  const closed = await store.closeRange({ key, rangeId: range.id });
   if (!closed) {
     // Another caller closed it first and is opening the successor itself.
     return false;

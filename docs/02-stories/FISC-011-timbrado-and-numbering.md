@@ -329,6 +329,23 @@ refuses it and says to retire instead.
 
 ## Implementation Summary
 
+**WU-E, part 3 (in progress) — the permission and the Prisma adapter.**
+`fiscal.profile.manage` joins the permission seeds, held by OWNER and ADMIN
+alongside the signing-material one, and `apps/api/src/fiscal/timbrado/` carries
+the port's Prisma implementation.
+
+The adapter is thin on purpose — every decision is in `packages/fiscal` and
+everything here is one statement — and it is typed with **Prisma's own argument
+types**. That is the resolution of the fitting problem WU-D found: a
+hand-written delegate interface does not match Prisma's generic `updateMany`, so
+the port is named operations, and here, where Prisma's types ARE available,
+using them makes the delegate fit by construction rather than by hope.
+
+Its suite asserts the SHAPE of the four statements, because that is the
+adapter's whole content: the tenant is in every write's `where`, the claim
+really compares the counter it was given, and the successor inherits the
+authorisation instead of reissuing it.
+
 **WU-E, part 2 — the profile assembly.**
 `packages/fiscal/src/timbrado/emitter-profile.ts`: `assembleEmitterProfile`
 turns the stored rows into the `EmitterFiscalProfile` the mapper takes, and it
