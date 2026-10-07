@@ -279,10 +279,74 @@ candidate 1 exists.
       whose tables the Manual references but does not contain.
 - [x] T4b — **FISC-008 WU-C: the invoice -> request mapper — DONE 2026-10-06.**
       See **WU-C: the mapper** below.
-- [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
+- [ ] T5 — **FISC-009: XMLDSig signing + `SIGNING` + ADR-006 — STARTED
+      2026-10-07.** Story at `docs/02-stories/FISC-009-xmldsig-signing.md`,
+      contract pinned from baseline §5. **ADR-006 is ACCEPTED (2026-10-07):
+      `xml-crypto` 6.3.3 (MIT)**, a dependency of `packages/fiscal` only; its
+      four packages are all permissive and none is native. **The finding that
+      changes the vocabulary**: SIFEN v150 does **not** ask for XAdES. `XAdES`,
+      `QualifyingProperties` and `SignedProperties` occur **zero times** in the
+      three official schemas, and the Manual's §7.9 synthesis reads "Firma XML
+      Digital Signature, Enveloped". The vault's "XAdES" wording traces to PRD
+      §23's own text, which is **not edited**: the ADR and the Story record that
+      the implementation target is the §5 profile. **The other half of the
+      question the epic asked is answered**: `pkijs`/`asn1js` stay what ADR-005
+      added them for (parsing PKCS#12) because **they cannot sign XML** — the
+      installed `pkijs@3.4.1` has zero `xmldsig` occurrences. **Work units for
+      the implementation**, in order. **WU-A, the ADR and the Story** (this
+      commit). **WU-B, the pure signer**
+      (`packages/fiscal/src/dte/dte.signing.ts`): the §5 profile element by
+      element, the eight forbidden elements **refused** rather than omitted, the
+      signature placed between `</DE>` and `<gCamFuFD>`, and a sign-then-verify
+      round trip. **WU-C, the `SIGNING` state**: the enum value, the migration,
+      the transition guard and the worker stage —
+      `QUEUED ->     SIGNING -> SENDING`, `SIGNING -> ERROR`, and
+      `SIGNING -> CANCELLED` still excluded because a worker holds that claim.
+      **WU-D, verification**: the signed document through the XSD gate WU-B of
+      FISC-008 built, plus the live-PostgreSQL coverage of the new enum value
+      and the new edges. **WU-A and WU-B are DONE (2026-10-07).** WU-B is
+      `packages/fiscal/src/dte/dte.signing.ts` plus 25 cases in
+      `dte.signing.test.ts` and one new case in `xsd-validation.test.ts` (the
+      really signed document, deliberately separate from the structural
+      fixture's — structure is not a signature). Two findings it produced, both
+      recorded: **the signature is a SIBLING of `DE`**, because the schema's
+      `rDE` carries `DE` and then `ref="ds:Signature"` while `tDE` holds no
+      signature, so the enveloped transform removes nothing here; and
+      **`@xmldom/xmldom` is deliberately NOT declared**, because its
+      `index.d.ts` opens with `/// <reference lib="dom" />` and declaring it
+      re-typed an unrelated WebCrypto union in the PKCS#12 fixture, breaking
+      `typecheck` in a file this Story does not touch. Gates green: fiscal
+      lint/typecheck/test/build, the suite run with `DTE_XSD_REQUIRED=1`, root
+      18/18, 18/18, 19/19, 11/11, and `format-check`. The live-PostgreSQL gate
+      belongs to WU-C. **WU-C1 is DONE (2026-10-07): the `SIGNING` state.** The
+      enum value, the migration `20261007000001_fiscal_document_signing_state`,
+      and the guard body — `QUEUED -> SIGNING`, `SIGNING -> SENDING`,
+      `SIGNING -> ERROR`, with `SIGNING -> CANCELLED` still excluded because
+      `SIGNING` is a claim like `SENDING` and a worker holds it. `SIGNING` is
+      declared **last** in the Prisma enum on purpose:
+      `ALTER TYPE ... ADD VALUE` appends, so declaring it between `QUEUED` and
+      `SENDING` would describe an order the database cannot have without
+      recreating the type; the lifecycle's real order lives in the guard.
+      **Proven against a live PostgreSQL 16**, not only asserted: the migration
+      applies inside the transaction `prisma migrate deploy` wraps it in, the
+      value lands last in `pg_enum`, and the edges were exercised on a real row
+      in a transaction that was rolled back. 8 new cases in
+      `packages/database/src/schema-fiscal-signing-state.test.ts`. **WU-C2 — the
+      worker's signing stage — MOVED TO T8 / [[FISC-012]].** The worker cannot
+      build a DE yet and the reason is not missing work: there is no emitter
+      profile and no timbrado anywhere in `apps/worker` or `apps/api`
+      ([[FISC-011]] owns that storage, DEC-054 Q1-B), no `identity`/CDC without
+      them, and `qrContent` is [[FISC-012]]'s by the mapper's own note. The
+      worker also does not build a DE at all today — it hands invoice data to
+      the port and the fake provides. Recorded in the Story under "Why this
+      acceptance criterion moved" and in the epic's FISC-012 row.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
+      **Inherits FISC-009's worker signing stage**: claim `SIGNING`, sign the DE
+      with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
+      `SIGNING -> ERROR`. It is this Story's because it is the one that will
+      have [[FISC-011]]'s emitter profile and already owns the port.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 

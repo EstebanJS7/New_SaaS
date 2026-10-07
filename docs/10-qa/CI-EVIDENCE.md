@@ -1575,3 +1575,93 @@ and an unusable directory is refused instead of reporting a pass.
   `gCamItem`, and the fixture supplies exactly those; the mapping from a
   confirmed invoice is WU-C's blocked work.
 - It is not a cryptographic signature check. The signature block is structural.
+
+## EPIC-16 FISC-009 XMLDSig Signing and the SIGNING State (2026-10-07)
+
+Two things are proven here and they are proven differently, because their risks
+are different. The **signer** is proven by the official XSD and by a
+sign-then-verify round trip. The **state** is proven against a live PostgreSQL
+16, because a migration's risk is not its text but its application.
+
+### The signer, against the official schemas
+
+```text
+pnpm --filter @newsaas/fiscal test with DTE_XSD_REQUIRED=1
+  -> 164 passed / 164, 13 files
+
+new case: "accepts the document once it carries a REAL signature"
+  -> the signed DE validates against DE_v150.xsd
+
+"rejects the unsigned placeholder the builder emits on its own"
+  -> still fails, as it did in FISC-008
+```
+
+The signed-document case is deliberately separate from FISC-008's structural
+fixture case. Both pass the same gate, which is the point: **structure is not a
+signature**, and only a case that signs with real key material distinguishes
+them. The signature's own profile is asserted in `dte.signing.test.ts` — the
+five algorithm URIs, the two ordered transforms, the `#CDC` reference, the
+certificate placement, the eight forbidden elements one by one, the position
+between `</DE>` and `<gCamFuFD>`, the round trip, and purity.
+
+### The state, against a live PostgreSQL 16
+
+The `postgres:16` image CI uses, with the migration applied by
+`prisma migrate deploy`:
+
+```text
+pnpm db:deploy against a fresh database
+  -> All migrations have been successfully applied.
+
+pg_enum order for fiscal_document_status
+  -> PENDING, QUEUED, SENDING, SUBMITTED, APPROVED, REJECTED, ERROR,
+     CANCEL_PENDING, CANCELLED, SIGNING     (SIGNING last, as declared)
+
+PENDING -> SIGNING      admitted
+SIGNING -> CANCELLED    REFUSED  "fiscal document transition from SIGNING to
+                                   CANCELLED is not allowed"
+SIGNING -> SUBMITTED    REFUSED  "from SIGNING to SUBMITTED is not allowed"
+SIGNING -> SENDING      admitted
+SIGNING -> ERROR        admitted
+ERROR   -> SIGNING      admitted
+SENDING -> CANCELLED    REFUSED  "from SENDING to CANCELLED is not allowed"
+```
+
+The probe ran inside a transaction that was rolled back, so no row survives it.
+**The same assertions are now a repeatable case in the suite**, so this is
+re-proven by CI rather than by hand:
+`admits the FISC-009 SIGNING edges and keeps its cancellation excluded` in
+`apps/api/test/live-pg-isolation.e2e-spec.ts` (214 passed / 214). It runs each
+group inside a `$transaction` that is always rolled back, which is the only way
+to exercise the guard without leaving a row — `fiscal_document` cannot be
+deleted, and the suite pins the tenant's document count at its seeded baseline.
+`orders both applied fiscal enums exactly` was updated for the appended value.
+
+Two things about it are worth recording because they are easy to get wrong:
+
+- **The `ALTER TYPE ... ADD VALUE` ran inside the transaction** that Prisma
+  wraps each migration file in, with the guard's replacement in the same file.
+  The function body mentions `'SIGNING'` only inside PL/pgSQL, which is stored
+  as source and is not resolved against the enum at creation time, so it does
+  not count as a use of the new value in that transaction. This is the exact
+  risk the migration's TRANSACTION NOTE describes, now measured rather than
+  reasoned about.
+- **`SIGNING` is last in `pg_enum`**, because `ALTER TYPE ... ADD VALUE`
+  appends. Declaring it between `QUEUED` and `SENDING` in the Prisma schema
+  would describe an order the database cannot have without recreating the type,
+  so the schema declares it last and the lifecycle's real order lives in the
+  guard.
+
+### What this evidence does not prove
+
+- **The worker does not sign yet.** FISC-009's worker criterion moved to
+  [[FISC-012]]: there is no emitter profile and no timbrado anywhere in the
+  application ([[FISC-011]] owns that storage), so no DE can be built in the
+  worker to sign. The state machine and the signer are done; the wiring is not.
+- **It is not a homologation run.** The certificate is FISC-007's throwaway
+  fixture, not one from a PSC habilitado por el MIC, and nothing here talks to
+  DNIT. That is [[FISC-013]].
+- **It does not prove the signature is accepted by SIFEN.** Only DNIT can accept
+  a signature. What is proven is that it is the profile the Manual pins, that it
+  verifies against its own certificate, and that it sits where the schema
+  allows.

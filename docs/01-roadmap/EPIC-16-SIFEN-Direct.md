@@ -132,17 +132,17 @@ word.
 
 ## Stories
 
-| Story    | Scope                                                                                                                                             | Depends on         |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| FISC-006 | **SIFEN Direct scope and the DNIT baseline revalidation** — documentation only; the epic's precondition and the source of every protocol constant | —                  |
-| FISC-007 | **Tenant signing material**: the `SecretStore` boundary for the private key (RESTRICTED), rotation and removal — [[ADR-005]] + [[DEC-053]]        | FISC-006           |
-| FISC-008 | **DTE XML generation**, validated against the official XSDs                                                                                       | FISC-006           |
-| FISC-009 | **XAdES signing** and the return of the `SIGNING` lifecycle state                                                                                 | FISC-007, FISC-008 |
-| FISC-010 | **DNIT web services**: reception, query, events, and the asynchronous outcome model                                                               | FISC-008, FISC-009 |
-| FISC-011 | **Timbrado and numbering ranges** per establishment, point and document type                                                                      | FISC-006           |
-| FISC-012 | **`SifenDirectFiscalProvider`** behind the existing port, plus the port's asynchronous-status extension and provider selection                    | FISC-010, FISC-011 |
-| FISC-013 | **Contingency handling** and the certification/homologation evidence run                                                                          | FISC-012           |
-| FISC-014 | **Epic closure**: module docs, CI evidence, changelog, roadmap, advisory triage                                                                   | all                |
+| Story    | Scope                                                                                                                                                                          | Depends on         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| FISC-006 | **SIFEN Direct scope and the DNIT baseline revalidation** — documentation only; the epic's precondition and the source of every protocol constant                              | —                  |
+| FISC-007 | **Tenant signing material**: the `SecretStore` boundary for the private key (RESTRICTED), rotation and removal — [[ADR-005]] + [[DEC-053]]                                     | FISC-006           |
+| FISC-008 | **DTE XML generation**, validated against the official XSDs                                                                                                                    | FISC-006           |
+| FISC-009 | **XMLDSig signing** (not XAdES — see [[ADR-006]]) and the return of the `SIGNING` lifecycle state. The worker stage that claims it moved to FISC-012                           | FISC-007, FISC-008 |
+| FISC-010 | **DNIT web services**: reception, query, events, and the asynchronous outcome model                                                                                            | FISC-008, FISC-009 |
+| FISC-011 | **Timbrado and numbering ranges** per establishment, point and document type                                                                                                   | FISC-006           |
+| FISC-012 | **`SifenDirectFiscalProvider`** behind the existing port, the port's asynchronous-status extension, provider selection, and **the worker's signing stage** moved from FISC-009 | FISC-010, FISC-011 |
+| FISC-013 | **Contingency handling** and the certification/homologation evidence run                                                                                                       | FISC-012           |
+| FISC-014 | **Epic closure**: module docs, CI evidence, changelog, roadmap, advisory triage                                                                                                | all                |
 
 Story numbering continues the Fiscal prefix (`FISC-`). FISC-001..005 belong to
 [[EPIC-15]].
@@ -184,13 +184,22 @@ Architectural changes need an **ADR**, because `DOCUMENTATION-RULES.md` names
    introduces a reusable `SecretStore` capability with envelope encryption in
    PostgreSQL and records what the Fiscal boundary is now responsible for. Its
    product-level choices are [[DEC-053]]. It is the gate for [[FISC-007]].
-2. **An XAdES signing dependency — ADR-006, not yet written.** `AGENTS.md`
-   requires a concrete requirement before a new dependency; signing is one, but
-   the choice of library, its provenance and its update story are architectural.
-   It is the gate for [[FISC-009]]. Note that [[ADR-005]] already added `pkijs`
-   and `asn1js` for PKCS#12 parsing, which is a **different** requirement:
-   ADR-006 must state whether the signing path reuses that family or adds
-   another library.
+2. **An XMLDSig signing dependency — [[ADR-006]], `accepted` 2026-10-07.**
+   `AGENTS.md` requires a concrete requirement before a new dependency; signing
+   is one, and the choice of library is architectural. **`xml-crypto` 6.3.3
+   (MIT)**, a dependency of `packages/fiscal` only. **The family question is
+   answered**: `pkijs`/`asn1js` stay what [[ADR-005]] added them for — parsing
+   the PKCS#12 container — because **`pkijs` cannot sign XML** (the installed
+   `pkijs@3.4.1` has zero `xmldsig` occurrences; it implements CMS/PKCS#7 and
+   X.509, a different serialization). **And the vocabulary is corrected rather
+   than renamed**: SIFEN v150 does **not** ask for XAdES — `XAdES`,
+   `QualifyingProperties` and `SignedProperties` occur **zero times** in the
+   three official schemas, and the Manual's §7.9 synthesis reads "Firma **XML
+   Digital Signature, Enveloped**". The "XAdES" wording in PRD §23, in this
+   epic, in the changelog and in [[FISC-007]]/[[FISC-008]] is inherited from the
+   PRD's text, which is **not edited**; the ADR and [[FISC-009]] record that the
+   implementation target is the profile of `SIFEN-BASELINE.md` §5. It is the
+   gate for [[FISC-009]].
 3. **An asynchronous status capability on the provider port — ADR-007, not yet
    written.** SIFEN answers asynchronously, so `issue` alone is not enough; the
    port needs a way to ask what happened, and the worker needs a reconciliation

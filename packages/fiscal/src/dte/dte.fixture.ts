@@ -23,6 +23,10 @@
  *    contents (`QUJDREVGRw==`). Producing the real signature is [[FISC-009]]'s.
  */
 
+import {
+  TEST_CERTIFICATE_DER_BASE64,
+  TEST_PRIVATE_KEY_PKCS8_DER_BASE64,
+} from "../signing-material/pkcs12.fixture.js";
 import { SIFEN_TEST_EMITTER_NAME, type DteRequest } from "./dte.types.js";
 
 /**
@@ -151,6 +155,22 @@ export function validFacturaElectronicaRequest(): DteRequest {
     gCamFuFD: { dCarQR: FIXTURE_QR },
   };
 }
+
+/**
+ * [[FISC-007]]'s throwaway material as PEM, which is what [[FISC-009]]'s signer
+ * takes. The DER constants are base64 without line breaks; PEM messages carry
+ * them at 64 columns, so the wrapping is done here rather than at each call site.
+ */
+function toPem(base64: string, label: string): string {
+  const wrapped = (base64.match(/.{1,64}/g) ?? []).join("\n");
+  return `-----BEGIN ${label}-----\n${wrapped}\n-----END ${label}-----\n`;
+}
+
+/** Self-signed test certificate as PEM. Public material. */
+export const FIXTURE_CERTIFICATE_PEM = toPem(TEST_CERTIFICATE_DER_BASE64, "CERTIFICATE");
+
+/** The matching RSA-2048 private key as PKCS#8 PEM. Test-only. */
+export const FIXTURE_PRIVATE_KEY_PEM = toPem(TEST_PRIVATE_KEY_PKCS8_DER_BASE64, "PRIVATE KEY");
 
 /**
  * Replaces WU-A's `<Signature/>` placeholder with the structurally complete

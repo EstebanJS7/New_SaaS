@@ -2502,9 +2502,18 @@ enum FiscalProvider {
   @@map("fiscal_provider")
 }
 
-/// Internal fiscal lifecycle (SIFEN.md, DEC-051), excluding SIGNING until a
-/// real adapter defines that stage. Values are appended, never reordered or
-/// removed. Evolve additively only.
+/// Internal fiscal lifecycle (SIFEN.md, DEC-051). Values are appended, never
+/// reordered or removed. Evolve additively only.
+///
+/// `SIGNING` was deliberately absent while a fake stood in for the provider
+/// (DEC-047); FISC-009 returns it, and the SIFEN signing stage now exists.
+///
+/// It is declared **last** on purpose, and that is not its position in the
+/// state machine. PostgreSQL's `ALTER TYPE ... ADD VALUE` appends, so declaring
+/// it between `QUEUED` and `SENDING` here would describe an order the database
+/// cannot have without recreating the type. The lifecycle's real order lives in
+/// `fiscal_document_transition_guard`, which is where a reader should look:
+/// `QUEUED -> SIGNING -> SENDING`.
 enum FiscalDocumentStatus {
   PENDING
   QUEUED
@@ -2515,6 +2524,7 @@ enum FiscalDocumentStatus {
   ERROR
   CANCEL_PENDING
   CANCELLED
+  SIGNING
 
   @@map("fiscal_document_status")
 }

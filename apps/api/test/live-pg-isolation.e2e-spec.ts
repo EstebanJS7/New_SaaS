@@ -15818,6 +15818,11 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           "ERROR",
           "CANCEL_PENDING",
           "CANCELLED",
+          // EPIC-16 FISC-009 appended SIGNING. It is LAST because PostgreSQL's
+          // `ALTER TYPE ... ADD VALUE` appends, so this is the applied order and
+          // not the lifecycle's order: the state machine lives in
+          // `fiscal_document_transition_guard` as QUEUED -> SIGNING -> SENDING.
+          "SIGNING",
         ],
       })) {
         const actual = rows.filter((row) => row.typname === name);
@@ -15827,6 +15832,66 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         );
       }
     }, 30_000);
+
+    it("admits the FISC-009 SIGNING edges and keeps its cancellation excluded", async () => {
+      // The state machine is enforced by `fiscal_document_transition_guard` in the
+      // database, so this is the only place that proves the applied behaviour
+      // rather than the migration's text.
+      class Rollback extends Error {}
+
+      /**
+       * Runs `assert` against a fresh document inside a transaction that is always
+       * rolled back. `fiscal_document` cannot be deleted — the
+       * `fiscal_document_no_delete` guard refuses it and says to cancel instead —
+       * and the suite pins the tenant's document count at its seeded baseline, so
+       * a rolled-back transaction is the only way to exercise the guard without
+       * leaving a row behind.
+       */
+      const withFreshDocument = async (
+        assert: (setStatus: (status: string) => Promise<number>) => Promise<void>
+      ): Promise<void> => {
+        await expect(
+          prisma.$transaction(async (tx) => {
+            const saleId = await insertRawFiscalSale(tx, tenantAId);
+            const invoiceId = await insertRawFiscalInvoice(tx, tenantAId, saleId);
+            const documentId = await insertRawFiscalDocument(tx, tenantAId, invoiceId);
+            await assert(
+              (status: string) =>
+                tx.$executeRaw`
+                  UPDATE "fiscal_document" SET "status" = ${status}::fiscal_document_status
+                  WHERE "id" = ${documentId}::uuid
+                `
+            );
+            throw new Rollback();
+          })
+        ).rejects.toThrow(Rollback);
+      };
+
+      // The whole admitted path on one document: claim, fail, retry, hand off.
+      await withFreshDocument(async (setStatus) => {
+        await expect(setStatus("SIGNING")).resolves.toBe(1);
+        await expect(setStatus("ERROR")).resolves.toBe(1);
+        await expect(setStatus("SIGNING")).resolves.toBe(1);
+        await expect(setStatus("SENDING")).resolves.toBe(1);
+      });
+
+      // SIGNING is a claim, not a label: cancelling underneath the signer is
+      // excluded for the same reason SENDING -> CANCELLED is.
+      await withFreshDocument(async (setStatus) => {
+        await setStatus("SIGNING");
+        await expect(setStatus("CANCELLED")).rejects.toThrow(
+          /transition from SIGNING to CANCELLED is not allowed/
+        );
+      });
+
+      // Signing is not submitting.
+      await withFreshDocument(async (setStatus) => {
+        await setStatus("SIGNING");
+        await expect(setStatus("SUBMITTED")).rejects.toThrow(
+          /transition from SIGNING to SUBMITTED is not allowed/
+        );
+      });
+    }, 60_000);
 
     it("proves the exact applied fiscal_document columns and scalar types", async () => {
       const rows = await prisma.$queryRaw<
