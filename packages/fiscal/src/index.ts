@@ -85,6 +85,13 @@ export {
   computeCdcCheckDigit,
 } from "./dte/dte.cdc.js";
 export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
+// FISC-008: the security code's generator, with its randomness injected.
+export {
+  generateSecurityCode,
+  SECURITY_CODE_DIGITS,
+  SECURITY_CODE_MAX_ATTEMPTS,
+} from "./dte/dte.codseg.js";
+export type { GeneratedSecurityCode, GenerateSecurityCodeArgs } from "./dte/dte.codseg.js";
 // FISC-008 WU-C: the invoice -> DteRequest mapper, with the profile supplied.
 export {
   addDecimals,

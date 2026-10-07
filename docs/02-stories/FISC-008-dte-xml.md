@@ -3,7 +3,7 @@ id: FISC-008
 type: story
 title: DTE XML generation validated against the official XSDs
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-006
@@ -13,7 +13,7 @@ prd_sections:
 permissions: []
 branch: feat/epic-16-fisc-008-dte-xml
 created: 2026-10-04
-updated: 2026-10-05
+updated: 2026-10-06
 ---
 
 # FISC-008 — DTE XML generation validated against the official XSDs
@@ -356,11 +356,20 @@ not three, and an _unsigned_ DE cannot validate at all. The maintainer approved
 the rewrite below, and the reasons are in baseline §21.7.
 
 - [x] `dCodSeg` is nine random digits, zero-padded, non-sequential, unrelated to
-      the document and the issuer, and never equal to `dNumDoc`. **WU-A enforces
-      every decidable part** (nine digits, value ≥ 1, never equal to `dNumDoc`,
-      zero-padding accepted) **and does not generate it**: randomness inside the
-      builder would break the determinism criterion above. The generator belongs
-      where a random source exists — still open.
+      the document and the issuer, and never equal to `dNumDoc`. **Both halves
+      now exist.** `buildDteXml` validates every decidable part (nine digits,
+      value ≥ 1, never equal to `dNumDoc`, zero-padding accepted) and still
+      never generates it, because randomness inside it would break the
+      determinism criterion above;
+      `generateSecurityCode({ randomDigit, documentNumber })` is the missing
+      half, **pure because the randomness is injected**. The three properties no
+      validator can decide are satisfied by construction — nine independent
+      draws are not a sequence and no document or issuer field takes part in
+      them — and the decidable one is enforced with a bounded retry so a broken
+      source fails loudly instead of spinning. **One observation worth
+      keeping**: a well-formed `dNumDoc` is seven digits and the code is nine,
+      so that collision is impossible in contract and the rule is a safety net;
+      the test says so, and exercises the guard with an out-of-contract value.
 - [x] A dedicated CI job fetches **the seven official artifacts a full DE
       validation needs** — the three originally named plus `Paises_v100.xsd`,
       `Departamentos_v141.xsd`, `Monedas_v150.xsd` and
@@ -389,10 +398,11 @@ the rewrite below, and the reasons are in baseline §21.7.
       degrading to a skip, and the assertion is itself tested without a network:
       a captive-portal HTML page, a short body, a non-200 status and a schema of
       the wrong namespace each fail.
-- [ ] The run is recorded in `docs/10-qa/CI-EVIDENCE.md` with the run id, the
+- [x] The run is recorded in `docs/10-qa/CI-EVIDENCE.md` with the run id, the
       revision, the artifact sizes and the number of validation cases executed.
-      **Recorded locally** (seven sizes, 100 cases, the hermetic proof); the CI
-      run id follows the push and the PR, which the maintainer owns.
+      **Run `37405674505` at `dbbcc50`**, with the seven artifact sizes, the
+      case counts and the hermetic proof; the later runs at `154c8f4` and
+      `77dc9b0` are listed beside it.
 - [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
 
 ### Closed — WU-C (the invoice → request mapping), authorized by DEC-054
@@ -415,13 +425,24 @@ the rewrite below, and the reasons are in baseline §21.7.
 - [x] **Money is never a float**: `addDecimals` sums decimal strings exactly and
       `scale` pads to a type's scale, refusing to round.
 
-### The original WU-C wording, kept for the trail
+### The original WU-C wording, superseded and kept for the trail
 
-- [ ] `dTiCam` is absent when the currency is PYG, and **every item of a
-      document carries the same currency**. The PYG half is enforced; the
-      per-item half cannot be until an item model exists, because `gCamItem` is
-      one of the groups whose members §21.6 records as untranscribed.
-- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
+These two bullets were the Story's WU-C acceptance criteria before [[DEC-054]]
+re-scoped that work unit. They are **not live criteria** and their premises are
+gone, so they are recorded as prose rather than as unchecked boxes:
+
+**`dTiCam` is absent when the currency is PYG, and every item of a document
+carries the same currency.** Both halves now hold. The PYG half is enforced in
+the builder and in the mapper. The currency half turned out to be **structural
+rather than per-item**: `cMoneOpe` occurs exactly **once** in `DE_v150.xsd`, in
+`gOpeCom`, and the mapper takes a single `invoice.currency` — so a DE cannot
+carry two currencies, and nothing had to be enforced per item. What _is_ per
+item is the **exchange rate**: `tgValorItem` carries `dTiCamIt` (optional) for
+the `D017 = 2` case, and the mapper does not emit it — it takes `F023` as an
+input instead, which is recorded as a known limitation rather than hidden.
+
+**Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.**
+Recorded as the live criterion above; the trail copy is redundant.
 
 ## Domain Invariants
 
@@ -468,13 +489,19 @@ timbrado data; where that data is stored is FISC-011's scope.
 pure `typed request -> XML string` function and its validators:
 
 ```text
-dte.types.ts    the request, the pinned enumerations and the quoted constants
-dte.rules.ts    DteValidationError + assertValidDteRequest, one rule per cited section
-dte.builder.ts  buildDteXml(request): string  — no clock, no randomness, no I/O
-dte.builder.test.ts  22 cases over the sections this Story pins
+dte.types.ts        the request, the pinned enumerations and the quoted constants
+dte.rules.ts        DteValidationError + assertValidDteRequest, one rule per cited section
+dte.builder.ts      buildDteXml(request): string  — no clock, no randomness, no I/O
+dte.cdc.ts          composeCdc + computeCdcCheckDigit  (both halves pinned 2026-10-06)
+dte.codseg.ts       generateSecurityCode  — pure, with the randomness injected
+dte.mapper.ts       buildDteRequestFromInvoice  — pure, three inputs
+dte.fixture.ts      the schema-valid request and the structural signature
+xsd-artifacts.ts    the seven official artifacts, their assertions, the include rewrite
+xsd-validator.ts    the entry schema and the libxml2 validation
 ```
 
-The public surface is exported from `packages/fiscal/src/index.ts`.
+The public surface is exported from `packages/fiscal/src/index.ts`, and the
+scaffolding — the fixture, the schema tooling — from `@newsaas/fiscal/testing`.
 
 **Structure.** `rDE`'s four children and `DE`'s eleven are emitted in schema
 order, `dVerFor` is the literal `150`, `dSisFact` is `1`, the `<Signature>`
@@ -524,6 +551,18 @@ blocked.
 ## Verification
 
 ```text
+FISC-008 complete on feat/epic-16-fisc-008-dte-xml, 2026-10-06:
+
+  DTE_XSD_DIR=... DTE_XSD_REQUIRED=1 pnpm --filter @newsaas/fiscal test
+    -> 137 passed / 137, the schema-validation suite running
+  pnpm --filter @newsaas/fiscal lint / typecheck / build   pass
+  pnpm format-check (whole repo)                          pass
+  pnpm lint / typecheck                                    18/18, 18/18
+  pnpm test / build                                        19/19, 11/11
+  pnpm --filter @newsaas/api test:live-pg                  213 passed / 213
+  PR #106, head a0b49d9, three checks green:
+    DTE XSD validation 28s · Database migrations 1m21s · quality 4m05s
+
 WU-A + WU-B on feat/epic-16-fisc-008-dte-xml, 2026-10-05:
 
   pnpm fetch:dte-schemas /tmp/dte-xsd-live
@@ -615,6 +654,15 @@ run meaningful is itself tested):
 - A B2C receptor carrying an identity document is **both accepted by §22.11 and
   schema-valid**, which §22.3's old clause would have refused.
 - An unusable directory is refused instead of reporting a pass.
+
+### The security code
+
+`dte.codseg.test.ts` (6 cases) covers §10.3's rules one at a time: nine digits
+with zero-padding, two different draws producing different codes, **that a
+well-formed seven-digit `dNumDoc` cannot collide with a nine-digit code** (so
+the Manual's rule is a safety net, stated as such), the redraw when the draw
+_does_ collide, the bounded retry turning a broken source into an error instead
+of a hang, and a source that returns something other than a digit.
 
 ## Known Limitations
 
@@ -900,9 +948,31 @@ odd/tasks/epic-16-sifen-direct.md           the epic tracker, T4
 
 ## Completion Notes
 
-_Status must remain non-`done` until every acceptance criterion and gate
-passes._ WU-A and WU-B are implemented, gated and review-approved; **WU-C
-remains blocked**, so the Story stays `in-progress`.
+**`done` 2026-10-06.** Every acceptance criterion is checked and every gate
+passes; the three work units, the CDC composition, the security-code generator
+and the mapper are implemented and covered, and the limitations below are
+recorded rather than hidden.
+
+**What `done` does NOT mean here**, because a reader should not have to infer
+it:
+
+- **Two review lineages are not closed.** `review-d1934d6b6a6db4b0` is
+  **escalated** (terminal: its targeted validator produced no verdict) and
+  `review-83755a14a6eda333` is stuck at `correction_required` with a binding the
+  relay rejected. The content of both was re-reviewed in fresh lineages that
+  **closed `approved`** — `review-ba6218e187d42859` and
+  `review-d348e4bdb5bcd5b0` — so the receipts exist, but the original ranges
+  have no closure. The tracker records this, and the maintainer's options are
+  the provider's own: inspect the lineage's authority, or disable the review
+  switch for this clone.
+- **`R3-CDC-DATE` is open in [[TD-032]] and it is the one with a real failure
+  mode**: every date in this Story is checked by a regex, so
+  `2026-13-45T99:99:99` passes our validators **and** the official `fecHhmmss`
+  pattern. `dFecFirma` and `dFeEmiDE` sit inside the signed document and the
+  Manual's 72-hour and 360-hour windows are computed from them.
+- **The per-item exchange rate is not emitted.** `tgValorItem` carries the
+  optional `dTiCamIt` for the `D017 = 2` case; the mapper takes `F023` as an
+  input instead, which supports the global-rate case only.
 
 **WU-C's blocker list was re-derived on 2026-10-05** by a read-only
 investigation, and two of the three items on it were wrong:

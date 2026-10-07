@@ -127,7 +127,11 @@ export interface EmitterFiscalProfile {
 export interface DocumentIdentity {
   readonly cdc: string;
   readonly dDVId: string;
-  /** `B004`: nine digits, never equal to `dNumDoc`. */
+  /**
+   * `B004`: nine digits, never equal to `dNumDoc`. `generateSecurityCode` in
+   * `dte.codseg.ts` produces one from an injected random source; the mapper takes
+   * it as an input so it stays pure.
+   */
   readonly securityCode: string;
   readonly environment: "test" | "production";
 }
