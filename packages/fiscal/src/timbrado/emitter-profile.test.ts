@@ -342,15 +342,45 @@ describe("an input that did not come from the database is refused", () => {
     expect(failureOf(() => assembleEmitterProfile(args({ activities: [] })))).toBe("NO_ACTIVITY");
   });
 
-  it("refuses a half-filled gRespDE, which the database's CHECK forbids", () => {
+  it("refuses a gRespDE missing a field", () => {
+    const half = args({
+      profile: { ...args().profile, responsibleIssuerType: 1, responsibleIssuerTypeName: null },
+    });
+    expect(failureOf(() => assembleEmitterProfile(half))).toBe("INCOMPLETE_RESPONSIBLE_ISSUER");
+  });
+
+  it("refuses a gRespDE whose type is missing but whose fields are set", () => {
+    // The other direction: returning undefined here would DROP the four fields
+    // rather than complain, which is the guessing this module refuses to do.
     const half = args({
       profile: {
         ...args().profile,
-        responsibleIssuerType: 1,
-        responsibleIssuerTypeName: null,
+        responsibleIssuerType: null,
+        responsibleIssuerTypeName: "Cédula paraguaya",
+        responsibleIssuerId: "1234567",
+        responsibleIssuerName: "Ana Pérez",
+        responsibleIssuerRole: "Contadora",
       },
     });
     expect(failureOf(() => assembleEmitterProfile(half))).toBe("INCOMPLETE_RESPONSIBLE_ISSUER");
+  });
+
+  it("refuses a district with a code and no name, rather than emitting an empty one", () => {
+    // tdDesDisEmi is 1..30: an empty description is not a value the schema
+    // carries, so a default would emit a document the XSD rejects.
+    const half = args({
+      establishment: { ...args().establishment, districtName: null },
+    });
+    expect(failureOf(() => assembleEmitterProfile(half))).toBe("INCOMPLETE_DISTRICT");
+  });
+
+  it("omits the district when neither half is set", () => {
+    const none = args({
+      establishment: { ...args().establishment, districtCode: null, districtName: null },
+    });
+    const { emitter } = assembleEmitterProfile(none);
+    expect(emitter).not.toHaveProperty("cDisEmi");
+    expect(emitter).not.toHaveProperty("dDesDisEmi");
   });
 
   it.each([["000004"], ["00000422"], ["000004A"], ["0000000"]])(

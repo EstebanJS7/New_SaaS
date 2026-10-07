@@ -404,7 +404,7 @@ second copy would be a second place for it to drift.
 ```text
 pnpm --filter @newsaas/fiscal lint       green
 pnpm --filter @newsaas/fiscal typecheck  green
-pnpm --filter @newsaas/fiscal test       green - 244 tests, 17 files
+pnpm --filter @newsaas/fiscal test       green - 247 tests, 17 files
    run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
@@ -475,6 +475,21 @@ Planned for the remaining units:
   against Tabla 3.
 
 ## Technical Debt
+
+Two advisories from WU-E part 2's review (`review-bd912ca6487dcc13`, approved
+2026-10-07), both non-blocking and both fixed in the same work unit, because
+each was the module violating its own stated contract — refuse rather than
+guess:
+
+- **`R3-001`** (reliability, `WARNING`) — `buildResponsibleIssuer` refused a
+  half-filled `gRespDE` in one direction and, in the other, returned `undefined`
+  and **silently dropped** the four fields that were set. Both directions are
+  checked now.
+- **`R3-002`** (reliability, `WARNING`) — the district pair defaulted a missing
+  name to an empty string, which `tdDesDisEmi` forbids (`minLength` 1): a
+  default there would emit a document the XSD rejects, which is worse than
+  failing where the bad input is. A half-set pair is refused, and neither-set
+  omits both.
 
 Two advisories from WU-E part 1's review (`review-54d1ceb0ce87813c`, approved
 2026-10-07), both non-blocking and both fixed in the same work unit:

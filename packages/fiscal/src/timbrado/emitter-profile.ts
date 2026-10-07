@@ -43,7 +43,10 @@ import type { EmitterFiscalProfile } from "../dte/dte.mapper.js";
 import { DOCUMENT_NUMBER_WIDTH } from "./allocation.js";
 
 export type EmitterProfileAssemblyFailure =
-  "NO_ACTIVITY" | "INCOMPLETE_RESPONSIBLE_ISSUER" | "INVALID_DOCUMENT_NUMBER";
+  | "NO_ACTIVITY"
+  | "INCOMPLETE_RESPONSIBLE_ISSUER"
+  | "INCOMPLETE_DISTRICT"
+  | "INVALID_DOCUMENT_NUMBER";
 
 export class EmitterProfileAssemblyError extends Error {
   readonly failure: EmitterProfileAssemblyFailure;
@@ -191,12 +194,7 @@ function buildEmitter(
     // Derived from the code: the twenty names are enumerated in the schema, so
     // storing this one would be a second source for a closed set.
     dDesDepEmi: describeDepartment(establishment.departmentCode),
-    ...(establishment.districtCode === null
-      ? {}
-      : {
-          cDisEmi: String(establishment.districtCode),
-          dDesDisEmi: establishment.districtName ?? "",
-        }),
+    ...buildDistrict(establishment),
     cCiuEmi: String(establishment.cityCode),
     dDesCiuEmi: establishment.cityName,
     dTelEmi: establishment.phone,
@@ -210,21 +208,66 @@ function buildEmitter(
   };
 }
 
-/** `gRespDE`, optional as a whole: either every column is set or none is. */
+/**
+ * `cDisEmi` / `dDesDisEmi`, optional together.
+ *
+ * `tdDesDisEmi` is 1..30, so an EMPTY description is not a value the schema
+ * carries. The pair is refused when half of it is missing rather than defaulted:
+ * a default would emit a document the XSD rejects, which is worse than failing
+ * where the bad input is.
+ */
+function buildDistrict(establishment: StoredEstablishment): Partial<DteEmisor> {
+  if (establishment.districtCode === null && establishment.districtName === null) {
+    return {};
+  }
+  if (establishment.districtCode === null || establishment.districtName === null) {
+    throw new EmitterProfileAssemblyError(
+      "INCOMPLETE_DISTRICT",
+      "cDisEmi and dDesDisEmi are optional together: set both or neither."
+    );
+  }
+  return {
+    cDisEmi: String(establishment.districtCode),
+    dDesDisEmi: establishment.districtName,
+  };
+}
+
+/**
+ * `gRespDE`, optional as a whole: either every column is set or none is.
+ *
+ * Both directions are checked. Returning `undefined` as soon as the type is null
+ * would DROP the other four if they were set — the database's CHECK forbids that
+ * state, so reaching it means the caller built the object by hand, and silently
+ * discarding fields is exactly the guessing this module refuses to do.
+ */
 function buildResponsibleIssuer(profile: StoredEmitterProfile): DteResponsableEmision | undefined {
-  const { responsibleIssuerType, responsibleIssuerId } = profile;
-  if (responsibleIssuerType === null) {
+  const {
+    responsibleIssuerType,
+    responsibleIssuerTypeName,
+    responsibleIssuerId,
+    responsibleIssuerName,
+    responsibleIssuerRole,
+  } = profile;
+  const fields = [
+    responsibleIssuerType,
+    responsibleIssuerTypeName,
+    responsibleIssuerId,
+    responsibleIssuerName,
+    responsibleIssuerRole,
+  ];
+  const present = fields.filter((field) => field !== null).length;
+  if (present === 0) {
     return undefined;
   }
-  const { responsibleIssuerTypeName, responsibleIssuerName, responsibleIssuerRole } = profile;
+  // Naming each field rather than counting lets the compiler narrow all five, so
+  // the object below needs no assertion.
   if (
+    responsibleIssuerType === null ||
     responsibleIssuerTypeName === null ||
     responsibleIssuerId === null ||
     responsibleIssuerName === null ||
     responsibleIssuerRole === null
   ) {
-    // The database's all-or-nothing CHECK forbids this, so reaching it means the
-    // caller built the object by hand.
     throw new EmitterProfileAssemblyError(
       "INCOMPLETE_RESPONSIBLE_ISSUER",
       "gRespDE is optional as a whole: its five fields are set together or not at all."
