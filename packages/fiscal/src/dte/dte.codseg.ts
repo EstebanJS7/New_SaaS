@@ -21,12 +21,26 @@
  *
  * The three properties that are not decidable by inspection are satisfied **by
  * construction**: nine independent draws are not a sequence, and no field of the
- * document or of the issuer takes part in the draw. The one that *is* decidable —
- * never equal to `dNumDoc` — is enforced, with a bounded retry so a broken source
- * cannot spin forever.
+ * document or of the issuer takes part in the draw.
+ *
+ * **Two rules the Manual states ARE decidable, and both are handled with one
+ * bounded redraw:**
+ *
+ * 1. **The range is `000000001` to `999999999`**, so an all-zero draw is not a
+ *    value — the code must be at least 1. This one is reachable, and it is the
+ *    reason the retry loop exists: a source yielding nine zeros would otherwise
+ *    produce a code that `buildDteXml` refuses.
+ * 2. **Never equal to `dNumDoc`.** With a well-formed `dNumDoc` — exactly seven
+ *    digits, which this function requires — the two can never be equal, so the
+ *    guard cannot fire. It is kept because the Manual states it, and it is what
+ *    makes an out-of-contract caller fail instead of slipping through.
  */
 
 import { DteValidationError } from "./dte.rules.js";
+
+/** `tdNumDoc` is exactly seven digits, and its pattern forbids an all-zero value. */
+const DOCUMENT_NUMBER_LENGTH = 7;
+const DOCUMENT_NUMBER_PATTERN = /^(?:0+[1-9][0-9]*|[1-9]+[0-9]+)$/;
 
 /** `tdCodSeg` is nine digits; the Manual says to zero-pad to that width. */
 export const SECURITY_CODE_DIGITS = 9;
@@ -53,10 +67,24 @@ export interface GeneratedSecurityCode {
 }
 
 /**
- * Draws `dCodSeg`. The result is nine digits, zero-padded, and never equal to
- * `documentNumber`.
+ * Draws `dCodSeg`. The result is nine digits, zero-padded, at least 1, and never
+ * equal to `documentNumber`.
  */
 export function generateSecurityCode(args: GenerateSecurityCodeArgs): GeneratedSecurityCode {
+  // `tdNumDoc` is exactly seven digits, so requiring it here is what makes the
+  // `dNumDoc` comparison below meaningful rather than a comparison across widths.
+  // `tdNumDoc` is BOTH `length=7` and that pattern, so the length is checked
+  // separately: the pattern alone accepts "00000002".
+  if (
+    args.documentNumber.length !== DOCUMENT_NUMBER_LENGTH ||
+    !DOCUMENT_NUMBER_PATTERN.test(args.documentNumber)
+  ) {
+    throw new DteValidationError(
+      "INVALID_DOCUMENT_NUMBER",
+      `documentNumber must be a well-formed dNumDoc: exactly seven digits, received "${args.documentNumber}".`
+    );
+  }
+
   for (let attempt = 1; attempt <= SECURITY_CODE_MAX_ATTEMPTS; attempt += 1) {
     const digits: string[] = [];
     for (let position = 0; position < SECURITY_CODE_DIGITS; position += 1) {
@@ -65,14 +93,22 @@ export function generateSecurityCode(args: GenerateSecurityCodeArgs): GeneratedS
     // Left-padding is a consequence of drawing exactly nine digits; it is stated
     // rather than assumed because the Manual names it as a rule.
     const candidate = digits.join("").padStart(SECURITY_CODE_DIGITS, "0");
+    // The Manual's range starts at 000000001, so an all-zero draw is not a value.
+    // This is the reachable reason for the retry: without it the generator could
+    // return a code that `buildDteXml` refuses.
+    if (candidate === "0".repeat(SECURITY_CODE_DIGITS)) {
+      continue;
+    }
+    // Cannot fire for a well-formed dNumDoc — seven digits against nine — and is
+    // kept because the Manual states the rule.
     if (candidate !== args.documentNumber) {
       return { dCodSeg: candidate, attempts: attempt };
     }
   }
   throw new DteValidationError(
     "INVALID_SECURITY_CODE",
-    `dCodSeg collided with dNumDoc on ${SECURITY_CODE_MAX_ATTEMPTS} consecutive draws, which a ` +
-      "working random source does not do; the source is not random."
+    `dCodSeg was unusable on ${SECURITY_CODE_MAX_ATTEMPTS} consecutive draws — an all-zero ` +
+      "value or a collision with dNumDoc — which a working random source does not do."
   );
 }
 

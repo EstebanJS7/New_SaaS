@@ -95,6 +95,21 @@ before the same anchor. **FIXED**: 112 duplicate lines removed, one copy of each
 kept, and the newer coverage text kept over the older. A duplicated record that
 can disagree with itself is worse than a cosmetic finding. |
 
+| `R3-CODSEG-RANGE` | reliability | WARNING |
+`packages/fiscal/src/dte/dte.codseg.ts:67-70` | **A real bug, fixed.** The
+Manual's range is `000000001` to `999999999`, so an all-zero draw is not a value
+— and the generator could return `000000000`, which **its own validator
+refuses** (`buildDteXml` requires value ≥ 1). The generator and the validator
+disagreed. Fixed by redrawing an all-zero candidate, which is now the reachable
+reason the retry loop exists. | | `R3-CODSEG-COLLISION` | reliability | WARNING
+| `packages/fiscal/src/dte/dte.codseg.ts:68` | **Fixed as a contract.** The
+`dNumDoc` comparison compared a nine-digit candidate against a `documentNumber`
+of unvalidated width. `generateSecurityCode` now requires a well-formed
+`tdNumDoc` — **exactly seven digits _and_ the pattern**, because the pattern
+alone accepts `00000002` — which makes the comparison meaningful and the
+collision guard provably unreachable in contract. The guard stays, because the
+Manual states the rule and it is what makes an out-of-contract caller fail. |
+
 ## The one finding with a real failure mode: dates are shaped, never validated
 
 `R3-CDC-DATE` is right, and it is not confined to the CDC. Every date this Story

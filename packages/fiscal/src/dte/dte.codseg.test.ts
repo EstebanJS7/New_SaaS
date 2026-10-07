@@ -65,25 +65,38 @@ describe("generateSecurityCode (§10.3)", () => {
     expect(dCodSeg).not.toBe("0000002");
   });
 
-  it("redraws when the draw does equal the supplied document number", () => {
-    // Nine digits, so this value is out of contract for `dNumDoc` — which is
-    // exactly the case the guard exists for. First draw collides, second does not.
+  it("redraws an all-zero draw, because the Manual's range starts at 000000001", () => {
+    // This is the reachable reason for the retry: without it the generator would
+    // return a code that its own validator refuses (value must be at least 1).
     const { dCodSeg, attempts } = generateSecurityCode({
-      randomDigit: digitsFrom([1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2]),
-      documentNumber: "111111111",
+      randomDigit: digitsFrom([0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+      documentNumber: "0000002",
     });
 
-    expect(dCodSeg).toBe("222222222");
+    expect(dCodSeg).toBe("123456789");
     expect(attempts).toBe(2);
   });
 
-  it("fails loudly when the source keeps colliding, instead of spinning", () => {
-    // A source that always yields the document number is not random, and the
+  it("refuses a document number that is not a well-formed dNumDoc", () => {
+    // Seven digits is what makes the dNumDoc comparison meaningful rather than a
+    // comparison across widths; an eight- or nine-digit value is out of contract.
+    for (const bad of ["0000002".slice(0, 6), "00000002", "111111111", "0000000"]) {
+      expect(() =>
+        generateSecurityCode({
+          randomDigit: digitsFrom([1, 2, 3, 4, 5, 6, 7, 8, 9]),
+          documentNumber: bad,
+        })
+      ).toThrow(DteValidationError);
+    }
+  });
+
+  it("fails loudly when every draw is unusable, instead of spinning", () => {
+    // A source that always yields zeros is not a working random source, and the
     // bounded retry is what turns that into an error rather than a hang.
     expect(() =>
       generateSecurityCode({
-        randomDigit: digitsFrom([1, 1, 1, 1, 1, 1, 1, 1, 1]),
-        documentNumber: "111111111",
+        randomDigit: digitsFrom([0]),
+        documentNumber: "0000002",
       })
     ).toThrow(DteValidationError);
     expect(SECURITY_CODE_MAX_ATTEMPTS).toBeGreaterThan(1);
@@ -97,10 +110,10 @@ describe("generateSecurityCode (§10.3)", () => {
     }
   });
 
-  it("is never equal to a nine-digit document number across many draws", () => {
-    // A sweep over a deterministic sequence, with the document number set to a
-    // value the draw lands on: every draw that collides must be redrawn.
-    const sequence = [1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 5, 6, 7, 8, 9, 0, 1];
+  it("never returns a value its own validator would refuse", () => {
+    // The code must be at least 1 and at most nine digits, which is exactly what
+    // `buildDteXml` checks; the generator and the validator have to agree.
+    const sequence = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let index = 0;
     const { dCodSeg } = generateSecurityCode({
       randomDigit: () => {
@@ -108,10 +121,11 @@ describe("generateSecurityCode (§10.3)", () => {
         index += 1;
         return value;
       },
-      documentNumber: "111111111",
+      documentNumber: "0000002",
     });
 
-    expect(dCodSeg).not.toBe("111111111");
+    expect(dCodSeg).toBe("000000001");
+    expect(Number(dCodSeg)).toBeGreaterThanOrEqual(1);
     expect(dCodSeg).toMatch(/^[0-9]{9}$/);
   });
 });
