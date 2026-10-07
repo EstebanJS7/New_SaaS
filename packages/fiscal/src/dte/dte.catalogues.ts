@@ -46,10 +46,19 @@ export class DteCatalogueError extends Error {
 }
 
 /**
- * `tiTiDE` / `tdDesTiDE`, in the schema's own order.
+ * `tiTiDE` / `tdDesTiDE`, keyed by code.
  *
- * `tiTiDE` skips 2, 3 and 8, and the seven descriptions line up with the seven
- * codes — the Manual's worked example uses `1 ↔ "Factura electrónica"`.
+ * **Five of the seven pairings are stated by the Manual** (p. 63, C002/C003):
+ * `1` Factura electrónica, `4` Autofactura, `5` Nota de crédito, `6` Nota de
+ * débito, `7` Nota de remisión. The Manual's table also lists `2`, `3` and `8`,
+ * each marked "(Futuro)" — and none of those three is in `tiTiDE`, which admits
+ * `1|4-7|9|10`. So the XSD's enum is the gate and the Manual's table is not.
+ *
+ * `9` and `10` appear in **neither** the Manual's table nor anywhere else: their
+ * descriptions ("Boleta de venta electrónica", "Boleta resimple electrónica")
+ * exist only in `tdDesTiDE`. They are placed by elimination — the five
+ * corroborated pairs take the first five entries, leaving the last two for `9`
+ * and `10` in that order.
  */
 export const DTE_DOCUMENT_TYPE_DESCRIPTIONS: readonly DteCodeDescription[] = [
   { code: 1, description: "Factura electrónica" },

@@ -461,6 +461,20 @@ Planned for the remaining units:
 
 ## Technical Debt
 
+Two advisories from WU-E part 1's review (`review-54d1ceb0ce87813c`, approved
+2026-10-07), both non-blocking and both fixed in the same work unit:
+
+- **`R3-001`** (reliability, `WARNING`) — a test block was named "the three the
+  Manual's worked example corroborates" and asserted **five** pairs. The name is
+  now what the block does.
+- **`R3-002`** (reliability, `SUGGESTION`) — the document-type catalogue's
+  comment said the Manual corroborates its order, when the Manual's table had
+  only been checked against its **first** pair. Following it up found the real
+  answer, which is better and is now written down: the Manual states **five** of
+  the seven pairs, and `9`/`10` are placed by elimination. The same
+  investigation found the Manual's `2`, `3` and `8`, which `tiTiDE` does not
+  admit at all.
+
 Three advisories from WU-D's review (`review-839e5bd326e5b806`, approved
 2026-10-07), all non-blocking. **All three were fixed in the same work unit**,
 because each was a wrong contract rather than a cosmetic:

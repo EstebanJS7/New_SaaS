@@ -122,14 +122,29 @@ describe("the Manual and the XSD disagree about two transaction types", () => {
   });
 });
 
-describe("the three the Manual's worked example corroborates", () => {
+describe("the pairs the sources state, and the two that are placed by elimination", () => {
   it("pairs the first code of each set with the description the fixture uses", () => {
-    // The Manual's example emits these three pairs; the fixture transcribes them.
+    // The Manual's worked example emits these pairs; the fixture transcribes them.
     expect(describeDocumentType(1)).toBe("Factura electrónica");
     expect(describeTaxType(1)).toBe("IVA");
     expect(describeTransactionType(1)).toBe("Venta de mercadería");
     expect(describeEmissionType(1)).toBe("Normal");
     expect(describeEmissionType(2)).toBe("Contingencia");
+  });
+
+  it("states five document-type pairs and places two by elimination", () => {
+    // The Manual's C002/C003 table gives 1, 4, 5, 6 and 7 outright. It also lists
+    // 2, 3 and 8, all marked "(Futuro)", and NONE of those is in tiTiDE — so the
+    // XSD's enum is the gate, not the Manual's table.
+    expect(describeDocumentType(1)).toBe("Factura electrónica");
+    expect(describeDocumentType(4)).toBe("Autofactura electrónica");
+    expect(describeDocumentType(5)).toBe("Nota de crédito electrónica");
+    expect(describeDocumentType(6)).toBe("Nota de débito electrónica");
+    expect(describeDocumentType(7)).toBe("Nota de remisión electrónica");
+    // 9 and 10 are in neither table: their descriptions exist only in tdDesTiDE,
+    // and the five above take the first five entries, leaving these two.
+    expect(describeDocumentType(9)).toBe("Boleta de venta electrónica");
+    expect(describeDocumentType(10)).toBe("Boleta resimple electrónica");
   });
 
   it("refuses the document types the schema skips", () => {
