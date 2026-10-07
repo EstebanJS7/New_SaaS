@@ -85,6 +85,18 @@ export {
   computeCdcCheckDigit,
 } from "./dte/dte.cdc.js";
 export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
+// FISC-011 WU-E: the stored rows -> the profile the mapper takes. It does not
+// allocate, does not store descriptions and reads no clock or tenant.
+export { assembleEmitterProfile, EmitterProfileAssemblyError } from "./timbrado/emitter-profile.js";
+export type {
+  AllocatedNumber,
+  AssembleEmitterProfileArgs,
+  EmitterProfileAssemblyFailure,
+  StoredActivity,
+  StoredEmitterProfile,
+  StoredEstablishment,
+  StoredTimbradoRange,
+} from "./timbrado/emitter-profile.js";
 // FISC-011: the descriptions the DE carries beside its enumerated codes. Keyed
 // by CODE, never by position — the Manual lists 13 transaction types and the XSD
 // enumerates 11 of them, so the third entry of the enum belongs to code 4.

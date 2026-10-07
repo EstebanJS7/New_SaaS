@@ -329,6 +329,21 @@ refuses it and says to retire instead.
 
 ## Implementation Summary
 
+**WU-E, part 2 — the profile assembly.**
+`packages/fiscal/src/timbrado/emitter-profile.ts`: `assembleEmitterProfile`
+turns the stored rows into the `EmitterFiscalProfile` the mapper takes, and it
+is the only place that knows how a stored column becomes a DE field. It does not
+allocate (the number arrives already allocated, because the number is part of
+the CDC), does not store descriptions (every one is derived), and reads no clock
+and no tenant.
+
+Two consequences worth naming. **The department name is derived and the district
+and city names are stored**, because the twenty departments are enumerated in
+the schema and the 272 districts and 6,766 cities are not. And **the assembly is
+cast-free**: `entryFor` returns the code narrowed to the protocol's own union
+together with its description, so a stored integer never has to be asserted into
+a union the schema defines.
+
 **WU-E, part 1 — the description catalogues.**
 `packages/fiscal/src/dte/dte.catalogues.ts`: the five enumerated sets the DE
 carries descriptions for, keyed by code, with lookups that refuse an unknown or
@@ -389,7 +404,7 @@ second copy would be a second place for it to drift.
 ```text
 pnpm --filter @newsaas/fiscal lint       green
 pnpm --filter @newsaas/fiscal typecheck  green
-pnpm --filter @newsaas/fiscal test       green - 219 tests, 16 files
+pnpm --filter @newsaas/fiscal test       green - 244 tests, 17 files
    run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11

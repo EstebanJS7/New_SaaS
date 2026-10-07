@@ -27,10 +27,28 @@
  * ```
  */
 
-/** One enumerated code and the description the DE carries with it. */
-export interface DteCodeDescription<C extends number = number> {
+import {
+  T_IMP_VALUES,
+  TI_DE_VALUES,
+  TIP_CONT_VALUES,
+  TIP_TRA_VALUES,
+  type DteTipoContribuyente,
+  type DteTipoDocumentoElectronico,
+  type DteTipoImpuesto,
+  type DteTipoTransaccion,
+} from "./dte.types.js";
+
+/**
+ * One enumerated code and the description the DE carries with it.
+ *
+ * Generic in the description as well as the code, so a catalogue declared with
+ * `as const` keeps its literal descriptions: `entryFor` can then hand back
+ * `"Normal" | "Contingencia"` where `EmitterFiscalProfile` demands that union
+ * rather than a string.
+ */
+export interface DteCodeDescription<C extends number = number, D extends string = string> {
   readonly code: C;
-  readonly description: string;
+  readonly description: D;
 }
 
 export type DteCatalogueFailure = "UNKNOWN_CODE" | "INVALID_CODE";
@@ -60,18 +78,19 @@ export class DteCatalogueError extends Error {
  * corroborated pairs take the first five entries, leaving the last two for `9`
  * and `10` in that order.
  */
-export const DTE_DOCUMENT_TYPE_DESCRIPTIONS: readonly DteCodeDescription[] = [
-  { code: 1, description: "Factura electrónica" },
-  { code: 4, description: "Autofactura electrónica" },
-  { code: 5, description: "Nota de crédito electrónica" },
-  { code: 6, description: "Nota de débito electrónica" },
-  { code: 7, description: "Nota de remisión electrónica" },
-  { code: 9, description: "Boleta de venta electrónica" },
-  { code: 10, description: "Boleta resimple electrónica" },
-];
+export const DTE_DOCUMENT_TYPE_DESCRIPTIONS: readonly DteCodeDescription<DteTipoDocumentoElectronico>[] =
+  [
+    { code: 1, description: "Factura electrónica" },
+    { code: 4, description: "Autofactura electrónica" },
+    { code: 5, description: "Nota de crédito electrónica" },
+    { code: 6, description: "Nota de débito electrónica" },
+    { code: 7, description: "Nota de remisión electrónica" },
+    { code: 9, description: "Boleta de venta electrónica" },
+    { code: 10, description: "Boleta resimple electrónica" },
+  ];
 
 /** `tiTImp` / `tdDesTImp`: five codes, five descriptions, in order. */
-export const DTE_TAX_TYPE_DESCRIPTIONS: readonly DteCodeDescription[] = [
+export const DTE_TAX_TYPE_DESCRIPTIONS: readonly DteCodeDescription<DteTipoImpuesto>[] = [
   { code: 1, description: "IVA" },
   { code: 2, description: "ISC" },
   { code: 3, description: "Renta" },
@@ -88,34 +107,44 @@ export const DTE_TAX_TYPE_DESCRIPTIONS: readonly DteCodeDescription[] = [
  * disagreement between the Manual and the XSD, not a transcription choice, and
  * it is recorded in the Story rather than resolved by guessing a substitute.
  */
-export const DTE_TRANSACTION_TYPE_DESCRIPTIONS: readonly DteCodeDescription[] = [
-  { code: 1, description: "Venta de mercadería" },
-  { code: 2, description: "Prestación de servicios" },
-  { code: 3, description: "Mixto (Venta de mercadería y servicios)" },
-  { code: 4, description: "Venta de activo fijo" },
-  { code: 5, description: "Venta de divisas" },
-  { code: 6, description: "Compra de divisas" },
-  { code: 7, description: "Promoción o entrega de muestras" },
-  { code: 8, description: "Donación" },
-  { code: 9, description: "Anticipo" },
-  { code: 10, description: "Compra de productos" },
-  { code: 11, description: "Compra de servicios" },
-  { code: 12, description: "Venta de crédito fiscal" },
-  { code: 13, description: "Muestras médicas (Art. 3 RG 24/2014)" },
-];
+export const DTE_TRANSACTION_TYPE_DESCRIPTIONS: readonly DteCodeDescription<DteTipoTransaccion>[] =
+  [
+    { code: 1, description: "Venta de mercadería" },
+    { code: 2, description: "Prestación de servicios" },
+    { code: 3, description: "Mixto (Venta de mercadería y servicios)" },
+    { code: 4, description: "Venta de activo fijo" },
+    { code: 5, description: "Venta de divisas" },
+    { code: 6, description: "Compra de divisas" },
+    { code: 7, description: "Promoción o entrega de muestras" },
+    { code: 8, description: "Donación" },
+    { code: 9, description: "Anticipo" },
+    { code: 10, description: "Compra de productos" },
+    { code: 11, description: "Compra de servicios" },
+    { code: 12, description: "Venta de crédito fiscal" },
+    { code: 13, description: "Muestras médicas (Art. 3 RG 24/2014)" },
+  ];
 
-/** `iTipEmi` / `tdDesTipEmi`: `1 = "Normal"`, `2 = "Contingencia"`. */
-export const DTE_EMISSION_TYPE_DESCRIPTIONS: readonly DteCodeDescription[] = [
+/**
+ * `iTipEmi` / `tdDesTipEmi`: `1 = "Normal"`, `2 = "Contingencia"`.
+ *
+ * `as const` because `EmitterFiscalProfile.emissionType.description` is the union
+ * `"Normal" | "Contingencia"` rather than a string, so the lookup has to narrow.
+ */
+export const DTE_EMISSION_TYPE_DESCRIPTIONS = [
   { code: 1, description: "Normal" },
   { code: 2, description: "Contingencia" },
-];
+] as const satisfies readonly DteCodeDescription[];
+
+/** The two descriptions `iTipEmi` can carry. */
+export type DteEmissionTypeDescription =
+  (typeof DTE_EMISSION_TYPE_DESCRIPTIONS)[number]["description"];
 
 /**
  * `tDepartamentos` / `tDesDepartamento`, the twenty pairs from
  * `Departamentos_v141.xsd`. Both enumerations live in that file in the same
  * order, so this one IS positional — and the file is the authority for `D111`.
  */
-export const DTE_DEPARTMENT_NAMES: readonly DteCodeDescription[] = [
+export const DTE_DEPARTMENT_NAMES: readonly DteCodeDescription<number>[] = [
   { code: 1, description: "CAPITAL" },
   { code: 2, description: "CONCEPCION" },
   { code: 3, description: "SAN PEDRO" },
@@ -138,6 +167,58 @@ export const DTE_DEPARTMENT_NAMES: readonly DteCodeDescription[] = [
   { code: 20, description: "NUEVA ASUNCION" },
 ];
 
+/**
+ * The catalogue entry for a code: the CODE NARROWED to the protocol's union,
+ * plus its description.
+ *
+ * The stored columns are plain integers, so a lookup that returned only the
+ * description would leave the caller casting the code back into the union. This
+ * returns both, which is what makes the assembly cast-free.
+ */
+export function entryFor<C extends number, D extends string>(
+  catalogue: readonly DteCodeDescription<C, D>[],
+  code: number,
+  label: string
+): DteCodeDescription<C, D> {
+  assertIntegerCode(code, label);
+  const found = catalogue.find((entry) => entry.code === code);
+  if (found === undefined) {
+    throw new DteCatalogueError(
+      "UNKNOWN_CODE",
+      `${String(code)} is not a ${label}; the catalogue holds ` +
+        `${catalogue.map((entry) => String(entry.code)).join(", ")}.`
+    );
+  }
+  return found;
+}
+
+/** Narrows a code the DE has no description for, or fails naming it. */
+export function narrowCode<C extends number>(
+  allowed: readonly C[],
+  code: number,
+  label: string
+): C {
+  assertIntegerCode(code, label);
+  const found = allowed.find((candidate) => candidate === code);
+  if (found === undefined) {
+    throw new DteCatalogueError(
+      "UNKNOWN_CODE",
+      `${String(code)} is not a ${label}; the schema admits ${allowed.join(", ")}.`
+    );
+  }
+  return found;
+}
+
+/** `tiTipCont`: `iTipCont` carries no description, so there is no catalogue. */
+export function narrowTaxpayerType(code: number): DteTipoContribuyente {
+  return narrowCode(TIP_CONT_VALUES, code, "taxpayer type");
+}
+
+/** The codes the DE admits for each set, re-exported for a caller that needs them. */
+export const DTE_TAX_TYPE_CODES = T_IMP_VALUES;
+export const DTE_DOCUMENT_TYPE_CODES = TI_DE_VALUES;
+export const DTE_TRANSACTION_TYPE_CODES = TIP_TRA_VALUES;
+
 /** The description for a document type, or a failure naming the code. */
 export function describeDocumentType(code: number): string {
   return describeFrom(DTE_DOCUMENT_TYPE_DESCRIPTIONS, code, "document type");
@@ -154,7 +235,7 @@ export function describeTransactionType(code: number): string {
 }
 
 /** The description for an emission type, or a failure naming the code. */
-export function describeEmissionType(code: number): string {
+export function describeEmissionType(code: number): DteEmissionTypeDescription {
   return describeFrom(DTE_EMISSION_TYPE_DESCRIPTIONS, code, "emission type");
 }
 
@@ -163,11 +244,20 @@ export function describeDepartment(code: number): string {
   return describeFrom(DTE_DEPARTMENT_NAMES, code, "department");
 }
 
-function describeFrom(
-  catalogue: readonly DteCodeDescription[],
+function assertIntegerCode(code: number, label: string): void {
+  if (!Number.isInteger(code)) {
+    throw new DteCatalogueError(
+      "INVALID_CODE",
+      `A ${label} is an integer code, received ${String(code)}.`
+    );
+  }
+}
+
+function describeFrom<D extends string>(
+  catalogue: readonly { readonly code: number; readonly description: D }[],
   code: number,
   label: string
-): string {
+): D {
   if (!Number.isInteger(code)) {
     throw new DteCatalogueError(
       "INVALID_CODE",
