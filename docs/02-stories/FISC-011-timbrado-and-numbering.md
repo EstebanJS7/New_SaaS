@@ -475,6 +475,16 @@ because each was a wrong contract rather than a cosmetic:
   runs **forty** rollovers and then a successful claim; a bound of 32 would have
   failed at the thirty-second.
 
+One suggestion from the fix's own review (`review-87530a83749358a1`, approved
+2026-10-07), recorded rather than chased — this is where generation starts
+outrunning resolution:
+
+- **`R3-ROLLOVER-ERROR`** (reliability, `WARNING`) — the loop's final throw says
+  "made no progress in 32 attempts", but the loop can also leave through the
+  rollover bound, where the real cause is a chain of ranges that claimed to be
+  closed and were not. The failure code is right in both cases; only the message
+  is. Closing it means distinguishing the two exits, which is a message change.
+
 Two advisories from WU-B's review (`review-ab19166c91a10075`, approved
 2026-10-07), both non-blocking. **Both were fixed in the same work unit** rather
 than recorded, because each was a real defect in a file this Story is still
