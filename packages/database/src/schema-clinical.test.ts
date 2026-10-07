@@ -186,11 +186,12 @@ describe("schema · clinical inventory (EPIC-06 CLI-001)", () => {
     // Customer, PortalBookingRequest, CatalogItem, StockMovement, Supplier,
     // Purchase, PurchaseLine, Sale, SaleLine, CashRegister, CashSession,
     // CashMovement, Payment, IdempotencyRecord, Invoice, InvoiceLine,
-    // InvoiceNumberSequence, FiscalDocument, TenantSecret and
-    // TenantFiscalSigningMaterial each expose a (tenantId, id) key that
-    // composite FKs target.
+    // InvoiceNumberSequence, FiscalDocument, TenantSecret,
+    // TenantFiscalSigningMaterial, and EPIC-16 FISC-011's
+    // FiscalEmitterProfile and FiscalEstablishment each expose a (tenantId, id)
+    // key that composite FKs target.
     expect(SCHEMA).toMatch(/@@unique\(\[tenantId, id\]\)/);
-    expect(SCHEMA.match(/@@unique\(\[tenantId, id\]\)/g)).toHaveLength(25);
+    expect(SCHEMA.match(/@@unique\(\[tenantId, id\]\)/g)).toHaveLength(27);
 
     const clinicalModels = [
       "ClinicalEncounter",

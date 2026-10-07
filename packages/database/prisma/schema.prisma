@@ -174,6 +174,11 @@ model Tenant {
   /// reference them (ADR-005).
   tenantSecrets               TenantSecret[]
   fiscalSigningMaterials      TenantFiscalSigningMaterial[]
+  /// EPIC-16 FISC-011 emitter profile, establishments and numbering ranges.
+  fiscalEmitterProfile        FiscalEmitterProfile?
+  fiscalEstablishments        FiscalEstablishment[]
+  fiscalTimbradoRanges        FiscalTimbradoRange[]
+  fiscalEmitterActivities     FiscalEmitterActivity[]
 
   @@map("tenant")
 }
@@ -2728,4 +2733,217 @@ model AuditLog {
 
   @@index([tenantId, createdAt(sort: Desc)])
   @@map("audit_log")
+}
+
+// ---------------------------------------------------------------------------
+// EPIC-16 FISC-011 — the emitter profile, its establishments and the
+// authorised numbering ranges (Manual §10.5, baseline §13).
+//
+// Protocol codes are stored as the protocol's own smallints with a CHECK on the
+// allowed set, not as named enums. The code is what the DE carries and what
+// SIFEN validates, so a name would be a translation layer with nothing on the
+// other side; the descriptions are derived from the official enumerations,
+// whose counts match the code sets exactly and whose order is corroborated by
+// the three pairs the Manual's worked example uses (baseline §21.5).
+//
+// These are reference data an operator maintains, not movements: nothing here
+// is a ledger, and a range that has consumed numbers is history rather than
+// configuration — which is why it is retired, never deleted.
+// ---------------------------------------------------------------------------
+
+/// The life of an authorised numbering range. `ACTIVE` is the only status an
+/// allocation may draw from; the other two are kept as the permanent record.
+enum FiscalTimbradoRangeStatus {
+  /// The only status an allocation may take a number from.
+  ACTIVE
+  /// Every number in the range has been consumed. Terminal for that series.
+  EXHAUSTED
+  /// An operator stopped using it. Kept as the permanent record: its consumed
+  /// numbers are burnt and can never be reissued.
+  RETIRED
+
+  @@map("fiscal_timbrado_range_status")
+}
+
+/// INTERNAL: one emitter profile per tenant. The RUC here must match the one on
+/// the signing certificate (baseline §22.4) — that is an invariant, not a
+/// preference, and it is why this is a tenant-scoped aggregate rather than a
+/// settings namespace.
+model FiscalEmitterProfile {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @unique @map("tenant_id") @db.Uuid
+
+  /// `D101 dRucEm`, `tRuc`: 3..8 of `[1-9][0-9]*[0-9A-D]?`.
+  ruc        String @db.VarChar(8)
+  /// `D102 dDVEmi`, `tDVer`: one digit.
+  checkDigit String @map("check_digit") @db.VarChar(1)
+  /// `D103 iTipCont`: 1 or 2.
+  taxpayerType Int @map("taxpayer_type") @db.SmallInt
+  /// `cTipReg`, `tcTipReg`: 1..8. Tabla 1 is not retrieved (FISC-008's notes).
+  regimeCode Int? @map("regime_code") @db.SmallInt
+  /// `D105 dNomEmi`, `tdNombre`: 4..255.
+  legalName String @map("legal_name") @db.VarChar(255)
+  /// `dNomFanEmi`, `tdNombre`.
+  tradeName String? @map("trade_name") @db.VarChar(255)
+
+  /// `gRespDE`, optional as a whole: all five columns are set or all are null.
+  responsibleIssuerType Int?    @map("responsible_issuer_type") @db.SmallInt
+  responsibleIssuerTypeName String? @map("responsible_issuer_type_name")
+  responsibleIssuerId       String? @map("responsible_issuer_id") @db.VarChar(20)
+  responsibleIssuerName     String? @map("responsible_issuer_name") @db.VarChar(255)
+  responsibleIssuerRole     String? @map("responsible_issuer_role") @db.VarChar(100)
+
+  /// `gOpeCom` defaults for the DE. `iTipTra` is optional in the schema and
+  /// `iTImp` is required, which is why only the second is non-null.
+  transactionType Int? @map("transaction_type") @db.SmallInt
+  taxType         Int  @map("tax_type") @db.SmallInt
+  /// `iTipEmi`: 1 = Normal, 2 = Contingencia. The default the emitter uses.
+  emissionType Int @map("emission_type") @db.SmallInt
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  activities FiscalEmitterActivity[]
+
+  @@unique([tenantId, id])
+  @@map("fiscal_emitter_profile")
+}
+
+/// `gActEco` / `tgActEco`: the emitter's economic activities, one row each,
+/// ordered. A child table rather than a JSON column because the group is a typed
+/// 1..n with two cited columns, and the repository already models those that way
+/// (`purchase_line`, `customer_contact`).
+model FiscalEmitterActivity {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId  String @map("tenant_id") @db.Uuid
+  profileId String @map("profile_id") @db.Uuid
+  /// Position in `gActEco`; the DE carries them in this order.
+  position  Int    @db.SmallInt
+
+  /// `cActEco`, `tcActEco`: 1..8 of `[0-9A-Z]`. The code list ("maragantu") is
+  /// not retrieved (FISC-008's notes), so the code is stored as supplied.
+  code        String @db.VarChar(8)
+  /// `dDesActEco`, `tdDesActEco`: 1..300.
+  description String @db.VarChar(300)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant  Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  profile FiscalEmitterProfile @relation(fields: [tenantId, profileId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([profileId, position])
+  @@map("fiscal_emitter_activity")
+}
+
+/// INTERNAL: one establishment. The Manual's identifying sequence names it, and
+/// the test guide asks for one establishment with up to three points of
+/// expedition, so it is a thing an operator registers rather than a column on
+/// the range: the address would otherwise be repeated for every point.
+///
+/// `dDesDepEmi` is deliberately NOT stored. `Departamentos_v141.xsd` enumerates
+/// the twenty department names, so the pair is derived from the code and cannot
+/// drift; the district and city names are NOT enumerable (272 and 6,766 entries
+/// in the official spreadsheet), so those two are stored.
+model FiscalEstablishment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  /// `D107 dEst`, `tdEst`: three digits, zero-padded.
+  code     String @db.VarChar(3)
+
+  /// `dDirEmi`, `tdDirec`: up to 255.
+  addressLine String  @map("address_line") @db.VarChar(255)
+  /// `D108 dNumCas`, `tdNumCas`: 0..999999. "Si no tiene numeración, colocar 0".
+  houseNumber Int     @map("house_number")
+  addressComplement1 String? @map("address_complement1") @db.VarChar(255)
+  addressComplement2 String? @map("address_complement2") @db.VarChar(255)
+
+  /// `D111 cDepEmi`, `tDepartamentos`: 1..20. The name is derived.
+  departmentCode Int @map("department_code") @db.SmallInt
+  /// `D113 cDisEmi`, `tcDisEmi`: 1..9999, optional.
+  districtCode Int?    @map("district_code") @db.SmallInt
+  /// `dDesDisEmi`, `tdDesDisEmi`: 1..30. Set with `districtCode` or not at all.
+  districtName String? @map("district_name") @db.VarChar(30)
+  /// `D115 cCiuEmi`, `tcCiuEmi`: 1..99999.
+  cityCode Int    @map("city_code")
+  /// `dDesCiuEmi`, `tdDesCiuEmi`: 1..30.
+  cityName String @map("city_name") @db.VarChar(30)
+
+  /// `dTelEmi`, `tdTel`: 6..15.
+  phone String @db.VarChar(15)
+  /// `dEmailE`, `tEmail`: the schema's own pattern.
+  email String @db.VarChar(255)
+  /// `dDenSuc`, 1..30, optional.
+  branchName String? @map("branch_name") @db.VarChar(30)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ranges FiscalTimbradoRange[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@map("fiscal_establishment")
+}
+
+/// INTERNAL: one authorised numbering range, and the counter it is consumed by.
+///
+/// The Manual's sequence is timbrado + establishment + expedition point +
+/// document type + document number + series, so a range is keyed by all of the
+/// first four plus the series. `series` NULL is a REAL state, not a missing
+/// value: it is the initial range, which the Manual says is consumed for each
+/// document type before `AA` starts.
+///
+/// `nextNumber` is an integer rather than the seven-character `dNumDoc`, because
+/// the counter has to express "one past the end" to be exhausted and `9999999 + 1`
+/// is not seven digits. The seven-digit string is the EMITTED form, produced by
+/// zero-padding at the edge.
+model FiscalTimbradoRange {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId       String @map("tenant_id") @db.Uuid
+  establishmentId String @map("establishment_id") @db.Uuid
+  /// `dPunExp`, `tdPunExp`: three digits, zero-padded.
+  expeditionPoint String @map("expedition_point") @db.VarChar(3)
+  /// `iTiDE`, `tiTiDE`: 1, 4, 5, 6, 7, 9 or 10. The description is derived.
+  documentType    Int    @map("document_type") @db.SmallInt
+
+  /// `dSerieNum`, `tdSerieNum`: `[A-Z]{2}`, or NULL for the initial range.
+  series String? @db.VarChar(2)
+
+  /// `dNumTim`, `tdNumTim`: exactly eight digits, never all zero.
+  timbradoNumber String @map("timbrado_number") @db.VarChar(8)
+  /// The authorised span, as integers 1..9999999 (`tdNumDoc` forbids all-zero).
+  rangeFrom      Int    @map("range_from")
+  rangeTo        Int    @map("range_to")
+  /// `dFeIniT`, `tdFeIniT`: a date, `minInclusive` 2018-05-01. A DATE in the
+  /// schema, persisted as timestamptz anchored to midnight UTC because the
+  /// repository's convention requires it for every DateTime; a CHECK enforces
+  /// the anchor, and the DE emits the date part.
+  validityStart  DateTime @map("validity_start") @db.Timestamptz(3)
+
+  /// The next number to hand out. Never lowered: a consumed number is burnt,
+  /// because the number is part of the CDC and a rejected DE keeps its CDC
+  /// (Manual §6.5, baseline §12).
+  nextNumber Int @map("next_number")
+
+  /// Set once, from the first DE's digital-signature date-time in this series —
+  /// which is the instant SIFEN takes as the series' start (Manual §10.5).
+  seriesStartedAt DateTime? @map("series_started_at") @db.Timestamptz(3)
+
+  status FiscalTimbradoRangeStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  establishment FiscalEstablishment @relation(fields: [tenantId, establishmentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, establishmentId, expeditionPoint, documentType, series])
+  @@index([tenantId, status])
+  @@map("fiscal_timbrado_range")
 }

@@ -15833,6 +15833,164 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       }
     }, 30_000);
 
+    it("enforces the FISC-011 range invariants on the applied database", async () => {
+      // The migration is hand-written, so its CHECKs and partial indexes are only
+      // real once PostgreSQL has accepted them.
+      //
+      // Every case runs inside ONE transaction that is always rolled back, and
+      // each expected failure gets its own: a rejected statement aborts the
+      // transaction, so a second assertion in the same one would report "current
+      // transaction is aborted" instead of the constraint under test. The
+      // no-delete trigger is why nothing here can be cleaned up afterwards.
+      class Rollback extends Error {}
+
+      type Tx = Prisma.TransactionClient;
+
+      /** Runs `assert` with a fresh establishment, then rolls everything back. */
+      const withEstablishment = async (
+        assert: (tx: Tx, establishmentId: string) => Promise<void>
+      ): Promise<void> => {
+        await expect(
+          prisma.$transaction(async (tx) => {
+            const establishmentId = randomUUID();
+            await tx.$executeRaw`
+              INSERT INTO "fiscal_establishment" (
+                "id", "tenant_id", "code", "address_line", "house_number",
+                "department_code", "city_code", "city_name", "phone", "email"
+              ) VALUES (
+                ${establishmentId}::uuid, ${tenantAId}::uuid, '001', 'Av. Siempre Viva',
+                742, 1, 1, 'ASUNCION', '021123456', 'fiscal@example.test'
+              )
+            `;
+            await assert(tx, establishmentId);
+            throw new Rollback();
+          })
+        ).rejects.toThrow(Rollback);
+      };
+
+      const insertRange = (
+        tx: Tx,
+        establishmentId: string,
+        overrides: { series?: string | null; nextNumber?: number; status?: string } = {}
+      ) =>
+        tx.$executeRaw`
+          INSERT INTO "fiscal_timbrado_range" (
+            "tenant_id", "establishment_id", "expedition_point", "document_type",
+            "series", "timbrado_number", "range_from", "range_to",
+            "validity_start", "next_number", "status"
+          ) VALUES (
+            ${tenantAId}::uuid, ${establishmentId}::uuid, '001', 1,
+            ${overrides.series === undefined ? null : overrides.series}::varchar,
+            '12345678', 1, 9999999,
+            TIMESTAMPTZ '2019-09-01 00:00:00+00', ${overrides.nextNumber ?? 1},
+            ${overrides.status ?? "ACTIVE"}::fiscal_timbrado_range_status
+          )
+        `;
+
+      // A range that still has numbers and is ACTIVE is the ordinary case, and
+      // the one every other case is measured against.
+      await withEstablishment(async (tx, establishmentId) => {
+        await expect(insertRange(tx, establishmentId)).resolves.toBe(1);
+      });
+
+      // One seriesless range per establishment, point and document type. A plain
+      // unique index would admit many, because PostgreSQL treats NULLs as
+      // distinct — which is why this is a partial index.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId);
+        await expect(insertRange(tx, establishmentId)).rejects.toThrow(/already exists/);
+      });
+
+      // One ACTIVE range per key: the allocation draws from that one, so two
+      // would make the choice ambiguous.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId);
+        await expect(insertRange(tx, establishmentId, { series: "AA" })).rejects.toThrow(
+          /already exists/
+        );
+      });
+
+      // EXHAUSTED and the counter cannot disagree.
+      await withEstablishment(async (tx, establishmentId) => {
+        await expect(
+          insertRange(tx, establishmentId, { nextNumber: 9999999, status: "EXHAUSTED" })
+        ).rejects.toThrow(/fiscal_timbrado_range_exhausted_has_run_out/);
+      });
+
+      // A consumed number is burnt: the counter cannot be lowered.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId, { nextNumber: 500 });
+        // Lowering 500 back to 1 is the case a `next_number >= range_from` CHECK
+        // lets through, which is why this is a trigger.
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_timbrado_range" SET "next_number" = 1 WHERE "establishment_id" = ${establishmentId}::uuid`
+        ).rejects.toThrow(/counter cannot be lowered, from 500 to 1/);
+      });
+
+      // And a range is retired, never deleted.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId);
+        await expect(
+          tx.$executeRaw`DELETE FROM "fiscal_timbrado_range" WHERE "establishment_id" = ${establishmentId}::uuid`
+        ).rejects.toThrow(/cannot be deleted; retire it instead/);
+      });
+
+      // The scalars the official schema pins are pinned here too. The document
+      // type is the one a caller is most likely to get wrong, because the schema
+      // admits 1, 4, 5, 6, 7, 9 and 10 and skips 2, 3 and 8.
+      const scalarCases = [
+        [
+          "document_type 2 is not in tiTiDE",
+          2,
+          "12345678",
+          "2019-09-01",
+          /fiscal_timbrado_range_document_type_tiTiDE/,
+        ],
+        [
+          "an all-zero timbrado number",
+          1,
+          "00000000",
+          "2019-09-01",
+          /fiscal_timbrado_range_timbrado_number_tdNumTim/,
+        ],
+        [
+          "a validity start with a time part",
+          1,
+          "12345678",
+          "2019-09-01 12:00:00",
+          /fiscal_timbrado_range_validity_start_is_a_date/,
+        ],
+        [
+          "a validity start before 2018-05-01",
+          1,
+          "12345678",
+          "2018-04-30",
+          /fiscal_timbrado_range_validity_start_tdFeIniT/,
+        ],
+      ] as const;
+      for (const [label, documentType, timbradoNumber, validityStart, expected] of scalarCases) {
+        await withEstablishment(async (tx, establishmentId) => {
+          let failure: unknown;
+          try {
+            await tx.$executeRaw`
+              INSERT INTO "fiscal_timbrado_range" (
+                "tenant_id", "establishment_id", "expedition_point", "document_type",
+                "timbrado_number", "range_from", "range_to", "validity_start", "next_number"
+              ) VALUES (
+                ${tenantAId}::uuid, ${establishmentId}::uuid, '001', ${documentType},
+                ${timbradoNumber}, 1, 9999999,
+                ${validityStart}::timestamptz, 1
+              )
+            `;
+          } catch (error) {
+            failure = error;
+          }
+          expect(failure, label).toBeDefined();
+          expect(String(failure), label).toMatch(expected);
+        });
+      }
+    }, 120_000);
+
     it("admits the FISC-009 SIGNING edges and keeps its cancellation excluded", async () => {
       // The state machine is enforced by `fiscal_document_transition_guard` in the
       // database, so this is the only place that proves the applied behaviour

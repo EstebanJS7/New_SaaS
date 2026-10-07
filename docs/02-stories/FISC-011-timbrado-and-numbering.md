@@ -149,8 +149,10 @@ reason this Story has a counter and not a "free numbers" query.
       makes the check local and loud; WU-D calls it)_
 - [ ] `series_started_at` is **set once**, from the signature timestamp the
       caller supplies after signing, and a second call never overwrites it.
-- [ ] A range that has allocated at least one number **cannot be deleted**, and
-      its counter cannot be lowered.
+- [x] A range that has allocated at least one number **cannot be deleted**, and
+      its counter cannot be lowered. _(WU-C: the deletion is a trigger, and the
+      counter's monotonicity is a trigger because a CHECK cannot see the old
+      row)_
 - [ ] The assembled `EmitterFiscalProfile` satisfies
       `buildDteRequestFromInvoice` for a fixture invoice: the mapper accepts it
       with no change to the mapper.
@@ -201,26 +203,103 @@ burn numbers without issuing anything.
 
 ## Database
 
-Three tables and two enums, one migration:
+**Four tables and one enum**, one hand-written migration
+(`20261007000002_fisc_011_emitter_profile_and_timbrado_ranges`). It was planned
+as three; `gActEco` is a typed 1..n, so it needs a child table rather than a
+JSON column, following `purchase_line` and `customer_contact`.
 
 ```text
-fiscal_emitter_profile   one per tenant; RUC, DV, taxpayer type, name, trade
-                         name, activity, obligations
-fiscal_establishment     unique (tenant, code); the address the DE carries
+fiscal_emitter_profile   one per tenant: RUC, DV, taxpayer type, regime, legal
+                         and trade names, the optional responsible issuer, the
+                         operation defaults
+fiscal_emitter_activity  gActEco, one row per activity, ordered
+fiscal_establishment     unique (tenant, code): the address the DE carries
 fiscal_timbrado_range    unique (tenant, establishment, point, document type,
-                         series); the range, the validity start, the counter,
+                         series): the range, the validity start, the counter,
                          series_started_at, status
 ```
 
-`fiscal_timbrado_range.status` is `ACTIVE | EXHAUSTED | RETIRED`. `RETIRED` is
-what an operator does instead of deleting: a range that has consumed numbers is
-history, not configuration.
+### The columns, and where each one comes from
+
+Every width and pattern is the official schema's, read from
+`DE_v150.xsd`/`DE_Types_v150.xsd`/`Departamentos_v141.xsd` rather than from a
+summary: `tRuc` 3..8 `[1-9][0-9]*[0-9A-D]?`, `tdNombre` 4..255, `tdDirec` ≤255,
+`tdNumCas` 0..999999, `tdTel` 6..15, `tEmail`'s own pattern, `tdEst`/`tdPunExp`
+`[0-9]{3}`, `tdNumTim` eight digits never all zero, `tdNumDoc` seven digits
+never all zero, `tdSerieNum` `[A-Z]{2}`, `tdFeIniT` ≥ 2018-05-01, `dDenSuc`
+1..30, `tdDesDisEmi`/`tdDesCiuEmi` 1..30, `tcActEco` `[0-9A-Z]{1,8}` and
+`tdDesActEco` 1..300.
+
+**Four decisions worth stating, because each could reasonably have gone the
+other way:**
+
+1. **Protocol codes are stored as the protocol's own smallints with a CHECK on
+   the allowed set, not as named enums.** The code is what the DE carries and
+   what SIFEN validates, so a name would be a translation layer with nothing on
+   the other side. Internal states (`status`) keep named enums, as the
+   repository already does.
+2. **The descriptions are derived, not stored.** `tdDesTiDE` (7), `tdDesTImp`
+   (5), `tdDesTiTran` (13) and `tdDesTipEmi` (2) are closed enumerations whose
+   counts match the code sets exactly, and the Manual's worked example
+   corroborates the order in **three of three** pairs it uses:
+   `iTiDE 1 ↔ "Factura electrónica"`, `iTipTra 1 ↔ "Venta de mercadería"`,
+   `iTImp 1 ↔ "IVA"`. Storing them would be a second source for a closed set.
+3. **`dDesDepEmi` is not stored either.** `Departamentos_v141.xsd` enumerates
+   the twenty names, so the pair is derived from `department_code` and cannot
+   drift. The district and city names are **not** enumerable — 272 and 6,766
+   entries in the official spreadsheet — so those two are stored.
+4. **The counter is an integer, not the seven-character `dNumDoc`.** It has to
+   express "one past the end" to be exhausted, and `9999999 + 1` is not seven
+   digits. The seven-digit string is the emitted form, produced by zero-padding
+   at the edge.
+
+### Two partial unique indexes, because a plain one cannot say it
+
+PostgreSQL treats NULLs as distinct, so `UNIQUE (…, series)` would admit many
+seriesless ranges for the same establishment, point and document type — and the
+Manual describes exactly one. Likewise nothing stops two `ACTIVE` ranges unless
+it is said. So the migration creates:
+
+```text
+fiscal_timbrado_range_single_seriesless_key   WHERE series IS NULL
+fiscal_timbrado_range_single_active_key       WHERE status = 'ACTIVE'
+```
+
+### A defect this Story found in its own design
+
+The first draft enforced "the counter is never lowered" as a CHECK,
+`next_number >= range_from`. **That does not enforce it**: lowering a counter
+from 500 back to 1 passes, because `1 >= 1`. Monotonicity is a **transition**
+invariant and a CHECK can only see the new row.
+
+The live-PostgreSQL case caught it — the assertion expected a refusal and got
+`UPDATE 1`. The invariant is now a `BEFORE UPDATE` trigger
+(`fiscal_timbrado_range_next_number_monotonic`), and the CHECK stays as the
+static half, renamed `..._next_number_within_range` to say what it actually
+does.
+
+It matters because a consumed number is burnt: the number is part of the CDC,
+and lowering the counter would hand out a number that is already on a document.
+
+`fiscal_timbrado_range.status` is `ACTIVE | EXHAUSTED | RETIRED`, and two
+implications keep it honest — an `EXHAUSTED` range has run out and an `ACTIVE`
+one has not. `RETIRED` is deliberately free of both, because an operator may
+retire a range at any point in its life. A range is **never deleted**: a trigger
+refuses it and says to retire instead.
 
 ## UI
 
 - None. HTTP routes only.
 
 ## Implementation Summary
+
+**WU-C — the schema.** Four tables and one enum, hand-written SQL following the
+repository's migration style. Every column's width and pattern is read from the
+official XSDs; the four decisions and the self-found monotonicity defect are
+recorded under Database. The migration was verified two ways: it applies to a
+**fresh** database inside the transaction `prisma migrate deploy` wraps it in,
+and `prisma migrate diff` reports **no drift** on the four new tables beyond the
+repository-wide `updated_at` default that pre-exists on 37 other tables.
 
 **WU-A — the Story and the baseline correction.** The Manual's §10.5 was
 extracted in full and three rules it states were added to `SIFEN-BASELINE.md`
@@ -251,8 +330,16 @@ pnpm --filter @newsaas/fiscal test       green - 185 tests, 14 files
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
 pnpm format-check                        green, and it converges in two passes
-live-PostgreSQL gate                     not run - no schema change yet (WU-C)
+pnpm --filter @newsaas/database test     green - 435 tests
+live-PostgreSQL suite                    green - 215/215 against PostgreSQL 16
 ```
+
+The live-PG case is the one that mattered: it exercises the two partial unique
+indexes, both status implications, the monotonicity trigger, the deletion guard
+and four scalar CHECKs against a real PostgreSQL 16, each expected failure in
+its own rolled-back transaction — a rejected statement aborts the transaction,
+so two assertions sharing one would report "current transaction is aborted"
+instead of the constraint under test.
 
 ## Tests Added
 
