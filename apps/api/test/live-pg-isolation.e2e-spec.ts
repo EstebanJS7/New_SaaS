@@ -16162,6 +16162,74 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
     }, 60_000);
 
+    it("sets a series' start once on the applied database", async () => {
+      // Manual §10.5 (baseline §13): the series' start is the first DE's
+      // signature timestamp, and it is recorded in a second, set-once step by
+      // the caller that has just signed. Against real rows the load-bearing part
+      // is that the second call matches NOTHING — set-once is the
+      // `series_started_at IS NULL` predicate inside the UPDATE, not a read
+      // followed by a write.
+      //
+      // A DEDICATED tenant, for the reason the cases above use one:
+      // `fiscal_timbrado_range` refuses to be deleted (the no-delete trigger), so
+      // these rows stay behind and the suite's per-tenant baseline counts must
+      // not be disturbed.
+      const tenant = await prisma.tenant.create({
+        data: {
+          slug: `fisc011-start-${randomUUID().slice(0, 8)}`,
+          name: "FISC-011 series start",
+        },
+      });
+      const establishmentId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_establishment" (
+          "id", "tenant_id", "code", "address_line", "house_number",
+          "department_code", "city_code", "city_name", "phone", "email"
+        ) VALUES (
+          ${establishmentId}::uuid, ${tenant.id}::uuid, '001', 'Av. Mcal. López', 1234,
+          1, 7, 'ASUNCION', '021123456', 'fiscal@vetsur.example'
+        )
+      `;
+      const rangeId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_timbrado_range" (
+          "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+          "series", "timbrado_number", "range_from", "range_to", "validity_start",
+          "next_number", "status"
+        ) VALUES (
+          ${rangeId}::uuid, ${tenant.id}::uuid, ${establishmentId}::uuid, '001', 1,
+          NULL, '12345678', 1, 9999999, TIMESTAMPTZ '2019-09-01 00:00:00+00',
+          1, 'ACTIVE'
+        )
+      `;
+
+      const key = {
+        tenantId: tenant.id,
+        establishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+      } as const;
+      // Each call gets its OWN transaction: this one is not a rollback harness,
+      // and the first write has to be committed for the second call to be a
+      // second caller at all.
+      const setSeriesStart = (startedAt: Date) =>
+        prisma.$transaction((tx) =>
+          createTimbradoRangeStore(tx).setSeriesStart({ key, rangeId, startedAt })
+        );
+      const startedAt = new Date("2026-10-07T12:00:00.000Z");
+      const later = new Date("2027-01-02T00:00:00.000Z");
+
+      expect(await setSeriesStart(startedAt)).toBe(true);
+      const stamped = await prisma.fiscalTimbradoRange.findFirst({ where: { id: rangeId } });
+      expect(stamped?.seriesStartedAt?.toISOString()).toBe(startedAt.toISOString());
+
+      // The later instant must not overwrite the first signature's timestamp,
+      // which is when the series' validity actually began.
+      expect(await setSeriesStart(later)).toBe(false);
+      const unchanged = await prisma.fiscalTimbradoRange.findFirst({ where: { id: rangeId } });
+      expect(unchanged?.seriesStartedAt?.toISOString()).toBe(startedAt.toISOString());
+    }, 60_000);
+
     it("admits the FISC-009 SIGNING edges and keeps its cancellation excluded", async () => {
       // The state machine is enforced by `fiscal_document_transition_guard` in the
       // database, so this is the only place that proves the applied behaviour

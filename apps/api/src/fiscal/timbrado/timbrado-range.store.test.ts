@@ -193,3 +193,48 @@ describe("openSeries", () => {
     });
   });
 });
+
+describe("setSeriesStart", () => {
+  const STARTED_AT = new Date("2026-10-07T12:34:56.000Z");
+
+  it("sets it only where it is still unset, in the tenant's scope", async () => {
+    const delegate = new RecordingDelegate();
+    await store(delegate).setSeriesStart({ key: KEY, rangeId: ROW.id, startedAt: STARTED_AT });
+
+    // Set-once is the predicate in the WHERE, which is what makes this one
+    // statement rather than a read and a write: `seriesStartedAt: null` cannot
+    // match a row another caller has already stamped.
+    expect(delegate.updateManyArgs[0]?.where).toEqual({
+      id: ROW.id,
+      tenantId: KEY.tenantId,
+      seriesStartedAt: null,
+    });
+    expect(delegate.updateManyArgs[0]?.data).toEqual({ seriesStartedAt: STARTED_AT });
+  });
+
+  it("reports the second caller as false and the first as true", async () => {
+    const first = new RecordingDelegate(ROW, 1);
+    expect(
+      await store(first).setSeriesStart({ key: KEY, rangeId: ROW.id, startedAt: STARTED_AT })
+    ).toBe(true);
+
+    const second = new RecordingDelegate(ROW, 0);
+    expect(
+      await store(second).setSeriesStart({ key: KEY, rangeId: ROW.id, startedAt: STARTED_AT })
+    ).toBe(false);
+  });
+
+  it("refuses an unusable instant before issuing the statement", async () => {
+    const delegate = new RecordingDelegate();
+    await expect(
+      store(delegate).setSeriesStart({
+        key: KEY,
+        rangeId: ROW.id,
+        startedAt: new Date("not an instant"),
+      })
+    ).rejects.toMatchObject({ failure: "INVALID_SERIES_START" });
+    // Nothing reached PostgreSQL: the guard is the reason, and an unguarded
+    // adapter would hand the driver an instant nobody chose.
+    expect(delegate.updateManyArgs).toEqual([]);
+  });
+});

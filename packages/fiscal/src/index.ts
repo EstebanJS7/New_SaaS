@@ -131,10 +131,12 @@ export {
 export type { TimbradoFailure } from "./timbrado/series.js";
 // FISC-011 WU-D: the allocation. It owns no transaction and no Prisma client —
 // the caller's transaction client satisfies `TimbradoRangeDelegate` structurally,
-// which is what lets the same rules serve the API and the worker.
+// which is what lets the same rules serve the API and the worker. WU-F adds the
+// set-once series start the caller that has just signed records.
 export {
   ALLOCATION_MAX_ATTEMPTS,
   allocateDocumentNumber,
+  assertSeriesStartUsable,
   DOCUMENT_NUMBER_WIDTH,
   formatDocumentNumber,
   MAX_DOCUMENT_NUMBER,
