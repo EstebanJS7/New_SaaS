@@ -329,7 +329,24 @@ refuses it and says to retire instead.
 
 ## Implementation Summary
 
-**WU-E, part 3 (in progress) — the permission and the Prisma adapter.**
+**WU-E, part 3b — the surface.** `apps/api/src/fiscal/timbrado/` gains the
+tenant-scoped repository, the service and the routes behind
+`fiscal.profile.manage`. The service's whole content is the **gate order** — the
+`fiscal` entitlement first, then the permission — and **one transaction per
+write** spanning the rows and the audit row, so an unaudited change is
+structurally impossible. The audit carries field NAMES and counts, never values:
+a profile holds a RUC and an address.
+
+**There is deliberately no route that allocates a number.** The allocation is
+`allocateDocumentNumber` over the Prisma store, and exposing it would let a
+caller burn numbers without issuing anything.
+
+A resource outside the tenant reaches the service as a scoped read that finds
+nothing, so it answers `404` rather than confirming the row exists elsewhere —
+and a range whose establishment is in another tenant is refused before the
+insert, which is the service-level echo of the composite foreign key.
+
+**WU-E, part 3a — the permission and the Prisma adapter.**
 `fiscal.profile.manage` joins the permission seeds, held by OWNER and ADMIN
 alongside the signing-material one, and `apps/api/src/fiscal/timbrado/` carries
 the port's Prisma implementation.
@@ -422,6 +439,7 @@ second copy would be a second place for it to drift.
 pnpm --filter @newsaas/fiscal lint       green
 pnpm --filter @newsaas/fiscal typecheck  green
 pnpm --filter @newsaas/fiscal test       green - 247 tests, 17 files
+pnpm --filter @newsaas/api test          green - 1129 tests
    run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11

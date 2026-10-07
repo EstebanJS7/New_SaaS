@@ -209,6 +209,18 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /fiscal/signing-material",
   "GET /fiscal/signing-material",
   "POST /fiscal/signing-material/:id/retire",
+  // EPIC-16 FISC-011 — the emitter profile, its establishments and the
+  // authorised numbering ranges. There is deliberately NO route that allocates a
+  // number: that is an internal call, and exposing it would let a caller burn
+  // numbers without issuing anything.
+  "PUT /fiscal/emitter-profile",
+  "GET /fiscal/emitter-profile",
+  "GET /fiscal/establishments",
+  "POST /fiscal/establishments",
+  "PUT /fiscal/establishments/:id",
+  "GET /fiscal/timbrado-ranges",
+  "POST /fiscal/timbrado-ranges",
+  "POST /fiscal/timbrado-ranges/:id/retire",
   // EPIC-15 FISC-004 — explicit fiscal submission command.
   "POST /fiscal-documents",
   // FISC-005b / D7 — tenant-scoped fiscal read contract.
@@ -441,6 +453,17 @@ const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /fiscal/signing-material": FISCAL_PERMISSIONS.signingMaterialManage,
   "GET /fiscal/signing-material": FISCAL_PERMISSIONS.signingMaterialManage,
   "POST /fiscal/signing-material/:id/retire": FISCAL_PERMISSIONS.signingMaterialManage,
+  // FISC-011: one permission for the whole profile surface, separate from the
+  // signing material's because it is a different material and a different blast
+  // radius — a range's counter cannot be lowered once used.
+  "PUT /fiscal/emitter-profile": FISCAL_PERMISSIONS.profileManage,
+  "GET /fiscal/emitter-profile": FISCAL_PERMISSIONS.profileManage,
+  "GET /fiscal/establishments": FISCAL_PERMISSIONS.profileManage,
+  "POST /fiscal/establishments": FISCAL_PERMISSIONS.profileManage,
+  "PUT /fiscal/establishments/:id": FISCAL_PERMISSIONS.profileManage,
+  "GET /fiscal/timbrado-ranges": FISCAL_PERMISSIONS.profileManage,
+  "POST /fiscal/timbrado-ranges": FISCAL_PERMISSIONS.profileManage,
+  "POST /fiscal/timbrado-ranges/:id/retire": FISCAL_PERMISSIONS.profileManage,
   "GET /fiscal-documents": FISCAL_PERMISSIONS.read,
   "GET /fiscal-documents/:id": FISCAL_PERMISSIONS.read,
   "POST /fiscal-documents": FISCAL_PERMISSIONS.issue,
@@ -713,11 +736,11 @@ describe("route-contract probe (deny-by-default)", () => {
   it("maps EVERY fiscal route to its single intended granular fiscal.* permission", () => {
     const actualByRoute = new Map(
       inventory
-        .filter(
-          (entry) =>
-            entry.path.startsWith("/fiscal-documents") ||
-            entry.path.startsWith("/fiscal/signing-material")
-        )
+        // Every fiscal path, not a list of prefixes: FISC-011 added three more
+        // (`/fiscal/emitter-profile`, `/fiscal/establishments`,
+        // `/fiscal/timbrado-ranges`), and a filter that named two of them let the
+        // new ones go unchecked.
+        .filter((entry) => entry.path.startsWith("/fiscal"))
         .map((entry) => [
           `${entry.method} ${entry.path}`,
           entry.permissions === undefined ? [] : [...entry.permissions],

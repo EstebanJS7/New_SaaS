@@ -6,6 +6,9 @@ import { FiscalSigningMaterialRepository } from "./signing-material/signing-mate
 import { SigningMaterialController } from "./signing-material/signing-material.controller.js";
 import { SigningMaterialPipe } from "./signing-material/signing-material.pipe.js";
 import { FiscalSigningMaterialService } from "./signing-material/signing-material.service.js";
+import { FiscalProfileController } from "./timbrado/timbrado.controller.js";
+import { FiscalProfileRepository } from "./timbrado/timbrado.repository.js";
+import { FiscalProfileService } from "./timbrado/timbrado.service.js";
 import { FiscalProviderModule } from "@newsaas/fiscal";
 import { AuditModule } from "../audit/audit.module.js";
 import { ContextModule } from "../context/context.module.js";
@@ -25,14 +28,16 @@ import {
  */
 @Module({
   imports: [FiscalProviderModule, ContextModule, RbacModule, AuditModule, EntitlementsModule],
-  controllers: [FiscalController, SigningMaterialController],
-  exports: [FiscalService, FiscalSigningMaterialService],
+  controllers: [FiscalController, SigningMaterialController, FiscalProfileController],
+  exports: [FiscalService, FiscalSigningMaterialService, FiscalProfileService],
   providers: [
     FiscalRepository,
     FiscalService,
     FiscalSigningMaterialRepository,
     FiscalSigningMaterialService,
     SigningMaterialPipe,
+    FiscalProfileRepository,
+    FiscalProfileService,
     {
       provide: FISCAL_SUBMISSION_PRODUCER,
       useFactory: () => {
