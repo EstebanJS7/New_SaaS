@@ -85,6 +85,23 @@ export {
   computeCdcCheckDigit,
 } from "./dte/dte.cdc.js";
 export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
+// FISC-011: the descriptions the DE carries beside its enumerated codes. Keyed
+// by CODE, never by position — the Manual lists 13 transaction types and the XSD
+// enumerates 11 of them, so the third entry of the enum belongs to code 4.
+export {
+  describeDepartment,
+  describeDocumentType,
+  describeEmissionType,
+  describeTaxType,
+  describeTransactionType,
+  DTE_DEPARTMENT_NAMES,
+  DTE_DOCUMENT_TYPE_DESCRIPTIONS,
+  DTE_EMISSION_TYPE_DESCRIPTIONS,
+  DTE_TAX_TYPE_DESCRIPTIONS,
+  DTE_TRANSACTION_TYPE_DESCRIPTIONS,
+  DteCatalogueError,
+} from "./dte/dte.catalogues.js";
+export type { DteCatalogueFailure, DteCodeDescription } from "./dte/dte.catalogues.js";
 // FISC-011: the Manual §10.5 series order, which is a validation and not just a
 // sequence — SIFEN refuses a series that is not the previous, the same or the
 // next one.

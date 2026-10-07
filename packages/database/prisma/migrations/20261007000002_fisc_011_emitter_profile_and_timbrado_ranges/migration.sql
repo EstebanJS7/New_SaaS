@@ -28,10 +28,13 @@
 -- Protocol codes are stored as the protocol's own smallints with a CHECK on the
 -- allowed set, not as named enums. The code is what the DE carries and what
 -- SIFEN validates, so a name would be a translation layer with nothing on the
--- other side. The descriptions are derived from the official enumerations
--- (`tdDesTiDE`, `tdDesTImp`, `tdDesTiTran`, `tdDesTipEmi`, `tDesDepartamento`),
--- whose counts match the code sets exactly and whose order is corroborated by
--- the three pairs the Manual's worked example uses.
+-- other side.
+--
+-- The descriptions are derived from the sources and keyed by CODE, never by
+-- position: `tiTipTra` has 13 codes and the Manual states all 13 pairings, while
+-- `DE_Types_v150.xsd`'s `tdDesTiTran` enumerates only 11 of them — the Manual's
+-- list with codes 3 and 7 removed. A positional mapping would give every
+-- transaction type from 3 upward the wrong text. See the Story's Database section.
 --
 -- Two invariants are enforced here rather than in the service:
 --

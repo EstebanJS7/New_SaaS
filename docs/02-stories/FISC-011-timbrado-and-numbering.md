@@ -329,6 +329,12 @@ refuses it and says to retire instead.
 
 ## Implementation Summary
 
+**WU-E, part 1 — the description catalogues.**
+`packages/fiscal/src/dte/dte.catalogues.ts`: the five enumerated sets the DE
+carries descriptions for, keyed by code, with lookups that refuse an unknown or
+non-integer code rather than guessing. It is part 1 because the read path needs
+it: the profile stores codes, and the descriptions are derived here.
+
 **WU-D — the allocation.** `packages/fiscal/src/timbrado/allocation.ts`:
 `allocateDocumentNumber({ store, key })` takes the next `dNumDoc` for an
 establishment, expedition point and document type, rolling the series over when
@@ -383,7 +389,7 @@ second copy would be a second place for it to drift.
 ```text
 pnpm --filter @newsaas/fiscal lint       green
 pnpm --filter @newsaas/fiscal typecheck  green
-pnpm --filter @newsaas/fiscal test       green - 208 tests, 15 files
+pnpm --filter @newsaas/fiscal test       green - 219 tests, 16 files
    run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
