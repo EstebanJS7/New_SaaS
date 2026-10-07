@@ -139,11 +139,14 @@ reason this Story has a counter and not a "free numbers" query.
       or exhausting a range never frees one.
 - [ ] When a range is exhausted, the allocation **advances to the next series in
       lexicographic order** (`null -> AA -> AB -> … -> AZ -> BA -> … -> ZZ`),
-      opening that series' row and marking the previous one `EXHAUSTED`.
+      opening that series' row and marking the previous one `EXHAUSTED`. _(the
+      order itself is WU-B, done; the row work is WU-D)_
 - [ ] `ZZ` exhausted is a terminal state: the allocation fails with a named
-      failure rather than wrapping or reusing.
+      failure rather than wrapping or reusing. _(WU-B returns `null` and refuses
+      any successor of `ZZ`; WU-D surfaces it as the allocation's failure)_
 - [ ] A series is **never skipped**: the allocation cannot produce a series that
-      is not the successor of the current one.
+      is not the successor of the current one. _(WU-B's `assertSeriesSuccession`
+      makes the check local and loud; WU-D calls it)_
 - [ ] `series_started_at` is **set once**, from the signature timestamp the
       caller supplies after signing, and a second call never overwrites it.
 - [ ] A range that has allocated at least one number **cannot be deleted**, and
@@ -219,20 +222,59 @@ history, not configuration.
 
 ## Implementation Summary
 
-_Not implemented._
+**WU-A — the Story and the baseline correction.** The Manual's §10.5 was
+extracted in full and three rules it states were added to `SIFEN-BASELINE.md`
+§13 verbatim: the lexicographic series order with sequentiality as a validation,
+the seriesless initial range consumed per document type, and the series' start
+date being the DE's digital-signature date-time.
+
+**WU-B — the pure series order.** `packages/fiscal/src/timbrado/series.ts`:
+`nextSeries`, `seriesOrdinal` / `seriesFromOrdinal`, `assertSeriesSuccession`
+and `assertValidSeries`, with `FIRST_SERIES`, `LAST_SERIES` and `SERIES_COUNT`.
+`null` is modelled as a real state — the seriesless initial range — rather than
+a missing value, because the Manual's order starts there. **`Ñ` has no special
+case on purpose**: it is excluded because it is not in `A`–`Z`, and `tdSerieNum`
+is `[A-Z]{2}`, so a hand-written skip rule would be an invention. The suite
+walks all 676 series and asserts both facts.
+
+`SERIES_PATTERN` in `dte.rules.ts` became exported rather than copied: the
+series order is the same protocol constant read in the other direction, and a
+second copy would be a second place for it to drift.
 
 ## Verification
 
 ```text
-Not run.
+pnpm --filter @newsaas/fiscal lint       green
+pnpm --filter @newsaas/fiscal typecheck  green
+pnpm --filter @newsaas/fiscal test       green - 185 tests, 14 files
+   run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
+pnpm --filter @newsaas/fiscal build      green
+pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
+pnpm format-check                        green, and it converges in two passes
+live-PostgreSQL gate                     not run - no schema change yet (WU-C)
 ```
 
 ## Tests Added
 
-Planned:
+`packages/fiscal/src/timbrado/series.test.ts`, 21 cases (WU-B):
 
-- The series progression as a pure function: `null -> AA`, `AZ -> BA`,
-  `ZZ -> terminal`, and that no produced series contains `Ñ`.
+- The order walked against the Manual's printed sequence, across the `AZ -> BA`
+  boundary the Manual writes as "… , AZ …BA, BB, …".
+- All **676** series produced by walking from `null`: unique, `[A-Z]{2}`, and
+  **none containing `Ñ`** — so a hand-written skip rule cannot creep in.
+- `ZZ` is ordinal 675 and its successor is `null`, so it is terminal and does
+  not wrap.
+- The ordinals round-trip for every series, and out-of-range ordinals are
+  refused.
+- A skip (`AA -> AC`), a backwards step (`BA -> AZ`) and any successor of `ZZ`
+  are all refused by `assertSeriesSuccession`.
+- The pattern refuses `ÑA`, `AÑ`, lowercase, digits, the wrong length and the
+  empty string.
+
+Planned for the remaining units:
+
+- The allocation under concurrency: N parallel callers receive N distinct
+  numbers.
 - The allocation under concurrency: N parallel callers receive N distinct
   numbers.
 - Monotonicity across an exhaustion boundary: the last number of one series and
@@ -270,7 +312,9 @@ Planned:
 
 ```text
 packages/database/prisma/schema.prisma        three tables and two enums
-packages/fiscal/src/timbrado/**               the series progression, pure
+packages/fiscal/src/timbrado/series.ts        the series order, pure
+packages/fiscal/src/timbrado/series.test.ts   21 cases
+packages/fiscal/src/dte/dte.rules.ts          exports SERIES_PATTERN, one source
 apps/api/src/fiscal/profile/**                routes, service, repository
 docs/06-fiscal/SIFEN-BASELINE.md              §13 carries the Manual's full text
 odd/tasks/epic-16-sifen-direct.md             the epic tracker, T7

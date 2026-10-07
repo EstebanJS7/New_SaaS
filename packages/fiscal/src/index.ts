@@ -85,6 +85,21 @@ export {
   computeCdcCheckDigit,
 } from "./dte/dte.cdc.js";
 export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
+// FISC-011: the Manual §10.5 series order, which is a validation and not just a
+// sequence — SIFEN refuses a series that is not the previous, the same or the
+// next one.
+export {
+  assertSeriesSuccession,
+  assertValidSeries,
+  FIRST_SERIES,
+  LAST_SERIES,
+  nextSeries,
+  SERIES_COUNT,
+  seriesFromOrdinal,
+  seriesOrdinal,
+  TimbradoError,
+} from "./timbrado/series.js";
+export type { TimbradoFailure } from "./timbrado/series.js";
 // FISC-009: the XMLDSig signer. The profile's constants are exported so a caller
 // can assert them without reaching into the module's internals.
 export {
