@@ -100,6 +100,24 @@ export {
   TimbradoError,
 } from "./timbrado/series.js";
 export type { TimbradoFailure } from "./timbrado/series.js";
+// FISC-011 WU-D: the allocation. It owns no transaction and no Prisma client —
+// the caller's transaction client satisfies `TimbradoRangeDelegate` structurally,
+// which is what lets the same rules serve the API and the worker.
+export {
+  ALLOCATION_MAX_ATTEMPTS,
+  allocateDocumentNumber,
+  DOCUMENT_NUMBER_WIDTH,
+  formatDocumentNumber,
+  MAX_DOCUMENT_NUMBER,
+  TimbradoAllocationError,
+} from "./timbrado/allocation.js";
+export type {
+  AllocatedDocumentNumber,
+  TimbradoAllocationFailure,
+  TimbradoRangeKey,
+  TimbradoRangeRecord,
+  TimbradoRangeStore,
+} from "./timbrado/allocation.js";
 // FISC-009: the XMLDSig signer. The profile's constants are exported so a caller
 // can assert them without reaching into the module's internals.
 export {

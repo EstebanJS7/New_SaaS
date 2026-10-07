@@ -329,6 +329,28 @@ refuses it and says to retire instead.
 
 ## Implementation Summary
 
+**WU-D — the allocation.** `packages/fiscal/src/timbrado/allocation.ts`:
+`allocateDocumentNumber({ store, key })` takes the next `dNumDoc` for an
+establishment, expedition point and document type, rolling the series over when
+the current range is spent. It is written against a four-operation
+`TimbradoRangeStore` that the caller implements over its own transaction client,
+so the claim and any rollover commit together or not at all.
+
+**The port was the raw Prisma delegate first, and it does not fit.** Prisma's
+`findFirst` is assignable to a signature declared outside the package;
+`updateMany` is not, because it is generic over a `SelectSubset` of an `XOR<>`
+data type. A port promising the raw delegate would have been a promise this
+package cannot keep, so the port is four **named operations** and the Prisma
+adapter lives with the caller — the same split `FiscalSigningMaterialDelegate`
+already uses. The cost is that the compare-and-swap's `where` clause lives in
+the adapter, which is why `claimNumber` takes the observed counter it must
+compare against instead of letting the adapter choose one.
+
+**Which range is current.** Because the review made the timbrado part of a
+range's identity, two authorisations may each be `ACTIVE`, so the allocation
+does not take "the ACTIVE range": it takes the ACTIVE range with the greatest
+`validityStart`, which is the authorisation in force.
+
 **WU-C — the schema.** Four tables and one enum, hand-written SQL following the
 repository's migration style. Every column's width and pattern is read from the
 official XSDs; the four decisions and the self-found monotonicity defect are
@@ -361,7 +383,7 @@ second copy would be a second place for it to drift.
 ```text
 pnpm --filter @newsaas/fiscal lint       green
 pnpm --filter @newsaas/fiscal typecheck  green
-pnpm --filter @newsaas/fiscal test       green - 185 tests, 14 files
+pnpm --filter @newsaas/fiscal test       green - 206 tests, 15 files
    run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
