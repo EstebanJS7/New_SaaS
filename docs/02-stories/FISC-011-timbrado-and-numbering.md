@@ -551,6 +551,21 @@ Planned for the remaining units:
 fixed in the work unit that produced them, because each was a wrong contract;
 the rest are the ones where a round per member stopped paying.
 
+### WU-E part 3c — the CAS against PostgreSQL, and the migration it corrected
+
+Two advisories from `review-dd75cd15980ffceb` (approved 2026-10-07), the
+successor authority the BLOCKER required:
+
+- **`R2-duplicated-live-pg-fixture`** (readability, `SUGGESTION`) — the two new
+  live-PG cases repeat the establishment insert verbatim. A shared helper would
+  remove the copy, and the two tenants are created per case on purpose because
+  the ranges cannot be deleted.
+- **`R2-unenforced-migration-immutability-claim`** (readability, `WARNING`) —
+  the static suite asserts that `20261007000002` still carries the bound it
+  wrote, but nothing _enforces_ that it is never edited again. The claim is a
+  convention, and a test can only check the convention's current state, not
+  prevent a future edit. Recorded rather than chased.
+
 ### WU-E part 3b — the surface
 
 Three advisories from `review-b66e82eecd6150f5` (approved 2026-10-07):
