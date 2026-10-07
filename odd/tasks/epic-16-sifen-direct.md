@@ -364,9 +364,17 @@ candidate 1 exists.
   `NULL`, and none of `TimbradoRangeStore`'s four operations sets a series
   start; **(2)** the profile's RUC must be the certificate's RUC (baseline
   §22.4, `D101`): nothing compares the two, and the assembler emits
-  `profile.ruc`. The smallest completion for both is one work unit on this
-  Story's surface — a set-once store operation plus service method, and the
-  refusal at profile write time. Story at
+  `profile.ruc`. **Both are now implemented** on branch
+  `feat/epic-16-fisc-011-completion`: `d61bad4` (the set-once series start) and
+  `53e8bd2` (the RUC obligation, both write paths), review-approved as lineage
+  `review-5c088696cf985684` — high tier, four lenses, a refuter and a targeted
+  validator, closed `approved` with the authority burned. The refuter confirmed
+  `R4-001`, a real defect of mine: the SAN parse took the first RUC-shaped
+  token, so the employing entity's RUC could win. The correction is in. **The
+  Story is not closed yet**: the live-PostgreSQL gate has not run, because
+  Docker is unavailable in this environment and `fisc009-pg` is unreachable, and
+  that gate is what proves the new set-once case against real rows. Feature
+  record: `odd/tasks/fisc-011-completion.md`. Story at
   `docs/02-stories/FISC-011-timbrado-and-numbering.md`. **No ADR needed**: the
   epic's ADR list carries only ADR-006 and ADR-007, and three tenant-scoped
   tables plus a counter are a domain model, not an architecture change. **The
