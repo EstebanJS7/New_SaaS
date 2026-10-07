@@ -439,7 +439,7 @@ second copy would be a second place for it to drift.
 pnpm --filter @newsaas/fiscal lint       green
 pnpm --filter @newsaas/fiscal typecheck  green
 pnpm --filter @newsaas/fiscal test       green - 247 tests, 17 files
-pnpm --filter @newsaas/api test          green - 1129 tests
+pnpm --filter @newsaas/api test          green - 1148 tests
    run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
@@ -514,6 +514,24 @@ Planned for the remaining units:
 **The advisories below are recorded, not deferred silently.** Two of them were
 fixed in the work unit that produced them, because each was a wrong contract;
 the rest are the ones where a round per member stopped paying.
+
+### WU-E part 3b — the surface
+
+Three advisories from `review-b66e82eecd6150f5` (approved 2026-10-07):
+
+- **`R3-range-order`** (reliability, `WARNING`) — **fixed**. The range body did
+  not enforce `rangeFrom <= rangeTo`, so a reversed span reached the column and
+  failed as a server fault. The schema's own stated purpose is to answer `400`.
+- **`R3-validity-start`** (reliability, `WARNING`) — **fixed**, and the same
+  class. The regex accepted `2026-13-45` and `2018-04-30`; both are dates the
+  column refuses. It is a calendar round-trip now, not `Date.parse`, because
+  that one **rolls over**: `"2026-02-30"` comes back as March 2 rather than
+  failing.
+- **`R3-upsert-race`** (reliability, `SUGGESTION`) — the profile upsert reads
+  before it writes, so two concurrent upserts could both see "no profile" and
+  both try to create. The unique constraint on `tenant_id` makes the second fail
+  loudly rather than produce two rows, so it is a retry rather than corruption —
+  recorded, not chased.
 
 ### WU-E part 3a — the permission and the Prisma adapter
 
