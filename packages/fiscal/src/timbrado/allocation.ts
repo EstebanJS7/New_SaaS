@@ -39,7 +39,7 @@
  * current authorisation.
  */
 
-import { type TimbradoError, nextSeries } from "./series.js";
+import { SERIES_COUNT, type TimbradoError, nextSeries } from "./series.js";
 
 /** `tdNumDoc`: exactly seven digits, zero-padded, never all zero. */
 export const DOCUMENT_NUMBER_WIDTH = 7;
@@ -48,13 +48,17 @@ export const DOCUMENT_NUMBER_WIDTH = 7;
 export const MAX_DOCUMENT_NUMBER = 9_999_999;
 
 /**
- * How many times the allocation re-reads after losing a race.
+ * How many times the allocation re-reads **without making progress**.
  *
- * This is a **spin guard, not a contention limit**: each retry is one cheap
+ * This is a spin guard, not a contention limit: each retry is one cheap
  * compare-and-swap, and the worst case under N concurrent callers is N attempts.
  * A bound of 8 would therefore start failing at eight simultaneous documents for
  * the same key, which is a busy day rather than an impossible one. 32 leaves room
  * for that while still failing loudly instead of looping forever.
+ *
+ * A successful rollover is progress and does not spend the budget; the loop is
+ * still bounded because each rollover moves to a strictly greater series and `ZZ`
+ * raises `SERIES_EXHAUSTED`.
  */
 export const ALLOCATION_MAX_ATTEMPTS = 32;
 
@@ -123,6 +127,10 @@ export interface TimbradoRangeStore {
    * Opens the successor series, inheriting the authorisation's span, validity
    * start and timbrado number: the Manual's model is that the SAME authorisation
    * continues under the next series, which is why the timbrado is not reissued.
+   *
+   * `nextNumber` is passed rather than left to the adapter: where a series starts
+   * counting is a numbering rule, and an adapter that inferred it could start the
+   * successor at the wrong place without anything catching it.
    */
   openSeries(args: {
     readonly key: TimbradoRangeKey;
@@ -131,6 +139,7 @@ export interface TimbradoRangeStore {
     readonly rangeFrom: number;
     readonly rangeTo: number;
     readonly validityStart: Date;
+    readonly nextNumber: number;
   }): Promise<void>;
 }
 
@@ -162,7 +171,17 @@ export async function allocateDocumentNumber(args: {
 }): Promise<AllocatedDocumentNumber> {
   const { store, key } = args;
 
-  for (let attempt = 1; attempt <= ALLOCATION_MAX_ATTEMPTS; attempt += 1) {
+  let attempts = 0;
+  let rollovers = 0;
+
+  // Two budgets, because the two kinds of iteration mean different things. A
+  // rollover that closes a range is PROGRESS, so counting it against the
+  // contention budget would let a chain of spent ranges report contention when
+  // nobody is competing. It is still bounded, by the only bound that cannot be
+  // exceeded legitimately: the series space. A store that never closes what it is
+  // asked to close would otherwise loop forever, and `SERIES_COUNT` iterations of
+  // a range that keeps being "spent" is not a sequence anyone is issuing.
+  while (true) {
     const range = await store.findCurrentRange(key);
 
     if (range === null) {
@@ -177,7 +196,18 @@ export async function allocateDocumentNumber(args: {
     if (range.nextNumber > range.rangeTo) {
       // The range is spent. Close it and open the next series, then come back and
       // allocate from that one — this attempt consumed nothing.
-      await rollOverSeries({ store, key, range });
+      const progressed = await rollOverSeries({ store, key, range });
+      if (progressed) {
+        rollovers += 1;
+        if (rollovers > SERIES_COUNT) {
+          break;
+        }
+      } else {
+        attempts += 1;
+        if (attempts >= ALLOCATION_MAX_ATTEMPTS) {
+          break;
+        }
+      }
       continue;
     }
 
@@ -187,6 +217,10 @@ export async function allocateDocumentNumber(args: {
     });
     if (!claimed) {
       // Another caller took this number between the read and the claim.
+      attempts += 1;
+      if (attempts >= ALLOCATION_MAX_ATTEMPTS) {
+        break;
+      }
       continue;
     }
 
@@ -205,8 +239,8 @@ export async function allocateDocumentNumber(args: {
   throw new TimbradoAllocationError(
     "ALLOCATION_CONTENDED",
     `The timbrado range for establishment ${key.establishmentId}, point ` +
-      `${key.expeditionPoint} and document type ${String(key.documentType)} could not be ` +
-      `claimed in ${String(ALLOCATION_MAX_ATTEMPTS)} attempts.`
+      `${key.expeditionPoint} and document type ${String(key.documentType)} made no progress ` +
+      `in ${String(ALLOCATION_MAX_ATTEMPTS)} attempts.`
   );
 }
 
@@ -221,7 +255,7 @@ async function rollOverSeries(args: {
   store: TimbradoRangeStore;
   key: TimbradoRangeKey;
   range: TimbradoRangeRecord;
-}): Promise<void> {
+}): Promise<boolean> {
   const { store, key, range } = args;
   const successor = nextSeries(range.series);
   if (successor === null) {
@@ -236,7 +270,7 @@ async function rollOverSeries(args: {
   const closed = await store.closeRange({ rangeId: range.id });
   if (!closed) {
     // Another caller closed it first and is opening the successor itself.
-    return;
+    return false;
   }
 
   await store.openSeries({
@@ -246,15 +280,27 @@ async function rollOverSeries(args: {
     rangeFrom: range.rangeFrom,
     rangeTo: range.rangeTo,
     validityStart: range.validityStart,
+    nextNumber: range.rangeFrom,
   });
+  return true;
 }
 
-/** `dNumDoc` is seven digits, zero-padded; the schema forbids an all-zero value. */
+/**
+ * `dNumDoc` is seven digits, zero-padded; the schema forbids an all-zero value
+ * and the width forbids anything above {@link MAX_DOCUMENT_NUMBER}. Both ends are
+ * checked: a floor-only guard would happily return eight digits for a caller that
+ * passed a value the schema cannot carry.
+ */
 export function formatDocumentNumber(sequenceNumber: number): string {
-  if (!Number.isInteger(sequenceNumber) || sequenceNumber < 1) {
+  if (
+    !Number.isInteger(sequenceNumber) ||
+    sequenceNumber < 1 ||
+    sequenceNumber > MAX_DOCUMENT_NUMBER
+  ) {
     throw new TimbradoAllocationError(
       "INVALID_RANGE",
-      `A document number is an integer of at least 1, received ${String(sequenceNumber)}.`
+      `A document number is an integer from 1 to ${String(MAX_DOCUMENT_NUMBER)}, received ` +
+        `${String(sequenceNumber)}.`
     );
   }
   return String(sequenceNumber).padStart(DOCUMENT_NUMBER_WIDTH, "0");

@@ -383,7 +383,7 @@ second copy would be a second place for it to drift.
 ```text
 pnpm --filter @newsaas/fiscal lint       green
 pnpm --filter @newsaas/fiscal typecheck  green
-pnpm --filter @newsaas/fiscal test       green - 206 tests, 15 files
+pnpm --filter @newsaas/fiscal test       green - 208 tests, 15 files
    run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
@@ -454,6 +454,26 @@ Planned for the remaining units:
   against Tabla 3.
 
 ## Technical Debt
+
+Three advisories from WU-D's review (`review-839e5bd326e5b806`, approved
+2026-10-07), all non-blocking. **All three were fixed in the same work unit**,
+because each was a wrong contract rather than a cosmetic:
+
+- **`R3-FORMAT-MAX`** (reliability, `WARNING`) — `formatDocumentNumber` checked
+  the floor (`>= 1`) and not the ceiling, so it would happily return eight
+  digits for a value `tdNumDoc` cannot carry. Both ends are checked now.
+- **`R3-OPENSERIES-COUNTER`** (reliability, `SUGGESTION`) — the `openSeries`
+  port did not say where the successor's counter starts, leaving the adapter to
+  infer it. Where a series starts counting is a numbering rule, so `nextNumber`
+  is passed.
+- **`R3-ROLLOVER-ATTEMPTS`** (reliability, `WARNING`) — a rollover that closed a
+  range is **progress**, but it spent the contention budget, so a chain of spent
+  ranges would report `ALLOCATION_CONTENDED` with nobody competing. The two
+  kinds of iteration now have separate budgets: contention is bounded by
+  `ALLOCATION_MAX_ATTEMPTS`, and progress-making rollovers by the series space —
+  the only bound that cannot be exceeded legitimately. The test that proves it
+  runs **forty** rollovers and then a successful claim; a bound of 32 would have
+  failed at the thirty-second.
 
 Two advisories from WU-B's review (`review-ab19166c91a10075`, approved
 2026-10-07), both non-blocking. **Both were fixed in the same work unit** rather

@@ -102,6 +102,7 @@ class FakeRanges implements TimbradoRangeStore {
     rangeFrom: number;
     rangeTo: number;
     validityStart: Date;
+    nextNumber: number;
   }): Promise<void> {
     // The `single_active_key` partial unique index, scoped per authorisation:
     // one ACTIVE range per timbrado and key.
@@ -124,7 +125,7 @@ class FakeRanges implements TimbradoRangeStore {
       rangeFrom: args.rangeFrom,
       rangeTo: args.rangeTo,
       validityStart: args.validityStart,
-      nextNumber: args.rangeFrom,
+      nextNumber: args.nextNumber,
       status: "ACTIVE",
     });
     return Promise.resolve();
@@ -182,9 +183,11 @@ describe("the number the allocation hands out", () => {
   });
 
   it("refuses a number that is not a sequence value", () => {
-    for (const value of [0, -1, 1.5]) {
+    // Both ends: the floor is the schema's all-zero rule and the ceiling is the
+    // seven-digit width. A floor-only guard would return eight digits.
+    for (const value of [0, -1, 1.5, 10_000_000]) {
       expect(() => formatDocumentNumber(value)).toThrow(TimbradoAllocationError);
-      expect(() => formatDocumentNumber(value)).toThrow(/at least 1/);
+      expect(() => formatDocumentNumber(value)).toThrow(/from 1 to 9999999/);
     }
   });
 });
@@ -329,9 +332,58 @@ describe("the claim is a compare-and-swap, so a number is never handed out twice
 
     await expect(allocate(neverWins)).rejects.toThrow(TimbradoAllocationError);
     await expect(allocate(neverWins)).rejects.toThrow(
-      new RegExp(`could not be claimed in ${String(ALLOCATION_MAX_ATTEMPTS)} attempts`)
+      new RegExp(`made no progress in ${String(ALLOCATION_MAX_ATTEMPTS)} attempts`)
     );
     expect(await failureOf(() => allocate(neverWins))).toBe("ALLOCATION_CONTENDED");
+  });
+
+  it("does not spend the contention budget on rollovers that make progress", async () => {
+    // Forty spent ranges in a row, each of which the store closes, and then one
+    // that can be claimed. Counting a successful rollover against the contention
+    // budget would report ALLOCATION_CONTENDED at 32 and never reach the claim —
+    // and nothing is competing here. The series space is the bound that applies.
+    const spent = {
+      id: "range-spent",
+      timbradoNumber: "12345678",
+      establishmentId: ESTABLISHMENT,
+      expeditionPoint: "001",
+      documentType: 1,
+      series: null,
+      rangeFrom: 1,
+      rangeTo: 1,
+      validityStart: new Date("2019-09-01T00:00:00Z"),
+      nextNumber: 2,
+    };
+    let reads = 0;
+    const store: TimbradoRangeStore = {
+      findCurrentRange: () => {
+        reads += 1;
+        return Promise.resolve(
+          reads <= 40 ? { ...spent } : { ...spent, nextNumber: 1, rangeTo: 9_999_999 }
+        );
+      },
+      claimNumber: () => Promise.resolve(true),
+      closeRange: () => Promise.resolve(true),
+      openSeries: () => Promise.resolve(),
+    };
+
+    expect((await allocate(store)).documentNumber).toBe("0000001");
+    expect(reads).toBe(41);
+  });
+
+  it("still bounds a store that never closes what it is asked to close", async () => {
+    // A pathological store: every read reports a spent range and every close
+    // "succeeds", so progress is claimed but never happens. The series space is
+    // the only bound that cannot be exceeded legitimately, and it stops the loop.
+    const ranges = new FakeRanges();
+    const alwaysSpent: TimbradoRangeStore = {
+      findCurrentRange: () => Promise.resolve({ ...ranges.seed({ rangeTo: 1, nextNumber: 2 }) }),
+      claimNumber: () => Promise.resolve(false),
+      closeRange: () => Promise.resolve(true),
+      openSeries: () => Promise.resolve(),
+    };
+
+    expect(await failureOf(() => allocate(alwaysSpent))).toBe("ALLOCATION_CONTENDED");
   });
 
   it("does not open a second series when another caller already did", async () => {
