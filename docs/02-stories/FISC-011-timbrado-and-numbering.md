@@ -491,6 +491,37 @@ Planned for the remaining units:
   the profile stores the code the operator supplies without validating it
   against Tabla 3.
 
+## Technical Debt
+
+**The advisories below are recorded, not deferred silently.** Two of them were
+fixed in the work unit that produced them, because each was a wrong contract;
+the rest are the ones where a round per member stopped paying.
+
+### WU-E part 3a — the permission and the Prisma adapter
+
+Two advisories from `review-c608f94b2d2b7d0f` (approved 2026-10-07):
+
+- **`R3-001`** (reliability, `WARNING`) — **fixed**. The adapter ordered the
+  current range by `validityStart` alone. Two ACTIVE authorisations may share a
+  validity start, so the choice was not deterministic — and the port's own
+  contract names the timbrado number as the tie-break. The order is total on
+  those two keys now.
+- **`R3-002`** (reliability, `SUGGESTION`) — the `closeRange` case asserts the
+  statement's shape and not its true/false result, while the `claimNumber` cases
+  assert both. A missing assertion, not a missing behaviour.
+
+And one from the fix's own review, `review-10afc4df96e34fbd` (approved
+2026-10-07), which is precise:
+
+- **`R3-TOTALITY`** (reliability, `SUGGESTION`) — the fix made the order total
+  on `(validityStart, timbradoNumber)`, and that is **still not total**: the
+  schema's identity includes the series, so two series of the same timbrado can
+  share a validity start and tie on both keys. A final `id` would settle it. The
+  remaining tie is between two rows of the SAME authorisation, which only arises
+  if an operator registered two series at once.
+
+### WU-E part 2 — the profile assembly
+
 One advisory from the fix's own review (`review-0b7d72bb77b1ece2`, approved
 2026-10-07), recorded rather than chased — this is where the family stops being
 worth a round per member:
