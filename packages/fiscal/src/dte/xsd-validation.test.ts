@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { buildDteXml } from "./dte.builder.js";
 import { buildDteRequestFromInvoice } from "./dte.mapper.js";
-import { validFacturaElectronicaRequest, withStructuralSignature } from "./dte.fixture.js";
+import {
+  FIXTURE_CDC,
+  FIXTURE_CERTIFICATE_PEM,
+  FIXTURE_PRIVATE_KEY_PEM,
+  validFacturaElectronicaRequest,
+  withStructuralSignature,
+} from "./dte.fixture.js";
+import { signDteXml } from "./dte.signing.js";
 import {
   defaultDteSchemaDirectory,
   DTE_XSD_ARTIFACTS,
@@ -44,6 +51,24 @@ describe.skipIf(skipped)(
       const xml = withStructuralSignature(buildDteXml(validFacturaElectronicaRequest()));
       const result = await validateDeAgainstOfficialXsd(xml, schemaDirectory);
 
+      expect(result.errors).toEqual([]);
+      expect(result.valid).toBe(true);
+    });
+
+    it("accepts the document once it carries a REAL signature", async () => {
+      const xml = signDteXml({
+        xml: buildDteXml(validFacturaElectronicaRequest()),
+        privateKeyPem: FIXTURE_PRIVATE_KEY_PEM,
+        certificatePem: FIXTURE_CERTIFICATE_PEM,
+        cdc: FIXTURE_CDC,
+      });
+      const result = await validateDeAgainstOfficialXsd(xml, schemaDirectory);
+
+      // This is the acceptance criterion of [[FISC-009]]: not "it produced a
+      // signature", but "the signature it produced is the one the schema
+      // allows, in the position the schema allows". The structural fixture above
+      // passes the same gate, which is exactly why this case exists separately:
+      // structure is not a signature.
       expect(result.errors).toEqual([]);
       expect(result.valid).toBe(true);
     });

@@ -13,6 +13,20 @@
  */
 
 import { assertValidDteRequest } from "./dte.rules.js";
+
+/**
+ * The signature placeholder, as a complete line — indentation included.
+ *
+ * It is exported because [[FISC-009]] has to remove **exactly** this and let
+ * `xml-crypto` put the real signature in its place. Removing it is what keeps
+ * the digest honest, and owning the literal here means the signer never guesses
+ * at this module's serialization.
+ *
+ * The XSD's `ds:Signature` is `ds:SignatureType`, whose `SignedInfo` is required,
+ * so the placeholder makes an *unsigned* DE schema-invalid on purpose: it is a
+ * marker for "not signed yet", not a valid signature.
+ */
+export const SIGNATURE_PLACEHOLDER = `  <Signature xmlns="${XMLDSIG_NAMESPACE}"/>`;
 import {
   DTE_NAMESPACE,
   DTE_XML_VERSION,
@@ -43,7 +57,7 @@ export function buildDteXml(request: DteRequest): string {
     ...renderOptionalGroup("gCamGen", request.gCamGen, 4),
     ...(request.gCamDEAsoc ?? []).flatMap((associated) => renderGroup("gCamDEAsoc", associated, 4)),
     `  </DE>`,
-    `  <Signature xmlns="${XMLDSIG_NAMESPACE}"/>`,
+    SIGNATURE_PLACEHOLDER,
     ...renderCamposFueraFirma(request.gCamFuFD, 2),
     `</rDE>`,
   ];

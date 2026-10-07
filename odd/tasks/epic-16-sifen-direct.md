@@ -304,7 +304,21 @@ candidate 1 exists.
       `SIGNING -> CANCELLED` still excluded because a worker holds that claim.
       **WU-D, verification**: the signed document through the XSD gate WU-B of
       FISC-008 built, plus the live-PostgreSQL coverage of the new enum value
-      and the new edges.
+      and the new edges. **WU-A and WU-B are DONE (2026-10-07).** WU-B is
+      `packages/fiscal/src/dte/dte.signing.ts` plus 25 cases in
+      `dte.signing.test.ts` and one new case in `xsd-validation.test.ts` (the
+      really signed document, deliberately separate from the structural
+      fixture's — structure is not a signature). Two findings it produced, both
+      recorded: **the signature is a SIBLING of `DE`**, because the schema's
+      `rDE` carries `DE` and then `ref="ds:Signature"` while `tDE` holds no
+      signature, so the enveloped transform removes nothing here; and
+      **`@xmldom/xmldom` is deliberately NOT declared**, because its
+      `index.d.ts` opens with `/// <reference lib="dom" />` and declaring it
+      re-typed an unrelated WebCrypto union in the PKCS#12 fixture, breaking
+      `typecheck` in a file this Story does not touch. Gates green: fiscal
+      lint/typecheck/test/build, the suite run with `DTE_XSD_REQUIRED=1`, root
+      18/18, 18/18, 19/19, 11/11, and `format-check`. The live-PostgreSQL gate
+      belongs to WU-C, which is next.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.

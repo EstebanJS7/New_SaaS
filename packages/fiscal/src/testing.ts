@@ -37,7 +37,9 @@ export type {
 // prepared schemas are copyrighted artifacts that are never committed.
 export {
   FIXTURE_CDC,
+  FIXTURE_CERTIFICATE_PEM,
   FIXTURE_DOCUMENT_NUMBER,
+  FIXTURE_PRIVATE_KEY_PEM,
   FIXTURE_QR,
   FIXTURE_SECURITY_CODE,
   STRUCTURAL_SIGNATURE,

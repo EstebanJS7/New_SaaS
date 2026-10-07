@@ -109,6 +109,18 @@ Its transitive dependencies are `xpath`, `@xmldom/xmldom` and
 `@xmldom/is-dom-node` — four packages total, all permissively licensed, none
 native, none requiring a build step.
 
+**`@xmldom/xmldom` stays transitive and is deliberately NOT declared**, even
+though the signer needs to inspect XML. Its `index.d.ts` opens with
+`/// <reference lib="dom" />`, so declaring it pulls the **whole DOM lib** into
+this Node-only package's compilation. That is not theoretical: it re-typed an
+unrelated WebCrypto union in the PKCS#12 fixture (`AesGcmParams` began to
+require an `iv`) and broke `typecheck` in a file this Story does not touch.
+`xml-crypto` performs every parse, and `dte.signing.ts` does only two exact
+string operations over a document our own builder produced: removing the
+placeholder line the builder exports, and asserting the shape of the signature
+`xml-crypto` returned. Avoiding a `lib="dom"` leak in a package that parses
+PKCS#12 and signs is worth more than the convenience of a second parser.
+
 **Scope of the dependency**: `packages/fiscal` only. The API and the worker
 reach it through the package's public surface, never directly.
 

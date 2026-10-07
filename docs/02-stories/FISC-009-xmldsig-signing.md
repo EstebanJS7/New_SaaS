@@ -141,37 +141,41 @@ enforce the graph in the database, and the enum value is added by migration.
 
 ## Acceptance Criteria
 
-- [ ] The signature carries `CanonicalizationMethod` =
+- [x] The signature carries `CanonicalizationMethod` =
       `http://www.w3.org/TR/2001/REC-xml-c14n-20010315` — **inclusive**, not
-      exclusive.
-- [ ] The signature carries `SignatureMethod` =
-      `http://www.w3.org/2001/04/xmldsig-more#rsa-sha256`.
-- [ ] The `Reference` `URI` is `#` followed by the CDC, and the signed subtree
-      is the `DE` element whose `Id` is that CDC.
-- [ ] The `Reference` carries **exactly two** `Transform` elements, in this
+      exclusive. _(WU-B)_
+- [x] The signature carries `SignatureMethod` =
+      `http://www.w3.org/2001/04/xmldsig-more#rsa-sha256`. _(WU-B)_
+- [x] The `Reference` `URI` is `#` followed by the CDC, and the signed subtree
+      is the `DE` element whose `Id` is that CDC. _(WU-B)_
+- [x] The `Reference` carries **exactly two** `Transform` elements, in this
       order: `http://www.w3.org/2000/09/xmldsig#enveloped-signature`, then
-      `http://www.w3.org/2001/10/xml-exc-c14n#`.
-- [ ] `DigestMethod` = `http://www.w3.org/2001/04/xmlenc#sha256`.
-- [ ] `KeyInfo` carries `X509Data > X509Certificate` and nothing else, and the
+      `http://www.w3.org/2001/10/xml-exc-c14n#`. _(WU-B)_
+- [x] `DigestMethod` = `http://www.w3.org/2001/04/xmlenc#sha256`. _(WU-B)_
+- [x] `KeyInfo` carries `X509Data > X509Certificate` and nothing else, and the
       **eight forbidden elements are absent**; a signature that contains any of
-      them is refused rather than emitted.
-- [ ] The signature block is placed **between `</DE>` and `<gCamFuFD>`**, which
-      is the position [[FISC-008]] leaves for it.
-- [ ] The signed document **validates against the official XSD** in the CI job
-      [[FISC-008]] built.
-- [ ] A **sign-then-verify round trip** succeeds with the certificate's public
+      them is refused rather than emitted. _(WU-B)_
+- [x] The signature block is placed **between `</DE>` and `<gCamFuFD>`**, which
+      is the position [[FISC-008]] leaves for it. _(WU-B)_
+- [x] The signed document **validates against the official XSD** in the CI job
+      [[FISC-008]] built. _(WU-B)_
+- [x] A **sign-then-verify round trip** succeeds with the certificate's public
       key, and **fails** when the signed content is altered after signing.
+      _(WU-B)_
 - [ ] `fiscal_document_status` gains `SIGNING` by migration, and the transition
       guard admits `QUEUED -> SIGNING`, `SIGNING -> SENDING` and
-      `SIGNING -> ERROR` while still rejecting `SIGNING -> CANCELLED`.
+      `SIGNING -> ERROR` while still rejecting `SIGNING -> CANCELLED`. _(WU-C)_
 - [ ] The worker claims `SIGNING`, signs the document it built, and moves to
       `SENDING`; a signing failure moves it to `ERROR` with the reason recorded
-      and no secret in the error.
-- [ ] The signing function is **pure with respect to its inputs**: no ambient
-      clock, no ambient tenant, no I/O.
+      and no secret in the error. _(WU-C)_
+- [x] The signing function is **pure with respect to its inputs**: no ambient
+      clock, no ambient tenant, no I/O. _(WU-B)_
 - [ ] No secret appears in a log, an error, a returned value or a stored
-      snapshot.
+      snapshot. _(WU-B covers the error and the returned value; the log and the
+      stored snapshot belong to [[FISC-010]], where the document is persisted.)_
 - [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
+      _(Green through WU-B except the live-PostgreSQL gate, which WU-C exercises
+      when the enum and the guard change.)_
 
 ## Domain Invariants
 
@@ -205,29 +209,70 @@ One migration: `fiscal_document_status` gains `SIGNING`, and the
 
 ## Implementation Summary
 
-_Not implemented._ [[ADR-006]] is accepted, so nothing blocks the
-implementation.
+**WU-A — the ADR and this Story.** [[ADR-006]] accepted 2026-10-07: `xml-crypto`
+6.3.3 as a dependency of `packages/fiscal`. `pkijs`/`asn1js` stay what
+[[ADR-005]] added them for, because `pkijs` cannot sign XML.
+
+**WU-B — the signer.** `packages/fiscal/src/dte/dte.signing.ts`:
+`signDteXml({ xml, privateKeyPem, certificatePem, cdc })` returns the document
+with the signature in place of the placeholder. The five algorithm URIs, the
+certificate placement and the eight forbidden elements are constants of the
+module, so a caller can assert the profile without reaching into its internals.
+`dte.builder.ts` now exports `SIGNATURE_PLACEHOLDER` — the exact line the signer
+removes — so the signer never guesses at the builder's serialization.
+
+**Two findings the implementation produced, both recorded rather than worked
+around:**
+
+1. **The signature is a SIBLING of `DE`.** The schema's `rDE` carries
+   `<xs:element name="DE" type="tDE"/>` followed by
+   `<xs:element ref="ds:Signature"/>`, and `tDE` contains no signature. So the
+   enveloped transform removes nothing — the signature is not a descendant of
+   the referenced element — and it is present because the profile requires it,
+   not because it changes the digest.
+2. **`@xmldom/xmldom` is deliberately NOT declared.** Its `index.d.ts` opens
+   with `/// <reference lib="dom" />`, which pulls the whole DOM lib into this
+   Node-only package's compilation; declaring it re-typed an unrelated WebCrypto
+   union in the PKCS#12 fixture and broke `typecheck`. It stays transitive,
+   `xml-crypto` does every parse, and the signer's own XML work is two exact
+   string operations. [[ADR-006]] records this.
+
+**WU-C — the `SIGNING` state — is not implemented yet.**
 
 ## Verification
 
 ```text
-Not run.
+pnpm --filter @newsaas/fiscal lint       green
+pnpm --filter @newsaas/fiscal typecheck  green
+pnpm --filter @newsaas/fiscal test       green - 164 tests, 13 files
+   run with DTE_XSD_REQUIRED=1, so the official-schema gate ran instead of skipping
+pnpm --filter @newsaas/fiscal build      green
+pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
+pnpm format-check                        green, and it converges in two passes
+live-PostgreSQL gate                     not run - no schema change in WU-B
 ```
 
 ## Tests Added
 
-Planned:
+`packages/fiscal/src/dte/dte.signing.test.ts`, 25 cases:
 
-- The profile, element by element: each algorithm URI, the ordered transforms,
-  the reference URI and the certificate placement.
-- The eight forbidden elements, each one refused.
-- The signature's position between `</DE>` and `<gCamFuFD>`.
-- The signed document validating against the official XSD.
-- The round trip: verify with the public key succeeds, and fails on altered
-  content.
-- The purity of the signing function: the same inputs produce identical output.
-- The lifecycle: the new enum value, the three admitted edges, and
-  `SIGNING -> CANCELLED` still rejected.
+- Each of the five algorithm URIs, read from the produced signature.
+- The reference URI, and the two transforms in the profile's order.
+- The certificate in `X509Data > X509Certificate`, byte-equal to the fixture's
+  DER.
+- The eight forbidden elements, one case each.
+- The position: immediately after `</DE>`, nothing but whitespace between, and
+  before `<gCamFuFD`.
+- The round trip: verification succeeds, and fails on altered content.
+- Purity: identical output for identical inputs, and no key material returned.
+- Four refusals: the wrong `Id`, a document that is not a DE, a missing
+  placeholder, and an error that does not carry the key.
+
+`packages/fiscal/src/dte/xsd-validation.test.ts` gained one case: **the really
+signed document validates against the official XSD.** It is deliberately
+separate from the structural-fixture case above it — the structural block passes
+the same gate, which is exactly why "structure is not a signature" needed its
+own assertion.
 
 ## Known Limitations
 

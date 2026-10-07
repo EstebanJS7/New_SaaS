@@ -85,6 +85,19 @@ export {
   computeCdcCheckDigit,
 } from "./dte/dte.cdc.js";
 export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
+// FISC-009: the XMLDSig signer. The profile's constants are exported so a caller
+// can assert them without reaching into the module's internals.
+export {
+  DteSigningError,
+  ENVELOPED_TRANSFORM,
+  EXCLUSIVE_CANONICALIZATION,
+  FORBIDDEN_KEY_INFO_ELEMENTS,
+  SIGNATURE_CANONICALIZATION,
+  SIGNATURE_DIGEST_METHOD,
+  SIGNATURE_METHOD,
+  signDteXml,
+} from "./dte/dte.signing.js";
+export type { DteSigningFailure, SignDteXmlArgs } from "./dte/dte.signing.js";
 // FISC-008: the security code's generator, with its randomness injected.
 export {
   generateSecurityCode,
