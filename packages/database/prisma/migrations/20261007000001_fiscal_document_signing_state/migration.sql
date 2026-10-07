@@ -1,12 +1,20 @@
 -- Additive migration: EPIC-16 FISC-009 signing state.
 --
--- `fiscal_document_status` gains `SIGNING`, and the transition guard admits the
--- three edges that make it a stage rather than a label:
+-- `fiscal_document_status` gains `SIGNING`, and the transition guard admits it
+-- as a stage rather than a label. **Five edges change, not three**, and the split
+-- matters:
 --
---   QUEUED  -> SIGNING      the worker claims the document to sign it
---   SIGNING -> SENDING      the signature is produced, the submission follows
---   SIGNING -> ERROR        signing failed, and the failure is ours, not the
---                           provider's
+--   PENDING -> SIGNING      the three CLAIM paths. `SIGNING` replaces `SENDING`
+--   QUEUED  -> SIGNING      as the target of a claim, and the worker's
+--   ERROR   -> SIGNING      claimable set is PENDING, QUEUED and ERROR, so all
+--                           three have to reach it. The existing `-> SENDING`
+--                           edges stay: a document already in flight is still
+--                           re-claimable by the recovery sweep.
+--
+--   SIGNING -> SENDING      the stage's own exits. The signature is produced and
+--   SIGNING -> ERROR        the submission follows; or signing failed, which is
+--                           ours and not the provider's, so it is retryable
+--                           through `ERROR -> SIGNING`.
 --
 -- `SIGNING -> CANCELLED` is EXCLUDED for the same reason `SENDING -> CANCELLED`
 -- is: a worker holds that claim and may be mid-work, so cancelling underneath it

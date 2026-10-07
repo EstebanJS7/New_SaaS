@@ -395,6 +395,33 @@ Both are accepted as-is under the policy the epic already applied to [[TD-032]]:
 generation outran resolution, so cosmetics are recorded rather than chased. The
 Story's own `done` gate does not depend on either.
 
+Four more advisories from WU-C1's review (`review-cdb027b76f1760c1`, approved
+2026-10-07), all non-blocking. **The first was fixed in the same work unit**
+rather than recorded, because it was a real inaccuracy in a file that was still
+editable — the branch had not been merged, so amending the migration's comment
+could not invalidate an applied checksum:
+
+- **`R2-SIGNING-EDGE-COUNT`** (readability, `WARNING`) — the migration's comment
+  said "the three edges" and listed three, but the guard changes **five**: the
+  claim paths `PENDING -> SIGNING` and `ERROR -> SIGNING` are also added,
+  because the worker's claimable set is `PENDING`, `QUEUED` and `ERROR`. The
+  comment and the matching test name were corrected to name all five and to
+  separate the claim paths from the stage's own two exits.
+- **`R2-SIGNING-TEST-NAME`** (readability, `SUGGESTION`) — the same test was
+  named "admits the three edges"; it is now "admits every claim path into
+  SIGNING, and its two exits".
+- **`R3-001`** (reliability, `WARNING`) — `withFreshDocument` in the live-PG
+  suite signals its rollback by throwing, and `nextFiscalInvoiceNumber`'s
+  in-memory counter advances even though the transaction it served was rolled
+  back. The second is real and harmless — invoice numbers are per-suite and only
+  need to be distinct — but it is a side effect outside the transaction, so it
+  is recorded rather than left implicit.
+- **`R3-002`** (reliability, `WARNING`) — the "preserves every edge and
+  invariant the earlier guards installed" case restates the earlier migrations'
+  edge list, so it is a copy that can drift from the files it claims to
+  preserve. Closing it means deriving the expected set from those migrations
+  instead of restating it.
+
 ## Decisions / ADRs
 
 - **[[ADR-006]]** — the signing dependency. Accepted 2026-10-07: `xml-crypto`,

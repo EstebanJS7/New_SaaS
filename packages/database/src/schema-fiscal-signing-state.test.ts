@@ -57,9 +57,14 @@ describe("migration · fiscal document signing state (EPIC-16 FISC-009)", () => 
     expect(SQL).not.toMatch(/CREATE TRIGGER/i);
   });
 
-  it("admits the three edges that make SIGNING a stage", () => {
+  it("admits every claim path into SIGNING, and its two exits", () => {
+    // Five edges, not three: the worker's claimable set is PENDING, QUEUED and
+    // ERROR, so each of them has to reach SIGNING, and only then do the stage's
+    // own exits apply.
     for (const [from, to] of [
+      ["PENDING", "SIGNING"],
       ["QUEUED", "SIGNING"],
+      ["ERROR", "SIGNING"],
       ["SIGNING", "SENDING"],
       ["SIGNING", "ERROR"],
     ]) {
