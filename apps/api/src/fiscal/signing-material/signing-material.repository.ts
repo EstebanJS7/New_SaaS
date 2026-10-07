@@ -42,7 +42,7 @@ export interface FiscalSigningMaterialDelegate {
     };
   }): Promise<FiscalSigningMaterialRow | null>;
   findMany(args: {
-    where: { tenantId: string };
+    where: { tenantId: string; status?: "ACTIVE" | "RETIRED" };
     orderBy: { createdAt: "desc" };
   }): Promise<FiscalSigningMaterialRow[]>;
   updateMany(args: {
@@ -118,6 +118,21 @@ export class FiscalSigningMaterialRepository {
   ): Promise<FiscalSigningMaterialRow | null> {
     return tx.tenantFiscalSigningMaterial.findFirst({
       where: { tenantId: this.context.requireTenantId(), environment, status: "ACTIVE" },
+    });
+  }
+
+  /**
+   * Every `ACTIVE` material the tenant holds, across environments.
+   *
+   * The RUC obligation ([[FISC-011]] WU-G) is about whichever certificate signs,
+   * so it is checked against all of them: a tenant whose test and production
+   * certificates name different taxpayers must be refused rather than have one
+   * of the two silently pass.
+   */
+  async listActive(tx: FiscalSigningMaterialTx = this.prisma): Promise<FiscalSigningMaterialRow[]> {
+    return tx.tenantFiscalSigningMaterial.findMany({
+      where: { tenantId: this.context.requireTenantId(), status: "ACTIVE" },
+      orderBy: { createdAt: "desc" },
     });
   }
 

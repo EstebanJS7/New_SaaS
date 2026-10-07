@@ -6,6 +6,8 @@ import { RequestContextService } from "../../context/request-context.service.js"
 import { EntitlementsService } from "../../entitlements/entitlements.service.js";
 import { PermissionResolver } from "../../rbac/permission-resolver.service.js";
 import { FISCAL_PERMISSIONS } from "../fiscal.permissions.js";
+import { assertProfileRucMatchesCertificates } from "../fiscal-ruc-consistency.js";
+import { FiscalSigningMaterialRepository } from "../signing-material/signing-material.repository.js";
 import {
   type EmitterProfileRow,
   type EstablishmentRow,
@@ -131,7 +133,13 @@ export class FiscalProfileService {
     private readonly context: RequestContextService,
     private readonly audit: AuditWriter,
     private readonly entitlements: EntitlementsService,
-    private readonly permissionResolver: PermissionResolver
+    private readonly permissionResolver: PermissionResolver,
+    /**
+     * FISC-011 WU-G: the RUC obligation (baseline §22.4, `D101`) is between this
+     * profile and the tenant's certificates, so the write path needs to read
+     * them. It reads only; nothing here writes signing material.
+     */
+    private readonly signingMaterials: FiscalSigningMaterialRepository
   ) {}
 
   async getProfile(): Promise<EmitterProfileView> {
@@ -161,6 +169,14 @@ export class FiscalProfileService {
     await this.requirePermission();
     const actorUserProfileId = this.context.requireUserProfileId();
     const { activities, ...profile } = input;
+
+    // Before the write, not inside it: the certificate read is a cheap,
+    // tenant-scoped read, and refusing here keeps the transaction's contents
+    // exactly what they were — the rows plus their audit record.
+    assertProfileRucMatchesCertificates({
+      profile,
+      materials: await this.signingMaterials.listActive(),
+    });
 
     const row = await this.prisma.$transaction(async (tx) => {
       const saved = await this.repository.upsertProfile(profile, activities, tx);

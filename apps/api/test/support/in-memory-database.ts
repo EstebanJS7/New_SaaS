@@ -631,6 +631,41 @@ export interface FiscalSigningMaterialRow {
   updatedAt: Date;
 }
 
+/**
+ * FISC-011: the emitter profile. Its read side is what the RUC obligation
+ * (baseline §22.4, `D101`) compares a certificate against.
+ */
+export interface FiscalEmitterProfileRow {
+  id: string;
+  tenantId: string;
+  ruc: string;
+  checkDigit: string;
+  taxpayerType: number;
+  regimeCode: number | null;
+  legalName: string;
+  tradeName: string | null;
+  responsibleIssuerType: number | null;
+  responsibleIssuerTypeName: string | null;
+  responsibleIssuerId: string | null;
+  responsibleIssuerName: string | null;
+  responsibleIssuerRole: string | null;
+  transactionType: number | null;
+  taxType: number;
+  emissionType: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** `gActEco`, one row per activity, ordered by `position`. */
+export interface FiscalEmitterActivityRow {
+  id: string;
+  tenantId: string;
+  profileId: string;
+  position: number;
+  code: string;
+  description: string;
+}
+
 export interface InvoiceHeaderRow {
   id: string;
   tenantId: string;
@@ -1580,6 +1615,34 @@ export interface IsolationDatabase {
       }) => TenantSecretRow;
       findFirst: (args: { where: { tenantId: string; key: string } }) => TenantSecretRow | null;
       deleteMany: (args: { where: { tenantId: string; key: string } }) => { count: number };
+    };
+    /**
+     * FISC-011: the emitter profile and its ordered activities.
+     *
+     * Present because the signing-material upload reads the profile for the RUC
+     * obligation (baseline §22.4, `D101`), and a delegate the application calls
+     * but the double does not implement is a 500 — which is exactly how this was
+     * found. The write side is modelled too, so the profile surface is
+     * exercisable over HTTP without reopening this file.
+     */
+    fiscalEmitterProfile: {
+      findUnique: (args: {
+        where: { tenantId: string };
+        include?: { activities?: { orderBy?: { position: "asc" } } };
+      }) => (FiscalEmitterProfileRow & { activities?: FiscalEmitterActivityRow[] }) | null;
+      create: (args: {
+        data: Omit<FiscalEmitterProfileRow, "id" | "createdAt" | "updatedAt">;
+      }) => FiscalEmitterProfileRow;
+      update: (args: {
+        where: { tenantId: string };
+        data: Omit<FiscalEmitterProfileRow, "id" | "createdAt" | "updatedAt">;
+      }) => FiscalEmitterProfileRow;
+    };
+    fiscalEmitterActivity: {
+      deleteMany: (args: { where: { tenantId: string; profileId: string } }) => { count: number };
+      createMany: (args: { data: readonly Omit<FiscalEmitterActivityRow, "id">[] }) => {
+        count: number;
+      };
     };
     /** FISC-007: the tenant signing-material aggregate. */
     tenantFiscalSigningMaterial: {
@@ -2538,6 +2601,11 @@ export function createIsolationDatabase(): IsolationDatabase {
   // reference them. Both are written by the signing-material commands.
   const tenantSecretTable = new Map<string, TenantSecretRow>();
   const fiscalSigningMaterialTable = new Map<string, FiscalSigningMaterialRow>();
+  // EPIC-16 FISC-011: the emitter profile and its ordered activities. The
+  // profile is keyed by its tenant because the application's own access path is
+  // `findUnique({ where: { tenantId } })` — one profile per tenant.
+  const fiscalEmitterProfileTable = new Map<string, FiscalEmitterProfileRow>();
+  const fiscalEmitterActivityTable = new Map<string, FiscalEmitterActivityRow>();
   // EPIC-12 POS-002: the register/session tables the cash surface touches. The
   // movement table is MODELLED (so the inertness probe can diff it) but nothing
   // in EPIC-12 writes a row — POS-003 does, and EPIC-13 owns the other kinds.
@@ -3777,6 +3845,78 @@ export function createIsolationDatabase(): IsolationDatabase {
           count += 1;
         }
         return { count };
+      },
+    },
+    fiscalEmitterProfile: {
+      findUnique: ({ where, include }) => {
+        if (!where.tenantId) throw new Error("emitter profile reads require a tenantId predicate");
+        const row = fiscalEmitterProfileTable.get(where.tenantId);
+        if (row === undefined) return null;
+        // `include` is honoured rather than always applied: the real delegate
+        // returns the activities only when the caller asked for them, and a
+        // double that answered a different shape would let a missing `include`
+        // pass a test it should fail.
+        return include?.activities
+          ? {
+              ...row,
+              activities: [...fiscalEmitterActivityTable.values()]
+                .filter((activity) => activity.profileId === row.id)
+                .sort((left, right) => left.position - right.position),
+            }
+          : row;
+      },
+      create: ({ data }) => {
+        if (!data.tenantId) throw new Error("emitter profile writes require a tenantId");
+        const now = new Date();
+        const row: FiscalEmitterProfileRow = {
+          ...data,
+          id: randomUUID(),
+          createdAt: now,
+          updatedAt: now,
+        };
+        fiscalEmitterProfileTable.set(row.tenantId, row);
+        return row;
+      },
+      update: ({ where, data }) => {
+        if (!where.tenantId) throw new Error("emitter profile writes require a tenantId predicate");
+        const existing = fiscalEmitterProfileTable.get(where.tenantId);
+        if (existing === undefined) {
+          throw new Error(`the emitter profile for tenant ${where.tenantId} does not exist`);
+        }
+        const row: FiscalEmitterProfileRow = {
+          ...existing,
+          ...data,
+          id: existing.id,
+          tenantId: existing.tenantId,
+          createdAt: existing.createdAt,
+          updatedAt: new Date(),
+        };
+        fiscalEmitterProfileTable.set(row.tenantId, row);
+        return row;
+      },
+    },
+    fiscalEmitterActivity: {
+      deleteMany: ({ where }) => {
+        if (!where.tenantId) {
+          throw new Error("emitter activity writes require a tenantId predicate");
+        }
+        let count = 0;
+        for (const [id, activity] of [...fiscalEmitterActivityTable.entries()]) {
+          if (activity.tenantId !== where.tenantId || activity.profileId !== where.profileId) {
+            continue;
+          }
+          fiscalEmitterActivityTable.delete(id);
+          count += 1;
+        }
+        return { count };
+      },
+      createMany: ({ data }) => {
+        for (const activity of data) {
+          if (!activity.tenantId) throw new Error("emitter activity writes require a tenantId");
+          const id = randomUUID();
+          fiscalEmitterActivityTable.set(id, { ...activity, id });
+        }
+        return { count: data.length };
       },
     },
     tenantFiscalSigningMaterial: {

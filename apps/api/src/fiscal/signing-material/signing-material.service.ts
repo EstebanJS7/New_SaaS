@@ -18,7 +18,9 @@ import { RequestContextService } from "../../context/request-context.service.js"
 import { EntitlementsService } from "../../entitlements/entitlements.service.js";
 import { PermissionResolver } from "../../rbac/permission-resolver.service.js";
 import { FISCAL_PERMISSIONS } from "../fiscal.permissions.js";
+import { assertProfileRucMatchesCertificates } from "../fiscal-ruc-consistency.js";
 import { FISCAL_FEATURE_NOT_ENTITLED_MESSAGE } from "../fiscal.service.js";
+import { FiscalProfileRepository } from "../timbrado/timbrado.repository.js";
 import {
   FISCAL_SIGNING_MATERIAL_NOT_FOUND_MESSAGE,
   FiscalSigningMaterialRepository,
@@ -124,7 +126,13 @@ export class FiscalSigningMaterialService {
     private readonly audit: AuditWriter,
     private readonly entitlements: EntitlementsService,
     private readonly permissionResolver: PermissionResolver,
-    @Inject(SECRET_STORE) private readonly secretStore: SecretStore
+    @Inject(SECRET_STORE) private readonly secretStore: SecretStore,
+    /**
+     * FISC-011 WU-G: the upload is the other place the profile's RUC obligation
+     * can be broken, because the operator may configure the profile before the
+     * certificate exists. It reads the profile only; nothing here writes one.
+     */
+    private readonly profileRepository: FiscalProfileRepository
   ) {}
 
   /** Tenant-scoped, metadata-only, unaudited — mirroring the Fiscal read contract. */
@@ -152,6 +160,15 @@ export class FiscalSigningMaterialService {
     // Parsing happens outside any transaction: it is CPU work over an untrusted
     // file, and holding a database transaction across it would be waste.
     const extracted = await this.extract(args.container, args.password);
+
+    // The other half of the RUC obligation ([[FISC-011]] WU-G): a certificate
+    // that disagrees with an existing profile is refused here, so an onboarding
+    // that configures the profile first cannot end with a material that would
+    // sign as a different taxpayer.
+    const profile = await this.profileRepository.findProfile();
+    if (profile !== null) {
+      assertProfileRucMatchesCertificates({ profile, materials: [extracted] });
+    }
 
     const tenantId = this.context.requireTenantId();
     const actorUserProfileId = this.context.requireUserProfileId();

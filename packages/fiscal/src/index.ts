@@ -58,6 +58,20 @@ export type {
   ExtractedSigningMaterial,
   Pkcs12ExtractionFailure,
 } from "./signing-material/pkcs12.js";
+// FISC-011 WU-G: the RUC the signing certificate carries. Baseline §22.4's
+// `D101` obligation is only checkable where the certificate actually holds the
+// RUC, and baseline §6 pins that placement per taxpayer type.
+export {
+  CERTIFICATE_RUC_LITERAL,
+  CERTIFICATE_RUC_SUBJECT_ATTRIBUTE,
+  CertificateRucError,
+  certificateRucMatches,
+  parseCertificateRucToken,
+  readCertificateRuc,
+  readRucFromSubject,
+  readRucFromSubjectAlternativeName,
+} from "./signing-material/certificate-ruc.js";
+export type { CertificateRuc, CertificateRucFailure } from "./signing-material/certificate-ruc.js";
 // The PKCS#12 test fixture is NOT exported here: test scaffolding is not part of
 // the package's public contract. It lives at `@newsaas/fiscal/testing`.
 export {
