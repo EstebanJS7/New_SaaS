@@ -290,8 +290,25 @@ own assertion.
 
 ## Technical Debt
 
-- None created by the design. If the library's canonicalization has to be worked
-  around, that workaround is recorded at that point rather than here.
+Two advisories from WU-B's review (`review-08f7d14c4a649a88`, approved
+2026-10-07). Both are `SUGGESTION` and **non-blocking**: neither opened a
+correction, neither reopens the review, and they are recorded here as later work
+rather than as a reason to re-run review on that candidate.
+
+- **`R3-forbidden-list`** — `dte.signing.test.ts` iterates
+  `FORBIDDEN_KEY_INFO_ELEMENTS`, so the suite cannot detect an entry **missing
+  from the list itself**: deleting `"Modulus"` would leave every case green. The
+  list is transcribed from baseline §5 by hand, and the test proves the code
+  honours the list, not that the list is complete. Closing it means asserting
+  the constant against the eight names §5 states, independently of the constant.
+- **`R3-leak-test`** — the no-leak case checks one base64 line of the private
+  key against the `Error`'s message. It does not check the whole key, and it
+  does not walk the `cause` chain, which is where a library's error would carry
+  material.
+
+Both are accepted as-is under the policy the epic already applied to [[TD-032]]:
+generation outran resolution, so cosmetics are recorded rather than chased. The
+Story's own `done` gate does not depend on either.
 
 ## Decisions / ADRs
 
