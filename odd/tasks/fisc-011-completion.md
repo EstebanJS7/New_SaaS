@@ -131,8 +131,15 @@ truncation is the defect, not a claim that there are only three.
 pnpm --filter @newsaas/fiscal lint / typecheck / test / build   green (267 tests)
 pnpm lint / typecheck / test / build                            green (18/18, 18/18, 19/19, 11/11)
 pnpm format-check                                               green
-pnpm --filter @newsaas/api test:live-pg                         NOT RUN
+pnpm --filter @newsaas/api test:live-pg   green - 218/218 against PostgreSQL 16
+   (the `fisc009-pg` container on 55433; the new set-once case alone: 1 passed)
 ```
+
+**Closed 2026-10-07.** Both work units are implemented, review-approved and
+merged-ready; every gate is green, including the one that was outstanding —
+Docker came up and `test:live-pg` ran clean against real PostgreSQL. Nothing is
+left open for this Story except the non-blocking advisories, recorded as later
+work below.
 
 **`test:live-pg` did not run: Docker is unavailable in this WSL distro** (the
 `docker` CLI reports the Docker Desktop WSL integration is off, so the

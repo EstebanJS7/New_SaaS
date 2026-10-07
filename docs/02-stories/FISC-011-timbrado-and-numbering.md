@@ -3,7 +3,7 @@ id: FISC-011
 type: story
 title: Timbrado and numbering ranges per establishment, point and document type
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-006
@@ -517,6 +517,17 @@ pnpm --filter @newsaas/database test     green - 435 tests
 live-PostgreSQL suite                    green - 215/215 against PostgreSQL 16
 ```
 
+**Completion run, 2026-10-07, on `feat/epic-16-fisc-011-completion`**
+(`d61bad4`, `53e8bd2`):
+
+```text
+pnpm --filter @newsaas/fiscal test        green - 267 tests, 18 files
+pnpm lint / typecheck / test / build      green - 18/18, 18/18, 19/19, 11/11
+pnpm format-check                         green
+pnpm --filter @newsaas/api test:live-pg   green - 218/218 against PostgreSQL 16
+   and the new case alone, on the `fisc009-pg` container: 1 passed, 217 skipped
+```
+
 WU-C was corrected once, after its review closed `correction_required` with
 three severe findings. The corrections were re-verified the same way, and the
 two new assertions are pinned by test rather than by comment.
@@ -798,10 +809,10 @@ exist), and the Files/Modules block still said "three tables and two enums" and
 pointed at `apps/api/src/fiscal/profile/**`, neither of which is the shipped
 shape.
 
-**Status on 2026-10-07: both criteria are implemented and review-approved**
+**Closed 2026-10-07.** Both criteria are implemented and review-approved
 (`d61bad4` the set-once series start, `53e8bd2` the RUC obligation; one
 high-tier four-lens lineage, `review-5c088696cf985684`, whose refuter confirmed
-a defect of mine in the SAN parse and whose correction is in). `status` stays
-`in-progress` for exactly one reason: the live-PostgreSQL gate has not run,
-because Docker is unavailable in this environment. Feature record with the full
-evidence: `odd/tasks/fisc-011-completion.md`.
+a defect of mine in the SAN parse and whose correction is in), every gate is
+green including the live-PostgreSQL suite, and `status` is `done`. The
+non-blocking advisories the review closed with are recorded as later work in
+`odd/tasks/fisc-011-completion.md`, which carries the full evidence.
