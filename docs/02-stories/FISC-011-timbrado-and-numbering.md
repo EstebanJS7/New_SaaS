@@ -317,7 +317,19 @@ building on:
   indistinguishable from a timbrado that had genuinely run out. It now raises
   `INVALID_ORDINAL`, and `SERIES_EXHAUSTED` means only what it says.
 
-Nothing is left open from this review.
+One suggestion remains from the fix's own review (`review-375c0c24b4e6010a`,
+approved 2026-10-07), and it is recorded rather than chased — this is the point
+where generation starts outrunning resolution:
+
+- **`R3-001`** (reliability, `SUGGESTION`) — `assertSeriesSuccession` validates
+  `candidate` explicitly but reaches `current` only through `nextSeries`, so a
+  malformed `current` still fails with `INVALID_SERIES` but with a message that
+  does not say which of the two arguments was wrong. Closing it means validating
+  both at the top.
+
+The two from the first review were fixed because each was a wrong **failure
+code** a caller branches on. This one is a message, and the failure code is
+already right, so it is recorded.
 
 ## Decisions / ADRs
 
