@@ -68,7 +68,10 @@ export function createTimbradoRangeStore(client: TimbradoRangePrismaClient): Tim
           documentType: key.documentType,
           status: "ACTIVE",
         },
-        orderBy: { validityStart: "desc" },
+        // Total, not partial: two authorisations may share a validity start, and
+        // a single sort key would leave the choice to PostgreSQL's whim. The
+        // port's contract names the timbrado number as the tie-break.
+        orderBy: [{ validityStart: "desc" }, { timbradoNumber: "desc" }],
         select: RANGE_COLUMNS,
       });
       return row ?? null;

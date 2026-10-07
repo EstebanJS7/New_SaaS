@@ -83,8 +83,12 @@ describe("findCurrentRange", () => {
       status: "ACTIVE",
     });
     // The order is what makes "current" mean the authorisation in force, because
-    // two authorisations may each be ACTIVE.
-    expect(delegate.findFirstArgs[0]?.orderBy).toEqual({ validityStart: "desc" });
+    // two authorisations may each be ACTIVE — and it is TOTAL, because a single
+    // key would leave two equal validity starts to PostgreSQL's whim.
+    expect(delegate.findFirstArgs[0]?.orderBy).toEqual([
+      { validityStart: "desc" },
+      { timbradoNumber: "desc" },
+    ]);
   });
 
   it("selects the columns the allocation reads rather than the whole row", async () => {
