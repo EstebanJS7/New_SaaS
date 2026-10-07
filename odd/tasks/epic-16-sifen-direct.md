@@ -550,16 +550,34 @@ exposed that **NT 013's `F002` rule was half implemented**: for a partially
 taxed item (`E731 = 4`) it takes `E737`, the exempt base, and the mapper added
 nothing.
 
-**The validator produced no verdict, so the closure is missing — and that is
-stated, not papered over.** I re-derived the fix against the schema's own
-structure as the only available check: in `tgTotSub`, `dTotOpe` sits after the
-subtotals and **before** `dTotDesc`/`dTotAnt`/`dDescTotal`, while `dTotGralOpe`
-sits after them — so the operation total is the pre-adjustment total, and with
-zero adjustments the two must agree. That is a structural argument, not a
-review.
+**The validator produced no verdict for THAT lineage, and that is stated, not
+papered over.** I re-derived the fix against the schema's own structure as the
+only available check: in `tgTotSub`, `dTotOpe` sits after the subtotals and
+**before** `dTotDesc`/`dTotAnt`/`dDescTotal`, while `dTotGralOpe` sits after
+them — so the operation total is the pre-adjustment total, and with zero
+adjustments the two must agree. That was a structural argument, not a review.
 
-**What the maintainer can do**, per the provider's own continuation: inspect the
-lineage's authority, or disable the review switch for this clone
+**And then the content got its receipt anyway — twice over.** Because the
+workspace was clean, the provider resolved a fresh committed range and two later
+lineages closed **`approved`**:
+
+```text
+review-ba6218e187d42859   the subtotal correction        approved
+review-d348e4bdb5bcd5b0   the mapper's current state      approved
+```
+
+The second one is the one that matters here: the provider resolved its base to
+the escalated lineage's own correction tree, so it reviewed the mapper's
+**current** content — `dte.mapper.ts` and `dte.mapper.test.ts` among the changed
+files — and closed `approved` with two non-blocking `WARNING`s. One of them,
+`R3-EPIC-DUP`, found **three duplicated sections in this very file**, which were
+a real defect from repeated scripted insertions and are now removed.
+
+**What that does and does not settle.** The mapper's content has a receipt; the
+escalated lineage's own authority is still terminal and untouched, and three
+commits (`e8677fe`, `6e4fe02`, `5897628`) remain outside any closed _range_
+although their content was reviewed. **The maintainer's options are unchanged**:
+inspect the lineage's authority, or disable the review switch for this clone
 (`gentle-ai review mode disable --scope clone`), after which ordinary repository
 policy decides delivery. Nothing is reset or recovered here: `RESET` and
 `RECOVER` are destructive and need an explicit decision with exact native
@@ -588,118 +606,6 @@ for that specific range, and the escalated lineage is where that lives —
 terminal, awaiting the maintainer.
 
 Every other range closed, and the lineages are named in the section above.
-
-## WU-C: the mapper
-
-**DONE 2026-10-06.** `packages/fiscal/src/dte/dte.mapper.ts` holds
-`buildDteRequestFromInvoice({ invoice, profile, identity }) -> DteRequest`,
-pure: no I/O, no ambient clock, no tenant context. Authorized by [[DEC-054]]
-(accepted), whose option B gives the emitter fiscal profile's storage to
-FISC-011 — so the profile is an **input**, and the mapper is callable and
-testable today even though nothing in production supplies one yet.
-
-**The XSD case is the proof that mattered.** Putting the mapper's output through
-the schema-validation suite caught two real invalidities that no shape test
-could see: `totalsElement` emitted six of `tgTotSub`'s **ten** required members,
-in the wrong order, and `gValorItem` was missing its required `gValorRestaItem`.
-Both are fixed, and the case now runs in the same suite as the fixture's.
-
-**Two things it deliberately does not do**, both recorded in the module and in
-baseline §22.14: it does not re-derive tax (NT 013's formulas state no rounding
-rule, so the invoice's own `taxableBase`/`taxAmount` are carried rather than
-giving money a second source of truth), and it does not derive `F023` (NT 008
-defines it as `F014 * D018` with the same unpinned rounding, so a foreign
-currency supplies it). It always supplies the `D208c` total the currency names,
-which is the obligation `R3-D208C-OPTIN` placed on it.
-
-## WU-C's review is ESCALATED, not closed (2026-10-06)
-
-The mapper's candidate did **not** close. The chain, recorded because an
-escalated lineage is a state the maintainer has to see rather than a green tick:
-
-```text
-review-d1934d6b6a6db4b0   medium tier, review-reliability, 9 files / 883 lines
-  reviewer      admitted a result
-  refuter       provider_refuter_required -> CONFIRMED a CRITICAL
-  finding       R3-DTOTOPE (inferential, introduced)
-  correction    submitted as a 65-line plan, committed as 6e4fe02
-  validator     native-operation-failed -- NO VERDICT, nothing mutated
-  authority     ESCALATED, cause targeted_validator_rejected
-  transition    stop / native_stop_required   (terminal)
-```
-
-**The finding was right and the fix is in.** `totalsElement` wired `dTotOpe` to
-the sum of the lines' `taxableBase`, so an exempt line vanished from the
-operation total: the emitted `dTotOpe` was 100.00000000 while `dTotGralOpe` was
-160.50000000, with every adjustment member zero. `dTotOpe` is now the sum of the
-subtotals and `dTotGralOpe` derives from the same value. The same finding
-exposed that **NT 013's `F002` rule was half implemented**: for a partially
-taxed item (`E731 = 4`) it takes `E737`, the exempt base, and the mapper added
-nothing.
-
-**The validator produced no verdict, so the closure is missing — and that is
-stated, not papered over.** I re-derived the fix against the schema's own
-structure as the only available check: in `tgTotSub`, `dTotOpe` sits after the
-subtotals and **before** `dTotDesc`/`dTotAnt`/`dDescTotal`, while `dTotGralOpe`
-sits after them — so the operation total is the pre-adjustment total, and with
-zero adjustments the two must agree. That is a structural argument, not a
-review.
-
-**What the maintainer can do**, per the provider's own continuation: inspect the
-lineage's authority, or disable the review switch for this clone
-(`gentle-ai review mode disable --scope clone`), after which ordinary repository
-policy decides delivery. Nothing is reset or recovered here: `RESET` and
-`RECOVER` are destructive and need an explicit decision with exact native
-inputs.
-
-## Review coverage
-
-**FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head `5897628`,
-`MERGEABLE/CLEAN`, all three checks green (the new `DTE XSD validation` job
-among them, now a required check on `main`).
-
-**Two candidates are NOT closed, and that is the honest state.**
-
-```text
-a06e7b7..e8677fe   the CDC composition   CLOSED   review-73d24aefb8544918
-a06e7b7..e8677fe   the mapper            ESCALATED review-d1934d6b6a6db4b0
-                                         (see "WU-C's review is ESCALATED")
-```
-
-The mapper's range is counted below as covered by a _candidate_, not by a
-closure: its review reached a confirmed CRITICAL, the correction was committed,
-and the targeted validator produced no verdict, which escalated the authority.
-Nothing further is submitted against it until the maintainer inspects the
-lineage or disables the review switch for this clone.
-
-**The coverage claim, stated precisely because it is checkable.** From `0479e67`
-to `f0cf14b` the branch is tiled by **18 closed ranges covering all 24
-commits**, each with its own lineage and every one closed `approved`: WU-A
-`review-5f02ddd057fd6758`, WU-B `review-7a00fe71a5c544dd` (one bounded
-correction), the `D208c` correction `review-8d9b7cf45e039c2b`, the fetch timeout
-`review-2d607ead610b3633`, the TD-032 resolution `review-3d99274120684773`, its
-close `review-050847fbb8ae40c9`, and ten docs-only ranges that closed on the
-`START` call itself (`review-c77f287fe241b1b3`, `review-df0c5fb76056a959`,
-`review-5d015917b6866a9c`, `review-976a645a0e4beb8d`, `review-45e9783a54fbbaae`,
-`review-931b6ca48ff1f749`, `review-39b47f8a4dd53004`, `review-b4fee44aa678c49d`,
-`review-d81ec937ce380c03`, `review-81e01e2568c1ca79`, `review-d32a3cd1bc89bbe0`,
-`review-ca69f1e07a93b788`, `review-73d24aefb8544918` and the docs ranges after
-it).
-
-**Before `0479e67` there are 11 commits — the contract-pin and retrieval phase —
-and their coverage is recorded less well, which is stated rather than smoothed
-over.** They are `34588d4`, `02b28bb`, `4ae17a3`, `75253ea`, `902cce4`,
-`a3a6665`, `7892eef`, `33f982b`, `c866c9a`, `8e39b79` and `0479e67`, all
-docs-only. They were reviewed as docs-only candidates in the earlier session,
-whose record names seven lineages — `review-8a6b94a896127f08`,
-`review-1a4ef19151b70257`, `review-4d05cbbfec00788e`, `review-2fba8ef90d9e4e77`,
-`review-229a93e0dbec3610`, `review-bf483d1599370639`, `review-f814dc0d957abcf3`
-— for eight candidates, and the review store holds all of them. **The eighth
-lineage's identity is not recoverable from the repository**: the provider's
-per-lineage `target` is an opaque `sha256:` identity, not a git tree, so the
-records cannot be matched back to commits programmatically. That is a gap in
-this tracker's _record_, not evidence that a review is missing, and the
-distinction is written down instead of being resolved by guessing an id.
 
 ## Notes
 

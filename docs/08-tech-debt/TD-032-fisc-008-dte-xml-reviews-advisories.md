@@ -83,6 +83,18 @@ which selects `E735 + E736` for affectation 4 and `EA008` otherwise. **Accepted
 as-is**: it is the NT 013 rule in one expression, and the comment above it says
 which fields those are. |
 
+| `R3-DSUBEXO-COVERAGE` (mapper, fresh) | reliability | WARNING |
+`packages/fiscal/src/dte/dte.mapper.test.ts:228-229` | The assertions on the
+folded-in exonerated case. **Accepted as-is**; it duplicates the earlier
+`R3-001` at the same lines, which is itself the sign that the coverage was
+folded rather than added. | | `R3-EPIC-DUP` (mapper, fresh) | reliability |
+WARNING | `odd/tasks/epic-16-sifen-direct.md:616` | **Three duplicated sections
+in the epic tracker** — `## WU-C: the mapper`, `## WU-C's review is ESCALATED`,
+`## Review coverage` — from repeated scripted insertions of the same block
+before the same anchor. **FIXED**: 112 duplicate lines removed, one copy of each
+kept, and the newer coverage text kept over the older. A duplicated record that
+can disagree with itself is worse than a cosmetic finding. |
+
 ## The one finding with a real failure mode: dates are shaped, never validated
 
 `R3-CDC-DATE` is right, and it is not confined to the CDC. Every date this Story
@@ -158,7 +170,7 @@ why it was chosen.
 6. **`R2-evidence-count`** — corrected when it was found, because a wrong number
    in the evidence file is not a later-work item.
 
-## The mapper's correction is now closed
+## The mapper's content is now closed, twice over
 
 The correction that the stuck lineage could not validate was re-reviewed on its
 own as a fresh committed range and **closed `approved`**
