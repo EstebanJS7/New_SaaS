@@ -11,7 +11,7 @@ depends_on:
 prd_sections:
   - "23"
 permissions: []
-branch: feat/epic-16-fisc-009-xades-signing
+branch: feat/epic-16-fisc-009-xmldsig-signing
 created: 2026-10-07
 updated: 2026-10-07
 ---
