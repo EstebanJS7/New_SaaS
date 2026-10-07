@@ -318,10 +318,35 @@ candidate 1 exists.
       `typecheck` in a file this Story does not touch. Gates green: fiscal
       lint/typecheck/test/build, the suite run with `DTE_XSD_REQUIRED=1`, root
       18/18, 18/18, 19/19, 11/11, and `format-check`. The live-PostgreSQL gate
-      belongs to WU-C, which is next.
+      belongs to WU-C. **WU-C1 is DONE (2026-10-07): the `SIGNING` state.** The
+      enum value, the migration `20261007000001_fiscal_document_signing_state`,
+      and the guard body — `QUEUED -> SIGNING`, `SIGNING -> SENDING`,
+      `SIGNING -> ERROR`, with `SIGNING -> CANCELLED` still excluded because
+      `SIGNING` is a claim like `SENDING` and a worker holds it. `SIGNING` is
+      declared **last** in the Prisma enum on purpose:
+      `ALTER TYPE ... ADD VALUE` appends, so declaring it between `QUEUED` and
+      `SENDING` would describe an order the database cannot have without
+      recreating the type; the lifecycle's real order lives in the guard.
+      **Proven against a live PostgreSQL 16**, not only asserted: the migration
+      applies inside the transaction `prisma migrate deploy` wraps it in, the
+      value lands last in `pg_enum`, and the edges were exercised on a real row
+      in a transaction that was rolled back. 8 new cases in
+      `packages/database/src/schema-fiscal-signing-state.test.ts`. **WU-C2 — the
+      worker's signing stage — MOVED TO T8 / [[FISC-012]].** The worker cannot
+      build a DE yet and the reason is not missing work: there is no emitter
+      profile and no timbrado anywhere in `apps/worker` or `apps/api`
+      ([[FISC-011]] owns that storage, DEC-054 Q1-B), no `identity`/CDC without
+      them, and `qrContent` is [[FISC-012]]'s by the mapper's own note. The
+      worker also does not build a DE at all today — it hands invoice data to
+      the port and the fake provides. Recorded in the Story under "Why this
+      acceptance criterion moved" and in the epic's FISC-012 row.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
+      **Inherits FISC-009's worker signing stage**: claim `SIGNING`, sign the DE
+      with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
+      `SIGNING -> ERROR`. It is this Story's because it is the one that will
+      have [[FISC-011]]'s emitter profile and already owns the port.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 

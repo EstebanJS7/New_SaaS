@@ -26,14 +26,14 @@ exists until the rest of [[EPIC-16]].
 
 ## Owned tables
 
-| Table                                                           | Purpose                                                                                                                                                                                                                                                                                                         |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fiscal_document`                                               | The tenant-scoped submission record: source `invoice_id`, `provider`, `status`, provider references (`external_id`, `cdc`), XML/KuDE storage keys, sanitized request/response snapshots, attempt counters, last-error fields and the `submitted_at` / `resolved_at` / `cancelled_at` timestamps.                |
-| `fiscal_provider`                                               | The provider vocabulary enum: `THIRD_PARTY`, `SIFEN_DIRECT`, `FAKE`.                                                                                                                                                                                                                                            |
-| `fiscal_document_status`                                        | The lifecycle enum: `PENDING`, `QUEUED`, `SENDING`, `SUBMITTED`, `APPROVED`, `REJECTED`, `ERROR`, `CANCEL_PENDING`, `CANCELLED`. The SIFEN `SIGNING` stage is deliberately absent because XAdES signing is a real-adapter concern (PRD §23, [[DEC-047]]).                                                       |
-| `tenant_secret`                                                 | **RESTRICTED.** One sealed tenant secret: the AES-256-GCM ciphertext, the per-secret data key wrapped by the platform master key, and the master-key version that wrapped it. No plaintext, no unwrapped key and no password is ever stored, and no log, DTO or audit payload may carry a column of this table. |
-| `tenant_fiscal_signing_material`                                | **INTERNAL.** The tenant's SIFEN certificate and its metadata, plus an opaque `credential_ref` into `tenant_secret` for the private key. A partial unique index permits at most one `ACTIVE` material per tenant and environment; retirement destroys the stored key and keeps the row as the record.           |
-| `fiscal_signing_environment` / `fiscal_signing_material_status` | The `TEST`/`PRODUCTION` environment enum and the `ACTIVE`/`RETIRED` status enum. Evolve additively only.                                                                                                                                                                                                        |
+| Table                                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fiscal_document`                                               | The tenant-scoped submission record: source `invoice_id`, `provider`, `status`, provider references (`external_id`, `cdc`), XML/KuDE storage keys, sanitized request/response snapshots, attempt counters, last-error fields and the `submitted_at` / `resolved_at` / `cancelled_at` timestamps.                                                                                                                                          |
+| `fiscal_provider`                                               | The provider vocabulary enum: `THIRD_PARTY`, `SIFEN_DIRECT`, `FAKE`.                                                                                                                                                                                                                                                                                                                                                                      |
+| `fiscal_document_status`                                        | The lifecycle enum: `PENDING`, `QUEUED`, `SENDING`, `SUBMITTED`, `APPROVED`, `REJECTED`, `ERROR`, `CANCEL_PENDING`, `CANCELLED`, `SIGNING`. The SIFEN signing stage was deliberately absent while a fake stood in for the provider ([[DEC-047]]); [[FISC-009]] returns it. `SIGNING` is declared **last** because PostgreSQL's `ALTER TYPE ... ADD VALUE` appends — the lifecycle's order lives in the transition guard, not in the enum. |
+| `tenant_secret`                                                 | **RESTRICTED.** One sealed tenant secret: the AES-256-GCM ciphertext, the per-secret data key wrapped by the platform master key, and the master-key version that wrapped it. No plaintext, no unwrapped key and no password is ever stored, and no log, DTO or audit payload may carry a column of this table.                                                                                                                           |
+| `tenant_fiscal_signing_material`                                | **INTERNAL.** The tenant's SIFEN certificate and its metadata, plus an opaque `credential_ref` into `tenant_secret` for the private key. A partial unique index permits at most one `ACTIVE` material per tenant and environment; retirement destroys the stored key and keeps the row as the record.                                                                                                                                     |
+| `fiscal_signing_environment` / `fiscal_signing_material_status` | The `TEST`/`PRODUCTION` environment enum and the `ACTIVE`/`RETIRED` status enum. Evolve additively only.                                                                                                                                                                                                                                                                                                                                  |
 
 `fiscal_document` is tenant-scoped, carries the composite `(tenant_id, id)`
 ownership key and a composite `RESTRICT` foreign key to `invoice`. It duplicates
@@ -91,19 +91,24 @@ are never audited.
   admits exactly:
 
   ```text
-  PENDING        -> QUEUED, SENDING, CANCELLED
-  QUEUED         -> SENDING, CANCELLED
+  PENDING        -> QUEUED, SIGNING, SENDING, CANCELLED
+  QUEUED         -> SIGNING, SENDING, CANCELLED
+  SIGNING        -> SENDING, ERROR
   SENDING        -> SUBMITTED, APPROVED, REJECTED, ERROR
   SUBMITTED      -> APPROVED, REJECTED, ERROR, CANCEL_PENDING
   APPROVED       -> CANCEL_PENDING
   REJECTED       -> CANCELLED
-  ERROR          -> SENDING, CANCELLED
+  ERROR          -> SIGNING, SENDING, CANCELLED
   CANCEL_PENDING -> CANCELLED
   ```
 
   `SENDING -> CANCELLED` is deliberately excluded: a worker holds that claim and
-  may be mid-call. Every other transition is rejected with a message naming both
-  states and never a stored value.
+  may be mid-call. **`SIGNING -> CANCELLED` is excluded for the same reason** —
+  `SIGNING` is a claim too, not a label attached to one, so cancelling
+  underneath a signer would race it. `SIGNING -> ERROR` exists because a signing
+  failure is **ours**, not the provider's, and it is the only failure that does
+  not depend on a remote call. Every other transition is rejected with a message
+  naming both states and never a stored value.
 
 - **`resolved_at` is an implication, not a biconditional.** Entering `APPROVED`
   or `REJECTED` requires it; it is never required to be absent otherwise. This

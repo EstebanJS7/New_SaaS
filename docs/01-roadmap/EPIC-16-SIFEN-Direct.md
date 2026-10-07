@@ -132,17 +132,17 @@ word.
 
 ## Stories
 
-| Story    | Scope                                                                                                                                             | Depends on         |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| FISC-006 | **SIFEN Direct scope and the DNIT baseline revalidation** — documentation only; the epic's precondition and the source of every protocol constant | —                  |
-| FISC-007 | **Tenant signing material**: the `SecretStore` boundary for the private key (RESTRICTED), rotation and removal — [[ADR-005]] + [[DEC-053]]        | FISC-006           |
-| FISC-008 | **DTE XML generation**, validated against the official XSDs                                                                                       | FISC-006           |
-| FISC-009 | **XAdES signing** and the return of the `SIGNING` lifecycle state                                                                                 | FISC-007, FISC-008 |
-| FISC-010 | **DNIT web services**: reception, query, events, and the asynchronous outcome model                                                               | FISC-008, FISC-009 |
-| FISC-011 | **Timbrado and numbering ranges** per establishment, point and document type                                                                      | FISC-006           |
-| FISC-012 | **`SifenDirectFiscalProvider`** behind the existing port, plus the port's asynchronous-status extension and provider selection                    | FISC-010, FISC-011 |
-| FISC-013 | **Contingency handling** and the certification/homologation evidence run                                                                          | FISC-012           |
-| FISC-014 | **Epic closure**: module docs, CI evidence, changelog, roadmap, advisory triage                                                                   | all                |
+| Story    | Scope                                                                                                                                                                          | Depends on         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| FISC-006 | **SIFEN Direct scope and the DNIT baseline revalidation** — documentation only; the epic's precondition and the source of every protocol constant                              | —                  |
+| FISC-007 | **Tenant signing material**: the `SecretStore` boundary for the private key (RESTRICTED), rotation and removal — [[ADR-005]] + [[DEC-053]]                                     | FISC-006           |
+| FISC-008 | **DTE XML generation**, validated against the official XSDs                                                                                                                    | FISC-006           |
+| FISC-009 | **XMLDSig signing** (not XAdES — see [[ADR-006]]) and the return of the `SIGNING` lifecycle state. The worker stage that claims it moved to FISC-012                           | FISC-007, FISC-008 |
+| FISC-010 | **DNIT web services**: reception, query, events, and the asynchronous outcome model                                                                                            | FISC-008, FISC-009 |
+| FISC-011 | **Timbrado and numbering ranges** per establishment, point and document type                                                                                                   | FISC-006           |
+| FISC-012 | **`SifenDirectFiscalProvider`** behind the existing port, the port's asynchronous-status extension, provider selection, and **the worker's signing stage** moved from FISC-009 | FISC-010, FISC-011 |
+| FISC-013 | **Contingency handling** and the certification/homologation evidence run                                                                                                       | FISC-012           |
+| FISC-014 | **Epic closure**: module docs, CI evidence, changelog, roadmap, advisory triage                                                                                                | all                |
 
 Story numbering continues the Fiscal prefix (`FISC-`). FISC-001..005 belong to
 [[EPIC-15]].

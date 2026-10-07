@@ -3,7 +3,7 @@ id: FISC-009
 type: story
 title: XMLDSig signing of the DTE, and the return of the SIGNING state
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-007
@@ -118,8 +118,9 @@ enforce the graph in the database, and the enum value is added by migration.
 - The pure signing function:
   `(xml, certificate, private key, cdc) -> signed xml`, implementing the profile
   above, with the eight forbidden elements **refused**.
-- The `SIGNING` state: the enum value, the migration, the transition-guard
-  function, and the worker stage that claims it, signs, and moves on.
+- The `SIGNING` state: the enum value, the migration, and the transition-guard
+  function. The worker stage that claims it is [[FISC-012]]'s, for the reason
+  recorded above.
 - Verification: the signed document **validates against the official XSD**
   through the gate [[FISC-008]] built, and a **sign-then-verify round trip**
   using the certificate's public key.
@@ -134,10 +135,34 @@ enforce the graph in the database, and the enum value is added by migration.
 - **The QR and the CSC** — the `dCarQR` content is an input here, as it is in
   [[FISC-008]].
 - **KuDE rendering**, the portal surface, reports.
-- **Timbrado and numbering ranges** — [[FISC-011]].
+- **Timbrado and numbering ranges** — [[FISC-011]]. They are also what blocks
+  the worker stage, which is why that criterion moved to [[FISC-012]].
 - **A real PSC certificate.** The tests use the material [[FISC-007]]'s fixture
   produces; a certificate from a PSC habilitado por el MIC is a homologation
   concern, [[FISC-013]].
+
+## Why this acceptance criterion moved
+
+The criterion above was written assuming the worker could build a DE. **It
+cannot, and the reason is not missing work — the inputs do not exist yet:**
+
+| What `buildDteRequestFromInvoice` requires                             | Who owns it                                                 |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `profile` — timbrado, establishment, point, activity                   | **[[FISC-011]]** (DEC-054 Q1-B: FISC-011 owns that storage) |
+| `identity` — the CDC, which needs the timbrado and the numbering range | **[[FISC-011]]**                                            |
+| `qrContent` — `gCamFuFD dCarQR`                                        | **[[FISC-012]]**, as the mapper itself records              |
+| `totalGuaranies` — `F023` in a foreign currency                        | the caller                                                  |
+
+And the worker today does not build a DE at all: it hands invoice data to the
+**port** (`FiscalIssueRequest`) and the fake provides. The full DTE path inside
+the worker belongs to [[FISC-012]], which is the Story that already sits behind
+the port and will have [[FISC-011]]'s profile.
+
+So [[FISC-009]] delivers **the signer** and **the state**, and the wiring moves
+to the Story that can satisfy it. This is recorded rather than worked around: a
+Story does not silently narrow its own acceptance criteria, and it is not marked
+`done` while one is unmet — which is why this one is annotated with where it
+went instead of being deleted.
 
 ## Acceptance Criteria
 
@@ -162,20 +187,28 @@ enforce the graph in the database, and the enum value is added by migration.
 - [x] A **sign-then-verify round trip** succeeds with the certificate's public
       key, and **fails** when the signed content is altered after signing.
       _(WU-B)_
-- [ ] `fiscal_document_status` gains `SIGNING` by migration, and the transition
+- [x] `fiscal_document_status` gains `SIGNING` by migration, and the transition
       guard admits `QUEUED -> SIGNING`, `SIGNING -> SENDING` and
-      `SIGNING -> ERROR` while still rejecting `SIGNING -> CANCELLED`. _(WU-C)_
+      `SIGNING -> ERROR` while still rejecting `SIGNING -> CANCELLED`. _(WU-C1;
+      proven against a live PostgreSQL 16, see Verification)_
 - [ ] The worker claims `SIGNING`, signs the document it built, and moves to
       `SENDING`; a signing failure moves it to `ERROR` with the reason recorded
-      and no secret in the error. _(WU-C)_
+      and no secret in the error. **MOVED TO [[FISC-012]] (2026-10-07)** — the
+      worker cannot build a DE yet, and the reason is not missing work: see "Why
+      this acceptance criterion moved" below.
 - [x] The signing function is **pure with respect to its inputs**: no ambient
       clock, no ambient tenant, no I/O. _(WU-B)_
-- [ ] No secret appears in a log, an error, a returned value or a stored
-      snapshot. _(WU-B covers the error and the returned value; the log and the
-      stored snapshot belong to [[FISC-010]], where the document is persisted.)_
-- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
-      _(Green through WU-B except the live-PostgreSQL gate, which WU-C exercises
-      when the enum and the guard change.)_
+- [x] No secret appears in an **error or a returned value**: the signer's
+      failure path is asserted to carry neither the key nor its base64 body.
+      _(WU-B)_
+- [ ] No secret appears in a **log or a stored snapshot**. **MOVED TO
+      [[FISC-010]]**, which is where the document is persisted and where the
+      submission path logs. [[FISC-009]] never persists anything and never logs
+      the key.
+- [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
+      _(WU-C1: fiscal and database lint/typecheck/test/build, root 18/18, 18/18,
+      19/19, 11/11, `format-check`, and the live-PostgreSQL suite at 214/214
+      against PostgreSQL 16.)_
 
 ## Domain Invariants
 
@@ -200,8 +233,16 @@ None. This Story adds no route. The signing stage runs in the worker.
 
 ## Database
 
-One migration: `fiscal_document_status` gains `SIGNING`, and the
-`fiscal_document_transition_guard` function admits the three new edges.
+One migration, `20261007000001_fiscal_document_signing_state`:
+`fiscal_document_status` gains `SIGNING` by
+`ALTER TYPE ... ADD VALUE IF NOT EXISTS`, and `fiscal_document_transition_guard`
+is replaced with the body that admits `QUEUED -> SIGNING`, `SIGNING -> SENDING`
+and `SIGNING -> ERROR` while keeping `SIGNING -> CANCELLED` excluded. The
+trigger is not recreated: it resolves the function by name.
+
+`SIGNING` is declared **last** in the Prisma enum, because
+`ALTER TYPE ... ADD VALUE` appends and a value declared in the middle would
+describe an order the database cannot have without recreating the type.
 
 ## UI
 
@@ -237,7 +278,18 @@ around:**
    `xml-crypto` does every parse, and the signer's own XML work is two exact
    string operations. [[ADR-006]] records this.
 
-**WU-C — the `SIGNING` state — is not implemented yet.**
+**WU-C1 — the `SIGNING` state.** The enum value, the migration and the guard
+body. Proven against a live PostgreSQL 16 rather than only asserted: the
+migration applies inside the transaction `prisma migrate deploy` wraps it in,
+the new value lands **last** in `pg_enum` (so the schema declares no order the
+database cannot have), and every new edge behaves as the story pins it —
+`PENDING -> SIGNING`, `SIGNING -> SENDING`, `SIGNING -> ERROR` and
+`ERROR -> SIGNING` are admitted, while `SIGNING -> CANCELLED` and
+`SIGNING -> SUBMITTED` are refused with a message naming both states, and
+`SENDING -> CANCELLED` stays refused.
+
+**WU-C2 — the worker stage — moved to [[FISC-012]].** The reason is recorded
+above under "Why this acceptance criterion moved".
 
 ## Verification
 
@@ -249,8 +301,32 @@ pnpm --filter @newsaas/fiscal test       green - 164 tests, 13 files
 pnpm --filter @newsaas/fiscal build      green
 pnpm lint / typecheck / test / build     green - 18/18, 18/18, 19/19, 11/11
 pnpm format-check                        green, and it converges in two passes
-live-PostgreSQL gate                     not run - no schema change in WU-B
+live-PostgreSQL gate                     not run in WU-B - no schema change there
 ```
+
+WU-C1 was proven against a live PostgreSQL 16 (the `postgres:16` image CI uses),
+because the migration's risk is not its text but its application:
+
+```text
+pnpm db:deploy against a fresh database
+   -> All migrations have been successfully applied.
+      The ALTER TYPE ... ADD VALUE ran inside the transaction Prisma wraps each
+      migration in, with the guard's replacement in the same file.
+
+pg_enum order
+   -> PENDING, QUEUED, SENDING, SUBMITTED, APPROVED, REJECTED, ERROR,
+      CANCEL_PENDING, CANCELLED, SIGNING      (SIGNING last, as declared)
+
+PENDING -> SIGNING      admitted
+SIGNING -> CANCELLED    REFUSED  "from SIGNING to CANCELLED is not allowed"
+SIGNING -> SUBMITTED    REFUSED  "from SIGNING to SUBMITTED is not allowed"
+SIGNING -> SENDING      admitted
+SIGNING -> ERROR        admitted
+ERROR   -> SIGNING      admitted
+SENDING -> CANCELLED    REFUSED  "from SENDING to CANCELLED is not allowed"
+```
+
+The probe ran in a transaction that was rolled back, so no row survives it.
 
 ## Tests Added
 
@@ -267,6 +343,15 @@ live-PostgreSQL gate                     not run - no schema change in WU-B
 - Purity: identical output for identical inputs, and no key material returned.
 - Four refusals: the wrong `Id`, a document that is not a DE, a missing
   placeholder, and an error that does not carry the key.
+
+`packages/database/src/schema-fiscal-signing-state.test.ts`, 8 cases (WU-C1):
+the migration is additive and has no transaction wrapper; it appends the value
+and never references it as a value in that transaction; it replaces the function
+without recreating the trigger; the three new edges are present;
+`SIGNING -> CANCELLED` and `SENDING -> CANCELLED` are both absent; every edge
+and invariant the earlier guards installed survives; the other five guards are
+untouched; and the Prisma enum declares `SIGNING` last, exactly as the database
+has it.
 
 `packages/fiscal/src/dte/xsd-validation.test.ts` gained one case: **the really
 signed document validates against the official XSD.** It is deliberately
@@ -320,14 +405,42 @@ Story's own `done` gate does not depend on either.
 
 ```text
 packages/fiscal/src/dte/dte.signing.ts        the pure signer and its profile
+packages/fiscal/src/dte/dte.signing.test.ts   25 cases: the profile, the round trip
+packages/fiscal/src/dte/dte.builder.ts        exports SIGNATURE_PLACEHOLDER
+packages/database/prisma/schema.prisma        the SIGNING enum value, declared last
+packages/database/prisma/migrations/20261007000001_fiscal_document_signing_state/
+packages/database/src/schema-fiscal-signing-state.test.ts
 docs/04-adrs/ADR-006-xmldsig-signing-dependency.md
+docs/05-modules/Fiscal.md                     the enum and the graph
 docs/06-fiscal/SIFEN-BASELINE.md              §5 is the source of record
-packages/database/prisma/schema.prisma        the SIGNING enum value
-apps/worker/src/fiscal-submission/**          the signing stage
 odd/tasks/epic-16-sifen-direct.md             the epic tracker, T5
 ```
 
 ## Completion Notes
+
+**`done` means the signer and the state, and it does not mean the wiring.**
+
+What is done: `signDteXml` implements the §5 profile element by element and is
+asserted against it; the signed document validates against the official XSD and
+verifies against its own certificate; `SIGNING` is a real stage in the applied
+database, proven on a live PostgreSQL 16.
+
+What `done` does **not** mean:
+
+- **The worker does not sign yet.** Its criterion moved to [[FISC-012]], and the
+  reason is recorded above: there is no emitter profile and no timbrado anywhere
+  in the application, so no DE can be built there to sign. This is the same
+  distinction [[FISC-008]]'s notes draw.
+- **No signature has been accepted by SIFEN.** Only DNIT can accept one.
+  Homologation is [[FISC-013]].
+- **The certificate is a fixture.** [[FISC-007]]'s throwaway material, not one
+  from a PSC habilitado por el MIC.
+- **The signed XML is not stored.** `xml_storage_key` is still written by
+  nothing; where the document is persisted belongs with submission.
+- **The vault still says "XAdES" in places.** The PRD is not edited; [[ADR-006]]
+  and the section above record the discrepancy and name the real target.
+- **Two advisories from WU-B's review are open and accepted as-is**, recorded
+  under Technical Debt.
 
 _Status must remain non-`done` until every acceptance criterion and gate
 passes._
