@@ -567,6 +567,93 @@ inputs.
 
 ## Review coverage
 
+**FISC-008 review coverage, verified 2026-10-06.** PR **#106**, head `5d09015`,
+`MERGEABLE/CLEAN`, all three checks green (`DTE XSD validation` among them, now
+a required check on `main`).
+
+**30 of the 33 commits from `0479e67` to HEAD are inside a closed range. The
+three that are not are named, not glossed:**
+
+```text
+e8677fe  feat(FISC-008): map a confirmed invoice to a DteRequest
+6e4fe02  fix(FISC-008): dTotOpe is the operation total, not the taxed base
+5897628  docs(FISC-008): record that WU-C's review is escalated, not closed
+```
+
+Those three are exactly the escalated range `a06e7b7..5897628`. **Their content
+was not left unexamined**: the subtotal correction that followed them was
+re-reviewed on its own as `82d484f..576c830` and **closed `approved`**, and the
+schema suite proves the mapper's output is valid. What is missing is a _closure_
+for that specific range, and the escalated lineage is where that lives —
+terminal, awaiting the maintainer.
+
+Every other range closed, and the lineages are named in the section above.
+
+## WU-C: the mapper
+
+**DONE 2026-10-06.** `packages/fiscal/src/dte/dte.mapper.ts` holds
+`buildDteRequestFromInvoice({ invoice, profile, identity }) -> DteRequest`,
+pure: no I/O, no ambient clock, no tenant context. Authorized by [[DEC-054]]
+(accepted), whose option B gives the emitter fiscal profile's storage to
+FISC-011 — so the profile is an **input**, and the mapper is callable and
+testable today even though nothing in production supplies one yet.
+
+**The XSD case is the proof that mattered.** Putting the mapper's output through
+the schema-validation suite caught two real invalidities that no shape test
+could see: `totalsElement` emitted six of `tgTotSub`'s **ten** required members,
+in the wrong order, and `gValorItem` was missing its required `gValorRestaItem`.
+Both are fixed, and the case now runs in the same suite as the fixture's.
+
+**Two things it deliberately does not do**, both recorded in the module and in
+baseline §22.14: it does not re-derive tax (NT 013's formulas state no rounding
+rule, so the invoice's own `taxableBase`/`taxAmount` are carried rather than
+giving money a second source of truth), and it does not derive `F023` (NT 008
+defines it as `F014 * D018` with the same unpinned rounding, so a foreign
+currency supplies it). It always supplies the `D208c` total the currency names,
+which is the obligation `R3-D208C-OPTIN` placed on it.
+
+## WU-C's review is ESCALATED, not closed (2026-10-06)
+
+The mapper's candidate did **not** close. The chain, recorded because an
+escalated lineage is a state the maintainer has to see rather than a green tick:
+
+```text
+review-d1934d6b6a6db4b0   medium tier, review-reliability, 9 files / 883 lines
+  reviewer      admitted a result
+  refuter       provider_refuter_required -> CONFIRMED a CRITICAL
+  finding       R3-DTOTOPE (inferential, introduced)
+  correction    submitted as a 65-line plan, committed as 6e4fe02
+  validator     native-operation-failed -- NO VERDICT, nothing mutated
+  authority     ESCALATED, cause targeted_validator_rejected
+  transition    stop / native_stop_required   (terminal)
+```
+
+**The finding was right and the fix is in.** `totalsElement` wired `dTotOpe` to
+the sum of the lines' `taxableBase`, so an exempt line vanished from the
+operation total: the emitted `dTotOpe` was 100.00000000 while `dTotGralOpe` was
+160.50000000, with every adjustment member zero. `dTotOpe` is now the sum of the
+subtotals and `dTotGralOpe` derives from the same value. The same finding
+exposed that **NT 013's `F002` rule was half implemented**: for a partially
+taxed item (`E731 = 4`) it takes `E737`, the exempt base, and the mapper added
+nothing.
+
+**The validator produced no verdict, so the closure is missing — and that is
+stated, not papered over.** I re-derived the fix against the schema's own
+structure as the only available check: in `tgTotSub`, `dTotOpe` sits after the
+subtotals and **before** `dTotDesc`/`dTotAnt`/`dDescTotal`, while `dTotGralOpe`
+sits after them — so the operation total is the pre-adjustment total, and with
+zero adjustments the two must agree. That is a structural argument, not a
+review.
+
+**What the maintainer can do**, per the provider's own continuation: inspect the
+lineage's authority, or disable the review switch for this clone
+(`gentle-ai review mode disable --scope clone`), after which ordinary repository
+policy decides delivery. Nothing is reset or recovered here: `RESET` and
+`RECOVER` are destructive and need an explicit decision with exact native
+inputs.
+
+## Review coverage
+
 **FISC-008 review coverage, recorded 2026-10-06.** PR **#106**, head `5897628`,
 `MERGEABLE/CLEAN`, all three checks green (the new `DTE XSD validation` job
 among them, now a required check on `main`).
