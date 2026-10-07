@@ -474,7 +474,20 @@ Planned for the remaining units:
   the profile stores the code the operator supplies without validating it
   against Tabla 3.
 
-## Technical Debt
+One advisory from the fix's own review (`review-0b7d72bb77b1ece2`, approved
+2026-10-07), recorded rather than chased — this is where the family stops being
+worth a round per member:
+
+- **`R3-001`** (reliability, `WARNING`) — the assembly checks `!== null` for the
+  string columns but not for **emptiness**, so a hand-built `districtName: ""`
+  would be emitted and `tdDesDisEmi` forbids it (`minLength` 1). The same is
+  true of `cityName` (1..30) and `addressLine` (1..255).
+
+  **The database is the guard for all three**: its CHECKs are `length(...)`
+  bounds, so no row can carry an empty value, and the only way to reach the
+  assembly with one is to build the object by hand — which is the case the two
+  refusals above already cover for nulls. Closing it means an emptiness check
+  per string column, which is a family rather than a defect.
 
 Two advisories from WU-E part 2's review (`review-bd912ca6487dcc13`, approved
 2026-10-07), both non-blocking and both fixed in the same work unit, because
