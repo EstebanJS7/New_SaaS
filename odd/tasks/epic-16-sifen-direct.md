@@ -477,12 +477,23 @@ F005 dSub10   E731 = 1 -> EA008      E731 = 4 -> E735 + E736
 dTotOpe       the sum of the subtotals, before adjustments
 ```
 
-**What the fixes rest on, stated plainly.** Neither has a review verdict: the
-first lineage's validator failed, and the second's binding was rejected by the
-relay. So each rests on an argument I can check and on tests I can run — the
-schema's own ordering for `dTotOpe`, NT 013's field-by-field rule for the subt
-otals, and arithmetic that adds up by hand (106 = 60 + 6 + 40). The gates are
-green and CI is green, which is evidence about behaviour and not about review.
+**And then the second correction DID get its verdict.** Because the workspace
+was clean and the provider offered a committed range, the correction was
+re-reviewed on its own as `82d484f..576c830` — a fresh lineage,
+`review-ba6218e187d42859`, medium tier, one lens — and **closed `approved`**
+with two non-blocking `WARNING`s and no correction required. So the subtotal fix
+and the record around it have a receipt.
+
+The two lineages above stay as they are. **The first correction (`dTotOpe`)
+still has no verdict of its own** — it was inside the escalated range, and the
+escalated lineage is terminal.
+
+**What the fixes rest on, stated plainly.** The subtotal fix has a review
+verdict now. The `dTotOpe` fix does not: its lineage's validator failed. So that
+one rests on an argument I can check and on tests I can run — the schema's own
+ordering for `dTotOpe`, NT 013's field-by-field rule for the subt otals, and
+arithmetic that adds up by hand (106 = 60 + 6 + 40). The gates are green and CI
+is green, which is evidence about behaviour and not about review.
 
 **The maintainer's options**, per the provider's own continuation: inspect the
 lineages' authority, or disable the review switch for this clone

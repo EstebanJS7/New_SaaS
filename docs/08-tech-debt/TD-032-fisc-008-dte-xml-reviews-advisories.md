@@ -74,6 +74,15 @@ as-is**: it refuses a base that would make every weight meaningless. | |
 `packages/fiscal/src/dte/dte.cdc.ts:142-144` | The date is shape-checked, not
 validity-checked. **Open, and it is bigger than the CDC** — see below. |
 
+| `R3-001` (mapper fix) | reliability | WARNING |
+`packages/fiscal/src/dte/dte.mapper.test.ts:228-229` | The assertions on the
+folded-in exonerated case (`exonerated.exonerated` and `exonerated.general`).
+**Accepted as-is.** | | `R3-002` (mapper fix) | reliability | WARNING |
+`packages/fiscal/src/dte/dte.mapper.ts:353` | The `rateContribution` ternary,
+which selects `E735 + E736` for affectation 4 and `EA008` otherwise. **Accepted
+as-is**: it is the NT 013 rule in one expression, and the comment above it says
+which fields those are. |
+
 ## The one finding with a real failure mode: dates are shaped, never validated
 
 `R3-CDC-DATE` is right, and it is not confined to the CDC. Every date this Story
@@ -148,6 +157,15 @@ why it was chosen.
    total**.
 6. **`R2-evidence-count`** — corrected when it was found, because a wrong number
    in the evidence file is not a later-work item.
+
+## The mapper's correction is now closed
+
+The correction that the stuck lineage could not validate was re-reviewed on its
+own as a fresh committed range and **closed `approved`**
+(`review-ba6218e187d42859`, medium tier, one lens, 3 files / 133 lines), with
+the two `WARNING`s above and no correction required. The two earlier lineages
+stay as they are — one escalated, one stuck — and are recorded in the tracker;
+this is the receipt for the correction's _content_, which is what was missing.
 
 ## Not debt
 
