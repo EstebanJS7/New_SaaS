@@ -32,7 +32,8 @@ import {
   FISCAL_SUBMISSION_PRODUCER,
   type FiscalSubmissionProducer,
 } from "../src/fiscal/fiscal-submission.producer.js";
-import type { FiscalSubmissionJob } from "@newsaas/fiscal";
+import { allocateDocumentNumber, type FiscalSubmissionJob } from "@newsaas/fiscal";
+import { createTimbradoRangeStore } from "../src/fiscal/timbrado/timbrado-range.store.js";
 
 interface ErrorEnvelope {
   error: { code: string };
@@ -16025,6 +16026,141 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         });
       }
     }, 120_000);
+
+    it("allocates distinct numbers under real concurrency", async () => {
+      // The compare-and-swap against a real PostgreSQL, which is the only place
+      // it can be proven: the algorithm's own suite uses a fake, and a fake
+      // cannot race.
+      //
+      // A DEDICATED tenant, because `fiscal_timbrado_range` refuses to be deleted
+      // (the no-delete trigger) so these rows cannot be cleaned up, and the
+      // suite's baseline counts are per-tenant — leaving them in a throwaway
+      // tenant cannot disturb them.
+      const tenant = await prisma.tenant.create({
+        data: { slug: `fisc011-alloc-${randomUUID().slice(0, 8)}`, name: "FISC-011 allocation" },
+      });
+      const establishmentId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_establishment" (
+          "id", "tenant_id", "code", "address_line", "house_number",
+          "department_code", "city_code", "city_name", "phone", "email"
+        ) VALUES (
+          ${establishmentId}::uuid, ${tenant.id}::uuid, '001', 'Av. Mcal. López', 1234,
+          1, 7, 'ASUNCION', '021123456', 'fiscal@vetsur.example'
+        )
+      `;
+      const rangeId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_timbrado_range" (
+          "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+          "series", "timbrado_number", "range_from", "range_to", "validity_start",
+          "next_number", "status"
+        ) VALUES (
+          ${rangeId}::uuid, ${tenant.id}::uuid, ${establishmentId}::uuid, '001', 1,
+          NULL, '12345678', 1, 9999999, TIMESTAMPTZ '2019-09-01 00:00:00+00',
+          1, 'ACTIVE'
+        )
+      `;
+
+      const key = {
+        tenantId: tenant.id,
+        establishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+      } as const;
+      const allocate = () =>
+        prisma.$transaction((tx) =>
+          allocateDocumentNumber({ store: createTimbradoRangeStore(tx), key })
+        );
+
+      // Twelve callers, twelve transactions, ONE counter. Every one of them has
+      // to get a different number, and the loser of each race must re-read rather
+      // than take what it observed.
+      const allocated = await Promise.all(Array.from({ length: 12 }, allocate));
+      const numbers = allocated.map((entry) => entry.documentNumber);
+
+      expect(new Set(numbers).size).toBe(12);
+      expect([...numbers].sort()).toEqual(
+        Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(7, "0"))
+      );
+      // The counter moved exactly twelve times: no number was handed out twice
+      // and none was skipped.
+      const range = await prisma.fiscalTimbradoRange.findFirst({ where: { id: rangeId } });
+      expect(range?.nextNumber).toBe(13);
+      expect(range?.series).toBeNull();
+    }, 60_000);
+
+    it("rolls the series over on the applied database", async () => {
+      // The Manual's model, against real rows: when a range runs out the
+      // numbering continues in the next series under the SAME authorisation.
+      const tenant = await prisma.tenant.create({
+        data: { slug: `fisc011-series-${randomUUID().slice(0, 8)}`, name: "FISC-011 series" },
+      });
+      const establishmentId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_establishment" (
+          "id", "tenant_id", "code", "address_line", "house_number",
+          "department_code", "city_code", "city_name", "phone", "email"
+        ) VALUES (
+          ${establishmentId}::uuid, ${tenant.id}::uuid, '001', 'Av. Mcal. López', 1234,
+          1, 7, 'ASUNCION', '021123456', 'fiscal@vetsur.example'
+        )
+      `;
+      const rangeId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_timbrado_range" (
+          "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+          "series", "timbrado_number", "range_from", "range_to", "validity_start",
+          "next_number", "status"
+        ) VALUES (
+          ${rangeId}::uuid, ${tenant.id}::uuid, ${establishmentId}::uuid, '001', 1,
+          NULL, '12345678', 1, 3, TIMESTAMPTZ '2019-09-01 00:00:00+00',
+          1, 'ACTIVE'
+        )
+      `;
+
+      const key = {
+        tenantId: tenant.id,
+        establishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+      } as const;
+      const allocate = () =>
+        prisma.$transaction((tx) =>
+          allocateDocumentNumber({ store: createTimbradoRangeStore(tx), key })
+        );
+
+      const allocated = [];
+      for (let index = 0; index < 4; index += 1) {
+        allocated.push(await allocate());
+      }
+
+      // The first three are the seriesless range; the fourth is the first of AA.
+      expect(allocated.map((entry) => entry.documentNumber)).toEqual([
+        "0000001",
+        "0000002",
+        "0000003",
+        "0000001",
+      ]);
+      expect(allocated.map((entry) => entry.series)).toEqual([null, null, null, "AA"]);
+      // The spent range is closed, and the successor continues the SAME
+      // authorisation: same timbrado, same span.
+      const spent = await prisma.fiscalTimbradoRange.findFirst({ where: { id: rangeId } });
+      expect(spent?.status).toBe("EXHAUSTED");
+      const successor = await prisma.fiscalTimbradoRange.findFirst({
+        where: { tenantId: tenant.id, series: "AA" },
+      });
+      expect(successor).toMatchObject({
+        timbradoNumber: "12345678",
+        rangeFrom: 1,
+        rangeTo: 3,
+        nextNumber: 2,
+        status: "ACTIVE",
+        // The Manual puts a series' start at the first DE's signature date,
+        // which is a later step.
+        seriesStartedAt: null,
+      });
+    }, 60_000);
 
     it("admits the FISC-009 SIGNING edges and keeps its cancellation excluded", async () => {
       // The state machine is enforced by `fiscal_document_transition_guard` in the

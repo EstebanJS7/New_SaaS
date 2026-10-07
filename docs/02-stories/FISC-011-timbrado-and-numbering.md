@@ -301,6 +301,31 @@ zone-free result, and brings it back, so it depends only on the stored value.
 Both directions are pinned: a UTC-midnight row is accepted **in a non-UTC
 session**, and a row with a time part is refused.
 
+### A defect the live-PostgreSQL case found, and nothing else could
+
+The rollover case failed the first time it ran, with a CHECK violation:
+
+```text
+new row for relation "fiscal_timbrado_range" violates check constraint
+  "fiscal_timbrado_range_active_has_numbers_left"
+```
+
+**The last number of every range was impossible to issue.** WU-C's CHECK
+required an ACTIVE range to satisfy `next_number <= range_to`, and WU-D's claim
+takes a number by **incrementing** the counter. On the last number those two
+disagree: the counter goes to `range_to + 1` while the status is still ACTIVE,
+because the rollover happens on the _next_ call, when the allocation finds the
+range spent.
+
+Neither unit's own suite could catch it. WU-D's uses a fake that does not apply
+the schema's CHECKs, and WU-C's only ever inserted rows — it never claimed the
+last number of one. **Two units that are each correct can still disagree**, and
+the disagreement was only visible where both meet a real database.
+
+The bound is now `range_to + 1`, and the constraint is renamed
+`..._active_within_one_past_the_end` to say what it actually enforces: an ACTIVE
+range may be **spent and awaiting its rollover**.
+
 ### A defect this Story found in its own design
 
 The first draft enforced "the counter is never lowered" as a CHECK,

@@ -69,8 +69,13 @@ describe("migration · timbrado and numbering ranges (EPIC-16 FISC-011)", () => 
     expect(SQL).toMatch(
       /CONSTRAINT "fiscal_timbrado_range_exhausted_has_run_out"\s+CHECK \("status" <> 'EXHAUSTED' OR "next_number" > "range_to"\)/
     );
+    // `range_to + 1`, not `range_to`: an ACTIVE range may be spent and awaiting
+    // its rollover, because the claim that takes the LAST number increments the
+    // counter one past the end. A `range_to` bound refused that increment and
+    // made the last number of every range impossible to issue — which is exactly
+    // what the live-PostgreSQL rollover case caught.
     expect(SQL).toMatch(
-      /CONSTRAINT "fiscal_timbrado_range_active_has_numbers_left"\s+CHECK \("status" <> 'ACTIVE' OR "next_number" <= "range_to"\)/
+      /CONSTRAINT "fiscal_timbrado_range_active_within_one_past_the_end"\s+CHECK \("status" <> 'ACTIVE' OR "next_number" <= "range_to" \+ 1\)/
     );
     // RETIRED appears in neither implication: an operator may retire a range at
     // any point in its life, so a third implication would be wrong.
