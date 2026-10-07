@@ -85,6 +85,68 @@ export {
   computeCdcCheckDigit,
 } from "./dte/dte.cdc.js";
 export type { ComposedCdc, DteCdcFields } from "./dte/dte.cdc.js";
+// FISC-011 WU-E: the stored rows -> the profile the mapper takes. It does not
+// allocate, does not store descriptions and reads no clock or tenant.
+export { assembleEmitterProfile, EmitterProfileAssemblyError } from "./timbrado/emitter-profile.js";
+export type {
+  AllocatedNumber,
+  AssembleEmitterProfileArgs,
+  EmitterProfileAssemblyFailure,
+  StoredActivity,
+  StoredEmitterProfile,
+  StoredEstablishment,
+  StoredTimbradoRange,
+} from "./timbrado/emitter-profile.js";
+// FISC-011: the descriptions the DE carries beside its enumerated codes. Keyed
+// by CODE, never by position — the Manual lists 13 transaction types and the XSD
+// enumerates 11 of them, so the third entry of the enum belongs to code 4.
+export {
+  describeDepartment,
+  describeDocumentType,
+  describeEmissionType,
+  describeTaxType,
+  describeTransactionType,
+  DTE_DEPARTMENT_NAMES,
+  DTE_DOCUMENT_TYPE_DESCRIPTIONS,
+  DTE_EMISSION_TYPE_DESCRIPTIONS,
+  DTE_TAX_TYPE_DESCRIPTIONS,
+  DTE_TRANSACTION_TYPE_DESCRIPTIONS,
+  DteCatalogueError,
+} from "./dte/dte.catalogues.js";
+export type { DteCatalogueFailure, DteCodeDescription } from "./dte/dte.catalogues.js";
+// FISC-011: the Manual §10.5 series order, which is a validation and not just a
+// sequence — SIFEN refuses a series that is not the previous, the same or the
+// next one.
+export {
+  assertSeriesSuccession,
+  assertValidSeries,
+  FIRST_SERIES,
+  LAST_SERIES,
+  nextSeries,
+  SERIES_COUNT,
+  seriesFromOrdinal,
+  seriesOrdinal,
+  TimbradoError,
+} from "./timbrado/series.js";
+export type { TimbradoFailure } from "./timbrado/series.js";
+// FISC-011 WU-D: the allocation. It owns no transaction and no Prisma client —
+// the caller's transaction client satisfies `TimbradoRangeDelegate` structurally,
+// which is what lets the same rules serve the API and the worker.
+export {
+  ALLOCATION_MAX_ATTEMPTS,
+  allocateDocumentNumber,
+  DOCUMENT_NUMBER_WIDTH,
+  formatDocumentNumber,
+  MAX_DOCUMENT_NUMBER,
+  TimbradoAllocationError,
+} from "./timbrado/allocation.js";
+export type {
+  AllocatedDocumentNumber,
+  TimbradoAllocationFailure,
+  TimbradoRangeKey,
+  TimbradoRangeRecord,
+  TimbradoRangeStore,
+} from "./timbrado/allocation.js";
 // FISC-009: the XMLDSig signer. The profile's constants are exported so a caller
 // can assert them without reaching into the module's internals.
 export {

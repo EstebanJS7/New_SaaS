@@ -746,7 +746,7 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // 52 -> 56. FISC-005b adds read-wide `fiscal.read` (D7), moving 56 -> 57.
       // FISC-007 adds `fiscal.signing_material.manage` for the two owning roles
       // (DEC-053/ADR-005), moving 57 -> 58.
-      permissions: 58,
+      permissions: 59,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

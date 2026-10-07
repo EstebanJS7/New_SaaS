@@ -207,6 +207,11 @@ export const PERMISSION_SEEDS = [
   { key: "billing.cancel", name: "Cancel invoices" },
   // FISC-007: only owning roles manage tenant signing credentials.
   { key: "fiscal.signing_material.manage", name: "Manage tenant fiscal signing material" },
+  // FISC-011: only owning roles configure the emitter profile, its
+  // establishments and the authorised numbering ranges. A number handed out
+  // cannot be taken back, so this is a configuration capability rather than a
+  // routine one.
+  { key: "fiscal.profile.manage", name: "Manage the emitter fiscal profile" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -275,6 +280,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.confirm",
     "billing.cancel",
     "fiscal.signing_material.manage",
+    "fiscal.profile.manage",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -335,6 +341,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.confirm",
     "billing.cancel",
     "fiscal.signing_material.manage",
+    "fiscal.profile.manage",
   ],
   VETERINARIAN: [
     "inventory.stock.read",

@@ -380,6 +380,47 @@ Serie
 - The `dDesTipEmi` field (B003) distinguishes `1 = "Normal"` from
   `2 = "Contingencia"`.
 
+**The full §10.5 text was extracted on 2026-10-07, and three rules it states
+were not in the summary above.** They are quoted rather than paraphrased,
+because each is a constraint on the allocation:
+
+1. **The series order is lexicographic, and skipping is not allowed.**
+
+   > "Inicialmente no se utilizará serie hasta consumir toda la numeración que
+   > va desde 0000001 al 9999999 para cada tipo de documento, luego se tendrá
+   > que hacer uso de la serie según el siguiente orden. • Orden de Serie: AA,
+   > AB, AC, … , AZ …BA, BB, …., BZ, … ZA, ZB, … , ZZ El sistema validará la
+   > secuencialidad del uso de la serie."
+
+   So the **initial range carries no series** and the whole `0000001`–`9999999`
+   range is consumed **per document type** before `AA` starts. The order is
+   exactly lexicographic over two letters `A`–`Z`, which is why `Ñ` needs no
+   special case: it is not in `A`–`Z`, and `tdSerieNum` is `[A-Z]{2}` (§21.3).
+
+2. **The series' start date comes from the DE, not from the emitter.**
+
+   > "Una vez que el SIFEN reciba un DE con serie, se tomará la fecha y hora de
+   > firma digital del DE como fecha inicial de inicio de la vigencia de la
+   > serie."
+
+   Since the number is part of the CDC and the CDC is signed, the allocation
+   cannot know that timestamp: it has to be recorded afterwards.
+
+3. **SIFEN approves only three series, relative to the greatest one it has
+   received** — which is what makes an out-of-order series a rejection rather
+   than a cosmetic difference:
+
+   ```text
+   serie inmediatamente anterior   signature date EARLIER than the current series' start
+   serie igual                     always
+   serie inmediatamente posterior  signature date LATER than the current series' start
+   ```
+
+   The manual's own example: with current series `AC` starting
+   `07/06/2019 08:30:00`, `AB` is approved with a signature date before that
+   instant, every `AC` is approved, and `AD` is approved with a signature date
+   after it.
+
 ## 14. KuDE and QR
 
 **[R]** Manual §6.2, §13, and the changelog's note that §13.8 changed the

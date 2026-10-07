@@ -81,7 +81,13 @@ const DOCUMENT_NUMBER_PATTERN = /^(?:0+[1-9][0-9]*|[1-9]+[0-9]+)$/;
 /** `tdNumTim` — exactly eight digits, zero-padded. */
 const TIMBRADO_NUMBER_PATTERN = /^(?:0+[1-9][0-9]*|[1-9]+[0-9]+)$/;
 /** `tdSerieNum` (§21.3). */
-const SERIES_PATTERN = /^[A-Z]{2}$/;
+/**
+ * `tdSerieNum` (§21.3): `[A-Z]{2}`. Exported because the Manual's §10.5 series
+ * order is the same constant read in a different direction — `timbrado/series.ts`
+ * generates the successors of this alphabet — and a second copy of it would be a
+ * second place for the protocol to drift.
+ */
+export const SERIES_PATTERN = /^[A-Z]{2}$/;
 /** `tiCodSe`: nine digits, `minInclusive=1` — so `000000000` is not a value. */
 const SECURITY_CODE_PATTERN = /^[0-9]{9}$/;
 /** `tRuc` (§21.3): the check letter is optional here. */

@@ -32,7 +32,8 @@ import {
   FISCAL_SUBMISSION_PRODUCER,
   type FiscalSubmissionProducer,
 } from "../src/fiscal/fiscal-submission.producer.js";
-import type { FiscalSubmissionJob } from "@newsaas/fiscal";
+import { allocateDocumentNumber, type FiscalSubmissionJob } from "@newsaas/fiscal";
+import { createTimbradoRangeStore } from "../src/fiscal/timbrado/timbrado-range.store.js";
 
 interface ErrorEnvelope {
   error: { code: string };
@@ -15832,6 +15833,334 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         );
       }
     }, 30_000);
+
+    it("enforces the FISC-011 range invariants on the applied database", async () => {
+      // The migration is hand-written, so its CHECKs and partial indexes are only
+      // real once PostgreSQL has accepted them.
+      //
+      // Every case runs inside ONE transaction that is always rolled back, and
+      // each expected failure gets its own: a rejected statement aborts the
+      // transaction, so a second assertion in the same one would report "current
+      // transaction is aborted" instead of the constraint under test. The
+      // no-delete trigger is why nothing here can be cleaned up afterwards.
+      class Rollback extends Error {}
+
+      type Tx = Prisma.TransactionClient;
+
+      /** Runs `assert` with a fresh establishment, then rolls everything back. */
+      const withEstablishment = async (
+        assert: (tx: Tx, establishmentId: string) => Promise<void>
+      ): Promise<void> => {
+        await expect(
+          prisma.$transaction(async (tx) => {
+            const establishmentId = randomUUID();
+            await tx.$executeRaw`
+              INSERT INTO "fiscal_establishment" (
+                "id", "tenant_id", "code", "address_line", "house_number",
+                "department_code", "city_code", "city_name", "phone", "email"
+              ) VALUES (
+                ${establishmentId}::uuid, ${tenantAId}::uuid, '001', 'Av. Siempre Viva',
+                742, 1, 1, 'ASUNCION', '021123456', 'fiscal@example.test'
+              )
+            `;
+            await assert(tx, establishmentId);
+            throw new Rollback();
+          })
+        ).rejects.toThrow(Rollback);
+      };
+
+      const insertRange = (
+        tx: Tx,
+        establishmentId: string,
+        overrides: {
+          series?: string | null;
+          timbrado?: string;
+          validityStart?: string;
+          nextNumber?: number;
+          status?: string;
+        } = {}
+      ) =>
+        tx.$executeRaw`
+          INSERT INTO "fiscal_timbrado_range" (
+            "tenant_id", "establishment_id", "expedition_point", "document_type",
+            "series", "timbrado_number", "range_from", "range_to",
+            "validity_start", "next_number", "status"
+          ) VALUES (
+            ${tenantAId}::uuid, ${establishmentId}::uuid, '001', 1,
+            ${overrides.series === undefined ? null : overrides.series}::varchar,
+            ${overrides.timbrado ?? "12345678"}, 1, 9999999,
+            ${overrides.validityStart ?? "2019-09-01 00:00:00+00"}::timestamptz,
+            ${overrides.nextNumber ?? 1},
+            ${overrides.status ?? "ACTIVE"}::fiscal_timbrado_range_status
+          )
+        `;
+
+      // A range that still has numbers and is ACTIVE is the ordinary case, and
+      // the one every other case is measured against.
+      await withEstablishment(async (tx, establishmentId) => {
+        await expect(insertRange(tx, establishmentId)).resolves.toBe(1);
+      });
+
+      // One seriesless range per establishment, point and document type. A plain
+      // unique index would admit many, because PostgreSQL treats NULLs as
+      // distinct — which is why this is a partial index.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId);
+        await expect(insertRange(tx, establishmentId)).rejects.toThrow(/already exists/);
+      });
+
+      // One ACTIVE range per authorisation: a second ACTIVE under the SAME
+      // timbrado is refused.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId);
+        await expect(insertRange(tx, establishmentId, { series: "AA" })).rejects.toThrow(
+          /already exists/
+        );
+      });
+
+      // But a DIFFERENT timbrado is a different authorisation, and it has to be
+      // registrable — that is what the Manual's model needs when numbering is
+      // extended, and the identity index has to include the timbrado number for
+      // it to be possible.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId);
+        await expect(insertRange(tx, establishmentId, { timbrado: "87654321" })).resolves.toBe(1);
+      });
+
+      // And the ACTIVE rule is per AUTHORISATION, so the same timbrado still
+      // cannot have two.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId, { timbrado: "87654321" });
+        await expect(
+          insertRange(tx, establishmentId, { timbrado: "87654321", series: "AA" })
+        ).rejects.toThrow(/already exists/);
+      });
+
+      // The validity-start anchor is UTC, not the session's timezone. Under a
+      // non-UTC session the obvious `date_trunc('day', timestamptz)` form rejects
+      // a correctly anchored row, which is the defect this pins.
+      await withEstablishment(async (tx, establishmentId) => {
+        await tx.$executeRawUnsafe(`SET LOCAL TimeZone = 'America/New_York'`);
+        await expect(
+          insertRange(tx, establishmentId, { validityStart: "2019-09-01 00:00:00+00" })
+        ).resolves.toBe(1);
+      });
+
+      // EXHAUSTED and the counter cannot disagree.
+      await withEstablishment(async (tx, establishmentId) => {
+        await expect(
+          insertRange(tx, establishmentId, { nextNumber: 9999999, status: "EXHAUSTED" })
+        ).rejects.toThrow(/fiscal_timbrado_range_exhausted_has_run_out/);
+      });
+
+      // A consumed number is burnt: the counter cannot be lowered.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId, { nextNumber: 500 });
+        // Lowering 500 back to 1 is the case a `next_number >= range_from` CHECK
+        // lets through, which is why this is a trigger.
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_timbrado_range" SET "next_number" = 1 WHERE "establishment_id" = ${establishmentId}::uuid`
+        ).rejects.toThrow(/counter cannot be lowered, from 500 to 1/);
+      });
+
+      // And a range is retired, never deleted.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId);
+        await expect(
+          tx.$executeRaw`DELETE FROM "fiscal_timbrado_range" WHERE "establishment_id" = ${establishmentId}::uuid`
+        ).rejects.toThrow(/cannot be deleted; retire it instead/);
+      });
+
+      // The scalars the official schema pins are pinned here too. The document
+      // type is the one a caller is most likely to get wrong, because the schema
+      // admits 1, 4, 5, 6, 7, 9 and 10 and skips 2, 3 and 8.
+      const scalarCases = [
+        [
+          "document_type 2 is not in tiTiDE",
+          2,
+          "12345678",
+          "2019-09-01",
+          /fiscal_timbrado_range_document_type_tiTiDE/,
+        ],
+        [
+          "an all-zero timbrado number",
+          1,
+          "00000000",
+          "2019-09-01",
+          /fiscal_timbrado_range_timbrado_number_tdNumTim/,
+        ],
+        [
+          "a validity start with a time part",
+          1,
+          "12345678",
+          "2019-09-01 12:00:00",
+          /fiscal_timbrado_range_validity_start_is_a_date/,
+        ],
+        [
+          "a validity start before 2018-05-01",
+          1,
+          "12345678",
+          "2018-04-30",
+          /fiscal_timbrado_range_validity_start_tdFeIniT/,
+        ],
+      ] as const;
+      for (const [label, documentType, timbradoNumber, validityStart, expected] of scalarCases) {
+        await withEstablishment(async (tx, establishmentId) => {
+          let failure: unknown;
+          try {
+            await tx.$executeRaw`
+              INSERT INTO "fiscal_timbrado_range" (
+                "tenant_id", "establishment_id", "expedition_point", "document_type",
+                "timbrado_number", "range_from", "range_to", "validity_start", "next_number"
+              ) VALUES (
+                ${tenantAId}::uuid, ${establishmentId}::uuid, '001', ${documentType},
+                ${timbradoNumber}, 1, 9999999,
+                ${validityStart}::timestamptz, 1
+              )
+            `;
+          } catch (error) {
+            failure = error;
+          }
+          expect(failure, label).toBeDefined();
+          expect(String(failure), label).toMatch(expected);
+        });
+      }
+    }, 120_000);
+
+    it("allocates distinct numbers under real concurrency", async () => {
+      // The compare-and-swap against a real PostgreSQL, which is the only place
+      // it can be proven: the algorithm's own suite uses a fake, and a fake
+      // cannot race.
+      //
+      // A DEDICATED tenant, because `fiscal_timbrado_range` refuses to be deleted
+      // (the no-delete trigger) so these rows cannot be cleaned up, and the
+      // suite's baseline counts are per-tenant — leaving them in a throwaway
+      // tenant cannot disturb them.
+      const tenant = await prisma.tenant.create({
+        data: { slug: `fisc011-alloc-${randomUUID().slice(0, 8)}`, name: "FISC-011 allocation" },
+      });
+      const establishmentId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_establishment" (
+          "id", "tenant_id", "code", "address_line", "house_number",
+          "department_code", "city_code", "city_name", "phone", "email"
+        ) VALUES (
+          ${establishmentId}::uuid, ${tenant.id}::uuid, '001', 'Av. Mcal. López', 1234,
+          1, 7, 'ASUNCION', '021123456', 'fiscal@vetsur.example'
+        )
+      `;
+      const rangeId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_timbrado_range" (
+          "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+          "series", "timbrado_number", "range_from", "range_to", "validity_start",
+          "next_number", "status"
+        ) VALUES (
+          ${rangeId}::uuid, ${tenant.id}::uuid, ${establishmentId}::uuid, '001', 1,
+          NULL, '12345678', 1, 9999999, TIMESTAMPTZ '2019-09-01 00:00:00+00',
+          1, 'ACTIVE'
+        )
+      `;
+
+      const key = {
+        tenantId: tenant.id,
+        establishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+      } as const;
+      const allocate = () =>
+        prisma.$transaction((tx) =>
+          allocateDocumentNumber({ store: createTimbradoRangeStore(tx), key })
+        );
+
+      // Twelve callers, twelve transactions, ONE counter. Every one of them has
+      // to get a different number, and the loser of each race must re-read rather
+      // than take what it observed.
+      const allocated = await Promise.all(Array.from({ length: 12 }, allocate));
+      const numbers = allocated.map((entry) => entry.documentNumber);
+
+      expect(new Set(numbers).size).toBe(12);
+      expect([...numbers].sort()).toEqual(
+        Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(7, "0"))
+      );
+      // The counter moved exactly twelve times: no number was handed out twice
+      // and none was skipped.
+      const range = await prisma.fiscalTimbradoRange.findFirst({ where: { id: rangeId } });
+      expect(range?.nextNumber).toBe(13);
+      expect(range?.series).toBeNull();
+    }, 60_000);
+
+    it("rolls the series over on the applied database", async () => {
+      // The Manual's model, against real rows: when a range runs out the
+      // numbering continues in the next series under the SAME authorisation.
+      const tenant = await prisma.tenant.create({
+        data: { slug: `fisc011-series-${randomUUID().slice(0, 8)}`, name: "FISC-011 series" },
+      });
+      const establishmentId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_establishment" (
+          "id", "tenant_id", "code", "address_line", "house_number",
+          "department_code", "city_code", "city_name", "phone", "email"
+        ) VALUES (
+          ${establishmentId}::uuid, ${tenant.id}::uuid, '001', 'Av. Mcal. López', 1234,
+          1, 7, 'ASUNCION', '021123456', 'fiscal@vetsur.example'
+        )
+      `;
+      const rangeId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_timbrado_range" (
+          "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+          "series", "timbrado_number", "range_from", "range_to", "validity_start",
+          "next_number", "status"
+        ) VALUES (
+          ${rangeId}::uuid, ${tenant.id}::uuid, ${establishmentId}::uuid, '001', 1,
+          NULL, '12345678', 1, 3, TIMESTAMPTZ '2019-09-01 00:00:00+00',
+          1, 'ACTIVE'
+        )
+      `;
+
+      const key = {
+        tenantId: tenant.id,
+        establishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+      } as const;
+      const allocate = () =>
+        prisma.$transaction((tx) =>
+          allocateDocumentNumber({ store: createTimbradoRangeStore(tx), key })
+        );
+
+      const allocated = [];
+      for (let index = 0; index < 4; index += 1) {
+        allocated.push(await allocate());
+      }
+
+      // The first three are the seriesless range; the fourth is the first of AA.
+      expect(allocated.map((entry) => entry.documentNumber)).toEqual([
+        "0000001",
+        "0000002",
+        "0000003",
+        "0000001",
+      ]);
+      expect(allocated.map((entry) => entry.series)).toEqual([null, null, null, "AA"]);
+      // The spent range is closed, and the successor continues the SAME
+      // authorisation: same timbrado, same span.
+      const spent = await prisma.fiscalTimbradoRange.findFirst({ where: { id: rangeId } });
+      expect(spent?.status).toBe("EXHAUSTED");
+      const successor = await prisma.fiscalTimbradoRange.findFirst({
+        where: { tenantId: tenant.id, series: "AA" },
+      });
+      expect(successor).toMatchObject({
+        timbradoNumber: "12345678",
+        rangeFrom: 1,
+        rangeTo: 3,
+        nextNumber: 2,
+        status: "ACTIVE",
+        // The Manual puts a series' start at the first DE's signature date,
+        // which is a later step.
+        seriesStartedAt: null,
+      });
+    }, 60_000);
 
     it("admits the FISC-009 SIGNING edges and keeps its cancellation excluded", async () => {
       // The state machine is enforced by `fiscal_document_transition_guard` in the

@@ -341,7 +341,37 @@ candidate 1 exists.
       the port and the fake provides. Recorded in the Story under "Why this
       acceptance criterion moved" and in the epic's FISC-012 row.
 - [ ] T6 — FISC-010: DNIT web services.
-- [ ] T7 — FISC-011: timbrado and numbering ranges.
+- [ ] T7 — **FISC-011: timbrado and numbering ranges — STARTED 2026-10-07.**
+      Story at `docs/02-stories/FISC-011-timbrado-and-numbering.md`. **No ADR
+      needed**: the epic's ADR list carries only ADR-006 and ADR-007, and three
+      tenant-scoped tables plus a counter are a domain model, not an
+      architecture change. **The Manual's §10.5 was extracted in full (p. 59-60)
+      and it is richer than the baseline's summary** — three rules the baseline
+      did not carry, now recorded in `SIFEN-BASELINE.md` §13 verbatim: the
+      series order is **lexicographic** (`AA, AB, … AZ, BA, … ZZ`) and _"El
+      sistema validará la secuencialidad del uso de la serie"_; **the initial
+      range carries no series** until the whole `0000001`-`9999999` range is
+      consumed **per document type**; and **the series' start date is the DE's
+      digital-signature date-time**, which SIFEN takes on receipt — so the
+      allocation cannot know it, because the number is part of the CDC and the
+      CDC is signed afterwards. SIFEN approves only the previous, the same, or
+      the next series, which makes an out-of-order series a rejection rather
+      than a cosmetic difference. **The invariant that governs the allocation**:
+      §6.5 lets a rejected DE reuse the **same CDC**, and the number is part of
+      the CDC, so **a consumed number is never reused** — monotonic, like the
+      stock and cash ledgers. **Decided with the maintainer 2026-10-07**: three
+      tables (`fiscal_emitter_profile` + `fiscal_establishment` +
+      `fiscal_timbrado_range`), **automatic and audited** series advancement,
+      and HTTP routes behind a new `fiscal.profile.manage` permission with the
+      allocation as an **internal service**, not a route. **Work units**, in
+      order. **WU-A, the Story and the baseline correction** (this commit).
+      **WU-B, the pure series progression** (`packages/fiscal/src/timbrado/**`):
+      `null -> AA`, `AZ -> BA`, `ZZ -> terminal`, no `Ñ`, no skipping. **WU-C,
+      the schema**: the three tables, the two enums, the migration, the static
+      migration tests and the live-PostgreSQL proof. **WU-D, the allocation**:
+      the transactional compare-and-swap counter with the series rollover.
+      **WU-E, the surface**: the profile/establishment/range routes, the
+      permission, the audit and tenant isolation.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
       **Inherits FISC-009's worker signing stage**: claim `SIGNING`, sign the DE
       with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
