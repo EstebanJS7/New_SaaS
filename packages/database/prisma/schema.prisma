@@ -2943,7 +2943,10 @@ model FiscalTimbradoRange {
   tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   establishment FiscalEstablishment @relation(fields: [tenantId, establishmentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
-  @@unique([tenantId, establishmentId, expeditionPoint, documentType, series])
+  /// The Manual's whole sequence: the timbrado number is part of the identity, so a
+  /// second authorisation for the same key is a different range rather than a
+  /// collision.
+  @@unique([tenantId, establishmentId, expeditionPoint, documentType, series, timbradoNumber])
   @@index([tenantId, status])
   @@map("fiscal_timbrado_range")
 }

@@ -15871,7 +15871,13 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       const insertRange = (
         tx: Tx,
         establishmentId: string,
-        overrides: { series?: string | null; nextNumber?: number; status?: string } = {}
+        overrides: {
+          series?: string | null;
+          timbrado?: string;
+          validityStart?: string;
+          nextNumber?: number;
+          status?: string;
+        } = {}
       ) =>
         tx.$executeRaw`
           INSERT INTO "fiscal_timbrado_range" (
@@ -15881,8 +15887,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           ) VALUES (
             ${tenantAId}::uuid, ${establishmentId}::uuid, '001', 1,
             ${overrides.series === undefined ? null : overrides.series}::varchar,
-            '12345678', 1, 9999999,
-            TIMESTAMPTZ '2019-09-01 00:00:00+00', ${overrides.nextNumber ?? 1},
+            ${overrides.timbrado ?? "12345678"}, 1, 9999999,
+            ${overrides.validityStart ?? "2019-09-01 00:00:00+00"}::timestamptz,
+            ${overrides.nextNumber ?? 1},
             ${overrides.status ?? "ACTIVE"}::fiscal_timbrado_range_status
           )
         `;
@@ -15901,13 +15908,41 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         await expect(insertRange(tx, establishmentId)).rejects.toThrow(/already exists/);
       });
 
-      // One ACTIVE range per key: the allocation draws from that one, so two
-      // would make the choice ambiguous.
+      // One ACTIVE range per authorisation: a second ACTIVE under the SAME
+      // timbrado is refused.
       await withEstablishment(async (tx, establishmentId) => {
         await insertRange(tx, establishmentId);
         await expect(insertRange(tx, establishmentId, { series: "AA" })).rejects.toThrow(
           /already exists/
         );
+      });
+
+      // But a DIFFERENT timbrado is a different authorisation, and it has to be
+      // registrable — that is what the Manual's model needs when numbering is
+      // extended, and the identity index has to include the timbrado number for
+      // it to be possible.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId);
+        await expect(insertRange(tx, establishmentId, { timbrado: "87654321" })).resolves.toBe(1);
+      });
+
+      // And the ACTIVE rule is per AUTHORISATION, so the same timbrado still
+      // cannot have two.
+      await withEstablishment(async (tx, establishmentId) => {
+        await insertRange(tx, establishmentId, { timbrado: "87654321" });
+        await expect(
+          insertRange(tx, establishmentId, { timbrado: "87654321", series: "AA" })
+        ).rejects.toThrow(/already exists/);
+      });
+
+      // The validity-start anchor is UTC, not the session's timezone. Under a
+      // non-UTC session the obvious `date_trunc('day', timestamptz)` form rejects
+      // a correctly anchored row, which is the defect this pins.
+      await withEstablishment(async (tx, establishmentId) => {
+        await tx.$executeRawUnsafe(`SET LOCAL TimeZone = 'America/New_York'`);
+        await expect(
+          insertRange(tx, establishmentId, { validityStart: "2019-09-01 00:00:00+00" })
+        ).resolves.toBe(1);
       });
 
       // EXHAUSTED and the counter cannot disagree.

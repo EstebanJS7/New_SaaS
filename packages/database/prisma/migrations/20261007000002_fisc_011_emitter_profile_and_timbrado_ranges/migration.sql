@@ -229,11 +229,20 @@ CREATE TABLE "fiscal_timbrado_range" (
   CONSTRAINT "fiscal_timbrado_range_ordered" CHECK ("range_from" <= "range_to"),
   -- `dFeIniT` is a DATE in the schema, and the repository's convention persists
   -- every DateTime as UTC timestamptz, so it is anchored to midnight UTC and the
-  -- DE emits the date part. The anchor is enforced rather than assumed.
+  -- DE emits the date part.
+  --
+  -- The anchor is pinned to UTC explicitly. `date_trunc('day', timestamptz)`
+  -- truncates in the SESSION's TimeZone, so the obvious form enforces midnight in
+  -- whatever timezone the connection happens to use — it rejects a correctly
+  -- anchored row under America/New_York and accepts a local-midnight one. The
+  -- `AT TIME ZONE 'UTC'` pair takes the value to a zone-free timestamp, truncates
+  -- that, and brings it back, so the result depends only on the stored value.
   CONSTRAINT "fiscal_timbrado_range_validity_start_tdFeIniT"
     CHECK ("validity_start" >= TIMESTAMPTZ '2018-05-01 00:00:00+00'),
-  CONSTRAINT "fiscal_timbrado_range_validity_start_is_a_date"
-    CHECK ("validity_start" = date_trunc('day', "validity_start")),
+  CONSTRAINT "fiscal_timbrado_range_validity_start_is_a_date" CHECK (
+    ("validity_start" AT TIME ZONE 'UTC')
+      = date_trunc('day', "validity_start" AT TIME ZONE 'UTC')
+  ),
   -- The counter is bounded by its own range. This is the STATIC half; the
   -- transition half — that it never decreases — needs a trigger, because a CHECK
   -- cannot see the old value. See the guard below.
@@ -258,25 +267,42 @@ CREATE UNIQUE INDEX "fiscal_establishment_tenant_id_code_key"
   ON "fiscal_establishment"("tenant_id", "code");
 CREATE UNIQUE INDEX "fiscal_emitter_activity_profile_id_position_key"
   ON "fiscal_emitter_activity"("profile_id", "position");
+-- The identity is the Manual's whole sequence, and the TIMBRADO NUMBER IS PART OF
+-- IT. Leaving it out made a new authorisation impossible to register: a second
+-- timbrado for the same establishment, point, document type and series collided
+-- with the first, even though it is a different authorisation.
 CREATE UNIQUE INDEX "fiscal_timbrado_range_tenant_id_establishment_id_expedition_key"
   ON "fiscal_timbrado_range"(
-    "tenant_id", "establishment_id", "expedition_point", "document_type", "series"
+    "tenant_id", "establishment_id", "expedition_point", "document_type", "series",
+    "timbrado_number"
   );
 
 -- Two states that a plain unique index cannot express, because PostgreSQL treats
 -- NULLs as distinct and would admit many seriesless rows for the same key.
 --
--- At most one range carries no series per establishment, point and document
--- type: it is the initial range, and the Manual describes exactly one.
+-- At most one range carries no series per establishment, point, document type
+-- and timbrado: it is that authorisation's initial range, and the Manual
+-- describes exactly one. Scoped per timbrado for the same reason the identity is:
+-- a second authorisation has its own seriesless range.
 CREATE UNIQUE INDEX "fiscal_timbrado_range_single_seriesless_key"
-  ON "fiscal_timbrado_range"("tenant_id", "establishment_id", "expedition_point", "document_type")
+  ON "fiscal_timbrado_range"(
+    "tenant_id", "establishment_id", "expedition_point", "document_type", "timbrado_number"
+  )
   WHERE "series" IS NULL;
 
--- At most one ACTIVE range per establishment, point and document type: the
--- allocation takes the number from that one, and the series rollover happens
--- inside it, so two actives would make the choice ambiguous.
+-- At most one ACTIVE range per authorisation. Deliberately NOT scoped to the
+-- establishment alone: an operator has to be able to register next year's
+-- timbrado while this year's is still in use, so two authorisations may each be
+-- ACTIVE at once.
+--
+-- The allocation therefore does not pick "the ACTIVE range" — it picks the ACTIVE
+-- range with the GREATEST `validity_start`, which is the current authorisation.
+-- That rule is the allocation's, and it is pinned in the Story; this index is
+-- what guarantees there is at most one candidate per authorisation.
 CREATE UNIQUE INDEX "fiscal_timbrado_range_single_active_key"
-  ON "fiscal_timbrado_range"("tenant_id", "establishment_id", "expedition_point", "document_type")
+  ON "fiscal_timbrado_range"(
+    "tenant_id", "establishment_id", "expedition_point", "document_type", "timbrado_number"
+  )
   WHERE "status" = 'ACTIVE';
 
 CREATE INDEX "fiscal_timbrado_range_tenant_id_status_idx"

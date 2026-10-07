@@ -79,7 +79,40 @@ describe("migration · timbrado and numbering ranges (EPIC-16 FISC-011)", () => 
     expect(implications).toHaveLength(2);
   });
 
-  it("admits NULL as a real series state, and one seriesless range per key", () => {
+  it("includes the timbrado number in the range's identity", () => {
+    // Leaving it out made a new authorisation impossible to register: a second
+    // timbrado for the same establishment, point, document type and series
+    // collided with the first, even though it is a different authorisation. The
+    // Manual's sequence names the timbrado first.
+    const identity =
+      /CREATE UNIQUE INDEX "fiscal_timbrado_range_tenant_id_establishment_id_expedition_key"[\s\S]*?"timbrado_number"\s*\)/.exec(
+        SQL
+      )?.[0] ?? "";
+    expect(identity).toContain('"series"');
+    expect(identity).toContain('"timbrado_number"');
+    // And the two partial indexes are scoped per authorisation for the same
+    // reason, so next year's timbrado can be staged while this year's is in use.
+    for (const name of [
+      "fiscal_timbrado_range_single_seriesless_key",
+      "fiscal_timbrado_range_single_active_key",
+    ]) {
+      const index = new RegExp(`CREATE UNIQUE INDEX "${name}"[\\s\\S]*?WHERE[^;]*;`).exec(SQL)?.[0];
+      expect(index, name).toContain('"timbrado_number"');
+    }
+  });
+
+  it("pins the validity-start anchor to UTC, not to the session's timezone", () => {
+    // `date_trunc('day', timestamptz)` truncates in the SESSION's TimeZone, so the
+    // obvious form enforces midnight in whatever timezone the connection uses: it
+    // rejects a correctly anchored row under America/New_York and accepts a
+    // local-midnight one.
+    expect(SQL).toMatch(
+      /CONSTRAINT "fiscal_timbrado_range_validity_start_is_a_date" CHECK \(\s*\("validity_start" AT TIME ZONE 'UTC'\)\s*= date_trunc\('day', "validity_start" AT TIME ZONE 'UTC'\)\s*\)/
+    );
+    expect(SQL).not.toMatch(/CHECK \("validity_start" = date_trunc\('day', "validity_start"\)\)/);
+  });
+
+  it("admits NULL as a genuine series state, and one seriesless range per key", () => {
     expect(SQL).toMatch(/"series" VARCHAR\(2\),/);
     expect(SQL).toMatch(/"series" IS NULL OR "series" ~ '\^\[A-Z\]\{2\}\$'/);
     // A plain unique index would not do it: PostgreSQL treats NULLs as distinct

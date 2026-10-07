@@ -265,6 +265,42 @@ fiscal_timbrado_range_single_seriesless_key   WHERE series IS NULL
 fiscal_timbrado_range_single_active_key       WHERE status = 'ACTIVE'
 ```
 
+### The review found two more, and both were real
+
+The first review of WU-C (`review-76fc979401c1bf07`, four lenses) closed
+`correction_required` with three severe findings. All three were introduced by
+this Story, and all three were corrected before the work unit was accepted.
+
+**`R3-001` (BLOCKER) — the range's identity omitted the timbrado number.** The
+migration's own comment says the Manual's sequence is timbrado + establishment +
+expedition point + document type + series, and the unique index left the
+timbrado out. A second authorisation for the same establishment, point, document
+type and series therefore **collided with the first**, so a new timbrado could
+not be registered at all — which is the Manual's other path for extending
+numbering. The timbrado is now part of the identity, and the two partial indexes
+are scoped per authorisation for the same reason.
+
+That change has a consequence worth stating: **two authorisations may each be
+`ACTIVE` at once**, because next year's timbrado has to be registrable while
+this year's is still in use. So the allocation does not take "the ACTIVE range"
+— it takes the ACTIVE range with the **greatest `validity_start`**, which is the
+current authorisation. That rule is WU-D's to implement and is pinned here.
+
+**`R3-002` / `R4-1` (CRITICAL, the same defect twice) — the validity-start
+anchor was not anchored.** The CHECK was
+`validity_start = date_trunc('day', validity_start)`, and `date_trunc` on a
+`timestamptz` truncates in the **session's** `TimeZone`, not UTC. Measured
+rather than argued: under `America/New_York`, a correctly anchored UTC-midnight
+row **fails** that comparison, so the constraint would have rejected valid data
+from any connection whose timezone is not UTC — and accepted a local-midnight
+value. The comment claimed the anchor was "enforced rather than assumed", and it
+was not.
+
+The CHECK now takes the value through `AT TIME ZONE 'UTC'`, truncates the
+zone-free result, and brings it back, so it depends only on the stored value.
+Both directions are pinned: a UTC-midnight row is accepted **in a non-UTC
+session**, and a row with a time part is refused.
+
 ### A defect this Story found in its own design
 
 The first draft enforced "the counter is never lowered" as a CHECK,
@@ -334,6 +370,10 @@ pnpm --filter @newsaas/database test     green - 435 tests
 live-PostgreSQL suite                    green - 215/215 against PostgreSQL 16
 ```
 
+WU-C was corrected once, after its review closed `correction_required` with
+three severe findings. The corrections were re-verified the same way, and the
+two new assertions are pinned by test rather than by comment.
+
 The live-PG case is the one that mattered: it exercises the two partial unique
 indexes, both status implications, the monotonicity trigger, the deletion guard
 and four scalar CHECKs against a real PostgreSQL 16, each expected failure in
@@ -381,9 +421,12 @@ Planned for the remaining units:
   that SIFEN agrees until homologation ([[FISC-013]]).
 - **No timbrado is issued here.** The SGTM does that; this Story stores what an
   operator enters.
-- **A single active range per `(establishment, point, document type)`.** If two
-  ranges could be active at once, the allocation would have to choose, and the
-  Manual does not describe that state.
+- **Two authorisations may be `ACTIVE` at once, and the allocation chooses.**
+  The Manual does not describe overlapping authorisations, so this is our model:
+  a new timbrado has to be registrable while the current one is still in use,
+  which means the allocation selects the ACTIVE range with the greatest
+  `validity_start` rather than assuming there is exactly one. WU-D implements
+  that rule.
 - **The activity code table (`D131`) is still open** ([[FISC-008]]'s notes), so
   the profile stores the code the operator supplies without validating it
   against Tabla 3.
