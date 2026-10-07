@@ -16,6 +16,19 @@ import {
   seriesOrdinal,
 } from "./series.js";
 
+/** The failure code a call raises, which is the part a caller branches on. */
+function failureOf(call: () => unknown): string {
+  try {
+    call();
+  } catch (error) {
+    if (error instanceof TimbradoError) {
+      return error.failure;
+    }
+    throw error;
+  }
+  throw new Error("expected the call to throw");
+}
+
 /** The Manual's own order, spelled out far enough to cross both boundaries. */
 const MANUAL_ORDER_HEAD = ["AA", "AB", "AC", "AD", "AE"];
 
@@ -80,6 +93,9 @@ describe("ordinals are the inverse of the order", () => {
     for (const ordinal of [-1, SERIES_COUNT, 1.5]) {
       expect(() => seriesFromOrdinal(ordinal)).toThrow(TimbradoError);
       expect(() => seriesFromOrdinal(ordinal)).toThrow(/ordinal is 0\.\.675/);
+      // A bad ordinal is a programming error, not an exhausted timbrado: the two
+      // have to be distinguishable at the call site.
+      expect(failureOf(() => seriesFromOrdinal(ordinal))).toBe("INVALID_ORDINAL");
     }
   });
 });
@@ -103,6 +119,15 @@ describe("skipping a series is refused, not merely avoided", () => {
   it("refuses any successor of ZZ, because there is none", () => {
     expect(() => assertSeriesSuccession("ZZ", "AA")).toThrow(TimbradoError);
     expect(() => assertSeriesSuccession("ZZ", "AA")).toThrow(/has no successor/);
+    expect(failureOf(() => assertSeriesSuccession("ZZ", "AA"))).toBe("SERIES_EXHAUSTED");
+  });
+
+  it("reports a malformed candidate as malformed, not as out of order", () => {
+    // Comparing it would produce SERIES_OUT_OF_ORDER, which points the caller at
+    // the wrong thing.
+    expect(failureOf(() => assertSeriesSuccession("AA", "ÑA"))).toBe("INVALID_SERIES");
+    expect(failureOf(() => assertSeriesSuccession("AA", "A"))).toBe("INVALID_SERIES");
+    expect(failureOf(() => assertSeriesSuccession("AA", "AC"))).toBe("SERIES_OUT_OF_ORDER");
   });
 });
 

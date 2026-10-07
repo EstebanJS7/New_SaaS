@@ -38,7 +38,8 @@ export const LAST_SERIES = "ZZ";
 /** How many series exist: `26 * 26`. `AA` is ordinal 0 and `ZZ` is 675. */
 export const SERIES_COUNT = 26 * 26;
 
-export type TimbradoFailure = "INVALID_SERIES" | "SERIES_EXHAUSTED" | "SERIES_OUT_OF_ORDER";
+export type TimbradoFailure =
+  "INVALID_SERIES" | "INVALID_ORDINAL" | "SERIES_EXHAUSTED" | "SERIES_OUT_OF_ORDER";
 
 export class TimbradoError extends Error {
   readonly failure: TimbradoFailure;
@@ -93,8 +94,11 @@ export function nextSeries(current: string | null): string | null {
 /** The inverse of {@link seriesOrdinal}. */
 export function seriesFromOrdinal(ordinal: number): string {
   if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= SERIES_COUNT) {
+    // `INVALID_ORDINAL`, not `SERIES_EXHAUSTED`: an out-of-range ordinal is a
+    // programming error, and reserving the exhausted failure for the timbrado
+    // actually running out keeps the two distinguishable at the call site.
     throw new TimbradoError(
-      "SERIES_EXHAUSTED",
+      "INVALID_ORDINAL",
       `A series ordinal is 0..${String(SERIES_COUNT - 1)}, received ${String(ordinal)}.`
     );
   }
@@ -111,6 +115,9 @@ export function seriesFromOrdinal(ordinal: number): string {
  * would surface as a rejected DE in production instead of as a failure here.
  */
 export function assertSeriesSuccession(current: string | null, candidate: string): void {
+  // The candidate is validated first, so a malformed one reports `INVALID_SERIES`
+  // rather than the misleading order failure that comparing it would produce.
+  assertValidSeries(candidate);
   const expected = nextSeries(current);
   if (expected === null) {
     throw new TimbradoError(

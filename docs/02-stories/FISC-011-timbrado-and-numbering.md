@@ -256,7 +256,7 @@ live-PostgreSQL gate                     not run - no schema change yet (WU-C)
 
 ## Tests Added
 
-`packages/fiscal/src/timbrado/series.test.ts`, 21 cases (WU-B):
+`packages/fiscal/src/timbrado/series.test.ts`, 22 cases (WU-B):
 
 - The order walked against the Manual's printed sequence, across the `AZ -> BA`
   boundary the Manual writes as "… , AZ …BA, BB, …".
@@ -270,6 +270,9 @@ live-PostgreSQL gate                     not run - no schema change yet (WU-C)
   are all refused by `assertSeriesSuccession`.
 - The pattern refuses `ÑA`, `AÑ`, lowercase, digits, the wrong length and the
   empty string.
+- Each refusal's **failure code** is asserted, not only that it throws, so
+  `INVALID_ORDINAL`, `INVALID_SERIES`, `SERIES_OUT_OF_ORDER` and
+  `SERIES_EXHAUSTED` stay distinguishable for the caller.
 
 Planned for the remaining units:
 
@@ -300,7 +303,21 @@ Planned for the remaining units:
 
 ## Technical Debt
 
-- None yet. Any advisory this Story's review produces is recorded here.
+Two advisories from WU-B's review (`review-ab19166c91a10075`, approved
+2026-10-07), both non-blocking. **Both were fixed in the same work unit** rather
+than recorded, because each was a real defect in a file this Story is still
+building on:
+
+- **`R3-001`** (reliability, `WARNING`) — `assertSeriesSuccession` compared the
+  candidate before validating it, so a malformed series (`ÑA`, `A`) produced
+  `SERIES_OUT_OF_ORDER`, which points the caller at the wrong thing. The
+  candidate is now validated first, and the failure codes are asserted by test.
+- **`R3-002`** (reliability, `SUGGESTION`) — `seriesFromOrdinal` reported an
+  out-of-range ordinal as `SERIES_EXHAUSTED`, so a programming error was
+  indistinguishable from a timbrado that had genuinely run out. It now raises
+  `INVALID_ORDINAL`, and `SERIES_EXHAUSTED` means only what it says.
+
+Nothing is left open from this review.
 
 ## Decisions / ADRs
 
