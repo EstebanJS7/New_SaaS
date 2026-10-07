@@ -279,7 +279,32 @@ candidate 1 exists.
       whose tables the Manual references but does not contain.
 - [x] T4b — **FISC-008 WU-C: the invoice -> request mapper — DONE 2026-10-06.**
       See **WU-C: the mapper** below.
-- [ ] T5 — FISC-009: XAdES signing + `SIGNING` + ADR.
+- [ ] T5 — **FISC-009: XMLDSig signing + `SIGNING` + ADR-006 — STARTED
+      2026-10-07.** Story at `docs/02-stories/FISC-009-xmldsig-signing.md`,
+      contract pinned from baseline §5. **ADR-006 is ACCEPTED (2026-10-07):
+      `xml-crypto` 6.3.3 (MIT)**, a dependency of `packages/fiscal` only; its
+      four packages are all permissive and none is native. **The finding that
+      changes the vocabulary**: SIFEN v150 does **not** ask for XAdES. `XAdES`,
+      `QualifyingProperties` and `SignedProperties` occur **zero times** in the
+      three official schemas, and the Manual's §7.9 synthesis reads "Firma XML
+      Digital Signature, Enveloped". The vault's "XAdES" wording traces to PRD
+      §23's own text, which is **not edited**: the ADR and the Story record that
+      the implementation target is the §5 profile. **The other half of the
+      question the epic asked is answered**: `pkijs`/`asn1js` stay what ADR-005
+      added them for (parsing PKCS#12) because **they cannot sign XML** — the
+      installed `pkijs@3.4.1` has zero `xmldsig` occurrences. **Work units for
+      the implementation**, in order. **WU-A, the ADR and the Story** (this
+      commit). **WU-B, the pure signer**
+      (`packages/fiscal/src/dte/dte.signing.ts`): the §5 profile element by
+      element, the eight forbidden elements **refused** rather than omitted, the
+      signature placed between `</DE>` and `<gCamFuFD>`, and a sign-then-verify
+      round trip. **WU-C, the `SIGNING` state**: the enum value, the migration,
+      the transition guard and the worker stage —
+      `QUEUED ->     SIGNING -> SENDING`, `SIGNING -> ERROR`, and
+      `SIGNING -> CANCELLED` still excluded because a worker holds that claim.
+      **WU-D, verification**: the signed document through the XSD gate WU-B of
+      FISC-008 built, plus the live-PostgreSQL coverage of the new enum value
+      and the new edges.
 - [ ] T6 — FISC-010: DNIT web services.
 - [ ] T7 — FISC-011: timbrado and numbering ranges.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.

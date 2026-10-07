@@ -184,13 +184,22 @@ Architectural changes need an **ADR**, because `DOCUMENTATION-RULES.md` names
    introduces a reusable `SecretStore` capability with envelope encryption in
    PostgreSQL and records what the Fiscal boundary is now responsible for. Its
    product-level choices are [[DEC-053]]. It is the gate for [[FISC-007]].
-2. **An XAdES signing dependency — ADR-006, not yet written.** `AGENTS.md`
-   requires a concrete requirement before a new dependency; signing is one, but
-   the choice of library, its provenance and its update story are architectural.
-   It is the gate for [[FISC-009]]. Note that [[ADR-005]] already added `pkijs`
-   and `asn1js` for PKCS#12 parsing, which is a **different** requirement:
-   ADR-006 must state whether the signing path reuses that family or adds
-   another library.
+2. **An XMLDSig signing dependency — [[ADR-006]], `accepted` 2026-10-07.**
+   `AGENTS.md` requires a concrete requirement before a new dependency; signing
+   is one, and the choice of library is architectural. **`xml-crypto` 6.3.3
+   (MIT)**, a dependency of `packages/fiscal` only. **The family question is
+   answered**: `pkijs`/`asn1js` stay what [[ADR-005]] added them for — parsing
+   the PKCS#12 container — because **`pkijs` cannot sign XML** (the installed
+   `pkijs@3.4.1` has zero `xmldsig` occurrences; it implements CMS/PKCS#7 and
+   X.509, a different serialization). **And the vocabulary is corrected rather
+   than renamed**: SIFEN v150 does **not** ask for XAdES — `XAdES`,
+   `QualifyingProperties` and `SignedProperties` occur **zero times** in the
+   three official schemas, and the Manual's §7.9 synthesis reads "Firma **XML
+   Digital Signature, Enveloped**". The "XAdES" wording in PRD §23, in this
+   epic, in the changelog and in [[FISC-007]]/[[FISC-008]] is inherited from the
+   PRD's text, which is **not edited**; the ADR and [[FISC-009]] record that the
+   implementation target is the profile of `SIFEN-BASELINE.md` §5. It is the
+   gate for [[FISC-009]].
 3. **An asynchronous status capability on the provider port — ADR-007, not yet
    written.** SIFEN answers asynchronously, so `issue` alone is not enough; the
    port needs a way to ask what happened, and the worker needs a reconciliation

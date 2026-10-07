@@ -201,6 +201,16 @@ Encoding                Base64
 - Revocation is checked by SIFEN against the CRL at validation time, so the
   emitter does **not** attach the list.
 
+**This profile is XMLDSig, not XAdES, and the vault's wording is corrected
+rather than renamed.** `XAdES`, `QualifyingProperties` and `SignedProperties`
+occur **zero times** in the three official schemas, and §7's own synthesis reads
+"Firma **XML Digital Signature, Enveloped**". The "XAdES signing" phrase in PRD
+§23, in [[EPIC-16]], in the changelog and in [[FISC-007]]/[[FISC-008]] is
+inherited from the PRD's text, which is **not edited**. [[ADR-006]] and
+[[FISC-009]] record that the implementation target is the profile above; the
+practical consequence is that a library emitting XAdES qualifying properties
+would add signed content the profile does not ask for.
+
 ## 6. Certificate standard
 
 **[R]** Manual §7.5 and §7.9.
@@ -535,15 +545,15 @@ statement that it is undefined — and **the clauses of Notas Técnicas 23, 24 a
 
 ## 20. Consequences for the epic's Stories
 
-| Story                                  | May now pin                                                                                                                                                           | Must still not write                                                       |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| FISC-007 signing material              | That a PSC-issued X.509 v3 certificate is used for **both** signing and mutual TLS; that the private key and password are RESTRICTED; the RUC placement rules         | Nothing beyond the certificate standard                                    |
-| FISC-008 DTE XML                       | The full `rDE` structure, `dVerFor` = 150, the required CDC `Id`, the child order, the namespace rules, `gCamDEAsoc` ≤ 99                                             | Field-level types from `DE_Types_v150.xsd`, and any Nota Técnica amendment |
-| FISC-009 XAdES signing                 | **The complete signature profile**: c14n, rsa-sha256, `#CDC` reference URI, the two ordered transforms, sha256 digest, X509Data, RSA 2048, and the forbidden elements | The library choice, which is the ADR                                       |
-| FISC-010 DNIT web services             | **The endpoint list for both environments**, the six services, sync/async split, SOAP 1.2 Document/Literal over mutual TLS                                            | SOAP actions and WSDL details; the batch limit                             |
-| FISC-011 timbrado and numbering        | The six-field sequence, the series rule (two uppercase letters, no Ñ), the no-expiry timbrado model                                                                   | The tables' contents                                                       |
-| FISC-012 the provider                  | The three-state result model and the `dCodRes`/`dMsgRes` mapping, and that a rejected DE is **retryable with the same CDC**                                           | The full `dCodRes` catalogue                                               |
-| FISC-013 contingency and certification | **The test guide's sequence and test data**, the test and production environments, and that documents in test have no legal value                                     | A contingency protocol: DNIT has not defined one                           |
+| Story                                  | May now pin                                                                                                                                                           | Must still not write                                                                |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| FISC-007 signing material              | That a PSC-issued X.509 v3 certificate is used for **both** signing and mutual TLS; that the private key and password are RESTRICTED; the RUC placement rules         | Nothing beyond the certificate standard                                             |
+| FISC-008 DTE XML                       | The full `rDE` structure, `dVerFor` = 150, the required CDC `Id`, the child order, the namespace rules, `gCamDEAsoc` ≤ 99                                             | Field-level types from `DE_Types_v150.xsd`, and any Nota Técnica amendment          |
+| FISC-009 **XMLDSig** signing           | **The complete signature profile**: c14n, rsa-sha256, `#CDC` reference URI, the two ordered transforms, sha256 digest, X509Data, RSA 2048, and the forbidden elements | The library choice is [[ADR-006]]: `xml-crypto`, with `pkijs` kept for PKCS#12 only |
+| FISC-010 DNIT web services             | **The endpoint list for both environments**, the six services, sync/async split, SOAP 1.2 Document/Literal over mutual TLS                                            | SOAP actions and WSDL details; the batch limit                                      |
+| FISC-011 timbrado and numbering        | The six-field sequence, the series rule (two uppercase letters, no Ñ), the no-expiry timbrado model                                                                   | The tables' contents                                                                |
+| FISC-012 the provider                  | The three-state result model and the `dCodRes`/`dMsgRes` mapping, and that a rejected DE is **retryable with the same CDC**                                           | The full `dCodRes` catalogue                                                        |
+| FISC-013 contingency and certification | **The test guide's sequence and test data**, the test and production environments, and that documents in test have no legal value                                     | A contingency protocol: DNIT has not defined one                                    |
 
 ## Sources
 
