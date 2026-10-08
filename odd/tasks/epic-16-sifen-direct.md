@@ -3,7 +3,7 @@ feature: epic-16-sifen-direct
 epic: EPIC-16
 status: in-progress
 created: 2026-10-03
-updated: 2026-10-07
+updated: 2026-10-08
 branch: main
 ---
 
@@ -122,11 +122,24 @@ candidate 1 exists.
    query and the worker needs reconciliation. → **before FISC-010**, not
    FISC-012: FISC-010 is the story that produces the asynchronous result, so the
    port has to expose it before FISC-012 consumes it. Becomes **ADR-007**.
+   **Resolved: [[ADR-007]] `accepted` 2026-10-08** — `SUBMITTED` as a
+   non-terminal **and non-retryable** issue outcome, `providerReference` on the
+   result, a `query` capability, a nullable `fiscal_document.provider_reference`
+   for SIFEN's batch number, `submitted_at`'s writer, and the TD-028 sweep
+   extended to `SUBMITTED` as the reconciliation path.
 4. **The SIFEN transport: SOAP over mutual TLS with the tenant's certificate,
    and the client/parser dependency.** The adapter runs in the worker and must
    authenticate as the tenant, so the boundary gains a per-call credential read
    on a process-singleton provider, and an XML parser `packages/fiscal` does not
-   have today. → before FISC-010. Becomes **ADR-008**.
+   have today. → before FISC-010. Becomes **ADR-008**. **Resolved: [[ADR-008]]
+   `accepted` 2026-10-08** — `node:https` with a per-call mutual-TLS
+   configuration and `agent: false` (no pooled socket, so no authenticated
+   connection is reused across tenants),
+   `FiscalCredentialPort.read({ tenantId, environment })` with a null-returning
+   default behind a `forRoot()`-able module, the deployment-level
+   `SIFEN_ENVIRONMENT` with the material's `environment` column as a **guard**,
+   and two MIT dependencies (`fast-xml-parser`, `fflate`) with their advisory
+   record and the parser's guardrails.
 
 ## Story plan
 
@@ -353,7 +366,43 @@ candidate 1 exists.
       worker also does not build a DE at all today — it hands invoice data to
       the port and the fake provides. Recorded in the Story under "Why this
       acceptance criterion moved" and in the epic's FISC-012 row.
-- [ ] T6 — FISC-010: DNIT web services.
+- [~] T6 — **FISC-010: DNIT web services — in progress 2026-10-08.** Branch
+  `feat/epic-16-fisc-010-dnit-web-services` from **`68b3c74`** (chosen by the
+  maintainer over `ffd08a1`, because `4907e65` — the epic's ADR-order correction
+  — and the FISC-011 completion commits are not yet in `main`, and both touch
+  the bookkeeping files this work unit edits). Feature record:
+  `odd/tasks/fisc-010-dnit-web-services.md`. Story:
+  `docs/02-stories/FISC-010-dnit-web-services.md`. **WU-A, docs-only, is this
+  commit**: [[ADR-007]] and [[ADR-008]] accepted 2026-10-08, the Story,
+  `SIFEN-BASELINE.md` **§23** (the service-schema retrieval record, the WSDL
+  block and the outcome model), the epic's ADR list and rows, and this tracker
+  entry. **Three findings from §23 shape the rest of the Story**: **(1)** the
+  v150 **batch** schemas do not exist — `SiRecepLoteDE_v150.xsd`,
+  `ProtProcesLoteDE_v150.xsd`, `resRecepLoteDE_v150.xsd`,
+  `SiResultLoteDE_v150.xsd`, `resResultLoteDE_v150.xsd` and
+  `WS_SiRecepLoteDE_v150.xsd` all return **HTTP 404**, and the batch shapes are
+  published only at **v141**, which is also what the Guide documents; **(2)**
+  the two **consultation** services (`Consulta DE`, `Consulta RUC`) require a
+  **signed request** whose signature profile **no retrieved source pins**
+  (`siConsultaDTE.xsd` and `siConsultaArchivoRuc.xsd` both carry a required
+  `ds:Signature`, and §5 pins only the DE's), while the October-2024 Guide
+  documents a **different, unsigned v141-era shape**
+  (`rEnviConsDeRequest { dId, dCDC }`) for the same service — so both are
+  **deferred and blocked**, and the post-window per-CDC resolution path with
+  them; **(3)** the WSDL is unreadable on both hosts
+  (`HTTP 302 → /vdesk/hangup.php3`, and a **bogus path and the host root answer
+  the same**, so the gate is host-wide and the probe says nothing about the
+  paths), which leaves SOAPAction and bindings open and makes "never follow a
+  redirect" a requirement rather than a preference. **Remaining WUs**: WU-B the
+  message layer, WU-C the transport and the credential port, WU-D the port's
+  asynchronous capability and the schema, WU-E the service facade and the pure
+  outcome mapping. **The maintainer's boundary of 2026-10-08**: FISC-010 defines
+  the credential port and proves it with a **double**; [[FISC-012]] wires the
+  worker together with the signing stage. **One criterion moved a second time**:
+  FISC-009 pointed "no secret in a log or a stored snapshot" at FISC-010;
+  ADR-008 put the transport in `packages/fiscal` and the wiring in FISC-012, and
+  FISC-010 persists no document and logs no submission, so it re-points to
+  FISC-012 with the reason recorded in the Story.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
@@ -405,11 +454,27 @@ candidate 1 exists.
       the transactional compare-and-swap counter with the series rollover.
       **WU-E, the surface**: the profile/establishment/range routes, the
       permission, the audit and tenant isolation.
-- [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
-      **Inherits FISC-009's worker signing stage**: claim `SIGNING`, sign the DE
-      with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
-      `SIGNING -> ERROR`. It is this Story's because it is the one that will
-      have [[FISC-011]]'s emitter profile and already owns the port.
+- [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + the asynchronous capability's
+      implementation + provider selection. **Inherits from FISC-009 the worker's
+      signing stage** (claim `SIGNING`, sign the DE with `signDteXml`, then
+      `SIGNING -> SENDING`; a signing failure goes to `SIGNING -> ERROR`), and
+      **from FISC-010 three more things**, per ADR-007 and ADR-008: **(a)** the
+      real `FiscalCredentialPort` in the worker — `@newsaas/secret-store` in
+      `apps/worker/package.json`, `SecretsModule`, `SECRET_STORE_MASTER_KEYS`
+      and the `secretStore.get` path, **none of which exists today**; **(b)**
+      the **reconciliation stage** — the TD-028 sweep extended to `SUBMITTED`,
+      calling `query` and applying the terminal result, with `retryAfterMs`
+      bounding the next attempt; **(c)** **persisting the signed DE**
+      (`xml_storage_key`, still written by nothing) and the submission path's
+      logging, which is where FISC-009's "no secret in a log or a stored
+      snapshot" criterion now lives. **The two consultation services stay
+      blocked** until the request's signature profile is pinned (FISC-013,
+      against a real service); the provider's `query` must therefore resolve
+      through the batch service, and the 48-hour cliff is recorded in the Story.
+      **Note on this Story's row in the epic**: FISC-010 **adds** the port's
+      asynchronous capability; FISC-012 **implements** it. The epic's earlier
+      wording ("the port's asynchronous-status extension") was corrected on
+      2026-10-08.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 
@@ -587,6 +652,10 @@ Every other range closed, and the lineages are named in the section above.
 - Base: merged `main` `b05d411` (PR #104 merged; FISC-006 landed). The "What
   exists already" section below was verified on `4c02473` and remains accurate
   for every item it lists.
+- **FISC-010's base is `68b3c74`, not `ffd08a1`** (2026-10-08): `main` does not
+  contain `4907e65` (the epic's ADR-order correction), the FISC-011 completion
+  commits or `68b3c74`, and both pending branches touch the files WU-A edits.
+  Chosen by the maintainer when the discrepancy was reported.
 - The rename leaves ~20 older Story references to "EPIC-16 the provider" intact
   in substance; the one that became factually wrong (`FISC-003`'s
   `FISCAL_PROVIDER` closed set) is corrected.
