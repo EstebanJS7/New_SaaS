@@ -27,7 +27,13 @@ import {
  * one-way read seam for the DEC-051 cancellation hand-off.
  */
 @Module({
-  imports: [FiscalProviderModule, ContextModule, RbacModule, AuditModule, EntitlementsModule],
+  imports: [
+    FiscalProviderModule.forRoot(),
+    ContextModule,
+    RbacModule,
+    AuditModule,
+    EntitlementsModule,
+  ],
   controllers: [FiscalController, SigningMaterialController, FiscalProfileController],
   exports: [FiscalService, FiscalSigningMaterialService, FiscalProfileService],
   providers: [

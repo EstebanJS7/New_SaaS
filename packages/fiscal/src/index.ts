@@ -31,6 +31,21 @@ export type {
   SanitizedProviderSnapshot,
 } from "./fiscal-snapshot.sanitizer.js";
 export { FiscalProviderModule } from "./fiscal-provider.module.js";
+export type { FiscalProviderModuleOptions } from "./fiscal-provider.module.js";
+// FISC-010 WU-C / ADR-008 §2: the credential boundary the transport reads per
+// call. The port lives here; its implementation lands in the worker (FISC-012),
+// because `packages/fiscal` must not depend on Prisma or `@newsaas/secret-store`.
+// `createNullFiscalCredentialPort` is the fail-closed default `forRoot()` wires.
+export {
+  createNullFiscalCredentialPort,
+  FISCAL_CREDENTIAL_PORT,
+  isCredentialFresh,
+} from "./fiscal-credential.port.js";
+export type {
+  FiscalCredentialPort,
+  FiscalSigningEnvironment,
+  FiscalTransportCredential,
+} from "./fiscal-credential.port.js";
 // The queue contract lives here because both deployables share it.
 // Export the identity helper so the producer and recovery sweep cannot disagree about job identity.
 export {
@@ -363,3 +378,23 @@ export {
   SifenParseError,
 } from "./sifen/sifen.parser.js";
 export type { SifenParseFailure } from "./sifen/sifen.parser.js";
+// FISC-010 WU-C / ADR-008 §1: the transport. SOAP 1.2 Document/Literal over
+// `node:https` with a per-call mutual-TLS configuration, `agent: false` on every
+// request, no redirect followed, the response bounded while it is read, and a
+// typed failure for every way a call can end badly. The local TLS double that
+// proves it is test scaffolding and lives at `@newsaas/fiscal/testing`.
+export {
+  classifySocketFailure,
+  sendSifenRequest,
+  SIFEN_DEFAULT_TIMEOUT_MS,
+  SIFEN_ENVIRONMENT_HOSTS,
+  SIFEN_SOAP_CONTENT_TYPE,
+  SIFEN_TLS_MIN_VERSION,
+  SifenTransportError,
+  sifenBaseUrl,
+} from "./sifen/sifen.transport.js";
+export type {
+  SendSifenRequestArgs,
+  SifenTransportFailure,
+  SifenTransportResponse,
+} from "./sifen/sifen.transport.js";

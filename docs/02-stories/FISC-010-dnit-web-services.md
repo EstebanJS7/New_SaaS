@@ -362,25 +362,40 @@ worker's logging path, in [[FISC-012]].
 
 **WU-C — the transport and the credential port**
 
-- [ ] The transport posts a SOAP 1.2 envelope (`application/soap+xml`) over TLS
+- [x] The transport posts a SOAP 1.2 envelope (`application/soap+xml`) over TLS
       with mutual authentication, presenting the tenant's certificate, with
       `minVersion: "TLSv1.2"`, server verification on and `agent: false`.
-- [ ] **Proven against a local TLS double**: a server that **refuses a client
+- [x] **Proven against a local TLS double**: a server that **refuses a client
       without a certificate** accepts ours, and the assertion is on the
-      handshake, not on a mocked agent.
-- [ ] `FiscalCredentialPort.read({ tenantId, environment })` exists, returns
-      `null` when the tenant has no material, and is consulted **once per
-      call**; no field of the provider holds material between calls.
-- [ ] `FiscalProviderModule.forRoot()` exists, registers a **null-returning
+      handshake, not on a mocked agent. The suite also proves the double is not
+      vacuous — a bare request without a certificate is rejected by the same
+      server — and that two calls with two client certificates make **two
+      connections with two peer subjects**, which a pooled agent would not
+      produce.
+- [x] `FiscalCredentialPort.read({ tenantId, environment })` exists and its
+      fail-closed default returns `null` for every read, because absence of
+      material is a state and not an exception.
+- [ ] The port is consulted **once per call** and no field of the provider holds
+      material between calls. **MOVED TO [[FISC-012]] (2026-10-08)**: there is
+      no provider yet, so the property has no subject. WU-C delivers the port
+      and the injection seam it will be read through.
+- [x] `FiscalProviderModule.forRoot()` exists, registers a **null-returning
       default** for the credential port, and both `apps/api` and `apps/worker`
       import it that way.
-- [ ] A redirect is an error carrying its status and `Location`, and is never
+- [x] A redirect is an error carrying its status and `Location`, and is never
       parsed — asserted with a double that answers `302`.
-- [ ] A response over the size cap fails before parsing, and a body carrying
-      `<!DOCTYPE` is refused before parsing.
-- [ ] A timeout, a missing credential and an expired credential each produce the
+- [x] A response over the size cap fails **while it is being read**, before
+      anything parses it. (The `<!DOCTYPE` refusal is [[WU-B]]'s and is asserted
+      there: the reader refuses the construct before the parser runs.)
+- [x] A timeout and an expired — or not-yet-valid — credential each produce the
       documented outcome, and **no error carries the key, the certificate or the
-      response body**.
+      response body**: the failure messages are a fixed table, and the one
+      variable part is a symbolic socket code validated against a conservative
+      shape before it is interpolated.
+- [ ] A **missing** credential produces `CONFIGURATION_ERROR`. **MOVED TO
+      [[FISC-012]]**, together with the line above: the transport receives a
+      credential and cannot receive `null`; the mapping from the port's `null`
+      to a terminal `CONFIGURATION_ERROR` is the adapter's.
 
 **WU-D — the port's asynchronous capability and the schema**
 
@@ -534,8 +549,44 @@ smoothed over:**
    the capital would be refused as unknown, which is a homologation check for
    [[FISC-013]] rather than a guess made here.
 
-**WU-C, WU-D and WU-E are not implemented.** The Story's status stays
-`in-progress`.
+**WU-C — the transport and the credential port.** Three new modules and one
+composition-root change, with 32 new cases (fiscal now 24 files / 420 tests):
+
+```text
+fiscal-credential.port.ts   the port, the FISCAL_CREDENTIAL_PORT token, the
+                            null-returning default, the pure freshness check
+sifen/sifen.transport.ts    the SOAP 1.2 POST over per-call mutual TLS
+sifen/sifen.tls.fixture.ts  a CA, a server certificate and two client
+                            certificates, plus the mutual-TLS double
+fiscal-provider.module.ts   static @Module -> forRoot(options), providing the
+                            provider token AND the credential token
+```
+
+**The trust anchor is a per-call input, and that was not in ADR-008's list.**
+The double needs it — its CA is throwaway — and so does a deployment whose PSC
+root is not in Node's bundled store, which is a real production case for a
+Paraguayan government chain. ADR-008 §1 now records it, with the property that
+matters: **it adds anchors and never weakens verification**, and when it is
+absent the request carries no `ca` option at all.
+
+**The double is not vacuous, and that is the point.** The suite proves a bare
+request without a client certificate is _rejected by the same server_ before it
+proves ours is accepted, and it proves two calls with two client certificates
+open **two connections with two peer subjects** — the observable consequence of
+`agent: false`, which a pooled agent would not produce. Certificates are built
+with `pkijs` for the ASN.1 and signed with `node:crypto`, the same split
+`pkcs12.fixture.ts` already documents, because `pkijs@3.4.1`'s own `sign()`
+writes a signature algorithm OpenSSL rejects.
+
+**Two criteria moved to [[FISC-012]]** while implementing this one, because they
+name a provider that does not exist yet: "the port is consulted once per call
+and no field of the provider holds material between calls", and "a missing
+credential produces `CONFIGURATION_ERROR`". The transport cannot receive `null`;
+the mapping from the port's `null` to a terminal configuration error is the
+adapter's, and moving them keeps the criteria provable instead of nominally
+checked.
+
+**WU-D and WU-E are not implemented.** The Story's status stays `in-progress`.
 
 ## Verification
 
@@ -642,15 +693,17 @@ packages/fiscal/src/sifen/sifen.codes.ts        the result-code vocabulary
 packages/fiscal/src/sifen/sifen.messages.ts     the six shapes and their constants
 packages/fiscal/src/sifen/sifen.serializer.ts   the envelopes and the batch ZIP
 packages/fiscal/src/sifen/sifen.parser.ts       the responses and the guardrails
+packages/fiscal/src/sifen/sifen.transport.ts    the SOAP/mTLS POST
+packages/fiscal/src/sifen/sifen.tls.fixture.ts  the mutual-TLS double (testing only)
+packages/fiscal/src/fiscal-credential.port.ts   the per-call credential port
+packages/fiscal/src/fiscal-provider.module.ts   forRoot(), both tokens
 packages/fiscal/src/fiscal-provider.port.ts       SUBMITTED, providerReference, query
-packages/fiscal/src/fiscal-provider.module.ts     forRoot(), the credential token
 packages/database/prisma/migrations/**            provider_reference
 apps/api/src/fiscal/**                            the status list and zod enum
 apps/worker/src/**                                unchanged by this Story
 ```
 
-and WU-C will add the transport, the credential port and the facade under the
-same directory.
+and WU-E will add the service facade under the same directory.
 
 ## Completion Notes
 

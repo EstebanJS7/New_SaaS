@@ -19,7 +19,7 @@ import { FiscalSubmissionRecoveryService } from "./fiscal-submission/fiscal-reco
  * StoragePort the handler deletes through.
  */
 @Module({
-  imports: [PrismaModule, StorageModule.forRoot(), FiscalProviderModule],
+  imports: [PrismaModule, StorageModule.forRoot(), FiscalProviderModule.forRoot()],
   providers: [
     RedisHealthService,
     BrandingResetCleanupHandler,

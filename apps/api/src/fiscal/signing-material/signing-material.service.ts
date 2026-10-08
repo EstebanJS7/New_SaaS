@@ -5,8 +5,19 @@ import {
   extractSigningMaterial,
   Pkcs12ExtractionError,
   type ExtractedSigningMaterial,
+  type FiscalSigningEnvironment,
   type Pkcs12ExtractionFailure,
 } from "@newsaas/fiscal";
+
+/**
+ * ADR-008 §2: the environment vocabulary has **one** definition, in
+ * `packages/fiscal`, and this module re-exports it so the repository, the pipe
+ * and the DTOs keep importing it from where they always did.
+ *
+ * Two lines and not `export type { FiscalSigningEnvironment } from "…"`: a bare
+ * re-export does not bind the name locally, and this file uses it.
+ */
+export type { FiscalSigningEnvironment };
 import {
   createOpaqueSecretKey,
   SECRET_KEY_PREFIXES,
@@ -27,8 +38,6 @@ import {
   type FiscalSigningMaterialClient,
   type FiscalSigningMaterialRow,
 } from "./signing-material.repository.js";
-
-export type FiscalSigningEnvironment = "TEST" | "PRODUCTION";
 
 export const FISCAL_SIGNING_MATERIAL_UPLOAD_ACTION = "fiscal.signing_material.uploaded";
 export const FISCAL_SIGNING_MATERIAL_RETIRE_ACTION = "fiscal.signing_material.retired";

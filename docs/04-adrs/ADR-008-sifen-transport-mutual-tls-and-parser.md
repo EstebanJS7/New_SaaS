@@ -174,11 +174,14 @@ envelope      xmlns="http://www.w3.org/2003/05/soap-envelope"   (SOAP 1.2)
 body elements qualified with xmlns="http://ekuatia.set.gov.py/sifen/xsd"
 TLS           minVersion TLSv1.2, rejectUnauthorized true,
               cert + key from the tenant's credential, agent: false
+trust anchors Node's bundled roots, plus an optional per-call PEM list
+              for a PSC root Node does not bundle
 timeout       default 60_000 ms  (baseline §11: SIFEN's maximum response
                                   time per DTE is 1 minute)
 redirects     refused, never followed: a 3xx is an error carrying the status
               and the Location
-response cap  8 MiB, then the call fails rather than buffering unbounded
+response cap  8 MiB, enforced WHILE reading, then the call fails rather than
+              buffering unbounded
 ```
 
 **`agent: false` is the load-bearing detail.** Node's default agent pools and
@@ -193,6 +196,15 @@ another tenant**.
 answer `302 → /vdesk/hangup.php3` for everything unauthenticated, so a client
 that follows redirects would fetch an HTML portal page and hand it to an XML
 parser.
+
+**The server's trust anchors are Node's bundle plus an optional per-call list.**
+SIFEN's certificate chains to a PSC root, and a PSC root is not necessarily in
+Node's bundled store — so the transport accepts extra PEM anchors per call, and
+a deployment can name the one it trusts without disabling verification. **It
+never weakens verification, it only adds anchors**: when the list is absent the
+request carries no `ca` option at all and Node's default store applies, and the
+per-call shape is what keeps a trust anchor out of the tenant's credential,
+where it does not belong.
 
 **The SOAPAction is not pinned, and is not invented.** SOAP 1.2 makes it a
 media-type parameter rather than a mandatory header, the Guide's invocations
