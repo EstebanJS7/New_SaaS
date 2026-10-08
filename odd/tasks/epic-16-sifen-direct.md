@@ -429,23 +429,29 @@ candidate 1 exists.
   fresh transaction; the second (`review-68028f3d442967b0`) found the same
   defect class one level deeper (an unguarded null write of `providerReference`
   on the retry path), corrected it, and closed **`approved`** with four
-  non-blocking advisories. Both are in the Review coverage section. **Remaining
-  WU**: WU-E the service facade and the pure outcome mapping. **The maintainer's
-  boundary of 2026-10-08**: FISC-010 defines the credential port and proves it
-  with a **double**; [[FISC-012]] wires the worker together with the signing
-  stage. **One criterion moved a second time**: FISC-009 pointed "no secret in a
-  log or a stored snapshot" at FISC-010; ADR-008 put the transport in
-  `packages/fiscal` and the wiring in FISC-012, and FISC-010 persists no
-  document and logs no submission, so it re-points to FISC-012 with the reason
-  recorded in the Story. **WU-A landed as commit `3779569`** — 8 files, 2,116
-  insertions, 49 deletions — and its review is `review-fe256d67a4d60ed5`, closed
-  **`approved`** with **no lenses**: the provider classified the candidate
-  `non_executable_only` at `low` tier and set `lenses_required: false`, so the
-  four-lens review never ran. Inspected **before** committing, and the
-  intended-untracked selection adopted the four new files. **The correction
-  landed as `f71871c`** (6 files, 364 insertions, 186 deletions) and its review
-  is `review-7e0ebabc11a3a00c`, also `approved` with **no lenses** and the same
-  `non_executable_only` classification.
+  non-blocking advisories. Both are in the Review coverage section. **WU-E
+  landed as commit `b567265`** — 5 files, 2,195 insertions, 61 new cases (fiscal
+  now 26 files / 507 tests) — and its review is `review-4548d852efe5ee3a`: tier
+  `medium`, lens `review-reliability`, **`approved` on the first pass**, the
+  first work unit of this feature to need no correction, with one advisory at
+  `WARNING`/`informational`. **That closes FISC-010's five work units**: the
+  decisions and the Story, the message layer, the transport and the credential
+  port, the port's asynchronous capability and the schema, and the facade with
+  its outcome mapping. **The maintainer's boundary of 2026-10-08**: FISC-010
+  defines the credential port and proves it with a **double**; [[FISC-012]]
+  wires the worker together with the signing stage. **One criterion moved a
+  second time**: FISC-009 pointed "no secret in a log or a stored snapshot" at
+  FISC-010; ADR-008 put the transport in `packages/fiscal` and the wiring in
+  FISC-012, and FISC-010 persists no document and logs no submission, so it
+  re-points to FISC-012 with the reason recorded in the Story. **WU-A landed as
+  commit `3779569`** — 8 files, 2,116 insertions, 49 deletions — and its review
+  is `review-fe256d67a4d60ed5`, closed **`approved`** with **no lenses**: the
+  provider classified the candidate `non_executable_only` at `low` tier and set
+  `lenses_required: false`, so the four-lens review never ran. Inspected
+  **before** committing, and the intended-untracked selection adopted the four
+  new files. **The correction landed as `f71871c`** (6 files, 364 insertions,
+  186 deletions) and its review is `review-7e0ebabc11a3a00c`, also `approved`
+  with **no lenses** and the same `non_executable_only` classification.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
@@ -669,6 +675,17 @@ policy decides delivery. Nothing is reset or recovered here: `RESET` and
 inputs.
 
 ## Review coverage
+
+**FISC-010 WU-E — `review-4548d852efe5ee3a`, `approved` on the first pass
+(2026-10-08).** Tier **`medium`** (reason `executable_change` on
+`packages/fiscal/src/index.ts`), **one** lens (`review-reliability`), 5 files
+and 2,195 changed lines. It closed `approved` with **one advisory** at
+`WARNING`/`informational` (`R3-0362-REASON-EMPTY` in `sifen.outcomes.ts`) and
+needed **no correction** — the first work unit of this feature that did not. The
+acknowledgement burned the authority. **With it, FISC-010's five work units are
+complete**: every one has a commit and a closed lineage, and the two that needed
+a correction (WU-C and WU-D) have their corrections recorded with the
+validator's verdict.
 
 **FISC-010 WU-D — two lineages, and the first one is why the second exists
 (2026-10-08).** Tier **`high`** (reason `process_boundary`/`shell_process` on

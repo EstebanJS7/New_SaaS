@@ -425,14 +425,19 @@ worker's logging path, in [[FISC-012]].
 
 **WU-E — the service facade and the outcome model**
 
-- [ ] One typed method per implemented service, each bound to the endpoint
-      baseline §8 publishes, and no endpoint string is written anywhere else.
-- [ ] The outcome mapping above is a **pure function** with a table-driven test:
+- [x] One typed method per implemented service, each bound to the endpoint
+      baseline §8 publishes, and no endpoint string is written anywhere else —
+      `SIFEN_SERVICE_PATHS` is the only place a path appears, and a test asserts
+      each of the six endpoints.
+- [x] The outcome mapping above is a **pure function** with a table-driven test:
       each row of `dEstRes`, each code of the two asynchronous families, and the
-      consultation codes `0420`/`0421`/`0422` and `0500`/`0501`/`0502`.
-- [ ] `Aprobado con observación` maps to `APPROVED` **with the observation
+      consultation codes `0420`/`0421`/`0422` and `0500`/`0501`/`0502` — 45
+      cases over every row, including unlisted codes carried rather than
+      coerced.
+- [x] `Aprobado con observación` maps to `APPROVED` **with the observation
       preserved** in `reason`, which baseline §10 requires.
-- [ ] A `PROCESSING` result carries the Guide's ten minutes as `retryAfterMs`.
+- [x] A `PROCESSING` result carries the Guide's ten minutes as `retryAfterMs`,
+      imported from `SIFEN_BATCH_POLL_INTERVAL_MS` rather than restated.
 
 **Gates**
 
@@ -623,7 +628,33 @@ process facts a later reader would otherwise have to rediscover:
    applied to the field I had left behind: "absent, never null" is a rule about
    the whole expression, not about the columns you happened to be looking at.**
 
-**WU-E is not implemented.** The Story's status stays `in-progress`.
+**WU-E — the service facade and the outcome mapping.** `sifen.facade.ts`
+(`SIFEN_SERVICE_PATHS` + the six typed methods) and `sifen.outcomes.ts` (the
+five pure mappers), with 61 new cases — the whole Story's client is now
+composable from the four WU-B modules, WU-C's transport and this facade.
+
+**Three decisions inside the mapping that the adapter inherits, recorded rather
+than buried:**
+
+1. **`0360` and `0420` both land on `CONFIGURATION_ERROR`**, because that is the
+   outcome the existing worker turns into an `ERROR` row the sweep re-drives.
+   For `0420` — "the document is not in SIFEN" — that re-drive is exactly the
+   resubmission the Guide asks for. For `0360` — a batch number SIFEN does not
+   know — it is a resubmission the Guide warns against, and whether the re-drive
+   should treat that case differently is [[FISC-012]]'s decision, recorded as a
+   Known Limitation rather than guessed at here.
+2. **`0422`'s CDC is read from the DE inside `xContenDE`** and re-validated
+   against `tCDC`, because the frozen parser deliberately exposes no CDC for
+   that content. An unreadable `Id` yields `null` rather than an echoed
+   malformed value.
+3. **`SUBMITTED` carries `retryAfterMs: null`.** The Guide's ten minutes are
+   pinned to the query's `PROCESSING`; whether the _first_ query should be
+   delayed by a hint on the hand-over is [[FISC-012]]'s.
+
+**WU-E closes FISC-010's work units.** Every acceptance criterion of this Story
+that does not name [[FISC-012]] or [[FISC-013]] is now checked; the Story's
+status still depends on the epic's own gates, so it stays `in-progress` until
+they run.
 
 ## Verification
 
@@ -765,6 +796,22 @@ written cannot clear anything — but only the live-PostgreSQL suite can exercis
 the guard that would have raised. The guard's never-clear clause is pinned
 there.
 
+**WU-E's review (`review-4548d852efe5ee3a`, approved 2026-10-08) left one
+advisory**, `WARNING`/`informational`, reported by coordinate with the same
+caveat as above:
+
+| id                     | location                    | our reading of the location                                                                                                                            |
+| ---------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `R3-0362-REASON-EMPTY` | `sifen.outcomes.ts:437-444` | A concluded batch whose result group carries no message falls back to the batch-level `dMsgResLot`, so `reason` can end up empty when both are absent. |
+
+- **`0360`'s re-drive is a decision, not a mapping.** A batch number SIFEN does
+  not know becomes a `CONFIGURATION_ERROR`, which the worker turns into an
+  `ERROR` row the sweep re-drives — a resubmission the Guide warns against. The
+  mapping follows the Story's pinned table; whether the reconciliation path
+  should treat that case differently is [[FISC-012]]'s, and this is where it is
+  recorded so it is not rediscovered.
+- **`0422`'s CDC comes from a conservative read of the DE inside `xContenDE`**
+  (the frozen parser exposes none there), and an unreadable `Id` yields `null`.
 - **The signed v150 query family** — the archive and the bulk queries — is
   blocked on its request signature profile. When [[FISC-013]] pins it against a
   real service, it becomes a work unit rather than a new Story.

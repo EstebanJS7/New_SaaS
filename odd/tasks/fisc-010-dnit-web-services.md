@@ -133,10 +133,26 @@ WU-C     9f92642  feat(FISC-010): the SIFEN transport and the per-call credentia
                   correction plan of 40 diff lines -> targeted validation), then
                   two advisories at `WARNING`/`informational`; the
                   acknowledgement burned the authority
+WU-D     a1ce736  feat(FISC-010): the port's asynchronous capability and the
+                  provider reference — 18 files, 1,052 insertions (the port, the
+                  migration, the writer, the fake, the five-mirror drift fix)
+         review-535e9a45a5624196  **ESCALATED**, tier `high`, four lenses, one
+                  CRITICAL corrected then rejected by the targeted validator
+                  (`state: escalated`, `native_stop_required`); nothing committed
+         review-68028f3d442967b0  closed `approved`, tier `high`, four lenses,
+                  one CRITICAL corrected (refuter -> correction plan of 30 diff
+                  lines -> targeted validation passed), then four advisories at
+                  `WARNING`/`SUGGESTION`; the acknowledgement burned the authority
+WU-E     b567265  feat(FISC-010): the service facade and the outcome mapping —
+                  5 files, 2,195 insertions (61 new cases)
+         review-4548d852efe5ee3a  closed `approved` on the FIRST pass, tier
+                  `medium`, lens `review-reliability`, one advisory at
+                  `WARNING`/`informational` (`R3-0362-REASON-EMPTY`), no
+                  correction; the acknowledgement burned the authority
 gates    format-check green; lint 18/18, typecheck 18/18, test 19/19 and build
-         11/11 forced; the fiscal package alone at 421 tests (24 files); the
-         API and worker lint/typecheck/test green; and the live-PostgreSQL gate
-         at 218/218, run because WU-C moved the API's composition root
+         11/11 forced; fiscal 507 tests (26 files), worker 79, database 445,
+         api 1149 (+220 live-PG skipped), web 1087; live-PostgreSQL 220/220; and
+         `db:live-verify` green on a freshly created database
 ```
 
 ## Review record
