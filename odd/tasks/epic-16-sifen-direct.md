@@ -421,23 +421,31 @@ candidate 1 exists.
   the bounded correction (plan 40 diff lines) added the
   `close`-without-`complete` failure path, and the **targeted validator** passed
   both checks — so the lineage closed `approved` with two
-  `WARNING`/`informational` advisories left. **Remaining WUs**: WU-D the port's
-  asynchronous capability and the schema, WU-E the service facade and the pure
-  outcome mapping. **The maintainer's boundary of 2026-10-08**: FISC-010 defines
-  the credential port and proves it with a **double**; [[FISC-012]] wires the
-  worker together with the signing stage. **One criterion moved a second time**:
-  FISC-009 pointed "no secret in a log or a stored snapshot" at FISC-010;
-  ADR-008 put the transport in `packages/fiscal` and the wiring in FISC-012, and
-  FISC-010 persists no document and logs no submission, so it re-points to
-  FISC-012 with the reason recorded in the Story. **WU-A landed as commit
-  `3779569`** — 8 files, 2,116 insertions, 49 deletions — and its review is
-  `review-fe256d67a4d60ed5`, closed **`approved`** with **no lenses**: the
-  provider classified the candidate `non_executable_only` at `low` tier and set
-  `lenses_required: false`, so the four-lens review never ran. Inspected
-  **before** committing, and the intended-untracked selection adopted the four
-  new files. **The correction landed as `f71871c`** (6 files, 364 insertions,
-  186 deletions) and its review is `review-7e0ebabc11a3a00c`, also `approved`
-  with **no lenses** and the same `non_executable_only` classification.
+  `WARNING`/`informational` advisories left. **WU-D landed as commit `a1ce736`**
+  — 18 files, 1,052 insertions — and it took **two review transactions**: the
+  first (`review-535e9a45a5624196`, `high`, four lenses) found one CRITICAL and
+  its correction was **rejected by the targeted validator**, so that lineage
+  went terminal (`escalated`, `native_stop_required`) and the maintainer chose a
+  fresh transaction; the second (`review-68028f3d442967b0`) found the same
+  defect class one level deeper (an unguarded null write of `providerReference`
+  on the retry path), corrected it, and closed **`approved`** with four
+  non-blocking advisories. Both are in the Review coverage section. **Remaining
+  WU**: WU-E the service facade and the pure outcome mapping. **The maintainer's
+  boundary of 2026-10-08**: FISC-010 defines the credential port and proves it
+  with a **double**; [[FISC-012]] wires the worker together with the signing
+  stage. **One criterion moved a second time**: FISC-009 pointed "no secret in a
+  log or a stored snapshot" at FISC-010; ADR-008 put the transport in
+  `packages/fiscal` and the wiring in FISC-012, and FISC-010 persists no
+  document and logs no submission, so it re-points to FISC-012 with the reason
+  recorded in the Story. **WU-A landed as commit `3779569`** — 8 files, 2,116
+  insertions, 49 deletions — and its review is `review-fe256d67a4d60ed5`, closed
+  **`approved`** with **no lenses**: the provider classified the candidate
+  `non_executable_only` at `low` tier and set `lenses_required: false`, so the
+  four-lens review never ran. Inspected **before** committing, and the
+  intended-untracked selection adopted the four new files. **The correction
+  landed as `f71871c`** (6 files, 364 insertions, 186 deletions) and its review
+  is `review-7e0ebabc11a3a00c`, also `approved` with **no lenses** and the same
+  `non_executable_only` classification.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
@@ -661,6 +669,31 @@ policy decides delivery. Nothing is reset or recovered here: `RESET` and
 inputs.
 
 ## Review coverage
+
+**FISC-010 WU-D — two lineages, and the first one is why the second exists
+(2026-10-08).** Tier **`high`** (reason `process_boundary`/`shell_process` on
+the live-PG spec), **four lenses**, 18 files and ~1,030 changed lines.
+
+- **`review-535e9a45a5624196`** — the reliability lens found one **CRITICAL**
+  (`R3-query-cdc-missing`: `FiscalQueryResult` could not return the document's
+  CDC, so ADR-007 §2's recovery path could not persist the identity it learned).
+  The plan was accepted (45 diff lines), the correction added the field, and the
+  **targeted validator rejected it**: the fake echoed the request's CDC on
+  answers that resolve nothing. `state: escalated`,
+  `cause: targeted_validator_rejected`, STATUS → **`stop` /
+  `native_stop_required` / horizon terminal**. Nothing was committed; the
+  regression was fixed and the maintainer chose a fresh transaction.
+- **`review-68028f3d442967b0`** — the resilience lens found one **CRITICAL**
+  (`R4-001`: `providerReference` written unconditionally, so a null hand-over
+  handle became a clearing write the guard refuses, aborting the transaction on
+  the retry path and turning it into a resubmitted document), the **refuter**
+  corroborated it as candidate-caused, the bounded correction (30 diff lines,
+  submitted before the edit) made all three identity columns conditional, the
+  **targeted validator passed** `original_criteria` and `correction_regression`,
+  and the lineage closed **`approved`** with four advisories (`R1-001`,
+  `R2-COMMENT-NULL-WRITE`, `R2-FAKE-RAW-RESPONSE`, `R3-PROVIDERREF-NULL-WRITE`),
+  all `WARNING`/`SUGGESTION` and none opening a correction. The acknowledgement
+  burned the authority.
 
 **FISC-010 WU-C — `review-ac6687061a6f8f5d`, `approved` after one bounded
 correction (2026-10-08).** Tier **`medium`** (reason `executable_change` on

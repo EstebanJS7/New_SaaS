@@ -163,6 +163,24 @@ retained** by this facade. `inspect` ran before the commit, the
 intended-untracked selection adopted the eight new files, and the
 acknowledgement burned the authority.
 
+**WU-D — two lineages, and the first one escalated (2026-10-08).**
+`review-535e9a45a5624196` (tier `high`, four lenses, 18 files) found one
+CRITICAL and its **targeted validator rejected the correction** — the fake
+echoed the request's CDC on answers that resolve nothing, contradicting the
+contract the same correction had just documented. The provider declared
+`escalated` / `native_stop_required` / horizon terminal, so **the maintainer
+chose a fresh transaction** over the corrected candidate.
+`review-68028f3d442967b0` then found the same defect class one level deeper: the
+handler wrote `providerReference` unconditionally while the same expression
+already guarded `cdc` and `externalId`, so a null hand-over handle became a
+clearing write the guard refuses — an aborted transaction on the retry path,
+which is a resubmitted document. The refuter corroborated it, the bounded
+correction (30 diff lines, submitted before the edit) made all three columns
+conditional, the targeted validator passed both checks, and the lineage closed
+**`approved`** with four non-blocking advisories. **The lesson is in the
+Story**: "absent, never null" is a rule about the whole expression, not about
+the columns you happened to be looking at.
+
 **WU-C — `review-ac6687061a6f8f5d`, `approved` after one bounded correction
 (2026-10-08).** Tier `medium`, one lens (`review-reliability`), 15 files and
 2,093 changed lines. The lens raised one **CRITICAL** in the transport's

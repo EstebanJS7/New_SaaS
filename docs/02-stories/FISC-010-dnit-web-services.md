@@ -399,17 +399,29 @@ worker's logging path, in [[FISC-012]].
 
 **WU-D — the port's asynchronous capability and the schema**
 
-- [ ] `FiscalIssueOutcome` carries `SUBMITTED`; `FiscalIssueResult` carries
+- [x] `FiscalIssueOutcome` carries `SUBMITTED`; `FiscalIssueResult` carries
       `providerReference`; the port declares `query`; and
       **`isRetryableOutcome("SUBMITTED")` is `false`**.
-- [ ] `fiscal_document.provider_reference` exists by an **additive** migration,
+- [x] `fiscal_document.provider_reference` exists by an **additive** migration,
       and `submitted_at` is written in the same conditional update that enters
-      `SUBMITTED`.
-- [ ] The fake provider implements `query` as a scripted outcome, so the
-      contract is exercisable before a real provider exists.
-- [ ] Proven against a **live PostgreSQL**: the new column applies, the guard's
-      `SENDING -> SUBMITTED -> APPROVED|REJECTED|ERROR` edges hold, and a
-      transient `query` failure leaves the row `SUBMITTED`.
+      `SUBMITTED`. The migration also replaces the guard function to add the
+      fifth never-clear clause, which is what makes the handle survive
+      resolution (ADR-007 §4) instead of relying on discipline.
+- [x] The fake provider implements `query` as a scripted outcome, so the
+      contract is exercisable before a real provider exists — including a
+      `retryAfterMs` knob for `PROCESSING` (ADR-007 guardrail 5's bound is
+      otherwise untestable) and a CDC for a resolved answer it was not given.
+- [x] Proven against a **live PostgreSQL**: the new column applies and is the
+      last physical column, clearing it is refused with the guard's message,
+      `SENDING -> SUBMITTED` and `SUBMITTED -> APPROVED|REJECTED|ERROR` hold,
+      `PENDING`/`QUEUED -> SUBMITTED` and `SUBMITTED -> SENDING|CANCELLED` stay
+      refused, and the documented submission path carries a handle through to
+      approval.
+- [ ] **MOVED TO [[FISC-012]]**: "a transient `query` failure leaves the row
+      `SUBMITTED`". That is the reconciliation stage's behaviour — the sweep
+      walking `SUBMITTED` and applying a `query` result — and the Story's Out of
+      Scope already assigns that stage to FISC-012. WU-D delivers the capability
+      it needs.
 
 **WU-E — the service facade and the outcome model**
 
@@ -586,7 +598,32 @@ the mapping from the port's `null` to a terminal configuration error is the
 adapter's, and moving them keeps the criteria provable instead of nominally
 checked.
 
-**WU-D and WU-E are not implemented.** The Story's status stays `in-progress`.
+**WU-D — the port's asynchronous capability and the schema.** The port, the
+migration, the writer, the fake and the drift fix, with 18 files and 1,052 added
+lines. Two things about how it landed are worth recording, because both are
+process facts a later reader would otherwise have to rediscover:
+
+1. **It took two review transactions.** The first lineage
+   (`review-535e9a45a5624196`, `high`, four lenses) found one CRITICAL —
+   `FiscalQueryResult` had no `cdc`, so the recovery answer could not return the
+   identity ADR-007 §2 exists to recover — and its bounded correction introduced
+   a regression the targeted validator rejected: the fake echoed the request's
+   CDC on answers that resolve nothing. That lineage went terminal (`escalated`,
+   `native_stop_required`), the regression was fixed, and the maintainer chose a
+   fresh transaction over the corrected candidate.
+2. **The second lineage (`review-68028f3d442967b0`) found the same class of
+   defect one level deeper.** Its resilience lens caught that the handler wrote
+   `providerReference` **unconditionally** while the same expression already
+   guarded `cdc` and `externalId` — so on the retry path
+   (`SUBMITTED -> ERROR -> SENDING -> SUBMITTED`) a null hand-over handle became
+   a clearing write the guard refuses, aborting the transaction and turning it
+   into a resubmitted document. The refuter corroborated it, the bounded
+   correction made all three columns conditional, and the targeted validator
+   passed both checks. **The lesson is the one the first lineage already taught,
+   applied to the field I had left behind: "absent, never null" is a rule about
+   the whole expression, not about the columns you happened to be looking at.**
+
+**WU-E is not implemented.** The Story's status stays `in-progress`.
 
 ## Verification
 
@@ -627,6 +664,13 @@ None yet. WU-A adds documents.
   and the Manual describes `rContDe { rDE, dProtAut }`, so the reader accepts
   the DE bare or wrapped; which one SIFEN sends is only provable against a live
   service ([[FISC-013]]).
+- **A hand-over answer that carries no identity at all leaves a gap, and it is
+  recorded rather than invented.** If a `SUBMITTED` result carries no
+  `providerReference`, no `cdc` and no `externalId`, the row enters `SUBMITTED`
+  with no reconciliation identifier. The provider's answer is what it is —
+  refusing the hand-over would be wrong, because the provider holds the document
+  — so the handler persists what it has and the reconciliation stage must treat
+  that row as an operator case ([[FISC-012]]).
 - **The signed v150 query family has no signature source** — the protocol query,
   the RUC archive and the date-range query. They are out of scope here and
   recorded in §23.6/§23.8.
@@ -696,6 +740,30 @@ parser — the reviewer's reasoning stands as a defensive gap even where this No
 version closes it — and the test guards the observable behaviour: a truncated
 answer always settles, with `NETWORK_FAILURE`, instead of hanging until the
 runner's timeout.
+
+**WU-D's review (`review-68028f3d442967b0`, approved 2026-10-08) left four
+advisories, all non-blocking**, reported by coordinate with the same caveat as
+above — the reviewer's text is not retained, so the reading is ours:
+
+| id                          | location                               | our reading of the location                                                                                                          |
+| --------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `R1-001`                    | `fiscal-submission.handler.ts:297`     | The hand-over update writes several fields in one expression; a reader must hold three conditional spreads in mind at once.          |
+| `R2-COMMENT-NULL-WRITE`     | `fiscal-submission.handler.ts:297`     | The comment argues "absent, never null" and the expression now matches it, which is the state the first lineage's correction missed. |
+| `R2-FAKE-RAW-RESPONSE`      | `fake-fiscal.provider.ts:122`          | The fake's `providerResponse` mirror grows with every field the port gains; it is a stand-in, not a contract.                        |
+| `R3-PROVIDERREF-NULL-WRITE` | `fiscal-submission.handler.ts:295-302` | The same defect class as `R4-001`, recorded from the reliability lens at `SUGGESTION` after the resilience lens raised it higher.    |
+
+**And the validator's follow-up, which is the honest scope of the new test:**
+
+> The retry test does not model an existing `providerReference` or exercise the
+> database guard; the code inspection, not that test, establishes preservation.
+> —
+> `apps/worker/src/fiscal-submission/fiscal-submission.handler.test.ts:242-258`
+
+That is correct: a unit test on the handler can assert that the update never
+_contains_ the key — which is the whole property, because a key that is never
+written cannot clear anything — but only the live-PostgreSQL suite can exercise
+the guard that would have raised. The guard's never-clear clause is pinned
+there.
 
 - **The signed v150 query family** — the archive and the bulk queries — is
   blocked on its request signature profile. When [[FISC-013]] pins it against a

@@ -209,6 +209,7 @@ export interface FiscalQueryRequest {
 
 export interface FiscalQueryResult {
   readonly outcome: FiscalQueryOutcome;
+  readonly cdc: string | null; // the document's identity, as the answer knows it
   readonly externalId: string | null;
   readonly reasonCode: string | null;
   readonly reason: string | null;
@@ -218,6 +219,17 @@ export interface FiscalQueryResult {
   readonly resolvedAt: string;
 }
 ```
+
+**`cdc` was added to this shape after WU-D's review found it missing, and the
+correction is recorded rather than folded in.** The first version of this ADR
+listed `externalId` and no `cdc`, which contradicted §2's own rule one paragraph
+up: if the query's fallback identifier is the CDC, an answer that cannot return
+it leaves the recovery path unable to persist the identity it just learned. The
+reliability lens raised it as a CRITICAL on the implementation, the correction
+added the field, and the fake now answers with a CDC for a resolved answer it
+was not given. **An answer that resolves nothing carries none** — `PROCESSING`,
+a transient failure and a configuration error identify no document, even when
+the question carried a CDC.
 
 **`providerReference` may be null and the query still works.** The Guide's
 recommendation 3 is explicit that a lost submission response is recoverable:
