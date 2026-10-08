@@ -586,6 +586,28 @@ None yet. WU-A adds documents.
 
 ## Technical Debt
 
+**Four advisories from WU-B's review (`review-f16dff5e521484d2`, approved
+2026-10-08).** The closure reported them by coordinate with `severity: WARNING`
+and `disposition: informational`, and declared them non-blocking: none opened a
+correction, none reopens the review, and no correction transition is offered for
+this candidate. **The reviewer's full text is not retained by this facade** —
+lens context is ephemeral by design — so what follows is the coordinates the
+provider gave plus _this session's reading_ of each location, marked as an
+inference rather than as the reviewer's wording:
+
+| id     | location                  | our reading of the location                                                                                                                                    |
+| ------ | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R3-001 | `sifen.parser.ts:241`     | `parseRucQueryResponse` accepts `xContRUC` without cross-checking `dCodRes = 0502`, where the CDC parser does validate its own code-to-content pair.           |
+| R3-002 | `sifen.parser.ts:661`     | `TIMESTAMP_PATTERN` anchors its start but not its end, so trailing garbage after the seconds passes.                                                           |
+| R3-003 | `sifen.parser.ts:727-731` | An empty element is refused as `UNEXPECTED_SHAPE` with a message that says it "is an element rather than a text value", which is not what an empty element is. |
+| R3-004 | `sifen.parser.ts:340-353` | `readDeContent` extracts the `rDE` element by regular expression over a string, so content carrying a `</rDE>` inside it can truncate the DE.                  |
+
+Each is one small change, none is a defect in the message layer's contract with
+§23, and the guardrails the criteria above name are asserted by the suite. They
+are recorded rather than fixed because the review's disposition is
+`informational` and the candidate's authority is burned: fixing them on a new
+candidate is a later work unit.
+
 - **The signed v150 query family** — the archive and the bulk queries — is
   blocked on its request signature profile. When [[FISC-013]] pins it against a
   real service, it becomes a work unit rather than a new Story.

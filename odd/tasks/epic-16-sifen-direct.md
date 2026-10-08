@@ -408,24 +408,29 @@ candidate 1 exists.
   Story's criteria now separate the structural domains from the code catalogue;
   and **the ZIP is write-only in this Story** — the read direction belongs to
   the signed family, so `fflate`'s `unzip` path (the only one its advisory ever
-  touched) stays unused. **Remaining WUs**: WU-C the transport and the
-  credential port, WU-D the port's asynchronous capability and the schema, WU-E
-  the service facade and the pure outcome mapping. **The maintainer's boundary
-  of 2026-10-08**: FISC-010 defines the credential port and proves it with a
-  **double**; [[FISC-012]] wires the worker together with the signing stage.
-  **One criterion moved a second time**: FISC-009 pointed "no secret in a log or
-  a stored snapshot" at FISC-010; ADR-008 put the transport in `packages/fiscal`
-  and the wiring in FISC-012, and FISC-010 persists no document and logs no
-  submission, so it re-points to FISC-012 with the reason recorded in the Story.
-  **WU-A landed as commit `3779569`** — 8 files, 2,116 insertions, 49 deletions
-  — and its review is `review-fe256d67a4d60ed5`, closed **`approved`** with **no
-  lenses**: the provider classified the candidate `non_executable_only` at `low`
-  tier and set `lenses_required: false`, so the four-lens review never ran.
-  Inspected **before** committing, and the intended-untracked selection adopted
-  the four new files. **The correction landed as `f71871c`** (6 files, 364
-  insertions, 186 deletions) and its review is `review-7e0ebabc11a3a00c`, also
-  `approved` with **no lenses** and the same `non_executable_only`
-  classification.
+  touched) stays unused. **WU-B landed as commit `5bdf676`** — 16 files, 3,830
+  insertions — and its review is `review-f16dff5e521484d2`: tier **`medium`**,
+  lens **`review-reliability`**, closed **`approved`** with **four advisories**
+  at `WARNING`/`informational` (`R3-001`..`R3-004`, all in `sifen.parser.ts`,
+  none opening a correction), and the acknowledgement burned the authority. The
+  advisories are recorded in the Story's Technical Debt. **Remaining WUs**: WU-C
+  the transport and the credential port, WU-D the port's asynchronous capability
+  and the schema, WU-E the service facade and the pure outcome mapping. **The
+  maintainer's boundary of 2026-10-08**: FISC-010 defines the credential port
+  and proves it with a **double**; [[FISC-012]] wires the worker together with
+  the signing stage. **One criterion moved a second time**: FISC-009 pointed "no
+  secret in a log or a stored snapshot" at FISC-010; ADR-008 put the transport
+  in `packages/fiscal` and the wiring in FISC-012, and FISC-010 persists no
+  document and logs no submission, so it re-points to FISC-012 with the reason
+  recorded in the Story. **WU-A landed as commit `3779569`** — 8 files, 2,116
+  insertions, 49 deletions — and its review is `review-fe256d67a4d60ed5`, closed
+  **`approved`** with **no lenses**: the provider classified the candidate
+  `non_executable_only` at `low` tier and set `lenses_required: false`, so the
+  four-lens review never ran. Inspected **before** committing, and the
+  intended-untracked selection adopted the four new files. **The correction
+  landed as `f71871c`** (6 files, 364 insertions, 186 deletions) and its review
+  is `review-7e0ebabc11a3a00c`, also `approved` with **no lenses** and the same
+  `non_executable_only` classification.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
@@ -649,6 +654,20 @@ policy decides delivery. Nothing is reset or recovered here: `RESET` and
 inputs.
 
 ## Review coverage
+
+**FISC-010 WU-B — `review-f16dff5e521484d2`, `approved` (2026-10-08).** The
+first _executable_ candidate of this feature, and the first one the provider did
+not classify as passive documentation: tier **`medium`**, reason
+`configuration_change` on `packages/fiscal/package.json`, 16 changed files and
+3,880 changed lines. It selected **one** lens — `review-reliability` — which ran
+through a single `gentle_review_capture` slot (forecast first: one model run
+over the `pi_host_relay` transport, nothing executed), and closed `approved`
+with **four advisories** at `WARNING`/`informational` (`R3-001`..`R3-004`, all
+in `sifen.parser.ts`), none of which opened a correction. The acknowledgement
+burned the authority with `native-approved-acknowledgement-completed`. **The
+reviewer's full text is not retained** — the closure reported coordinates only
+and the lens context is ephemeral by design — so the Story's Technical Debt
+records the coordinates plus an explicitly-labelled reading.
 
 **FISC-010 WU-A — `review-fe256d67a4d60ed5`, `approved`, zero lenses
 (2026-10-08).** A docs-only candidate over 8 files and 2,165 changed lines. The

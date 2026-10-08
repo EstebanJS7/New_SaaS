@@ -111,8 +111,17 @@ correction
          review-7e0ebabc11a3a00c  closed `approved`, tier `low`,
                   `non_executable_only`, zero lenses required; the
                   acknowledgement burned the authority
+WU-B     5bdf676  feat(FISC-010): the SIFEN message layer — 16 files, 3,830
+                  insertions (121 new cases in four suites), plus
+                  `fast-xml-parser@^5.11.2` and `fflate@^0.8.3`
+         review-f16dff5e521484d2  closed `approved`, tier `medium`, lens
+                  `review-reliability`, four advisories at
+                  `WARNING`/`informational` (`R3-001`..`R3-004` in
+                  `sifen.parser.ts`), none opening a correction; the
+                  acknowledgement burned the authority
 gates    format-check green; lint 18/18, typecheck 18/18, test 19/19 and build
-         11/11, all forced rather than served from turbo's cache
+         11/11, all forced rather than served from turbo's cache; the fiscal
+         package alone at 388 tests (22 files), 121 of them new
 ```
 
 ## Review record
@@ -126,6 +135,18 @@ facade cannot express as a base ref; the intended-untracked selection was
 resolved with `select-intended-untracked`, which adopted the four new files and
 closed the lineage. The acknowledgement was called with the lineage alone, and
 the burn returned `native-approved-acknowledgement-completed`.
+
+**WU-B — `review-f16dff5e521484d2`, `approved` with one lens (2026-10-08).** The
+provider classified the candidate **`medium`** for a `configuration_change` on
+`packages/fiscal/package.json` and selected **one** lens, `review-reliability`;
+the single materialize slot forecast one model run and then ran it over the
+`pi_host_relay` transport. The closure is `approved` with **four advisories**,
+all `WARNING`/`informational` and none opening a correction; they are recorded
+in the Story's Technical Debt, with the coordinates the closure gave and an
+explicitly-labelled reading, because **the reviewer's full text is not
+retained** by this facade. `inspect` ran before the commit, the
+intended-untracked selection adopted the eight new files, and the
+acknowledgement burned the authority.
 
 **WU-A's correction — `review-7e0ebabc11a3a00c`, `approved`, no lenses
 (2026-10-08).** The same classification over the six corrected files: tier
