@@ -149,16 +149,22 @@ word.
 Story numbering continues the Fiscal prefix (`FISC-`). FISC-001..005 belong to
 [[EPIC-15]].
 
-**FISC-010's scope is bounded by a source gap, found 2026-10-08.** The two
-consultation services (`Consulta DE`, `Consulta RUC`) require a **signed request
-whose signature profile no retrieved source pins**, and the October-2024 Guide
-documents a different, unsigned v141-era shape for the same service. They are
-**deferred and recorded** in `SIFEN-BASELINE.md` §23.6 and §23.8 rather than
-implemented from either text, and the post-window per-CDC resolution path
-depends on them. Also found the same day: the v150 **batch** schemas do not
-exist (HTTP 404 by every name the Manual's index uses), so the batch service's
-shapes are the v141-published ones; and the WSDL is unreadable on both hosts
-(`302 → /vdesk/hangup.php3`, host-wide — a bogus path answers the same).
+**FISC-010's service layer is fully pinned, and a first reading of it was wrong
+(2026-10-08).** The v150 **batch** schemas do not exist (HTTP 404 by every name
+the Manual's index uses), so the batch shapes are the v141-published ones; the
+WSDL is unreadable on both hosts (`302 → /vdesk/hangup.php3`, host-wide — a
+bogus path answers the same). And the two consultation services were first
+recorded as **blocked** on a request signature no source pins: that was wrong.
+The published v150 consultation schemas (`siConsultaDTE`,
+`siConsultaArchivoRuc`) are **different services** — by authorization protocol,
+by date range, and the RUC archive, all signed and all returning ZIPs — while
+the Manual's §9.4 and §9.6 pin the two services the endpoint list names as
+**unsigned** (`rEnviConsDe { dId, dCDC }` and `rEnviConsRUC { dId, dRUCCons }`),
+which the published v141 artifacts (`WS_SiConsDE_v141.xsd`,
+`WS_SiConsRUC_v141.xsd`) and the October-2024 Guide confirm. The blocker was a
+search not yet run; the correction is recorded in `SIFEN-BASELINE.md`
+§23.6/§23.8 and in the Story. The signed family's own signature profile stays
+open and out of scope.
 
 **Every story from FISC-007 onward is provisional in its technical content**
 until FISC-006 lands. The names and dependencies above are the shape; the

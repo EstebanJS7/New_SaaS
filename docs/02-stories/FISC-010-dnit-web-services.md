@@ -64,21 +64,21 @@ Baseline §8 (the Manual's §7.10 table) fixes the paths; §23 fixes the message
 shapes from the published schemas. Both hosts publish the same paths:
 `https://sifen-test.set.gov.py` and `https://sifen.set.gov.py`.
 
-| Service                 | Path                                  | Mode              | Request root                 | Response root                 |
-| ----------------------- | ------------------------------------- | ----------------- | ---------------------------- | ----------------------------- |
-| Recepción DE            | `/de/ws/sync/recibe.wsdl`             | Synchronous       | `rEnviDe`                    | `rRetEnviDe`                  |
-| Recepción lote DE       | `/de/ws/async/recibe-lote.wsdl`       | **Asynchronous**  | `rEnvioLote`                 | `rResEnviLoteDe`              |
-| Consulta resultado lote | `/de/ws/consultas/consulta-lote.wsdl` | Asynchronous pair | `rEnviConsLoteDe`            | `rResEnviConsLoteDe`          |
-| Consulta DE             | `/de/ws/consultas/consulta.wsdl`      | Synchronous       | `rConsDteRequest`            | `rConsDteResponse`            |
-| Consulta RUC            | `/de/ws/consultas/consulta-ruc.wsdl`  | Synchronous       | `rEnviConsArchivoRUCRequest` | `rEnviConsArchivoRUCResponse` |
-| Recepción evento        | `/de/ws/eventos/evento.wsdl`          | Synchronous       | `rEnviEventoDe`              | `rRetEnviEventoDe`            |
+| Service                 | Path                                  | Mode              | Request root         | Response root         |
+| ----------------------- | ------------------------------------- | ----------------- | -------------------- | --------------------- |
+| Recepción DE            | `/de/ws/sync/recibe.wsdl`             | Synchronous       | `rEnviDe`            | `rRetEnviDe`          |
+| Recepción lote DE       | `/de/ws/async/recibe-lote.wsdl`       | **Asynchronous**  | `rEnvioLote`         | `rResEnviLoteDe`      |
+| Consulta resultado lote | `/de/ws/consultas/consulta-lote.wsdl` | Asynchronous pair | `rEnviConsLoteDe`    | `rResEnviConsLoteDe`  |
+| Consulta DE             | `/de/ws/consultas/consulta.wsdl`      | Synchronous       | `rEnviConsDeRequest` | `rEnviConsDeResponse` |
+| Consulta RUC            | `/de/ws/consultas/consulta-ruc.wsdl`  | Synchronous       | `rEnviConsRUC`       | `rResEnviConsRUC`     |
+| Recepción evento        | `/de/ws/eventos/evento.wsdl`          | Synchronous       | `rEnviEventoDe`      | `rRetEnviEventoDe`    |
 
 **The paths are used exactly as the Manual's table writes them, including the
 `.wsdl` suffix.** The Guide says the WSDL itself is obtained by appending
 `?wsdl`, so the table's paths are the service addresses, not documentation
 links. They are odd, and they are what the source says.
 
-### The four shapes this Story implements
+### The six shapes this Story implements
 
 ```text
 Recepción DE — synchronous, and the DE is EMBEDDED, not base64
@@ -101,7 +101,25 @@ Consulta resultado lote
 Recepción evento
   rEnviEventoDe { dId, dEvReg { gGroupGesEve } }
   rRetEnviEventoDe { dFecProc, gResProcEVe 1..15 }
+
+Consulta DE — by CDC, UNSIGNED (Manual §9.4; WS_SiConsDE_v141.xsd)
+  rEnviConsDeRequest  { dId (xs:integer, totalDigits 15), dCDC (xs:string, 44) }
+  rEnviConsDeResponse { dFecProc (xs:dateTime), dCodRes (xs:string, 4),
+                        dMsgRes (1..255), xContenDE? (xs:string) }
+  xContenDE carries the DE — bare or wrapped in rContDe; accept both (§23.8)
+
+Consulta RUC — the RUC's status, UNSIGNED (Manual §9.6; WS_SiConsRUC_v141.xsd)
+  rEnviConsRUC    { dId, dRUCCons (xs:string, 5..8, NO check digit) }
+  rResEnviConsRUC { dCodRes (4), dMsgRes (1..255), xContRUC? }
+  xContRUC { dRUCCons, dRazCons (1..250), dCodEstCons (3), dDesEstCons (6..25),
+             dRUCFactElec (S|N) }
 ```
+
+**Neither consultation request carries a signature**, and that is what made the
+first reading of §23 wrong: §9.6 says the service "solamente permite conexiones
+con certificado digital" — mutual TLS authenticates it, exactly as §8's rule
+says ("el software cliente deberá autenticarse ante el SIFEN utilizando su
+certificado y firma digital").
 
 **`xDE` means two different things in two services**, and that is the single
 most likely place to implement from memory and be wrong: the synchronous service
@@ -150,7 +168,21 @@ batch query — rResEnviConsLoteDe.dCodResLot
                                           SIFEN does not know)
   0361  lote en procesamiento          -> PROCESSING, retryAfterMs = 10 minutes
   0362  procesamiento concluido        -> per-DE results, from gResProcLote
-  0364  consulta extemporánea (>48 h)  -> CONFIGURATION_ERROR, reason recorded (see below)
+  0364  consulta extemporánea (>48 h)  -> CONFIGURATION_ERROR for the batch path; the
+                                          adapter falls back to the per-CDC query below
+
+Consulta DE — rEnviConsDeResponse.dCodRes   (Manual §9.4, Tabla G)
+  0420  CDC inexistente                -> the DE is not in SIFEN: ERROR, reasonCode 0420,
+                                          which the existing re-drive can resubmit
+  0421  RUC sin permiso                -> CONFIGURATION_ERROR (terminal: the certificate
+                                          is not authorized to consult)
+  0422  CDC encontrado                 -> APPROVED, with xContenDE carrying the DE
+
+Consulta RUC — rResEnviConsRUC.dCodRes      (Manual §9.6, Tabla H)
+  0500  RUC no existe                  -> CONFIGURATION_ERROR
+  0501  RUC sin permiso consulta WS    -> CONFIGURATION_ERROR
+  0502  RUC encontrado                 -> the container: dCodEstCons, dDesEstCons,
+                                          dRUCFactElec
 ```
 
 **The ten minutes are the Guide's own number**: "se recomienda comenzar a
@@ -163,56 +195,57 @@ records the Manual's table typing it `N, 4`; `protProcesDE_v150.xsd` declares it
 `xs:string` with `minLength 1`, and §23 records the divergence. A leading zero
 is part of the code, so it is never parsed into a number.
 
-## What is blocked, and why — the two consultation services
+## The naming collision that looked like a blocker — and how it resolved
 
-`Consulta DE` and `Consulta RUC` are **in the endpoint list and out of this
-Story's implementation**, and the reason is a missing source, not a lack of
-work.
+**The two consultation services are in scope and need no XML signature.** The
+first reading of §23 concluded the opposite, and the error is worth recording
+because it is the second time this directory's naming and version mix has
+produced a false blocker.
 
-The published v150 schemas require the **request itself to be signed**:
+**What the Manual actually says.** §9.4 pins `Consulta DE` — "consulta de un DE
+por su CDC" — as `rEnviConsDe { dId, dCDC }`, and §9.6 pins `Consulta RUC` as
+`rEnviConsRUC { dId, dRUCCons }`. **Neither table carries a `ds:Signature`
+row**, and §9.6's own text says authentication is "conexiones con certificado
+digital". The published artifacts agree: `WS_SiConsDE_v141.xsd` and
+`WS_SiConsRUC_v141.xsd` have **zero `xmldsig` occurrences**, and the Guide's
+`consulta` example matches the artifact's element names (`rEnviConsDeRequest` /
+`rEnviConsDeResponse`).
 
-```xml
-<xs:element name="rConsultaDTE" type="rConsultaDTE"/>
-<xs:complexType name="rConsultaDTE">
-  <xs:sequence>
-    <xs:element name="ConsultaDTE">   <!-- dRuc + dProtConsDTEA, @Id required -->
-    <xs:element ref="ds:Signature"/>  <!-- REQUIRED -->
-```
+**What went wrong.** The published v150 consultation schemas —
+`siConsultaDTE.xsd`, `WS_SiConsDTE.xsd`, `siConsultaDTEAsync.xsd`,
+`WS_SiConsDTEAsync.xsd`, `siConsultaArchivoRuc.xsd`, `WS_ConsultaArchivoRuc.xsd`
+— declare **signed** requests, and their names look like the Manual's
+(`siConsultaDTE` against `siConsDE`, `Consulta Archivo RUC` against
+`Consulta RUC`). They are **different services**: a query by authorization
+protocol, a date-range query, and the archive of a RUC, all returning ZIPs.
+Reading them as the Manual's §9.4/§9.6 services produced a blocker that does not
+exist.
 
-and the same in `siConsultaArchivoRuc.xsd` (`ConsultaDTE` with `dRucFactElec`,
-plus a required `ds:Signature`). **The signature profile for a consultation
-request is not pinned by any retrieved source.** Baseline §5 pins the signature
-of a **DE** — its `Reference URI` is the CDC, and the signed subtree is the `DE`
-element. A consultation's signature has a different referenced element
-(`ConsultaDTE`, whose `@Id` is a self-managed string) and no retrieved document
-says which canonicalization, which transforms or which reference the service
-expects. Implementing it would be inventing protocol, which PRD §23 forbids.
+**The lesson is baseline §22.1's, applied to a schema directory instead of a
+PDF**: _"the source does not contain it" and "the source does not pin it" are
+different claims_. The Manual's §9 had not been read for these two services when
+the blocker was recorded; it pins them completely, and the missing piece was a
+search, not a source.
 
-There is also a **conflict between two official sources**, which is why the
-question cannot be settled by choosing the newer text: the Guide's `consulta`
-section (October 2024) documents a **different, unsigned** request,
-`rEnviConsDeRequest { dId, dCDC }`, answered by `rEnviConsDeResponse` with
-`xContenDE` — the v141-era shape, and the v141 schemas are still published
-(`WS_SiConsDE_v141.xsd`). So the two services are **deferred with the blocker
-recorded**, not silently implemented from the wrong source:
+**The signed family stays out of scope, with its own open question.** Their
+request signature references `ConsultaDTE`, whose `@Id` is a self-managed
+string, and no retrieved document states which canonicalization, transforms or
+reference they expect — §5 pins the **DE**'s signature and nothing else. They
+are not needed by the issuance or the asynchronous-resolution flow, and they are
+recorded in §23.6/§23.8 as a family whose profile is open. If a later Story
+needs the archive or the bulk query, that is where the work starts.
 
-```text
-Consulta DE   blocked on: the request's signature profile (no source)
-              conflicting source: the Guide's unsigned v141-era shape
-Consulta RUC  blocked on: the same
-```
-
-**The practical consequence is a 48-hour cliff, and it is recorded rather than
-hidden.** Within its window the batch query resolves a document; after it, the
-Guide's answer is to query each CDC with `Consulta DE` — which is blocked. A
-document still `SUBMITTED` past the window therefore stays `SUBMITTED` until
-[[FISC-013]]'s homologation pins the request signature against a real service,
-and the operator path for it is [[TD-029]].
+**The 48-hour path is now complete.** Within its window the batch query answers;
+after it, the Guide's instruction ("deberá consultar cada CDC del lote mediante
+la WS Consulta DE") lands on a service this Story implements. The remaining
+ambiguity is only the container: `xContenDE` is typed `xs:string` by the
+artifact while the Manual describes `rContDe { rDE, dProtAut }`, so the reader
+accepts the DE **bare or wrapped** and never assumes which (§23.8).
 
 ## In Scope
 
 - **[[ADR-007]] and [[ADR-008]]**, and `SIFEN-BASELINE.md` §23 (WU-A).
-- **The message layer** for the four shapes above: types, serializers and
+- **The message layer** for the six shapes above: types, serializers and
   parsers, plus the batch container (build `<rLoteDE>`, ZIP it, base64 it) and
   the ZIP reader for the responses that carry one (WU-B).
 - **The transport**: SOAP 1.2 Document/Literal over `node:https` with a per-call
@@ -240,7 +273,12 @@ and the operator path for it is [[TD-029]].
   provider. ADR-007 decides the mechanism; this Story delivers the capability.
 - **Persisting the signed DE** (`xml_storage_key`) and the submission path's
   logging — [[FISC-012]], for the reason in the next section.
-- **The two consultation services**, blocked above.
+- **The signed v150 query family** — the protocol query (`WS_SiConsDTE`), the
+  date-range query (`WS_SiConsDTEAsync`) and the RUC archive
+  (`WS_ConsultaArchivoRuc`). They are **different services** from the Manual's
+  §9.4/§9.6 pair, they require a request signature whose profile no retrieved
+  source pins, and the issuance flow does not need them. §23.6/§23.8 record the
+  open question; a later Story that needs the archive starts there.
 - **Building an event's payload** (`dEvReg`'s content, i.e. a cancellation
   event's body): the event service takes the document as an argument, exactly as
   the reception service takes a signed DE. Composing a cancellation event is
@@ -284,8 +322,9 @@ worker's logging path, in [[FISC-012]].
       record, and the parser's guardrails.
 - [x] `SIFEN-BASELINE.md` §23 records the retrieval of the service schemas with
       **HTTP status and byte counts**, the WSDL's **302 and the control probe**,
-      the four implemented shapes, the outcome codes, and the two blocked
-      consultation services.
+      the **six** implemented shapes, the outcome codes, and the resolution of
+      the consultation family — including the signed v150 family's own open
+      question.
 
 **WU-B — the message layer**
 
@@ -299,6 +338,13 @@ worker's logging path, in [[FISC-012]].
       to 50, each carrying `id`, `dEstRes`, `dProtAut?` and `gResProc` up to 5.
 - [ ] The event reception shapes match `WS_SiRecepEvento_v150.xsd`: `dEvReg`
       with `gGroupGesEve`, and `gResProcEVe` 1..15.
+- [ ] The two consultation shapes match the Manual's §9.4/§9.6 tables and the
+      published v141 artifacts: `rEnviConsDeRequest { dId, dCDC }` and
+      `rEnviConsRUC { dId, dRUCCons }`, **both without a signature**, with
+      `dCDC` matching `tCDC` (44 characters) and `dRUCCons` matching `tRuc`
+      (5–8, no check digit).
+- [ ] `xContenDE` is accepted **bare or wrapped in `rContDe`**, and the reader
+      never assumes which — §23.8 records why both are possible.
 - [ ] The ZIP container is read and written by the dependency ADR-008 chose, and
       a round trip through it is asserted.
 - [ ] **No value is coerced**: `dId`, `dCodRes`, `dCodResLot`, `dProtConsLote`
@@ -349,7 +395,8 @@ worker's logging path, in [[FISC-012]].
 - [ ] One typed method per implemented service, each bound to the endpoint
       baseline §8 publishes, and no endpoint string is written anywhere else.
 - [ ] The outcome mapping above is a **pure function** with a table-driven test:
-      each row of `dEstRes` and each code of the two asynchronous families.
+      each row of `dEstRes`, each code of the two asynchronous families, and the
+      consultation codes `0420`/`0421`/`0422` and `0500`/`0501`/`0502`.
 - [ ] `Aprobado con observación` maps to `APPROVED` **with the observation
       preserved** in `reason`, which baseline §10 requires.
 - [ ] A `PROCESSING` result carries the Guide's ten minutes as `retryAfterMs`.
@@ -423,8 +470,8 @@ a live database rather than changing it.
 
 **WU-A — the decisions, the Story and the baseline.** [[ADR-007]] and
 [[ADR-008]] accepted 2026-10-08, `SIFEN-BASELINE.md` §23 written from the
-retrieved service schemas, and the tracker's T6 opened. The two findings that
-shaped the rest of the Story:
+retrieved service schemas, and the tracker's T6 opened. Three findings shaped
+the rest of the Story:
 
 1. **The v150 async batch schemas are not published.**
    `WS_SiRecepLoteDE_v150.xsd` and `WS_SiConsLote_v150.xsd` return **HTTP 404**,
@@ -434,9 +481,22 @@ shaped the rest of the Story:
    exist **only at v141**, and the Guide documents them against those same
    schema names without a version. §23 records this instead of pretending a v150
    batch schema exists.
-2. **The consultation services require a signed request whose profile no source
-   pins**, and the Guide documents a different, unsigned shape for the same
-   service. Both are deferred, blocked, and recorded above.
+2. **The WSDL is unreachable on both hosts**, host-wide, which leaves the
+   SOAPAction and the bindings open and turns "never follow a redirect" into a
+   requirement (§23.5).
+3. **The consultation services are NOT blocked — the first reading of §23 said
+   they were, and it was wrong.** The published v150 consultation schemas
+   (`siConsultaDTE`, `siConsultaArchivoRuc`) require a signed request, and their
+   names resemble the Manual's services; they are **different services** (by
+   protocol, by range, and the RUC archive, all returning ZIPs). The Manual's
+   §9.4 and §9.6 pin the two services the endpoint list names as **unsigned**
+   (`rEnviConsDe { dId, dCDC }`, `rEnviConsRUC { dId, dRUCCons }`), the
+   published v141 artifacts agree (`WS_SiConsDE_v141.xsd`,
+   `WS_SiConsRUC_v141.xsd`, zero `xmldsig` occurrences), and the Guide's example
+   matches them. **The blocker was a search not yet run, not a missing source**
+   — baseline §22.1's lesson, applied to a schema directory. The correction, the
+   signed family's own open question and the resolved 48-hour path are recorded
+   above, and §23 was rewritten with it.
 
 **WU-B, WU-C, WU-D and WU-E are not implemented.** The Story's status stays
 `in-progress`.
@@ -476,8 +536,13 @@ None yet. WU-A adds documents.
   path, including a bogus one and the root.
 - **The ZIP entry's name is not published.** The client writes one; only a real
   service can confirm it.
-- **The two consultation services are blocked**, and with them the post-window
-  per-CDC resolution path — the 48-hour cliff recorded above.
+- **The `xContenDE` container is ambiguous.** The artifact types it `xs:string`
+  and the Manual describes `rContDe { rDE, dProtAut }`, so the reader accepts
+  the DE bare or wrapped; which one SIFEN sends is only provable against a live
+  service ([[FISC-013]]).
+- **The signed v150 query family has no signature source** — the protocol query,
+  the RUC archive and the date-range query. They are out of scope here and
+  recorded in §23.6/§23.8.
 - **No real DNIT call is made by this Story.** The tests use a local double; the
   test environment's WSDL is unreachable and no habilitación exists yet
   ([[FISC-013]]).
@@ -485,9 +550,9 @@ None yet. WU-A adds documents.
 
 ## Technical Debt
 
-- **The post-window resolution path** is blocked on the consultation request's
-  signature profile. When [[FISC-013]] pins it against a real service, this
-  becomes a work unit rather than a new Story.
+- **The signed v150 query family** — the archive and the bulk queries — is
+  blocked on its request signature profile. When [[FISC-013]] pins it against a
+  real service, it becomes a work unit rather than a new Story.
 - **`CANCEL_PENDING` has no resolver.** SIFEN's cancellation is an event whose
   reception is synchronous, so a SIFEN adapter may never produce it; whether it
   does is [[FISC-012]]'s finding ([[ADR-007]] records the open question).
@@ -528,17 +593,18 @@ apps/worker/src/**                                unchanged by this Story
 
 **WU-A is done and the Story is not.** What WU-A settles: the port's
 asynchronous shape, the transport and credential boundary, the parser and ZIP
-dependencies with their advisory record, the four message shapes, the outcome
-mapping, and the two blocked consultation services with the exact source each is
-missing.
+dependencies with their advisory record, the six message shapes, the outcome
+mapping, and — after a correction — the resolution of the consultation services
+that a first reading had recorded as blocked.
 
 What it deliberately does not settle, and what a reader should not assume:
 
 - **No DNIT call works yet.** There is no transport, no credential read and no
   provider; the test environment is behind an F5 gate and no habilitación
   exists.
-- **The consultation services are not "later work"** — they are blocked on a
-  source, and the difference matters for planning.
+- **The signed query family is not "later work"** — it is blocked on a source,
+  and the difference matters for planning. The two services the endpoint list
+  names are not.
 - **The signed DE is still not persisted**, and the criterion that says so moved
   to [[FISC-012]] with the reason recorded.
 

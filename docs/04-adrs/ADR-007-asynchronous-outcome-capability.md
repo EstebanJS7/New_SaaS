@@ -314,8 +314,9 @@ into an error.
   `query` to cover it: no retrieved source says the query services report a
   cancellation's state.
 - **The document's own fate after the query window closes.** The Guide's 48-hour
-  batch-query window is a protocol limit, not a business rule; what to do with a
-  document that never resolves is an operator decision ([[TD-029]]).
+  batch-query window is a protocol limit, not a business rule: after it, §23.6's
+  per-CDC query answers for the document, and only a document that neither
+  service can resolve is an operator decision ([[TD-029]]).
 
 ## Alternatives Considered
 

@@ -382,14 +382,17 @@ candidate 1 exists.
   `SiResultLoteDE_v150.xsd`, `resResultLoteDE_v150.xsd` and
   `WS_SiRecepLoteDE_v150.xsd` all return **HTTP 404**, and the batch shapes are
   published only at **v141**, which is also what the Guide documents; **(2)**
-  the two **consultation** services (`Consulta DE`, `Consulta RUC`) require a
-  **signed request** whose signature profile **no retrieved source pins**
-  (`siConsultaDTE.xsd` and `siConsultaArchivoRuc.xsd` both carry a required
-  `ds:Signature`, and §5 pins only the DE's), while the October-2024 Guide
-  documents a **different, unsigned v141-era shape**
-  (`rEnviConsDeRequest { dId, dCDC }`) for the same service — so both are
-  **deferred and blocked**, and the post-window per-CDC resolution path with
-  them; **(3)** the WSDL is unreadable on both hosts
+  the two **consultation** services were first recorded as **blocked** — that
+  was **wrong, and it is corrected here**: the published v150 consultation
+  schemas (`siConsultaDTE.xsd`, `siConsultaArchivoRuc.xsd`) are **different
+  services** (by authorization protocol, by date range, and the RUC archive, all
+  signed and all returning ZIPs), while the Manual's **§9.4 and §9.6** pin the
+  two services the endpoint list names as **unsigned**
+  (`rEnviConsDe { dId, dCDC }`, `rEnviConsRUC { dId, dRUCCons }`) and the
+  published v141 artifacts (`WS_SiConsDE_v141.xsd`, `WS_SiConsRUC_v141.xsd`,
+  **zero `xmldsig` occurrences**) and the Guide's example confirm them — the
+  blocker was a search not yet run (baseline §22.1's lesson), and §23.6/§23.8
+  were rewritten with it; **(3)** the WSDL is unreadable on both hosts
   (`HTTP 302 → /vdesk/hangup.php3`, and a **bogus path and the host root answer
   the same**, so the gate is host-wide and the probe says nothing about the
   paths), which leaves SOAPAction and bindings open and makes "never follow a
@@ -473,14 +476,16 @@ candidate 1 exists.
       bounding the next attempt; **(c)** **persisting the signed DE**
       (`xml_storage_key`, still written by nothing) and the submission path's
       logging, which is where FISC-009's "no secret in a log or a stored
-      snapshot" criterion now lives. **The two consultation services stay
-      blocked** until the request's signature profile is pinned (FISC-013,
-      against a real service); the provider's `query` must therefore resolve
-      through the batch service, and the 48-hour cliff is recorded in the Story.
-      **Note on this Story's row in the epic**: FISC-010 **adds** the port's
-      asynchronous capability; FISC-012 **implements** it. The epic's earlier
-      wording ("the port's asynchronous-status extension") was corrected on
-      2026-10-08.
+      snapshot" criterion now lives. **The two consultation services are IN
+      scope**: the Manual's §9.4 CDC query is what resolves a document after the
+      Guide's 48-hour batch window, and §9.6's RUC status query is the sixth
+      service of the endpoint list. **What stays blocked and out of scope is the
+      signed v150 query family** — by protocol, by range, and the RUC archive —
+      whose request signature profile no source pins (FISC-013, against a real
+      service). **Note on this Story's row in the epic**: FISC-010 **adds** the
+      port's asynchronous capability; FISC-012 **implements** it. The epic's
+      earlier wording ("the port's asynchronous-status extension") was corrected
+      on 2026-10-08.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 
@@ -642,6 +647,13 @@ adopted the four new files, and `acknowledge-approved` burned the authority with
 `native-approved-acknowledgement-completed`. **Recorded because a code work unit
 will not be classified this way**: the WUs that follow are executable and will
 require the four lenses.
+
+**FISC-010 WU-A's correction — `review-7e0ebabc11a3a00c`, `approved`, zero
+lenses (2026-10-08).** The same classification over the six corrected files
+(`low`, `non_executable_only`, `lenses_required: false`), the same closure
+without a capture, and the same burn. The correction's substance is in the
+Story's "naming collision" section and in `SIFEN-BASELINE.md` §23.6: the
+consultation services were recorded as blocked and are not.
 
 **FISC-008 review coverage, verified 2026-10-06.** PR **#106**, head `5d09015`,
 `MERGEABLE/CLEAN`, all three checks green (`DTE XSD validation` among them, now

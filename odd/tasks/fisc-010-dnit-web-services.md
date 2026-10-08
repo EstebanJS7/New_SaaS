@@ -28,7 +28,10 @@ per the boundary decided with the maintainer on 2026-10-08.
 
 Authorized by the maintainer on 2026-10-08 as **WU-A, docs-only**: ADR-007,
 ADR-008, the Story, `SIFEN-BASELINE.md` §23 and the tracker. No source write in
-WU-A.
+WU-A. **And authorized again the same day as the WU-A correction** ("haz lo
+recomendable para abordar ese caso"): resolve the consultation-services blocker
+by looking for the source instead of accepting the deferral — still docs-only,
+same files.
 
 Base: **`68b3c74`** — `main` (`ffd08a1`) plus `docs/epic-16-bookkeeping`
 (`4907e65`) and `feat/epic-16-fisc-011-completion` (`68b3c74`), which are not
@@ -57,9 +60,11 @@ because both pending branches touch the two bookkeeping files WU-A edits, and
       its commit, its review and the branch's gates. **Landed 2026-10-08 —
       `3779569`, plus the record commit that carries this line.**
 - [ ] **WU-B — the message layer (pure).** The request and response shapes of
-      the services, as types plus serializers and parsers, with the result-code
-      tables. No I/O: fixtures come from the official schemas and from the
-      Guide's own examples.
+      the **six** services — reception, batch reception, batch query, event
+      reception, the **CDC query** (`rEnviConsDeRequest`) and the **RUC status
+      query** (`rEnviConsRUC`) — as types plus serializers and parsers, with the
+      result-code tables. No I/O: fixtures come from the official schemas and
+      from the Guide's own examples.
 - [ ] **WU-C — the transport.** The SOAP 1.2 Document/Literal client over
       `node:https` with a per-call mutual-TLS agent built from the tenant's
       certificate, the `FiscalCredentialPort`, and the guardrails ADR-008
@@ -70,9 +75,11 @@ because both pending branches touch the two bookkeeping files WU-A edits, and
       vocabulary, the `query` capability, the migration that gives the
       asynchronous reference a column and `submitted_at` its writer, and the
       live-PostgreSQL proof of the new edges.
-- [ ] **WU-E — the service facade.** One typed method per published service,
-      each bound to its endpoint from baseline §8, composing WU-B and WU-C, and
-      the mapping from SIFEN's result codes to the port's outcomes.
+- [ ] **WU-E — the service facade.** One typed method per published service
+      (**six**, including the two consultations), each bound to its endpoint
+      from baseline §8, composing WU-B and WU-C, and the mapping from SIFEN's
+      result codes to the port's outcomes — including `0420`/`0421`/`0422` and
+      `0500`/`0501`/`0502`, which is what closes the post-window path.
 
 ## Out of scope for this feature record
 
@@ -93,6 +100,11 @@ WU-A     3779569  docs(FISC-010): the DNIT web-service decisions, the Story and
          review-fe256d67a4d60ed5  closed `approved`, tier `low`,
                   `non_executable_only`, zero lenses required; the
                   acknowledgement burned the authority
+correction
+         review-7e0ebabc11a3a00c  closed `approved`, tier `low`,
+                  `non_executable_only`, zero lenses required; the
+                  acknowledgement burned the authority — the commit that
+                  carries this line is the correction's
 gates    format-check green; lint 18/18, typecheck 18/18, test 19/19 and build
          11/11, all forced rather than served from turbo's cache
 ```
@@ -109,8 +121,27 @@ resolved with `select-intended-untracked`, which adopted the four new files and
 closed the lineage. The acknowledgement was called with the lineage alone, and
 the burn returned `native-approved-acknowledgement-completed`.
 
+**WU-A's correction — `review-7e0ebabc11a3a00c`, `approved`, no lenses
+(2026-10-08).** The same classification over the six corrected files: tier
+`low`, `non_executable_only`, `lenses_required: false`, so no lens, refuter or
+validator ran and the closure came from the provider's risk evaluation.
+Inspected **before** committing, started with the offered route and a fresh
+idempotency key, and the acknowledgement burned the authority with the same
+outcome.
+
 ## Notes
 
+- **Correction, 2026-10-08: the two consultation services are NOT blocked.** The
+  first §23 recorded them as blocked on a request signature no source pins. That
+  was a misreading: the published v150 consultation schemas (`siConsultaDTE`,
+  `siConsultaArchivoRuc`) are **different services** (by protocol, by range, and
+  the RUC archive, all signed, all returning ZIPs), while the Manual's §9.4 and
+  §9.6 pin the two the endpoint list names as **unsigned** — and the published
+  v141 artifacts (`WS_SiConsDE_v141.xsd`, `WS_SiConsRUC_v141.xsd`, zero
+  `xmldsig` occurrences) and the Guide's example agree. The blocker was a search
+  not yet run (baseline §22.1's lesson). §23.6/§23.8, the Story, the epic and
+  the tracker were rewritten; the **signed family** keeps its own open question
+  and stays out of scope.
 - **The review never ran its lenses, and that is the provider's call, not a
   skip.** WU-A came back `non_executable_only` at `low` tier with
   `lenses_required: false`; nothing was captured because nothing was required. A
