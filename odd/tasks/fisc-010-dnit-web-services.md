@@ -101,10 +101,11 @@ WU-A     3779569  docs(FISC-010): the DNIT web-service decisions, the Story and
                   `non_executable_only`, zero lenses required; the
                   acknowledgement burned the authority
 correction
+         f71871c  docs(FISC-010): correct the consultation blocker — the source
+                  was there  — 6 files, 364 insertions, 186 deletions
          review-7e0ebabc11a3a00c  closed `approved`, tier `low`,
                   `non_executable_only`, zero lenses required; the
-                  acknowledgement burned the authority — the commit that
-                  carries this line is the correction's
+                  acknowledgement burned the authority
 gates    format-check green; lint 18/18, typecheck 18/18, test 19/19 and build
          11/11, all forced rather than served from turbo's cache
 ```

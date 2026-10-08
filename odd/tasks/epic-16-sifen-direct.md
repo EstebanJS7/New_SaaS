@@ -411,7 +411,9 @@ candidate 1 exists.
   provider classified the candidate `non_executable_only` at `low` tier and set
   `lenses_required: false`, so the four-lens review never ran. Inspected
   **before** committing, and the intended-untracked selection adopted the four
-  new files.
+  new files. **The correction landed as `f71871c`** (6 files, 364 insertions,
+  186 deletions) and its review is `review-7e0ebabc11a3a00c`, also `approved`
+  with **no lenses** and the same `non_executable_only` classification.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
