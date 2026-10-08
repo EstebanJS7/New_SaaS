@@ -327,9 +327,11 @@ advisories     one historical advisory (GHSA-px8p-9vwx-vf98, an infinite loop
 The ZIP is not optional and not our choice: the batch reception schema types
 `xDE` as `xs:base64Binary` with `xmime:expectedContentTypes="application/zip"`,
 the Guide's steps are "Comprimir el contenido de la estructura del lote rLoteDE"
-then "Convertir el contenido comprimido a Base64", and the query services type
-their result the same way. **We must write a ZIP to send a batch and read one to
-consume a consultation.**
+then "Convertir el contenido comprimido a Base64". **We must write a ZIP to send
+a batch.** The read direction belongs to the **signed v150 query family** — the
+protocol query and the RUC archive, §23.6 — which is out of [[FISC-010]]'s
+scope, so `fflate`'s `unzip` path stays unused; that is also the only path its
+one historical advisory ever touched (GHSA-px8p-9vwx-vf98, `unzipSync`).
 
 ### 5. The parser's guardrails
 
@@ -353,14 +355,20 @@ above is the evidence. Five rules, all testable:
    helpers normalise whitespace explicitly. SIFEN's own DE rules care about
    whitespace, so silently trimming would hide a difference this system may need
    to report.
-5. **Every parsed value is validated against a known domain before it is used**,
-   and the reader constructs its result field by field — never by spreading or
-   merging parsed data into a domain object. `dEstRes` is one of three published
-   strings, a result code is one of the codes §23 records, a CDC matches the CDC
-   shape, a base64 payload matches base64. **Anything else is refused, never
-   coerced**, which is what makes namespace-prefix games (`removeNSPrefix: true`
-   strips them, and a prefix bound to a foreign namespace would collide) a
-   bounded risk instead of an open one.
+5. **Every parsed value is validated against a published domain before it is
+   used**, and the domains are of two kinds. The **structural** ones are
+   refused: a `dEstRes` outside the three published strings, a code that is not
+   four digits, a CDC that does not match `tCDC`, a `dRUCCons` that does not
+   match `tRuc`, a `dId` that is not digits, a payload that is not base64. The
+   **result-code catalogue is an open set**: §23.8 item 7 records that no
+   retrieved source enumerates `dCodRes`, and the Manual's own §10 worked
+   example is **`0160`** — a code §23.7 does not list — so an unlisted but
+   well-formed code is **carried as data**, never coerced into an outcome and
+   never the reason a legitimate response is discarded. The reader constructs
+   its result field by field, never by spreading or merging parsed data into a
+   domain object, which is what makes namespace-prefix games
+   (`removeNSPrefix: true` strips them, and a prefix bound to a foreign
+   namespace would collide) a bounded risk instead of an open one.
 
 ## Alternatives Considered
 
@@ -468,7 +476,9 @@ with the signing stage. Nothing in this ADR is reachable in production until
    asserted on a body that carries one.
 4. **Values are strings and are validated against published domains.** A test
    feeds a response whose `dEstRes` is an unknown string and asserts a refusal
-   rather than a coerced outcome.
+   rather than a coerced outcome; another feeds a well-formed but unlisted
+   `dCodRes` and asserts it is **carried** as `unknown` with the raw code,
+   because the catalogue is an open set (§23.8 item 7).
 5. **The credential is read per call and never retained.** A test asserts the
    port is consulted once per call and that no field of the provider holds
    material between calls.

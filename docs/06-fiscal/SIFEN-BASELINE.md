@@ -1945,9 +1945,45 @@ with the Guide's own request example:
 </soap:Envelope>
 ```
 
+**[R]** And the Manual's **§9.2.1 pins the container itself**, in the two
+schemas it names (Schema XML 5 and 5A):
+
+```text
+Schema XML 5 — SiRecepLoteDE_v150.xsd (WS Recepción DE Lote), §9.2
+  rEnvioLote  raíz
+  dId         N 1-15   1-1   "Número secuencial autoincremental … responsabilidad
+                              del contribuyente"
+  xDE         B        1-1   "Archivo de Lote comprimido", "Campo comprimido en
+                              formato Base64 según el esquema del Protocolo de
+                              procesamiento del Lote"
+
+Schema XML 5A — ProtProcesLoteDE_v150.xsd (Protocolo de procesamiento del Lote)
+  rLoteDE     raíz            "Elemento raíz"
+  rDE         XML  1-50       "Sigue las definiciones del Capítulo Formato de los DE"
+
+§9.2 prose
+  "Particularidad: Archivo comprimido «.zip»"
+  "el lote podrá contener hasta 50 DE del mismo tipo"
+  "No se requiere que el número del DE sea secuencial en el lote.
+   Un lote debe contener solo un mismo tipo de DE."
+  "agrupados mediante un contenedor el cual posee el certificado digital del
+   emisor"   <- the prose; Schema XML 5A carries no certificate element, and the
+                certificate travels inside each DE's own signature
+```
+
+**Both schemas are 404** (they are in §23.1's list), so the container is pinned
+by the Manual's table and not by an artifact. Two of its properties follow from
+that and are recorded as open in §23.8: **the container's namespace** (`rLoteDE`
+appears in no published schema) and **the ZIP entry's name**.
+
 **The ZIP entry's name is not published anywhere.** The container element is
 `rLoteDE`, the compression is described but not parameterised, and the entry
-name is unstated — recorded as open in §23.8.
+name is unstated — recorded as open in §23.8. **What this client emits**: **one
+entry**, and the container in `http://ekuatia.set.gov.py/sifen/xsd` — every
+published DNIT schema declares that `targetNamespace`, and `rDE` inside the
+container is the v150 DE carrying its own namespace declaration. Both choices
+are single constants, so a homologation run can flip them without touching the
+serializer.
 
 ### 23.5 The WSDL is unreachable on both hosts
 
@@ -2137,7 +2173,11 @@ recorded as such.
    the field as `xs:string`, while the Guide shows it holding the DE's XML. So a
    reader must accept the DE whether it arrives bare or wrapped in `rContDe`,
    and must not assume which.
-4. **The ZIP entry's name** inside the batch container (§23.4).
+4. **The ZIP entry's name** inside the batch container, **and the container's
+   namespace.** `rLoteDE` appears in no published schema (Schema XML 5A is 404),
+   and the Manual's table gives the element without a namespace. The client
+   emits one entry and the SIFEN namespace (§23.4), and both are single
+   constants a homologation run can flip.
 5. **Whether the batch service accepts a v150 DE inside the v141-shaped
    container.** The container schema constrains only the base64 payload, so
    nothing in the retrieved sources forbids it; nothing confirms it either.

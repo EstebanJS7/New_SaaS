@@ -396,24 +396,36 @@ candidate 1 exists.
   (`HTTP 302 → /vdesk/hangup.php3`, and a **bogus path and the host root answer
   the same**, so the gate is host-wide and the probe says nothing about the
   paths), which leaves SOAPAction and bindings open and makes "never follow a
-  redirect" a requirement rather than a preference. **Remaining WUs**: WU-B the
-  message layer, WU-C the transport and the credential port, WU-D the port's
-  asynchronous capability and the schema, WU-E the service facade and the pure
-  outcome mapping. **The maintainer's boundary of 2026-10-08**: FISC-010 defines
-  the credential port and proves it with a **double**; [[FISC-012]] wires the
-  worker together with the signing stage. **One criterion moved a second time**:
-  FISC-009 pointed "no secret in a log or a stored snapshot" at FISC-010;
-  ADR-008 put the transport in `packages/fiscal` and the wiring in FISC-012, and
-  FISC-010 persists no document and logs no submission, so it re-points to
-  FISC-012 with the reason recorded in the Story. **WU-A landed as commit
-  `3779569`** — 8 files, 2,116 insertions, 49 deletions — and its review is
-  `review-fe256d67a4d60ed5`, closed **`approved`** with **no lenses**: the
-  provider classified the candidate `non_executable_only` at `low` tier and set
-  `lenses_required: false`, so the four-lens review never ran. Inspected
-  **before** committing, and the intended-untracked selection adopted the four
-  new files. **The correction landed as `f71871c`** (6 files, 364 insertions,
-  186 deletions) and its review is `review-7e0ebabc11a3a00c`, also `approved`
-  with **no lenses** and the same `non_executable_only` classification.
+  redirect" a requirement rather than a preference. **WU-B landed 2026-10-08**
+  (4 modules under `packages/fiscal/src/sifen/`, 121 new cases,
+  `fast-xml-parser` and `fflate` added by ADR-008): `sifen.codes.ts` (the
+  vocabulary), `sifen.messages.ts` (the six shapes and their constants),
+  `sifen.serializer.ts` (the SOAP envelopes and the batch container + ZIP +
+  base64) and `sifen.parser.ts` (the six responses with the guardrails). **Two
+  corrections it forced on the documents**: an **unlisted result code is
+  carried, not refused** (the catalogue is open — §23.8 item 7, and the Manual's
+  own §10 example is `0160`, which §23.7 does not list), so ADR-008 §5 and the
+  Story's criteria now separate the structural domains from the code catalogue;
+  and **the ZIP is write-only in this Story** — the read direction belongs to
+  the signed family, so `fflate`'s `unzip` path (the only one its advisory ever
+  touched) stays unused. **Remaining WUs**: WU-C the transport and the
+  credential port, WU-D the port's asynchronous capability and the schema, WU-E
+  the service facade and the pure outcome mapping. **The maintainer's boundary
+  of 2026-10-08**: FISC-010 defines the credential port and proves it with a
+  **double**; [[FISC-012]] wires the worker together with the signing stage.
+  **One criterion moved a second time**: FISC-009 pointed "no secret in a log or
+  a stored snapshot" at FISC-010; ADR-008 put the transport in `packages/fiscal`
+  and the wiring in FISC-012, and FISC-010 persists no document and logs no
+  submission, so it re-points to FISC-012 with the reason recorded in the Story.
+  **WU-A landed as commit `3779569`** — 8 files, 2,116 insertions, 49 deletions
+  — and its review is `review-fe256d67a4d60ed5`, closed **`approved`** with **no
+  lenses**: the provider classified the candidate `non_executable_only` at `low`
+  tier and set `lenses_required: false`, so the four-lens review never ran.
+  Inspected **before** committing, and the intended-untracked selection adopted
+  the four new files. **The correction landed as `f71871c`** (6 files, 364
+  insertions, 186 deletions) and its review is `review-7e0ebabc11a3a00c`, also
+  `approved` with **no lenses** and the same `non_executable_only`
+  classification.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).

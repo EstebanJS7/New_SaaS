@@ -328,31 +328,37 @@ worker's logging path, in [[FISC-012]].
 
 **WU-B — the message layer**
 
-- [ ] The synchronous reception shapes match `WS_SiRecepDE_v150.xsd` and
+- [x] The synchronous reception shapes match `WS_SiRecepDE_v150.xsd` and
       `protProcesDE_v150.xsd`: `rEnviDe { dId, xDE }` with the DE **embedded as
       an element**, and `rProtDe`'s field order preserved.
-- [ ] The batch reception shapes match `WS_SiRecepLoteDE_v141.xsd` and the
+- [x] The batch reception shapes match `WS_SiRecepLoteDE_v141.xsd` and the
       Guide's `recibe-lote`: `xDE` as **base64 ZIP**, and the container built as
       `<rLoteDE>` holding one `<rDE>` per document.
-- [ ] The batch query shapes match `WS_SiConsLote_v141.xsd`: `gResProcLote` up
+- [x] The batch query shapes match `WS_SiConsLote_v141.xsd`: `gResProcLote` up
       to 50, each carrying `id`, `dEstRes`, `dProtAut?` and `gResProc` up to 5.
-- [ ] The event reception shapes match `WS_SiRecepEvento_v150.xsd`: `dEvReg`
+- [x] The event reception shapes match `WS_SiRecepEvento_v150.xsd`: `dEvReg`
       with `gGroupGesEve`, and `gResProcEVe` 1..15.
-- [ ] The two consultation shapes match the Manual's §9.4/§9.6 tables and the
+- [x] The two consultation shapes match the Manual's §9.4/§9.6 tables and the
       published v141 artifacts: `rEnviConsDeRequest { dId, dCDC }` and
       `rEnviConsRUC { dId, dRUCCons }`, **both without a signature**, with
       `dCDC` matching `tCDC` (44 characters) and `dRUCCons` matching `tRuc`
       (5–8, no check digit).
-- [ ] `xContenDE` is accepted **bare or wrapped in `rContDe`**, and the reader
+- [x] `xContenDE` is accepted **bare or wrapped in `rContDe`**, and the reader
       never assumes which — §23.8 records why both are possible.
-- [ ] The ZIP container is read and written by the dependency ADR-008 chose, and
-      a round trip through it is asserted.
-- [ ] **No value is coerced**: `dId`, `dCodRes`, `dCodResLot`, `dProtConsLote`
+- [x] The ZIP container is **written** by the dependency ADR-008 chose, and the
+      suite unzips it to assert the container's content and its single entry.
+      The **read** direction is unused: no in-scope response carries a ZIP.
+- [x] **No value is coerced**: `dId`, `dCodRes`, `dCodResLot`, `dProtConsLote`
       and every CDC stay strings, asserted on a response whose codes carry
       leading zeros and whose batch number is longer than 2^53.
-- [ ] **Every parsed value is validated against a published domain**, and an
-      unknown `dEstRes` or an unknown result code is **refused**, never coerced
-      into an outcome.
+- [x] **Every parsed value is validated against a published domain**, in the two
+      kinds ADR-008 §5 names: the **structural** domains are refused (an unknown
+      `dEstRes`, a code that is not four digits, a malformed CDC, `tRuc` or
+      base64), while the **result-code catalogue is an open set** — an unlisted
+      but well-formed code is carried as `unknown` with its raw value, never
+      coerced into an outcome. The reason is §23.8 item 7 plus the Manual's own
+      §10 worked example (`0160`, which §23.7 does not list): refusing an
+      unlisted code would refuse a legitimate response.
 
 **WU-C — the transport and the credential port**
 
@@ -498,7 +504,37 @@ the rest of the Story:
    signed family's own open question and the resolved 48-hour path are recorded
    above, and §23 was rewritten with it.
 
-**WU-B, WU-C, WU-D and WU-E are not implemented.** The Story's status stays
+**WU-B — the message layer.** Four modules under `packages/fiscal/src/sifen/`,
+all pure, with 121 new cases in four suites:
+
+```text
+sifen.codes.ts       the vocabulary: dEstRes's three values, 0300/0301,
+                     0360-0364 with the Guide's 10 minutes and 48 hours,
+                     Tabla G's 0420-0422 and Tabla H's 0500-0502
+sifen.messages.ts    the six services' shapes and every constant that pins them
+sifen.serializer.ts  the SOAP envelope and the six request bodies, the batch
+                     container, its ZIP and its base64
+sifen.parser.ts      the six responses, with ADR-008's guardrails
+```
+
+**Two judgement calls the implementation surfaced, both recorded rather than
+smoothed over:**
+
+1. **An unlisted result code is carried, not refused** — and that corrects this
+   Story's own wording. §23.8 item 7 records that no retrieved source enumerates
+   `dCodRes`, and the Manual's §10 worked example is `0160`, which §23.7 does
+   not list. So the _structural_ domains are refused (an unknown `dEstRes`, a
+   non-four-digit code, a malformed CDC/`tRuc`/`dId`/base64) while the catalogue
+   is treated as open: the descriptor is total and answers `unknown` carrying
+   the raw code, and the coercion happens nowhere. ADR-008 §5 and the acceptance
+   criteria above were corrected to say exactly that.
+2. **`dEstRes` is matched case-sensitively** against §10's
+   `Aprobado con observación`. §23.7 quotes the Guide's prose spelling that one
+   with a capital `O`, and prose is not the field value: a service that sends
+   the capital would be refused as unknown, which is a homologation check for
+   [[FISC-013]] rather than a guess made here.
+
+**WU-C, WU-D and WU-E are not implemented.** The Story's status stays
 `in-progress`.
 
 ## Verification
@@ -580,14 +616,19 @@ odd/tasks/fisc-010-dnit-web-services.md           the work-unit plan
 and, for the WUs that follow:
 
 ```text
-packages/fiscal/src/sifen/**                      the transport, messages, facade
+packages/fiscal/src/sifen/sifen.codes.ts        the result-code vocabulary
+packages/fiscal/src/sifen/sifen.messages.ts     the six shapes and their constants
+packages/fiscal/src/sifen/sifen.serializer.ts   the envelopes and the batch ZIP
+packages/fiscal/src/sifen/sifen.parser.ts       the responses and the guardrails
 packages/fiscal/src/fiscal-provider.port.ts       SUBMITTED, providerReference, query
 packages/fiscal/src/fiscal-provider.module.ts     forRoot(), the credential token
-packages/fiscal/package.json                      fast-xml-parser, fflate
 packages/database/prisma/migrations/**            provider_reference
 apps/api/src/fiscal/**                            the status list and zod enum
 apps/worker/src/**                                unchanged by this Story
 ```
+
+and WU-C will add the transport, the credential port and the facade under the
+same directory.
 
 ## Completion Notes
 

@@ -59,12 +59,17 @@ because both pending branches touch the two bookkeeping files WU-A edits, and
       block), and the tracker. Docs-only: the content commit plus the record of
       its commit, its review and the branch's gates. **Landed 2026-10-08 —
       `3779569`, plus the record commit that carries this line.**
-- [ ] **WU-B — the message layer (pure).** The request and response shapes of
+- [x] **WU-B — the message layer (pure).** The request and response shapes of
       the **six** services — reception, batch reception, batch query, event
       reception, the **CDC query** (`rEnviConsDeRequest`) and the **RUC status
       query** (`rEnviConsRUC`) — as types plus serializers and parsers, with the
       result-code tables. No I/O: fixtures come from the official schemas and
-      from the Guide's own examples.
+      from the Guide's own examples. **Landed 2026-10-08**: four modules under
+      `packages/fiscal/src/sifen/` (`codes`, `messages`, `serializer`,
+      `parser`), 121 new cases, and the two ADR-008 dependencies added to
+      `packages/fiscal`. Two document corrections came out of it: an unlisted
+      result code is **carried, not refused**, and the ZIP is **write-only** in
+      this Story.
 - [ ] **WU-C — the transport.** The SOAP 1.2 Document/Literal client over
       `node:https` with a per-call mutual-TLS agent built from the tenant's
       certificate, the `FiscalCredentialPort`, and the guardrails ADR-008
