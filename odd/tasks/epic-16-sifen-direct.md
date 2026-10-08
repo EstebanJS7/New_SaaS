@@ -366,92 +366,107 @@ candidate 1 exists.
       worker also does not build a DE at all today — it hands invoice data to
       the port and the fake provides. Recorded in the Story under "Why this
       acceptance criterion moved" and in the epic's FISC-012 row.
-- [~] T6 — **FISC-010: DNIT web services — in progress 2026-10-08.** Branch
-  `feat/epic-16-fisc-010-dnit-web-services` from **`68b3c74`** (chosen by the
-  maintainer over `ffd08a1`, because `4907e65` — the epic's ADR-order correction
-  — and the FISC-011 completion commits are not yet in `main`, and both touch
-  the bookkeeping files this work unit edits). Feature record:
-  `odd/tasks/fisc-010-dnit-web-services.md`. Story:
-  `docs/02-stories/FISC-010-dnit-web-services.md`. **WU-A, docs-only, is this
-  commit**: [[ADR-007]] and [[ADR-008]] accepted 2026-10-08, the Story,
-  `SIFEN-BASELINE.md` **§23** (the service-schema retrieval record, the WSDL
-  block and the outcome model), the epic's ADR list and rows, and this tracker
-  entry. **Three findings from §23 shape the rest of the Story**: **(1)** the
-  v150 **batch** schemas do not exist — `SiRecepLoteDE_v150.xsd`,
-  `ProtProcesLoteDE_v150.xsd`, `resRecepLoteDE_v150.xsd`,
-  `SiResultLoteDE_v150.xsd`, `resResultLoteDE_v150.xsd` and
-  `WS_SiRecepLoteDE_v150.xsd` all return **HTTP 404**, and the batch shapes are
-  published only at **v141**, which is also what the Guide documents; **(2)**
-  the two **consultation** services were first recorded as **blocked** — that
-  was **wrong, and it is corrected here**: the published v150 consultation
-  schemas (`siConsultaDTE.xsd`, `siConsultaArchivoRuc.xsd`) are **different
-  services** (by authorization protocol, by date range, and the RUC archive, all
-  signed and all returning ZIPs), while the Manual's **§9.4 and §9.6** pin the
-  two services the endpoint list names as **unsigned**
-  (`rEnviConsDe { dId, dCDC }`, `rEnviConsRUC { dId, dRUCCons }`) and the
-  published v141 artifacts (`WS_SiConsDE_v141.xsd`, `WS_SiConsRUC_v141.xsd`,
-  **zero `xmldsig` occurrences**) and the Guide's example confirm them — the
-  blocker was a search not yet run (baseline §22.1's lesson), and §23.6/§23.8
-  were rewritten with it; **(3)** the WSDL is unreadable on both hosts
-  (`HTTP 302 → /vdesk/hangup.php3`, and a **bogus path and the host root answer
-  the same**, so the gate is host-wide and the probe says nothing about the
-  paths), which leaves SOAPAction and bindings open and makes "never follow a
-  redirect" a requirement rather than a preference. **WU-B landed 2026-10-08**
-  (4 modules under `packages/fiscal/src/sifen/`, 121 new cases,
-  `fast-xml-parser` and `fflate` added by ADR-008): `sifen.codes.ts` (the
-  vocabulary), `sifen.messages.ts` (the six shapes and their constants),
-  `sifen.serializer.ts` (the SOAP envelopes and the batch container + ZIP +
-  base64) and `sifen.parser.ts` (the six responses with the guardrails). **Two
-  corrections it forced on the documents**: an **unlisted result code is
-  carried, not refused** (the catalogue is open — §23.8 item 7, and the Manual's
-  own §10 example is `0160`, which §23.7 does not list), so ADR-008 §5 and the
-  Story's criteria now separate the structural domains from the code catalogue;
-  and **the ZIP is write-only in this Story** — the read direction belongs to
-  the signed family, so `fflate`'s `unzip` path (the only one its advisory ever
-  touched) stays unused. **WU-B landed as commit `5bdf676`** — 16 files, 3,830
-  insertions — and its review is `review-f16dff5e521484d2`: tier **`medium`**,
-  lens **`review-reliability`**, closed **`approved`** with **four advisories**
-  at `WARNING`/`informational` (`R3-001`..`R3-004`, all in `sifen.parser.ts`,
-  none opening a correction), and the acknowledgement burned the authority. The
-  advisories are recorded in the Story's Technical Debt. **WU-C landed as commit
-  `9f92642`** — 15 files, 2,085 insertions — and its review is
-  `review-ac6687061a6f8f5d`: tier `medium` (reason `executable_change` on the
-  API's fiscal module test), lens `review-reliability`, which found **one
-  CRITICAL** in the transport's response lifecycle. The refuter corroborated it,
-  the bounded correction (plan 40 diff lines) added the
-  `close`-without-`complete` failure path, and the **targeted validator** passed
-  both checks — so the lineage closed `approved` with two
-  `WARNING`/`informational` advisories left. **WU-D landed as commit `a1ce736`**
-  — 18 files, 1,052 insertions — and it took **two review transactions**: the
-  first (`review-535e9a45a5624196`, `high`, four lenses) found one CRITICAL and
-  its correction was **rejected by the targeted validator**, so that lineage
-  went terminal (`escalated`, `native_stop_required`) and the maintainer chose a
-  fresh transaction; the second (`review-68028f3d442967b0`) found the same
-  defect class one level deeper (an unguarded null write of `providerReference`
-  on the retry path), corrected it, and closed **`approved`** with four
-  non-blocking advisories. Both are in the Review coverage section. **WU-E
-  landed as commit `b567265`** — 5 files, 2,195 insertions, 61 new cases (fiscal
-  now 26 files / 507 tests) — and its review is `review-4548d852efe5ee3a`: tier
-  `medium`, lens `review-reliability`, **`approved` on the first pass**, the
-  first work unit of this feature to need no correction, with one advisory at
-  `WARNING`/`informational`. **That closes FISC-010's five work units**: the
-  decisions and the Story, the message layer, the transport and the credential
-  port, the port's asynchronous capability and the schema, and the facade with
-  its outcome mapping. **The maintainer's boundary of 2026-10-08**: FISC-010
-  defines the credential port and proves it with a **double**; [[FISC-012]]
-  wires the worker together with the signing stage. **One criterion moved a
-  second time**: FISC-009 pointed "no secret in a log or a stored snapshot" at
-  FISC-010; ADR-008 put the transport in `packages/fiscal` and the wiring in
-  FISC-012, and FISC-010 persists no document and logs no submission, so it
-  re-points to FISC-012 with the reason recorded in the Story. **WU-A landed as
-  commit `3779569`** — 8 files, 2,116 insertions, 49 deletions — and its review
-  is `review-fe256d67a4d60ed5`, closed **`approved`** with **no lenses**: the
-  provider classified the candidate `non_executable_only` at `low` tier and set
-  `lenses_required: false`, so the four-lens review never ran. Inspected
-  **before** committing, and the intended-untracked selection adopted the four
-  new files. **The correction landed as `f71871c`** (6 files, 364 insertions,
-  186 deletions) and its review is `review-7e0ebabc11a3a00c`, also `approved`
-  with **no lenses** and the same `non_executable_only` classification.
+- [x] T6 — **FISC-010: DNIT web services — DONE 2026-10-08.** Branch
+      `feat/epic-16-fisc-010-dnit-web-services` from **`68b3c74`** (chosen by
+      the maintainer over `ffd08a1`, because `4907e65` — the epic's ADR-order
+      correction — and the FISC-011 completion commits are not yet in `main`,
+      and both touch the bookkeeping files this work unit edits). Feature
+      record: `odd/tasks/fisc-010-dnit-web-services.md`. Story:
+      `docs/02-stories/FISC-010-dnit-web-services.md`. **WU-A, docs-only, is
+      this commit**: [[ADR-007]] and [[ADR-008]] accepted 2026-10-08, the Story,
+      `SIFEN-BASELINE.md` **§23** (the service-schema retrieval record, the WSDL
+      block and the outcome model), the epic's ADR list and rows, and this
+      tracker entry. **Three findings from §23 shape the rest of the Story**:
+      **(1)** the v150 **batch** schemas do not exist —
+      `SiRecepLoteDE_v150.xsd`, `ProtProcesLoteDE_v150.xsd`,
+      `resRecepLoteDE_v150.xsd`, `SiResultLoteDE_v150.xsd`,
+      `resResultLoteDE_v150.xsd` and `WS_SiRecepLoteDE_v150.xsd` all return
+      **HTTP 404**, and the batch shapes are published only at **v141**, which
+      is also what the Guide documents; **(2)** the two **consultation**
+      services were first recorded as **blocked** — that was **wrong, and it is
+      corrected here**: the published v150 consultation schemas
+      (`siConsultaDTE.xsd`, `siConsultaArchivoRuc.xsd`) are **different
+      services** (by authorization protocol, by date range, and the RUC archive,
+      all signed and all returning ZIPs), while the Manual's **§9.4 and §9.6**
+      pin the two services the endpoint list names as **unsigned**
+      (`rEnviConsDe { dId, dCDC }`, `rEnviConsRUC { dId, dRUCCons }`) and the
+      published v141 artifacts (`WS_SiConsDE_v141.xsd`, `WS_SiConsRUC_v141.xsd`,
+      **zero `xmldsig` occurrences**) and the Guide's example confirm them — the
+      blocker was a search not yet run (baseline §22.1's lesson), and
+      §23.6/§23.8 were rewritten with it; **(3)** the WSDL is unreadable on both
+      hosts (`HTTP 302 → /vdesk/hangup.php3`, and a **bogus path and the host
+      root answer the same**, so the gate is host-wide and the probe says
+      nothing about the paths), which leaves SOAPAction and bindings open and
+      makes "never follow a redirect" a requirement rather than a preference.
+      **WU-B landed 2026-10-08** (4 modules under `packages/fiscal/src/sifen/`,
+      121 new cases, `fast-xml-parser` and `fflate` added by ADR-008):
+      `sifen.codes.ts` (the vocabulary), `sifen.messages.ts` (the six shapes and
+      their constants), `sifen.serializer.ts` (the SOAP envelopes and the batch
+      container + ZIP + base64) and `sifen.parser.ts` (the six responses with
+      the guardrails). **Two corrections it forced on the documents**: an
+      **unlisted result code is carried, not refused** (the catalogue is open —
+      §23.8 item 7, and the Manual's own §10 example is `0160`, which §23.7 does
+      not list), so ADR-008 §5 and the Story's criteria now separate the
+      structural domains from the code catalogue; and **the ZIP is write-only in
+      this Story** — the read direction belongs to the signed family, so
+      `fflate`'s `unzip` path (the only one its advisory ever touched) stays
+      unused. **WU-B landed as commit `5bdf676`** — 16 files, 3,830 insertions —
+      and its review is `review-f16dff5e521484d2`: tier **`medium`**, lens
+      **`review-reliability`**, closed **`approved`** with **four advisories**
+      at `WARNING`/`informational` (`R3-001`..`R3-004`, all in
+      `sifen.parser.ts`, none opening a correction), and the acknowledgement
+      burned the authority. The advisories are recorded in the Story's Technical
+      Debt. **WU-C landed as commit `9f92642`** — 15 files, 2,085 insertions —
+      and its review is `review-ac6687061a6f8f5d`: tier `medium` (reason
+      `executable_change` on the API's fiscal module test), lens
+      `review-reliability`, which found **one CRITICAL** in the transport's
+      response lifecycle. The refuter corroborated it, the bounded correction
+      (plan 40 diff lines) added the `close`-without-`complete` failure path,
+      and the **targeted validator** passed both checks — so the lineage closed
+      `approved` with two `WARNING`/`informational` advisories left. **WU-D
+      landed as commit `a1ce736`** — 18 files, 1,052 insertions — and it took
+      **two review transactions**: the first (`review-535e9a45a5624196`, `high`,
+      four lenses) found one CRITICAL and its correction was **rejected by the
+      targeted validator**, so that lineage went terminal (`escalated`,
+      `native_stop_required`) and the maintainer chose a fresh transaction; the
+      second (`review-68028f3d442967b0`) found the same defect class one level
+      deeper (an unguarded null write of `providerReference` on the retry path),
+      corrected it, and closed **`approved`** with four non-blocking advisories.
+      Both are in the Review coverage section. **WU-E landed as commit
+      `b567265`** — 5 files, 2,195 insertions, 61 new cases (fiscal now 26 files
+      / 507 tests) — and its review is `review-4548d852efe5ee3a`: tier `medium`,
+      lens `review-reliability`, **`approved` on the first pass**, the first
+      work unit of this feature to need no correction, with one advisory at
+      `WARNING`/`informational`. **That closes FISC-010's five work units**: the
+      decisions and the Story, the message layer, the transport and the
+      credential port, the port's asynchronous capability and the schema, and
+      the facade with its outcome mapping. **The Story's closure run
+      (2026-10-08)**: 12/12 package gates green for fiscal, database and api,
+      root lint 18/18, typecheck 18/18, test 19/19, build 11/11, `format-check`
+      clean, `db:deploy` + `db:live-verify` green on a freshly created database,
+      and `test:live-pg` at **220/220** — so
+      `docs/02-stories/FISC-010-dnit-web-services.md` moves to `status: done`
+      with every criterion checked or explicitly re-pointed, **215 new test
+      cases across ten suites**, and eleven advisories recorded as accepted
+      debt. **Eleven commits on the branch**: `3779569`, `28c30ab`, `f71871c`,
+      `ff9c485`, `5bdf676`, `61f43ba`, `9f92642`, `8b8a1d8`, `a1ce736`,
+      `f527b67`, `b567265` + the closure commit. **The maintainer's boundary of
+      2026-10-08**: FISC-010 defines the credential port and proves it with a
+      **double**; [[FISC-012]] wires the worker together with the signing stage.
+      **One criterion moved a second time**: FISC-009 pointed "no secret in a
+      log or a stored snapshot" at FISC-010; ADR-008 put the transport in
+      `packages/fiscal` and the wiring in FISC-012, and FISC-010 persists no
+      document and logs no submission, so it re-points to FISC-012 with the
+      reason recorded in the Story. **WU-A landed as commit `3779569`** — 8
+      files, 2,116 insertions, 49 deletions — and its review is
+      `review-fe256d67a4d60ed5`, closed **`approved`** with **no lenses**: the
+      provider classified the candidate `non_executable_only` at `low` tier and
+      set `lenses_required: false`, so the four-lens review never ran. Inspected
+      **before** committing, and the intended-untracked selection adopted the
+      four new files. **The correction landed as `f71871c`** (6 files, 364
+      insertions, 186 deletions) and its review is `review-7e0ebabc11a3a00c`,
+      also `approved` with **no lenses** and the same `non_executable_only`
+      classification.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).

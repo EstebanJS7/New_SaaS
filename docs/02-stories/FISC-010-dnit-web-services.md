@@ -5,7 +5,7 @@ title:
   DNIT web services — the transport, the message layer and the asynchronous
   outcome model
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-008
@@ -441,10 +441,16 @@ worker's logging path, in [[FISC-012]].
 
 **Gates**
 
-- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass
+- [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass
       for `@newsaas/fiscal`, `@newsaas/database` and `@newsaas/api`, and the
-      root gates pass.
-- [ ] No protocol constant is written without a cited source in §23.
+      root gates pass. _(Closure run 2026-10-08: 12/12 package gates green, root
+      lint 18/18, typecheck 18/18, test 19/19, build 11/11, `format-check`
+      clean, `db:deploy` + `db:live-verify` green on a freshly created database,
+      and `test:live-pg` at **220/220**.)_
+- [x] No protocol constant is written without a cited source in §23. _(Every
+      constant in the four modules, the facade and the mappers carries its §23
+      line, and the port's public surface is asserted to contain no
+      SIFEN-specific string at all.)_
 
 ## Domain Invariants
 
@@ -659,25 +665,50 @@ they run.
 ## Verification
 
 ```text
-WU-A   docs only: no code, no migration, no schema, so no package test or live-PG
-       gate applies. What was run on the branch, forced rather than served from
-       turbo's cache, all green:
+Closure run 2026-10-08, one pass, every command run individually.
 
-         pnpm format-check        All matched files use Prettier code style!
-         pnpm lint --force        18/18
-         pnpm typecheck --force   18/18
-         pnpm test --force        19/19
-         pnpm build --force       11/11
+package gates                       @newsaas/fiscal    lint, typecheck, test, build   12/12 green
+                                    @newsaas/database  lint, typecheck, test, build
+                                    @newsaas/api       lint, typecheck, test, build
+root gates                          pnpm lint          18/18
+                                    pnpm typecheck     18/18
+                                    pnpm test          19/19
+                                    pnpm build         11/11
+                                    pnpm format-check  All matched files use Prettier code style!
+live PostgreSQL                     db:deploy + db:live-verify on a freshly created
+                                    database                          green, then dropped
+                                    api test:live-pg                  220/220
 
-       `pnpm --filter @newsaas/api test:live-pg` is not applicable to WU-A:
-       it changes no migration and no code. The base it branches from,
-       `68b3c74`, already carries the recorded 218/218 run.
+test totals                         fiscal     507 (26 files)
+                                    database   445 (24 files)
+                                    api        1149 (+220 live-PG skipped in the unit run)
+                                    worker      79
+                                    web       1087
+                                    ui 36, secret-store 50, shared 16, preflight 6,
+                                    typescript-config 1
 ```
+
+WU-A's own gates are in the Story's history rather than here: a docs-only work
+unit runs `format-check` and the four root gates, and the branch carries the
+forced run (`18/18`, `18/18`, `19/19`, `11/11`).
 
 ## Tests Added
 
+The Story added **215 cases across ten new suites**, and one existing suite was
+extended:
+
 ```text
-None yet. WU-A adds documents.
+packages/fiscal/src/sifen/sifen.messages.test.ts      20
+packages/fiscal/src/sifen/sifen.codes.test.ts         18
+packages/fiscal/src/sifen/sifen.serializer.test.ts    27
+packages/fiscal/src/sifen/sifen.parser.test.ts        56
+packages/fiscal/src/sifen/sifen.transport.test.ts     24   against a real TLS handshake
+packages/fiscal/src/fiscal-credential.port.test.ts     5
+packages/fiscal/src/sifen/sifen.facade.test.ts        16
+packages/fiscal/src/sifen/sifen.outcomes.test.ts      45   table-driven over every row
+packages/database/src/schema-fiscal-provider-reference.test.ts   7   static migration
+apps/api/test/live-pg-isolation.e2e-spec.ts           4 new live cases (220 total)
+apps/worker/src/fiscal-submission/fiscal-submission.handler.test.ts  3 new cases
 ```
 
 ## Known Limitations
@@ -818,8 +849,6 @@ caveat as above:
 - **`CANCEL_PENDING` has no resolver.** SIFEN's cancellation is an event whose
   reception is synchronous, so a SIFEN adapter may never produce it; whether it
   does is [[FISC-012]]'s finding ([[ADR-007]] records the open question).
-- **The staff status list and the API's zod enum omit `SIGNING`** — a drift
-  found while scoping WU-D, fixed there rather than left.
 
 ## Decisions / ADRs
 
@@ -848,34 +877,72 @@ packages/fiscal/src/sifen/sifen.serializer.ts   the envelopes and the batch ZIP
 packages/fiscal/src/sifen/sifen.parser.ts       the responses and the guardrails
 packages/fiscal/src/sifen/sifen.transport.ts    the SOAP/mTLS POST
 packages/fiscal/src/sifen/sifen.tls.fixture.ts  the mutual-TLS double (testing only)
+packages/fiscal/src/sifen/sifen.facade.ts       the six services and their endpoints
+packages/fiscal/src/sifen/sifen.outcomes.ts     the pure mapping to the port
 packages/fiscal/src/fiscal-credential.port.ts   the per-call credential port
 packages/fiscal/src/fiscal-provider.module.ts   forRoot(), both tokens
-packages/fiscal/src/fiscal-provider.port.ts       SUBMITTED, providerReference, query
-packages/database/prisma/migrations/**            provider_reference
-apps/api/src/fiscal/**                            the status list and zod enum
-apps/worker/src/**                                unchanged by this Story
+packages/fiscal/src/fiscal-provider.port.ts     SUBMITTED, providerReference, query
+packages/fiscal/src/fake-fiscal.provider.ts     the scripted query and handle
+packages/database/prisma/migrations/20261008000001_fiscal_document_provider_reference/**
+packages/database/src/schema-fiscal-provider-reference.test.ts
+apps/api/src/fiscal/fiscal.repository.ts        the status vocabulary
+apps/api/src/fiscal/fiscal.zod.ts
+apps/api/test/live-pg-isolation.e2e-spec.ts     the live proofs
+apps/worker/src/fiscal-submission/fiscal-submission.handler.ts   the SUBMITTED writer
 ```
 
-and WU-E will add the service facade under the same directory.
+and [[FISC-012]] adds the provider that implements the port, the worker's
+credential wiring and the reconciliation stage.
 
 ## Completion Notes
 
-**WU-A is done and the Story is not.** What WU-A settles: the port's
-asynchronous shape, the transport and credential boundary, the parser and ZIP
-dependencies with their advisory record, the six message shapes, the outcome
-mapping, and — after a correction — the resolution of the consultation services
-that a first reading had recorded as blocked.
+**`done` means the web-service layer exists, is cited, is tested and is reviewed
+— and it does not mean SIFEN has ever answered us.**
 
-What it deliberately does not settle, and what a reader should not assume:
+What is done, and what a reader can rely on:
 
-- **No DNIT call works yet.** There is no transport, no credential read and no
-  provider; the test environment is behind an F5 gate and no habilitación
-  exists.
-- **The signed query family is not "later work"** — it is blocked on a source,
-  and the difference matters for planning. The two services the endpoint list
-  names are not.
-- **The signed DE is still not persisted**, and the criterion that says so moved
-  to [[FISC-012]] with the reason recorded.
+- **The protocol is cited, not remembered.** Every element name, field, code,
+  limit and timing in `packages/fiscal/src/sifen/**` traces to a line of
+  `SIFEN-BASELINE.md` §23, which records the artifacts' HTTP status and byte
+  counts, the two findings that shaped the Story (the v150 batch schemas do not
+  exist; the published v150 consultation schemas are _different services_), and
+  the open questions the client does not invent answers to.
+- **The six services are implemented end to end**: the shapes and their parsers,
+  the SOAP 1.2 envelopes, the mutual-TLS transport with a per-call credential,
+  the asynchronous outcome model, and the facade that binds each service to its
+  endpoint. `pnpm --filter @newsaas/fiscal test` covers them with 507 cases, 215
+  of them added by this Story, and the mutual-TLS suite runs against a real
+  handshake rather than a mocked agent.
+- **The port can express what SIFEN actually answers**: `SUBMITTED` with a
+  handle, `PROCESSING` with a retry bound, the CDC on both sides of a query, and
+  a `provider_reference` column that the transition guard refuses to clear.
+- **Everything the Story moved is named where it moved to**: two criteria to
+  [[FISC-012]] (the provider's per-call read and the `null`-credential mapping),
+  one to [[FISC-012]] (a transient query failure leaving the row `SUBMITTED`),
+  and [[FISC-009]]'s "no secret in a log or a stored snapshot" re-pointed to
+  [[FISC-012]] because the stage that persists a document is the worker's.
 
-_Status must remain non-`done` until every acceptance criterion and gate
-passes._
+What `done` does **not** mean:
+
+- **No DNIT call has ever been made.** The test environment is behind an F5 gate
+  (`302 → /vdesk/hangup.php3` for every path), the WSDL is unread, no
+  habilitación exists and the certificate is a fixture. The client is proven
+  against a local double; only [[FISC-013]] can prove it against SIFEN.
+- **`SifenDirectFiscalProvider` does not exist.** Nothing selects
+  `SIFEN_DIRECT`, the worker still injects the fake, the worker has no
+  credential read, and the reconciliation sweep does not walk `SUBMITTED`. All
+  of that is [[FISC-012]].
+- **The signed DE is still not persisted** (`xml_storage_key` is written by
+  nothing), and the criterion that says so lives in [[FISC-012]].
+- **The signed v150 query family is blocked on a source**, not deferred: no
+  retrieved document pins the signature profile of a consultation request, so
+  the archive and the bulk queries are out of scope here.
+- **Eleven advisories from four reviews are open and accepted as-is**, recorded
+  under Technical Debt with the coordinates the closures gave.
+- **One criterion of this Story's own review was re-pointed twice** (FISC-009's
+  "no secret in a log or a stored snapshot"), and the Story records both moves
+  and the reason rather than leaving a stale pointer.
+
+Also closed here, because it was this Story's find rather than its work: the
+`SIGNING` drift in the five TypeScript status mirrors (API repository, API zod
+enum, worker handler, web union and web label map), fixed in WU-D.

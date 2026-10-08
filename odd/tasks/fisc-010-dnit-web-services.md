@@ -2,7 +2,7 @@
 feature: fisc-010-dnit-web-services
 epic: EPIC-16
 story: FISC-010
-status: in-progress
+status: done
 created: 2026-10-08
 branch: feat/epic-16-fisc-010-dnit-web-services
 ---
@@ -153,6 +153,12 @@ gates    format-check green; lint 18/18, typecheck 18/18, test 19/19 and build
          11/11 forced; fiscal 507 tests (26 files), worker 79, database 445,
          api 1149 (+220 live-PG skipped), web 1087; live-PostgreSQL 220/220; and
          `db:live-verify` green on a freshly created database
+closure  2026-10-08: 12/12 package gates for fiscal/database/api, the four root
+         gates, `format-check`, `db:deploy` + `db:live-verify` on a fresh
+         database, and `test:live-pg` at 220/220. The Story is `done`; every
+         criterion is checked or explicitly re-pointed to FISC-012, 215 new
+         cases across ten suites, and eleven advisories are recorded as accepted
+         debt.
 ```
 
 ## Review record
