@@ -15768,20 +15768,22 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         attemptCount?: number;
         cancelledAt?: Date | null;
         resolvedAt?: Date | null;
+        providerReference?: string | null;
       } = {}
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
         INSERT INTO "fiscal_document" (
           "id", "tenant_id", "invoice_id", "provider", "status", "external_id",
-          "cdc", "attempt_count", "cancelled_at", "resolved_at"
+          "cdc", "attempt_count", "cancelled_at", "resolved_at", "provider_reference"
         ) VALUES (
           ${id}::uuid, ${tenantId}::uuid, ${invoiceId}::uuid,
           ${options.provider ?? "THIRD_PARTY"}::fiscal_provider,
           ${options.status ?? "PENDING"}::fiscal_document_status,
           ${options.externalId ?? null}, ${options.cdc ?? null},
           ${options.attemptCount ?? 0}, ${options.cancelledAt ?? null}::timestamptz,
-          ${options.resolvedAt ?? null}::timestamptz
+          ${options.resolvedAt ?? null}::timestamptz,
+          ${options.providerReference ?? null}
         )
       `;
       return id;
@@ -16320,6 +16322,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         "cancelled_at",
         "created_at",
         "updated_at",
+        // EPIC-16 FISC-010 WU-D appended it by `ALTER TABLE ... ADD COLUMN`,
+        // which appends physically, so it is last here and not next to `cdc`
+        // where the Prisma model declares it.
+        "provider_reference",
       ]);
       const types = new Map(
         rows.map((row) => [row.column_name, `${row.data_type}:${row.udt_name}`])
@@ -16333,6 +16339,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         "kude_storage_key",
         "last_error_code",
         "last_error_message",
+        "provider_reference",
       ])
         expect(types.get(column), column).toBe("text:text");
       for (const column of ["request_snapshot", "response_snapshot"])
@@ -16668,6 +16675,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         // edge. Cancellation belongs to FISC-005, so the FISC-004 guard rejects
         // every transition out of APPROVED until that slice extends it; that
         // rejected edge is pinned separately below.
+        //
+        // FISC-010 WU-D extends the walk with the asynchronous hand-over: the
+        // handle the provider returns arrives WITH the state and survives the
+        // resolution that follows (ADR-007 §4).
         const sale = await insertRawFiscalSale(tx, tenantAId);
         const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
         const id = await insertRawFiscalDocument(tx, tenantAId, invoice, { status: "PENDING" });
@@ -16675,18 +16686,41 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SENDING' WHERE "id" = ${id}::uuid`
         ).resolves.toBe(1);
         await expect(
-          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SUBMITTED', "external_id" = 'provider-1', "submitted_at" = now() WHERE "id" = ${id}::uuid`
+          tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'SUBMITTED', "external_id" = 'provider-1', "submitted_at" = now(), "provider_reference" = 'operation-1' WHERE "id" = ${id}::uuid`
         ).resolves.toBe(1);
+        const [handedOver] = await tx.$queryRaw<
+          {
+            provider_reference: string | null;
+            submitted_at: Date | null;
+            resolved_at: Date | null;
+          }[]
+        >`
+          SELECT "provider_reference", "submitted_at", "resolved_at"
+          FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        // The handle is what the reconciliation path polls with, so an
+        // unresolved row without one is exactly the lost-response case
+        // ADR-007 §2 refuses to leave unrecoverable.
+        expect(handedOver?.provider_reference).toBe("operation-1");
+        expect(handedOver?.submitted_at).not.toBeNull();
+        // SUBMITTED is not a resolution.
+        expect(handedOver?.resolved_at).toBeNull();
         await expect(
           tx.$executeRaw`UPDATE "fiscal_document" SET "status" = 'APPROVED', "resolved_at" = now() WHERE "id" = ${id}::uuid`
         ).resolves.toBe(1);
         const [resolved] = await tx.$queryRaw<
-          { external_id: string | null; resolved_at: Date | null }[]
+          {
+            external_id: string | null;
+            resolved_at: Date | null;
+            provider_reference: string | null;
+          }[]
         >`
-          SELECT "external_id", "resolved_at" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+          SELECT "external_id", "resolved_at", "provider_reference"
+          FROM "fiscal_document" WHERE "id" = ${id}::uuid
         `;
         expect(resolved?.external_id).toBe("provider-1");
         expect(resolved?.resolved_at).not.toBeNull();
+        expect(resolved?.provider_reference).toBe("operation-1");
       });
     }, 30_000);
 
@@ -16779,6 +16813,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       ["PENDING", "CANCEL_PENDING", null],
       ["QUEUED", "SUBMITTED", null],
       ["SUBMITTED", "SENDING", null],
+      // An unresolved document is neither resolved nor cancelled: the
+      // reconciliation path resolves it, and cancellation of a document the
+      // provider still holds is not a state this guard admits (ADR-007 §5).
+      ["SUBMITTED", "CANCELLED", null],
       ["CANCEL_PENDING", "APPROVED", null],
       ["ERROR", "APPROVED", null],
     ] as const)(
@@ -16845,6 +16883,13 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       ["cdc", "'cdc-1'", "a fiscal document cdc is write-once"],
       ["submitted_at", "now()", "fiscal document submitted_at cannot be cleared"],
       ["resolved_at", "now()", "fiscal document resolved_at cannot be cleared"],
+      // FISC-010 WU-D: the operation handle joins them. A handle erased after
+      // resolution cannot be audited, and the row's history is the record.
+      [
+        "provider_reference",
+        "'operation-1'",
+        "fiscal document provider_reference cannot be cleared",
+      ],
     ] as const)(
       "never clears %s once set",
       async (column, setValue, expectedMessage) => {

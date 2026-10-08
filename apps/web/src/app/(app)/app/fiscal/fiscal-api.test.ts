@@ -60,7 +60,9 @@ describe("fiscal-api", () => {
     expect(Object.keys(DOC)).not.toEqual(
       expect.arrayContaining(["tenantId", "requestSnapshot", "responseSnapshot"])
     );
-    expect(FISCAL_DOCUMENT_STATUSES).toHaveLength(9);
+    // Nine until FISC-010 WU-D: FISC-009 had appended SIGNING to the database
+    // enum while this mirror still described the older set.
+    expect(FISCAL_DOCUMENT_STATUSES).toHaveLength(10);
   });
   it("issues all four calls through the fiscal proxy", async () => {
     fetchMock

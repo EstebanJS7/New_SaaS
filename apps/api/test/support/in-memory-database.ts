@@ -563,6 +563,10 @@ export type InvoiceStatusRow = "DRAFT" | "CONFIRMED" | "CANCELLED";
 export type FiscalDocumentStatusRow =
   | "PENDING"
   | "QUEUED"
+  // FISC-009 appended SIGNING to `fiscal_document_status`; this double kept nine
+  // values until FISC-010 WU-D closed the drift. Lifecycle order, matching the
+  // API's own union: only the Prisma enum has to append.
+  | "SIGNING"
   | "SENDING"
   | "SUBMITTED"
   | "APPROVED"
@@ -580,6 +584,12 @@ export interface FiscalDocumentRow {
   attemptCount: number;
   externalId: string | null;
   cdc: string | null;
+  /**
+   * The provider's handle for an unresolved operation; never cleared (ADR-007 §4).
+   * Optional because a fixture written before this column existed does not carry
+   * it — the rows this double creates always do, and it defaults to `null`.
+   */
+  providerReference?: string | null;
   lastErrorCode: string | null;
   cancelledAt?: Date | null;
   lastErrorMessage?: string | null;
@@ -1602,6 +1612,7 @@ export interface IsolationDatabase {
           cancelledAt?: Date;
           lastErrorCode?: string | null;
           lastErrorMessage?: string | null;
+          providerReference?: string;
         };
       }) => { count: number };
     };
@@ -3783,6 +3794,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           attemptCount: 0,
           externalId: null,
           cdc: null,
+          providerReference: null,
           lastErrorCode: null,
           createdAt: now,
           updatedAt: now,
@@ -3809,6 +3821,9 @@ export function createIsolationDatabase(): IsolationDatabase {
           if ("cancelledAt" in data) row.cancelledAt = data.cancelledAt;
           if ("lastErrorCode" in data) row.lastErrorCode = data.lastErrorCode ?? null;
           if ("lastErrorMessage" in data) row.lastErrorMessage = data.lastErrorMessage ?? null;
+          // Write-once in the real database, so an absent key must leave it
+          // alone rather than clearing it: `undefined` is not a write.
+          if (data.providerReference !== undefined) row.providerReference = data.providerReference;
           row.updatedAt = new Date();
           count += 1;
         }

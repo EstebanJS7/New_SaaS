@@ -9,6 +9,10 @@ export const fiscalTextareaClassName =
 export const FISCAL_STATUS_LABELS: Record<FiscalDocumentStatus, string> = {
   PENDING: "Pending",
   QUEUED: "Queued",
+  // FISC-009 appended SIGNING to `fiscal_document_status`; this label map kept
+  // nine entries until FISC-010 WU-D closed the drift, and the key order follows
+  // the lifecycle rather than the enum's append order.
+  SIGNING: "Signing",
   SENDING: "Sending",
   SUBMITTED: "Submitted",
   APPROVED: "Approved",

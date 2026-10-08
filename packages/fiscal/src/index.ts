@@ -21,6 +21,9 @@ export type {
   FiscalIssueResult,
   FiscalProviderId,
   FiscalProviderPort,
+  FiscalQueryOutcome,
+  FiscalQueryRequest,
+  FiscalQueryResult,
 } from "./fiscal-provider.port.js";
 // Dev/test only; this fake does not implement SIFEN.
 export { createFakeFiscalProvider, FakeFiscalProvider } from "./fake-fiscal.provider.js";

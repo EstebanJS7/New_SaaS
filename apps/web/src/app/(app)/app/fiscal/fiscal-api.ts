@@ -1,9 +1,16 @@
 "use client";
 
-/** Staff fiscal client. Every request uses the authenticated web proxy; tenant authority stays server-side. */
+/**
+ * Staff fiscal client. Every request uses the authenticated web proxy; tenant authority stays server-side.
+ *
+ * Mirrors the API's and the database's `fiscal_document_status`: FISC-009 appended
+ * `SIGNING` and this mirror kept nine values until FISC-010 WU-D closed the
+ * drift. Listed in lifecycle order, which is the order the filter renders.
+ */
 export type FiscalDocumentStatus =
   | "PENDING"
   | "QUEUED"
+  | "SIGNING"
   | "SENDING"
   | "SUBMITTED"
   | "APPROVED"
@@ -14,6 +21,7 @@ export type FiscalDocumentStatus =
 export const FISCAL_DOCUMENT_STATUSES = [
   "PENDING",
   "QUEUED",
+  "SIGNING",
   "SENDING",
   "SUBMITTED",
   "APPROVED",
