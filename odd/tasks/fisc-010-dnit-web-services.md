@@ -70,12 +70,18 @@ because both pending branches touch the two bookkeeping files WU-A edits, and
       `packages/fiscal`. Two document corrections came out of it: an unlisted
       result code is **carried, not refused**, and the ZIP is **write-only** in
       this Story.
-- [ ] **WU-C — the transport.** The SOAP 1.2 Document/Literal client over
+- [x] **WU-C — the transport.** The SOAP 1.2 Document/Literal client over
       `node:https` with a per-call mutual-TLS agent built from the tenant's
       certificate, the `FiscalCredentialPort`, and the guardrails ADR-008
       decides (response size cap, DOCTYPE refusal, no value coercion, no
       cross-tenant socket reuse). Proven against a local TLS double that
-      verifies the client certificate.
+      verifies the client certificate. **Landed 2026-10-08**: commit `9f92642`,
+      33 new cases (fiscal 24 files / 421 tests),
+      `FiscalProviderModule.forRoot()` wired in both deployables, and the
+      live-PostgreSQL gate re-run at 218/218 because the API's composition root
+      moved. Two ADR-008 gaps closed by the work: the per-call trust anchor, and
+      the two criteria re-pointed to [[FISC-012]]. Its review required the
+      feature's first bounded correction.
 - [ ] **WU-D — the port's asynchronous capability and the schema.** The outcome
       vocabulary, the `query` capability, the migration that gives the
       asynchronous reference a column and `submitted_at` its writer, and the
@@ -119,9 +125,18 @@ WU-B     5bdf676  feat(FISC-010): the SIFEN message layer — 16 files, 3,830
                   `WARNING`/`informational` (`R3-001`..`R3-004` in
                   `sifen.parser.ts`), none opening a correction; the
                   acknowledgement burned the authority
+WU-C     9f92642  feat(FISC-010): the SIFEN transport and the per-call credential
+                  port — 15 files, 2,085 insertions (33 new cases), the TLS
+                  double, `forRoot()`, and the trust-anchor gap ADR-008 closed
+         review-ac6687061a6f8f5d  closed `approved`, tier `medium`, lens
+                  `review-reliability`, **one CRITICAL corrected** (refuter ->
+                  correction plan of 40 diff lines -> targeted validation), then
+                  two advisories at `WARNING`/`informational`; the
+                  acknowledgement burned the authority
 gates    format-check green; lint 18/18, typecheck 18/18, test 19/19 and build
-         11/11, all forced rather than served from turbo's cache; the fiscal
-         package alone at 388 tests (22 files), 121 of them new
+         11/11 forced; the fiscal package alone at 421 tests (24 files); the
+         API and worker lint/typecheck/test green; and the live-PostgreSQL gate
+         at 218/218, run because WU-C moved the API's composition root
 ```
 
 ## Review record
@@ -147,6 +162,22 @@ explicitly-labelled reading, because **the reviewer's full text is not
 retained** by this facade. `inspect` ran before the commit, the
 intended-untracked selection adopted the eight new files, and the
 acknowledgement burned the authority.
+
+**WU-C — `review-ac6687061a6f8f5d`, `approved` after one bounded correction
+(2026-10-08).** Tier `medium`, one lens (`review-reliability`), 15 files and
+2,093 changed lines. The lens raised one **CRITICAL** in the transport's
+response lifecycle; STATUS demanded a **refuter**, which corroborated it as
+candidate-caused; `correction_required` followed and STATUS demanded a
+**correction plan**, submitted as 40 diff lines **before** the edit; the
+correction added a `close`-without-`complete` failure path plus a test for the
+aggregate property; STATUS then demanded a **targeted validation**, which passed
+`original_criteria` and `correction_regression`; and the acknowledgement burned
+the authority. Two advisories survive at `WARNING`/`informational` and the
+validator's follow-up is recorded in the Story's Technical Debt. **The
+validation route is not `gentle_review_capture`**: the vector is
+`gentle-ai review capture-validation --materialize`, the host relay runs the
+role independently over the frozen trees, and the verdict is submitted with
+`--input`.
 
 **WU-A's correction — `review-7e0ebabc11a3a00c`, `approved`, no lenses
 (2026-10-08).** The same classification over the six corrected files: tier

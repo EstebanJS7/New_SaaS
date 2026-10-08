@@ -413,24 +413,31 @@ candidate 1 exists.
   lens **`review-reliability`**, closed **`approved`** with **four advisories**
   at `WARNING`/`informational` (`R3-001`..`R3-004`, all in `sifen.parser.ts`,
   none opening a correction), and the acknowledgement burned the authority. The
-  advisories are recorded in the Story's Technical Debt. **Remaining WUs**: WU-C
-  the transport and the credential port, WU-D the port's asynchronous capability
-  and the schema, WU-E the service facade and the pure outcome mapping. **The
-  maintainer's boundary of 2026-10-08**: FISC-010 defines the credential port
-  and proves it with a **double**; [[FISC-012]] wires the worker together with
-  the signing stage. **One criterion moved a second time**: FISC-009 pointed "no
-  secret in a log or a stored snapshot" at FISC-010; ADR-008 put the transport
-  in `packages/fiscal` and the wiring in FISC-012, and FISC-010 persists no
-  document and logs no submission, so it re-points to FISC-012 with the reason
-  recorded in the Story. **WU-A landed as commit `3779569`** — 8 files, 2,116
-  insertions, 49 deletions — and its review is `review-fe256d67a4d60ed5`, closed
-  **`approved`** with **no lenses**: the provider classified the candidate
-  `non_executable_only` at `low` tier and set `lenses_required: false`, so the
-  four-lens review never ran. Inspected **before** committing, and the
-  intended-untracked selection adopted the four new files. **The correction
-  landed as `f71871c`** (6 files, 364 insertions, 186 deletions) and its review
-  is `review-7e0ebabc11a3a00c`, also `approved` with **no lenses** and the same
-  `non_executable_only` classification.
+  advisories are recorded in the Story's Technical Debt. **WU-C landed as commit
+  `9f92642`** — 15 files, 2,085 insertions — and its review is
+  `review-ac6687061a6f8f5d`: tier `medium` (reason `executable_change` on the
+  API's fiscal module test), lens `review-reliability`, which found **one
+  CRITICAL** in the transport's response lifecycle. The refuter corroborated it,
+  the bounded correction (plan 40 diff lines) added the
+  `close`-without-`complete` failure path, and the **targeted validator** passed
+  both checks — so the lineage closed `approved` with two
+  `WARNING`/`informational` advisories left. **Remaining WUs**: WU-D the port's
+  asynchronous capability and the schema, WU-E the service facade and the pure
+  outcome mapping. **The maintainer's boundary of 2026-10-08**: FISC-010 defines
+  the credential port and proves it with a **double**; [[FISC-012]] wires the
+  worker together with the signing stage. **One criterion moved a second time**:
+  FISC-009 pointed "no secret in a log or a stored snapshot" at FISC-010;
+  ADR-008 put the transport in `packages/fiscal` and the wiring in FISC-012, and
+  FISC-010 persists no document and logs no submission, so it re-points to
+  FISC-012 with the reason recorded in the Story. **WU-A landed as commit
+  `3779569`** — 8 files, 2,116 insertions, 49 deletions — and its review is
+  `review-fe256d67a4d60ed5`, closed **`approved`** with **no lenses**: the
+  provider classified the candidate `non_executable_only` at `low` tier and set
+  `lenses_required: false`, so the four-lens review never ran. Inspected
+  **before** committing, and the intended-untracked selection adopted the four
+  new files. **The correction landed as `f71871c`** (6 files, 364 insertions,
+  186 deletions) and its review is `review-7e0ebabc11a3a00c`, also `approved`
+  with **no lenses** and the same `non_executable_only` classification.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
@@ -654,6 +661,27 @@ policy decides delivery. Nothing is reset or recovered here: `RESET` and
 inputs.
 
 ## Review coverage
+
+**FISC-010 WU-C — `review-ac6687061a6f8f5d`, `approved` after one bounded
+correction (2026-10-08).** Tier **`medium`** (reason `executable_change` on
+`apps/api/src/fiscal/fiscal.module.test.ts`), one lens (`review-reliability`),
+15 files and 2,093 changed lines. **It is the first lineage of this feature that
+required a correction**, and the whole route ran: the lens raised one
+**CRITICAL** (the transport's response lifecycle listened only for `error` and
+`end`, so a connection that goes away without either could leave the promise
+pending) → STATUS demanded a **refuter** → the refuter corroborated it as
+candidate-caused → `correction_required` → STATUS demanded a **correction plan**
+(40 diff lines, accepted) → the correction added a `close`-without-`complete`
+failure path and a test for the aggregate property → STATUS demanded a
+**targeted validation** → the validator passed `original_criteria` and
+`correction_regression` → `approved` → the acknowledgement burned the authority.
+Two advisories survived at `WARNING`/`informational` (`R3-002`
+`sifen.tls.fixture.ts:280`, `R3-003` `fiscal-provider.module.ts:52`), and the
+validator added a follow-up the Story's Technical Debt records: the new test may
+exercise the request-error path rather than the new branch. **The targeted
+validator does not go through `gentle_review_capture`** — its vector is
+`gentle-ai review capture-validation --materialize`, the host relay runs the
+role, and the verdict is submitted with `--input`.
 
 **FISC-010 WU-B — `review-f16dff5e521484d2`, `approved` (2026-10-08).** The
 first _executable_ candidate of this feature, and the first one the provider did

@@ -659,6 +659,44 @@ are recorded rather than fixed because the review's disposition is
 `informational` and the candidate's authority is burned: fixing them on a new
 candidate is a later work unit.
 
+**WU-C's review (`review-ac6687061a6f8f5d`, approved 2026-10-08) raised one
+CRITICAL, and it was corrected rather than recorded.** The lens found that the
+response lifecycle listened only for `error` and `end`, so a connection that
+goes away without either could leave the promise pending — the inactivity timer
+no longer protects a call whose socket is gone. The refuter corroborated it as
+candidate-caused, the bounded correction added a `close`-without-`complete`
+failure path plus a test for the aggregate property, and the targeted validator
+passed both checks.
+
+**Two advisories survive it, both `WARNING`/`informational`**, reported by
+coordinate with the same caveat as above — the reviewer's text is not retained:
+
+| id     | location                       | our reading of the location                                                                                                                                        |
+| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| R3-002 | `sifen.tls.fixture.ts:280`     | The double's socket bookkeeping tracks connections for the test's assertions, so a failure there would surface as a test error rather than as a transport failure. |
+| R3-003 | `fiscal-provider.module.ts:52` | The `forRoot()` provider selection answers one provider per token, and the option's shape is checked by construction rather than by a runtime guard.               |
+
+**And the validator's own follow-up, which matches an experiment this session
+ran independently** — and that is why the correction claims a guard, not a
+proof:
+
+> The test destroys the socket immediately after writing headers and a fragment,
+> so it may exercise the request-error path instead of the new response-close
+> path. It does not specifically prove the no-error, no-end case. —
+> `packages/fiscal/src/sifen/sifen.transport.test.ts:264-286`
+
+The experiment: a standalone script with the same listener set and the same
+throwaway certificate, against a server that truncates in two shapes (a
+`Transfer-Encoding: chunked` body cut mid-flight, and a declared
+`Content-Length` never satisfied). **Node surfaced `ECONNRESET` in both cases,
+on the request in one and on the response in the other, so the hang was not
+reproducible locally and no test can fail without the fix.** The fix is kept
+because it makes settlement a property of the transport rather than of Node's
+parser — the reviewer's reasoning stands as a defensive gap even where this Node
+version closes it — and the test guards the observable behaviour: a truncated
+answer always settles, with `NETWORK_FAILURE`, instead of hanging until the
+runner's timeout.
+
 - **The signed v150 query family** — the archive and the bulk queries — is
   blocked on its request signature profile. When [[FISC-013]] pins it against a
   real service, it becomes a work unit rather than a new Story.
