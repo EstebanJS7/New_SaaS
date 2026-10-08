@@ -401,3 +401,39 @@ export type {
   SifenTransportFailure,
   SifenTransportResponse,
 } from "./sifen/sifen.transport.js";
+// FISC-010 WU-E / baseline §8: the service facade. One typed method per
+// implemented service, each bound to the endpoint the Manual's table publishes,
+// and no endpoint string written anywhere else in the package. Every call reads
+// the tenant's credential, builds its envelope, posts it and parses the answer,
+// in that order; a null credential read is a typed `CREDENTIAL_UNAVAILABLE` and
+// the transport's and the parser's failures travel out unchanged.
+export {
+  createSifenServiceFacade,
+  SIFEN_SERVICE_PATHS,
+  SifenFacadeError,
+} from "./sifen/sifen.facade.js";
+export type {
+  SifenFacadeDependencies,
+  SifenFacadeFailure,
+  SifenServiceFacade,
+} from "./sifen/sifen.facade.js";
+// FISC-010 WU-E / ADR-007: the pure outcome mapping from a parsed SIFEN answer
+// onto the port's vocabulary. No I/O and no clock — `resolvedAt` arrives in the
+// context, the raw snapshots are only echoed (the Fiscal boundary sanitizes
+// them), and every field of the result is set, with `null` where the answer is
+// silent. The `SIFEN_*_REASON` strings are client-authored notes, not protocol
+// constants.
+export {
+  mapBatchQueryOutcome,
+  mapBatchReceptionOutcome,
+  mapCdcQueryOutcome,
+  mapReceptionOutcome,
+  mapRucQueryOutcome,
+  SIFEN_BATCH_CONCLUDED_WITHOUT_RESULTS_REASON,
+  SIFEN_BATCH_RECEPTION_MESSAGE_ABSENT_REASON,
+  SIFEN_BATCH_WINDOW_CLOSED_REASON,
+  SIFEN_OBSERVATION_UNSTATED_REASON,
+  SIFEN_RECEPTION_FATE_ABSENT_REASON,
+  SIFEN_RECEPTION_MESSAGE_ABSENT_REASON,
+} from "./sifen/sifen.outcomes.js";
+export type { SifenOutcomeContext, SifenRucQueryOutcome } from "./sifen/sifen.outcomes.js";
