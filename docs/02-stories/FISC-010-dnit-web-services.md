@@ -444,8 +444,19 @@ shaped the rest of the Story:
 ## Verification
 
 ```text
-WU-A   docs only: no code, no migration, no gate to run beyond the repository's
-       own format check.
+WU-A   docs only: no code, no migration, no schema, so no package test or live-PG
+       gate applies. What was run on the branch, forced rather than served from
+       turbo's cache, all green:
+
+         pnpm format-check        All matched files use Prettier code style!
+         pnpm lint --force        18/18
+         pnpm typecheck --force   18/18
+         pnpm test --force        19/19
+         pnpm build --force       11/11
+
+       `pnpm --filter @newsaas/api test:live-pg` is not applicable to WU-A:
+       it changes no migration and no code. The base it branches from,
+       `68b3c74`, already carries the recorded 218/218 run.
 ```
 
 ## Tests Added

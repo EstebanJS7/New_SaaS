@@ -49,11 +49,13 @@ because both pending branches touch the two bookkeeping files WU-A edits, and
 
 ## Work units
 
-- [ ] **WU-A — the decisions, the Story and the baseline retrieval record.**
+- [x] **WU-A — the decisions, the Story and the baseline retrieval record.**
       [[ADR-007]] (the port's asynchronous outcome capability), [[ADR-008]] (the
       transport, the credential port and the parser), the FISC-010 Story,
       `SIFEN-BASELINE.md` §23 (the service-schema retrieval record and the WSDL
-      block), and the tracker. Docs-only, one commit.
+      block), and the tracker. Docs-only: the content commit plus the record of
+      its commit, its review and the branch's gates. **Landed 2026-10-08 —
+      `3779569`, plus the record commit that carries this line.**
 - [ ] **WU-B — the message layer (pure).** The request and response shapes of
       the services, as types plus serializers and parsers, with the result-code
       tables. No I/O: fixtures come from the official schemas and from the
@@ -86,15 +88,33 @@ because both pending branches touch the two bookkeeping files WU-A edits, and
 
 ```text
 branch   feat/epic-16-fisc-010-dnit-web-services   from 68b3c74
-WU-A     pending
+WU-A     3779569  docs(FISC-010): the DNIT web-service decisions, the Story and
+                  the baseline §23 — 8 files, 2,116 insertions, 49 deletions
+         review-fe256d67a4d60ed5  closed `approved`, tier `low`,
+                  `non_executable_only`, zero lenses required; the
+                  acknowledgement burned the authority
+gates    format-check green; lint 18/18, typecheck 18/18, test 19/19 and build
+         11/11, all forced rather than served from turbo's cache
 ```
 
 ## Review record
 
-Pending WU-A.
+**WU-A — `review-fe256d67a4d60ed5`, `approved`, no lenses (2026-10-08).** The
+provider classified the candidate `non_executable_only` at `low` tier with
+`lenses_required: false`, so the four-lens review never ran and the closure came
+from the provider's own risk evaluation. Inspected **before** committing, per
+the lesson that a clean tree turns the candidate into a committed range the
+facade cannot express as a base ref; the intended-untracked selection was
+resolved with `select-intended-untracked`, which adopted the four new files and
+closed the lineage. The acknowledgement was called with the lineage alone, and
+the burn returned `native-approved-acknowledgement-completed`.
 
 ## Notes
 
+- **The review never ran its lenses, and that is the provider's call, not a
+  skip.** WU-A came back `non_executable_only` at `low` tier with
+  `lenses_required: false`; nothing was captured because nothing was required. A
+  code work unit will not be classified that way.
 - **The v150 async batch schemas are not published.**
   `WS_SiRecepLoteDE_v150.xsd`, `WS_SiConsLote_v150.xsd` and the Manual's own
   `SiRecepLoteDE_v150.xsd` family return **HTTP 404**; the batch shapes are

@@ -402,7 +402,13 @@ candidate 1 exists.
   FISC-009 pointed "no secret in a log or a stored snapshot" at FISC-010;
   ADR-008 put the transport in `packages/fiscal` and the wiring in FISC-012, and
   FISC-010 persists no document and logs no submission, so it re-points to
-  FISC-012 with the reason recorded in the Story.
+  FISC-012 with the reason recorded in the Story. **WU-A landed as commit
+  `3779569`** — 8 files, 2,116 insertions, 49 deletions — and its review is
+  `review-fe256d67a4d60ed5`, closed **`approved`** with **no lenses**: the
+  provider classified the candidate `non_executable_only` at `low` tier and set
+  `lenses_required: false`, so the four-lens review never ran. Inspected
+  **before** committing, and the intended-untracked selection adopted the four
+  new files.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
@@ -624,6 +630,18 @@ policy decides delivery. Nothing is reset or recovered here: `RESET` and
 inputs.
 
 ## Review coverage
+
+**FISC-010 WU-A — `review-fe256d67a4d60ed5`, `approved`, zero lenses
+(2026-10-08).** A docs-only candidate over 8 files and 2,165 changed lines. The
+provider classified it **`non_executable_only`** at **`low`** tier with
+`lenses_required: false`, so no lens, refuter or validator ran: the closure came
+from the provider's own risk evaluation, not from a capture. `inspect` ran
+**before** the commit (a clean tree would have made the candidate a committed
+range whose base ref the facade cannot express), `select-intended-untracked`
+adopted the four new files, and `acknowledge-approved` burned the authority with
+`native-approved-acknowledgement-completed`. **Recorded because a code work unit
+will not be classified this way**: the WUs that follow are executable and will
+require the four lenses.
 
 **FISC-008 review coverage, verified 2026-10-06.** PR **#106**, head `5d09015`,
 `MERGEABLE/CLEAN`, all three checks green (`DTE XSD validation` among them, now
