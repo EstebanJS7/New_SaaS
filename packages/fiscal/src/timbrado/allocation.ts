@@ -1,8 +1,8 @@
 /**
  * FISC-011 WU-D — allocating the next document number.
  *
- * The Manual's §10.5 numbering is consumed one number at a time, and the two
- * rules that make it a ledger rather than a counter are both here:
+ * The Manual's §10.5 numbering is consumed one number at a time, and the rules
+ * that make it a ledger rather than a counter are here:
  *
  * 1. **A consumed number is never reused.** §6.5 lets a rejected DE reuse its
  *    own CDC, and the number is part of the CDC, so a number is burnt the moment
@@ -12,9 +12,13 @@
  *    a range runs out the numbering continues in the next series — `null -> AA ->
  *    AB -> … -> ZZ` — and `ZZ` exhausted is terminal, because wrapping would hand
  *    out numbers the emitter is not authorised for.
+ * 3. **A series' start is recorded once, and not by the allocation.** §10.5 makes
+ *    the start the first DE's signature timestamp, which is knowable only after
+ *    the number has been signed into its CDC, so
+ *    {@link TimbradoRangeStore.setSeriesStart} is a second, set-once step.
  *
  * **Why this module owns no transaction and no Prisma client.** It is written
- * against a {@link TimbradoRangeStore}: four named operations the caller
+ * against a {@link TimbradoRangeStore}: five named operations the caller
  * implements over its own transaction client, the same shape
  * `FiscalSigningMaterialDelegate` uses in the API so a test can pass a fake. The
  * caller owns the transaction, so the claim and the rollover commit together or
@@ -63,7 +67,11 @@ export const MAX_DOCUMENT_NUMBER = 9_999_999;
 export const ALLOCATION_MAX_ATTEMPTS = 32;
 
 export type TimbradoAllocationFailure =
-  "RANGE_NOT_FOUND" | "SERIES_EXHAUSTED" | "ALLOCATION_CONTENDED" | "INVALID_RANGE";
+  | "RANGE_NOT_FOUND"
+  | "SERIES_EXHAUSTED"
+  | "ALLOCATION_CONTENDED"
+  | "INVALID_RANGE"
+  | "INVALID_SERIES_START";
 
 export class TimbradoAllocationError extends Error {
   readonly failure: TimbradoAllocationFailure;
@@ -100,7 +108,7 @@ export interface TimbradoRangeKey {
 }
 
 /**
- * The four operations the allocation needs, over the caller's own transaction.
+ * The five operations the allocation needs, over the caller's own transaction.
  *
  * An adapter over a Prisma transaction client implements this; so does an
  * in-memory fake. Every read and every write is tenant-scoped by the adapter,
@@ -150,6 +158,33 @@ export interface TimbradoRangeStore {
     readonly validityStart: Date;
     readonly nextNumber: number;
   }): Promise<void>;
+
+  /**
+   * Records the series' start, **once**: `true` when this call set it, `false`
+   * when it was already set and the stored instant is untouched.
+   *
+   * Manual §10.5 (baseline §13): _"Una vez que el SIFEN reciba un DE con serie,
+   * se tomará la fecha y hora de firma digital del DE como fecha inicial de
+   * inicio de la vigencia de la serie."_ The allocation cannot know it — the
+   * number is part of the CDC, and the CDC is signed after the number is handed
+   * out — so the caller that has just signed records it here. That is also why
+   * nothing in this module derives the instant from the wall clock: it is data
+   * the caller supplies.
+   *
+   * **Set-once is a predicate inside the UPDATE, never a read-then-write.** Two
+   * callers that observe an unset start cannot both set it; the loser is told
+   * `false` and must not fall back to an unconditional write, because the first
+   * signature's timestamp is what the series' validity actually started at.
+   *
+   * An implementation applies {@link assertSeriesStartUsable} before its
+   * statement, so an unusable instant is a named refusal rather than a stored
+   * value.
+   */
+  setSeriesStart(args: {
+    readonly key: TimbradoRangeKey;
+    readonly rangeId: string;
+    readonly startedAt: Date;
+  }): Promise<boolean>;
 }
 
 export interface AllocatedDocumentNumber {
@@ -314,6 +349,25 @@ export function formatDocumentNumber(sequenceNumber: number): string {
     );
   }
   return String(sequenceNumber).padStart(DOCUMENT_NUMBER_WIDTH, "0");
+}
+
+/**
+ * A series' start is an instant — the signature timestamp of the first DE — and
+ * anything else is refused **before** it reaches a statement, rather than being
+ * written and discovered later.
+ *
+ * An `Invalid Date` is the case that matters: it is a `Date` to the type system
+ * and `NaN` to `getTime()`, and a driver handed one writes a timestamp nobody
+ * chose or fails with a message that says nothing about the series. Both are
+ * worse than a named refusal.
+ */
+export function assertSeriesStartUsable(startedAt: Date): void {
+  if (Number.isNaN(startedAt.getTime())) {
+    throw new TimbradoAllocationError(
+      "INVALID_SERIES_START",
+      "A series start must be a usable instant; received an invalid Date."
+    );
+  }
 }
 
 /** A range whose own numbers cannot describe a sequence is a data defect. */

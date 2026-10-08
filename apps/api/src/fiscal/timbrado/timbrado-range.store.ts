@@ -1,10 +1,14 @@
 import type { Prisma } from "@newsaas/database";
-import type { TimbradoRangeRecord, TimbradoRangeStore } from "@newsaas/fiscal";
+import {
+  assertSeriesStartUsable,
+  type TimbradoRangeRecord,
+  type TimbradoRangeStore,
+} from "@newsaas/fiscal";
 
 /**
  * FISC-011 WU-E — the Prisma side of the allocation's port.
  *
- * The port is four named operations (`TimbradoRangeStore`), and this is the only
+ * The port is five named operations (`TimbradoRangeStore`), and this is the only
  * implementation that talks to PostgreSQL. It is deliberately thin: every
  * decision the allocation makes is in `packages/fiscal`, and everything here is
  * one statement.
@@ -19,8 +23,8 @@ import type { TimbradoRangeRecord, TimbradoRangeStore } from "@newsaas/fiscal";
  *
  * **Why every statement carries the key.** A tenant-scoped write whose scope came
  * from anything but the caller would be the one place a cross-tenant read could
- * pass unnoticed, so `claimNumber` and `closeRange` take the key with the write
- * and put `tenantId` in the `where` clause.
+ * pass unnoticed, so `claimNumber`, `closeRange` and `setSeriesStart` take the
+ * key with the write and put `tenantId` in the `where` clause.
  */
 
 /** The delegate surface, in Prisma's own terms. */
@@ -110,7 +114,8 @@ export function createTimbradoRangeStore(client: TimbradoRangePrismaClient): Tim
       // The successor continues the SAME authorisation, which is why the
       // timbrado number and the authorised span are carried over rather than
       // reissued. `seriesStartedAt` stays NULL: the Manual puts the series'
-      // start at the first DE's signature date, which is a later step.
+      // start at the first DE's signature date, and `setSeriesStart` is that
+      // later step.
       await client.fiscalTimbradoRange.create({
         data: {
           tenantId: key.tenantId,
@@ -126,6 +131,22 @@ export function createTimbradoRangeStore(client: TimbradoRangePrismaClient): Tim
           status: "ACTIVE",
         },
       });
+    },
+
+    async setSeriesStart({ key, rangeId, startedAt }): Promise<boolean> {
+      // Set-once is the `seriesStartedAt: null` predicate INSIDE the update, and
+      // not a read followed by a write: two callers that both observed an unset
+      // start cannot both match it, so a zero count means the first signature's
+      // timestamp is the one that stands and this caller set nothing.
+      //
+      // The guard runs before the statement, so an unusable instant is a named
+      // failure here instead of a timestamp PostgreSQL was asked to store.
+      assertSeriesStartUsable(startedAt);
+      const updated = await client.fiscalTimbradoRange.updateMany({
+        where: { id: rangeId, tenantId: key.tenantId, seriesStartedAt: null },
+        data: { seriesStartedAt: startedAt },
+      });
+      return updated.count === 1;
     },
   };
 }

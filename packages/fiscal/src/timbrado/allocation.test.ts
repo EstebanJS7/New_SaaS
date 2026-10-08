@@ -16,16 +16,33 @@ import {
   type TimbradoRangeRecord,
   type TimbradoRangeStore,
   allocateDocumentNumber,
+  assertSeriesStartUsable,
   formatDocumentNumber,
 } from "./allocation.js";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const ESTABLISHMENT = "22222222-2222-4222-8222-222222222222";
 
+/** The key every case in this suite draws numbers from. */
+const KEY = {
+  tenantId: TENANT,
+  establishmentId: ESTABLISHMENT,
+  expeditionPoint: "001",
+  documentType: 1,
+} as const;
+
 /** The record, minus its `readonly` modifiers: the fake mutates its own rows. */
 type StoredRange = {
   -readonly [K in keyof TimbradoRangeRecord]: TimbradoRangeRecord[K];
-} & { status: "ACTIVE" | "EXHAUSTED" | "RETIRED" };
+} & {
+  status: "ACTIVE" | "EXHAUSTED" | "RETIRED";
+  /**
+   * Not part of {@link TimbradoRangeRecord}: the allocation never reads the
+   * series' start, and only `setSeriesStart` is allowed to write it. The column
+   * is here so the set-once rule has something to be set once.
+   */
+  seriesStartedAt: Date | null;
+};
 
 /**
  * A delegate that behaves like the applied schema: the CAS is decided by the
@@ -50,6 +67,7 @@ class FakeRanges implements TimbradoRangeStore {
       validityStart: new Date("2019-09-01T00:00:00Z"),
       nextNumber: 1,
       status: "ACTIVE",
+      seriesStartedAt: null,
       ...overrides,
     };
     this.rows.push(row);
@@ -133,6 +151,26 @@ class FakeRanges implements TimbradoRangeStore {
       status: "ACTIVE",
     });
     return Promise.resolve();
+  }
+
+  setSeriesStart(args: {
+    key: { tenantId: string };
+    rangeId: string;
+    startedAt: Date;
+  }): Promise<boolean> {
+    // The guard the adapter applies before its statement, applied here too: a
+    // fake that accepted `Invalid Date` would quietly allow what PostgreSQL
+    // would not.
+    assertSeriesStartUsable(args.startedAt);
+    const row = this.rows.find((candidate) => candidate.id === args.rangeId);
+    // Set-once, as the `seriesStartedAt: null` predicate in the adapter's
+    // `where`: a row that already has a start cannot match again, and neither
+    // can a row that is not there at all.
+    if (row?.seriesStartedAt === null) {
+      row.seriesStartedAt = args.startedAt;
+      return Promise.resolve(true);
+    }
+    return Promise.resolve(false);
   }
 }
 
@@ -332,6 +370,7 @@ describe("the claim is a compare-and-swap, so a number is never handed out twice
       claimNumber: () => Promise.resolve(false),
       closeRange: (args) => ranges.closeRange(args),
       openSeries: (args) => ranges.openSeries(args),
+      setSeriesStart: (args) => ranges.setSeriesStart(args),
     };
 
     await expect(allocate(neverWins)).rejects.toThrow(TimbradoAllocationError);
@@ -369,6 +408,7 @@ describe("the claim is a compare-and-swap, so a number is never handed out twice
       claimNumber: () => Promise.resolve(true),
       closeRange: () => Promise.resolve(true),
       openSeries: () => Promise.resolve(),
+      setSeriesStart: () => Promise.resolve(false),
     };
 
     expect((await allocate(store)).documentNumber).toBe("0000001");
@@ -385,6 +425,7 @@ describe("the claim is a compare-and-swap, so a number is never handed out twice
       claimNumber: () => Promise.resolve(false),
       closeRange: () => Promise.resolve(true),
       openSeries: () => Promise.resolve(),
+      setSeriesStart: () => Promise.resolve(false),
     };
 
     expect(await failureOf(() => allocate(alwaysSpent))).toBe("ALLOCATION_CONTENDED");
@@ -416,5 +457,77 @@ describe("a range whose own numbers cannot describe a sequence", () => {
     const ranges = new FakeRanges();
     ranges.seed(overrides);
     expect(await failureOf(() => allocate(ranges))).toBe("INVALID_RANGE");
+  });
+});
+
+describe("the series' start is recorded once", () => {
+  // Manual §10.5: the start is the first DE's signature timestamp, and the
+  // allocation cannot know it — the number is part of the CDC and the CDC is
+  // signed after the number is handed out. So the caller that has just signed
+  // records it, in a second step, exactly once.
+  const STARTED_AT = new Date("2026-10-07T12:34:56.000Z");
+
+  it("answers true on the first call, and stores the instant", async () => {
+    const ranges = new FakeRanges();
+    const range = ranges.seed();
+
+    expect(
+      await ranges.setSeriesStart({ key: KEY, rangeId: range.id, startedAt: STARTED_AT })
+    ).toBe(true);
+    expect(range.seriesStartedAt).toEqual(STARTED_AT);
+  });
+
+  it("answers false on a second call with a different instant, and keeps the first", async () => {
+    const ranges = new FakeRanges();
+    const range = ranges.seed();
+    const later = new Date("2027-01-02T00:00:00.000Z");
+
+    await ranges.setSeriesStart({ key: KEY, rangeId: range.id, startedAt: STARTED_AT });
+
+    // The series' validity started at the FIRST signature, so the later one must
+    // not overwrite it — the caller is told it did nothing rather than refused.
+    expect(await ranges.setSeriesStart({ key: KEY, rangeId: range.id, startedAt: later })).toBe(
+      false
+    );
+    expect(range.seriesStartedAt).toEqual(STARTED_AT);
+  });
+
+  it("answers false on a second call with the same instant", async () => {
+    const ranges = new FakeRanges();
+    const range = ranges.seed();
+
+    await ranges.setSeriesStart({ key: KEY, rangeId: range.id, startedAt: STARTED_AT });
+
+    // Set-once is about the CALL, not about the value: an idempotent-looking
+    // repeat is still a second caller that must be told it set nothing.
+    expect(
+      await ranges.setSeriesStart({ key: KEY, rangeId: range.id, startedAt: STARTED_AT })
+    ).toBe(false);
+  });
+
+  it("refuses an unusable instant by its own failure code, and stores nothing", async () => {
+    const ranges = new FakeRanges();
+    const range = ranges.seed();
+    const unusable = new Date("not an instant");
+
+    expect(
+      await failureOf(() =>
+        ranges.setSeriesStart({ key: KEY, rangeId: range.id, startedAt: unusable })
+      )
+    ).toBe("INVALID_SERIES_START");
+    // The code is the part a caller branches on, and the refusal has to leave
+    // the column unset rather than write a timestamp nobody chose.
+    expect(range.seriesStartedAt).toBeNull();
+  });
+
+  it("names the instant when the guard itself refuses", () => {
+    expect(() => assertSeriesStartUsable(new Date("not an instant"))).toThrow(
+      TimbradoAllocationError
+    );
+    expect(() => assertSeriesStartUsable(new Date("not an instant"))).toThrow(
+      /must be a usable instant/
+    );
+    // A real instant is not the guard's business, and it does not re-derive one.
+    expect(() => assertSeriesStartUsable(STARTED_AT)).not.toThrow();
   });
 });

@@ -169,6 +169,7 @@ function buildService(
     entitled?: boolean;
     permissions?: string[];
     audit?: { append: ReturnType<typeof vi.fn> };
+    materials?: readonly { certificatePem: string; certificateSubject: string }[];
   } = {}
 ) {
   const audit = overrides.audit ?? { append: vi.fn().mockResolvedValue({}) };
@@ -184,7 +185,10 @@ function buildService(
     {
       resolveForActiveRequest: () =>
         Promise.resolve(new Set(overrides.permissions ?? [FISCAL_PERMISSIONS.profileManage])),
-    } as never
+    } as never,
+    // FISC-011 WU-G: the write path reads the tenant's ACTIVE certificates, and
+    // each case chooses what they carry. A case that omits them has none.
+    { listActive: () => Promise.resolve(overrides.materials ?? []) } as never
   );
   return { service, audit };
 }
@@ -445,3 +449,67 @@ const RANGE_INPUT = {
   rangeTo: 9_999_999,
   validityStart: new Date("2019-09-01T00:00:00Z"),
 } as const;
+
+describe("the RUC obligation (baseline §22.4, D101)", () => {
+  /** A subject that carries the RUC where SIFEN pins it for a legal person. */
+  const PINNED_SUBJECT = "C=PY\nO=Clínica Veterinaria del Sur S.A.\nserialNumber=RUC80012345-6";
+
+  it("refuses a profile whose RUC is not the one the certificate carries", async () => {
+    const { client } = buildClient();
+    const { service } = buildService(client, {
+      materials: [
+        {
+          // A legal person's RUC comes from the subject, so the PEM is never
+          // consulted and a placeholder cannot weaken the case.
+          certificatePem: "not-read-for-a-legal-person",
+          certificateSubject: "C=PY\nserialNumber=RUC80099999-6",
+        },
+      ],
+    });
+
+    await expect(service.saveProfile(PROFILE_INPUT)).rejects.toThrow(DomainError);
+    await expect(service.saveProfile(PROFILE_INPUT)).rejects.toThrow(
+      /does not match the RUC in the tenant's signing certificate/
+    );
+  });
+
+  it("refuses a certificate that carries no RUC where SIFEN expects it", async () => {
+    const { client } = buildClient();
+    const { service } = buildService(client, {
+      materials: [
+        {
+          certificatePem: "not-read-for-a-legal-person",
+          // The test fixture's own shape: the RUC sits in the `CN`, which is not
+          // the pinned placement, so there is nothing to compare against and the
+          // profile write must not proceed as if there were.
+          certificateSubject: "C=PY\nO=Clínica Veterinaria del Sur S.A.\nCN=RUC80012345-6",
+        },
+      ],
+    });
+
+    await expect(service.saveProfile(PROFILE_INPUT)).rejects.toThrow(
+      /does not carry the RUC where SIFEN requires it/
+    );
+  });
+
+  it("proceeds when the certificate carries the same RUC", async () => {
+    const { client } = buildClient();
+    const { service } = buildService(client, {
+      materials: [
+        { certificatePem: "not-read-for-a-legal-person", certificateSubject: PINNED_SUBJECT },
+      ],
+    });
+
+    await expect(service.saveProfile(PROFILE_INPUT)).resolves.toMatchObject({ ruc: "80012345" });
+  });
+
+  it("proceeds when the tenant has no ACTIVE certificate yet", async () => {
+    // Nothing to compare means the profile write is the side that proceeds, and
+    // the upload that follows is the side that refuses — which is why the
+    // obligation is enforced on both writes rather than on one.
+    const { client } = buildClient();
+    const { service } = buildService(client);
+
+    await expect(service.saveProfile(PROFILE_INPUT)).resolves.toMatchObject({ ruc: "80012345" });
+  });
+});

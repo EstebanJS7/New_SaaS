@@ -39,7 +39,9 @@ interface Subject {
  * backed by the real in-memory secret store, so "was the key destroyed?" is an
  * observable question rather than an assumption about a mock.
  */
-function makeSubject(): Subject {
+function makeSubject(
+  overrides: { profile?: { ruc: string; checkDigit: string; taxpayerType: number } | null } = {}
+): Subject {
   const rows: FiscalSigningMaterialRow[] = [];
   const secrets = new InMemorySecretStore();
   const audits: Record<string, unknown>[] = [];
@@ -173,7 +175,12 @@ function makeSubject(): Subject {
     audit as never,
     entitlements as never,
     permissionResolver as never,
-    secrets
+    secrets,
+    // FISC-011 WU-G: the upload's half of the RUC obligation. A subject without
+    // a profile sees `null`, which is the state an onboarding starts in.
+    {
+      findProfile: vi.fn(async () => overrides.profile ?? null),
+    } as never
   );
 
   return { service, rows, secrets, audits, entitlements, permissionResolver };
@@ -607,5 +614,42 @@ describe("FiscalSigningMaterialService projection and gates", () => {
 
     expect(subject.rows).toHaveLength(0);
     expect(subject.audits).toHaveLength(0);
+  });
+});
+
+describe("the RUC obligation on upload (baseline §22.4, D101)", () => {
+  it("refuses a certificate that cannot expose the RUC when a profile already exists", async () => {
+    // The fixture's certificate carries the RUC in its `CN`, not in the
+    // `serialNumber` the baseline pins, so the comparison cannot be made and the
+    // upload must refuse rather than accept a material it could not check.
+    const subject = makeSubject({
+      profile: { ruc: "80012345", checkDigit: "6", taxpayerType: 2 },
+    });
+
+    await expect(
+      subject.service.upload({
+        environment: "TEST",
+        container: new Uint8Array(await testContainer()),
+        password: TEST_PKCS12_PASSWORD,
+      })
+    ).rejects.toThrow(/does not carry the RUC where SIFEN requires it/);
+
+    // The refusal happens before the transaction, so there is no half-written
+    // material and no secret left behind.
+    expect(subject.rows).toHaveLength(0);
+    expect(subject.audits).toHaveLength(0);
+  });
+
+  it("proceeds when no profile exists yet", async () => {
+    const subject = makeSubject();
+
+    await expect(
+      subject.service.upload({
+        environment: "TEST",
+        container: new Uint8Array(await testContainer()),
+        password: TEST_PKCS12_PASSWORD,
+      })
+    ).resolves.toMatchObject({ status: "ACTIVE" });
+    expect(subject.rows).toHaveLength(1);
   });
 });

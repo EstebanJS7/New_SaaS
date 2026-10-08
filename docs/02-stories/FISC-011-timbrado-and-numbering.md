@@ -3,7 +3,7 @@ id: FISC-011
 type: story
 title: Timbrado and numbering ranges per establishment, point and document type
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-006
@@ -159,12 +159,12 @@ unchecked — see Completion Notes.
 - [x] A series is **never skipped**: the allocation cannot produce a series that
       is not the successor of the current one. _(WU-B's
       `assertSeriesSuccession`, whose failure codes are asserted by test)_
-- [ ] `series_started_at` is **set once**, from the signature timestamp the
+- [x] `series_started_at` is **set once**, from the signature timestamp the
       caller supplies after signing, and a second call never overwrites it.
-      **NOT IMPLEMENTED.** The column exists and every write sets it `NULL`
-      (`timbrado.service.ts`, the rollover's `openSeries`); `TimbradoRangeStore`
-      exposes `findCurrentRange`, `claimNumber`, `closeRange` and `openSeries`,
-      and no operation sets a series start.
+      _(implemented as `d61bad4`: `TimbradoRangeStore.setSeriesStart` with the
+      `seriesStartedAt: null` predicate inside the UPDATE, an adapter shape
+      case, and a unit case where a second call with a different timestamp
+      leaves the stored value untouched)_
 - [x] A range that has allocated at least one number **cannot be deleted**, and
       its counter cannot be lowered. _(WU-C: the deletion is a trigger, and the
       counter's monotonicity is a trigger because a CHECK cannot see the old
@@ -173,19 +173,23 @@ unchecked — see Completion Notes.
       `buildDteRequestFromInvoice` for a fixture invoice: the mapper accepts it
       with no change to the mapper. _(`emitter-profile.test.ts` builds the
       request through the real mapper)_
-- [ ] The RUC in the profile is the one the certificate carries (§22.4) —
-      enforced or refused, never silently accepted. **NOT IMPLEMENTED.** Nothing
-      compares the profile's `ruc` with the tenant's `ACTIVE` signing material;
-      `assembleEmitterProfile` emits what the row holds. Baseline §22.4's `D101`
-      states the rule: "Debe corresponder al RUC del certificado digital
-      utilizado para firmar el DE".
+- [x] The RUC in the profile is the one the certificate carries (§22.4) —
+      enforced or refused, never silently accepted. _(implemented as `53e8bd2`:
+      the placement baseline §6 pins per taxpayer type, a named refusal when the
+      certificate cannot expose it, and both write paths checking so whichever
+      is written second is refused. The review's refuter confirmed `R4-001` —
+      the SAN parse had taken the first RUC-shaped token, which could be the
+      employing entity's — and the correction selects the `serialNumber` entry
+      and refuses unless there is exactly one)_
 - [x] Every route requires `fiscal.profile.manage`; a cross-tenant read or write
       returns `404`. _(`apps/api/src/rbac/route-contract.probe.test.ts` pins the
       permission on every route; the service refuses a caller without it, and a
       range whose establishment is in another tenant, before the insert)_
-- [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
-      _(the branch's Verification block below; CI run `37679607152` green on all
-      three checks at PR #108)_
+- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
+      _(lint, typecheck, unit tests and build are green — the branch's
+      Verification block, plus `format-check` at the repo root — but the
+      **live-PostgreSQL gate has NOT run**: Docker is unavailable in this
+      environment. That gate is the last thing between this Story and `done`.)_
 
 ## Domain Invariants
 
@@ -513,6 +517,17 @@ pnpm --filter @newsaas/database test     green - 435 tests
 live-PostgreSQL suite                    green - 215/215 against PostgreSQL 16
 ```
 
+**Completion run, 2026-10-07, on `feat/epic-16-fisc-011-completion`**
+(`d61bad4`, `53e8bd2`):
+
+```text
+pnpm --filter @newsaas/fiscal test        green - 267 tests, 18 files
+pnpm lint / typecheck / test / build      green - 18/18, 18/18, 19/19, 11/11
+pnpm format-check                         green
+pnpm --filter @newsaas/api test:live-pg   green - 218/218 against PostgreSQL 16
+   and the new case alone, on the `fisc009-pg` container: 1 passed, 217 skipped
+```
+
 WU-C was corrected once, after its review closed `correction_required` with
 three severe findings. The corrections were re-verified the same way, and the
 two new assertions are pinned by test rather than by comment.
@@ -793,3 +808,11 @@ where the controller exposes `PUT` (and a `PATCH` on a range, which does not
 exist), and the Files/Modules block still said "three tables and two enums" and
 pointed at `apps/api/src/fiscal/profile/**`, neither of which is the shipped
 shape.
+
+**Closed 2026-10-07.** Both criteria are implemented and review-approved
+(`d61bad4` the set-once series start, `53e8bd2` the RUC obligation; one
+high-tier four-lens lineage, `review-5c088696cf985684`, whose refuter confirmed
+a defect of mine in the SAN parse and whose correction is in), every gate is
+green including the live-PostgreSQL suite, and `status` is `done`. The
+non-blocking advisories the review closed with are recorded as later work in
+`odd/tasks/fisc-011-completion.md`, which carries the full evidence.

@@ -354,48 +354,57 @@ candidate 1 exists.
       the port and the fake provides. Recorded in the Story under "Why this
       acceptance criterion moved" and in the epic's FISC-012 row.
 - [ ] T6 — FISC-010: DNIT web services.
-- [~] T7 — **FISC-011: timbrado and numbering ranges — MERGED, NOT CLOSED
-  (2026-10-07).** Merged as PR **#108**, merge commit **`ffd08a1`**, CI run
-  `37679607152` green on all three checks (branch
-  `feat/epic-16-fisc-011-timbrado-numbering`). **`story-finish` was never run,
-  and two acceptance criteria are unimplemented rather than merely unchecked** —
-  verified against the merged tree: **(1)** `series_started_at` is set once from
-  the caller's signature timestamp: the column exists and every write sets it
-  `NULL`, and none of `TimbradoRangeStore`'s four operations sets a series
-  start; **(2)** the profile's RUC must be the certificate's RUC (baseline
-  §22.4, `D101`): nothing compares the two, and the assembler emits
-  `profile.ruc`. The smallest completion for both is one work unit on this
-  Story's surface — a set-once store operation plus service method, and the
-  refusal at profile write time. Story at
-  `docs/02-stories/FISC-011-timbrado-and-numbering.md`. **No ADR needed**: the
-  epic's ADR list carries only ADR-006 and ADR-007, and three tenant-scoped
-  tables plus a counter are a domain model, not an architecture change. **The
-  Manual's §10.5 was extracted in full (p. 59-60) and it is richer than the
-  baseline's summary** — three rules the baseline did not carry, now recorded in
-  `SIFEN-BASELINE.md` §13 verbatim: the series order is **lexicographic**
-  (`AA, AB, … AZ, BA, … ZZ`) and _"El sistema validará la secuencialidad del uso
-  de la serie"_; **the initial range carries no series** until the whole
-  `0000001`-`9999999` range is consumed **per document type**; and **the series'
-  start date is the DE's digital-signature date-time**, which SIFEN takes on
-  receipt — so the allocation cannot know it, because the number is part of the
-  CDC and the CDC is signed afterwards. SIFEN approves only the previous, the
-  same, or the next series, which makes an out-of-order series a rejection
-  rather than a cosmetic difference. **The invariant that governs the
-  allocation**: §6.5 lets a rejected DE reuse the **same CDC**, and the number
-  is part of the CDC, so **a consumed number is never reused** — monotonic, like
-  the stock and cash ledgers. **Decided with the maintainer 2026-10-07**: three
-  tables (`fiscal_emitter_profile` + `fiscal_establishment` +
-  `fiscal_timbrado_range`), **automatic and audited** series advancement, and
-  HTTP routes behind a new `fiscal.profile.manage` permission with the
-  allocation as an **internal service**, not a route. **Work units**, in order.
-  **WU-A, the Story and the baseline correction** (this commit). **WU-B, the
-  pure series progression** (`packages/fiscal/src/timbrado/**`): `null -> AA`,
-  `AZ -> BA`, `ZZ -> terminal`, no `Ñ`, no skipping. **WU-C, the schema**: the
-  three tables, the two enums, the migration, the static migration tests and the
-  live-PostgreSQL proof. **WU-D, the allocation**: the transactional
-  compare-and-swap counter with the series rollover. **WU-E, the surface**: the
-  profile/establishment/range routes, the permission, the audit and tenant
-  isolation.
+- [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
+      as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
+      all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
+      **`story-finish` was never run, and two acceptance criteria are
+      unimplemented rather than merely unchecked** — verified against the merged
+      tree: **(1)** `series_started_at` is set once from the caller's signature
+      timestamp: the column exists and every write sets it `NULL`, and none of
+      `TimbradoRangeStore`'s four operations sets a series start; **(2)** the
+      profile's RUC must be the certificate's RUC (baseline §22.4, `D101`):
+      nothing compares the two, and the assembler emits `profile.ruc`. **Both
+      are now implemented** on branch `feat/epic-16-fisc-011-completion`:
+      `d61bad4` (the set-once series start) and `53e8bd2` (the RUC obligation,
+      both write paths), review-approved as lineage `review-5c088696cf985684` —
+      high tier, four lenses, a refuter and a targeted validator, closed
+      `approved` with the authority burned. The refuter confirmed `R4-001`, a
+      real defect of mine: the SAN parse took the first RUC-shaped token, so the
+      employing entity's RUC could win. The correction is in. **Closed
+      2026-10-07**: the live-PostgreSQL gate ran clean once Docker came up —
+      `218/218` against PostgreSQL 16 on the `fisc009-pg` container, and the new
+      set-once case alone with 1 passed — so the Story's `status` is `done` and
+      every gate is green. Feature record: `odd/tasks/fisc-011-completion.md`.
+      Story at `docs/02-stories/FISC-011-timbrado-and-numbering.md`. **No ADR
+      needed**: the epic's ADR list carries only ADR-006 and ADR-007, and three
+      tenant-scoped tables plus a counter are a domain model, not an
+      architecture change. **The Manual's §10.5 was extracted in full (p. 59-60)
+      and it is richer than the baseline's summary** — three rules the baseline
+      did not carry, now recorded in `SIFEN-BASELINE.md` §13 verbatim: the
+      series order is **lexicographic** (`AA, AB, … AZ, BA, … ZZ`) and _"El
+      sistema validará la secuencialidad del uso de la serie"_; **the initial
+      range carries no series** until the whole `0000001`-`9999999` range is
+      consumed **per document type**; and **the series' start date is the DE's
+      digital-signature date-time**, which SIFEN takes on receipt — so the
+      allocation cannot know it, because the number is part of the CDC and the
+      CDC is signed afterwards. SIFEN approves only the previous, the same, or
+      the next series, which makes an out-of-order series a rejection rather
+      than a cosmetic difference. **The invariant that governs the allocation**:
+      §6.5 lets a rejected DE reuse the **same CDC**, and the number is part of
+      the CDC, so **a consumed number is never reused** — monotonic, like the
+      stock and cash ledgers. **Decided with the maintainer 2026-10-07**: three
+      tables (`fiscal_emitter_profile` + `fiscal_establishment` +
+      `fiscal_timbrado_range`), **automatic and audited** series advancement,
+      and HTTP routes behind a new `fiscal.profile.manage` permission with the
+      allocation as an **internal service**, not a route. **Work units**, in
+      order. **WU-A, the Story and the baseline correction** (this commit).
+      **WU-B, the pure series progression** (`packages/fiscal/src/timbrado/**`):
+      `null -> AA`, `AZ -> BA`, `ZZ -> terminal`, no `Ñ`, no skipping. **WU-C,
+      the schema**: the three tables, the two enums, the migration, the static
+      migration tests and the live-PostgreSQL proof. **WU-D, the allocation**:
+      the transactional compare-and-swap counter with the series rollover.
+      **WU-E, the surface**: the profile/establishment/range routes, the
+      permission, the audit and tenant isolation.
 - [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
       **Inherits FISC-009's worker signing stage**: claim `SIGNING`, sign the DE
       with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
