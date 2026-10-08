@@ -3,9 +3,18 @@ import { PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
 import { RequestContextService } from "../context/request-context.service.js";
 
+/**
+ * Mirrors `fiscal_document_status`.
+ *
+ * FISC-009 appended `SIGNING` to the database enum and this union kept nine
+ * values until FISC-010 WU-D closed the drift. The order here is the lifecycle's
+ * order, which is what this type describes: only the Prisma enum has to append,
+ * because PostgreSQL's `ALTER TYPE ... ADD VALUE` appends.
+ */
 export type FiscalDocumentStatus =
   | "PENDING"
   | "QUEUED"
+  | "SIGNING"
   | "SENDING"
   | "SUBMITTED"
   | "APPROVED"

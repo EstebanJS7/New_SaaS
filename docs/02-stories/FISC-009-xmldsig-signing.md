@@ -202,9 +202,13 @@ went instead of being deleted.
       failure path is asserted to carry neither the key nor its base64 body.
       _(WU-B)_
 - [ ] No secret appears in a **log or a stored snapshot**. **MOVED TO
-      [[FISC-010]]**, which is where the document is persisted and where the
-      submission path logs. [[FISC-009]] never persists anything and never logs
-      the key.
+      [[FISC-010]] on 2026-10-07, and RE-POINTED TO [[FISC-012]] on
+      2026-10-08.** The reason for the second move is recorded in [[FISC-010]]'s
+      Story under "An acceptance criterion that moved a second time": ADR-008
+      put the transport in `packages/fiscal` and the credential wiring in
+      [[FISC-012]], and the stage that persists a document and logs a submission
+      is the worker's — which is [[FISC-012]]'s. FISC-009 never persists
+      anything and never logs the key.
 - [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass.
       _(WU-C1: fiscal and database lint/typecheck/test/build, root 18/18, 18/18,
       19/19, 11/11, `format-check`, and the live-PostgreSQL suite at 214/214

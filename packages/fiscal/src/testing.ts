@@ -74,3 +74,23 @@ export type {
 } from "./dte/xsd-artifacts.js";
 export { buildDteEntrySchema, validateDeAgainstOfficialXsd } from "./dte/xsd-validator.js";
 export type { DteXsdValidationResult } from "./dte/xsd-validator.js";
+// FISC-010 WU-C: the local mutual-TLS double the transport is proven against.
+// `testing.ts` and not the package index, for the reason the PKCS#12 fixture is
+// here too: it carries throwaway key material and starts an `https` server, and
+// neither belongs to the boundary's public contract.
+export {
+  createSifenTlsFixture,
+  SIFEN_TLS_FIXTURE_CA_COMMON_NAME,
+  SIFEN_TLS_FIXTURE_COUNTRY,
+  SIFEN_TLS_FIXTURE_ORGANIZATION,
+  SIFEN_TLS_FIXTURE_SERVER_COMMON_NAME,
+  SIFEN_TLS_FIXTURE_TENANT_A_COMMON_NAME,
+  SIFEN_TLS_FIXTURE_TENANT_B_COMMON_NAME,
+  startSifenTlsServer,
+} from "./sifen/sifen.tls.fixture.js";
+export type {
+  SifenTlsFixture,
+  SifenTlsFixtureOptions,
+  SifenTlsServerHandle,
+  SifenTlsServerHandler,
+} from "./sifen/sifen.tls.fixture.js";

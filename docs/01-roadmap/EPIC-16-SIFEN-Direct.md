@@ -16,7 +16,7 @@ prd_sections:
   - "40"
   - "41"
 created: 2026-10-03
-updated: 2026-10-04
+updated: 2026-10-08
 ---
 
 # EPIC-16 — SIFEN Direct
@@ -134,20 +134,37 @@ word.
 
 ## Stories
 
-| Story    | Scope                                                                                                                                                                          | Depends on         |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| FISC-006 | **SIFEN Direct scope and the DNIT baseline revalidation** — documentation only; the epic's precondition and the source of every protocol constant                              | —                  |
-| FISC-007 | **Tenant signing material**: the `SecretStore` boundary for the private key (RESTRICTED), rotation and removal — [[ADR-005]] + [[DEC-053]]                                     | FISC-006           |
-| FISC-008 | **DTE XML generation**, validated against the official XSDs                                                                                                                    | FISC-006           |
-| FISC-009 | **XMLDSig signing** (not XAdES — see [[ADR-006]]) and the return of the `SIGNING` lifecycle state. The worker stage that claims it moved to FISC-012                           | FISC-007, FISC-008 |
-| FISC-010 | **DNIT web services**: reception, query, events, and the asynchronous outcome model                                                                                            | FISC-008, FISC-009 |
-| FISC-011 | **Timbrado and numbering ranges** per establishment, point and document type                                                                                                   | FISC-006           |
-| FISC-012 | **`SifenDirectFiscalProvider`** behind the existing port, the port's asynchronous-status extension, provider selection, and **the worker's signing stage** moved from FISC-009 | FISC-010, FISC-011 |
-| FISC-013 | **Contingency handling** and the certification/homologation evidence run                                                                                                       | FISC-012           |
-| FISC-014 | **Epic closure**: module docs, CI evidence, changelog, roadmap, advisory triage                                                                                                | all                |
+| Story    | Scope                                                                                                                                                                                                                                                            | Depends on         |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| FISC-006 | **SIFEN Direct scope and the DNIT baseline revalidation** — documentation only; the epic's precondition and the source of every protocol constant                                                                                                                | —                  |
+| FISC-007 | **Tenant signing material**: the `SecretStore` boundary for the private key (RESTRICTED), rotation and removal — [[ADR-005]] + [[DEC-053]]                                                                                                                       | FISC-006           |
+| FISC-008 | **DTE XML generation**, validated against the official XSDs                                                                                                                                                                                                      | FISC-006           |
+| FISC-009 | **XMLDSig signing** (not XAdES — see [[ADR-006]]) and the return of the `SIGNING` lifecycle state. The worker stage that claims it moved to FISC-012                                                                                                             | FISC-007, FISC-008 |
+| FISC-010 | **DNIT web services**: reception, query, events, and the asynchronous outcome model — [[ADR-007]] + [[ADR-008]]                                                                                                                                                  | FISC-008, FISC-009 |
+| FISC-011 | **Timbrado and numbering ranges** per establishment, point and document type                                                                                                                                                                                     | FISC-006           |
+| FISC-012 | **`SifenDirectFiscalProvider`** behind the existing port — it **implements** the asynchronous capability [[FISC-010]] adds — provider selection, **the worker's signing stage** moved from FISC-009, the worker's credential wiring and the reconciliation stage | FISC-010, FISC-011 |
+| FISC-013 | **Contingency handling** and the certification/homologation evidence run                                                                                                                                                                                         | FISC-012           |
+| FISC-014 | **Epic closure**: module docs, CI evidence, changelog, roadmap, advisory triage                                                                                                                                                                                  | all                |
 
 Story numbering continues the Fiscal prefix (`FISC-`). FISC-001..005 belong to
 [[EPIC-15]].
+
+**FISC-010's service layer is fully pinned, and a first reading of it was wrong
+(2026-10-08).** The v150 **batch** schemas do not exist (HTTP 404 by every name
+the Manual's index uses), so the batch shapes are the v141-published ones; the
+WSDL is unreadable on both hosts (`302 → /vdesk/hangup.php3`, host-wide — a
+bogus path answers the same). And the two consultation services were first
+recorded as **blocked** on a request signature no source pins: that was wrong.
+The published v150 consultation schemas (`siConsultaDTE`,
+`siConsultaArchivoRuc`) are **different services** — by authorization protocol,
+by date range, and the RUC archive, all signed and all returning ZIPs — while
+the Manual's §9.4 and §9.6 pin the two services the endpoint list names as
+**unsigned** (`rEnviConsDe { dId, dCDC }` and `rEnviConsRUC { dId, dRUCCons }`),
+which the published v141 artifacts (`WS_SiConsDE_v141.xsd`,
+`WS_SiConsRUC_v141.xsd`) and the October-2024 Guide confirm. The blocker was a
+search not yet run; the correction is recorded in `SIFEN-BASELINE.md`
+§23.6/§23.8 and in the Story. The signed family's own signature profile stays
+open and out of scope.
 
 **Every story from FISC-007 onward is provisional in its technical content**
 until FISC-006 lands. The names and dependencies above are the shape; the
@@ -203,20 +220,30 @@ Architectural changes need an **ADR**, because `DOCUMENTATION-RULES.md` names
    PRD's text, which is **not edited**; the ADR and [[FISC-009]] record that the
    implementation target is the profile of `SIFEN-BASELINE.md` §5. It is the
    gate for [[FISC-009]].
-3. **An asynchronous outcome capability on the provider port — ADR-007, not yet
-   written.** SIFEN answers asynchronously, so `issue` alone is not enough; the
-   port needs a way to ask what happened, and the worker needs a reconciliation
-   path. **It is the gate for [[FISC-010]], not [[FISC-012]]**: FISC-010 is the
-   story that produces the asynchronous result, so the port must expose it
-   before FISC-012 consumes it. The epic's earlier "before FISC-012" ordering
-   was corrected on 2026-10-07.
-4. **The SIFEN transport: SOAP over mutual TLS — ADR-008, not yet written.** The
-   adapter runs inside the worker and the test guide requires mutual
-   authentication with the taxpayer's certificate, so the boundary gains a
-   per-call credential read on a process-singleton provider, plus an XML parser
-   `packages/fiscal` does not have today: its production dependencies are
+3. **An asynchronous outcome capability on the provider port — [[ADR-007]],
+   `accepted` 2026-10-08.** SIFEN answers asynchronously, so `issue` alone is
+   not enough; the port needs a way to ask what happened, and the worker needs a
+   reconciliation path. **It is the gate for [[FISC-010]], not [[FISC-012]]**:
+   FISC-010 is the story that produces the asynchronous result, so the port must
+   expose it before FISC-012 consumes it. The epic's earlier "before FISC-012"
+   ordering was corrected on 2026-10-07. The ADR adds the `SUBMITTED` outcome
+   (non-terminal **and non-retryable**), the `query` capability, the nullable
+   `provider_reference` column that persists SIFEN's batch number, and it names
+   the TD-028 sweep — extended to `SUBMITTED` — as the reconciliation path, so
+   no new scheduling infrastructure is introduced.
+4. **The SIFEN transport: SOAP over mutual TLS — [[ADR-008]], `accepted`
+   2026-10-08.** The adapter runs inside the worker and the test guide requires
+   mutual authentication with the taxpayer's certificate, so the boundary gains
+   a per-call credential read on a process-singleton provider, plus an XML
+   parser `packages/fiscal` does not have today: its production dependencies are
    `@nestjs/common`, `asn1js`, `pkijs` and `xml-crypto`, and `libxmljs2` is a
-   dev dependency for the schema gate. It is the gate for [[FISC-010]].
+   dev dependency for the schema gate. It is the gate for [[FISC-010]]. The ADR
+   chooses `node:https` with a per-call mutual-TLS configuration and **no pooled
+   socket** (`agent: false`, so no authenticated connection is reused across
+   tenants), defines `FiscalCredentialPort.read({ tenantId, environment })` with
+   a null-returning default on a `forRoot()`-able module, and adds two MIT
+   dependencies — `fast-xml-parser` and `fflate` — with their advisory record
+   and the parser's guardrails.
 
 ## Technical Debt
 

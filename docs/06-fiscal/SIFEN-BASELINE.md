@@ -4,8 +4,8 @@ status: active
 country: PY
 manual_version: "150"
 manual_date: 2019-09-10
-verified: 2026-10-03
-updated: 2026-10-03
+verified: 2026-10-08
+updated: 2026-10-08
 ---
 
 # SIFEN baseline (revalidated)
@@ -86,6 +86,12 @@ including `DE_Types_v150.xsd`; §21 records their field-level facts.**
 
 **Recepción, v150:** `siRecepDE_v150.xsd`, `siRecepDE_Ekuatiai_v150.xsd`,
 `siRecepRDE_v150.xsd`, `siRecepRDE_Ekuatiai_v150.xsd`, `WS_SiRecepDE_v150.xsd`.
+**§23 retrieved the whole service layer on 2026-10-08 and records what each
+schema declares**, including the finding that the batch service's shapes — and
+the two consultation services' — exist **only at v141**, that two of the v150
+files above point at an include path that returns 404, and that the published
+v150 consultation schemas (`siConsultaDTE`, `siConsultaArchivoRuc`) are
+**different services** from the ones the Manual's §9.4 and §9.6 describe.
 
 **Eventos, v150:** `Evento_v150.xsd`, `Evento_Types_v150.xsd`,
 `siRecepEvento_v150.xsd`, `siRecepEventoEmisor_v150.xsd`,
@@ -553,8 +559,14 @@ flag and treat the rules as pending DNIT, or be reframed.
    the scalar patterns, and the `rDE`/`tDE` structures are now pinned from the
    official schema.
 3. The full `dCodRes` catalogue from chapter 12.
-4. The WSDL documents: SOAP actions, bindings, header requirements.
-5. The batch size limit for asynchronous reception.
+4. The WSDL documents: SOAP actions, bindings, header requirements. **Blocked
+   2026-10-08 — see §23.5.** Every service path on both hosts answers
+   `HTTP 302 → /vdesk/hangup.php3`, and a bogus path and the host root answer
+   the same, so the gate is host-wide and the WSDL is unreadable from here.
+   **Open, and the probe says nothing about the paths themselves.**
+5. ~~The batch size limit for asynchronous reception.~~ **Resolved 2026-10-08 —
+   see §23.7.** The Guide states **up to 50 documents per batch**, one RUC
+   emisor and one document type, with the request capped at **1000 KB**.
 6. The QR composition and the CSC's per-environment value.
 7. ~~The tables' contents, and chapter 16's codifications.~~ **Mostly resolved
    2026-10-04 — see §22.2 and §22.6.** The Manual's field-level rules are
@@ -586,15 +598,15 @@ statement that it is undefined — and **the clauses of Notas Técnicas 23, 24 a
 
 ## 20. Consequences for the epic's Stories
 
-| Story                                  | May now pin                                                                                                                                                           | Must still not write                                                                |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| FISC-007 signing material              | That a PSC-issued X.509 v3 certificate is used for **both** signing and mutual TLS; that the private key and password are RESTRICTED; the RUC placement rules         | Nothing beyond the certificate standard                                             |
-| FISC-008 DTE XML                       | The full `rDE` structure, `dVerFor` = 150, the required CDC `Id`, the child order, the namespace rules, `gCamDEAsoc` ≤ 99                                             | Field-level types from `DE_Types_v150.xsd`, and any Nota Técnica amendment          |
-| FISC-009 **XMLDSig** signing           | **The complete signature profile**: c14n, rsa-sha256, `#CDC` reference URI, the two ordered transforms, sha256 digest, X509Data, RSA 2048, and the forbidden elements | The library choice is [[ADR-006]]: `xml-crypto`, with `pkijs` kept for PKCS#12 only |
-| FISC-010 DNIT web services             | **The endpoint list for both environments**, the six services, sync/async split, SOAP 1.2 Document/Literal over mutual TLS                                            | SOAP actions and WSDL details; the batch limit                                      |
-| FISC-011 timbrado and numbering        | The six-field sequence, the series rule (two uppercase letters, no Ñ), the no-expiry timbrado model                                                                   | The tables' contents                                                                |
-| FISC-012 the provider                  | The three-state result model and the `dCodRes`/`dMsgRes` mapping, and that a rejected DE is **retryable with the same CDC**                                           | The full `dCodRes` catalogue                                                        |
-| FISC-013 contingency and certification | **The test guide's sequence and test data**, the test and production environments, and that documents in test have no legal value                                     | A contingency protocol: DNIT has not defined one                                    |
+| Story                                  | May now pin                                                                                                                                                                                         | Must still not write                                                                              |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| FISC-007 signing material              | That a PSC-issued X.509 v3 certificate is used for **both** signing and mutual TLS; that the private key and password are RESTRICTED; the RUC placement rules                                       | Nothing beyond the certificate standard                                                           |
+| FISC-008 DTE XML                       | The full `rDE` structure, `dVerFor` = 150, the required CDC `Id`, the child order, the namespace rules, `gCamDEAsoc` ≤ 99                                                                           | Field-level types from `DE_Types_v150.xsd`, and any Nota Técnica amendment                        |
+| FISC-009 **XMLDSig** signing           | **The complete signature profile**: c14n, rsa-sha256, `#CDC` reference URI, the two ordered transforms, sha256 digest, X509Data, RSA 2048, and the forbidden elements                               | The library choice is [[ADR-006]]: `xml-crypto`, with `pkijs` kept for PKCS#12 only               |
+| FISC-010 DNIT web services             | **The endpoint list for both environments**, the six services, sync/async split, SOAP 1.2 Document/Literal over mutual TLS; the service message shapes, the result codes and the batch limits (§23) | SOAP actions and WSDL bindings; the signed query family's signature profile; the ZIP entry's name |
+| FISC-011 timbrado and numbering        | The six-field sequence, the series rule (two uppercase letters, no Ñ), the no-expiry timbrado model                                                                                                 | The tables' contents                                                                              |
+| FISC-012 the provider                  | The three-state result model and the `dCodRes`/`dMsgRes` mapping, and that a rejected DE is **retryable with the same CDC**                                                                         | The full `dCodRes` catalogue                                                                      |
+| FISC-013 contingency and certification | **The test guide's sequence and test data**, the test and production environments, and that documents in test have no legal value                                                                   | A contingency protocol: DNIT has not defined one                                                  |
 
 ## Sources
 
@@ -1705,3 +1717,480 @@ titles and affected obligations (§22.13) and items (§22.14). **The rule text o
 Notas Técnicas 001–022 is therefore transcribed for every area FISC-008 or its
 mapping touches**, except the notes whose only effect is on events (NT 018's
 transport rules, NT 019, NT 027) — those belong to [[FISC-010]].
+
+## 23. The service layer — reception, batch, query and events (retrieved 2026-10-08)
+
+**[R]** This section closes open question 5 of §19 and most of open question 4.
+It exists because §3's inventory **named** the service schemas without reading
+them, and because every constant [[FISC-010]] encodes — the endpoint, the
+element names, the result codes, the batch limit — has to come from an artifact
+rather than from memory.
+
+### 23.1 Retrieval record
+
+Everything below was fetched from the official directory
+<https://ekuatia.set.gov.py/sifen/xsd/> (the index itself: **HTTP 200, 3,402
+bytes**) on 2026-10-08, and the bytes were inspected rather than trusted by
+name.
+
+```text
+v150 — reception, protocol, query and event services
+  WS_SiRecepDE_v150.xsd                        2,599 bytes
+  protProcesDE_v150.xsd                        4,206 bytes
+  siRecepDE_v150.xsd                             395 bytes
+  siRecepRDE_v150.xsd                            368 bytes
+  siRecepDE_Ekuatiai_v150.xsd                    366 bytes
+  siRecepRDE_Ekuatiai_v150.xsd                   524 bytes
+  WS_SiRecepEvento_v150.xsd                    2,618 bytes
+  siRecepEvento_v150.xsd                         417 bytes
+  siRecepEventoEmisor_v150.xsd                   410 bytes
+  siRecepEventoReceptor_v150.xsd                 412 bytes
+  siRecepEventoSet_v150.xsd                      410 bytes
+  Evento_v150.xsd                             23,255 bytes   retrieved, not profiled
+  Evento_Types_v150.xsd                       23,320 bytes   retrieved, not profiled
+  siConsultaDTE.xsd                            1,485 bytes
+  WS_SiConsDTE.xsd                             1,482 bytes
+  siConsultaDTEAsync.xsd                       1,632 bytes
+  WS_SiConsDTEAsync.xsd                        1,360 bytes
+  siConsultaArchivoRuc.xsd                     1,338 bytes
+  WS_ConsultaArchivoRuc.xsd                    1,960 bytes
+
+v141 — still published, and the ONLY place the batch shapes exist
+  WS_SiRecepLoteDE_v141.xsd                    3,880 bytes
+  WS_SiConsLote_v141.xsd                       7,193 bytes
+  WS_SiConsRUC_v141.xsd                        3,244 bytes
+
+HTTP 404 — the v150 batch schemas, by every name the Manual's Schema XML index uses
+  SiRecepLoteDE_v150.xsd   ProtProcesLoteDE_v150.xsd   resRecepLoteDE_v150.xsd
+  SiResultLoteDE_v150.xsd  resResultLoteDE_v150.xsd
+
+HTTP 404 — an include path two published v150 files point at
+  rde/150/RDE_Group.xsd          (included by siRecepRDE_v150.xsd)
+  rde/150/RDE_Ekuatiai_Group.xsd (included by siRecepRDE_Ekuatiai_v150.xsd)
+  rde/  rde/150/  sifen/         (no subdirectory is served)
+
+The Guide — the official recommendations for the asynchronous service
+  Guía de Mejores Prácticas para la Gestión del Envío de DE
+    HTTP 200, 520,393 bytes, application/pdf, 13 pages, read in full
+    https://www.dnit.gov.py/documents/20123/420592/
+      Guía+de+Mejores+Prácticas+para+la+Gestión+del+Envío+de+DE.pdf
+```
+
+The document list page
+(<https://www.dnit.gov.py/web/e-kuatia/documentacion-tecnica>, HTTP 200, 99,844
+bytes) is where the Guide is published, under the card the Manual's own index
+calls "Recomendaciones - servicio asíncrono". **It is a separate official
+document from the Manual and it is dated October 2024**, so it postdates v150
+and documents the asynchronous services in operational terms.
+
+### 23.2 What the directory publishes, and what it does not
+
+**The v150 batch and consultation schemas do not exist.** The Manual's Schema
+XML index names `SiRecepLoteDE_v150.xsd`, `ProtProcesLoteDE_v150.xsd`,
+`resRecepLoteDE_v150.xsd`, `SiResultLoteDE_v150.xsd`,
+`resResultLoteDE_v150.xsd`, `siConsDE_v150.xsd`, `resConsDE_v150.xsd`,
+`ContenedorDE_v150.xsd`, `siConsRUC_v150.xsd`, `resConsRUC_v150.xsd` and
+`ContenedorRUC_v150.xsd`; **all eleven return HTTP 404**, and so does every
+subdirectory probe. The asynchronous batch service and the two consultation
+services are published **only at v141** (`WS_SiRecepLoteDE_v141.xsd`,
+`WS_SiConsLote_v141.xsd`, `WS_SiConsDE_v141.xsd`, `WS_SiConsRUC_v141.xsd`), and
+the Guide documents the batch flow against the same unversioned names
+(`WS_SiRecepLoteDE.xsd`, `WS_SiConsLote.xsd`).
+
+**The published v150 consultation schemas are different services, and that is
+what §23.6 is about.** Their names look like the Manual's — `siConsultaDTE`
+against `siConsDE`, `Consulta Archivo RUC` against `Consulta RUC` — but they
+declare signed requests for queries the Manual's §9 does not describe.
+
+This is recorded as a finding, not as a gap to be filled by assumption: **a
+client that implements the batch or consultation services must implement the
+v141-published shapes**, because they are the only published ones, while the DE
+inside the batch is v150. Whether the service accepts a v150 DE inside a
+v141-shaped container is open (§23.8).
+
+**Two published v150 files cannot be used as-is**: `siRecepRDE_v150.xsd` and
+`siRecepRDE_Ekuatiai_v150.xsd` include `rde/150/RDE_Group.xsd` and
+`rde/150/RDE_Ekuatiai_Group.xsd`, and both return 404. They are the only
+dangling includes found in the directory.
+
+**Most of the "service" schemas are trivial wrappers.** `siRecepDE_v150.xsd` is
+a 395-byte schema that includes `DE_v150.xsd` and re-declares
+`<xs:element name="rDE" type="rDE"/>`; `siRecepEventoEmisor_v150.xsd`,
+`siRecepEventoReceptor_v150.xsd` and `siRecepEventoSet_v150.xsd` are 410-byte
+wrappers that declare `rGesEve` as `trGesEveEmi`, `trGesEveRecep` and
+`trGesEveSet` — **the groups a _received_ event document carries**, which is a
+different direction from the emitter's own submission service.
+
+### 23.3 The v150 service shapes, message by message
+
+**[R]** `WS_SiRecepDE_v150.xsd` — **Recepción DE, synchronous**:
+
+```xml
+<xs:element name="rEnviDe">
+  <xs:complexType><xs:sequence>
+    <xs:element name="dId">            <!-- xs:integer, totalDigits 15 -->
+    <xs:element name="xDE">            <!-- NOT base64: a wildcard element -->
+      <xs:complexType><xs:sequence>
+        <xs:any namespace="http://ekuatia.set.gov.py/sifen/xsd"
+                processContents="skip"/>
+      </xs:sequence></xs:complexType>
+    </xs:element>
+  </xs:sequence></xs:complexType>
+</xs:element>
+<xs:element name="rRetEnviDe">
+  <xs:complexType><xs:sequence>
+    <xs:element name="rProtDe" type="rProtDe"/>
+  </xs:sequence></xs:complexType>
+</xs:element>
+```
+
+**The DE is embedded as a child element here.** This is the divergence §23.4's
+batch shape contradicts, and it is the single most likely place to implement
+from memory and be wrong.
+
+**[R]** `protProcesDE_v150.xsd` — the processing protocol, included by the
+above:
+
+```text
+rProtDe  Id?        cdc resultado            xs:string
+         dFecProc   REQUIRED                 fecUTC
+         dDigVal?   hash of the DE           xs:base64Binary
+         dEstRes?   estado del resultado     xs:string        (no enumeration)
+         dProtAut?  número del protocolo     tdProtAut = xs:long
+         gResProc?  result group             tgResProc, maxOccurs 100
+tgResProc  dCodRes?  código de resultado    xs:string, minLength 1
+tgResProc  dMsgRes?  mensaje                xs:string, minLength 1
+```
+
+**Two divergences from the Manual's own table (§10), both worth recording:** the
+Manual types `dCodRes` as `N, 4` while the v150 schema declares it `xs:string`
+with a minimum length of 1 and **no pattern**; and the Manual constrains
+`dEstRes` to `A, 8–30` with three values while the schema declares a bare
+`xs:string`. The schema is **looser than the manual**, so a client must validate
+the domain itself rather than trusting the document to be well-typed.
+
+**[R]** `WS_SiRecepEvento_v150.xsd` — **Recepción evento, synchronous**:
+
+```text
+rEnviEventoDe     { dId (xs:integer, totalDigits 15), dEvReg { gGroupGesEve } }
+rRetEnviEventoDe  { dFecProc (fecUTC), gResProcEVe (tgResProcEVe, 1..15) }
+```
+
+`siRecepEvento_v150.xsd` declares `gGroupGesEve` as `tgGroupGesEve`, defined in
+`Evento_v150.xsd`. **`Evento_v150.xsd` and `Evento_Types_v150.xsd` were
+retrieved (23,255 and 23,320 bytes) but their field-level rules are not profiled
+here** — the event _payload_ is the emitter's own document to build, and
+profiling it is the work of the Story that builds one.
+
+**[R]** The two consultation services — the CDC query and the RUC status query,
+both **unsigned** — and the **different, signed** v150 query family that made
+them look blocked: see §23.6.
+
+### 23.4 The batch service, and the version it is published at
+
+**[R]** `WS_SiRecepLoteDE_v141.xsd` — **Recepción lote DE, asynchronous**:
+
+```text
+rEnvioLote       { dId (xs:long, 1..999999999999999),
+                   xDE (xs:base64Binary, xmime:expectedContentTypes="application/zip") }
+rResEnviLoteDe   { dFecProc? (fecUTC), dCodRes? (xs:string, minLength 1),
+                   dMsgRes? (xs:string), dProtConsLote? (xs:decimal, 28 digits,
+                   0..9999999999999999999999999999), dTpoProces? (xs:integer) }
+```
+
+**`xDE` is base64 here and an embedded element in the synchronous service.**
+Same element name, two encodings, in two schemas published side by side.
+
+**[R]** `WS_SiConsLote_v141.xsd` — **Consulta resultado lote**:
+
+```text
+rEnviConsLoteDe       { dId (dIdType), dProtConsLote? (same 28-digit decimal),
+                        dCDC? (xs:string, maxLength 50) }
+rResEnviConsLoteDe    { dFecProc (fecUTC), dCodResLot (xs:string, 1..4),
+                        dMsgResLot (xs:string, 1..255),
+                        gResProcLote? (tgResProcLote, maxOccurs 50) }
+tgResProcLote         { id (xs:string, 1..47 — the CDC), dEstRes (xs:string, 8..30),
+                        dProtAut? (xs:integer, pattern [0-9]{1,10}),
+                        gResProc (tgResProc, maxOccurs 5) }
+tgResProc             { dCodRes (xs:string, pattern [0-9]{4}),
+                        dMsgRes (xs:string, 1..255) }
+```
+
+**The 50 bounds the query's response groups, not the batch.** The batch size
+limit is a separate, operational rule and it is also 50 (§23.7).
+
+**[R]** The Guide's own steps for the batch, which is where the container comes
+from — no published schema defines it:
+
+```text
+1. Crear la estructura del lote   <rLoteDE> … </rLoteDE>
+2. Insertar los DE firmados       <rLoteDE><rDE>…</rDE><rDE>…</rDE></rLoteDE>
+3. Comprimir el contenido de la estructura del lote rLoteDE
+4. Convertir el contenido comprimido a Base64
+5. Crear el envelope soap, teniendo en cuenta los namespace especificados
+```
+
+with the Guide's own request example:
+
+```xml
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+               xmlns:xsd="http://ekuatia.set.gov.py/sifen/xsd">
+  <soap:Header/>
+  <soap:Body>
+    <xsd:rEnvioLote>
+      <xsd:dId>20240926</xsd:dId>
+      <xsd:xDE>{Aquí va el Base64 del punto 4}</xsd:xDE>
+    </xsd:rEnvioLote>
+  </soap:Body>
+</soap:Envelope>
+```
+
+**[R]** And the Manual's **§9.2.1 pins the container itself**, in the two
+schemas it names (Schema XML 5 and 5A):
+
+```text
+Schema XML 5 — SiRecepLoteDE_v150.xsd (WS Recepción DE Lote), §9.2
+  rEnvioLote  raíz
+  dId         N 1-15   1-1   "Número secuencial autoincremental … responsabilidad
+                              del contribuyente"
+  xDE         B        1-1   "Archivo de Lote comprimido", "Campo comprimido en
+                              formato Base64 según el esquema del Protocolo de
+                              procesamiento del Lote"
+
+Schema XML 5A — ProtProcesLoteDE_v150.xsd (Protocolo de procesamiento del Lote)
+  rLoteDE     raíz            "Elemento raíz"
+  rDE         XML  1-50       "Sigue las definiciones del Capítulo Formato de los DE"
+
+§9.2 prose
+  "Particularidad: Archivo comprimido «.zip»"
+  "el lote podrá contener hasta 50 DE del mismo tipo"
+  "No se requiere que el número del DE sea secuencial en el lote.
+   Un lote debe contener solo un mismo tipo de DE."
+  "agrupados mediante un contenedor el cual posee el certificado digital del
+   emisor"   <- the prose; Schema XML 5A carries no certificate element, and the
+                certificate travels inside each DE's own signature
+```
+
+**Both schemas are 404** (they are in §23.1's list), so the container is pinned
+by the Manual's table and not by an artifact. Two of its properties follow from
+that and are recorded as open in §23.8: **the container's namespace** (`rLoteDE`
+appears in no published schema) and **the ZIP entry's name**.
+
+**The ZIP entry's name is not published anywhere.** The container element is
+`rLoteDE`, the compression is described but not parameterised, and the entry
+name is unstated — recorded as open in §23.8. **What this client emits**: **one
+entry**, and the container in `http://ekuatia.set.gov.py/sifen/xsd` — every
+published DNIT schema declares that `targetNamespace`, and `rDE` inside the
+container is the v150 DE carrying its own namespace declaration. Both choices
+are single constants, so a homologation run can flip them without touching the
+serializer.
+
+### 23.5 The WSDL is unreachable on both hosts
+
+**[R]** Every service path was probed on both hosts on 2026-10-08, with a
+**control probe** that makes the result interpretable:
+
+```text
+https://sifen-test.set.gov.py/de/ws/sync/recibe.wsdl          HTTP/1.0 302  Location: /vdesk/hangup.php3
+https://sifen-test.set.gov.py/de/ws/async/recibe-lote.wsdl   HTTP/1.0 302  Location: /vdesk/hangup.php3
+https://sifen-test.set.gov.py/de/ws/consultas/consulta-lote.wsdl
+                                                             HTTP/1.0 302  Location: /vdesk/hangup.php3
+https://sifen.set.gov.py/de/ws/sync/recibe.wsdl              HTTP/1.0 302  Location: /vdesk/hangup.php3
+https://sifen.set.gov.py/de/ws/consultas/consulta-ruc.wsdl   HTTP/1.0 302  Location: /vdesk/hangup.php3
+
+control probes, same host
+https://sifen-test.set.gov.py/de/ws/sync/no-existe-jamas.wsdl HTTP/1.0 302  Location: /vdesk/hangup.php3
+https://sifen-test.set.gov.py/                                HTTP/1.0 302  Location: /vdesk/hangup.php3
+
+all of the above: Content-Length: 0
+```
+
+**The control probe is the finding.** A bogus path and the host root answer the
+same `302 → /vdesk/hangup.php3`, so **the gate is host-wide and the probe says
+nothing about whether a given service path is correct**. Two conclusions follow,
+and both matter:
+
+- the WSDL documents — SOAPAction, bindings, header requirements — **are not
+  readable from here**, and the Manual's endpoint table (§8) remains the only
+  source for the paths;
+- a client must **refuse to follow a redirect**, because following this one
+  fetches an HTML portal page and hands it to an XML parser.
+
+### 23.6 The consultation services: two names, two families
+
+**[R]** The Manual's §9.4 and §9.6 pin the two consultation services the
+endpoint list names, and **both requests are unsigned**:
+
+```text
+Consulta DE — Schema XML 9, siConsDE_v150.xsd, "consulta de un DE por su CDC"
+  rEnviConsDe { dId (N 1-15), dCDC (C 44) }
+  rResEnviConsDe { dFecProc (D 19), dCodRes (N 4), dMsgRes (C 1-255),
+                   xContenDE? (XML; present only if dCodRes = 0422) }
+  container: Schema XML 11, ContenedorDE_v150.xsd -> rContDe { rDE, dProtAut }
+  Tabla G: 0420 CDC inexistente · 0421 RUC del certificado sin permiso ·
+           0422 CDC encontrado
+
+Consulta RUC — Schema XML 15, siConsRUC_v150.xsd, "datos y estado del RUC"
+  rEnviConsRUC { dId (N 1-15), dRUCCons (A 5-8, sin dígito verificador) }
+  rResEnviConsRUC { dCodRes (N 4), dMsgRes (A 1-255), xContRUC? }
+  container: Schema XML 17, ContenedorRUC_v150.xsd ->
+    rContRUC { dRUCCons, dRazCons (1-250), dCodEstCons (3), dDesEstCons (6-25),
+               dRUCFactElec (1: S = facturador electrónico / N = no) }
+  Tabla H: 0500 RUC no existe · 0501 RUC sin permiso consulta WS ·
+           0502 RUC encontrado
+```
+
+**No `ds:Signature` appears in either request**, and §9.6 says the service
+"solamente permite conexiones con certificado digital" — the authentication is
+the mutual-TLS certificate, not an XML signature on the request. That is
+coherent with §8's own rule: "el software cliente deberá autenticarse ante el
+SIFEN utilizando su certificado y firma digital".
+
+**[R]** The Manual's v150 file names are **404** (`siConsDE_v150.xsd`,
+`resConsDE_v150.xsd`, `ContenedorDE_v150.xsd`, `siConsRUC_v150.xsd`,
+`resConsRUC_v150.xsd`, `ContenedorRUC_v150.xsd`), so the artifacts are the
+**v141** pair, published side by side with the v150 ones — the same pattern the
+batch service shows. And the Guide's own example matches the artifact, not the
+Manual's element names:
+
+```text
+WS_SiConsDE_v141.xsd (1,707 bytes, no xmldsig import)
+  rEnviConsDeRequest  { dId (dIdType), dCDC (tCDC) }
+  rEnviConsDeResponse { dFecProc (fecUTC), dCodRes (xs:string, length 4),
+                        dMsgRes (1..255), xContenDE? (xs:string) }
+WS_SiConsRUC_v141.xsd (3,244 bytes, no xmldsig import)
+  rEnviConsRUC  { dId (dIdType), dRUCCons (tRuc) }
+  rResEnviConsRUC { dCodRes (length 4), dMsgRes (1..255), xContRUC? (tContenedorRuc) }
+
+dIdType  xs:integer, totalDigits 15                      (SIFEN_Types_v141.xsd)
+tCDC     xs:string, length 44,
+         pattern [0-9]{2}([0-9]{7}[0-9A-D])[0-9]{34}      (FE_Types_v141.xsd)
+tRuc     xs:string, 5..8, pattern [1-9][0-9]*[0-9A-D]?   (FE_Types_v141.xsd)
+fecUTC   xs:dateTime, {AAAA-MM-DDThh:mm:ss-ss:ss}        (SIFEN_Types_v141.xsd)
+```
+
+So the element **names** differ between the Manual's table (`rEnviConsDe`) and
+the artifact the Guide uses (`rEnviConsDeRequest`); **the artifact wins**,
+because it is the schema and the Guide's example agrees with it.
+
+**[R] The signed v150 schemas are a different family of services.** They are
+what made this look like a conflict, and they are **not** the services §9.4 and
+§9.6 describe:
+
+```text
+WS_SiConsDTE.xsd + siConsultaDTE.xsd
+  rConsDteRequest  { rConsultaDTE }
+    rConsultaDTE { ConsultaDTE { dRuc, dProtConsDTEA }, @Id, ds:Signature }
+  rConsDteResponse { dFecProc (fecHhmmss), dMsgRes (1..255),
+                     rConsDte? (base64 ZIP) }
+  -> a query by AUTHORIZATION PROTOCOL, signed, returning a ZIP
+
+WS_SiConsDTEAsync.xsd + siConsultaDTEAsync.xsd
+  rEnviConsDteAsyncRequest  { rConsultaDTE }
+    rConsultaDTE { ConsultaDTE { dRuc, dTiDE, dFecIni, dFecFin }, @Id, ds:Signature }
+  rEnviConsDteAsyncResponse { dFecProc (fecHhmmss), dProtConsDTEAsync,
+                              dMsgRes (1..255) }
+  -> a DATE-RANGE query, signed, returning a consultation number
+
+WS_ConsultaArchivoRuc.xsd + siConsultaArchivoRuc.xsd
+  rEnviConsArchivoRUCRequest  { rConsultaArchivo }
+    rConsultaArchivo { ConsultaDTE { dRucFactElec }, @Id, ds:Signature }
+  rEnviConsArchivoRUCResponse { dFecProc (fecUTC), dFecArchivo?, dCodRes (1..4),
+                                dMsgRes (1..255), rConsDte? (base64 ZIP) }
+  -> the ARCHIVE of a RUC, signed, returning a ZIP
+```
+
+**The request's signature profile is not pinned by any retrieved source**: §5
+pins the signature of a **DE**, whose reference is `#<CDC>`, and these
+consultation requests reference `ConsultaDTE`, whose `@Id` is a self-managed
+string. No retrieved document states which canonicalization, transforms or
+reference these services expect. **They are therefore out of [[FISC-010]]'s
+scope** — they are not needed by the issuance or the asynchronous-resolution
+flow — and their profile stays open (§23.8). **What FISC-010 implements is
+§9.4's CDC query and §9.6's RUC status query, which need no XML signature at
+all.**
+
+### 23.7 The Guide's operational rules
+
+**[R]** The Guide's own text, and these are the only source for the batch's
+limits and the polling cadence:
+
+```text
+batch size          "Enviar la máxima cantidad posible de documentos en un lote
+                     (hasta 50 documentos)"
+same emitter        "Se debe enviar documentos de un solo RUC emisor por lote"
+same type           "Se debe enviar documentos de un solo tipo de documento por lote
+                     (solo Factura Electrónica, solo Nota de Crédito, etc)"
+request size        "El mensaje de datos de entrada del WS no debe superar 1000 KB"
+
+0300                "Lote recibido con éxito … se debe consultar el estado, a través
+                     del número de lote retornado"
+0301                "Lote no encolado para procesamiento, el lote NO será procesado"
+
+polling             "se recomienda comenzar a realizar la consulta pasados los 10
+                     minutos de la recepción y luego a intervalos regulares no
+                     menores a 10 minutos"
+processing time     "En momentos de alta carga el procesamiento puede ocurrir entre
+                     1 a 24 horas posteriores a la recepción"
+query window        "0364 La consulta del lote contempla un plazo de hasta 48 horas
+                     posteriores al envío del mismo. Una vez superado el tiempo,
+                     deberá consultar cada CDC del lote mediante la WS Consulta DE"
+
+never resend early  "Nunca se debe enviar un mismo CDC sin haber tenido la respuesta
+                     definitiva de SIFEN (Aprobado, Aprobado con Observación o
+                     Rechazado)"
+recover a lost      "Cuando se envía un lote y no se recibe respuesta del SIFEN por
+submission          algún corte en la comunicación, se puede consultar el lote con un
+                     CDC que fue enviado en el lote respectivo … Utilizar esta opción
+                     solo en caso de no recibir el Número de Lote como respuesta"
+
+RUC block           sending empty or invalid lots, the same CDC several times in one
+                     lot, the same CDC in different lots while still processing, or
+                     the same lot several times, blocks reception for that RUC
+                     "de 10 a 60 minutos, según la cantidad de reincidencia"
+```
+
+**Three of these are protocol constants a client encodes**, not advice: the 50,
+the 1000 KB and the 48-hour window. The ten minutes is a recommendation and is
+recorded as such.
+
+### 23.8 What this still does not pin
+
+1. **The WSDL documents.** SOAPAction, bindings, header requirements — blocked
+   by the host-wide 302 (§23.5). SOAP 1.2 makes the action a media-type
+   parameter rather than a mandatory header, and the Guide's invocations carry
+   none, so a client may proceed without one; a service that demands one will
+   say so.
+2. **The request signature profile of the signed v150 query family** — the
+   protocol query, the RUC archive and the date-range query (§23.6). They are
+   **not** the services §9.4 and §9.6 describe, no retrieved source pins their
+   signature, and [[FISC-010]] does not need them. Also open: **whether those
+   newer services supersede §9.4/§9.6**, since no retrieved source says they do,
+   while the Manual's text and the October-2024 Guide both describe the unsigned
+   forms as live.
+3. **The exact content of `xContenDE`.** The Manual describes the container as
+   `rContDe { rDE, dProtAut }` (Schema XML 11) and `WS_SiConsDE_v141.xsd` types
+   the field as `xs:string`, while the Guide shows it holding the DE's XML. So a
+   reader must accept the DE whether it arrives bare or wrapped in `rContDe`,
+   and must not assume which.
+4. **The ZIP entry's name** inside the batch container, **and the container's
+   namespace.** `rLoteDE` appears in no published schema (Schema XML 5A is 404),
+   and the Manual's table gives the element without a namespace. The client
+   emits one entry and the SIFEN namespace (§23.4), and both are single
+   constants a homologation run can flip.
+5. **Whether the batch service accepts a v150 DE inside the v141-shaped
+   container.** The container schema constrains only the base64 payload, so
+   nothing in the retrieved sources forbids it; nothing confirms it either.
+6. **The event payload's field-level rules.** `Evento_v150.xsd` and
+   `Evento_Types_v150.xsd` are retrieved but not profiled, and Notas Técnicas
+   018, 019 and 027 amend event rules (§22.14).
+7. **The `dCodRes` catalogue.** §10's open question stands: the schema does not
+   enumerate the codes, and the Guide supplies only the ones §23.7 lists.
+
+### 23.9 Consequences for the epic's Stories
+
+| Story                              | May now pin                                                                                                                                                                                                                                 | Must still not write                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| FISC-010 DNIT web services         | The six endpoints and both hosts (§8); the synchronous, batch, batch-query, event, **CDC-query and RUC-status** shapes (§23.3, §23.4, §23.6); the result codes and the batch limits (§23.7); SOAP 1.2 Document/Literal over mutual TLS (§7) | The SOAPAction and WSDL bindings; the signed query family's signature profile; the ZIP entry's name |
+| FISC-012 the provider              | The outcome mapping's inputs: `dEstRes`'s three values, `dProtAut`, `dCodRes`/`dMsgRes`, `dProtConsLote` as the asynchronous handle, and the CDC query as the post-window fallback                                                          | The `dCodRes` catalogue's full text; a contingency protocol                                         |
+| FISC-013 contingency/certification | That the batch path's limits and cadence are operational rules, and that the signed query family needs a signature source before it can be called                                                                                           | Anything about a live service's behaviour before a habilitación exists                              |

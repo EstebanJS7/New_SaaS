@@ -131,6 +131,12 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
       issueRequests.push(request);
       return fakeProvider.issue(request);
     },
+    // FISC-010 WU-D: the port gained a third capability, so this double must
+    // forward it. No API test exercises a query yet — the reconciliation path
+    // that consumes it is the worker's (FISC-012) — and it is deliberately not
+    // given a `scriptQuery` hook here: a script nothing drives is a surface that
+    // would only have to be re-reviewed when its first caller lands.
+    query: (request) => fakeProvider.query(request),
   };
 
   const captured: string[] = [];

@@ -5,6 +5,9 @@ import type {
   FiscalCancelResult,
   FiscalIssueRequest,
   FiscalIssueResult,
+  FiscalQueryOutcome,
+  FiscalQueryRequest,
+  FiscalQueryResult,
 } from "./fiscal-provider.port.js";
 
 const request: FiscalIssueRequest = {
@@ -35,6 +38,22 @@ async function cancel(
   provider: ReturnType<typeof createFakeFiscalProvider>
 ): Promise<FiscalCancelResult> {
   return provider.cancel(cancelRequest);
+}
+
+/** The recovery path's request: the handle is absent, the document's identity is not. */
+const queryRequest: FiscalQueryRequest = {
+  fiscalDocumentId: "document-1",
+  tenantId: "tenant-1",
+  provider: "FAKE",
+  cdc: "cdc-1",
+  externalId: null,
+  providerReference: null,
+};
+
+async function query(
+  provider: ReturnType<typeof createFakeFiscalProvider>
+): Promise<FiscalQueryResult> {
+  return provider.query(queryRequest);
 }
 
 describe("FakeFiscalProvider", () => {
@@ -84,6 +103,42 @@ describe("FakeFiscalProvider", () => {
       expect(result.reasonCode).toMatch(/^FAKE_[A-Z_]+$/);
       expect(result.externalId).toBeNull();
     }
+  });
+
+  it.each([
+    ["SUBMITTED", "fake-ref-1"],
+    ["APPROVED", null],
+    ["REJECTED", null],
+    ["FUNCTIONAL_REJECTION", null],
+    ["CONFIGURATION_ERROR", null],
+    ["TRANSIENT_FAILURE", null],
+  ] as const)("returns the operation handle %s carries", async (outcome, providerReference) => {
+    // ADR-007 §2: the handle belongs to the HAND-OVER and to nothing else. A
+    // `SUBMITTED` without one would leave the reconciliation path with nothing to
+    // poll with, and a handle on a resolved answer would blur it with the
+    // document reference.
+    const result = await issue(createFakeFiscalProvider({ outcomes: [outcome] }));
+    expect(result.providerReference).toBe(providerReference);
+  });
+
+  it("derives the operation handle from its prefix and the 1-based call index", async () => {
+    const provider = createFakeFiscalProvider({
+      outcomes: ["SUBMITTED"],
+      providerReferencePrefix: "operation",
+    });
+    expect((await issue(provider)).providerReference).toBe("operation-1");
+    expect((await issue(provider)).providerReference).toBe("operation-2");
+  });
+
+  it("keeps the operation handle distinct from the document's external id", async () => {
+    const provider = createFakeFiscalProvider({ outcomes: ["SUBMITTED", "APPROVED"] });
+    const submitted = await issue(provider);
+    const approved = await issue(provider);
+    expect(submitted.externalId).toBeNull();
+    expect(submitted.providerReference).toBe("fake-ref-1");
+    expect(approved.externalId).toBe("fake-2");
+    expect(approved.providerReference).toBeNull();
+    expect(submitted.providerReference).not.toBe(approved.externalId);
   });
 
   it("consumes cancellation outcomes in order and repeats the last entry", async () => {
@@ -148,6 +203,168 @@ describe("FakeFiscalProvider", () => {
       createFakeFiscalProvider({ clock: () => new Date("2026-01-02T03:04:05.000Z") })
     );
     expect(result.resolvedAt).toBe("2026-01-02T03:04:05.000Z");
+  });
+
+  it("consumes the query script in order and repeats its last entry", async () => {
+    const provider = createFakeFiscalProvider({
+      queryOutcomes: ["PROCESSING", "PROCESSING", "APPROVED"],
+    });
+    expect((await query(provider)).outcome).toBe("PROCESSING");
+    expect((await query(provider)).outcome).toBe("PROCESSING");
+    expect((await query(provider)).outcome).toBe("APPROVED");
+    expect((await query(provider)).outcome).toBe("APPROVED");
+  });
+
+  it("answers a query with APPROVED by default, including an empty script", async () => {
+    expect((await query(createFakeFiscalProvider())).outcome).toBe("APPROVED");
+    const provider = createFakeFiscalProvider({ queryOutcomes: [] });
+    expect((await query(provider)).outcome).toBe("APPROVED");
+    expect((await query(provider)).outcome).toBe("APPROVED");
+  });
+
+  it("returns the required query shape for every outcome", async () => {
+    const expected: readonly [FiscalQueryOutcome, string | null, number | null][] = [
+      ["APPROVED", null, null],
+      ["PROCESSING", null, null],
+      ["REJECTED", "FAKE_REJECTED", null],
+      ["FUNCTIONAL_REJECTION", "FAKE_FUNCTIONAL_REJECTION", null],
+      ["CONFIGURATION_ERROR", "FAKE_CONFIGURATION_ERROR", null],
+      ["TRANSIENT_FAILURE", "FAKE_TRANSIENT_FAILURE", 1_000],
+    ];
+    for (const [outcome, reasonCode, retryAfterMs] of expected) {
+      const result = await query(createFakeFiscalProvider({ queryOutcomes: [outcome] }));
+      expect(result.outcome, outcome).toBe(outcome);
+      expect(result.reasonCode, outcome).toBe(reasonCode);
+      expect(result.reason === null, outcome).toBe(reasonCode === null);
+      // With no scripted hint, `PROCESSING` is an answer rather than a failure
+      // and carries none: the provider's polling cadence is a protocol constant
+      // the adapter owns, and the knob that scripts one is exercised separately.
+      expect(result.retryAfterMs, outcome).toBe(retryAfterMs);
+      expect(result.externalId === null, outcome).toBe(outcome !== "APPROVED");
+    }
+  });
+
+  it("keeps issue, query and cancellation scripts on independent counters", async () => {
+    const provider = createFakeFiscalProvider({
+      outcomes: ["APPROVED", "SUBMITTED"],
+      queryOutcomes: ["PROCESSING", "APPROVED"],
+      cancelOutcomes: ["CANCEL_PENDING", "CANCELLED"],
+    });
+    expect((await issue(provider)).outcome).toBe("APPROVED");
+    expect((await query(provider)).outcome).toBe("PROCESSING");
+    expect((await cancel(provider)).outcome).toBe("CANCEL_PENDING");
+    expect((await query(provider)).outcome).toBe("APPROVED");
+    expect((await issue(provider)).outcome).toBe("SUBMITTED");
+    expect((await cancel(provider)).outcome).toBe("CANCELLED");
+  });
+
+  it("uses the injected clock for a query", async () => {
+    const result = await query(
+      createFakeFiscalProvider({ clock: () => new Date("2026-02-03T04:05:06.000Z") })
+    );
+    expect(result.resolvedAt).toBe("2026-02-03T04:05:06.000Z");
+  });
+
+  it("carries a scripted retry hint on a PROCESSING answer", async () => {
+    // ADR-007 guardrail 5: `retryAfterMs` is what keeps the reconciliation sweep
+    // from hot-looping against an answer of "still processing". Without a knob the
+    // bound would be untestable with the fake, and the fake is what makes the
+    // contract exercisable before a real provider exists.
+    const result = await query(
+      createFakeFiscalProvider({ queryOutcomes: ["PROCESSING"], queryRetryAfterMs: 60_000 })
+    );
+    expect(result.outcome).toBe("PROCESSING");
+    expect(result.retryAfterMs).toBe(60_000);
+    // The hint is not a reason code: `PROCESSING` is not a failure.
+    expect(result.reasonCode).toBeNull();
+  });
+
+  it("carries no retry hint for PROCESSING unless the option supplies one", async () => {
+    const result = await query(createFakeFiscalProvider({ queryOutcomes: ["PROCESSING"] }));
+    expect(result.outcome).toBe("PROCESSING");
+    expect(result.retryAfterMs).toBeNull();
+  });
+
+  it("never attaches the scripted PROCESSING hint to another outcome", async () => {
+    // The knob belongs to "keep waiting". A transient failure keeps its own fixed
+    // hint so a test can tell the two apart, and an answer carries none.
+    const transient = await query(
+      createFakeFiscalProvider({ queryOutcomes: ["TRANSIENT_FAILURE"], queryRetryAfterMs: 60_000 })
+    );
+    expect(transient.retryAfterMs).toBe(1_000);
+    for (const outcome of [
+      "APPROVED",
+      "REJECTED",
+      "FUNCTIONAL_REJECTION",
+      "CONFIGURATION_ERROR",
+    ] as const) {
+      const result = await query(
+        createFakeFiscalProvider({ queryOutcomes: [outcome], queryRetryAfterMs: 60_000 })
+      );
+      expect(result.retryAfterMs, outcome).toBeNull();
+    }
+  });
+
+  it("answers a query without protocol artefacts, whatever the script says", async () => {
+    for (const outcome of [
+      "APPROVED",
+      "PROCESSING",
+      "REJECTED",
+      "FUNCTIONAL_REJECTION",
+      "CONFIGURATION_ERROR",
+      "TRANSIENT_FAILURE",
+    ] as const) {
+      const result = await query(createFakeFiscalProvider({ queryOutcomes: [outcome] }));
+      for (const payload of [result.providerRequest, result.providerResponse]) {
+        expect(payload).toBeTypeOf("object");
+        expect(payload).not.toBeNull();
+        const serialized = JSON.stringify(payload);
+        expect(serialized, outcome).not.toMatch(/<\/?[a-z][^>]*>/i);
+        expect(serialized, outcome).not.toMatch(/xml|signature|certificate|private.?key/i);
+      }
+    }
+  });
+
+  it("answers a query for the recovery path, which carries no handle", async () => {
+    // ADR-007 §2: the query is identified by whatever the document has, so the
+    // scripted answer must not depend on the handle being present.
+    const provider = createFakeFiscalProvider({ queryOutcomes: ["APPROVED"] });
+    const withoutHandle = await provider.query({ ...queryRequest, providerReference: null });
+    const withHandle = await provider.query({ ...queryRequest, providerReference: "operation-1" });
+    expect(withoutHandle.outcome).toBe("APPROVED");
+    expect(withHandle.outcome).toBe("APPROVED");
+  });
+
+  it("confirms the CDC the question carried", async () => {
+    const result = await query(createFakeFiscalProvider({ queryOutcomes: ["APPROVED"] }));
+    expect(result.cdc).toBe(queryRequest.cdc);
+  });
+
+  it("hands back the CDC it was not given, for a resolved answer", async () => {
+    // The lost-hand-over case ADR-007 §2 exists for: the request carries no
+    // identity, the answer is what tells us which document it resolved. A fake
+    // that could only echo would leave the recovery path unexercisable.
+    for (const outcome of ["APPROVED", "REJECTED", "FUNCTIONAL_REJECTION"] as const) {
+      const result = await createFakeFiscalProvider({ queryOutcomes: [outcome] }).query({
+        ...queryRequest,
+        cdc: null,
+      });
+      expect(result.outcome, outcome).toBe(outcome);
+      expect(result.cdc, outcome).not.toBeNull();
+    }
+  });
+
+  it("hands back no CDC for an answer that resolved nothing", async () => {
+    // Including when the question carried one: an unresolved or failed answer
+    // identifies no document, so reporting a CDC there would be an identity the
+    // provider never confirmed. `queryRequest` carries `cdc-1` on purpose.
+    for (const outcome of ["PROCESSING", "TRANSIENT_FAILURE", "CONFIGURATION_ERROR"] as const) {
+      const result = await createFakeFiscalProvider({ queryOutcomes: [outcome] }).query(
+        queryRequest
+      );
+      expect(result.outcome, outcome).toBe(outcome);
+      expect(result.cdc, outcome).toBeNull();
+    }
   });
 
   it("returns JSON raw payloads without XML or signature/protocol artefacts", async () => {

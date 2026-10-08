@@ -21,6 +21,9 @@ export type {
   FiscalIssueResult,
   FiscalProviderId,
   FiscalProviderPort,
+  FiscalQueryOutcome,
+  FiscalQueryRequest,
+  FiscalQueryResult,
 } from "./fiscal-provider.port.js";
 // Dev/test only; this fake does not implement SIFEN.
 export { createFakeFiscalProvider, FakeFiscalProvider } from "./fake-fiscal.provider.js";
@@ -31,6 +34,21 @@ export type {
   SanitizedProviderSnapshot,
 } from "./fiscal-snapshot.sanitizer.js";
 export { FiscalProviderModule } from "./fiscal-provider.module.js";
+export type { FiscalProviderModuleOptions } from "./fiscal-provider.module.js";
+// FISC-010 WU-C / ADR-008 §2: the credential boundary the transport reads per
+// call. The port lives here; its implementation lands in the worker (FISC-012),
+// because `packages/fiscal` must not depend on Prisma or `@newsaas/secret-store`.
+// `createNullFiscalCredentialPort` is the fail-closed default `forRoot()` wires.
+export {
+  createNullFiscalCredentialPort,
+  FISCAL_CREDENTIAL_PORT,
+  isCredentialFresh,
+} from "./fiscal-credential.port.js";
+export type {
+  FiscalCredentialPort,
+  FiscalSigningEnvironment,
+  FiscalTransportCredential,
+} from "./fiscal-credential.port.js";
 // The queue contract lives here because both deployables share it.
 // Export the identity helper so the producer and recovery sweep cannot disagree about job identity.
 export {
@@ -238,3 +256,184 @@ export type {
   DteTipoTransaccion,
   DteXmlElement,
 } from "./dte/dte.types.js";
+// FISC-010 WU-B: the pure message layer of the SIFEN web services — the six
+// services' shapes, their serializers and parsers, and the result-code tables.
+// No I/O, no clock, no filesystem: the transport and the credential port are
+// WU-C's, the facade and the outcome mapping are WU-E's.
+//
+// The result codes first, because they are the vocabulary the other three
+// speak: `dEstRes`'s three published values, the batch reception's 0300/0301,
+// the batch query's 0360-0364, and Tabla G/H's 0420-0422 and 0500-0502. Every
+// descriptor is total and answers `unknown` carrying the raw code, because §23.8
+// records that no retrieved source enumerates the dCodRes catalogue.
+export {
+  describeBatchQuery,
+  describeBatchReception,
+  describeCdcQuery,
+  describeDeStatus,
+  describeRucQuery,
+  SIFEN_BATCH_POLL_INTERVAL_MS,
+  SIFEN_BATCH_QUERY_CODES,
+  SIFEN_BATCH_QUERY_WINDOW_MS,
+  SIFEN_BATCH_RECEPTION_CODES,
+  SIFEN_CDC_QUERY_CODES,
+  SIFEN_DE_STATUS_OUTCOMES,
+  SIFEN_RUC_QUERY_CODES,
+} from "./sifen/sifen.codes.js";
+export type {
+  SifenBatchQueryDescriptor,
+  SifenBatchQueryOutcome,
+  SifenBatchReceptionDescriptor,
+  SifenBatchReceptionOutcome,
+  SifenDeStatusDescriptor,
+  SifenDeStatusOutcome,
+  SifenEstadoResultado,
+  SifenLookupDescriptor,
+  SifenLookupOutcome,
+} from "./sifen/sifen.codes.js";
+// The six shapes and the constants that pin them: the namespaces, the envelope's
+// element names, and every published field domain the serializer writes and the
+// parser validates.
+export {
+  SIFEN_BASE64_PATTERN,
+  SIFEN_BATCH_NUMBER_MAX_DIGITS,
+  SIFEN_BATCH_NUMBER_PATTERN,
+  SIFEN_BATCH_PROTOCOL_NUMBER_PATTERN,
+  SIFEN_BATCH_QUERY_MAX_CODES,
+  SIFEN_BATCH_QUERY_MAX_RESULTS,
+  SIFEN_CDC_LENGTH,
+  SIFEN_CDC_PATTERN,
+  SIFEN_EVENT_MAX_CODES,
+  SIFEN_EVENT_MAX_RESULTS,
+  SIFEN_EVENT_MIN_RESULTS,
+  SIFEN_ID_PATTERN,
+  SIFEN_MAX_ID_DIGITS,
+  SIFEN_NAMESPACE,
+  SIFEN_PROTOCOL_NUMBER_PATTERN,
+  SIFEN_RECEPTION_MAX_CODES,
+  SIFEN_RESULT_CODE_PATTERN,
+  SIFEN_RESULT_CODE_WIDTH,
+  SIFEN_RESULT_MESSAGE_MAX_LENGTH,
+  SIFEN_RUC_ELECTRONIC_VALUES,
+  SIFEN_RUC_MAX_LENGTH,
+  SIFEN_RUC_MIN_LENGTH,
+  SIFEN_RUC_NAME_MAX_LENGTH,
+  SIFEN_RUC_PATTERN,
+  SIFEN_RUC_STATE_CODE_LENGTH,
+  SIFEN_RUC_STATE_DESCRIPTION_MAX_LENGTH,
+  SIFEN_SOAP_BODY,
+  SIFEN_SOAP_ENVELOPE,
+  SIFEN_SOAP_HEADER,
+  SOAP_ENVELOPE_NAMESPACE,
+} from "./sifen/sifen.messages.js";
+export type {
+  SifenBatchQueryDeResult,
+  SifenBatchQueryRequest,
+  SifenBatchQueryResponse,
+  SifenBatchQueryResultGroup,
+  SifenBatchReceptionRequest,
+  SifenBatchReceptionResponse,
+  SifenCdcQueryRequest,
+  SifenCdcQueryResponse,
+  SifenDeContent,
+  SifenEventReceptionRequest,
+  SifenEventReceptionResponse,
+  SifenEventResult,
+  SifenProcessingProtocol,
+  SifenProcessingResultGroup,
+  SifenReceptionRequest,
+  SifenReceptionResponse,
+  SifenRucElectronicFlag,
+  SifenRucQueryRequest,
+  SifenRucQueryResponse,
+  SifenRucStatus,
+} from "./sifen/sifen.messages.js";
+// The serializers. One function per service, plus the batch container; the two
+// things §23.8 leaves unpinned (the ZIP entry's name and the container's
+// namespace) are single constants a homologation run can flip.
+export {
+  buildBatchContainer,
+  serializeBatchQuery,
+  serializeBatchReception,
+  serializeCdcQuery,
+  serializeEventReception,
+  serializeReception,
+  serializeRucQuery,
+  SIFEN_BATCH_CONTAINER_NAMESPACE,
+  SIFEN_BATCH_MAX_DOCUMENTS,
+  SIFEN_MAX_REQUEST_BYTES,
+  SIFEN_ZIP_ENTRY_NAME,
+  SifenSerializationError,
+} from "./sifen/sifen.serializer.js";
+export type { SifenSerializationFailure } from "./sifen/sifen.serializer.js";
+// The parsers, with ADR-008's guardrails: the size cap and the DOCTYPE refusal
+// run before the parse, no value is coerced, and the reader builds its result
+// field by field.
+export {
+  parseBatchQueryResponse,
+  parseBatchReceptionResponse,
+  parseCdcQueryResponse,
+  parseEventReceptionResponse,
+  parseReceptionResponse,
+  parseRucQueryResponse,
+  SIFEN_MAX_NESTED_TAGS,
+  SIFEN_MAX_RESPONSE_BYTES,
+  SifenParseError,
+} from "./sifen/sifen.parser.js";
+export type { SifenParseFailure } from "./sifen/sifen.parser.js";
+// FISC-010 WU-C / ADR-008 §1: the transport. SOAP 1.2 Document/Literal over
+// `node:https` with a per-call mutual-TLS configuration, `agent: false` on every
+// request, no redirect followed, the response bounded while it is read, and a
+// typed failure for every way a call can end badly. The local TLS double that
+// proves it is test scaffolding and lives at `@newsaas/fiscal/testing`.
+export {
+  classifySocketFailure,
+  sendSifenRequest,
+  SIFEN_DEFAULT_TIMEOUT_MS,
+  SIFEN_ENVIRONMENT_HOSTS,
+  SIFEN_SOAP_CONTENT_TYPE,
+  SIFEN_TLS_MIN_VERSION,
+  SifenTransportError,
+  sifenBaseUrl,
+} from "./sifen/sifen.transport.js";
+export type {
+  SendSifenRequestArgs,
+  SifenTransportFailure,
+  SifenTransportResponse,
+} from "./sifen/sifen.transport.js";
+// FISC-010 WU-E / baseline §8: the service facade. One typed method per
+// implemented service, each bound to the endpoint the Manual's table publishes,
+// and no endpoint string written anywhere else in the package. Every call reads
+// the tenant's credential, builds its envelope, posts it and parses the answer,
+// in that order; a null credential read is a typed `CREDENTIAL_UNAVAILABLE` and
+// the transport's and the parser's failures travel out unchanged.
+export {
+  createSifenServiceFacade,
+  SIFEN_SERVICE_PATHS,
+  SifenFacadeError,
+} from "./sifen/sifen.facade.js";
+export type {
+  SifenFacadeDependencies,
+  SifenFacadeFailure,
+  SifenServiceFacade,
+} from "./sifen/sifen.facade.js";
+// FISC-010 WU-E / ADR-007: the pure outcome mapping from a parsed SIFEN answer
+// onto the port's vocabulary. No I/O and no clock — `resolvedAt` arrives in the
+// context, the raw snapshots are only echoed (the Fiscal boundary sanitizes
+// them), and every field of the result is set, with `null` where the answer is
+// silent. The `SIFEN_*_REASON` strings are client-authored notes, not protocol
+// constants.
+export {
+  mapBatchQueryOutcome,
+  mapBatchReceptionOutcome,
+  mapCdcQueryOutcome,
+  mapReceptionOutcome,
+  mapRucQueryOutcome,
+  SIFEN_BATCH_CONCLUDED_WITHOUT_RESULTS_REASON,
+  SIFEN_BATCH_RECEPTION_MESSAGE_ABSENT_REASON,
+  SIFEN_BATCH_WINDOW_CLOSED_REASON,
+  SIFEN_OBSERVATION_UNSTATED_REASON,
+  SIFEN_RECEPTION_FATE_ABSENT_REASON,
+  SIFEN_RECEPTION_MESSAGE_ABSENT_REASON,
+} from "./sifen/sifen.outcomes.js";
+export type { SifenOutcomeContext, SifenRucQueryOutcome } from "./sifen/sifen.outcomes.js";

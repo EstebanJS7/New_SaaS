@@ -2540,10 +2540,10 @@ enum FiscalDocumentStatus {
 /// No invoice series, number, currency, customer or money snapshot is duplicated:
 /// confirmed invoices are immutable, so consumers read the request data through
 /// the composite tenant-ownership FK. No secret material is stored.
-/// Data classification: provider references (externalId, cdc, storage keys) and
-/// request/response snapshots are CONFIDENTIAL; status and attempt counters are
-/// INTERNAL (PRD §41). Provider snapshots/errors must be sanitized; logs and
-/// audit carry IDs and field names only.
+/// Data classification: provider references (externalId, cdc, providerReference,
+/// storage keys) and request/response snapshots are CONFIDENTIAL; status and
+/// attempt counters are INTERNAL (PRD §41). Provider snapshots/errors must be
+/// sanitized; logs and audit carry IDs and field names only.
 model FiscalDocument {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
@@ -2555,6 +2555,15 @@ model FiscalDocument {
 
   externalId String? @map("external_id")
   cdc        String?
+
+  /// The provider's handle for an unresolved OPERATION (ADR-007 §2), written in
+  /// the same conditional update that enters `SUBMITTED`. It is not `externalId`:
+  /// that column is the provider's reference for the DOCUMENT, known only once
+  /// the document resolves, while this one names the operation that carried it —
+  /// and one operation may carry many documents. The transition guard refuses to
+  /// clear it, so a restart cannot drop the reference the reconciliation path
+  /// polls with.
+  providerReference String? @map("provider_reference")
 
   xmlStorageKey  String? @map("xml_storage_key")
   kudeStorageKey String? @map("kude_storage_key")

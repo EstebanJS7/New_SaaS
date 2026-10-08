@@ -3,7 +3,7 @@ feature: epic-16-sifen-direct
 epic: EPIC-16
 status: in-progress
 created: 2026-10-03
-updated: 2026-10-07
+updated: 2026-10-08
 branch: main
 ---
 
@@ -122,11 +122,24 @@ candidate 1 exists.
    query and the worker needs reconciliation. → **before FISC-010**, not
    FISC-012: FISC-010 is the story that produces the asynchronous result, so the
    port has to expose it before FISC-012 consumes it. Becomes **ADR-007**.
+   **Resolved: [[ADR-007]] `accepted` 2026-10-08** — `SUBMITTED` as a
+   non-terminal **and non-retryable** issue outcome, `providerReference` on the
+   result, a `query` capability, a nullable `fiscal_document.provider_reference`
+   for SIFEN's batch number, `submitted_at`'s writer, and the TD-028 sweep
+   extended to `SUBMITTED` as the reconciliation path.
 4. **The SIFEN transport: SOAP over mutual TLS with the tenant's certificate,
    and the client/parser dependency.** The adapter runs in the worker and must
    authenticate as the tenant, so the boundary gains a per-call credential read
    on a process-singleton provider, and an XML parser `packages/fiscal` does not
-   have today. → before FISC-010. Becomes **ADR-008**.
+   have today. → before FISC-010. Becomes **ADR-008**. **Resolved: [[ADR-008]]
+   `accepted` 2026-10-08** — `node:https` with a per-call mutual-TLS
+   configuration and `agent: false` (no pooled socket, so no authenticated
+   connection is reused across tenants),
+   `FiscalCredentialPort.read({ tenantId, environment })` with a null-returning
+   default behind a `forRoot()`-able module, the deployment-level
+   `SIFEN_ENVIRONMENT` with the material's `environment` column as a **guard**,
+   and two MIT dependencies (`fast-xml-parser`, `fflate`) with their advisory
+   record and the parser's guardrails.
 
 ## Story plan
 
@@ -353,7 +366,107 @@ candidate 1 exists.
       worker also does not build a DE at all today — it hands invoice data to
       the port and the fake provides. Recorded in the Story under "Why this
       acceptance criterion moved" and in the epic's FISC-012 row.
-- [ ] T6 — FISC-010: DNIT web services.
+- [x] T6 — **FISC-010: DNIT web services — DONE 2026-10-08.** Branch
+      `feat/epic-16-fisc-010-dnit-web-services` from **`68b3c74`** (chosen by
+      the maintainer over `ffd08a1`, because `4907e65` — the epic's ADR-order
+      correction — and the FISC-011 completion commits are not yet in `main`,
+      and both touch the bookkeeping files this work unit edits). Feature
+      record: `odd/tasks/fisc-010-dnit-web-services.md`. Story:
+      `docs/02-stories/FISC-010-dnit-web-services.md`. **WU-A, docs-only, is
+      this commit**: [[ADR-007]] and [[ADR-008]] accepted 2026-10-08, the Story,
+      `SIFEN-BASELINE.md` **§23** (the service-schema retrieval record, the WSDL
+      block and the outcome model), the epic's ADR list and rows, and this
+      tracker entry. **Three findings from §23 shape the rest of the Story**:
+      **(1)** the v150 **batch** schemas do not exist —
+      `SiRecepLoteDE_v150.xsd`, `ProtProcesLoteDE_v150.xsd`,
+      `resRecepLoteDE_v150.xsd`, `SiResultLoteDE_v150.xsd`,
+      `resResultLoteDE_v150.xsd` and `WS_SiRecepLoteDE_v150.xsd` all return
+      **HTTP 404**, and the batch shapes are published only at **v141**, which
+      is also what the Guide documents; **(2)** the two **consultation**
+      services were first recorded as **blocked** — that was **wrong, and it is
+      corrected here**: the published v150 consultation schemas
+      (`siConsultaDTE.xsd`, `siConsultaArchivoRuc.xsd`) are **different
+      services** (by authorization protocol, by date range, and the RUC archive,
+      all signed and all returning ZIPs), while the Manual's **§9.4 and §9.6**
+      pin the two services the endpoint list names as **unsigned**
+      (`rEnviConsDe { dId, dCDC }`, `rEnviConsRUC { dId, dRUCCons }`) and the
+      published v141 artifacts (`WS_SiConsDE_v141.xsd`, `WS_SiConsRUC_v141.xsd`,
+      **zero `xmldsig` occurrences**) and the Guide's example confirm them — the
+      blocker was a search not yet run (baseline §22.1's lesson), and
+      §23.6/§23.8 were rewritten with it; **(3)** the WSDL is unreadable on both
+      hosts (`HTTP 302 → /vdesk/hangup.php3`, and a **bogus path and the host
+      root answer the same**, so the gate is host-wide and the probe says
+      nothing about the paths), which leaves SOAPAction and bindings open and
+      makes "never follow a redirect" a requirement rather than a preference.
+      **WU-B landed 2026-10-08** (4 modules under `packages/fiscal/src/sifen/`,
+      121 new cases, `fast-xml-parser` and `fflate` added by ADR-008):
+      `sifen.codes.ts` (the vocabulary), `sifen.messages.ts` (the six shapes and
+      their constants), `sifen.serializer.ts` (the SOAP envelopes and the batch
+      container + ZIP + base64) and `sifen.parser.ts` (the six responses with
+      the guardrails). **Two corrections it forced on the documents**: an
+      **unlisted result code is carried, not refused** (the catalogue is open —
+      §23.8 item 7, and the Manual's own §10 example is `0160`, which §23.7 does
+      not list), so ADR-008 §5 and the Story's criteria now separate the
+      structural domains from the code catalogue; and **the ZIP is write-only in
+      this Story** — the read direction belongs to the signed family, so
+      `fflate`'s `unzip` path (the only one its advisory ever touched) stays
+      unused. **WU-B landed as commit `5bdf676`** — 16 files, 3,830 insertions —
+      and its review is `review-f16dff5e521484d2`: tier **`medium`**, lens
+      **`review-reliability`**, closed **`approved`** with **four advisories**
+      at `WARNING`/`informational` (`R3-001`..`R3-004`, all in
+      `sifen.parser.ts`, none opening a correction), and the acknowledgement
+      burned the authority. The advisories are recorded in the Story's Technical
+      Debt. **WU-C landed as commit `9f92642`** — 15 files, 2,085 insertions —
+      and its review is `review-ac6687061a6f8f5d`: tier `medium` (reason
+      `executable_change` on the API's fiscal module test), lens
+      `review-reliability`, which found **one CRITICAL** in the transport's
+      response lifecycle. The refuter corroborated it, the bounded correction
+      (plan 40 diff lines) added the `close`-without-`complete` failure path,
+      and the **targeted validator** passed both checks — so the lineage closed
+      `approved` with two `WARNING`/`informational` advisories left. **WU-D
+      landed as commit `a1ce736`** — 18 files, 1,052 insertions — and it took
+      **two review transactions**: the first (`review-535e9a45a5624196`, `high`,
+      four lenses) found one CRITICAL and its correction was **rejected by the
+      targeted validator**, so that lineage went terminal (`escalated`,
+      `native_stop_required`) and the maintainer chose a fresh transaction; the
+      second (`review-68028f3d442967b0`) found the same defect class one level
+      deeper (an unguarded null write of `providerReference` on the retry path),
+      corrected it, and closed **`approved`** with four non-blocking advisories.
+      Both are in the Review coverage section. **WU-E landed as commit
+      `b567265`** — 5 files, 2,195 insertions, 61 new cases (fiscal now 26 files
+      / 507 tests) — and its review is `review-4548d852efe5ee3a`: tier `medium`,
+      lens `review-reliability`, **`approved` on the first pass**, the first
+      work unit of this feature to need no correction, with one advisory at
+      `WARNING`/`informational`. **That closes FISC-010's five work units**: the
+      decisions and the Story, the message layer, the transport and the
+      credential port, the port's asynchronous capability and the schema, and
+      the facade with its outcome mapping. **The Story's closure run
+      (2026-10-08)**: 12/12 package gates green for fiscal, database and api,
+      root lint 18/18, typecheck 18/18, test 19/19, build 11/11, `format-check`
+      clean, `db:deploy` + `db:live-verify` green on a freshly created database,
+      and `test:live-pg` at **220/220** — so
+      `docs/02-stories/FISC-010-dnit-web-services.md` moves to `status: done`
+      with every criterion checked or explicitly re-pointed, **215 new test
+      cases across ten suites**, and eleven advisories recorded as accepted
+      debt. **Eleven commits on the branch**: `3779569`, `28c30ab`, `f71871c`,
+      `ff9c485`, `5bdf676`, `61f43ba`, `9f92642`, `8b8a1d8`, `a1ce736`,
+      `f527b67`, `b567265` + the closure commit. **The maintainer's boundary of
+      2026-10-08**: FISC-010 defines the credential port and proves it with a
+      **double**; [[FISC-012]] wires the worker together with the signing stage.
+      **One criterion moved a second time**: FISC-009 pointed "no secret in a
+      log or a stored snapshot" at FISC-010; ADR-008 put the transport in
+      `packages/fiscal` and the wiring in FISC-012, and FISC-010 persists no
+      document and logs no submission, so it re-points to FISC-012 with the
+      reason recorded in the Story. **WU-A landed as commit `3779569`** — 8
+      files, 2,116 insertions, 49 deletions — and its review is
+      `review-fe256d67a4d60ed5`, closed **`approved`** with **no lenses**: the
+      provider classified the candidate `non_executable_only` at `low` tier and
+      set `lenses_required: false`, so the four-lens review never ran. Inspected
+      **before** committing, and the intended-untracked selection adopted the
+      four new files. **The correction landed as `f71871c`** (6 files, 364
+      insertions, 186 deletions) and its review is `review-7e0ebabc11a3a00c`,
+      also `approved` with **no lenses** and the same `non_executable_only`
+      classification.
 - [x] T7 — **FISC-011: timbrado and numbering ranges — DONE 2026-10-07.** Merged
       as PR **#108**, merge commit **`ffd08a1`**, CI run `37679607152` green on
       all three checks (branch `feat/epic-16-fisc-011-timbrado-numbering`).
@@ -405,11 +518,29 @@ candidate 1 exists.
       the transactional compare-and-swap counter with the series rollover.
       **WU-E, the surface**: the profile/establishment/range routes, the
       permission, the audit and tenant isolation.
-- [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + port extension + ADR.
-      **Inherits FISC-009's worker signing stage**: claim `SIGNING`, sign the DE
-      with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
-      `SIGNING -> ERROR`. It is this Story's because it is the one that will
-      have [[FISC-011]]'s emitter profile and already owns the port.
+- [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + the asynchronous capability's
+      implementation + provider selection. **Inherits from FISC-009 the worker's
+      signing stage** (claim `SIGNING`, sign the DE with `signDteXml`, then
+      `SIGNING -> SENDING`; a signing failure goes to `SIGNING -> ERROR`), and
+      **from FISC-010 three more things**, per ADR-007 and ADR-008: **(a)** the
+      real `FiscalCredentialPort` in the worker — `@newsaas/secret-store` in
+      `apps/worker/package.json`, `SecretsModule`, `SECRET_STORE_MASTER_KEYS`
+      and the `secretStore.get` path, **none of which exists today**; **(b)**
+      the **reconciliation stage** — the TD-028 sweep extended to `SUBMITTED`,
+      calling `query` and applying the terminal result, with `retryAfterMs`
+      bounding the next attempt; **(c)** **persisting the signed DE**
+      (`xml_storage_key`, still written by nothing) and the submission path's
+      logging, which is where FISC-009's "no secret in a log or a stored
+      snapshot" criterion now lives. **The two consultation services are IN
+      scope**: the Manual's §9.4 CDC query is what resolves a document after the
+      Guide's 48-hour batch window, and §9.6's RUC status query is the sixth
+      service of the endpoint list. **What stays blocked and out of scope is the
+      signed v150 query family** — by protocol, by range, and the RUC archive —
+      whose request signature profile no source pins (FISC-013, against a real
+      service). **Note on this Story's row in the epic**: FISC-010 **adds** the
+      port's asynchronous capability; FISC-012 **implements** it. The epic's
+      earlier wording ("the port's asynchronous-status extension") was corrected
+      on 2026-10-08.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 
@@ -560,6 +691,96 @@ inputs.
 
 ## Review coverage
 
+**FISC-010 WU-E — `review-4548d852efe5ee3a`, `approved` on the first pass
+(2026-10-08).** Tier **`medium`** (reason `executable_change` on
+`packages/fiscal/src/index.ts`), **one** lens (`review-reliability`), 5 files
+and 2,195 changed lines. It closed `approved` with **one advisory** at
+`WARNING`/`informational` (`R3-0362-REASON-EMPTY` in `sifen.outcomes.ts`) and
+needed **no correction** — the first work unit of this feature that did not. The
+acknowledgement burned the authority. **With it, FISC-010's five work units are
+complete**: every one has a commit and a closed lineage, and the two that needed
+a correction (WU-C and WU-D) have their corrections recorded with the
+validator's verdict.
+
+**FISC-010 WU-D — two lineages, and the first one is why the second exists
+(2026-10-08).** Tier **`high`** (reason `process_boundary`/`shell_process` on
+the live-PG spec), **four lenses**, 18 files and ~1,030 changed lines.
+
+- **`review-535e9a45a5624196`** — the reliability lens found one **CRITICAL**
+  (`R3-query-cdc-missing`: `FiscalQueryResult` could not return the document's
+  CDC, so ADR-007 §2's recovery path could not persist the identity it learned).
+  The plan was accepted (45 diff lines), the correction added the field, and the
+  **targeted validator rejected it**: the fake echoed the request's CDC on
+  answers that resolve nothing. `state: escalated`,
+  `cause: targeted_validator_rejected`, STATUS → **`stop` /
+  `native_stop_required` / horizon terminal**. Nothing was committed; the
+  regression was fixed and the maintainer chose a fresh transaction.
+- **`review-68028f3d442967b0`** — the resilience lens found one **CRITICAL**
+  (`R4-001`: `providerReference` written unconditionally, so a null hand-over
+  handle became a clearing write the guard refuses, aborting the transaction on
+  the retry path and turning it into a resubmitted document), the **refuter**
+  corroborated it as candidate-caused, the bounded correction (30 diff lines,
+  submitted before the edit) made all three identity columns conditional, the
+  **targeted validator passed** `original_criteria` and `correction_regression`,
+  and the lineage closed **`approved`** with four advisories (`R1-001`,
+  `R2-COMMENT-NULL-WRITE`, `R2-FAKE-RAW-RESPONSE`, `R3-PROVIDERREF-NULL-WRITE`),
+  all `WARNING`/`SUGGESTION` and none opening a correction. The acknowledgement
+  burned the authority.
+
+**FISC-010 WU-C — `review-ac6687061a6f8f5d`, `approved` after one bounded
+correction (2026-10-08).** Tier **`medium`** (reason `executable_change` on
+`apps/api/src/fiscal/fiscal.module.test.ts`), one lens (`review-reliability`),
+15 files and 2,093 changed lines. **It is the first lineage of this feature that
+required a correction**, and the whole route ran: the lens raised one
+**CRITICAL** (the transport's response lifecycle listened only for `error` and
+`end`, so a connection that goes away without either could leave the promise
+pending) → STATUS demanded a **refuter** → the refuter corroborated it as
+candidate-caused → `correction_required` → STATUS demanded a **correction plan**
+(40 diff lines, accepted) → the correction added a `close`-without-`complete`
+failure path and a test for the aggregate property → STATUS demanded a
+**targeted validation** → the validator passed `original_criteria` and
+`correction_regression` → `approved` → the acknowledgement burned the authority.
+Two advisories survived at `WARNING`/`informational` (`R3-002`
+`sifen.tls.fixture.ts:280`, `R3-003` `fiscal-provider.module.ts:52`), and the
+validator added a follow-up the Story's Technical Debt records: the new test may
+exercise the request-error path rather than the new branch. **The targeted
+validator does not go through `gentle_review_capture`** — its vector is
+`gentle-ai review capture-validation --materialize`, the host relay runs the
+role, and the verdict is submitted with `--input`.
+
+**FISC-010 WU-B — `review-f16dff5e521484d2`, `approved` (2026-10-08).** The
+first _executable_ candidate of this feature, and the first one the provider did
+not classify as passive documentation: tier **`medium`**, reason
+`configuration_change` on `packages/fiscal/package.json`, 16 changed files and
+3,880 changed lines. It selected **one** lens — `review-reliability` — which ran
+through a single `gentle_review_capture` slot (forecast first: one model run
+over the `pi_host_relay` transport, nothing executed), and closed `approved`
+with **four advisories** at `WARNING`/`informational` (`R3-001`..`R3-004`, all
+in `sifen.parser.ts`), none of which opened a correction. The acknowledgement
+burned the authority with `native-approved-acknowledgement-completed`. **The
+reviewer's full text is not retained** — the closure reported coordinates only
+and the lens context is ephemeral by design — so the Story's Technical Debt
+records the coordinates plus an explicitly-labelled reading.
+
+**FISC-010 WU-A — `review-fe256d67a4d60ed5`, `approved`, zero lenses
+(2026-10-08).** A docs-only candidate over 8 files and 2,165 changed lines. The
+provider classified it **`non_executable_only`** at **`low`** tier with
+`lenses_required: false`, so no lens, refuter or validator ran: the closure came
+from the provider's own risk evaluation, not from a capture. `inspect` ran
+**before** the commit (a clean tree would have made the candidate a committed
+range whose base ref the facade cannot express), `select-intended-untracked`
+adopted the four new files, and `acknowledge-approved` burned the authority with
+`native-approved-acknowledgement-completed`. **Recorded because a code work unit
+will not be classified this way**: the WUs that follow are executable and will
+require the four lenses.
+
+**FISC-010 WU-A's correction — `review-7e0ebabc11a3a00c`, `approved`, zero
+lenses (2026-10-08).** The same classification over the six corrected files
+(`low`, `non_executable_only`, `lenses_required: false`), the same closure
+without a capture, and the same burn. The correction's substance is in the
+Story's "naming collision" section and in `SIFEN-BASELINE.md` §23.6: the
+consultation services were recorded as blocked and are not.
+
 **FISC-008 review coverage, verified 2026-10-06.** PR **#106**, head `5d09015`,
 `MERGEABLE/CLEAN`, all three checks green (`DTE XSD validation` among them, now
 a required check on `main`).
@@ -587,6 +808,10 @@ Every other range closed, and the lineages are named in the section above.
 - Base: merged `main` `b05d411` (PR #104 merged; FISC-006 landed). The "What
   exists already" section below was verified on `4c02473` and remains accurate
   for every item it lists.
+- **FISC-010's base is `68b3c74`, not `ffd08a1`** (2026-10-08): `main` does not
+  contain `4907e65` (the epic's ADR-order correction), the FISC-011 completion
+  commits or `68b3c74`, and both pending branches touch the files WU-A edits.
+  Chosen by the maintainer when the discrepancy was reported.
 - The rename leaves ~20 older Story references to "EPIC-16 the provider" intact
   in substance; the one that became factually wrong (`FISC-003`'s
   `FISCAL_PROVIDER` closed set) is corrected.

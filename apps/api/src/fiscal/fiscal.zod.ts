@@ -23,9 +23,17 @@ export const cancelFiscalDocumentBody = z
 export type CancelFiscalDocumentInput = z.infer<typeof cancelFiscalDocumentBody>;
 export const fiscalDocumentIdParam = z.object({ id: z.string().uuid() });
 
+/**
+ * The read surface's status vocabulary, mirroring `fiscal_document_status`.
+ *
+ * FISC-009 appended `SIGNING` to the enum and this list kept nine values until
+ * FISC-010 WU-D closed the drift — the same vocabulary the web client mirrors.
+ * It is ordered by the lifecycle, not by the enum's append order.
+ */
 export const FISCAL_DOCUMENT_STATUS_VALUES = Object.freeze([
   "PENDING",
   "QUEUED",
+  "SIGNING",
   "SENDING",
   "SUBMITTED",
   "APPROVED",

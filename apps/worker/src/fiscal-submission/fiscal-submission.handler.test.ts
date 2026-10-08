@@ -16,12 +16,13 @@ const job = {
 };
 const outcomes: readonly {
   outcome: FiscalIssueOutcome;
-  status: "APPROVED" | "REJECTED" | "ERROR";
+  status: "APPROVED" | "REJECTED" | "ERROR" | "SUBMITTED";
   resolved: boolean;
 }[] = [
   { outcome: "APPROVED", status: "APPROVED", resolved: true },
   { outcome: "REJECTED", status: "REJECTED", resolved: true },
   { outcome: "FUNCTIONAL_REJECTION", status: "REJECTED", resolved: true },
+  { outcome: "SUBMITTED", status: "SUBMITTED", resolved: false },
   { outcome: "CONFIGURATION_ERROR", status: "ERROR", resolved: false },
   { outcome: "TRANSIENT_FAILURE", status: "ERROR", resolved: false },
 ];
@@ -51,7 +52,14 @@ interface SetupResult {
 function setup(
   status: Status = "PENDING",
   outcome: FiscalIssueOutcome = "APPROVED",
-  lastAttemptAt: Date | null = null
+  lastAttemptAt: Date | null = null,
+  /** The document identity the provider's answer carries, varied by case. */
+  identity: { readonly cdc: string | null; readonly externalId: string | null } = {
+    cdc: "cdc-1",
+    externalId: "external-1",
+  },
+  /** The hand-over handle the provider's answer carries; `null` is a real case. */
+  providerReference: string | null = "operation-1"
 ): SetupResult {
   const document: DocumentFixture = {
     id: job.fiscalDocumentId,
@@ -87,8 +95,9 @@ function setup(
   });
   const result: FiscalIssueResult = {
     outcome,
-    externalId: "external-1",
-    cdc: "cdc-1",
+    externalId: identity.externalId,
+    providerReference,
+    cdc: identity.cdc,
     reasonCode: "R-1",
     reason: "Provider reason",
     retryAfterMs: null,
@@ -97,9 +106,11 @@ function setup(
     resolvedAt: "2026-01-02T03:05:00.000Z",
   };
   const issue = vi.fn(() => Promise.resolve(result));
-  // The submission handler never cancels, but the port now requires the method.
+  // The submission handler never cancels or queries, but the port requires both
+  // methods: a double missing one is a contract the test would not be testing.
   const cancel = vi.fn(() => Promise.reject(new Error("cancel is not used by the handler")));
-  const provider = { provider: "FAKE", issue, cancel } as FiscalProviderPort;
+  const query = vi.fn(() => Promise.reject(new Error("query is not used by the handler")));
+  const provider = { provider: "FAKE", issue, query, cancel } as FiscalProviderPort;
   const tx = {
     fiscalDocument: { updateMany },
     auditLog: {
@@ -161,6 +172,99 @@ describe("FiscalSubmissionHandler", () => {
       expect(finalData?.lastErrorCode).toBe("R-1");
       expect(finalData?.lastErrorMessage).toBe("Provider reason");
     }
+    if (outcome !== "SUBMITTED") {
+      // Only the hand-over owns the handle and the hand-over timestamp.
+      expect(finalData?.providerReference).toBeUndefined();
+      expect(finalData?.submittedAt).toBeUndefined();
+    }
+  });
+
+  it("enters SUBMITTED with its handle, its timestamp and its identity in one update, and does not retry", async () => {
+    const { handler, updates } = setup("PENDING", "SUBMITTED");
+    // ADR-007 guardrail 1: a hand-over is not a failure, so nothing may be
+    // rethrown for BullMQ to retry. A second send of a document the provider
+    // already holds is the duplicate submission its own rules punish.
+    await expect(handler.handle(job)).resolves.toBeUndefined();
+    const finalData = updates[1]?.data;
+    // Guardrail 3: the handle lands in the SAME update that enters the state, so
+    // a crash between the provider's answer and the next sweep cannot lose it.
+    // The CDC and the document reference land with it when the answer carries
+    // them: ADR-007 §2 makes the CDC the identifier that survives losing the
+    // hand-over answer, so dropping it here would make the recovery path the
+    // only one the document has left.
+    expect(finalData).toMatchObject({
+      status: "SUBMITTED",
+      providerReference: "operation-1",
+      cdc: "cdc-1",
+      externalId: "external-1",
+      submittedAt: new Date("2026-01-02T03:05:00.000Z"),
+    });
+    // SUBMITTED is unresolved: `resolved_at` is required only on entry to
+    // APPROVED or REJECTED, and writing it here would be a lie in the row.
+    expect(finalData?.resolvedAt).toBeUndefined();
+    // The result write stays a conditional update on the claim it is resolving,
+    // so a stolen or recovered claim cannot be overwritten by a stale answer.
+    expect(updates[1]?.where).toMatchObject({ status: { in: ["SENDING"] } });
+  });
+
+  it("leaves cdc and external_id untouched when a SUBMITTED result carries no identity", async () => {
+    // A hand-over answer that carries neither must write neither. Writing `null`
+    // would be a clearing attempt the transition guard refuses — and, where it
+    // did not, it would erase the identity the recovery path needs.
+    const { handler, updates } = setup("PENDING", "SUBMITTED", null, {
+      cdc: null,
+      externalId: null,
+    });
+    await handler.handle(job);
+    const finalData = updates[1]?.data;
+    expect(finalData?.status).toBe("SUBMITTED");
+    expect(finalData?.providerReference).toBe("operation-1");
+    expect(finalData?.submittedAt).toBeInstanceOf(Date);
+    expect(finalData?.cdc).toBeUndefined();
+    expect(finalData?.externalId).toBeUndefined();
+  });
+
+  it("writes no provider_reference when the hand-over answer carries none", async () => {
+    const { handler, updates } = setup(
+      "PENDING",
+      "SUBMITTED",
+      null,
+      { cdc: null, externalId: null },
+      null
+    );
+    await handler.handle(job);
+    const finalData = updates[1]?.data;
+    expect(finalData?.status).toBe("SUBMITTED");
+    expect(finalData?.submittedAt).toBeInstanceOf(Date);
+    // Absent, not null: a `null` write is a clearing attempt the transition
+    // guard refuses, and on the retry path it would abort the transaction.
+    expect(finalData).not.toHaveProperty("providerReference");
+  });
+
+  it("never clears a handle the row already holds, on a retried hand-over", async () => {
+    // The scenario the resilience lens named: a SUBMITTED document that became
+    // ERROR is re-driven to SENDING and handed over again while the row still
+    // carries its first handle. Writing `null` would abort the transaction, and
+    // an aborted transaction here is a retried submission of a document the
+    // provider already holds.
+    const { handler, updates } = setup(
+      "ERROR",
+      "SUBMITTED",
+      null,
+      { cdc: null, externalId: null },
+      null
+    );
+    await handler.handle(job);
+    expect(updates[1]?.data).not.toHaveProperty("providerReference");
+  });
+
+  it("keeps a SUBMITTED document off the claimable set after the hand-over", async () => {
+    // The same double-delivery protection APPROVED and REJECTED already have:
+    // the reconciliation path queries a SUBMITTED row, it never resubmits it.
+    const { handler, issue, updates } = setup("SUBMITTED", "APPROVED");
+    await handler.handle(job);
+    expect(issue).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
   });
 
   it("persists ERROR before rethrowing TRANSIENT_FAILURE", async () => {

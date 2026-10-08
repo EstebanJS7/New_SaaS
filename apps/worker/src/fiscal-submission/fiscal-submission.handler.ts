@@ -15,6 +15,10 @@ import {
 type FiscalStatus =
   | "PENDING"
   | "QUEUED"
+  // FISC-009 appended SIGNING to `fiscal_document_status`; this mirror kept nine
+  // values until FISC-010 WU-D closed the drift (lifecycle order, not the
+  // enum's append order).
+  | "SIGNING"
   | "SENDING"
   | "SUBMITTED"
   | "APPROVED"
@@ -85,7 +89,7 @@ interface FiscalHandlerPrisma extends FiscalTransaction {
 }
 
 export interface OutcomeStatusMapping {
-  readonly status: "APPROVED" | "REJECTED" | "ERROR";
+  readonly status: "APPROVED" | "REJECTED" | "ERROR" | "SUBMITTED";
   readonly resolved: boolean;
 }
 
@@ -96,6 +100,12 @@ export function mapOutcomeToStatus(outcome: FiscalIssueOutcome): OutcomeStatusMa
     case "REJECTED":
     case "FUNCTIONAL_REJECTION":
       return { status: "REJECTED", resolved: true };
+    case "SUBMITTED":
+      // ADR-007 §1: the provider took the document into its queue. `SUBMITTED`
+      // is the state that was pre-wired for this since EPIC-15 and had no
+      // writer; it is unresolved, so `resolved_at` stays null, and it is not a
+      // failure, so the caller must not retry it.
+      return { status: "SUBMITTED", resolved: false };
     case "CONFIGURATION_ERROR":
     case "TRANSIENT_FAILURE":
       return { status: "ERROR", resolved: false };
@@ -244,6 +254,11 @@ export class FiscalSubmissionHandler {
     const reasonCode = this.truncate(result.reasonCode);
     const reason = this.truncate(result.reason);
     const resolvedAt = mapping.resolved ? new Date(result.resolvedAt) : undefined;
+    // ADR-007 §4: `submitted_at` is set at the moment the hand-over happened,
+    // which is the instant this result was produced. It comes from the same
+    // provider-reported clock `resolvedAt` already comes from, so every
+    // timestamp this method writes belongs to one clock domain instead of two.
+    const submittedAt = result.outcome === "SUBMITTED" ? new Date(result.resolvedAt) : undefined;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.fiscalDocument.updateMany({
@@ -263,6 +278,34 @@ export class FiscalSubmissionHandler {
             : {}),
           ...(mapping.status === "ERROR"
             ? { lastErrorCode: reasonCode, lastErrorMessage: reason }
+            : {}),
+          // ADR-007 §4/guardrail 3: the handle is written in the SAME
+          // conditional update that enters SUBMITTED, so a restart between the
+          // provider's answer and the next reconciliation pass cannot lose the
+          // reference the query polls with. `resolvedAt` stays out on purpose:
+          // SUBMITTED is not a resolution, and the guard requires `resolved_at`
+          // only on entry to APPROVED or REJECTED.
+          //
+          // ADR-007 §2 makes the document's own identity a first-class query
+          // identifier — the reference is the fast path and the CDC is the path
+          // that survives losing the hand-over answer — so whatever the result
+          // carries is persisted here too, and a result that carries none of the
+          // three writes none of them: an absent value must never become a null
+          // write, because the guard refuses to clear any of those columns and an
+          // aborted transaction here is a retried submission of a document the
+          // provider already holds. A hand-over answer that carries nothing
+          // leaves the row SUBMITTED with no reconciliation identifier: that is
+          // the provider's answer, recorded rather than invented, and the
+          // reconciliation stage treats it as an operator case (FISC-012).
+          ...(result.outcome === "SUBMITTED"
+            ? {
+                ...(result.providerReference === null
+                  ? {}
+                  : { providerReference: result.providerReference }),
+                submittedAt,
+                ...(result.cdc === null ? {} : { cdc: result.cdc }),
+                ...(result.externalId === null ? {} : { externalId: result.externalId }),
+              }
             : {}),
           requestSnapshot,
           responseSnapshot,
