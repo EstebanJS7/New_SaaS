@@ -194,6 +194,21 @@ export {
   signDteXml,
 } from "./dte/dte.signing.js";
 export type { DteSigningFailure, SignDteXmlArgs } from "./dte/dte.signing.js";
+// FISC-012 WU-C / baseline §24: the QR. Its composition, its two consultation
+// addresses, and the placeholder the unsigned DE carries in `dCarQR` — the QR
+// depends on the signature's digest, and `gCamFuFD` sits outside the signed
+// subtree, so `fillQrContent` is the one replacement and it cannot break the
+// signature. The CSC stays an input and never enters the returned URL.
+export {
+  buildQrContent,
+  DteQrError,
+  fillQrContent,
+  QR_CONSULTATION_URLS,
+  QR_CONTENT_MAX_LENGTH,
+  QR_CONTENT_MIN_LENGTH,
+  QR_PLACEHOLDER,
+} from "./dte/dte.qr.js";
+export type { BuildQrContentArgs, DteQrFailure, FillQrContentArgs } from "./dte/dte.qr.js";
 // FISC-008: the security code's generator, with its randomness injected.
 export {
   generateSecurityCode,
