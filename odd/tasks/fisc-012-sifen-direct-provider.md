@@ -182,10 +182,46 @@ cHashQR             -       -   hash no   URL yes
 
 ```text
 branch   feat/epic-16-fisc-012-sifen-direct-provider   from ff8954e
-WU-A     docs-only: ADR-009, ADR-010, DEC-055, the FISC-012 Story, baseline §24,
-         the epic's ADR list and Story row, and the tracker's T8.
-         `pnpm format-check` green; no code, no migration, no package gate applies.
+WU-A     7949f04  docs(FISC-012): the decisions, the Story and the QR's retrieval
+                  record — 8 files, 1,533 insertions, 38 deletions
+         review-27456c2f386bd5f9  closed `approved`, tier `medium`, lens
+                  `review-reliability`, five advisories at
+                  `WARNING`/`SUGGESTION`, none opening a correction; the
+                  acknowledgement burned the authority
+gates    `pnpm format-check` green. Docs only: no code, no migration, no package
+         gate applies.
 ```
+
+## Review record
+
+**WU-A — `review-27456c2f386bd5f9`, `approved` with one lens (2026-10-08).**
+Tier `medium`, lens `review-reliability`, 8 files and 1,571 changed lines. It
+closed `approved` with **five advisories**, all `WARNING`/`SUGGESTION` and none
+opening a correction. **The reviewer's full text is not retained** by this
+facade, so what follows is the coordinates plus _this session's reading_ of
+each, marked as an inference, and what was done about it:
+
+| id     | location             | our reading of the location                                                                                          | action    |
+| ------ | -------------------- | -------------------------------------------------------------------------------------------------------------------- | --------- |
+| R3-001 | `FISC-012-…:230-231` | The reconciliation ACs pin the cadence but not the mechanism: which clock and which comparison bound the next query. | WU-F's    |
+| R3-002 | `ADR-010-…:214-217`  | The ADR names the re-drive loop a permanent failure would create and does not bound it.                              | **fixed** |
+| R3-003 | `FISC-012-…:175-179` | The credential AC's wrapped line made the returned shape hard to read.                                               | **fixed** |
+| R3-004 | `ADR-010-…:146-148`  | The store/validate order was left as "either order is acceptable", which is two implementations.                     | **fixed** |
+| R3-005 | `FISC-012-…:164`     | The AC said "the two Manual defects" while §24 records **three**.                                                    | **fixed** |
+
+**Three fixes landed in the same follow-up commit as this record**, because they
+were one-line corrections in documents the review had just read: the WU-F
+criteria gained **"a permanent failure does not loop"** and the Story's
+Technical Debt names it, the WU-D criteria now pin **store-then-validate** (so a
+refused document is inspectable and `xml_storage_key` is never written for a
+document that was not stored), and the count is three. R3-001 stays where it
+belongs — WU-F's, whose mechanism it is — and is recorded rather than guessed at
+now.
+
+`inspect` ran before the commit, with `untrackedScope: select` adopting the five
+new files; the first START returned an empty result, STATUS re-offered the
+selection, and the retry created the lineage. The acknowledgement burned the
+authority.
 
 ## Notes
 

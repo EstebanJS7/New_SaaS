@@ -161,8 +161,8 @@ lot is a later optimization: the container and the facade already take a list.
 - [ ] [[DEC-055]] is accepted and records the adapters' home, the QR and the
       CSC, and the reconciliation's rules including the `0360` answer.
 - [ ] `SIFEN-BASELINE.md` §24 records the QR composition with its retrieval
-      record, the sign-then-QR ordering, the two Manual defects found, and the
-      DE chain.
+      record, the sign-then-QR ordering, the **three** Manual defects found, and
+      the DE chain.
 
 **WU-B — the persistence adapters**
 
@@ -200,8 +200,9 @@ lot is a later optimization: the container and the facade already take a list.
       reason and no secret in it.
 - [ ] The document is built **only when `requiresSignedDocument` is true**: with
       the fake, the stage reads no fiscal profile, asserted.
-- [ ] The signed XML is stored and `xml_storage_key` is written, with a fiscal
-      storage-key prefix; the row keeps the key after the submission.
+- [ ] The signed XML is stored **before** the XSD gate runs, so a refused
+      document is inspectable; `xml_storage_key` is never written for a document
+      that was not stored.
 - [ ] The XSD gate runs on the **signed** document before submission, fails
       closed without `DTE_XSD_DIR`, and compiles the schema once per process.
 - [ ] The credential read serves both the signature and the mutual-TLS call, and
@@ -229,6 +230,10 @@ lot is a later optimization: the container and the facade already take a list.
 
 - [ ] The sweep walks `SUBMITTED` in addition to `QUEUED`/`ERROR`, bounded by
       `SIFEN_BATCH_POLL_INTERVAL_MS` rather than the recovery default.
+- [ ] **A permanent failure does not loop.** The sweep's `ERROR` re-drive is
+      bounded, so a schema refusal or a missing fiscal profile reaches an
+      operator instead of being resubmitted forever — the mechanism is decided
+      in this work unit, and the `QUEUED` path keeps its existing semantics.
 - [ ] `PROCESSING` leaves the row `SUBMITTED` and **never** triggers a
       resubmission; `retryAfterMs` bounds the next attempt.
 - [ ] A terminal resolution applies `APPROVED`/`REJECTED` with its identity and
@@ -338,6 +343,12 @@ None yet. WU-A adds documents.
   the reuse). If the two ever need different semantics, a column is the fix.
 - **The XSD schemas are fetched, not vendored**, so a deployment's gate depends
   on a step that runs outside this repository ([[ADR-010]], [[FISC-008]]).
+- **The unbounded re-drive is a property of the sweep, not of this Story.**
+  [[ADR-010]]'s Consequences name it: a permanent failure becomes an `ERROR` row
+  the sweep re-drives, and re-driving a document whose data is invalid refuses
+  again. WU-F's criteria bound it; if the bound ends up being a _code list_
+  rather than an attempt count, that list needs a source or it becomes the next
+  guess.
 
 ## Decisions / ADRs
 
