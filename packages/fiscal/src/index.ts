@@ -470,3 +470,33 @@ export {
   SIFEN_RECEPTION_MESSAGE_ABSENT_REASON,
 } from "./sifen/sifen.outcomes.js";
 export type { SifenOutcomeContext, SifenRucQueryOutcome } from "./sifen/sifen.outcomes.js";
+// FISC-012 WU-E / ADR-009: the real SIFEN provider behind the port. `issue`
+// submits a lot of one through the asynchronous service and answers `SUBMITTED`
+// with the lot number; `query` asks by the reference first and by the CDC when
+// the reference was lost; `cancel` fails closed because §23.3 leaves the
+// cancellation event's payload unprofiled. The failure partition is exported so
+// the terminal/retryable table is auditable: every transport and facade member
+// is mapped by name, and anything unrecognised is a configuration error rather
+// than a blind retry. The snapshots are descriptors — the CDC, the service and
+// the byte count — never the signed document.
+export {
+  createSifenDirectFiscalProvider,
+  generateSifenControlNumber,
+  mapSifenFailure,
+  SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON,
+  SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON_CODE,
+  SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON,
+  SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON_CODE,
+  SIFEN_DIRECT_QUERY_IDENTITY_MISSING_REASON,
+  SIFEN_DIRECT_QUERY_IDENTITY_MISSING_REASON_CODE,
+  SIFEN_DIRECT_UNMAPPED_FAILURE_REASON,
+  SIFEN_DIRECT_UNMAPPED_FAILURE_REASON_CODE,
+} from "./sifen/sifen-direct.provider.js";
+export type {
+  SifenDirectProviderDependencies,
+  SifenDirectRequestSnapshot,
+  SifenDirectResponseSnapshot,
+  SifenDirectService,
+  SifenFailureMapping,
+  SifenFailureOutcome,
+} from "./sifen/sifen-direct.provider.js";

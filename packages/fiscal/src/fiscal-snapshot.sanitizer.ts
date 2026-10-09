@@ -13,6 +13,14 @@ export const PROVIDER_SNAPSHOT_ALLOWED_KEYS = Object.freeze([
   "reasonCode",
   "message",
   "timestamp",
+  // ADR-009: the request now carries the signed document, so the SIFEN
+  // adapter's snapshot is a **descriptor** of the operation — the service it
+  // called and the byte count of the signed XML — never the document itself.
+  // Neither a service name nor a byte count is personal data, so both are
+  // allowed rather than redacted; the document's own keys stay unlisted and are
+  // therefore redacted if one ever appears.
+  "service",
+  "xmlBytes",
 ] as const);
 
 export const PROVIDER_SNAPSHOT_SECRET_KEY_PATTERNS = Object.freeze([

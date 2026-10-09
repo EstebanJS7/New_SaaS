@@ -19,9 +19,35 @@ describe("provider snapshot sanitizer (DEC-050, PRD §41)", () => {
       "reasonCode",
       "message",
       "timestamp",
+      "service",
+      "xmlBytes",
     ]);
     const value = Object.fromEntries(PROVIDER_SNAPSHOT_ALLOWED_KEYS.map((key) => [key, "value"]));
     expect(sanitizeProviderSnapshot(value).snapshot).toEqual(value);
+  });
+
+  it("keeps the SIFEN descriptor keys ADR-009 adds, and redacts a document instead", () => {
+    // ADR-009: the provider's snapshot is a descriptor — the service, the CDC
+    // and the byte count — so the two descriptor-only keys survive, while the
+    // document's own bytes (any unlisted key) are redacted.
+    expect(
+      sanitizeProviderSnapshot({
+        provider: "SIFEN_DIRECT",
+        service: "receiveBatch",
+        cdc: "cdc-1",
+        xmlBytes: 1_024,
+        signedXml: "<rDE>",
+      })
+    ).toEqual({
+      snapshot: {
+        provider: "SIFEN_DIRECT",
+        service: "receiveBatch",
+        cdc: "cdc-1",
+        xmlBytes: 1_024,
+        signedXml: "[redacted]",
+      },
+      redactedPaths: ["signedXml"],
+    });
   });
 
   it("redacts non-allowlisted keys and records the path", () => {
