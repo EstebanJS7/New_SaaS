@@ -195,9 +195,15 @@ WU-B     e20fc6b  feat(FISC-012): the fiscal persistence package and the moved
                   boundary in the live-PG spec), FOUR lenses, three advisories
                   at `WARNING`, none opening a correction; the acknowledgement
                   burned the authority
+WU-C     f968843  feat(FISC-012): the QR, its placeholder and the one fill —
+                  3 files, 577 insertions (222 the module, 340 its suite)
+         review-5eeef34d2f4685c2  closed `approved`, tier `medium`, one lens
+                  (`review-reliability`), two advisories at `SUGGESTION`, neither
+                  opening a correction; the acknowledgement burned the authority
 gates    format-check green; lint 20/20, typecheck 20/20, test 21/21, build 12/12;
-         the new package 27 tests, fiscal 507, api 1138 (+220 live-PG skipped);
-         and the live-PostgreSQL suite at 220/220
+         the new package 27 tests, fiscal 532 (25 new), api 1138 (+220 live-PG
+         skipped), database 445, web 1087, worker 79, secret-store 50, ui 36,
+         shared 16; and the live-PostgreSQL suite at 220/220
 ```
 
 ## Review record
@@ -249,7 +255,7 @@ inside the span, which prettier renders as stray spaces. It is now one unbroken
 span — recorded because it took two attempts and the second one only looked like
 a fix.
 
-## Notes
+**WU-B's notes.**
 
 - **The live-PostgreSQL gate ran against a locally provisioned PostgreSQL
   16.13**, not the `fisc009-pg` container: Docker's WSL integration is gone from
@@ -269,6 +275,44 @@ a fix.
   `include`-dependent return type does not fit the structural client that the
   tests pin at compile time, and the two-statement form keeps each query's
   result shape explicit.
+
+**WU-C — `review-5eeef34d2f4685c2`, `approved` with one lens (2026-10-08).**
+Tier `medium` (an executable change in the new test file), one lens, three files
+and 577 changed lines. It closed `approved` with **two advisories**, both
+`SUGGESTION`, neither opening a correction:
+
+| id     | location            | our reading of the location                                                                                                                         | action   |
+| ------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R3-001 | `dte.qr.ts:125-126` | The `"0"` defaults for `dTotGralOpe`/`dTotIVA`. §13.8.2's footnote nominally also covers `dRucRec`/`dNumIDRec`, which this contract types non-null. | recorded |
+| R3-002 | `dte.qr.ts:221`     | The three-line `escapeXmlText` mirroring the builder's, which is not exported.                                                                      | recorded |
+
+Both were the coordinates the worker had already raised as judgement calls, and
+the second is the one the delegation itself created: the brief forbade editing
+`dte.builder.ts`, whose escaper is private, so the alternative to duplicating
+three lines was touching a file the previous work unit's review had read.
+
+**WU-C's notes.**
+
+- **The worked example was verified before it was specified.** `node:crypto`
+  reproduced both hex conversions and the hash `97ddbb3c…74ed` from §13.8.4's
+  own inputs, so the delegation could demand byte-exactness instead of hoping
+  for it. The example's URL is 360 characters, comfortably inside the XSD's
+  100..600.
+- **The escaping lives in the fill, and that is forced, not chosen**: the QR is
+  built after the signature (its `Id` is the CDC and its `DigestValue` is the
+  signature's digest), and by then the document is already a serialized string.
+- **The XSD round trip ran, it did not skip**: the official schemas are present
+  at `defaultDteSchemaDirectory()` (`/tmp/newsaas-dte-xsd`), and the round trip
+  proves the property that makes the whole design work — filling the QR after
+  signing leaves the signature valid, because `gCamFuFD` sits outside the signed
+  `DE` subtree.
+- **`dRucRec` is typed non-null and §24 does not pin the choice** for a receptor
+  with no RUC: the caller decides what identity value goes in. Carried into
+  WU-D.
+- **The QR's environment vocabulary is `DocumentIdentity`'s** (`test` /
+  `production`), not the transport's `TEST`/`PRODUCTION`. The mapping is WU-D's.
+- **Nothing is proven against SIFEN**: the CSC is a stand-in and whether SIFEN
+  rejects a wrong `cHashQR` is a live question (§24.6.3).
 
 ## Notes
 

@@ -559,37 +559,43 @@ candidate 1 exists.
   the review had just read and landed with the record: WU-F's criteria gained
   **"a permanent failure does not loop"**, WU-D's now pin
   **store-then-validate**, and the Story's "two Manual defects" became three.
-  **Remaining WUs**: WU-C the QR, WU-D the worker's document stage, WU-E the
-  provider and the selection, WU-F the reconciliation. **WU-B landed as commit
-  `e20fc6b`** — 13 files, 911 insertions, with the two store files recorded as
-  **100% renames** — and its review is `review-fb085a14b38e2ae8`: tier `high`,
-  **four lenses**, closed **`approved`** with three advisories at `WARNING`,
-  none opening a correction. The new `@newsaas/fiscal-persistence` package
-  carries the moved range store, the emitter-profile read and the credential
-  read, and its live-PostgreSQL proof ran at **220/220** against a locally
-  provisioned PostgreSQL 16.13 because Docker's WSL integration is gone from
-  this distro; the suite's **UTC sensitivity** was found there (a non-UTC server
-  fails the FISC-011 boundary case at 219/220). **Inherits from FISC-009 the
-  worker's signing stage** (claim `SIGNING`, sign the DE with `signDteXml`, then
-  `SIGNING -> SENDING`; a signing failure goes to `SIGNING -> ERROR`), and
-  **from FISC-010 three more things**, per ADR-007 and ADR-008: **(a)** the real
-  `FiscalCredentialPort` in the worker — `@newsaas/secret-store` in
-  `apps/worker/package.json`, `SecretsModule`, `SECRET_STORE_MASTER_KEYS` and
-  the `secretStore.get` path, **none of which exists today**; **(b)** the
-  **reconciliation stage** — the TD-028 sweep extended to `SUBMITTED`, calling
-  `query` and applying the terminal result, with `retryAfterMs` bounding the
-  next attempt; **(c)** **persisting the signed DE** (`xml_storage_key`, still
-  written by nothing) and the submission path's logging, which is where
-  FISC-009's "no secret in a log or a stored snapshot" criterion now lives.
-  **The two consultation services are IN scope**: the Manual's §9.4 CDC query is
-  what resolves a document after the Guide's 48-hour batch window, and §9.6's
-  RUC status query is the sixth service of the endpoint list. **What stays
-  blocked and out of scope is the signed v150 query family** — by protocol, by
-  range, and the RUC archive — whose request signature profile no source pins
-  (FISC-013, against a real service). **Note on this Story's row in the epic**:
-  FISC-010 **adds** the port's asynchronous capability; FISC-012 **implements**
-  it. The epic's earlier wording ("the port's asynchronous-status extension")
-  was corrected on 2026-10-08.
+  **Remaining WUs**: WU-D the worker's document stage, WU-E the provider and the
+  selection, WU-F the reconciliation. **WU-B landed as commit `e20fc6b`** — 13
+  files, 911 insertions, with the two store files recorded as **100% renames** —
+  and its review is `review-fb085a14b38e2ae8`: tier `high`, **four lenses**,
+  closed **`approved`** with three advisories at `WARNING`, none opening a
+  correction. The new `@newsaas/fiscal-persistence` package carries the moved
+  range store, the emitter-profile read and the credential read, and its
+  live-PostgreSQL proof ran at **220/220** against a locally provisioned
+  PostgreSQL 16.13 because Docker's WSL integration is gone from this distro;
+  the suite's **UTC sensitivity** was found there (a non-UTC server fails the
+  FISC-011 boundary case at 219/220). **WU-C landed as commit `f968843`** — 3
+  files, 577 insertions — and its review is `review-5eeef34d2f4685c2`: tier
+  `medium`, one lens, closed **`approved`** with two advisories at `SUGGESTION`.
+  The QR is a pure builder whose acceptance test is §13.8.4's worked example
+  reproduced byte for byte, a placeholder the unsigned document carries, and one
+  fill that escapes and substitutes it after signing — proven by a round trip
+  that still verifies the signature and still validates against the official
+  XSD. **Inherits from FISC-009 the worker's signing stage** (claim `SIGNING`,
+  sign the DE with `signDteXml`, then `SIGNING -> SENDING`; a signing failure
+  goes to `SIGNING -> ERROR`), and **from FISC-010 three more things**, per
+  ADR-007 and ADR-008: **(a)** the real `FiscalCredentialPort` in the worker —
+  `@newsaas/secret-store` in `apps/worker/package.json`, `SecretsModule`,
+  `SECRET_STORE_MASTER_KEYS` and the `secretStore.get` path, **none of which
+  exists today**; **(b)** the **reconciliation stage** — the TD-028 sweep
+  extended to `SUBMITTED`, calling `query` and applying the terminal result,
+  with `retryAfterMs` bounding the next attempt; **(c)** **persisting the signed
+  DE** (`xml_storage_key`, still written by nothing) and the submission path's
+  logging, which is where FISC-009's "no secret in a log or a stored snapshot"
+  criterion now lives. **The two consultation services are IN scope**: the
+  Manual's §9.4 CDC query is what resolves a document after the Guide's 48-hour
+  batch window, and §9.6's RUC status query is the sixth service of the endpoint
+  list. **What stays blocked and out of scope is the signed v150 query family**
+  — by protocol, by range, and the RUC archive — whose request signature profile
+  no source pins (FISC-013, against a real service). **Note on this Story's row
+  in the epic**: FISC-010 **adds** the port's asynchronous capability; FISC-012
+  **implements** it. The epic's earlier wording ("the port's asynchronous-status
+  extension") was corrected on 2026-10-08.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 

@@ -187,16 +187,24 @@ lot is a later optimization: the container and the facade already take a list.
 
 **WU-C — the QR**
 
-- [ ] `buildQrContent` reproduces **§13.8.4's worked example byte for byte**,
-      including its `cHashQR`, from that example's own inputs.
-- [ ] `dFeEmiDE` and `DigestValue` enter as the hexadecimal of their bytes, and
-      `dTotGralOpe`/`dTotIVA` are `0` when absent.
-- [ ] The CSC is appended **only** to the hashed string and never appears in the
+- [x] `buildQrContent` reproduces **§13.8.4's worked example byte for byte**,
+      including its `cHashQR`, from that example's own inputs. Verified
+      independently with `node:crypto` before the code was written, so the test
+      pins a reproduced fact.
+- [x] `dFeEmiDE` and `DigestValue` enter as the hexadecimal of their bytes (each
+      with its own assertion), and `dTotGralOpe`/`dTotIVA` are `0` when absent.
+- [x] The CSC is appended **only** to the hashed string and never appears in the
       returned URL — asserted on the output.
-- [ ] Every `&` in the URL is escaped as `&amp;` before it enters the XML.
-- [ ] The builder emits a QR placeholder the stage fills, and the filled
-      document still validates against the official XSD and still verifies its
-      signature.
+- [x] Every `&` in the URL is escaped as `&amp;` before it enters the XML: the
+      escape belongs to the fill, because the value is born after the document
+      is already serialized.
+- [x] The builder carries a QR placeholder the stage fills — `QR_PLACEHOLDER`,
+      exactly 100 characters so `buildDteXml`'s own 100..600 rule accepts it
+      before a signature exists — and the filled document **still validates
+      against the official XSD and still verifies its signature**
+      (`xml-crypto`). The builder needed no edit: it emits `dCarQR` verbatim
+      through `escapeXmlText`, which is the identity for a placeholder with no
+      XML-special character.
 
 **WU-D — the worker's document stage**
 
