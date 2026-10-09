@@ -110,7 +110,13 @@ function setup(
   // methods: a double missing one is a contract the test would not be testing.
   const cancel = vi.fn(() => Promise.reject(new Error("cancel is not used by the handler")));
   const query = vi.fn(() => Promise.reject(new Error("query is not used by the handler")));
-  const provider = { provider: "FAKE", issue, query, cancel } as FiscalProviderPort;
+  const provider = {
+    provider: "FAKE",
+    requiresSignedDocument: false,
+    issue,
+    query,
+    cancel,
+  } as FiscalProviderPort;
   const tx = {
     fiscalDocument: { updateMany },
     auditLog: {

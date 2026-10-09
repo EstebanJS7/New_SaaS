@@ -244,6 +244,12 @@ importers:
       '@newsaas/fiscal':
         specifier: workspace:*
         version: link:../../packages/fiscal
+      '@newsaas/fiscal-persistence':
+        specifier: workspace:*
+        version: link:../../packages/fiscal-persistence
+      '@newsaas/secret-store':
+        specifier: workspace:*
+        version: link:../../packages/secret-store
       '@newsaas/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -406,6 +412,9 @@ importers:
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
+      libxmljs2:
+        specifier: ^0.37.0
+        version: 0.37.0
       pkijs:
         specifier: ^3.4.1
         version: 3.4.1
@@ -428,9 +437,6 @@ importers:
       eslint:
         specifier: ^9.24.0
         version: 9.39.5(jiti@2.7.0)
-      libxmljs2:
-        specifier: ^0.37.0
-        version: 0.37.0
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

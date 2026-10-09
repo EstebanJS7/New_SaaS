@@ -37,10 +37,42 @@ export interface FiscalIssueLine {
   readonly lineTotal: string;
 }
 
+/**
+ * The document a caller built and signed, as the provider will submit it.
+ *
+ * ADR-009 puts the document in the request because the two facts that make it
+ * necessary meet here: the port's request carries **invoice data** while a real
+ * provider submits a **signed document**, and the caller is the side that can
+ * build and sign one — the emitter profile, the timbrado and the allocation
+ * live in PostgreSQL, and `packages/fiscal` deliberately depends on neither
+ * Prisma nor `@newsaas/database`. The port therefore carries bytes and an
+ * identity; it never learns what kind of document they are, and the adapter
+ * stays the only side that knows (ADR-009, ADR-007 §6).
+ *
+ * The bytes are passed through unchanged: a provider that re-serialized them
+ * would invalidate the signature it was handed.
+ */
+export interface FiscalIssueDocument {
+  /** The CDC, which the signature's reference also carries. */
+  readonly cdc: string;
+  /** The signed DE, with its QR already filled. */
+  readonly signedXml: string;
+}
+
 export interface FiscalIssueRequest {
   readonly fiscalDocumentId: string;
   readonly tenantId: string;
   readonly provider: FiscalProviderId;
+  /**
+   * The signed document, or `null` when the provider does not require one.
+   *
+   * Required rather than optional (ADR-009): an optional field lets a caller
+   * forget it, and the provider that needs the document would then have to
+   * decide what a missing field means. `null` is the caller's explicit
+   * statement that the provider it selected answers
+   * {@link FiscalProviderPort.requiresSignedDocument} with `false`.
+   */
+  readonly document: FiscalIssueDocument | null;
   readonly invoice: {
     readonly series: string;
     readonly number: number;
@@ -223,6 +255,16 @@ export interface FiscalCancelResult {
 
 export interface FiscalProviderPort {
   readonly provider: FiscalProviderId;
+  /**
+   * Whether this provider needs the caller's built document to issue.
+   *
+   * The contract both sides read: a provider whose flag is `true` and that is
+   * handed `document: null` answers `CONFIGURATION_ERROR` and **never**
+   * submits or throws. `CONFIGURATION_ERROR` is terminal and non-retryable
+   * (DEC-049), so a caller that skipped the document stage gets an
+   * operator-readable row instead of a retry loop (ADR-009 §3).
+   */
+  readonly requiresSignedDocument: boolean;
   issue(request: FiscalIssueRequest): Promise<FiscalIssueResult>;
   /**
    * Asks what happened to a document the provider has not resolved yet.

@@ -222,6 +222,7 @@ export class FiscalSubmissionHandler {
       fiscalDocumentId: document.id,
       tenantId: document.tenantId,
       provider: document.provider,
+      document: null,
       invoice: {
         series: invoice.series,
         number: invoice.number,
