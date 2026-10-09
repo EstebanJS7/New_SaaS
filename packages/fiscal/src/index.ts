@@ -110,6 +110,23 @@ export type {
 } from "./signing-material/pkcs12.fixture.js";
 // FISC-008 WU-A: pure typed request -> XML builder for unsigned SIFEN DTEs.
 export { buildDteXml } from "./dte/dte.builder.js";
+// FISC-012 WU-D2 / ADR-010 §1: the official-schema gate becomes runtime API.
+// `validateDeAgainstOfficialXsd`, `buildDteEntrySchema`, `inspectDteSchemas` and
+// `prepareDteSchemas` move here from `testing.ts`, which keeps its re-exports so
+// nothing that already imports them breaks. Production code imports this barrel,
+// and `libxmljs2` is a runtime dependency of the package for the same decision.
+// `defaultDteSchemaDirectory` is here because it is what resolves the
+// deployment's `DTE_XSD_DIR` input, and `DteSchemaError` is the typed failure
+// the stage catches to refuse a submission.
+export { buildDteEntrySchema, validateDeAgainstOfficialXsd } from "./dte/xsd-validator.js";
+export type { DteXsdValidationResult } from "./dte/xsd-validator.js";
+export {
+  defaultDteSchemaDirectory,
+  DteSchemaError,
+  inspectDteSchemas,
+  prepareDteSchemas,
+} from "./dte/xsd-artifacts.js";
+export type { DteSchemaDirectoryInspection, PreparedDteSchemas } from "./dte/xsd-artifacts.js";
 // FISC-008: the CDC's composition and its check digit, both pinned 2026-10-06.
 export {
   CDC_CHECK_DIGIT_BASE_MAX,

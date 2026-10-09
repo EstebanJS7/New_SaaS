@@ -12,7 +12,13 @@ export function createOpaqueStorageKey(prefix: string): string {
   return `${prefix}_${token}`;
 }
 
-/** Prefixes used by the branding asset boundary. */
+/** Prefixes used by the shared object-storage boundaries. */
 export const STORAGE_KEY_PREFIXES = Object.freeze({
   brandingAsset: "brand",
+  /**
+   * FISC-012: the signed fiscal document the worker stores before submission.
+   * The key is written to `fiscal_document.xml_storage_key`; the bytes are the
+   * exact signed XML the provider is asked to accept (ADR-009).
+   */
+  fiscalDocument: "fiscal-document",
 });

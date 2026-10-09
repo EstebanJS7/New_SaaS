@@ -8,6 +8,10 @@ import { BrandingResetCleanupConsumer } from "./branding-reset-cleanup/cleanup.c
 import { BrandingResetCleanupHandler } from "./branding-reset-cleanup/cleanup.handler.js";
 import { BrandingResetCleanupReconciliationService } from "./branding-reset-cleanup/reconciliation.service.js";
 import { RedisHealthService } from "./redis/redis-health.service.js";
+import {
+  createUnavailableFiscalDocumentBuilder,
+  FISCAL_DOCUMENT_BUILDER,
+} from "./fiscal-submission/fiscal-document-builder.js";
 import { FiscalSubmissionConsumer } from "./fiscal-submission/fiscal-submission.consumer.js";
 import { FiscalSubmissionHandler } from "./fiscal-submission/fiscal-submission.handler.js";
 import { FiscalSubmissionRecoveryService } from "./fiscal-submission/fiscal-recovery.service.js";
@@ -30,6 +34,20 @@ const credentialPort: Provider = {
 };
 
 /**
+ * The stage's document seam (DEC-056).
+ *
+ * The default is the fail-closed builder: it answers `UNAVAILABLE` with a named
+ * reason, so a deployment without the assembly refuses the document instead of
+ * submitting something invented. FISC-015 replaces this provider with the real
+ * assembly; the stage does not change. A value rather than a factory because the
+ * default is stateless.
+ */
+const documentBuilderProvider: Provider = {
+  provide: FISCAL_DOCUMENT_BUILDER,
+  useValue: createUnavailableFiscalDocumentBuilder(),
+};
+
+/**
  * Worker deployable module.
  *
  * Composes the durable branding-reset cleanup pipeline (consumer + interval
@@ -41,7 +59,8 @@ const credentialPort: Provider = {
  * worker's own composition root because `packages/secret-store` deliberately
  * ships no Nest module (ADR-005/D1, DEC-053/D7) — the record client is the
  * application's own Prisma client. `FiscalProviderModule.forRoot` receives the
- * reader, so the fail-closed null port is no longer what runs.
+ * reader, so the fail-closed null port is no longer what runs. WU-D2 adds the
+ * stage's document seam, whose default also fails closed until FISC-015.
  */
 @Module({
   imports: [
@@ -55,6 +74,7 @@ const credentialPort: Provider = {
     BrandingResetCleanupHandler,
     BrandingResetCleanupConsumer,
     BrandingResetCleanupReconciliationService,
+    documentBuilderProvider,
     FiscalSubmissionHandler,
     FiscalSubmissionConsumer,
     FiscalSubmissionRecoveryService,
