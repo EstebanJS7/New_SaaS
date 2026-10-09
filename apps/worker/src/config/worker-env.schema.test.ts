@@ -16,6 +16,7 @@ const productionBase = {
   NODE_ENV: "production",
   SECRET_STORE_MASTER_KEYS: `1:${MASTER_KEY}`,
   SIFEN_ENVIRONMENT: "TEST",
+  FISCAL_PROVIDER: "fake",
 };
 
 describe("workerEnv production storage gate", () => {
@@ -233,6 +234,52 @@ describe("workerEnv SIFEN_ENVIRONMENT gate", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error).toContain("SIFEN_ENVIRONMENT");
+    }
+  });
+});
+
+describe("workerEnv FISCAL_PROVIDER gate", () => {
+  it("rejects a missing FISCAL_PROVIDER in production", () => {
+    const result = workerEnv({
+      ...BASE_ENV,
+      NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: `1:${MASTER_KEY}`,
+      SIFEN_ENVIRONMENT: "TEST",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("FISCAL_PROVIDER");
+    }
+  });
+
+  it.each(["fake", "sifen-direct"] as const)(
+    "accepts the closed provider value %s in production",
+    (provider) => {
+      const result = workerEnv({ ...productionBase, FISCAL_PROVIDER: provider });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.env.FISCAL_PROVIDER).toBe(provider);
+      }
+    }
+  );
+
+  it.each(["SIFEN_DIRECT", "sifen_direct", "unknown"])("rejects the value %s", (provider) => {
+    const result = workerEnv({ ...BASE_ENV, FISCAL_PROVIDER: provider });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("FISCAL_PROVIDER");
+    }
+  });
+
+  it("keeps the provider optional outside production", () => {
+    const result = workerEnv(BASE_ENV);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.FISCAL_PROVIDER).toBeUndefined();
     }
   });
 });

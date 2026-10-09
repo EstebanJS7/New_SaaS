@@ -1,3 +1,4 @@
+import { FISCAL_PROVIDER_ENV_VALUES } from "@newsaas/fiscal";
 import { z } from "zod";
 
 /**
@@ -15,7 +16,9 @@ import { z } from "zod";
  * reader would lose RESTRICTED signing material across restarts.
  * `SIFEN_ENVIRONMENT` is required to be *present* in production because a
  * silent `TEST` default is a wrong-host submission waiting to happen
- * (ADR-008 §3).
+ * (ADR-008 §3). FISC-012 WU-E2 adds `FISCAL_PROVIDER`, validated against the
+ * package's closed set so a typo refuses at boot instead of deep inside
+ * `FiscalProviderModule`.
  */
 export const workerEnvSchema = z
   .object({
@@ -53,6 +56,15 @@ export const workerEnvSchema = z
      */
     SECRET_STORE_MASTER_KEY_VERSION: z.string().optional(),
     /**
+     * The fiscal provider this deployment selects (FISC-012 WU-E2).
+     *
+     * Optional in the schema and required in production by the gate below —
+     * the same contract the API declares. Absence in production would silently
+     * build the fake, and the closed set is the package's, so a typo refuses at
+     * boot instead of deep inside `FiscalProviderModule`.
+     */
+    FISCAL_PROVIDER: z.enum(FISCAL_PROVIDER_ENV_VALUES).optional(),
+    /**
      * The DNIT environment this deployment talks to (ADR-008 §3).
      *
      * Optional in the schema and required in production by the gate below: a
@@ -77,6 +89,17 @@ export const workerEnvSchema = z
     DTE_XSD_DIR: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === "production" && env.FISCAL_PROVIDER === undefined) {
+      // Match the API gate: an absent provider in production would silently
+      // select the fake. Explicit `fake` stays legitimate (the dedicated demo
+      // tenant, docs/03-architecture/DEMO-TENANT.md); absence is the failure.
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["FISCAL_PROVIDER"],
+        message: "FISCAL_PROVIDER is required in production.",
+      });
+    }
+
     if (env.NODE_ENV !== "production") {
       return;
     }

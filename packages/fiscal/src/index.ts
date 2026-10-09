@@ -34,8 +34,19 @@ export type {
   SanitizeProviderSnapshotOptions,
   SanitizedProviderSnapshot,
 } from "./fiscal-snapshot.sanitizer.js";
-export { FiscalProviderModule } from "./fiscal-provider.module.js";
-export type { FiscalProviderModuleOptions } from "./fiscal-provider.module.js";
+// FISC-012 WU-E2: the provider selection. `FISCAL_PROVIDER_ENV_VALUES` is the
+// one closed set of accepted environment values: the worker's env schema
+// imports it and the module's factory resolves against it. It is deliberately
+// lower case with a dash while the port's ids (`FISCAL_PROVIDER_VALUES`) are
+// upper case — the environment vocabulary predates the id union, and the
+// module's factory is the one place that maps one onto the other. The API's
+// schema keeps its own copy because `fiscal-boundary.test.ts` keeps
+// `@newsaas/fiscal` imports inside `apps/api/src/fiscal/`.
+export { FISCAL_PROVIDER_ENV_VALUES, FiscalProviderModule } from "./fiscal-provider.module.js";
+export type {
+  FiscalProviderEnvValue,
+  FiscalProviderModuleOptions,
+} from "./fiscal-provider.module.js";
 // FISC-010 WU-C / ADR-008 §2: the credential boundary the transport reads per
 // call. The port lives here; its implementation lands in the worker (FISC-012),
 // because `packages/fiscal` must not depend on Prisma or `@newsaas/secret-store`.
