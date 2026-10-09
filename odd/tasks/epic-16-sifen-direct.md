@@ -140,6 +140,20 @@ candidate 1 exists.
    `SIFEN_ENVIRONMENT` with the material's `environment` column as a **guard**,
    and two MIT dependencies (`fast-xml-parser`, `fflate`) with their advisory
    record and the parser's guardrails.
+5. **The port's request must carry the document.** A SIFEN provider submits a
+   signed DE and the request carries invoice data, so something has to close the
+   gap — and the provider cannot, because building a DE needs PostgreSQL. →
+   before FISC-012. Becomes **ADR-009**. **Resolved: [[ADR-009]] `accepted`
+   2026-10-08** — `FiscalIssueRequest.document = { cdc, signedXml } | null`, the
+   port gains `requiresSignedDocument` so the caller builds one only for
+   providers that need it, and a requiring provider handed `null` answers
+   `CONFIGURATION_ERROR`.
+6. **The XSD gate must run per submission.** The epic's criteria say so and the
+   FISC-008 gate is a CI job over a fixture. → before FISC-012. Becomes
+   **ADR-010**. **Resolved: [[ADR-010]] `accepted` 2026-10-08** — the validator
+   moves to the runtime barrel, `libxmljs2` becomes a runtime dependency of
+   `packages/fiscal`, `DTE_XSD_DIR` is a deployment input, and a deployment that
+   cannot validate cannot submit.
 
 ## Story plan
 
@@ -518,29 +532,49 @@ candidate 1 exists.
       the transactional compare-and-swap counter with the series rollover.
       **WU-E, the surface**: the profile/establishment/range routes, the
       permission, the audit and tenant isolation.
-- [ ] T8 — FISC-012: `SifenDirectFiscalProvider` + the asynchronous capability's
-      implementation + provider selection. **Inherits from FISC-009 the worker's
-      signing stage** (claim `SIGNING`, sign the DE with `signDteXml`, then
-      `SIGNING -> SENDING`; a signing failure goes to `SIGNING -> ERROR`), and
-      **from FISC-010 three more things**, per ADR-007 and ADR-008: **(a)** the
-      real `FiscalCredentialPort` in the worker — `@newsaas/secret-store` in
-      `apps/worker/package.json`, `SecretsModule`, `SECRET_STORE_MASTER_KEYS`
-      and the `secretStore.get` path, **none of which exists today**; **(b)**
-      the **reconciliation stage** — the TD-028 sweep extended to `SUBMITTED`,
-      calling `query` and applying the terminal result, with `retryAfterMs`
-      bounding the next attempt; **(c)** **persisting the signed DE**
-      (`xml_storage_key`, still written by nothing) and the submission path's
-      logging, which is where FISC-009's "no secret in a log or a stored
-      snapshot" criterion now lives. **The two consultation services are IN
-      scope**: the Manual's §9.4 CDC query is what resolves a document after the
-      Guide's 48-hour batch window, and §9.6's RUC status query is the sixth
-      service of the endpoint list. **What stays blocked and out of scope is the
-      signed v150 query family** — by protocol, by range, and the RUC archive —
-      whose request signature profile no source pins (FISC-013, against a real
-      service). **Note on this Story's row in the epic**: FISC-010 **adds** the
-      port's asynchronous capability; FISC-012 **implements** it. The epic's
-      earlier wording ("the port's asynchronous-status extension") was corrected
-      on 2026-10-08.
+- [~] T8 — **FISC-012: `SifenDirectFiscalProvider` and the worker's real
+  submission — in progress 2026-10-08.** Branch
+  `feat/epic-16-fisc-012-sifen-direct-provider` from **`ff8954e`** (`main` after
+  FISC-010 merged; this branch is **not** stacked on anything). Feature record:
+  `odd/tasks/fisc-012-sifen-direct-provider.md`. Story:
+  `docs/02-stories/FISC-012-sifen-direct-provider.md`. **WU-A, docs-only, is
+  this commit**: [[ADR-009]], [[ADR-010]], [[DEC-055]], the Story and
+  `SIFEN-BASELINE.md` **§24**. **The finding that shaped it**: §14 graded the QR
+  **[O] open** and **that was a tooling gap, not a source gap** — the Manual's
+  **§13.8 (pages 205–209)** pins the composition completely, and the extraction
+  §14 was written from had dropped it. Retrieved 2026-10-08 from the
+  already-local PDF with **PyMuPDF**, which extracts what `pypdf` and
+  `fetch_content` drop — §22.1's lesson, recorded for the third time. §24
+  carries the consultation URL, the nine parameters with their lengths, the
+  hexadecimal conversion of `dFeEmiDE`/`DigestValue`, the SHA-256 over the
+  parameters plus the CSC, the `&cHashQR` parameter and the XML escaping, plus
+  **three defects inside the Manual's own example**. **The consequence the Story
+  had to absorb**: the QR carries the signature's digest, so it is built
+  **after** signing — which is exactly why `gCamFuFD` sits outside the signed
+  `DE` subtree — and the builder therefore needs a QR placeholder. **Remaining
+  WUs**: WU-B the persistence adapters (a new `@newsaas/fiscal-persistence`
+  package), WU-C the QR, WU-D the worker's document stage, WU-E the provider and
+  the selection, WU-F the reconciliation. **Inherits from FISC-009 the worker's
+  signing stage** (claim `SIGNING`, sign the DE with `signDteXml`, then
+  `SIGNING -> SENDING`; a signing failure goes to `SIGNING -> ERROR`), and
+  **from FISC-010 three more things**, per ADR-007 and ADR-008: **(a)** the real
+  `FiscalCredentialPort` in the worker — `@newsaas/secret-store` in
+  `apps/worker/package.json`, `SecretsModule`, `SECRET_STORE_MASTER_KEYS` and
+  the `secretStore.get` path, **none of which exists today**; **(b)** the
+  **reconciliation stage** — the TD-028 sweep extended to `SUBMITTED`, calling
+  `query` and applying the terminal result, with `retryAfterMs` bounding the
+  next attempt; **(c)** **persisting the signed DE** (`xml_storage_key`, still
+  written by nothing) and the submission path's logging, which is where
+  FISC-009's "no secret in a log or a stored snapshot" criterion now lives.
+  **The two consultation services are IN scope**: the Manual's §9.4 CDC query is
+  what resolves a document after the Guide's 48-hour batch window, and §9.6's
+  RUC status query is the sixth service of the endpoint list. **What stays
+  blocked and out of scope is the signed v150 query family** — by protocol, by
+  range, and the RUC archive — whose request signature profile no source pins
+  (FISC-013, against a real service). **Note on this Story's row in the epic**:
+  FISC-010 **adds** the port's asynchronous capability; FISC-012 **implements**
+  it. The epic's earlier wording ("the port's asynchronous-status extension")
+  was corrected on 2026-10-08.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 

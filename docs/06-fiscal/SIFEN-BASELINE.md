@@ -440,8 +440,13 @@ because each is a constraint on the allocation:
 - Under posterior validation the KuDE may be issued **before** approval, which
   is what makes the CDC-reuse rule of §12 necessary.
 
-**[O]** The QR's exact composition and the CSC's per-environment value were not
-extracted in detail.
+**[R] Resolved 2026-10-08 — see §24.** The QR's composition is pinned by the
+Manual's §13.8 (pages 205–209), which §14's extraction had dropped: the
+consultation URL, the nine parameters with their lengths, the hexadecimal
+conversion of `dFeEmiDE` and `DigestValue`, the SHA-256 hash over the parameters
+plus the CSC, and the `&cHashQR` parameter. **The CSC's _value_ remains an
+operator input** — SIFEN issues it per taxpayer, up to two active ones, and it
+is secret.
 
 ## 15. Environments and the test guide
 
@@ -567,7 +572,11 @@ flag and treat the rules as pending DNIT, or be reframed.
 5. ~~The batch size limit for asynchronous reception.~~ **Resolved 2026-10-08 —
    see §23.7.** The Guide states **up to 50 documents per batch**, one RUC
    emisor and one document type, with the request capped at **1000 KB**.
-6. The QR composition and the CSC's per-environment value.
+6. ~~The QR composition~~ and the CSC's per-environment value. **The composition
+   is resolved 2026-10-08 — see §24**, together with the build order it forces
+   (`sign -> qr -> fill`). **What stays open is the CSC's _value_**: SIFEN
+   issues it per taxpayer (up to two active ones) and it is secret, so it is an
+   operator input and a `SecretStore` entry, never a constant.
 7. ~~The tables' contents, and chapter 16's codifications.~~ **Mostly resolved
    2026-10-04 — see §22.2 and §22.6.** The Manual's field-level rules are
    recorded, four companion tables are retrieved as official XSDs, and the
@@ -605,7 +614,7 @@ statement that it is undefined — and **the clauses of Notas Técnicas 23, 24 a
 | FISC-009 **XMLDSig** signing           | **The complete signature profile**: c14n, rsa-sha256, `#CDC` reference URI, the two ordered transforms, sha256 digest, X509Data, RSA 2048, and the forbidden elements                               | The library choice is [[ADR-006]]: `xml-crypto`, with `pkijs` kept for PKCS#12 only               |
 | FISC-010 DNIT web services             | **The endpoint list for both environments**, the six services, sync/async split, SOAP 1.2 Document/Literal over mutual TLS; the service message shapes, the result codes and the batch limits (§23) | SOAP actions and WSDL bindings; the signed query family's signature profile; the ZIP entry's name |
 | FISC-011 timbrado and numbering        | The six-field sequence, the series rule (two uppercase letters, no Ñ), the no-expiry timbrado model                                                                                                 | The tables' contents                                                                              |
-| FISC-012 the provider                  | The three-state result model and the `dCodRes`/`dMsgRes` mapping, and that a rejected DE is **retryable with the same CDC**                                                                         | The full `dCodRes` catalogue                                                                      |
+| FISC-012 the provider                  | The three-state result model and the `dCodRes`/`dMsgRes` mapping, that a rejected DE is **retryable with the same CDC**, and the whole QR composition with its build order (§24)                    | The full `dCodRes` catalogue; the CSC's value                                                     |
 | FISC-013 contingency and certification | **The test guide's sequence and test data**, the test and production environments, and that documents in test have no legal value                                                                   | A contingency protocol: DNIT has not defined one                                                  |
 
 ## Sources
@@ -2194,3 +2203,160 @@ recorded as such.
 | FISC-010 DNIT web services         | The six endpoints and both hosts (§8); the synchronous, batch, batch-query, event, **CDC-query and RUC-status** shapes (§23.3, §23.4, §23.6); the result codes and the batch limits (§23.7); SOAP 1.2 Document/Literal over mutual TLS (§7) | The SOAPAction and WSDL bindings; the signed query family's signature profile; the ZIP entry's name |
 | FISC-012 the provider              | The outcome mapping's inputs: `dEstRes`'s three values, `dProtAut`, `dCodRes`/`dMsgRes`, `dProtConsLote` as the asynchronous handle, and the CDC query as the post-window fallback                                                          | The `dCodRes` catalogue's full text; a contingency protocol                                         |
 | FISC-013 contingency/certification | That the batch path's limits and cadence are operational rules, and that the signed query family needs a signature source before it can be called                                                                                           | Anything about a live service's behaviour before a habilitación exists                              |
+
+## 24. The QR and the document's build order (retrieved 2026-10-08)
+
+**[R]** This section **corrects §14**. §14 graded the QR as **[O] open** — _"The
+QR's exact composition and the CSC's per-environment value were not extracted in
+detail"_ — and that was a **tooling gap, not a source gap**. The Manual's
+**§13.8 (pages 205–209)** pins the composition completely, and the extraction
+§14 was written from had dropped it: the same failure §22.1 documented for the
+Manual's tables and for page 56's embedded images.
+
+### 24.1 Retrieval record
+
+```text
+Manual Técnico v150    already local as a PDF
+  /tmp/manual-v150.pdf                    5,204,470 bytes   HTTP 200 (2026-10-07)
+  pages 205-209 (§13.8.1 - §13.8.5)       read with PyMuPDF 1.28.2
+```
+
+**The tool decides what this vault can see, and this is the third time it has
+mattered.** `pypdf` and the `fetch_content` extractor both return the section's
+_title_ and nothing else; PyMuPDF returns the prose and the table bodies.
+**Before declaring a source silent, read it with a second tool** — §22.1's
+lesson, applied to a section instead of a chapter.
+
+### 24.2 The QR's image and the CSC
+
+**[R]** §13.8.1, verbatim:
+
+> La imagen impresa del QR debe tener mínimamente 25 mm (veinticinco milímetros)
+> de ancho, de los cuales, 22 mm son para el contenido y 3 mm de margen seguro
+> (quiet zone). Queda a criterio del emisor si desea un tamaño mayor, en tal
+> caso, el margen seguro debe ser el 10% del ancho total. El contenido de este
+> código es cargado en el campo **J002** del archivo de DE correspondiente. El
+> código QR que será impreso en el KUDE, obedece al estándar internacional
+> **ISO/IEC 18004**. […] Este código estará compuesto de **32 dígitos
+> alfanuméricos**, es generado por el SIFEN y entregado al facturador
+> electrónico al momento de su ingreso. […] permitiéndose **hasta dos códigos de
+> seguridad en estado activo**.
+
+So the **CSC is issued by SIFEN, per taxpayer**, not a constant this system can
+invent — and it is secret: §13.8.4.2 and §13.8.4.3 say twice that it must never
+be shared and never be sent in the URL.
+
+### 24.3 The composition
+
+**[R]** §13.8.2 lists what the image contains: the SET's consultation address
+plus the DE's parameters plus a SHA-256 hash of them. Its table, verbatim:
+
+```text
+Parámetro           Descripción                En el DE  ID campo   Long.  hash  URL
+nVersion            versión del QR             Sí        AA002      3      Sí    Sí
+Id                  CDC del DE                 Sí        A002      44      Sí    Sí
+dFeEmiDE            fecha y hora de emisión    Sí        D002      19      Sí    Sí
+dRucRec/dNumIDRec   identificación del receptor Sí       D206/D210 20      Sí    Sí (*)
+dTotGralOpe         total general de la operación Sí     F014      23      Sí    Sí (*)
+dTotIVA            liquidación total del IVA   Sí        F017      23      Sí    Sí (*)
+cItems              cantidad de ítems del DE    No        cuenta E701 3      Sí    Sí (*)
+DigestValue         hash de la firma digital    Sí        XS17       -      Sí    Sí
+IdCSC               identificador del CSC       No        -          4      Sí    Sí
+cHashQR             código hash de los parámetros No      -          -      No    Sí
+
+(*) En caso de que estos campos no contengan valor completar con un "0"
+```
+
+**[R]** §13.8.3 — the methodology:
+
+> • Los siguientes campos deben ser convertidos a su equivalente hexadecimal ·
+> Fecha de Emisión · DigestValue de la Firma Digital • El valor de todos los
+> parámetros identificados en el cuadro precedente, deben ser concatenados y
+> aplicar el algoritmo SHA-256, para determinar el Código Hash • El valor Hash
+> del QR, debe estar en hexadecimal.
+
+**"Su equivalente hexadecimal" is the hex of the string's bytes**, and the
+section's own example proves it: `2017-01-25T09:35:17` becomes
+`323031372d30312d32355430393a33353a3137`, which is the ASCII hex of those 19
+characters — not a decoded timestamp.
+
+**[R]** §13.8.4 — the five steps, and its worked example is the specification
+this vault will assert against:
+
+```text
+Paso 1  concatenate:  nVersion=150&Id=<cdc>&dFeEmiDE=<hex>&dRucRec=<ruc>
+                      &dTotGralOpe=<n>&dTotIVA=<n>&cItems=<n>
+                      &DigestValue=<hex>&IdCSC=<id>
+Paso 2  append the CSC to the end of step 1's string   (for the hash only)
+Paso 3  SHA-256 of step 2, hexadecimal
+Paso 4  URL = consulta QR + step 1 + "&cHashQR=" + step 3
+Paso 5  escape every "&" as "&amp;" before the value enters <dCarQR>
+```
+
+with the consultation addresses of §13.8.2:
+
+```text
+Producción   https://ekuatia.set.gov.py/consultas/qr?
+Test         https://ekuatia.set.gov.py/consultas-test/qr?
+```
+
+and the example's own output, which the implementation must reproduce byte for
+byte:
+
+```text
+https://ekuatia.set.gov.py/consultas/qr?nVersion=150&Id=01444444017001001001452822017012515873260988
+&dFeEmiDE=323031372d30312d32355430393a33353a3137&dRucRec=88899990&dTotGralOpe=300000
+&dTotIVA=27272&cItems=2&DigestValue=797a4759685578312f5859597a6b7357422b6650523351633530633d
+&IdCSC=0001&cHashQR=97ddbb3c1e7d65af03a70ffe21f2b34846ab1c89e0566c35222086766b7374ed
+```
+
+### 24.4 Three defects inside the Manual's own example, recorded not copied
+
+```text
+1  §13.8.4.4's "Donde" writes https://www.ekuatia.set.gov.py/consultas/qr? while
+   §13.8.2 and the worked example both write it WITHOUT "www." — the example wins,
+   and the client emits no "www."
+2  §13.8.4.4's "Datos del Paso 1" says nVersion=142 while the final URL of the same
+   example says nVersion=150 — and nVersion is AA002, whose value is the document's
+   version, 150. The client emits 150.
+3  §13.8.3's example table labels the total row dTotOpe while §13.8.2's table and
+   §13.8.4.1's concatenation both use dTotGralOpe. The URL parameter is the one that
+   is concatenated, so it is dTotGralOpe.
+```
+
+### 24.5 The ordering, and why the schema's layout already allows it
+
+**[R]** The QR's `Id` is the **CDC** (`A002`) and its `DigestValue` is the
+**signature's digest** (`XS17`). Neither exists before the document is signed,
+so **the QR is built after the signature** and then inserted into the DE.
+
+That is not a workaround: baseline §4 records that `rDE` is
+`<DE>…</DE><Signature/><gCamFuFD/>`, and **`dCarQR` lives in `gCamFuFD`, outside
+the signed subtree**. The schema's own layout makes room for a value that
+depends on the signature, which is why the build order is:
+
+```text
+buildDteXml  ->  signDteXml  ->  buildQrContent  ->  fill the QR placeholder
+```
+
+### 24.6 What this still does not pin
+
+1. **The CSC's value.** It is issued by SIFEN to each taxpayer, up to two active
+   ones, and it is secret. It is an operator input and a `SecretStore` entry,
+   never a constant — and the `IdCSC` that names which one was used is part of
+   the URL.
+2. **The `J002` field's placement in the KuDE.** §13.8.1 says the QR's _content_
+   goes in `J002` of the DE file and that the image is printed on the KuDE; the
+   KuDE as a printable layout is out of [[EPIC-16]]'s scope, so only the content
+   is built here.
+3. **Whether SIFEN validates the QR's hash.** The schema requires `dCarQR` with
+   a length of 100–600 characters ([[FISC-008]]'s rules), and the composition
+   above is the Manual's; only a live service can confirm that a wrong hash is
+   rejected.
+
+### 24.7 Consequences for the epic's Stories
+
+| Story                              | May now pin                                                                                                                        | Must still not write                                                   |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| FISC-012 the provider              | The whole QR composition and its build order; the DE chain's inputs; that one certificate serves both the signature and mutual TLS | The CSC's value; whether SIFEN validates the hash                      |
+| FISC-013 contingency/certification | That the QR can be built before any SIFEN call, so the homologation run exercises it                                               | Anything about a live service's behaviour before a habilitación exists |
