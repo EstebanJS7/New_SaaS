@@ -33,7 +33,7 @@ import {
   type FiscalSubmissionProducer,
 } from "../src/fiscal/fiscal-submission.producer.js";
 import { allocateDocumentNumber, type FiscalSubmissionJob } from "@newsaas/fiscal";
-import { createTimbradoRangeStore } from "../src/fiscal/timbrado/timbrado-range.store.js";
+import { createTimbradoRangeStore } from "@newsaas/fiscal-persistence";
 
 interface ErrorEnvelope {
   error: { code: string };
