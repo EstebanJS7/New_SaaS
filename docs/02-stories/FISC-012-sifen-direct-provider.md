@@ -262,17 +262,45 @@ lot is a later optimization: the container and the facade already take a list.
 **WU-E — the provider**
 
 - [ ] `SifenDirectFiscalProvider` implements the port: `issue`, `query`,
-      `cancel`, and `requiresSignedDocument === true`.
-- [ ] `issue` submits a lot of one, maps the hand-over answer through the
-      outcome mapping, and answers `SUBMITTED` with the provider reference.
-- [ ] A request with `document: null` answers `CONFIGURATION_ERROR` naming the
-      violation — never a throw, never a submission.
-- [ ] A `null` credential read answers `CONFIGURATION_ERROR` (terminal), and a
-      transient transport failure answers `TRANSIENT_FAILURE` (retryable).
-- [ ] `FISCAL_PROVIDER` accepts `SIFEN_DIRECT`, the fake stays selectable
-      outside production, and **a production boot still refuses the fake**.
-- [ ] The sanitized `providerRequest` snapshot is a descriptor — the CDC, the
-      service, the byte count — **not the document**, asserted.
+      `cancel`, and `requiresSignedDocument === true`. **`issue`, `query` and
+      the flag are done; `cancel` is implemented as a fail-closed refusal** —
+      SIFEN's cancellation is an _event_, and `SIFEN-BASELINE.md` §23.3 records
+      that `Evento_v150.xsd`'s field-level rules are **not profiled**:
+      "profiling it is the work of the Story that builds one". That story is
+      [[FISC-016]], and until it lands `cancel` answers `CONFIGURATION_ERROR`
+      with `CANCELLATION_EVENT_UNPROFILED`, sends nothing, and says so.
+- [x] `issue` submits a lot of one, maps the hand-over answer through the
+      outcome mapping, and answers `SUBMITTED` with the provider reference. The
+      batch answer identifies an **operation and never a document**, so the
+      adapter overlays the request's own CDC — without it the lost-hand-over
+      reconciliation would lose its only identity ([[ADR-007]] §2).
+- [x] A request with `document: null` answers `CONFIGURATION_ERROR` naming the
+      violation — never a throw, never a submission, asserted with no facade
+      call.
+- [x] A `null` credential read answers `CONFIGURATION_ERROR` (terminal), and a
+      transient transport failure answers `TRANSIENT_FAILURE` (retryable). The
+      partition is **total and asserted member by member**: only the three
+      failures where the request may never have arrived or no answer did are
+      retryable, each with its duplicate protection named.
+- [x] `FISCAL_PROVIDER` accepts `SIFEN_DIRECT`, the fake stays selectable
+      outside production, and **a production boot still refuses the fake**. Read
+      as the refusal's own scope: what production refuses is **absence**, and an
+      explicit `fake` stays selectable because it is the documented
+      dedicated-demo path (`docs/03-architecture/DEMO-TENANT.md`) — refusing it
+      would break that deployment without protecting anything.
+- [x] The sanitized `providerRequest` snapshot is a descriptor — the CDC, the
+      service, the byte count — **not the document**, asserted. The sanitizer's
+      allowlist gained the two keys a descriptor needs, because an unlisted key
+      is silently redacted.
+
+> **A CRITICAL finding this Story's own review caught, 2026-10-08.**
+> `resolveSifenEnvironment` defaulted an absent `SIFEN_ENVIRONMENT` to `TEST`
+> for **every** environment, and WU-E2 made the API accept `sifen-direct` in
+> production: a production API could have built the real adapter against the
+> **DNIT test host** ([[ADR-008]] §3). A read-only refuter corroborated it after
+> looking for a gate it had missed, and the bounded correction closes it at both
+> construction points — the package's factory and the API's schema. The API's
+> own new test had asserted the broken behaviour.
 
 **WU-F — the reconciliation**
 

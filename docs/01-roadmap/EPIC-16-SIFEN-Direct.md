@@ -146,6 +146,7 @@ word.
 | FISC-013 | **Contingency handling** and the certification/homologation evidence run                                                                                                                                                                                                                                                                                                                | FISC-012           |
 | FISC-014 | **Epic closure**: module docs, CI evidence, changelog, roadmap, advisory triage                                                                                                                                                                                                                                                                                                         | all                |
 | FISC-015 | **The document assembly** — the fiscal identity a DE needs before it can be built: the number's authorisation at confirmation, the receptor, each line's tax treatment, the unit of measure, the currency table and the CSC's storage — [[DEC-056]]                                                                                                                                     | FISC-011, FISC-012 |
+| FISC-016 | **The cancellation event** — profiling `Evento_v150.xsd` (retrieved but unread), building and signing the event's payload, and mapping `rRetEnviEventoDe` onto the port's cancel outcomes. Until it lands `cancel` fails closed                                                                                                                                                         | FISC-012           |
 
 Story numbering continues the Fiscal prefix (`FISC-`). FISC-001..005 belong to
 [[EPIC-15]].
@@ -179,6 +180,14 @@ which the published v141 artifacts (`WS_SiConsDE_v141.xsd`,
 search not yet run; the correction is recorded in `SIFEN-BASELINE.md`
 §23.6/§23.8 and in the Story. The signed family's own signature profile stays
 open and out of scope.
+
+**FISC-016 was created by FISC-012's own implementation (2026-10-08).** SIFEN's
+cancellation is an **event**, and `SIFEN-BASELINE.md` §23.3 records that
+`Evento_v150.xsd`'s field-level rules were never profiled — the artifacts were
+retrieved (23,255 and 23,320 bytes) and the section says profiling them "is the
+work of the Story that builds one". So FISC-012's `cancel` fails closed with a
+named reason instead of sending an event nobody validated, and FISC-016 owns the
+profiling, the payload, its signature and the answer's mapping.
 
 **Every story from FISC-007 onward is provisional in its technical content**
 until FISC-006 lands. The names and dependencies above are the shape; the

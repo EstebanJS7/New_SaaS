@@ -260,10 +260,22 @@ WU-D2    8224825  feat(FISC-012): the document stage and its custody — 9 files
                   (`review-reliability`), three advisories (one `WARNING`, two
                   `SUGGESTION`), none opening a correction; the acknowledgement
                   burned the authority
+WU-E1    5bdd61b  feat(FISC-012): SifenDirectFiscalProvider over the facade —
+                  5 files, 1,267 insertions (the provider 586, its suite 617)
+         review-ca72a76b131d66e4  closed `approved`, tier `medium`, one lens
+                  (`review-reliability`), two advisories at `SUGGESTION`, neither
+                  opening a correction; the acknowledgement burned the authority
+WU-E2    9295769  feat(FISC-012): the provider selection, and the production hole
+                  it opened — 8 files, 521 insertions
+         review-661aab129f50b6f9  tier `medium`, one lens, **one CRITICAL
+                  finding** (`R3-SIFEN-PRODUCTION-DEFAULT`, `introduced`):
+                  refuted → **corroborated** by a read-only refuter → bounded
+                  correction (plan 60 diff lines) → targeted validator **passed
+                  both checks** → closed `approved`; the acknowledgement burned
+                  the authority
 gates    format-check green; lint 20/20, typecheck 20/20, test 21/21, build 12/12;
-         fiscal 535, worker 110 (39 handler + 3 seam), api 1138 (+220 live-PG
-         skipped), database 445, web 1087, secret-store 50, fiscal-persistence 27,
-         ui 36, shared 16
+         fiscal 577, worker 117, api 1143 (+220 live-PG skipped), database 445,
+         web 1087, secret-store 50, fiscal-persistence 27, ui 36, shared 16
 ```
 
 ## Review record
@@ -438,6 +450,82 @@ correction.
   session before the right one was resumed. The outcome was sound — one file,
   validated, kept by the session that owned it — but the lesson is to **re-read
   the task list before continuing a session**, not to trust a remembered id.
+
+**WU-E1 — `review-ca72a76b131d66e4`, `approved` with one lens (2026-10-08).**
+Tier `medium`, one lens, 5 files and 1,267 changed lines. It closed `approved`
+with **two advisories**, both `SUGGESTION` and both in the new suite's leak
+assertions:
+
+| id     | location                                | our reading of the location                                                                                                                                                    | action   |
+| ------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| R3-001 | `sifen-direct.provider.test.ts:422-427` | The leak assertion runs on `JSON.stringify(result)` rather than on the sanitized snapshot itself, so a leak through another field or a transformed encoding would not fail it. | recorded |
+| R3-002 | `sifen-direct.provider.test.ts:569-572` | The serializer-refusal test asserts the _reason_ carries no document fragment, while the message that does quote the document is the serializer's own.                         | recorded |
+
+I verified the production path by hand instead, and it is leak-safe by
+construction: the transport's and the facade's messages are **fixed sentences
+per member** (their own tables), and the two classes whose messages can quote
+document bytes map to fixed reason sentences instead of `error.message`.
+
+**WU-E2 — `review-661aab129f50b6f9`, `approved` with one lens and one CRITICAL
+(2026-10-08).** Tier `medium`, one lens, 8 files and 503 changed lines. This is
+the first candidate in the epic that the review **did not** let through, and the
+arc is the record worth keeping:
+
+| stage      | what happened                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| finding    | `R3-SIFEN-PRODUCTION-DEFAULT`, `CRITICAL`, `introduced`: `resolveSifenEnvironment` defaulted an absent `SIFEN_ENVIRONMENT` to `TEST` for **every** environment, and this slice made the API accept `sifen-direct` in production — a production API could have built the real adapter against the **DNIT test host** ([[ADR-008]] §3). The API's own new test asserted the broken behaviour. |
+| refuter    | The provider required a refuter because the finding was **inferential**. It was told to refute first; it searched for a production gate in the package, the API's schema, `main.ts` and the fiscal module, found none, and answered **corroborated**.                                                                                                                                       |
+| correction | Plan submitted **before** any edit: 60 diff lines against a frozen budget of 200. The fix closes the hole at **both** construction points — the package's factory (the single place every deployable passes through) and the API's schema at boot, scoped to the provider that has an environment.                                                                                          |
+| validator  | The targeted validator passed **both** checks: every original criterion met in the corrected candidate, and no regression — it looked specifically for a non-production path that now refuses, a weakened expectation and a stale caller. One follow-up: the corrected test asserts the same production object twice.                                                                       |
+| closure    | `approved` on the validator's admission; the acknowledgement burned the authority.                                                                                                                                                                                                                                                                                                          |
+
+**WU-E1's notes.**
+
+- **The batch answer identifies an operation, never a document**, so
+  `mapBatchReceptionOutcome` nulls `cdc` on every row — the adapter must overlay
+  the request's own CDC or the lost-hand-over reconciliation loses its only
+  identity. Overlaying it is not re-deriving the table: the outcome, the
+  reference and the reason still come from the mapper.
+- **The serializer's `UNEXPECTED_DOCUMENT_ROOT` message prints the first 48
+  characters of the document**, which is why parse and serialization failures
+  map to fixed reason sentences rather than `error.message`. A reader who
+  assumes the failure tables make every message safe would be wrong for exactly
+  two classes.
+- **The control number** is 15 digits from `node:crypto` with a non-zero leading
+  digit (the pattern's own not-all-zero rule), injected so a test is
+  deterministic. §9.2.1 calls `dId` a sequential emitter responsibility and no
+  persisted counter exists here: the enforced properties are kept and the
+  monotonicity question is carried to [[FISC-013]].
+- **`Record<SifenTransportFailure, …>` buys compile-time exhaustiveness**: a new
+  member breaks the build rather than silently defaulting, and the test table
+  pins the values.
+
+**WU-E2's notes.**
+
+- **The review route for non-lens roles is the CLI, not the capture tool**: the
+  refuter (`review.capture-refuter`), the correction plan
+  (`review.capture-correction-plan`) and the validator
+  (`review.capture-validation`) are provider-owned operations the facade does
+  not carry. Each rejected the facade's binding with "unknown, expired, or
+  belongs to a different session route" — which is the honest answer, not a
+  stale binding.
+- **`capture-refuter --execute` is refused for the `pi` agent** — "it is
+  host-mediated" — so the route is `--materialize` (which prints the exact task,
+  the input and the output schema), run the role read-only over the **frozen**
+  trees, then `--input=<file>`. The same shape as the validator.
+- **A zod trap that the test caught**: the first attempt added only the
+  `superRefine` rule and not the field, and `z.object` **strips undeclared
+  keys**, so the rule fired even when the operator had set the variable. The
+  field's comment now records it — a rule reading a key the object schema does
+  not declare reads `undefined` forever.
+- **The consent envelope expires on a clock, and a fresh START is the
+  recovery**: two candidates in a row returned `consent-binding-stale` with
+  `lineage_created: false`, so nothing was created and nothing mutated, and the
+  documented recovery is a new START rather than a resend of the same binding.
+- **A CRITICAL finding is the review working, not the process failing.** The
+  finding was true, the API's own test encoded the bug, and the correction was
+  cheap — because the finding arrived before the commit rather than after a
+  production incident.
 
 **WU-C's notes.**
 
