@@ -188,8 +188,16 @@ WU-A     7949f04  docs(FISC-012): the decisions, the Story and the QR's retrieva
                   `review-reliability`, five advisories at
                   `WARNING`/`SUGGESTION`, none opening a correction; the
                   acknowledgement burned the authority
-gates    `pnpm format-check` green. Docs only: no code, no migration, no package
-         gate applies.
+WU-B     e20fc6b  feat(FISC-012): the fiscal persistence package and the moved
+                  range store — 13 files, 911 insertions (the two store files
+                  recorded as 100% renames)
+         review-fb085a14b38e2ae8  closed `approved`, tier `high` (a process
+                  boundary in the live-PG spec), FOUR lenses, three advisories
+                  at `WARNING`, none opening a correction; the acknowledgement
+                  burned the authority
+gates    format-check green; lint 20/20, typecheck 20/20, test 21/21, build 12/12;
+         the new package 27 tests, fiscal 507, api 1138 (+220 live-PG skipped);
+         and the live-PostgreSQL suite at 220/220
 ```
 
 ## Review record
@@ -222,6 +230,45 @@ now.
 new files; the first START returned an empty result, STATUS re-offered the
 selection, and the retry created the lineage. The acknowledgement burned the
 authority.
+
+**WU-B — `review-fb085a14b38e2ae8`, `approved` with four lenses (2026-10-08).**
+Tier `high` (the process boundary in the live-PG spec), four lenses, 15 files
+and 1,696 changed lines. It closed `approved` with **three advisories**, all
+`WARNING` and none opening a correction — reported by coordinate with the same
+caveat, so the reading is ours:
+
+| id     | location                            | our reading of the location                                                                                           | action          |
+| ------ | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------- |
+| R2-001 | `fiscal-credential.reader.ts:19-20` | The reader's header states the three states it distinguishes; a reader of the file has to hold them against the code. | recorded        |
+| R3-001 | `live-pg-isolation.e2e-spec.ts:36`  | The suite's import now crosses a package boundary, so the live proof depends on the new package being built first.    | **noted below** |
+| R4-001 | `emitter-profile.read.ts:117-126`   | Two statements instead of the API's one `include`: the activities read is a second round trip, not a join.            | recorded        |
+
+**And a formatting fix that the same advisory kept pointing at.** R3-003 of WU-A
+was a wrapped line inside an inline code span, and the "fix" landed a line break
+inside the span, which prettier renders as stray spaces. It is now one unbroken
+span — recorded because it took two attempts and the second one only looked like
+a fix.
+
+## Notes
+
+- **The live-PostgreSQL gate ran against a locally provisioned PostgreSQL
+  16.13**, not the `fisc009-pg` container: Docker's WSL integration is gone from
+  this distro (it worked earlier the same day). The worker followed the repo's
+  own recorded practice (EPIC-06's disposable cluster) and ran the exact
+  authorized command. Same major version, same migrations, UTC.
+- **The suite is UTC-sensitive, and that is a finding.** A non-UTC server fails
+  the FISC-011 date-boundary case by constraint-name matching (219/220) because
+  `'2018-04-30'::timestamptz` lands at 04:00 UTC; the container was UTC. Worth
+  knowing for any future environment change.
+- **The package's consumers**: the API imports the moved store from it (the
+  live-PG suite). The worker's wiring is WU-D's, and that is where the Story's
+  "consumed by both apps" closes.
+- **The store's move is provable**: `git show HEAD:<old path> | diff` is clean,
+  and the commit records both files as **100% renames**.
+- **The profile read is two statements, not one `include`**: an
+  `include`-dependent return type does not fit the structural client that the
+  tests pin at compile time, and the two-statement form keeps each query's
+  result shape explicit.
 
 ## Notes
 

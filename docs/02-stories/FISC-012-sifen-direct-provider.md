@@ -166,19 +166,24 @@ lot is a later optimization: the container and the facade already take a list.
 
 **WU-B — the persistence adapters**
 
-- [ ] `@newsaas/fiscal-persistence` exists, is consumed by both apps, and
-      `packages/fiscal` still depends on neither Prisma nor the database
-      package.
-- [ ] The timbrado range store has **one** implementation: the API's store moves
-      and its tests follow, and the allocation's live-PostgreSQL proof still
-      passes where the store now lives.
-- [ ] The credential read returns
-      `{ certificatePem, privateKeyPem, notBefore,     notAfter }` for the
+- [x] `@newsaas/fiscal-persistence` exists, depends only on workspace packages,
+      and `packages/fiscal` still depends on neither Prisma nor the database
+      package. **Its second consumer is [[WU-D]]'s**: the worker's wiring is
+      where "consumed by both apps" closes.
+- [x] The timbrado range store has **one** implementation: the API's store moved
+      verbatim (git records both files as 100% renames) and its tests followed,
+      and the allocation's live-PostgreSQL proof passes with the store in its
+      new home.
+- [x] The credential read returns the four-field credential —
+      `{ certificatePem, privateKeyPem, notBefore, notAfter }` — for the
       tenant's **active** material in the requested environment, and `null` when
-      there is none — with the private key read from the `SecretStore` by
-      `credentialRef` and never logged.
-- [ ] A cross-tenant read returns `null`: the material's tenant is part of the
-      query, not of the caller's context.
+      there is none, with the private key read from the `SecretStore` by
+      `credentialRef` and never logged. Three states are distinguished: no
+      ACTIVE row, an ACTIVE row whose secret is gone (fail closed) and a corrupt
+      secret (the store's own typed error propagates).
+- [x] A cross-tenant read returns `null`: the material's tenant is part of the
+      query, not of the caller's context — asserted on the query the client
+      receives.
 
 **WU-C — the QR**
 
