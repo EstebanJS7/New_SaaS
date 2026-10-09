@@ -586,8 +586,15 @@ candidate 1 exists.
   [[FISC-015]] now. The same decision moves the fiscal number's allocation to
   **invoice confirmation**. Recorded as commit `89e4625`; FISC-015 is `planned`
   and its first work unit makes four product decisions before any schema change.
-  **Inherits from FISC-009 the worker's signing stage** (claim `SIGNING`, sign
-  the DE with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
+  **WU-D1 landed as commit `0ca390a`** — 15 files, 441 insertions — and its
+  review is `review-eed5d94fb24e9e54`: tier `medium`, one lens, closed
+  **`approved`** with three advisories (two `WARNING`, one `SUGGESTION`). The
+  port now carries the signed document (ADR-009: a required
+  `document: FiscalIssueDocument | null` plus `requiresSignedDocument`) and the
+  worker wires the real credential port, its own secret-store composition root
+  and the env gates; **WU-D2** carries the stage and the custody. **Inherits
+  from FISC-009 the worker's signing stage** (claim `SIGNING`, sign the DE with
+  `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
   `SIGNING -> ERROR`), and **from FISC-010 three more things**, per ADR-007 and
   ADR-008: **(a)** the real `FiscalCredentialPort` in the worker —
   `@newsaas/secret-store` in `apps/worker/package.json`, `SecretsModule`,

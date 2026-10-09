@@ -190,14 +190,23 @@ are, and it does not get improvised.
       adapters, per DEC-055): the Prisma `TimbradoRangeStore`, the
       emitter-profile read and the credential read, moved or written once and
       consumed by both apps, with the live-PostgreSQL proof where it belongs.
+      **Landed** — see the Evidence.
 - [ ] **WU-C — the QR**: a pure `buildQrContent(...)` in `packages/fiscal` (the
       URL, the parameters, the hex conversions, the SHA-256 hash, the escaping)
       plus the builder's QR placeholder and the fill step, table-driven against
-      §13.8.4's own worked example.
+      §13.8.4's own worked example. **Landed** — see the Evidence.
 - [ ] **WU-D — the worker's document stage**: the `QUEUED -> SIGNING -> SENDING`
       claim, the build → sign → QR → fill chain, the persistence of the signed
       XML (`xml_storage_key`, a new fiscal storage prefix), and the credential
-      read that serves both the signature and mutual TLS.
+      read that serves both the signature and mutual TLS. **Narrowed by DEC-056
+      and split into two reviewable slices**:
+  - **WU-D1 — the port surface and the credential boundary** (the port's
+    `document` field and `requiresSignedDocument`, the worker's own secret-store
+    composition root, the credential-port provider, the env entries, `libxmljs2`
+    as a runtime dependency). **Landed** — see the Evidence.
+  - **WU-D2 — the stage and the custody**: the claim transitions, the document
+    seam that fails closed, store-then-validate, the `xml_storage_key` writer,
+    the fiscal storage prefix and the XSD gate's per-process compile.
 - [ ] **WU-E — `SifenDirectFiscalProvider`**: the port implementation over the
       facade (the sync/batch strategy, `query`, `cancel`), the provider
       selection (`FISCAL_PROVIDER=SIFEN_DIRECT` with the production refusal
@@ -238,10 +247,15 @@ WU-C     f968843  feat(FISC-012): the QR, its placeholder and the one fill —
          review-5eeef34d2f4685c2  closed `approved`, tier `medium`, one lens
                   (`review-reliability`), two advisories at `SUGGESTION`, neither
                   opening a correction; the acknowledgement burned the authority
+WU-D1    0ca390a  feat(FISC-012): the port's document surface and the worker's
+                  credential boundary — 15 files, 441 insertions (2 new files)
+         review-eed5d94fb24e9e54  closed `approved`, tier `medium`, one lens
+                  (`review-reliability`), three advisories (two `WARNING`, one
+                  `SUGGESTION`), none opening a correction; the acknowledgement
+                  burned the authority
 gates    format-check green; lint 20/20, typecheck 20/20, test 21/21, build 12/12;
-         the new package 27 tests, fiscal 532 (25 new), api 1138 (+220 live-PG
-         skipped), database 445, web 1087, worker 79, secret-store 50, ui 36,
-         shared 16; and the live-PostgreSQL suite at 220/220
+         fiscal 533, worker 97, api 1138 (+220 live-PG skipped), database 445,
+         web 1087, secret-store 50, fiscal-persistence 27, ui 36, shared 16
 ```
 
 ## Review record
@@ -328,6 +342,51 @@ Both were the coordinates the worker had already raised as judgement calls, and
 the second is the one the delegation itself created: the brief forbade editing
 `dte.builder.ts`, whose escaper is private, so the alternative to duplicating
 three lines was touching a file the previous work unit's review had read.
+
+**WU-D1 — `review-eed5d94fb24e9e54`, `approved` with one lens (2026-10-08).**
+Tier `medium` (an executable change in the API's boot harness), one lens, 15
+files and 451 changed lines. It closed `approved` with **three advisories**,
+none opening a correction:
+
+| id     | location                             | our reading of the location                                                                                                     | action   |
+| ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R3-001 | `fiscal-provider.port.ts:258-267`    | The flag's contract is documented on the port while its enforcement is WU-E's, so nothing in this candidate proves the refusal. | recorded |
+| R3-002 | `worker.module.ts:25-30`             | The credential port is a process singleton whose `read` is per call — the property ADR-008 §2 asks for, stated in prose only.   | recorded |
+| R3-003 | `secret-store/secrets.test.ts:49-53` | The version test asserts the driver's class rather than the behaviour (that new writes use the rotated version).                | recorded |
+
+**WU-D1's notes.**
+
+- **A required port member reaches farther than the port.** `FiscalProviderPort`
+  has three in-repo implementations, and the two doubles needed the flag; the
+  API's boot harness is outside the worker's surfaces, so the worker **stopped
+  and asked** instead of editing it. The extension was approved and the change
+  is one line — the same shape FISC-010 hit when `query` was added, and that
+  file's own comment records it.
+- **`fiscal-provider.port.ts` is source-scanned for protocol vocabulary**
+  (`fiscal-provider.port.test.ts` forbids `sifen`, `lote`, `consulta`, `0360`…
+  in that file, doc comments included). The worker's first draft named SIFEN in
+  a comment and the _test_ caught it — `tsc` was silent.
+- **zod 3's `superRefine` sees `.default()`-applied values**, so a field-level
+  default makes "absent" indistinguishable from "explicitly `TEST`". The
+  production presence gate is therefore optional field + presence check +
+  trailing transform. A fact worth reusing wherever this schema pattern appears.
+- **The reader's real argument shape is `{ client, secretStore }`**, not
+  `{ prisma, secretStore }` as the delegation sketched: `PrismaService`
+  satisfies the narrow `FiscalCredentialReadClient` structurally, so no adapter
+  and no cast.
+- **The identifier drift was mine, and the ADR won.** I first told the worker to
+  use `SignedFiscalDocument` and then that ADR-009 was stale; the ADR is the
+  accepted decision and the code was the deviation, so the type is
+  `FiscalIssueDocument` and the ADR needed no edit. Reversing my own instruction
+  was cheaper than rewriting an accepted decision to match my mistake.
+- **The consent envelope expired once.** The first START for this candidate
+  returned `consent-binding-stale` with `lineage_created: false` — so nothing
+  was created and nothing mutated, and a fresh START was the documented recovery
+  rather than a retry of the same binding. Worth knowing: the envelope's clock
+  is real, and a long gate run before a START can outlive it.
+- **`SIFEN_ENVIRONMENT` is validated and unconsumed until WU-E**, and
+  `DTE_XSD_DIR` until WU-D2. The boot refusal is the deliverable here: a
+  production process without the environment variable does not start.
 
 **WU-C's notes.**
 

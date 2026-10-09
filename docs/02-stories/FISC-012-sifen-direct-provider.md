@@ -237,6 +237,14 @@ lot is a later optimization: the container and the facade already take a list.
 > The reconnaissance is recorded in
 > `odd/tasks/fisc-012-sifen-direct-provider.md`, the options and the decision in
 > DEC-056.
+>
+> **Split into two slices.** **D1 landed as `0ca390a`**: the port's `document`
+> field and `requiresSignedDocument` ([[ADR-009]]), the worker's own
+> secret-store composition root, the `FISCAL_CREDENTIAL_PORT` provider, the env
+> entries and `libxmljs2` promoted to a runtime dependency ([[ADR-010]]). **D2**
+> carries the claim transitions, the seam and the custody — the
+> store-then-validate order, the `xml_storage_key` writer and the XSD gate's
+> per-process compile.
 
 **WU-E — the provider**
 
