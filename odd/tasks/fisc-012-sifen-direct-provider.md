@@ -253,9 +253,17 @@ WU-D1    0ca390a  feat(FISC-012): the port's document surface and the worker's
                   (`review-reliability`), three advisories (two `WARNING`, one
                   `SUGGESTION`), none opening a correction; the acknowledgement
                   burned the authority
+WU-D2    8224825  feat(FISC-012): the document stage and its custody — 9 files,
+                  890 insertions (the seam 78, its test 37, the handler +288 and
+                  its suite +368)
+         review-736ec8a3be9b5e21  closed `approved`, tier `medium`, one lens
+                  (`review-reliability`), three advisories (one `WARNING`, two
+                  `SUGGESTION`), none opening a correction; the acknowledgement
+                  burned the authority
 gates    format-check green; lint 20/20, typecheck 20/20, test 21/21, build 12/12;
-         fiscal 533, worker 97, api 1138 (+220 live-PG skipped), database 445,
-         web 1087, secret-store 50, fiscal-persistence 27, ui 36, shared 16
+         fiscal 535, worker 110 (39 handler + 3 seam), api 1138 (+220 live-PG
+         skipped), database 445, web 1087, secret-store 50, fiscal-persistence 27,
+         ui 36, shared 16
 ```
 
 ## Review record
@@ -387,6 +395,49 @@ none opening a correction:
 - **`SIFEN_ENVIRONMENT` is validated and unconsumed until WU-E**, and
   `DTE_XSD_DIR` until WU-D2. The boot refusal is the deliverable here: a
   production process without the environment variable does not start.
+
+**WU-D2 — `review-736ec8a3be9b5e21`, `approved` with one lens (2026-10-08).**
+Tier `medium` (an executable change in the new seam's test), one lens, 9 files
+and 957 changed lines. It closed `approved` with **three advisories**, none
+opening a correction:
+
+| id                        | location                               | our reading of the location                                                                                                                                                                                  | action        |
+| ------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
+| R3-SIGNING-EXIT           | `fiscal-submission.handler.ts:313-315` | A re-claimed `SENDING` row resends the stored bytes **without re-running the gate**. ADR-010 §3 says the gate runs "before every submission", and the schema is cached now, so re-validating costs one call. | **follow-up** |
+| R3-STORAGE-FAIL-UNCOVERED | `fiscal-submission.handler.ts:341-349` | The `storage.put` failure branch (`DOCUMENT_STORAGE_WRITE_FAILED`) has **no test**: the double's `put` only succeeds.                                                                                        | recorded      |
+| R3-ORPHANED-OBJECT        | `fiscal-submission.handler.ts:359-363` | A lost claim after a successful `put` leaves an orphaned object; nothing deletes it. The worker flagged this itself.                                                                                         | recorded      |
+
+R3-SIGNING-EXIT is the one worth acting on: it is a contract sentence from an
+accepted ADR rather than a style point, and the fix is three lines in the resume
+path. It is recorded as a follow-up for **WU-F**, which already owns the resend
+and sweep surface, rather than reopening a review that closed without a
+correction.
+
+**WU-D2's notes.**
+
+- **The guard's asymmetry forced the design.** `SENDING -> SIGNING` is not an
+  admitted edge, so a re-claim cannot write a status: it is a timestamp CAS that
+  keeps the observed status. The worker verified this against the migration and
+  said so, and no migration was needed.
+- **That asymmetry is also why the custody writes the `cdc`**: a `SENDING` row
+  re-claimed must resend the stored bytes, and ADR-007 §2's reconciliation needs
+  the document's identity on the row even when the hand-over answer never
+  arrived.
+- **The `SENDING` recovery path was the worker's own addition**, beyond the
+  delegation's forward-only custody sentence, and it flagged it as such. It is
+  what makes the status-keeping re-claim functional for a requiring provider.
+- **The cache test had to count compiles without a test-only export**: it wraps
+  `parseXml` with `vi.mock` + `vi.hoisted`, and uses a directory unique to the
+  test because `defaultDteSchemaDirectory()` would inherit an earlier test's
+  cache.
+- **ADR-010's promotion was half-done in WU-D1** — the dependency moved, the
+  exports did not — and this slice closed it. The same class of finding as the
+  barrel: a decision's _second_ sentence is easy to leave behind.
+- **Two subagent sessions were cross-wired**: I sent the WU-D2 approval to the
+  WU-D1 session by task id, and the barrel promotion landed from the wrong
+  session before the right one was resumed. The outcome was sound — one file,
+  validated, kept by the session that owned it — but the lesson is to **re-read
+  the task list before continuing a session**, not to trust a remembered id.
 
 **WU-C's notes.**
 

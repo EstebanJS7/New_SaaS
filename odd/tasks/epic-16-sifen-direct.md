@@ -592,27 +592,35 @@ candidate 1 exists.
   port now carries the signed document (ADR-009: a required
   `document: FiscalIssueDocument | null` plus `requiresSignedDocument`) and the
   worker wires the real credential port, its own secret-store composition root
-  and the env gates; **WU-D2** carries the stage and the custody. **Inherits
-  from FISC-009 the worker's signing stage** (claim `SIGNING`, sign the DE with
-  `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
-  `SIGNING -> ERROR`), and **from FISC-010 three more things**, per ADR-007 and
-  ADR-008: **(a)** the real `FiscalCredentialPort` in the worker —
-  `@newsaas/secret-store` in `apps/worker/package.json`, `SecretsModule`,
-  `SECRET_STORE_MASTER_KEYS` and the `secretStore.get` path, **none of which
-  exists today**; **(b)** the **reconciliation stage** — the TD-028 sweep
-  extended to `SUBMITTED`, calling `query` and applying the terminal result,
-  with `retryAfterMs` bounding the next attempt; **(c)** **persisting the signed
-  DE** (`xml_storage_key`, still written by nothing) and the submission path's
-  logging, which is where FISC-009's "no secret in a log or a stored snapshot"
-  criterion now lives. **The two consultation services are IN scope**: the
-  Manual's §9.4 CDC query is what resolves a document after the Guide's 48-hour
-  batch window, and §9.6's RUC status query is the sixth service of the endpoint
-  list. **What stays blocked and out of scope is the signed v150 query family**
-  — by protocol, by range, and the RUC archive — whose request signature profile
-  no source pins (FISC-013, against a real service). **Note on this Story's row
-  in the epic**: FISC-010 **adds** the port's asynchronous capability; FISC-012
-  **implements** it. The epic's earlier wording ("the port's asynchronous-status
-  extension") was corrected on 2026-10-08.
+  and the env gates. **WU-D2 landed as commit `8224825`** — 9 files, 890
+  insertions — and its review is `review-736ec8a3be9b5e21`: tier `medium`, one
+  lens, closed **`approved`** with three advisories (one `WARNING`, two
+  `SUGGESTION`). The stage claims `QUEUED -> SIGNING -> SENDING`, the seam fails
+  closed (the assembly is FISC-015's), the custody stores then writes
+  `xml_storage_key` **and the `cdc`** before the gate, and the compiled schema
+  is cached per directory. One advisory is a real follow-up for **WU-F**: a
+  re-claimed `SENDING` row resends without re-running the gate, where ADR-010 §3
+  says "before every submission". **Inherits from FISC-009 the worker's signing
+  stage** (claim `SIGNING`, sign the DE with `signDteXml`, then
+  `SIGNING -> SENDING`; a signing failure goes to `SIGNING -> ERROR`), and
+  **from FISC-010 three more things**, per ADR-007 and ADR-008: **(a)** the real
+  `FiscalCredentialPort` in the worker — `@newsaas/secret-store` in
+  `apps/worker/package.json`, `SecretsModule`, `SECRET_STORE_MASTER_KEYS` and
+  the `secretStore.get` path, **none of which exists today**; **(b)** the
+  **reconciliation stage** — the TD-028 sweep extended to `SUBMITTED`, calling
+  `query` and applying the terminal result, with `retryAfterMs` bounding the
+  next attempt; **(c)** **persisting the signed DE** (`xml_storage_key`, still
+  written by nothing) and the submission path's logging, which is where
+  FISC-009's "no secret in a log or a stored snapshot" criterion now lives.
+  **The two consultation services are IN scope**: the Manual's §9.4 CDC query is
+  what resolves a document after the Guide's 48-hour batch window, and §9.6's
+  RUC status query is the sixth service of the endpoint list. **What stays
+  blocked and out of scope is the signed v150 query family** — by protocol, by
+  range, and the RUC archive — whose request signature profile no source pins
+  (FISC-013, against a real service). **Note on this Story's row in the epic**:
+  FISC-010 **adds** the port's asynchronous capability; FISC-012 **implements**
+  it. The epic's earlier wording ("the port's asynchronous-status extension")
+  was corrected on 2026-10-08.
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
 

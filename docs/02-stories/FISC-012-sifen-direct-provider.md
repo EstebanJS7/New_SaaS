@@ -208,21 +208,34 @@ lot is a later optimization: the container and the facade already take a list.
 
 **WU-D — the worker's document stage**
 
-- [ ] The worker claims `QUEUED -> SIGNING`, and `SIGNING -> SENDING` before the
+- [x] The worker claims `QUEUED -> SIGNING`, and `SIGNING -> SENDING` before the
       provider is called; a failure in the stage lands on `ERROR` with the
-      reason and no secret in it.
-- [ ] The document is built **only when `requiresSignedDocument` is true**: with
-      the fake, the stage reads no fiscal profile, asserted.
-- [ ] The signed XML is stored **before** the XSD gate runs, so a refused
+      reason and no secret in it. The re-claim of an abandoned row **keeps the
+      observed status**, because the guard admits no `SENDING -> SIGNING`.
+- [x] The document is built **only when `requiresSignedDocument` is true**: with
+      the fake, the stage returns before touching the builder, the storage or
+      the gate — asserted.
+- [x] The signed XML is stored **before** the XSD gate runs, so a refused
       document is inspectable; `xml_storage_key` is never written for a document
-      that was not stored.
-- [ ] The XSD gate runs on the **signed** document before submission, fails
-      closed without `DTE_XSD_DIR`, and compiles the schema once per process.
+      that was not stored, and a lost claim after a successful put submits
+      nothing.
+- [x] The XSD gate runs on the **signed** document before submission, fails
+      closed when the directory is unusable, and compiles the schema **once per
+      process** — cached per directory, a failed compile never cached as a
+      success. _(One gap is recorded as an advisory: a re-claimed `SENDING` row
+      resends the stored bytes without re-running the gate, where [[ADR-010]] §3
+      says "before every submission". A WU-F follow-up, not a blocker.)_
 - [ ] The credential read serves both the signature and the mutual-TLS call, and
       the worker refuses to build a document without one
-      (`CONFIGURATION_ERROR`).
-- [ ] `SIGNING` is claimable after an abandoned claim, so a worker that dies
-      while signing is recovered by the existing sweep rather than stranded.
+      (`CONFIGURATION_ERROR`). **Half of this is WU-E's**: the port is wired and
+      read per call (WU-D1) and the stage maps an unavailable document to
+      `CONFIGURATION_ERROR` (WU-D2), while the read itself — the signing read in
+      the assembly ([[FISC-015]]) and the mTLS read in the provider (WU-E) — is
+      where the refusal becomes observable.
+- [x] `SIGNING` is claimable after an abandoned claim, so a worker that dies
+      while signing is recovered rather than stranded. **The recovery is job
+      redelivery through the lease CAS**, not the sweep: the sweep still walks
+      `QUEUED`/`ERROR`, and extending it to `SUBMITTED` is WU-F's.
 
 > **Narrowed 2026-10-08 by [[DEC-056]].** A read-only reconnaissance found that
 > the assembly's **inputs** are unmodelled — the invoice's link to its timbrado
