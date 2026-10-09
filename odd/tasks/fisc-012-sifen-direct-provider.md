@@ -118,6 +118,44 @@ cHashQR             -       -   hash no   URL yes
   `www.`**. The example and §13.8.2 agree, so the client emits no `www.` and the
   divergence is recorded.
 
+## The WU-D reconnaissance (2026-10-08): what a DE needs that the data does not model
+
+One read-only scout over `main` + WU-A..WU-C, with the decisive claim verified
+independently. It **stopped WU-D**, and its output is [[DEC-056]].
+
+**The six inputs the assembly needs and the tenant's rows do not supply:**
+
+| need                                       | source today                                                                                                                                                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the fiscal number, and its link to a range | `allocateDocumentNumber` has **no production caller**; `Invoice.number` comes from Billing's `invoice_number_sequence` (`apps/api/src/billing/billing.service.ts:612`, `billing.repository.ts:402-419`) |
+| the range's key (establishment/point/type) | **nothing persists it** on `Invoice` (`schema.prisma:2342-2387`) or `FiscalDocument` (`:2547-2605`)                                                                                                     |
+| the receptor                               | `DteReceptor` has 24 fields (`dte.types.ts:213-248`), `Customer` has 8 (`schema.prisma:666-680`), **nothing maps them**; `Invoice.customerId` is nullable (`:2350`)                                     |
+| `E731 iAfecIVA` and `E734 ivaRate`         | only `InvoiceLine.rateCode` (`schema.prisma:2433`); the mapper refuses to invent them (`dte.mapper.ts:27-30`)                                                                                           |
+| `cUniMed`/`dDesUniMed`                     | **no column**: `CatalogItem` has no unit (`schema.prisma:1305-1367`)                                                                                                                                    |
+| `dDesMoneOpe`                              | nothing; only a fixture literal (`dte.fixture.ts:116`) — the cheapest to close, since it is a protocol table                                                                                            |
+| the CSC and its `IdCSC`                    | **unmodelled**: no column, no secret reference, no setting; DEC-055 Q2 said it _should_ be per-tenant secret material                                                                                   |
+
+**Three wiring gaps that are WU-D's own and implementable today:**
+`SIFEN_ENVIRONMENT` is never parsed
+(`apps/worker/src/config/worker-env.schema.ts:10-37` has neither it nor
+`DTE_XSD_DIR`); no fiscal storage prefix exists
+(`packages/storage/src/storage-keys.ts:18-21` defines only `brand`) and
+`xml_storage_key` (`schema.prisma:2568`) has **no writer and no reader**; the
+XSD gate **compiles per call** (`xsd-validator.ts:63-84`) while the criterion
+requires once per process, and `libxmljs2` is still a **devDependency** although
+imported at runtime — ADR-010's promotion was never made.
+
+**The risk, in the scout's words:** a guessed range key emits a `dEst`/`dPunExp`
+the emitter is not authorised for; a number allocated at issuance while the
+invoice keeps its Billing number gives one invoice two CDCs, which is the
+duplicate-send case `0360` punishes; and an invented receptor fallback hides a
+missing RUC behind a document that looks valid.
+
+**What this means for the plan**: WU-D's criteria split in two — four of them
+(the claim, the credential, the custody and the gate) are properties of the
+_stage_ and are satisfiable today; the assembly is where the product decisions
+are, and it does not get improvised.
+
 ## The decisions this feature needs
 
 1. **ADR-009 — the port's request carries the signed document.** For SIFEN the

@@ -224,6 +224,16 @@ lot is a later optimization: the container and the facade already take a list.
 - [ ] `SIGNING` is claimable after an abandoned claim, so a worker that dies
       while signing is recovered by the existing sweep rather than stranded.
 
+> **Stopped 2026-10-08, pending [[DEC-056]].** A read-only reconnaissance found
+> that the assembly's **inputs** are unmodelled — the invoice's link to its
+> timbrado range, the receptor's fiscal identity, the line's
+> `iAfecIVA`/`ivaRate`, the unit of measure, the currency description and the
+> CSC's storage — so the stage cannot build a document without inventing product
+> data. The criteria above split cleanly: the claim, the credential, the custody
+> (store-then-validate) and the gate are properties of the **stage** and are
+> implementable today; the assembly is not. The reconnaissance is recorded in
+> `odd/tasks/fisc-012-sifen-direct-provider.md` and the options in DEC-056.
+
 **WU-E — the provider**
 
 - [ ] `SifenDirectFiscalProvider` implements the port: `issue`, `query`,
