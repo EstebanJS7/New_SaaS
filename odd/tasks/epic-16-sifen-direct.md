@@ -576,10 +576,20 @@ candidate 1 exists.
   reproduced byte for byte, a placeholder the unsigned document carries, and one
   fill that escapes and substitutes it after signing — proven by a round trip
   that still verifies the signature and still validates against the official
-  XSD. **Inherits from FISC-009 the worker's signing stage** (claim `SIGNING`,
-  sign the DE with `signDteXml`, then `SIGNING -> SENDING`; a signing failure
-  goes to `SIGNING -> ERROR`), and **from FISC-010 three more things**, per
-  ADR-007 and ADR-008: **(a)** the real `FiscalCredentialPort` in the worker —
+  XSD. **WU-D was narrowed on 2026-10-08 by [[DEC-056]]**: a read-only
+  reconnaissance found the assembly's inputs unmodelled, so WU-D keeps the four
+  properties that are the stage's own (the `QUEUED -> SIGNING -> SENDING` claim
+  with its abandoned-claim recovery, the `requiresSignedDocument` port surface,
+  the credential wiring, and the custody — the fiscal storage prefix,
+  store-then-validate, the `xml_storage_key` writer and the XSD gate with its
+  per-process compile) and **fails closed** on the assembly, which is
+  [[FISC-015]] now. The same decision moves the fiscal number's allocation to
+  **invoice confirmation**. Recorded as commit `89e4625`; FISC-015 is `planned`
+  and its first work unit makes four product decisions before any schema change.
+  **Inherits from FISC-009 the worker's signing stage** (claim `SIGNING`, sign
+  the DE with `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
+  `SIGNING -> ERROR`), and **from FISC-010 three more things**, per ADR-007 and
+  ADR-008: **(a)** the real `FiscalCredentialPort` in the worker —
   `@newsaas/secret-store` in `apps/worker/package.json`, `SecretsModule`,
   `SECRET_STORE_MASTER_KEYS` and the `secretStore.get` path, **none of which
   exists today**; **(b)** the **reconciliation stage** — the TD-028 sweep

@@ -4,7 +4,7 @@ type: decision
 title:
   The document assembly's missing inputs — what a DE needs that the tenant's
   data does not model
-status: proposed
+status: accepted
 date: 2026-10-08
 related_epics:
   - EPIC-16
@@ -245,8 +245,33 @@ instead of reconstructing it.
 
 ## Decision
 
-_Pending. The maintainer decides: the numbering's allocation point, and whether
-the assembly lands as a new story (A) or inside FISC-012 (B)._
+**Accepted 2026-10-08** by the maintainer, on both questions:
+
+1. **The fiscal number is allocated at invoice confirmation**, from the timbrado
+   range, inside the confirmation transaction, with the range's identity
+   persisted beside the invoice — so a confirmed invoice carries one authorised
+   number and the worker reads it. Option A's reasoning above is the record of
+   why: a number minted later would leave a printed document carrying a number
+   the timbrado does not authorise, the allocator never reissues by design, and
+   the CDC must be stable before submission.
+2. **FISC-012's WU-D is narrowed** to the four properties that are the stage's
+   own — the `QUEUED -> SIGNING -> SENDING` claim with its abandoned-claim
+   recovery, the `requiresSignedDocument` port surface, the credential wiring,
+   and the document's custody (the fiscal storage prefix, store-then-validate,
+   the `xml_storage_key` writer, and the XSD gate with its per-process compile
+   and `libxmljs2` promoted to a runtime dependency). The assembly sits behind a
+   seam that fails closed with a named reason.
+3. **The assembly becomes [[FISC-015]]**, created with this decision. Its first
+   work unit makes the four product decisions this document lists (what a rate
+   code means fiscally, what a receptor is, where the CSC lives, which
+   establishment/point/type issues) before any schema change.
+
+## Status
+
+**Accepted 2026-10-08.** No schema change, no Billing change and no worker
+change were made while this document was a proposal, and none happens before
+FISC-015's first work unit lands. FISC-012's Story records the stop under its
+WU-D criteria, with the criteria themselves untouched.
 
 ## PRD Update
 
