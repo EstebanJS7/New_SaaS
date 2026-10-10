@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Test } from "@nestjs/testing";
@@ -15641,6 +15642,21 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
    */
   describe("EPIC-15 fiscal data foundation", () => {
     const FISCAL_ROLLBACK_SENTINEL = "live-pg-fiscal-rollback";
+
+    /**
+     * The FISC-012 WU-F migration, read as text so the backfill proof executes
+     * the migration's own statement instead of a copy of it. The file is applied
+     * by `prisma migrate deploy` before this suite starts; what is proved here is
+     * that the statement the migration ran computes the instants the marker
+     * contract requires.
+     */
+    const FISCAL_NEXT_QUERY_MIGRATION = readFileSync(
+      new URL(
+        "../../../packages/database/prisma/migrations/20261009000001_fiscal_document_next_query/migration.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
     let fiscalSaleAId: string;
     let fiscalInvoiceAId: string;
     let fiscalDocumentAId: string;
@@ -15769,13 +15785,17 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         cancelledAt?: Date | null;
         resolvedAt?: Date | null;
         providerReference?: string | null;
+        createdAt?: Date;
+        submittedAt?: Date | null;
+        nextQueryAt?: Date | null;
       } = {}
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
         INSERT INTO "fiscal_document" (
           "id", "tenant_id", "invoice_id", "provider", "status", "external_id",
-          "cdc", "attempt_count", "cancelled_at", "resolved_at", "provider_reference"
+          "cdc", "attempt_count", "cancelled_at", "resolved_at", "provider_reference",
+          "created_at", "submitted_at", "next_query_at"
         ) VALUES (
           ${id}::uuid, ${tenantId}::uuid, ${invoiceId}::uuid,
           ${options.provider ?? "THIRD_PARTY"}::fiscal_provider,
@@ -15783,7 +15803,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           ${options.externalId ?? null}, ${options.cdc ?? null},
           ${options.attemptCount ?? 0}, ${options.cancelledAt ?? null}::timestamptz,
           ${options.resolvedAt ?? null}::timestamptz,
-          ${options.providerReference ?? null}
+          ${options.providerReference ?? null},
+          COALESCE(${options.createdAt ?? null}::timestamptz, CURRENT_TIMESTAMP),
+          ${options.submittedAt ?? null}::timestamptz,
+          ${options.nextQueryAt ?? null}::timestamptz
         )
       `;
       return id;
@@ -16326,6 +16349,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         // which appends physically, so it is last here and not next to `cdc`
         // where the Prisma model declares it.
         "provider_reference",
+        // EPIC-16 FISC-012 WU-F appended the reconciliation's query marker the
+        // same way.
+        "next_query_at",
       ]);
       const types = new Map(
         rows.map((row) => [row.column_name, `${row.data_type}:${row.udt_name}`])
@@ -16352,8 +16378,204 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         "cancelled_at",
         "created_at",
         "updated_at",
+        "next_query_at",
       ])
         expect(types.get(column), column).toBe("timestamp with time zone:timestamptz");
+    }, 30_000);
+
+    it("proves the reconciliation index on status and next_query_at", async () => {
+      // The sweep is global, not per tenant: `status` leads the index (equality)
+      // and `next_query_at` follows (the range comparison, NULLs included).
+      const rows = await prisma.$queryRaw<
+        {
+          relname: string;
+          is_unique: boolean;
+          key_1: string | null;
+          key_2: string | null;
+          predicate: string | null;
+        }[]
+      >`
+        SELECT c.relname, i.indisunique AS is_unique,
+          pg_get_indexdef(i.indexrelid, 1, true) AS key_1,
+          pg_get_indexdef(i.indexrelid, 2, true) AS key_2,
+          pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index AS i JOIN pg_class AS c ON c.oid = i.indexrelid
+        WHERE i.indrelid = 'fiscal_document'::regclass
+          AND c.relname = 'fiscal_document_status_next_query_at_idx'
+      `;
+      expect(rows).toEqual([
+        {
+          relname: "fiscal_document_status_next_query_at_idx",
+          is_unique: false,
+          key_1: "status",
+          key_2: "next_query_at",
+          predicate: null,
+        },
+      ]);
+    }, 30_000);
+
+    it("proves the reconciliation marker's backfill arithmetic", async () => {
+      // The migration has already run on an empty database by the time this
+      // suite starts, so its backfill had no rows to touch. This executes the
+      // migration's OWN UPDATE — read from the migration file, not copied — over
+      // fixture rows in a rolled-back transaction, so the arithmetic the applied
+      // statement performs is what is asserted: a SUBMITTED row's marker is
+      // `COALESCE(submitted_at, created_at) + 10 minutes` (§23.7's interval,
+      // mirrored as `SIFEN_BATCH_POLL_INTERVAL_MS`), and nothing else moves.
+      const backfill = /UPDATE "fiscal_document"[\s\S]*?;/.exec(FISCAL_NEXT_QUERY_MIGRATION)?.[0];
+      expect(backfill).toBeDefined();
+
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const submittedAt = new Date("2026-10-01T10:00:00.000Z");
+        const createdAt = new Date("2026-09-30T09:00:00.000Z");
+        const handedOver = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "SUBMITTED",
+          submittedAt,
+          createdAt,
+        });
+
+        const saleB = await insertRawFiscalSale(tx, tenantAId);
+        const invoiceB = await insertRawFiscalInvoice(tx, tenantAId, saleB);
+        const neverStamped = await insertRawFiscalDocument(tx, tenantAId, invoiceB, {
+          status: "SUBMITTED",
+          createdAt,
+        });
+
+        const saleC = await insertRawFiscalSale(tx, tenantAId);
+        const invoiceC = await insertRawFiscalInvoice(tx, tenantAId, saleC);
+        const untouched = await insertRawFiscalDocument(tx, tenantAId, invoiceC, {
+          status: "PENDING",
+          createdAt,
+        });
+
+        const saleD = await insertRawFiscalSale(tx, tenantAId);
+        const invoiceD = await insertRawFiscalInvoice(tx, tenantAId, saleD);
+        const alreadyStamped = await insertRawFiscalDocument(tx, tenantAId, invoiceD, {
+          status: "SUBMITTED",
+          submittedAt,
+          nextQueryAt: new Date("2026-10-05T00:00:00.000Z"),
+        });
+
+        await tx.$executeRawUnsafe(backfill!);
+
+        const rows = await tx.$queryRaw<{ id: string; next_query_at: Date | null }[]>`
+          SELECT "id", "next_query_at" FROM "fiscal_document"
+          WHERE "id" IN (
+            ${handedOver}::uuid, ${neverStamped}::uuid, ${untouched}::uuid,
+            ${alreadyStamped}::uuid
+          )
+        `;
+        const marker = new Map(rows.map((row) => [row.id, row.next_query_at]));
+        expect(marker.get(handedOver)).toEqual(new Date(submittedAt.getTime() + 600_000));
+        expect(marker.get(neverStamped)).toEqual(new Date(createdAt.getTime() + 600_000));
+        expect(marker.get(untouched)).toBeNull();
+        expect(marker.get(alreadyStamped)).toEqual(new Date("2026-10-05T00:00:00.000Z"));
+      });
+    }, 30_000);
+
+    it("admits every write the reconciliation performs on a SUBMITTED row", async () => {
+      // The query phase writes exactly three shapes through the transition
+      // guard: the marker forward (a same-status update), a terminal resolution
+      // with its identity and `resolved_at`, and `0360` back to ERROR with the
+      // reason. Each is proved against the applied guard, not the migration's
+      // text.
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "SUBMITTED",
+          submittedAt: new Date("2026-10-01T10:00:00.000Z"),
+          nextQueryAt: new Date("2026-10-01T10:10:00.000Z"),
+        });
+        // PROCESSING and every unresolved answer: only the marker moves.
+        await expect(
+          tx.$executeRaw`
+            UPDATE "fiscal_document"
+            SET "next_query_at" = now() + interval '10 minutes'
+            WHERE "id" = ${id}::uuid
+          `
+        ).resolves.toBe(1);
+        // A terminal resolution applies the status, the identity the answer
+        // carried and `resolved_at` in the same update.
+        await expect(
+          tx.$executeRaw`
+            UPDATE "fiscal_document"
+            SET "status" = 'APPROVED', "external_id" = 'protocol-1',
+                "cdc" = 'cdc-answer', "resolved_at" = now(),
+                "last_error_code" = NULL, "last_error_message" = NULL
+            WHERE "id" = ${id}::uuid
+          `
+        ).resolves.toBe(1);
+        const [resolved] = await tx.$queryRaw<
+          {
+            status: string;
+            external_id: string | null;
+            cdc: string | null;
+            resolved_at: Date | null;
+          }[]
+        >`
+          SELECT "status", "external_id", "cdc", "resolved_at"
+          FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(resolved?.status).toBe("APPROVED");
+        expect(resolved?.external_id).toBe("protocol-1");
+        expect(resolved?.cdc).toBe("cdc-answer");
+        expect(resolved?.resolved_at).not.toBeNull();
+      });
+
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "SUBMITTED",
+          submittedAt: new Date("2026-10-01T10:00:00.000Z"),
+        });
+        // A rejection carries its reason and its resolution instant.
+        await expect(
+          tx.$executeRaw`
+            UPDATE "fiscal_document"
+            SET "status" = 'REJECTED', "resolved_at" = now(),
+                "last_error_code" = '0362', "last_error_message" = 'rechazado'
+            WHERE "id" = ${id}::uuid
+          `
+        ).resolves.toBe(1);
+        const [rejected] = await tx.$queryRaw<
+          { status: string; resolved_at: Date | null; last_error_code: string | null }[]
+        >`
+          SELECT "status", "resolved_at", "last_error_code"
+          FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(rejected?.status).toBe("REJECTED");
+        expect(rejected?.resolved_at).not.toBeNull();
+        expect(rejected?.last_error_code).toBe("0362");
+      });
+
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "SUBMITTED",
+          submittedAt: new Date("2026-10-01T10:00:00.000Z"),
+        });
+        // `0360`: back to ERROR with the reason, where the submission phase's
+        // existing re-drive picks it up.
+        await expect(
+          tx.$executeRaw`
+            UPDATE "fiscal_document"
+            SET "status" = 'ERROR', "last_error_code" = '0360',
+                "last_error_message" = 'numero de lote inexistente'
+            WHERE "id" = ${id}::uuid
+          `
+        ).resolves.toBe(1);
+        const [failed] = await tx.$queryRaw<{ status: string; last_error_code: string | null }[]>`
+          SELECT "status", "last_error_code"
+          FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(failed?.status).toBe("ERROR");
+        expect(failed?.last_error_code).toBe("0360");
+      });
     }, 30_000);
 
     it("proves exact fiscal CHECK definitions and the closed constraint-name set", async () => {

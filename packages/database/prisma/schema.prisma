@@ -2576,6 +2576,16 @@ model FiscalDocument {
   lastErrorCode    String?   @map("last_error_code")
   lastErrorMessage String?   @map("last_error_message")
   submittedAt      DateTime? @map("submitted_at") @db.Timestamptz(3)
+
+  /// The instant the reconciliation sweep may next query the provider about a
+  /// document it handed over (ADR-007 §5). `null` means "never queried", which
+  /// the sweep treats as eligible. A `SUBMITTED` row is written with
+  /// `submitted_at + SIFEN_BATCH_POLL_INTERVAL_MS`, because §23.7's Guide
+  /// recommends the first batch query ten minutes after reception and later
+  /// intervals no shorter than ten minutes; a `PROCESSING` answer moves it
+  /// forward by the provider's `retryAfterMs` or the same interval. No other
+  /// status reads it.
+  nextQueryAt      DateTime? @map("next_query_at") @db.Timestamptz(3)
   resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(3)
   cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(3)
 
@@ -2588,6 +2598,10 @@ model FiscalDocument {
   @@unique([tenantId, id])
   @@index([tenantId, status])
   @@index([tenantId, invoiceId])
+  /// The reconciliation sweep is global, not per tenant: it selects
+  /// `SUBMITTED` rows whose `next_query_at` is due (or unset), so `status`
+  /// leads the index and the range comparison follows it.
+  @@index([status, nextQueryAt])
   @@map("fiscal_document")
 }
 

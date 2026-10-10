@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from "vitest";
 import { Prisma } from "@newsaas/database";
 import {
   DteSchemaError,
+  SIFEN_BATCH_POLL_INTERVAL_MS,
   type FiscalIssueDocument,
   type FiscalIssueOutcome,
   type FiscalIssueRequest,
@@ -299,9 +300,11 @@ describe("FiscalSubmissionHandler", () => {
       expect(finalData?.lastErrorMessage).toBe("Provider reason");
     }
     if (outcome !== "SUBMITTED") {
-      // Only the hand-over owns the handle and the hand-over timestamp.
+      // Only the hand-over owns the handle, the hand-over timestamp and the
+      // reconciliation's query marker.
       expect(finalData?.providerReference).toBeUndefined();
       expect(finalData?.submittedAt).toBeUndefined();
+      expect(finalData?.nextQueryAt).toBeUndefined();
     }
   });
 
@@ -324,6 +327,7 @@ describe("FiscalSubmissionHandler", () => {
       cdc: "cdc-1",
       externalId: "external-1",
       submittedAt: new Date("2026-01-02T03:05:00.000Z"),
+      nextQueryAt: new Date("2026-01-02T03:15:00.000Z"),
     });
     // SUBMITTED is unresolved: `resolved_at` is required only on entry to
     // APPROVED or REJECTED, and writing it here would be a lie in the row.
@@ -331,6 +335,19 @@ describe("FiscalSubmissionHandler", () => {
     // The result write stays a conditional update on the claim it is resolving,
     // so a stolen or recovered claim cannot be overwritten by a stale answer.
     expect(updates[1]?.where).toMatchObject({ status: { in: ["SENDING"] } });
+  });
+
+  it("stamps the query marker one poll interval after the hand-over", async () => {
+    // §23.7's Guide recommends starting the batch query ten minutes after the
+    // reception and intervals no shorter than ten minutes, so the marker cannot
+    // be left unset: a `null` marker is "never queried" and would let the
+    // sweep's own 60-second cadence become the provider's (FISC-012 WU-F).
+    const { handler, updates } = setup("PENDING", "SUBMITTED");
+    await handler.handle(job);
+    const submittedAt = updates[1]?.data.submittedAt as Date;
+    const nextQueryAt = updates[1]?.data.nextQueryAt as Date;
+    expect(nextQueryAt).toBeInstanceOf(Date);
+    expect(nextQueryAt.getTime() - submittedAt.getTime()).toBe(SIFEN_BATCH_POLL_INTERVAL_MS);
   });
 
   it("leaves cdc and external_id untouched when a SUBMITTED result carries no identity", async () => {
@@ -625,11 +642,47 @@ describe("FiscalSubmissionHandler", () => {
     expect(build).not.toHaveBeenCalled();
     expect(storagePut).not.toHaveBeenCalled();
     expect(storageGet).toHaveBeenCalledWith({ key: "fiscal-document_stored" });
+    // ADR-010 §3: the resend is gated exactly like a first submission.
+    expect(gateSpy).toHaveBeenCalledWith(BUILT_DOCUMENT.signedXml, "/opt/newsaas/dte-xsd");
     expect(issue.mock.calls[0]?.[0]?.document).toEqual({
       cdc: "cdc-stored",
       signedXml: BUILT_DOCUMENT.signedXml,
     });
     expect(updates[0]?.where).toMatchObject({ status: "SENDING", lastAttemptAt: abandoned });
+  });
+
+  it("re-runs the XSD gate on a resend and refuses a document the schema rejects", async () => {
+    // R3-SIGNING-EXIT (WU-D2's review): a re-claimed `SENDING` row used to
+    // resend the stored bytes without re-running the gate, while ADR-010 §3
+    // says it runs "before every submission". The schema is cached per process,
+    // so the resend costs one validation and a refused document never reaches
+    // the provider.
+    const abandoned = new Date(Date.now() - 10 * 60_000);
+    const { handler, issue, storageGet, updates } = setup(
+      "SENDING",
+      "APPROVED",
+      abandoned,
+      undefined,
+      undefined,
+      {
+        requiresSignedDocument: true,
+        stored: { xmlStorageKey: "fiscal-document_stored", cdc: "cdc-stored" },
+        gate: { valid: false, errors: ["stored bytes refused"] },
+      }
+    );
+    await handler.handle(job);
+
+    expect(storageGet).toHaveBeenCalledWith({ key: "fiscal-document_stored" });
+    expect(gateSpy).toHaveBeenCalledWith(BUILT_DOCUMENT.signedXml, "/opt/newsaas/dte-xsd");
+    // The refused document lands on ERROR with the gate's diagnostics...
+    expect(issue).not.toHaveBeenCalled();
+    expect(updates[1]?.data).toMatchObject({
+      status: "ERROR",
+      lastErrorCode: "XSD_VALIDATION_FAILED",
+    });
+    expect(String(updates[1]?.data.lastErrorMessage)).toContain("stored bytes refused");
+    // ... and never reaches a second SENDING transition.
+    expect(updates.some((update) => update.data.status === "SENDING")).toBe(false);
   });
 
   it("fails closed when a recovered SENDING row has no stored custody", async () => {

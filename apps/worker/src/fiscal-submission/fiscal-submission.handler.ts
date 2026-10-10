@@ -6,6 +6,7 @@ import {
   FISCAL_PROVIDER,
   isRetryableOutcome,
   sanitizeProviderSnapshot,
+  SIFEN_BATCH_POLL_INTERVAL_MS,
   validateDeAgainstOfficialXsd,
   type FiscalIssueDocument,
   type FiscalIssueOutcome,
@@ -362,26 +363,7 @@ export class FiscalSubmissionHandler {
       return { outcome: "FAILED" };
     }
 
-    try {
-      const validation = await validateDeAgainstOfficialXsd(
-        built.document.signedXml,
-        defaultDteSchemaDirectory()
-      );
-      if (!validation.valid) {
-        await this.failStage(
-          document,
-          "XSD_VALIDATION_FAILED",
-          firstDiagnostics(validation.errors),
-          attemptCount
-        );
-        return { outcome: "FAILED" };
-      }
-    } catch (error) {
-      if (!(error instanceof DteSchemaError)) {
-        throw error;
-      }
-      // ADR-010 §3: fail closed and name the directory; a path is not secret.
-      await this.failStage(document, error.failure, error.message, attemptCount);
+    if (!(await this.gateSignedDocument(document, built.document.signedXml, attemptCount))) {
       return { outcome: "FAILED" };
     }
 
@@ -399,6 +381,12 @@ export class FiscalSubmissionHandler {
    * The `SENDING` recovery: the document was stored and gated before the
    * transition, so this resends exactly those bytes rather than building a
    * second document for one fiscal number.
+   *
+   * ADR-010 §3 says the XSD gate runs "before every submission", so a resend is
+   * gated exactly like a first submission: the stored bytes go through the same
+   * {@link gateSignedDocument} the forward stage uses. The schema is compiled
+   * once per process and cached, so re-validating costs one validation, and a
+   * document the schema refuses lands on `ERROR` without reaching the provider.
    */
   private async resumeStoredDocument(
     document: FiscalDocumentRecord,
@@ -413,12 +401,10 @@ export class FiscalSubmissionHandler {
       );
       return { outcome: "FAILED" };
     }
+    let signedXml: string;
     try {
       const stored = await this.storage.get({ key: document.xmlStorageKey });
-      return {
-        outcome: "READY",
-        document: { cdc: document.cdc, signedXml: stored.body.toString("utf8") },
-      };
+      signedXml = stored.body.toString("utf8");
     } catch {
       await this.failStage(
         document,
@@ -427,6 +413,46 @@ export class FiscalSubmissionHandler {
         attemptCount
       );
       return { outcome: "FAILED" };
+    }
+    if (!(await this.gateSignedDocument(document, signedXml, attemptCount))) {
+      return { outcome: "FAILED" };
+    }
+    return { outcome: "READY", document: { cdc: document.cdc, signedXml } };
+  }
+
+  /**
+   * The runtime XSD gate (ADR-010 §3), shared by the forward stage and the
+   * resend recovery.
+   *
+   * It runs on the exact bytes that will be submitted, and it fails closed: an
+   * invalid document lands on `ERROR` with the first diagnostics (bounded, and
+   * carrying no document bytes), and an unusable schema directory lands on
+   * `ERROR` naming the directory. Returns whether the bytes may be submitted.
+   */
+  private async gateSignedDocument(
+    document: FiscalDocumentRecord,
+    signedXml: string,
+    attemptCount: number
+  ): Promise<boolean> {
+    try {
+      const validation = await validateDeAgainstOfficialXsd(signedXml, defaultDteSchemaDirectory());
+      if (!validation.valid) {
+        await this.failStage(
+          document,
+          "XSD_VALIDATION_FAILED",
+          firstDiagnostics(validation.errors),
+          attemptCount
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (!(error instanceof DteSchemaError)) {
+        throw error;
+      }
+      // ADR-010 §3: fail closed and name the directory; a path is not secret.
+      await this.failStage(document, error.failure, error.message, attemptCount);
+      return false;
     }
   }
 
@@ -482,6 +508,17 @@ export class FiscalSubmissionHandler {
     // provider-reported clock `resolvedAt` already comes from, so every
     // timestamp this method writes belongs to one clock domain instead of two.
     const submittedAt = result.outcome === "SUBMITTED" ? new Date(result.resolvedAt) : undefined;
+    // §23.7's Guide: "se recomienda comenzar a realizar la consulta pasados los
+    // 10 minutos de la recepción y luego a intervalos regulares no menores a 10
+    // minutos." The marker is `submitted_at + SIFEN_BATCH_POLL_INTERVAL_MS`, so
+    // the first reconciliation query respects that cadence instead of the
+    // sweep's 60-second clock. It is written in the same conditional update as
+    // `submitted_at`, and the migration that added the column backfilled
+    // existing rows with the same formula.
+    const nextQueryAt =
+      submittedAt === undefined
+        ? undefined
+        : new Date(submittedAt.getTime() + SIFEN_BATCH_POLL_INTERVAL_MS);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.fiscalDocument.updateMany({
@@ -526,6 +563,7 @@ export class FiscalSubmissionHandler {
                   ? {}
                   : { providerReference: result.providerReference }),
                 submittedAt,
+                nextQueryAt,
                 ...(result.cdc === null ? {} : { cdc: result.cdc }),
                 ...(result.externalId === null ? {} : { externalId: result.externalId }),
               }
