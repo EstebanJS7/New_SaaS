@@ -36,11 +36,10 @@ The retrieval's own findings, worth keeping:
 ## Work units
 
 - [x] **WU-A — the decisions** ([[DEC-056]] + [[DEC-057]]), docs-only.
-- [ ] **WU-B — the number's authorisation**: the confirmation allocates from the
-      timbrado range inside its existing transaction and persists the range's
-      identity, so the worker reads the number instead of reconstructing it.
-      `invoice_number_sequence`'s fate is decided here, not left as a second
-      truth.
+- [x] **WU-B — the number's authorisation**. Landed — see the Evidence. The
+      counter **stays** for the non-fiscal path, and the two are not two truths:
+      a tenant uses exactly one of them and which one is a property of its
+      declaration, not of the code path.
 - [x] **WU-C — the fiscal data** (the schema delta and the reads). Landed — see
       the Evidence.
 - [ ] **WU-D — the assembly**: the mapping from the tenant's rows to
@@ -69,6 +68,14 @@ gates    format-check green; lint 20/20, typecheck 20/20, test 21/21, build 12/1
          on the disposable UTC cluster, fifteen of them for this delta
 ```
 
+WU-B b382108 feat(FISC-015): the number's authorisation at confirmation — 13
+files, 2,545 insertions review-582d2ef98bf0938f tier `high`, four lenses as one
+group: the refuter **corroborated** a CRITICAL claim (`R3-001`), the bounded
+correction **widened the candidate's scope**, and the review was **recovered**
+into a successor lineage review-935a71a795da88ed the recovered review: tier
+`high`, four lenses as one group, closed **`approved`** with eight advisories at
+`WARNING`/`SUGGESTION`, none opening a correction
+
 ## Review record
 
 **WU-C — `review-9ddfb96df63fba50`, `approved` with four lenses (2026-10-10).**
@@ -88,6 +95,23 @@ Four bindings went to `gentle_review_capture_group` in one call: one forecast
 for the four runs, four reviewers admitted in provider order, and the closure
 came back on the last one. The previous sessions' "slot by slot" habit cost
 three extra round-trips for nothing.
+
+**WU-B — one CRITICAL, a guard nobody knew about, and a recovery (2026-10-10).**
+
+| stage               | what happened                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| finding             | `R3-001`, CRITICAL: the confirmation took the invoice's number from the fiscal allocator **while leaving the invoice's Billing series untouched**, but the allocator restarts at 1 on a series rollover — so the first fiscal number of a successor range **collided** with a confirmed invoice under `(tenant_id, series, number)`, the confirmation failed with an untranslated 500, and **the tenant could not confirm any further invoice**. |
+| refuter             | Corroborated it after an adversarial search.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| correction, round 1 | The invoice's series becomes the fiscal one — and the **live-PostgreSQL suite refused it**: `a permitted transition cannot change the invoice series`, a **Billing header guard** making the series immutable.                                                                                                                                                                                                                                   |
+| the design finding  | DEC-056's "the fiscal number IS the invoice's number" **collides with two pre-existing Billing invariants** (the series' immutability and the `(tenant, series, number)` uniqueness). Not a bug in WU-B: a decision that did not know about an invariant.                                                                                                                                                                                        |
+| correction, round 2 | **Two identities, deliberately**: the invoice's own `number`/`series` stay Billing's and the **fiscal** number is the allocation's `document_number`, with its own unique index per range. No collision is possible, no guard is touched, and the DE and the KuDE carry the fiscal number — DEC-056's intent for the document the customer sees.                                                                                                 |
+| recovery            | The correction widened the scope by one file (`billing.repository.ts`), so the provider required a **recovery authorization**: the maintainer approved it, the predecessor lineage is preserved with the reason recorded, and the corrected candidate was reviewed fresh.                                                                                                                                                                        |
+
+**Eight advisories** are recorded with their coordinates, none opening a
+correction: the allocation's race window (`R3-ALLOC-RACE`, `R4-001`), the
+live-PG spec's own count (`R4-002`), the counter's documentation
+(`R3-COUNTER-DOC`) and four readability points. The reviewers' full text is
+never retained, so each reading above is ours.
 
 ## Notes
 
