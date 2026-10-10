@@ -707,7 +707,19 @@ candidate 1 exists.
       than a default when the tenant has not declared. **Next: WU-B** (the
       number's authorisation at confirmation) and **WU-D** (the assembly, which
       also adds the units and the currencies tables the protocol's XSDs carry
-      and the repository does not).
+      and the repository does not). **WU-B landed as commit `b382108`** — 13
+      files, 2,545 insertions — and its review is `review-935a71a795da88ed`
+      (recovered from `review-582d2ef98bf0938f`): tier `high`, four lenses as
+      one group, closed **`approved`** with eight advisories. Its refuter
+      **corroborated** a CRITICAL finding — the fiscal number collided with a
+      confirmed invoice because the invoice's Billing series is immutable and
+      its uniqueness is `(tenant, series, number)` — and the correction became
+      **two identities**: the invoice's number stays Billing's and the fiscal
+      number is the allocation's, which is what the DE and the KuDE carry. That
+      correction widened the candidate's scope by one file, so the review was
+      **recovered** with the maintainer's authorization and the predecessor
+      preserved. **Next: WU-D** (the assembly, which also adds the units and the
+      currencies tables the protocol's XSDs carry and the repository does not).
 - [ ] T12 — **FISC-016: the cancellation event.** Created by FISC-012's own
       implementation: SIFEN's cancellation is an event and `SIFEN-BASELINE.md`
       §23.3 records that `Evento_v150.xsd`'s field-level rules were never

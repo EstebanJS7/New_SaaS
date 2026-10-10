@@ -149,6 +149,24 @@ and against the published worked example of the protocol's own documentation.
 certification run rather than duplicated here: this unit ends when the
 assembly's output is the document FISC-013 submits.
 
+## The design finding WU-B's review produced
+
+**[[DEC-056]]'s "the fiscal number IS the invoice's number" collides with two
+pre-existing Billing invariants**: the invoice's series is **immutable across a
+permitted transition** (a header guard from BILL-003) and its uniqueness is
+`(tenant_id, series, number)`. A successor timbrado range restarts at 1, so
+writing the fiscal number to the invoice collides with the invoice the previous
+range numbered 1 — and the confirmation fails.
+
+The resolution is **two identities, deliberately**: the invoice's own `number`
+and `series` stay Billing's (the counter) and the **fiscal** number lives in
+`invoice_fiscal_allocation.document_number`, with its own unique index per
+range. No collision is possible, no guard is touched, and **the DE and the KuDE
+carry the fiscal number**, which is what a customer and the tax authority
+compare. DEC-056's sentence about "the invoice's printed number" is satisfied
+for the document the customer sees; the API's invoice DTO showing the fiscal
+number when an allocation exists is a follow-up.
+
 ## Known limitations this unit created
 
 - **The at-most-two ACTIVE CSC bound is enforced per statement, not
