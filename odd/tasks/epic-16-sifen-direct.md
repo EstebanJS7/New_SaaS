@@ -668,14 +668,31 @@ candidate 1 exists.
       `docs/10-qa/CI-EVIDENCE.md`, and the module doc lists what is deliberately
       absent.
 
-- [ ] T9 — FISC-013: contingency + certification evidence.
+- [ ] T9 — **FISC-013: contingency + certification evidence — planned
+      2026-10-10.** The retrieval answered the epic's row: the habilitación's
+      six steps, the test data set (with the **generic CSC**, whose first value
+      is the one in the Manual's QR example) and the Guía de Pruebas' minimum
+      matrix. **The finding**: the matrix requires the **events** (cancellation
+      ×5, **inutilización** ×5 as emitter, five receptor events ×3), so
+      [[FISC-016]] is on this story's critical path and the inutilización is a
+      second event type. The contingency half is DNIT's gap — the Manual §14
+      removes its own contingency section — so only the `dDesTipEmi = 2` flag is
+      recorded. Its runbook can be written now; the run itself waits for the
+      habilitación and the test data.
 - [ ] T10 — FISC-014: epic closure.
-- [ ] T11 — **FISC-015: the document assembly.** Created by [[DEC-056]] when
-      FISC-012's reconnaissance found the fiscal identity a DE needs unmodelled.
-      Its first work unit makes four product decisions — what a rate code means
-      fiscally, what a receptor is, where the CSC lives, which
-      establishment/point/type issues — **before any schema change**. Until it
-      lands the worker's stage fails closed with a named reason.
+- [ ] T11 — **FISC-015: the document assembly — its decisions are made
+      ([[DEC-057]], 2026-10-10).** The four product decisions, from a retrieval
+      of the Manual, the Notas Técnicas and the XSDs: the tenant declares a rate
+      code's affectation (the Manual does not distinguish _exento_ from
+      _exonerado_), the receptor is derived except `iTiOpe`, the CSC is per
+      tenant and per environment sealed in the secret store, and the tenant
+      declares its default issuance point. The schema delta is one additive
+      migration. Created by [[DEC-056]] when FISC-012's reconnaissance found the
+      fiscal identity a DE needs unmodelled. Its first work unit makes four
+      product decisions — what a rate code means fiscally, what a receptor is,
+      where the CSC lives, which establishment/point/type issues — **before any
+      schema change**. Until it lands the worker's stage fails closed with a
+      named reason.
 - [ ] T12 — **FISC-016: the cancellation event.** Created by FISC-012's own
       implementation: SIFEN's cancellation is an event and `SIFEN-BASELINE.md`
       §23.3 records that `Evento_v150.xsd`'s field-level rules were never

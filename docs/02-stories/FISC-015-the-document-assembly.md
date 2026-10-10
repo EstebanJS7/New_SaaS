@@ -76,21 +76,50 @@ from.
    reference lives, how `IdCSC` is stored, and how the secret reaches the QR
    builder without entering a URL, a log or a snapshot.
 
-### The decisions this story needs before its work units are written
+### The four decisions, made
 
-These are product decisions, and [[DEC-056]] says so explicitly. The story's
-first work unit is to make them, in the house form (a DEC per decision, or one
-DEC that carries them all with their citations):
+**[[DEC-057]] makes them**, from a retrieval that read the Manual v150, the
+Notas Técnicas that amend it, the official XSDs and the DNIT's own guides. In
+summary:
 
-- **What a rate code means fiscally**: which `iAfecIVA`, which rate, and whether
-  a 0% rate is exempt or exonerated.
-- **What a receptor is**: which operation type, which country, which document
-  type, and what an invoice with no customer produces.
-- **Where the CSC lives**: which table holds its reference, who writes it, and
-  how it is rotated.
-- **Which establishment, point of expedition and document type issue**: the
-  tenant-level policy that selects the timbrado range, or the explicit statement
-  that a tenant has exactly one and it is derived.
+1. **A rate code's fiscal meaning is the tenant's declaration.** `tax_rate`
+   gains the fiscal classification (`iAfecIVA`, and the proportionality for a
+   partially taxed line) while `rate` stays where it is. The Manual **does not
+   distinguish _exento_ from _exonerado_** — it labels both and gives both rate
+   `0` — so a code that derived the affectation from the rate would be choosing
+   a legal characterisation on the tenant's behalf. The tenant declares it; the
+   system carries it and refuses the combinations the protocol forbids.
+2. **The receptor is derived where the sources pin it, and declared where they
+   do not.** `iNatRec`, `iTiContRec`, `dRucRec` with its check digit,
+   `iTipIDRec`, `dNumIDRec`, `dNomRec` and the innominado case all follow from
+   `customer`'s own columns; `iTiOpe` does not, because `B2G` depends on the
+   DNIT's registry of state entities and `B2B`/`B2C`/`B2F` on facts only the
+   tenant knows. The validations the Notas Técnicas add are ours to enforce
+   before SIFEN does: innominado only for `B2C`, never for NC/ND/NR, and not
+   above NT 021's threshold.
+3. **The CSC is per tenant and per environment, sealed in the secret store**,
+   with its `IdCSC` beside the reference — the value is secret by the sources'
+   own words and the test environment's pair is generic while production's is
+   issued at the emitter's onboarding.
+4. **The tenant declares a default issuance point**, validated against exactly
+   one ACTIVE timbrado range at issuance, which is what lets the allocation
+   happen inside the confirmation transaction [[DEC-056]] chose.
+
+### The schema delta this implies
+
+- `tax_rate` gains the fiscal classification (one column or one small table).
+- The fiscal profile gains the default issuance point, the CSC's reference and
+  its `IdCSC`.
+- `customer` gains the operation type, or the fiscal profile carries a default.
+- **One additive migration**, with the tenant-isolation proof each new aggregate
+  requires.
+
+Two things the assembly still needs and this story owns: **the currency's
+description** is the protocol's own table (`Monedas_v150.xsd` carries
+`PYG → Guarani`, so it is a static mapping and not tenant data), and **the unit
+of measure** is the protocol's list too (`Unidades_Medida_v141.xsd`,
+`77 → Unidad - UNI`) but _which_ unit an item is, is tenant data that needs a
+field or a default.
 
 ## Work units
 
@@ -156,7 +185,8 @@ assembly's output is the document FISC-013 submits.
 
 ## Status
 
-**Planned 2026-10-08.** Created by [[DEC-056]]'s decision to narrow
-[[FISC-012]]: its WU-D keeps the stage's four own properties and this story
-carries the assembly. It is **not started**: its first work unit makes the four
-product decisions above, and no schema change happens before they are made.
+**Planned 2026-10-10, and its decisions are made.** Created by [[DEC-056]] when
+[[FISC-012]]'s reconnaissance found the assembly's inputs unmodelled;
+[[DEC-057]] now carries the four product decisions and the schema delta they
+imply. It is **not started**: the decisions are `proposed` until the maintainer
+accepts them, and no schema change happens before that.
