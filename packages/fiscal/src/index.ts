@@ -24,6 +24,7 @@ export type {
   FiscalQueryOutcome,
   FiscalQueryRequest,
   FiscalQueryResult,
+  FiscalIssueDocument,
 } from "./fiscal-provider.port.js";
 // Dev/test only; this fake does not implement SIFEN.
 export { createFakeFiscalProvider, FakeFiscalProvider } from "./fake-fiscal.provider.js";
@@ -33,8 +34,19 @@ export type {
   SanitizeProviderSnapshotOptions,
   SanitizedProviderSnapshot,
 } from "./fiscal-snapshot.sanitizer.js";
-export { FiscalProviderModule } from "./fiscal-provider.module.js";
-export type { FiscalProviderModuleOptions } from "./fiscal-provider.module.js";
+// FISC-012 WU-E2: the provider selection. `FISCAL_PROVIDER_ENV_VALUES` is the
+// one closed set of accepted environment values: the worker's env schema
+// imports it and the module's factory resolves against it. It is deliberately
+// lower case with a dash while the port's ids (`FISCAL_PROVIDER_VALUES`) are
+// upper case — the environment vocabulary predates the id union, and the
+// module's factory is the one place that maps one onto the other. The API's
+// schema keeps its own copy because `fiscal-boundary.test.ts` keeps
+// `@newsaas/fiscal` imports inside `apps/api/src/fiscal/`.
+export { FISCAL_PROVIDER_ENV_VALUES, FiscalProviderModule } from "./fiscal-provider.module.js";
+export type {
+  FiscalProviderEnvValue,
+  FiscalProviderModuleOptions,
+} from "./fiscal-provider.module.js";
 // FISC-010 WU-C / ADR-008 §2: the credential boundary the transport reads per
 // call. The port lives here; its implementation lands in the worker (FISC-012),
 // because `packages/fiscal` must not depend on Prisma or `@newsaas/secret-store`.
@@ -109,6 +121,23 @@ export type {
 } from "./signing-material/pkcs12.fixture.js";
 // FISC-008 WU-A: pure typed request -> XML builder for unsigned SIFEN DTEs.
 export { buildDteXml } from "./dte/dte.builder.js";
+// FISC-012 WU-D2 / ADR-010 §1: the official-schema gate becomes runtime API.
+// `validateDeAgainstOfficialXsd`, `buildDteEntrySchema`, `inspectDteSchemas` and
+// `prepareDteSchemas` move here from `testing.ts`, which keeps its re-exports so
+// nothing that already imports them breaks. Production code imports this barrel,
+// and `libxmljs2` is a runtime dependency of the package for the same decision.
+// `defaultDteSchemaDirectory` is here because it is what resolves the
+// deployment's `DTE_XSD_DIR` input, and `DteSchemaError` is the typed failure
+// the stage catches to refuse a submission.
+export { buildDteEntrySchema, validateDeAgainstOfficialXsd } from "./dte/xsd-validator.js";
+export type { DteXsdValidationResult } from "./dte/xsd-validator.js";
+export {
+  defaultDteSchemaDirectory,
+  DteSchemaError,
+  inspectDteSchemas,
+  prepareDteSchemas,
+} from "./dte/xsd-artifacts.js";
+export type { DteSchemaDirectoryInspection, PreparedDteSchemas } from "./dte/xsd-artifacts.js";
 // FISC-008: the CDC's composition and its check digit, both pinned 2026-10-06.
 export {
   CDC_CHECK_DIGIT_BASE_MAX,
@@ -194,6 +223,21 @@ export {
   signDteXml,
 } from "./dte/dte.signing.js";
 export type { DteSigningFailure, SignDteXmlArgs } from "./dte/dte.signing.js";
+// FISC-012 WU-C / baseline §24: the QR. Its composition, its two consultation
+// addresses, and the placeholder the unsigned DE carries in `dCarQR` — the QR
+// depends on the signature's digest, and `gCamFuFD` sits outside the signed
+// subtree, so `fillQrContent` is the one replacement and it cannot break the
+// signature. The CSC stays an input and never enters the returned URL.
+export {
+  buildQrContent,
+  DteQrError,
+  fillQrContent,
+  QR_CONSULTATION_URLS,
+  QR_CONTENT_MAX_LENGTH,
+  QR_CONTENT_MIN_LENGTH,
+  QR_PLACEHOLDER,
+} from "./dte/dte.qr.js";
+export type { BuildQrContentArgs, DteQrFailure, FillQrContentArgs } from "./dte/dte.qr.js";
 // FISC-008: the security code's generator, with its randomness injected.
 export {
   generateSecurityCode,
@@ -437,3 +481,33 @@ export {
   SIFEN_RECEPTION_MESSAGE_ABSENT_REASON,
 } from "./sifen/sifen.outcomes.js";
 export type { SifenOutcomeContext, SifenRucQueryOutcome } from "./sifen/sifen.outcomes.js";
+// FISC-012 WU-E / ADR-009: the real SIFEN provider behind the port. `issue`
+// submits a lot of one through the asynchronous service and answers `SUBMITTED`
+// with the lot number; `query` asks by the reference first and by the CDC when
+// the reference was lost; `cancel` fails closed because §23.3 leaves the
+// cancellation event's payload unprofiled. The failure partition is exported so
+// the terminal/retryable table is auditable: every transport and facade member
+// is mapped by name, and anything unrecognised is a configuration error rather
+// than a blind retry. The snapshots are descriptors — the CDC, the service and
+// the byte count — never the signed document.
+export {
+  createSifenDirectFiscalProvider,
+  generateSifenControlNumber,
+  mapSifenFailure,
+  SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON,
+  SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON_CODE,
+  SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON,
+  SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON_CODE,
+  SIFEN_DIRECT_QUERY_IDENTITY_MISSING_REASON,
+  SIFEN_DIRECT_QUERY_IDENTITY_MISSING_REASON_CODE,
+  SIFEN_DIRECT_UNMAPPED_FAILURE_REASON,
+  SIFEN_DIRECT_UNMAPPED_FAILURE_REASON_CODE,
+} from "./sifen/sifen-direct.provider.js";
+export type {
+  SifenDirectProviderDependencies,
+  SifenDirectRequestSnapshot,
+  SifenDirectResponseSnapshot,
+  SifenDirectService,
+  SifenFailureMapping,
+  SifenFailureOutcome,
+} from "./sifen/sifen-direct.provider.js";

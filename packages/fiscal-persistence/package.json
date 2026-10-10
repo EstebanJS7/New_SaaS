@@ -1,0 +1,36 @@
+{
+  "name": "@newsaas/fiscal-persistence",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NewSaaS fiscal persistence — the Prisma-backed implementations of the fiscal ports",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run --config ../../packages/vitest-config/vitest.node.ts"
+  },
+  "dependencies": {
+    "@newsaas/database": "workspace:*",
+    "@newsaas/fiscal": "workspace:*",
+    "@newsaas/secret-store": "workspace:*"
+  },
+  "devDependencies": {
+    "@newsaas/eslint-config": "workspace:*",
+    "@newsaas/typescript-config": "workspace:*",
+    "@newsaas/vitest-config": "workspace:*",
+    "@types/node": "^22.14.1",
+    "eslint": "^9.24.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}

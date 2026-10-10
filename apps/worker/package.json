@@ -19,6 +19,8 @@
     "@newsaas/config": "workspace:*",
     "@newsaas/database": "workspace:*",
     "@newsaas/fiscal": "workspace:*",
+    "@newsaas/fiscal-persistence": "workspace:*",
+    "@newsaas/secret-store": "workspace:*",
     "@newsaas/shared": "workspace:*",
     "@newsaas/storage": "workspace:*",
     "bullmq": "^5.46.1",

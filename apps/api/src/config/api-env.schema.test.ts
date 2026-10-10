@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { apiEnv } from "./api-env.js";
+import { FISCAL_PROVIDER_ENV_VALUES } from "./api-env.schema.js";
 import { readBrandingAssetDeliveryConfig } from "../branding/branding-asset-delivery.service.js";
 
 /** Minimal valid base env: every other required variable has a schema default. */
@@ -173,12 +174,22 @@ describe("readBrandingAssetDeliveryConfig non-production fallback", () => {
 });
 
 describe("apiEnv fiscal provider selection", () => {
-  it("accepts the closed fake provider and rejects unknown values", () => {
-    expect(apiEnv({ ...BASE_ENV, FISCAL_PROVIDER: "fake" }).success).toBe(true);
-    expect(apiEnv({ ...BASE_ENV, FISCAL_PROVIDER: "unknown" }).success).toBe(false);
+  it.each(["fake", "sifen-direct"] as const)("accepts the closed provider value %s", (provider) => {
+    const result = apiEnv({ ...BASE_ENV, FISCAL_PROVIDER: provider });
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.env.FISCAL_PROVIDER).toBe(provider);
   });
 
-  it("requires an explicit provider in production and accepts fake", () => {
+  it.each(["unknown", "SIFEN_DIRECT", "sifen_direct"])("rejects the value %s", (provider) => {
+    expect(apiEnv({ ...BASE_ENV, FISCAL_PROVIDER: provider }).success).toBe(false);
+  });
+
+  it("pins the API's closed set so the boot gate cannot drift silently", () => {
+    expect(FISCAL_PROVIDER_ENV_VALUES).toEqual(["fake", "sifen-direct"]);
+  });
+
+  it("requires an explicit provider in production and accepts both values", () => {
     const missing = apiEnv({
       ...BASE_ENV,
       NODE_ENV: "production",
@@ -189,16 +200,59 @@ describe("apiEnv fiscal provider selection", () => {
     expect(missing.success).toBe(false);
     if (!missing.success) expect(missing.error).toContain("FISCAL_PROVIDER");
 
+    for (const provider of ["fake"] as const) {
+      expect(
+        apiEnv({
+          ...BASE_ENV,
+          NODE_ENV: "production",
+          SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
+          FISCAL_PROVIDER: provider,
+          BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
+          BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
+        }).success
+      ).toBe(true);
+    }
+
+    // `sifen-direct` targets one DNIT host per environment, so production must
+    // say which: without it the package's factory would fall back to TEST and
+    // build the real adapter against the test host (ADR-008 §3).
     expect(
       apiEnv({
         ...BASE_ENV,
         NODE_ENV: "production",
         SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
-        FISCAL_PROVIDER: "fake",
+        FISCAL_PROVIDER: "sifen-direct",
         BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
         BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
       }).success
-    ).toBe(true);
+    ).toBe(false);
+
+    const withoutEnvironment = apiEnv({
+      ...BASE_ENV,
+      NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
+      FISCAL_PROVIDER: "sifen-direct",
+      BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
+      BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
+    });
+    expect(withoutEnvironment.success).toBe(false);
+    if (!withoutEnvironment.success) {
+      expect(withoutEnvironment.error).toContain("SIFEN_ENVIRONMENT");
+    }
+
+    for (const environment of ["TEST", "PRODUCTION"] as const) {
+      expect(
+        apiEnv({
+          ...BASE_ENV,
+          NODE_ENV: "production",
+          SECRET_STORE_MASTER_KEYS: PRODUCTION_MASTER_KEYS,
+          FISCAL_PROVIDER: "sifen-direct",
+          SIFEN_ENVIRONMENT: environment,
+          BRANDING_ASSET_URL_SECRET: PRODUCTION_SECRET,
+          BRANDING_ASSET_PUBLIC_BASE_URL: PRODUCTION_PUBLIC_BASE_URL,
+        }).success
+      ).toBe(true);
+    }
   });
 
   it("allows the provider to be unset outside production", () => {

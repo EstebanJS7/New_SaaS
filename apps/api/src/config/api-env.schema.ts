@@ -18,11 +18,18 @@ export const DEV_BRANDING_ASSET_PUBLIC_BASE_URL = "http://localhost:3001";
 export const PRODUCTION_BRANDING_ASSET_SECRET_MIN_LENGTH = 32;
 
 /**
- * Closed set of accepted `FISCAL_PROVIDER` values. EPIC-16 appends
- * `"third_party"`. Exported so the composition root's factory validates against
- * this list rather than a second copy of it.
+ * Closed set of accepted `FISCAL_PROVIDER` values. EPIC-16 adds
+ * `"sifen-direct"`. Exported so this schema and every API-side validation read
+ * ONE list instead of a drift-prone copy.
+ *
+ * The list is written here rather than imported from `@newsaas/fiscal` because
+ * `fiscal-boundary.test.ts` keeps any `@newsaas/fiscal` import outside
+ * `apps/api/src/fiscal/`, and this is the configuration layer. The package owns
+ * what the factory accepts and refuses anything outside its own set when the
+ * module is constructed, so a value that drifts past this schema still cannot
+ * start the process.
  */
-export const FISCAL_PROVIDER_ENV_VALUES = Object.freeze(["fake"] as const);
+export const FISCAL_PROVIDER_ENV_VALUES = Object.freeze(["fake", "sifen-direct"] as const);
 
 /** Hosts that are not reachable from a public portal and are rejected in production. */
 const LOCAL_BRANDING_ASSET_HOSTS: ReadonlySet<string> = new Set([
@@ -55,11 +62,20 @@ export const apiEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
     /**
-     * Closed provider set for EPIC-15; EPIC-16 adds "third_party". Declared as a
-     * shared constant so the composition root's factory validates against the
+     * Closed provider set for EPIC-15; EPIC-16 adds "sifen-direct". Declared as
+     * a shared constant so this schema and every API-side validation read the
      * SAME list instead of a drift-prone copy.
      */
     FISCAL_PROVIDER: z.enum(FISCAL_PROVIDER_ENV_VALUES).optional(),
+    /**
+     * The DNIT environment the selected provider targets. `sifen-direct` builds
+     * its adapter against one host per environment, so a production deployment
+     * that selected it and left this unset would target the **test** host with
+     * production intent (ADR-008 §3). Declared here, not only checked in the
+     * refinement below: an undeclared key is stripped by the object schema, so
+     * a rule reading it would fire even when the operator set it.
+     */
+    SIFEN_ENVIRONMENT: z.enum(["TEST", "PRODUCTION"]).optional(),
     API_HOST: z.string().min(1).default("0.0.0.0"),
     API_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
     DATABASE_URL: z.string().min(1),
@@ -129,9 +145,10 @@ export const apiEnvSchema = z
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && env.FISCAL_PROVIDER === undefined) {
-      // No production fiscal provider exists until EPIC-16; silently emitting
-      // non-fiscal documents is worse than failing fast. Explicit fake is the
-      // dedicated-demo path documented in docs/03-architecture/DEMO-TENANT.md.
+      // An absent selection would silently build the fake, and a production
+      // deployment must say which provider it runs. Explicit fake stays the
+      // dedicated-demo path documented in docs/03-architecture/DEMO-TENANT.md;
+      // the refusal is about absence, not about the fake.
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["FISCAL_PROVIDER"],
@@ -141,6 +158,19 @@ export const apiEnvSchema = z
 
     if (env.NODE_ENV !== "production") {
       return;
+    }
+
+    if (env.FISCAL_PROVIDER === "sifen-direct" && env.SIFEN_ENVIRONMENT === undefined) {
+      // The package's factory would fall back to `TEST` here, which is what
+      // makes the failure silent: a production deployment that selected the
+      // real adapter would target the **DNIT test host** with production intent
+      // (ADR-008 §3). The rule is scoped to the provider that has an
+      // environment — a fake deployment needs none.
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["SIFEN_ENVIRONMENT"],
+        message: "SIFEN_ENVIRONMENT is required in production when FISCAL_PROVIDER=sifen-direct.",
+      });
     }
 
     if (

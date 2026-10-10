@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { cp, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { buildDteXml } from "./dte.builder.js";
 import { buildDteRequestFromInvoice } from "./dte.mapper.js";
 import {
@@ -12,10 +15,33 @@ import { signDteXml } from "./dte.signing.js";
 import {
   defaultDteSchemaDirectory,
   DTE_XSD_ARTIFACTS,
+  DTE_XSD_ENTRY_ARTIFACT,
   inspectDteSchemas,
 } from "./xsd-artifacts.js";
 import { SIFEN_TEST_EMITTER_NAME } from "./dte.types.js";
 import { validateDeAgainstOfficialXsd } from "./xsd-validator.js";
+
+/**
+ * ADR-010 §4: the compiled schema is cached per process, keyed by directory,
+ * and a failed compile is never cached as a success. Both properties are
+ * internal to the validator, so the observable that proves them is the number
+ * of times the schema itself is parsed: a wrapper around the real `parseXml`
+ * counts the compiles without changing what compilation does.
+ */
+const { parseXmlSpy } = vi.hoisted(() => ({ parseXmlSpy: vi.fn() }));
+
+vi.mock("libxmljs2", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("libxmljs2")>();
+  parseXmlSpy.mockImplementation((...args: Parameters<typeof actual.parseXml>) =>
+    actual.parseXml(...args)
+  );
+  return { ...actual, parseXml: parseXmlSpy };
+});
+
+/** The compile is the parse whose source is the generated entry schema. */
+function schemaCompiles(): number {
+  return parseXmlSpy.mock.calls.filter(([source]) => String(source).includes('name="rDE"')).length;
+}
 
 /**
  * FISC-008 WU-B — the acceptance criterion is "a DTE XML validates against the
@@ -188,9 +214,65 @@ describe.skipIf(skipped)(
     });
 
     it("refuses an unusable directory instead of reporting a pass", async () => {
+      const directory = "/definitely/not/a/schema/directory";
+      const failure = validateDeAgainstOfficialXsd("<rDE/>", directory);
+
+      await expect(failure).rejects.toMatchObject({ failure: "DIRECTORY_UNUSABLE" });
+      // ADR-010 §3: the fail-closed reason names the directory, which is not
+      // secret and is the first thing an operator needs.
+      await expect(failure).rejects.toThrow(directory);
+    });
+
+    it("compiles the official schema once per process, keyed by the directory", async () => {
+      const directory = await mkdtemp(join(tmpdir(), "newsaas-dte-cache-"));
+      await cp(schemaDirectory, directory, { recursive: true });
+      const xml = withStructuralSignature(buildDteXml(validFacturaElectronicaRequest()));
+
+      parseXmlSpy.mockClear();
+      const first = await validateDeAgainstOfficialXsd(xml, directory);
+      const afterFirst = schemaCompiles();
+      const second = await validateDeAgainstOfficialXsd(xml, directory);
+      const afterSecond = schemaCompiles();
+
+      expect(first.valid).toBe(true);
+      expect(second.valid).toBe(true);
+      expect(afterFirst).toBe(1);
+      // The second submission validated against the cached compile: one compile
+      // for two submissions, and the document itself was parsed both times.
+      expect(afterSecond).toBe(1);
+      // One schema compile plus one document parse per submission.
+      expect(parseXmlSpy.mock.calls.length).toBe(3);
+    });
+
+    it("never caches a failed compile as a usable schema", async () => {
+      const directory = await mkdtemp(join(tmpdir(), "newsaas-dte-broken-"));
+      await cp(schemaDirectory, directory, { recursive: true });
+      // Large enough and URL-free enough to pass the directory inspection, so
+      // the failure is the compile and nothing earlier.
+      const corrupted = `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">${" ".repeat(
+        32_000
+      )}`;
+      await writeFile(join(directory, DTE_XSD_ENTRY_ARTIFACT), corrupted, "utf8");
+
       await expect(
-        validateDeAgainstOfficialXsd("<rDE/>", "/definitely/not/a/schema/directory")
-      ).rejects.toMatchObject({ failure: "DIRECTORY_UNUSABLE" });
+        validateDeAgainstOfficialXsd(
+          withStructuralSignature(buildDteXml(validFacturaElectronicaRequest())),
+          directory
+        )
+      ).rejects.toMatchObject({ failure: "SCHEMA_UNUSABLE" });
+
+      await cp(
+        join(schemaDirectory, DTE_XSD_ENTRY_ARTIFACT),
+        join(directory, DTE_XSD_ENTRY_ARTIFACT)
+      );
+      const result = await validateDeAgainstOfficialXsd(
+        withStructuralSignature(buildDteXml(validFacturaElectronicaRequest())),
+        directory
+      );
+
+      // If the failed compile had been cached, this second call would still
+      // have refused. It compiles again and accepts.
+      expect(result.valid).toBe(true);
     });
   }
 );

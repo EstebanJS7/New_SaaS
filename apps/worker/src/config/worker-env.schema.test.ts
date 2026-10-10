@@ -8,11 +8,15 @@ const BASE_ENV = {
 };
 
 const PRODUCTION_BUCKET = "newsaas-branding-assets";
+const MASTER_KEY = Buffer.alloc(32, 1).toString("base64");
 
 /** Valid production env with the required worker variables present. */
 const productionBase = {
   ...BASE_ENV,
   NODE_ENV: "production",
+  SECRET_STORE_MASTER_KEYS: `1:${MASTER_KEY}`,
+  SIFEN_ENVIRONMENT: "TEST",
+  FISCAL_PROVIDER: "fake",
 };
 
 describe("workerEnv production storage gate", () => {
@@ -128,6 +132,179 @@ describe("workerEnv production storage gate", () => {
     }
     if (disabled.success) {
       expect(disabled.env.BRANDING_ASSETS_ENABLED).toBe(false);
+    }
+  });
+});
+
+describe("workerEnv secret-store production gate", () => {
+  it("rejects a missing SECRET_STORE_MASTER_KEYS in production", () => {
+    const result = workerEnv({
+      ...BASE_ENV,
+      NODE_ENV: "production",
+      SIFEN_ENVIRONMENT: "TEST",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("SECRET_STORE_MASTER_KEYS");
+    }
+  });
+
+  it.each(["", "   "])("rejects a blank SECRET_STORE_MASTER_KEYS (%j) in production", (keys) => {
+    const result = workerEnv({
+      ...BASE_ENV,
+      NODE_ENV: "production",
+      SIFEN_ENVIRONMENT: "TEST",
+      SECRET_STORE_MASTER_KEYS: keys,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("SECRET_STORE_MASTER_KEYS");
+    }
+  });
+
+  it("accepts a configured SECRET_STORE_MASTER_KEYS in production", () => {
+    const result = workerEnv(productionBase);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.SECRET_STORE_MASTER_KEYS).toBe(`1:${MASTER_KEY}`);
+    }
+  });
+
+  it("keeps the master-key ring optional outside production", () => {
+    const result = workerEnv(BASE_ENV);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.SECRET_STORE_MASTER_KEYS).toBeUndefined();
+      expect(result.env.SECRET_STORE_MASTER_KEY_VERSION).toBeUndefined();
+    }
+  });
+});
+
+describe("workerEnv SIFEN_ENVIRONMENT gate", () => {
+  it("rejects a missing SIFEN_ENVIRONMENT in production", () => {
+    const result = workerEnv({
+      ...BASE_ENV,
+      NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: `1:${MASTER_KEY}`,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("SIFEN_ENVIRONMENT");
+    }
+  });
+
+  it.each(["TEST", "PRODUCTION"] as const)(
+    "accepts an explicit %s environment in production",
+    (environment) => {
+      const result = workerEnv({ ...productionBase, SIFEN_ENVIRONMENT: environment });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.env.SIFEN_ENVIRONMENT).toBe(environment);
+      }
+    }
+  );
+
+  it("defaults to TEST outside production when the variable is absent", () => {
+    const result = workerEnv(BASE_ENV);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.SIFEN_ENVIRONMENT).toBe("TEST");
+    }
+  });
+
+  it("honours an explicit environment outside production", () => {
+    const result = workerEnv({ ...BASE_ENV, SIFEN_ENVIRONMENT: "PRODUCTION" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.SIFEN_ENVIRONMENT).toBe("PRODUCTION");
+    }
+  });
+
+  it("rejects an unknown environment value", () => {
+    const result = workerEnv({ ...BASE_ENV, SIFEN_ENVIRONMENT: "STAGING" });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("SIFEN_ENVIRONMENT");
+    }
+  });
+});
+
+describe("workerEnv FISCAL_PROVIDER gate", () => {
+  it("rejects a missing FISCAL_PROVIDER in production", () => {
+    const result = workerEnv({
+      ...BASE_ENV,
+      NODE_ENV: "production",
+      SECRET_STORE_MASTER_KEYS: `1:${MASTER_KEY}`,
+      SIFEN_ENVIRONMENT: "TEST",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("FISCAL_PROVIDER");
+    }
+  });
+
+  it.each(["fake", "sifen-direct"] as const)(
+    "accepts the closed provider value %s in production",
+    (provider) => {
+      const result = workerEnv({ ...productionBase, FISCAL_PROVIDER: provider });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.env.FISCAL_PROVIDER).toBe(provider);
+      }
+    }
+  );
+
+  it.each(["SIFEN_DIRECT", "sifen_direct", "unknown"])("rejects the value %s", (provider) => {
+    const result = workerEnv({ ...BASE_ENV, FISCAL_PROVIDER: provider });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("FISCAL_PROVIDER");
+    }
+  });
+
+  it("keeps the provider optional outside production", () => {
+    const result = workerEnv(BASE_ENV);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.FISCAL_PROVIDER).toBeUndefined();
+    }
+  });
+});
+
+describe("workerEnv DTE_XSD_DIR", () => {
+  it("stays optional in production and outside it", () => {
+    const development = workerEnv(BASE_ENV);
+    const production = workerEnv(productionBase);
+
+    expect(development.success).toBe(true);
+    expect(production.success).toBe(true);
+    if (development.success) {
+      expect(development.env.DTE_XSD_DIR).toBeUndefined();
+    }
+    if (production.success) {
+      expect(production.env.DTE_XSD_DIR).toBeUndefined();
+    }
+  });
+
+  it("parses the directory when provided", () => {
+    const result = workerEnv({ ...productionBase, DTE_XSD_DIR: "/opt/newsaas/dte-xsd" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.env.DTE_XSD_DIR).toBe("/opt/newsaas/dte-xsd");
     }
   });
 });

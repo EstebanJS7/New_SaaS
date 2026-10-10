@@ -1665,3 +1665,76 @@ Two things about it are worth recording because they are easy to get wrong:
   a signature. What is proven is that it is the profile the Manual pins, that it
   verifies against its own certificate, and that it sits where the schema
   allows.
+
+## EPIC-16 FISC-012 SIFEN Direct Provider (2026-10-09)
+
+```text
+branch   feat/epic-16-fisc-012-sifen-direct-provider   from ff8954e (main)
+commits  7949f04  WU-A  the decisions, the Story and the baseline §24
+         e20fc6b  WU-B  the fiscal persistence package, the store moved verbatim
+         f968843  WU-C  the QR, its placeholder and the one fill
+         0ca390a  WU-D1 the port's document surface, the credential boundary
+         8224825  WU-D2 the document stage and its custody
+         5bdd61b  WU-E1 SifenDirectFiscalProvider over the facade
+         9295769  WU-E2 the provider selection, and the production hole it opened
+         0bdedac  WU-F  the reconciliation sweep
+         plus one record commit per work unit
+
+pnpm lint / typecheck / test / build      green - 20/20, 20/20, 21/21, 12/12
+pnpm format-check                         green
+pnpm --filter @newsaas/fiscal test        green - 577 tests, 28 files
+pnpm --filter @newsaas/worker test        green - 140 tests, 11 files
+pnpm --filter @newsaas/database test      green - 445 tests, 24 files
+pnpm --filter @newsaas/api test           green - 1143 passed, 223 skipped
+pnpm --filter @newsaas/fiscal-persistence test   green - 27 tests, 3 files
+pnpm --filter @newsaas/api test:live-pg   green - 223/223
+```
+
+**The live-PostgreSQL run, and the substitution.** The suite ran against a
+disposable PostgreSQL 16.13 on `127.0.0.1:55433`, started with
+`-c timezone=UTC -c unix_socket_directories=/tmp`, with the migrations and the
+seed applied by the suite itself. The `fisc009-pg` container was **not** used:
+Docker's WSL integration is gone from this environment, so the repo's own
+EPIC-06 practice (a disposable local cluster) was followed instead. Same major
+version, same migrations, and the timezone pinned because the suite is
+**timezone-sensitive**: a non-UTC server fails a pre-existing FISC-011
+date-boundary case by constraint-name matching, since a date-only `timestamptz`
+insert is parsed in the server's timezone. CI is UTC, which is why CI never saw
+it.
+
+**What the new live-PostgreSQL cases prove.** The `fiscal_document` column list
+and the `(status, next_query_at)` index exist as the migration declares them;
+the backfill produced the expected instants for rows already `SUBMITTED`; and
+the transition guard admits **every write the reconciliation performs** — a
+marker-only update, `SUBMITTED -> APPROVED` with its identity and `resolvedAt`,
+`SUBMITTED -> REJECTED` with its reason, and `0360`'s `SUBMITTED -> ERROR`. No
+guard change was needed, which is why the migration adds a column and an index
+and touches nothing else.
+
+**Two CRITICAL findings were corrected before their commits.** WU-E2's review
+found that an absent `SIFEN_ENVIRONMENT` defaulted to `TEST` for every
+environment, so a production API could have targeted the DNIT **test** host; a
+read-only refuter corroborated it and the bounded correction closed it at the
+package's factory and the API's schema. WU-F's review found that the query loop
+guarded only the provider call, so a rejected write while applying an answer
+threw out of the loop, left that row's marker unadvanced and blocked every other
+due document; the correction took three rounds, and the first two were rejected
+— one for hiding failures behind a sweep-level catch, one for exceeding the
+frozen 200-line correction budget.
+
+### What this evidence does not prove
+
+- **No document has been submitted to SIFEN.** The certificate is FISC-007's
+  throwaway fixture, the CSC is a stand-in, and nothing here talks to DNIT. That
+  is [[FISC-013]].
+- **The worker cannot build a document.** The stage fails closed behind a seam
+  whose reason names [[FISC-015]]: the fiscal identity a DE needs — the
+  invoice's link to its timbrado range, the receptor, each line's tax treatment,
+  the unit of measure, the currency description and the CSC's storage — is not
+  modelled yet.
+- **`cancel` refuses.** SIFEN's cancellation is an event and its payload is
+  unprofiled ([[FISC-016]]), so the adapter answers
+  `CANCELLATION_EVENT_UNPROFILED` rather than sending an event nobody validated.
+- **The reconciliation's real behaviour against SIFEN is unproven.** The batch
+  poll cadence, the `0360` reading and the duplicate protection are reasoned
+  from §23.7 and [[ADR-007]], not observed.

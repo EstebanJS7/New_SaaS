@@ -29,6 +29,7 @@
     "asn1js": "^3.0.10",
     "fast-xml-parser": "^5.11.2",
     "fflate": "^0.8.3",
+    "libxmljs2": "^0.37.0",
     "pkijs": "^3.4.1",
     "xml-crypto": "^6.3.3"
   },
@@ -38,7 +39,6 @@
     "@newsaas/vitest-config": "workspace:*",
     "@types/node": "^22.14.1",
     "eslint": "^9.24.0",
-    "libxmljs2": "^0.37.0",
     "typescript": "^5.8.3",
     "vitest": "^3.1.1"
   }

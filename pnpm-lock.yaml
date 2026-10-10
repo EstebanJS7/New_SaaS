@@ -68,6 +68,9 @@ importers:
       '@newsaas/fiscal':
         specifier: workspace:*
         version: link:../../packages/fiscal
+      '@newsaas/fiscal-persistence':
+        specifier: workspace:*
+        version: link:../../packages/fiscal-persistence
       '@newsaas/secret-store':
         specifier: workspace:*
         version: link:../../packages/secret-store
@@ -241,6 +244,12 @@ importers:
       '@newsaas/fiscal':
         specifier: workspace:*
         version: link:../../packages/fiscal
+      '@newsaas/fiscal-persistence':
+        specifier: workspace:*
+        version: link:../../packages/fiscal-persistence
+      '@newsaas/secret-store':
+        specifier: workspace:*
+        version: link:../../packages/secret-store
       '@newsaas/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -403,6 +412,9 @@ importers:
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
+      libxmljs2:
+        specifier: ^0.37.0
+        version: 0.37.0
       pkijs:
         specifier: ^3.4.1
         version: 3.4.1
@@ -425,9 +437,40 @@ importers:
       eslint:
         specifier: ^9.24.0
         version: 9.39.5(jiti@2.7.0)
-      libxmljs2:
-        specifier: ^0.37.0
-        version: 0.37.0
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(tsx@4.23.12)
+
+  packages/fiscal-persistence:
+    dependencies:
+      '@newsaas/database':
+        specifier: workspace:*
+        version: link:../database
+      '@newsaas/fiscal':
+        specifier: workspace:*
+        version: link:../fiscal
+      '@newsaas/secret-store':
+        specifier: workspace:*
+        version: link:../secret-store
+    devDependencies:
+      '@newsaas/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@newsaas/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@newsaas/vitest-config':
+        specifier: workspace:*
+        version: link:../vitest-config
+      '@types/node':
+        specifier: ^22.14.1
+        version: 22.20.1
+      eslint:
+        specifier: ^9.24.0
+        version: 9.39.5(jiti@2.7.0)
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

@@ -46,6 +46,11 @@ export interface FakeFiscalProviderOptions {
 /** Deterministic provider fake for development and tests; it does not implement SIFEN. */
 export class FakeFiscalProvider implements FiscalProviderPort {
   readonly provider: FiscalProviderId = "FAKE";
+  /**
+   * The fake submits nothing, so it needs no document (ADR-009): a demo tenant
+   * without an emitter profile must stay issuable in development.
+   */
+  readonly requiresSignedDocument = false;
   private calls = 0;
   private queryCalls = 0;
   private cancelCalls = 0;

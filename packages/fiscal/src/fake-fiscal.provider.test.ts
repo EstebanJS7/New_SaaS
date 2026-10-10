@@ -14,6 +14,7 @@ const request: FiscalIssueRequest = {
   fiscalDocumentId: "document-1",
   tenantId: "tenant-1",
   provider: "FAKE",
+  document: null,
   invoice: { series: "A", number: 1, currency: "PYG", issuedAt: "2026-10-02T00:00:00.000Z" },
   lines: [],
   totals: { taxableBase: "0", taxAmount: "0", total: "0" },
@@ -57,6 +58,14 @@ async function query(
 }
 
 describe("FakeFiscalProvider", () => {
+  it("declares that it needs no signed document (ADR-009)", async () => {
+    const provider = createFakeFiscalProvider();
+    expect(provider.requiresSignedDocument).toBe(false);
+    // The flag and the behaviour agree: issuing with `document: null` is the
+    // fake's normal path, not a contract violation.
+    expect((await issue(provider)).outcome).toBe("APPROVED");
+  });
+
   it("consumes the script in order and repeats its last entry", async () => {
     const provider = createFakeFiscalProvider({ outcomes: ["APPROVED", "REJECTED"] });
     expect((await issue(provider)).outcome).toBe("APPROVED");

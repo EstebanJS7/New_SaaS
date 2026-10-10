@@ -51,14 +51,21 @@ export function buildDteEntrySchema(schemaDirectory: string): string {
 }
 
 /**
- * Validates one document against the official schemas prepared in
- * `schemaDirectory`. Throws {@link DteSchemaError} when the directory is not
- * usable, so an absence is never mistaken for a pass.
+ * The compiled-schema cache, keyed by the directory path (ADR-010 §4).
+ *
+ * Compiling the official set is the expensive half of validation, so it happens
+ * once per directory per process; a deployment that changes the directory
+ * restarts the process. The directory inspection still runs on every call, on
+ * purpose: a directory that became unusable after it was compiled must refuse
+ * the document rather than validate against a stale compile. A failed compile
+ * is never stored — the entry is dropped, so the next submission compiles again
+ * and refuses again while the directory is broken. The map holds the in-flight
+ * promise too, so two concurrent first submissions of the same directory share
+ * one compilation instead of racing.
  */
-export async function validateDeAgainstOfficialXsd(
-  xml: string,
-  schemaDirectory: string
-): Promise<DteXsdValidationResult> {
+const compiledSchemas = new Map<string, Promise<Document>>();
+
+async function compiledSchema(schemaDirectory: string): Promise<Document> {
   const inspection = await inspectDteSchemas(schemaDirectory);
   if (!inspection.usable) {
     throw new DteSchemaError(
@@ -69,6 +76,22 @@ export async function validateDeAgainstOfficialXsd(
     );
   }
 
+  const cached = compiledSchemas.get(schemaDirectory);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const compiling = compileSchema(schemaDirectory);
+  compiledSchemas.set(schemaDirectory, compiling);
+  try {
+    return await compiling;
+  } catch (error) {
+    compiledSchemas.delete(schemaDirectory);
+    throw error;
+  }
+}
+
+async function compileSchema(schemaDirectory: string): Promise<Document> {
   const { readFile } = await import("node:fs/promises");
   const entryXsd = await readFile(join(schemaDirectory, DTE_XSD_ENTRY_ARTIFACT), "utf8");
   assertNoAbsoluteSchemaLocations(entryXsd, DTE_XSD_ENTRY_ARTIFACT);
@@ -90,6 +113,20 @@ export async function validateDeAgainstOfficialXsd(
         .join("; ")}.`
     );
   }
+  return schema;
+}
+
+/**
+ * Validates one document against the official schemas prepared in
+ * `schemaDirectory`. Throws {@link DteSchemaError} when the directory is not
+ * usable, so an absence is never mistaken for a pass. The compiled schema is
+ * reused for every later call in this process (ADR-010 §4).
+ */
+export async function validateDeAgainstOfficialXsd(
+  xml: string,
+  schemaDirectory: string
+): Promise<DteXsdValidationResult> {
+  const schema = await compiledSchema(schemaDirectory);
 
   const document = parseXml(xml);
   let valid: boolean;

@@ -1,9 +1,14 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService, Prisma, appendAuditLog, type AuditAppendTx } from "@newsaas/database";
 import {
+  defaultDteSchemaDirectory,
+  DteSchemaError,
   FISCAL_PROVIDER,
   isRetryableOutcome,
   sanitizeProviderSnapshot,
+  SIFEN_BATCH_POLL_INTERVAL_MS,
+  validateDeAgainstOfficialXsd,
+  type FiscalIssueDocument,
   type FiscalIssueOutcome,
   type FiscalIssueRequest,
   type FiscalIssueResult,
@@ -11,6 +16,13 @@ import {
   type FiscalProviderPort,
   type FiscalSubmissionJob,
 } from "@newsaas/fiscal";
+import {
+  createOpaqueStorageKey,
+  STORAGE_KEY_PREFIXES,
+  STORAGE_PORT,
+  type StoragePort,
+} from "@newsaas/storage";
+import { FISCAL_DOCUMENT_BUILDER, type FiscalDocumentBuilder } from "./fiscal-document-builder.js";
 
 type FiscalStatus =
   | "PENDING"
@@ -35,6 +47,10 @@ interface FiscalDocumentRecord {
   readonly status: FiscalStatus;
   readonly attemptCount: number;
   readonly lastAttemptAt: Date | null;
+  /** Written with the stored signed XML; the `SENDING` recovery reads it back. */
+  readonly xmlStorageKey: string | null;
+  /** The built document's identity; written with the custody so a recovery resends it. */
+  readonly cdc: string | null;
 }
 
 interface FiscalLineRecord {
@@ -129,25 +145,33 @@ const PROVIDER_OWNED_OR_TERMINAL: readonly FiscalStatus[] = [
 const CLAIMABLE_STATUSES: readonly FiscalStatus[] = ["PENDING", "QUEUED", "ERROR"];
 
 /**
- * How long a committed `SENDING` claim is honoured.
+ * How long a committed `SIGNING` or `SENDING` claim is honoured.
  *
- * The claim is committed before the provider call, so a worker that dies in
- * between — restart, OOM kill, container reschedule — leaves the row in
- * `SENDING` with no writer. The transition guard admits no other exit from
- * `SENDING`, and the reconciliation sweep is deferred technical debt, so without
- * a lease the document is stalled permanently and silently: every redelivered
- * job would no-op and report success.
- *
- * Past this age the claim is treated as abandoned and a delivery may take it
- * over, which is the only in-band recovery available until the sweep lands.
+ * The claim is committed before the document stage runs and before the provider
+ * call, so a worker that dies in between — restart, OOM kill, container
+ * reschedule — leaves the row claimed with no writer. Past this age the claim
+ * is treated as abandoned and a delivery may take it over, which is the only
+ * in-band recovery available until the reconciliation sweep lands.
  */
 const CLAIM_LEASE_MS = 5 * 60_000;
+
+/** The stage's answer: a document (or `null` for a provider that needs none), or a recorded failure. */
+type StageResult =
+  | { readonly outcome: "READY"; readonly document: FiscalIssueDocument | null }
+  | { readonly outcome: "FAILED" };
+
+/** The first schema diagnostics, bounded. The document's bytes never enter a reason. */
+function firstDiagnostics(errors: readonly string[]): string {
+  return errors.slice(0, 3).join("; ") || "The document did not validate against the official XSD.";
+}
 
 @Injectable()
 export class FiscalSubmissionHandler {
   constructor(
     @Inject(PrismaService) private readonly prisma: FiscalHandlerPrisma,
-    @Inject(FISCAL_PROVIDER) private readonly provider: FiscalProviderPort
+    @Inject(FISCAL_PROVIDER) private readonly provider: FiscalProviderPort,
+    @Inject(FISCAL_DOCUMENT_BUILDER) private readonly documentBuilder: FiscalDocumentBuilder,
+    @Inject(STORAGE_PORT) private readonly storage: StoragePort
   ) {}
 
   async handle(job: FiscalSubmissionJob): Promise<void> {
@@ -159,33 +183,41 @@ export class FiscalSubmissionHandler {
     if (PROVIDER_OWNED_OR_TERMINAL.includes(document.status)) {
       return;
     }
-    if (document.status === "SENDING" && !this.isClaimAbandoned(document)) {
-      // A fresh claim belongs to another worker, so this is a duplicate delivery
-      // and must not call the provider again.
+    // `SIGNING` and `SENDING` are committed claims; a fresh one belongs to
+    // another worker, so this is a duplicate delivery and must not touch it.
+    const reclaiming = document.status === "SIGNING" || document.status === "SENDING";
+    if (reclaiming && !this.isClaimAbandoned(document)) {
       return;
     }
 
     const attemptCount = document.attemptCount + 1;
     const startedAt = new Date();
-    // A stale `SENDING` is re-claimed by compare-and-swap on the observed lease
-    // timestamp, so two workers that both see the same abandoned claim cannot
-    // both win it. A `SENDING` row is never claimed by status alone.
-    const claimWhere =
-      document.status === "SENDING"
-        ? {
-            id: document.id,
-            tenantId: document.tenantId,
-            status: "SENDING" as const,
-            lastAttemptAt: document.lastAttemptAt,
-          }
-        : {
-            id: document.id,
-            tenantId: document.tenantId,
-            status: { in: CLAIMABLE_STATUSES },
-          };
+    // The transition guard admits `PENDING|QUEUED|ERROR -> SIGNING`,
+    // `SIGNING -> SENDING` and `SIGNING -> ERROR`, and it does NOT admit
+    // `SENDING -> SIGNING`. A re-claim of an abandoned row therefore KEEPS the
+    // status it observed — `SIGNING` re-claims as `SIGNING`, `SENDING` as
+    // `SENDING` — which is why the re-claim is a compare-and-swap on the
+    // observed lease timestamp rather than a status write; only a row claimed
+    // from `CLAIMABLE_STATUSES` moves to `SIGNING`.
+    const claimWhere = reclaiming
+      ? {
+          id: document.id,
+          tenantId: document.tenantId,
+          status: document.status,
+          lastAttemptAt: document.lastAttemptAt,
+        }
+      : {
+          id: document.id,
+          tenantId: document.tenantId,
+          status: { in: CLAIMABLE_STATUSES },
+        };
     const claimed = await this.prisma.fiscalDocument.updateMany({
       where: claimWhere,
-      data: { status: "SENDING", attemptCount: { increment: 1 }, lastAttemptAt: startedAt },
+      data: {
+        ...(reclaiming ? {} : { status: "SIGNING" }),
+        attemptCount: { increment: 1 },
+        lastAttemptAt: startedAt,
+      },
     });
     if (claimed.count !== 1) return;
 
@@ -194,7 +226,16 @@ export class FiscalSubmissionHandler {
       include: { lines: { orderBy: { position: "asc" } } },
     });
     if (!invoice?.confirmedAt || invoice.number === null) {
-      throw new Error("Fiscal submission invoice snapshot is unavailable");
+      // A stage failure, and terminal: a confirmed invoice is a precondition of
+      // the claim, so a retry cannot conjure one. The sweep re-drives `ERROR`
+      // only when an operator has fixed the data.
+      await this.failStage(
+        document,
+        "INVOICE_SNAPSHOT_UNAVAILABLE",
+        "The fiscal submission's confirmed invoice snapshot is unavailable.",
+        attemptCount
+      );
+      return;
     }
 
     const lines = invoice.lines.map((line) => ({
@@ -218,10 +259,15 @@ export class FiscalSubmissionHandler {
         total: new Prisma.Decimal(0),
       }
     );
+
+    const staged = await this.stageDocument(document, document.status === "SENDING", attemptCount);
+    if (staged.outcome === "FAILED") return;
+
     const request: FiscalIssueRequest = {
       fiscalDocumentId: document.id,
       tenantId: document.tenantId,
       provider: document.provider,
+      document: staged.document,
       invoice: {
         series: invoice.series,
         number: invoice.number,
@@ -243,6 +289,209 @@ export class FiscalSubmissionHandler {
     }
   }
 
+  /**
+   * The stage between the claim and the provider call (ADR-009 §4):
+   *
+   * ```text
+   * build -> store -> xml_storage_key -> XSD gate -> SIGNING -> SENDING
+   * ```
+   *
+   * It runs only when the provider requires a document. With the fake — or any
+   * provider that requires none — the stage is a pass-through: the assembly is
+   * never asked, nothing is stored and no gate runs.
+   *
+   * A re-claimed `SENDING` row does not rebuild: the previous attempt already
+   * stored and gated the document, so the recovery resends the stored bytes —
+   * the same CDC, the same signed XML — because the guard admits no
+   * `SENDING -> SIGNING` and a regenerated document would be a second identity
+   * for one submission.
+   */
+  private async stageDocument(
+    document: FiscalDocumentRecord,
+    resumingSubmission: boolean,
+    attemptCount: number
+  ): Promise<StageResult> {
+    if (!this.provider.requiresSignedDocument) {
+      return { outcome: "READY", document: null };
+    }
+    if (resumingSubmission) {
+      return this.resumeStoredDocument(document, attemptCount);
+    }
+
+    const built = await this.documentBuilder.build({
+      tenantId: document.tenantId,
+      fiscalDocumentId: document.id,
+    });
+    if (built.outcome === "UNAVAILABLE") {
+      await this.failStage(document, built.reasonCode, built.reason, attemptCount);
+      return { outcome: "FAILED" };
+    }
+
+    // Store-then-validate: the bytes reach storage before the gate can refuse
+    // the document, so a refused document stays inspectable, and
+    // `xml_storage_key` is written only after the put succeeded — a document
+    // that was never stored has no key.
+    let storageKey: string;
+    try {
+      const stored = await this.storage.put({
+        key: createOpaqueStorageKey(STORAGE_KEY_PREFIXES.fiscalDocument),
+        body: Buffer.from(built.document.signedXml, "utf8"),
+        contentType: "application/xml",
+      });
+      storageKey = stored.key;
+    } catch {
+      // No raw driver message: it cannot be proven free of the stored bytes.
+      await this.failStage(
+        document,
+        "DOCUMENT_STORAGE_WRITE_FAILED",
+        "The signed document could not be stored; nothing was submitted.",
+        attemptCount
+      );
+      return { outcome: "FAILED" };
+    }
+
+    // The CDC goes with the key: both are read back by a `SENDING` recovery,
+    // and the CDC is the identity the reconciliation asks with when the
+    // hand-over answer is lost (ADR-007 §2).
+    const keyed = await this.prisma.fiscalDocument.updateMany({
+      where: { id: document.id, tenantId: document.tenantId, status: "SIGNING" },
+      data: { xmlStorageKey: storageKey, cdc: built.document.cdc },
+    });
+    if (keyed.count !== 1) {
+      // The claim was stolen; the stored object is an orphan, and this worker
+      // must not submit anything.
+      return { outcome: "FAILED" };
+    }
+
+    if (!(await this.gateSignedDocument(document, built.document.signedXml, attemptCount))) {
+      return { outcome: "FAILED" };
+    }
+
+    const advanced = await this.prisma.fiscalDocument.updateMany({
+      where: { id: document.id, tenantId: document.tenantId, status: "SIGNING" },
+      data: { status: "SENDING" },
+    });
+    if (advanced.count !== 1) {
+      return { outcome: "FAILED" };
+    }
+    return { outcome: "READY", document: built.document };
+  }
+
+  /**
+   * The `SENDING` recovery: the document was stored and gated before the
+   * transition, so this resends exactly those bytes rather than building a
+   * second document for one fiscal number.
+   *
+   * ADR-010 §3 says the XSD gate runs "before every submission", so a resend is
+   * gated exactly like a first submission: the stored bytes go through the same
+   * {@link gateSignedDocument} the forward stage uses. The schema is compiled
+   * once per process and cached, so re-validating costs one validation, and a
+   * document the schema refuses lands on `ERROR` without reaching the provider.
+   */
+  private async resumeStoredDocument(
+    document: FiscalDocumentRecord,
+    attemptCount: number
+  ): Promise<StageResult> {
+    if (document.xmlStorageKey === null || document.cdc === null) {
+      await this.failStage(
+        document,
+        "DOCUMENT_CUSTODY_INCOMPLETE",
+        "The claimed document has no stored signed XML to resubmit.",
+        attemptCount
+      );
+      return { outcome: "FAILED" };
+    }
+    let signedXml: string;
+    try {
+      const stored = await this.storage.get({ key: document.xmlStorageKey });
+      signedXml = stored.body.toString("utf8");
+    } catch {
+      await this.failStage(
+        document,
+        "DOCUMENT_STORAGE_READ_FAILED",
+        "The stored signed document could not be read; nothing was submitted.",
+        attemptCount
+      );
+      return { outcome: "FAILED" };
+    }
+    if (!(await this.gateSignedDocument(document, signedXml, attemptCount))) {
+      return { outcome: "FAILED" };
+    }
+    return { outcome: "READY", document: { cdc: document.cdc, signedXml } };
+  }
+
+  /**
+   * The runtime XSD gate (ADR-010 §3), shared by the forward stage and the
+   * resend recovery.
+   *
+   * It runs on the exact bytes that will be submitted, and it fails closed: an
+   * invalid document lands on `ERROR` with the first diagnostics (bounded, and
+   * carrying no document bytes), and an unusable schema directory lands on
+   * `ERROR` naming the directory. Returns whether the bytes may be submitted.
+   */
+  private async gateSignedDocument(
+    document: FiscalDocumentRecord,
+    signedXml: string,
+    attemptCount: number
+  ): Promise<boolean> {
+    try {
+      const validation = await validateDeAgainstOfficialXsd(signedXml, defaultDteSchemaDirectory());
+      if (!validation.valid) {
+        await this.failStage(
+          document,
+          "XSD_VALIDATION_FAILED",
+          firstDiagnostics(validation.errors),
+          attemptCount
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (!(error instanceof DteSchemaError)) {
+        throw error;
+      }
+      // ADR-010 §3: fail closed and name the directory; a path is not secret.
+      await this.failStage(document, error.failure, error.message, attemptCount);
+      return false;
+    }
+  }
+
+  /**
+   * Lands a stage failure on `ERROR` with a sanitized reason.
+   *
+   * The claim is either `SIGNING` (a fresh claim or a signing recovery) or
+   * `SENDING` (a submission recovery), and the guard admits both to `ERROR`.
+   * The reason is truncated and newline-flattened by {@link truncate}, and the
+   * document's bytes never enter it.
+   */
+  private async failStage(
+    document: FiscalDocumentRecord,
+    reasonCode: string,
+    reason: string,
+    attemptCount: number
+  ): Promise<void> {
+    const code = this.truncate(reasonCode);
+    const message = this.truncate(reason);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.fiscalDocument.updateMany({
+        where: {
+          id: document.id,
+          tenantId: document.tenantId,
+          status: { in: ["SIGNING", "SENDING"] },
+        },
+        data: { status: "ERROR", lastErrorCode: code, lastErrorMessage: message },
+      });
+      await appendAuditLog(tx, {
+        action: "fiscal.document.submission_failed",
+        actorType: "SYSTEM",
+        tenantId: document.tenantId,
+        targetType: "fiscal_document",
+        targetId: document.id,
+        metadata: { outcome: "CONFIGURATION_ERROR", attemptCount },
+      });
+    });
+  }
+
   private async persistResult(
     document: FiscalDocumentRecord,
     result: FiscalIssueResult,
@@ -259,6 +508,17 @@ export class FiscalSubmissionHandler {
     // provider-reported clock `resolvedAt` already comes from, so every
     // timestamp this method writes belongs to one clock domain instead of two.
     const submittedAt = result.outcome === "SUBMITTED" ? new Date(result.resolvedAt) : undefined;
+    // §23.7's Guide: "se recomienda comenzar a realizar la consulta pasados los
+    // 10 minutos de la recepción y luego a intervalos regulares no menores a 10
+    // minutos." The marker is `submitted_at + SIFEN_BATCH_POLL_INTERVAL_MS`, so
+    // the first reconciliation query respects that cadence instead of the
+    // sweep's 60-second clock. It is written in the same conditional update as
+    // `submitted_at`, and the migration that added the column backfilled
+    // existing rows with the same formula.
+    const nextQueryAt =
+      submittedAt === undefined
+        ? undefined
+        : new Date(submittedAt.getTime() + SIFEN_BATCH_POLL_INTERVAL_MS);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.fiscalDocument.updateMany({
@@ -303,6 +563,7 @@ export class FiscalSubmissionHandler {
                   ? {}
                   : { providerReference: result.providerReference }),
                 submittedAt,
+                nextQueryAt,
                 ...(result.cdc === null ? {} : { cdc: result.cdc }),
                 ...(result.externalId === null ? {} : { externalId: result.externalId }),
               }

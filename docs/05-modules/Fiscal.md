@@ -2,7 +2,7 @@
 type: module
 status: implemented
 epic: EPIC-15 + EPIC-16
-updated: 2026-10-04
+updated: 2026-10-09
 ---
 
 # Fiscal
@@ -19,29 +19,42 @@ duplicates no invoice data and never imports Billing ([[DEC-046]], [[DEC-048]],
 Implemented by [[FISC-002]] (data foundation), [[FISC-003]] (provider port and
 fake), [[FISC-004]] (queued submission and the issue command), [[FISC-005]]
 (cancellation hand-off, read contract and staff surface), [[TD-028]] (the
-recovery sweep) and [[FISC-007]] (the tenant signing-material boundary). The
-documented behavior is implemented behavior, not a claim of production
-readiness: the only provider is a deterministic fake, and no real SIFEN adapter
-exists until the rest of [[EPIC-16]].
+recovery sweep), [[FISC-007]] (the tenant signing-material boundary), and
+[[FISC-008]], [[FISC-009]], [[FISC-010]], [[FISC-011]] and [[FISC-012]] for the
+SIFEN Direct path: the DE builder and its XSD gate, the XMLDSig signer, the
+web-service client, the timbrado ranges, the real adapter and the
+reconciliation.
+
+The documented behavior is implemented behavior, not a claim of production
+readiness. Two capabilities are **deliberately absent and fail closed**: the
+worker cannot build a document, because the fiscal identity a DE needs is
+[[FISC-015]]'s, and `cancel` refuses, because SIFEN's cancellation event is
+unprofiled and [[FISC-016]] owns it. Nothing in this module has been proven
+against DNIT; that is [[FISC-013]].
 
 ## Owned tables
 
-| Table                                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fiscal_document`                                               | The tenant-scoped submission record: source `invoice_id`, `provider`, `status`, provider references (`external_id`, `cdc`), XML/KuDE storage keys, sanitized request/response snapshots, attempt counters, last-error fields and the `submitted_at` / `resolved_at` / `cancelled_at` timestamps.                                                                                                                                          |
-| `fiscal_provider`                                               | The provider vocabulary enum: `THIRD_PARTY`, `SIFEN_DIRECT`, `FAKE`.                                                                                                                                                                                                                                                                                                                                                                      |
-| `fiscal_document_status`                                        | The lifecycle enum: `PENDING`, `QUEUED`, `SENDING`, `SUBMITTED`, `APPROVED`, `REJECTED`, `ERROR`, `CANCEL_PENDING`, `CANCELLED`, `SIGNING`. The SIFEN signing stage was deliberately absent while a fake stood in for the provider ([[DEC-047]]); [[FISC-009]] returns it. `SIGNING` is declared **last** because PostgreSQL's `ALTER TYPE ... ADD VALUE` appends — the lifecycle's order lives in the transition guard, not in the enum. |
-| `tenant_secret`                                                 | **RESTRICTED.** One sealed tenant secret: the AES-256-GCM ciphertext, the per-secret data key wrapped by the platform master key, and the master-key version that wrapped it. No plaintext, no unwrapped key and no password is ever stored, and no log, DTO or audit payload may carry a column of this table.                                                                                                                           |
-| `tenant_fiscal_signing_material`                                | **INTERNAL.** The tenant's SIFEN certificate and its metadata, plus an opaque `credential_ref` into `tenant_secret` for the private key. A partial unique index permits at most one `ACTIVE` material per tenant and environment; retirement destroys the stored key and keeps the row as the record.                                                                                                                                     |
-| `fiscal_signing_environment` / `fiscal_signing_material_status` | The `TEST`/`PRODUCTION` environment enum and the `ACTIVE`/`RETIRED` status enum. Evolve additively only.                                                                                                                                                                                                                                                                                                                                  |
+| Table                                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fiscal_document`                                               | The tenant-scoped submission record: source `invoice_id`, `provider`, `status`, provider references (`external_id`, `cdc`), XML/KuDE storage keys, sanitized request/response snapshots, attempt counters, last-error fields, the `submitted_at` / `resolved_at` / `cancelled_at` timestamps, and `next_query_at` — the instant the reconciliation may next query the provider, written by the handler when the row enters `SUBMITTED` and moved forward by the sweep. |
+| `fiscal_provider`                                               | The provider vocabulary enum: `THIRD_PARTY`, `SIFEN_DIRECT`, `FAKE`.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `fiscal_document_status`                                        | The lifecycle enum: `PENDING`, `QUEUED`, `SENDING`, `SUBMITTED`, `APPROVED`, `REJECTED`, `ERROR`, `CANCEL_PENDING`, `CANCELLED`, `SIGNING`. The SIFEN signing stage was deliberately absent while a fake stood in for the provider ([[DEC-047]]); [[FISC-009]] returns it. `SIGNING` is declared **last** because PostgreSQL's `ALTER TYPE ... ADD VALUE` appends — the lifecycle's order lives in the transition guard, not in the enum.                              |
+| `tenant_secret`                                                 | **RESTRICTED.** One sealed tenant secret: the AES-256-GCM ciphertext, the per-secret data key wrapped by the platform master key, and the master-key version that wrapped it. No plaintext, no unwrapped key and no password is ever stored, and no log, DTO or audit payload may carry a column of this table.                                                                                                                                                        |
+| `tenant_fiscal_signing_material`                                | **INTERNAL.** The tenant's SIFEN certificate and its metadata, plus an opaque `credential_ref` into `tenant_secret` for the private key. A partial unique index permits at most one `ACTIVE` material per tenant and environment; retirement destroys the stored key and keeps the row as the record.                                                                                                                                                                  |
+| `fiscal_signing_environment` / `fiscal_signing_material_status` | The `TEST`/`PRODUCTION` environment enum and the `ACTIVE`/`RETIRED` status enum. Evolve additively only.                                                                                                                                                                                                                                                                                                                                                               |
 
 `fiscal_document` is tenant-scoped, carries the composite `(tenant_id, id)`
 ownership key and a composite `RESTRICT` foreign key to `invoice`. It duplicates
 **no** invoice series, number, currency, customer or money: a confirmed invoice
 is immutable, so a consumer reads the request data through the composite
 tenant-ownership reference. Migrations: `20261002000001_fiscal_data_foundation`,
-`20261003000001_fiscal_document_transition_guard` and
-`20261004000001_fiscal_document_cancellation_guard`.
+`20261003000001_fiscal_document_transition_guard`,
+`20261004000001_fiscal_document_cancellation_guard`,
+`20261007000001_fiscal_document_signing_state` (the `SIGNING` state),
+`20261008000001_fiscal_document_provider_reference` (the operation handle, the
+`submitted_at` writer and the `SUBMITTED` edges) and
+`20261009000001_fiscal_document_next_query` (the reconciliation's marker, with a
+bounded backfill for rows already `SUBMITTED`).
 
 `tenant_secret` and `tenant_fiscal_signing_material` are tenant-scoped with a
 composite `(tenant_id, id)` ownership key, and the secret table's reads are
@@ -153,12 +166,51 @@ are never audited.
   `cancelOutcomes`, the last element repeating) that produces **no** XML,
   signature or protocol artifact, because PRD §23 forbids implementing SIFEN
   details from memory.
+- **`FiscalIssueRequest` carries the signed document** ([[ADR-009]]): a required
+  `document: FiscalIssueDocument | null` holding the CDC and the signed bytes,
+  and `FiscalProviderPort.requiresSignedDocument` says whether the provider
+  needs one. A provider whose flag is `true` and that is handed `null` answers
+  `CONFIGURATION_ERROR` — terminal, non-retryable — and never submits or throws.
+  The caller is the side that can build and sign, because the emitter profile,
+  the timbrado and the allocation live in PostgreSQL, which `packages/fiscal`
+  cannot reach.
+- **`SifenDirectFiscalProvider` is the real adapter.** `issue` submits a **lot
+  of one** through the asynchronous service — the Manual's schema admits 1–50
+  `rDE` per lot and the batch is the path whose answer is asynchronous, which is
+  what `SUBMITTED` and the reconciliation exist for — and answers `SUBMITTED`
+  with the lot number as `providerReference` and the document's own CDC, which
+  the batch answer does not carry. `query` asks by the reference when it has one
+  and by the CDC otherwise, so a lost hand-over answer does not lose the
+  document ([[ADR-007]] §2). `cancel` **fails closed** with
+  `CANCELLATION_EVENT_UNPROFILED`: SIFEN's cancellation is an event and its
+  payload is unprofiled ([[FISC-016]]).
+- **The failure partition is total.** The transport's nine failures and the
+  facade's one are mapped explicitly, and only the three where the request may
+  never have arrived — `NETWORK_FAILURE`, `TIMEOUT`, `ABORTED` — are
+  `TRANSIENT_FAILURE`; everything deterministic is terminal, so a retry cannot
+  loop. A parse or serializer refusal is terminal too, and it uses a **fixed
+  reason sentence** rather than the error's message, because the serializer's
+  message can quote the document's first characters.
+- **The snapshot is a descriptor**, not the document: the provider, the service,
+  the CDC and the byte count for a request, and the answer's own code and
+  message for a response. `PROVIDER_SNAPSHOT_ALLOWED_KEYS` carries the two keys
+  a descriptor needs, because the sanitizer redacts an unlisted key.
 - `FiscalProviderModule` is the only place the concrete implementation is
   created, selected from `FISCAL_PROVIDER`. In production an unset value is
-  refused both by `apiEnvSchema` at boot and by the factory, because no
-  production provider exists until EPIC-16 and silently emitting non-fiscal
-  documents is worse than failing fast. `FISCAL_PROVIDER=fake` is the
-  dedicated-demo path.
+  refused both by `apiEnvSchema` at boot and by the factory, because silently
+  emitting non-fiscal documents is worse than failing fast;
+  `FISCAL_PROVIDER=sifen-direct` builds the real adapter and requires
+  `SIFEN_ENVIRONMENT` in production, since an absent value would point a
+  production deployment at the DNIT **test** host. `FISCAL_PROVIDER=fake` is the
+  dedicated-demo path and stays selectable in production, deliberately: the
+  refusal is about absence, not about the fake.
+- **The credential is a port**
+  (`FiscalCredentialPort.read({ tenantId, environment })`), read **per call**
+  and never cached, because the provider is a process singleton and a cached
+  private key would be RESTRICTED material held across tenants ([[ADR-008]] §2).
+  `null` is a state, not an exception: it becomes `CONFIGURATION_ERROR`, which
+  is terminal. Both deployables wire the real port — the worker over its own
+  Prisma client and secret store, the API over its own.
 - A source-text boundary test keeps the concrete provider inside the Fiscal
   composition area and keeps `@newsaas/fiscal` imports out of every other
   domain.
@@ -178,11 +230,24 @@ directly. The job payload carries stable IDs only —
 - The producer is bounded: fail-fast Redis options (`maxRetriesPerRequest: 2`,
   `enableOfflineQueue: false`, 2 s `connectTimeout`) plus a 2 s `queue.add`
   deadline, so a Redis outage cannot hang an HTTP request.
-- The worker claims the document with a compare-and-set into `SENDING`, commits
-  that claim, calls the provider **outside** any transaction, sanitizes both raw
+- The worker claims the document with a compare-and-set into `SIGNING`, runs the
+  **document stage**, moves it to `SENDING` with a compare-and-set on the lease
+  timestamp, calls the provider **outside** any transaction, sanitizes both raw
   payloads, maps the outcome onto the graph and writes one `SYSTEM` audit row
   per attempt. A `TRANSIENT_FAILURE` is persisted as `ERROR` and then rethrown
   so BullMQ's bounded backoff owns the retry.
+- **The document stage is `build -> sign -> QR -> store -> validate`.** The
+  signed XML is stored **before** the XSD gate runs, so a refused document is
+  inspectable, and `xml_storage_key` is written only for a document that was
+  stored. The gate runs on the **signed** document with the schema compiled once
+  per process and **fails closed** — an unusable schema directory is a failure,
+  not a pass — and it runs again on a resend, because [[ADR-010]] §3 says the
+  gate runs before every submission. A stage failure lands on `ERROR` with a
+  sanitized reason and no secret in it. **The build itself is a seam that
+  answers `UNAVAILABLE`** with a named reason: the assembly is [[FISC-015]]'s,
+  so a `sifen-direct` deployment refuses rather than submitting an unbuilt
+  document. With the fake the stage returns before touching the builder, the
+  storage or the gate.
 - The claim is committed before the provider call, so a worker that dies in
   between would strand the row. A five-minute **claim lease** closes that
   window: past the lease the claim is treated as abandoned and a delivery may
@@ -198,6 +263,25 @@ directly. The job payload carries stable IDs only —
   because a deterministic job ID plus `removeOnFail: false` would otherwise make
   the re-add a silent BullMQ dedupe no-op. Each successful re-drive is audited
   as `fiscal.document.submission_requeued` with `actorType: SYSTEM`.
+- **The `ERROR` re-drive is bounded by an attempt cap.** Past it the sweep does
+  not select the row again, so a permanent failure — a schema refusal, a missing
+  fiscal profile — reaches an operator as a row that stays in `ERROR` with its
+  code and count instead of being resubmitted forever. The cap is a count rather
+  than a list of codes, because the result-code catalogue is open and a list
+  would rot. **It is a one-way door**: a capped row cannot be revived by the
+  sweep or by hand, which is why [[TD-029]] is urgent rather than optional.
+- **The reconciliation walks `SUBMITTED`.** A second phase selects the rows
+  whose `next_query_at` is due — the marker exists because the sweep's cadence
+  is 60 seconds while SIFEN's poll is ten minutes (§23.7), and without it every
+  due row would be queried once a minute — and asks the provider through the
+  port: a terminal answer applies the status with its identity and `resolvedAt`;
+  `PROCESSING` leaves the row `SUBMITTED` and moves the marker by the provider's
+  own hint, and **cannot resubmit** because that phase has no queue; `0360` goes
+  back to `ERROR` where the existing re-drive picks it up; and anything else
+  leaves the row `SUBMITTED` with its reason recorded. `attempt_count` counts
+  submissions and never queries. One row's failure is isolated — the guard sits
+  around the application of the answer, records the failure, advances the marker
+  and reports `unapplied` — so a single poisoned answer cannot block the batch.
 - Timing is configurable through `FISCAL_SUBMISSION_SWEEP_INTERVAL_MS` (default
   60 s) and `FISCAL_SUBMISSION_STALE_MS` (default 300 s).
 
@@ -348,17 +432,24 @@ because they are deployment concerns rather than tenant behavior.
   tables, constraints, the trigger catalogue, the transition graph per edge and
   the seed probes. Database suite: **21 files / 416 tests**.
 - `packages/fiscal/src/*` — the port, the fake's ordered scripts, the sanitizer,
-  the queue contract and the PKCS#12 extraction with its base64 fixture. Fiscal
-  suite: **6 files / 60 tests**.
+  the queue contract, the PKCS#12 extraction with its base64 fixture, the DE
+  builder and its official-schema gate, the XMLDSig signer, the SIFEN client
+  (messages, serializer, parser, transport, facade, outcome mapping), the QR
+  with §13.8.4's worked example, the timbrado ranges and profile assembly, the
+  real adapter with its failure partition, and the provider selection. Fiscal
+  suite: **28 files / 577 tests**.
 - `packages/secret-store/src/*` — the port, the envelope crypto, the key ring,
   the two drivers and the opaque key factory. Suite: **5 files / 50 tests**.
 - `apps/api/src/fiscal/*` — the issue, cancel and read integration suites (**21
   cases**), the signing-material service (**22 cases**) and HTTP boundary (**4
   cases**), the boundary rule, the producer deadline and the module composition.
   API suite: **84 files / 1105 tests**.
-- `apps/worker/src/fiscal-submission/*` — the handler's claim, lease, outcome
-  mapping and audit, the consumer, and the recovery sweep. Worker suite: **9
-  files / 72 tests**.
+- `apps/worker/src/fiscal-submission/*` — the handler's claim, lease, stage,
+  custody, outcome mapping and audit, the document seam, the consumer, and the
+  reconciliation sweep with its two phases, its cap and its isolation. Worker
+  suite: **11 files / 140 tests**.
+- `packages/fiscal-persistence/src/*` — the moved timbrado range store, the
+  emitter-profile read and the credential read. Suite: **3 files / 27 tests**.
 - `apps/web/src/app/(app)/app/fiscal/*` and
   `apps/web/src/app/api/fiscal/[[...path]]/route.test.ts` — client, display,
   validation, outcome, panels, workspace states and the proxy contract (**7
@@ -373,8 +464,22 @@ because they are deployment concerns rather than tenant behavior.
 
 ## Known limitations
 
-- The only provider is a deterministic fake. No real SIFEN adapter, XML,
-  signature or KuDE exists until the rest of [[EPIC-16]].
+- **The worker cannot build a document.** The stage fails closed behind a seam
+  whose reason names [[FISC-015]], so a `sifen-direct` deployment cannot issue
+  until the assembly lands.
+- **`cancel` fails closed** with `CANCELLATION_EVENT_UNPROFILED`: the
+  cancellation event's payload is unprofiled and [[FISC-016]] owns it.
+- **Nothing has been proven against DNIT.** No submission has reached SIFEN, the
+  certificate is a fixture and the CSC is a stand-in; that is [[FISC-013]].
+- **No deployment input exists for a trust-anchor override** (`caPem`): the
+  transport's own trust store is the only reviewed configuration.
+- **A capped `ERROR` row cannot be revived** — the sweep stops selecting it and
+  the attempts-monotonic trigger forbids lowering the count ([[TD-029]]).
+- **A lost claim after a successful `put` orphans a storage object**; nothing
+  deletes it.
+- **A query that can never resolve stays `SUBMITTED`** with its marker moving
+  and its reason recorded; there is no query-side cap by design ([[ADR-007]]
+  §6).
 - **We own the master key.** Losing `SECRET_STORE_MASTER_KEYS` makes every
   stored private key unrecoverable. Backup and custody of that value are an
   operational requirement the code cannot satisfy.

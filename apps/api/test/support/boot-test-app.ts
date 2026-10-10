@@ -115,6 +115,7 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
   let fakeProvider = createFakeFiscalProvider();
   const fiscalProvider: ScriptableFiscalProvider = {
     provider: "FAKE",
+    requiresSignedDocument: false,
     cancelRequests,
     issueRequests,
     scriptCancel: (outcomes) => {
