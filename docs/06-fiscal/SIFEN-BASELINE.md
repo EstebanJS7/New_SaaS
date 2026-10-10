@@ -968,9 +968,20 @@ is **not** the schema's:
 
 ```text
 D201  iNatRec    1 = contribuyente, 2 = no contribuyente
-D202  iTiOpe     1..4  (D202 = 3 is B2G, D202 = 4 is B2C)
+D202  iTiOpe     1..4  (1 = B2B, 2 = B2C, 3 = B2G, 4 = B2F)
 D206  dRucRec    Obligatorio si D201 = 1 ; No informar si D201 = 2
 D207  dDVRec     Obligatorio si existe el campo D206   (algoritmo módulo 11)
+```
+
+**Correction, 2026-10-10.** This table first recorded `D202 = 4` as B2C, which
+the Manual's own receptor table contradicts (`D202`: "1= B2B 2= B2C 3= B2G 4=
+B2F (Esta última opción debe utilizarse solo en caso de servicios para empresas
+o personas físicas del exterior)"), and which NT 010's validation `D202`/1300
+confirms in the same file at §22.11. The pairing above is the corrected one, and
+[[FISC-015]]'s schema stores the four **names** rather than the codes so a
+re-reading cannot reintroduce the wrong one.
+
+```text
 D208  iTipIDRec  Obligatorio si D201 = 2 y D202 ≠ 4 ; No informar si D201 = 1 o D202 = 4
                  1 = Cédula paraguaya   2 = Pasaporte   3 = Cédula extranjera
                  4 = Carnet de residencia   5 = Innominado

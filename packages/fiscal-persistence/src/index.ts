@@ -29,3 +29,33 @@ export type {
   FiscalCredentialReaderArgs,
   FiscalSigningMaterialReadRow,
 } from "./fiscal-credential.reader.js";
+
+// FISC-015 WU-C: the tenant's fiscal identity, read through the same shape — a
+// structural client, the tenant in the `where`, no ambient context and no Prisma
+// type crossing into `packages/fiscal`.
+export { createTaxClassificationReader } from "./tax-classification.read.js";
+export type {
+  DteIvaAffectation,
+  StoredIvaAffectation,
+  TaxClassification,
+  TaxClassificationReadClient,
+  TenantTaxClassificationRow,
+} from "./tax-classification.read.js";
+
+export { createCustomerFiscalReader } from "./customer-fiscal.read.js";
+export type {
+  CustomerFiscalReadClient,
+  CustomerFiscalRow,
+  FiscalOperationType,
+} from "./customer-fiscal.read.js";
+
+// The CSC read returns RESTRICTED material. Its shape is the credential port's,
+// and nothing that consumes it may log, serialize or echo the value.
+export { createFiscalCscReader } from "./fiscal-csc.reader.js";
+export type {
+  FiscalCsc,
+  FiscalCscPort,
+  FiscalCscReadClient,
+  FiscalCscReadRow,
+  FiscalCscReaderArgs,
+} from "./fiscal-csc.reader.js";

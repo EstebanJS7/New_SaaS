@@ -34,7 +34,14 @@ import {
   type FiscalSubmissionProducer,
 } from "../src/fiscal/fiscal-submission.producer.js";
 import { allocateDocumentNumber, type FiscalSubmissionJob } from "@newsaas/fiscal";
-import { createTimbradoRangeStore } from "@newsaas/fiscal-persistence";
+import {
+  createCustomerFiscalReader,
+  createFiscalCscReader,
+  createFiscalProfileReader,
+  createTaxClassificationReader,
+  createTimbradoRangeStore,
+} from "@newsaas/fiscal-persistence";
+import { InMemorySecretStore } from "@newsaas/secret-store";
 
 interface ErrorEnvelope {
   error: { code: string };
@@ -17155,6 +17162,548 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(await prisma.fiscalDocument.count({ where: { tenantId: tenantAId } })).toBe(
         fiscalDocumentBaseline
       );
+    }, 30_000);
+  });
+
+  describe("EPIC-16 FISC-015 fiscal identity", () => {
+    /**
+     * The applied database is where a hand-written migration is actually proved:
+     * a CHECK PostgreSQL never accepted is not a CHECK, and the two rules that
+     * span two tables each — the classification against `tax_rate`, and the bound
+     * on the ACTIVE CSCs — can only be exercised here.
+     *
+     * Every case runs inside ONE transaction that is always rolled back. These
+     * tables carry RESTRICT references and a no-delete convention, so a committed
+     * probe row would be permanent; and a rejected statement aborts its
+     * transaction, which is why each expected failure gets its own.
+     */
+    class Fisc015Rollback extends Error {}
+
+    type Fisc015Tx = Prisma.TransactionClient;
+
+    const inRollback = async (work: (tx: Fisc015Tx) => Promise<void>): Promise<void> => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw new Fisc015Rollback();
+        })
+      ).rejects.toThrow(Fisc015Rollback);
+    };
+
+    /** The database's PRIMARY message only, never the row detail it echoes. */
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
+      const serverRender = (match ? match[1] : text).replace(/^ERROR: /, "");
+      return serverRender.split("\n")[0];
+    };
+
+    /**
+     * Runs exactly ONE statement, expects the database to refuse it, and answers
+     * the refusal.
+     *
+     * One statement, because a rejected statement aborts its transaction: a second
+     * probe in the same one would report "current transaction is aborted" instead
+     * of the constraint under test. Most of this migration's rules are refusals,
+     * so this is the shape every case below uses.
+     */
+    const rejectionMessage = async (
+      statement: (tx: Fisc015Tx) => Promise<unknown>
+    ): Promise<string> => {
+      const outcome = await prisma
+        .$transaction(async (tx) => {
+          await statement(tx);
+          throw new Fisc015Rollback();
+        })
+        .then(
+          () => null,
+          (error: unknown) => error
+        );
+      if (outcome === null || outcome instanceof Fisc015Rollback) {
+        throw new Error("Expected the statement to be rejected by the database");
+      }
+      return databaseMessage(outcome);
+    };
+
+    const insertClassification = (
+      tx: Fisc015Tx,
+      tenantId: string,
+      rateCode: string,
+      affectation: string,
+      proportionality: string | null = null
+    ) =>
+      tx.$executeRaw`
+        INSERT INTO "tenant_tax_classification" (
+          "tenant_id", "rate_code", "affectation", "proportionality"
+        ) VALUES (
+          ${tenantId}::uuid, ${rateCode}, ${affectation}::fiscal_iva_affectation,
+          ${proportionality}::numeric
+        )
+      `;
+
+    const insertCsc = (
+      tx: Fisc015Tx,
+      tenantId: string,
+      environment: string,
+      idCsc: string,
+      secretRef: string
+    ) =>
+      tx.$executeRaw`
+        INSERT INTO "tenant_fiscal_csc" (
+          "tenant_id", "environment", "id_csc", "secret_ref"
+        ) VALUES (
+          ${tenantId}::uuid, ${environment}::fiscal_signing_environment, ${idCsc}, ${secretRef}
+        )
+      `;
+
+    /** One establishment and one profile for a tenant, inside the caller's tx. */
+    const insertEstablishmentAndProfile = async (
+      tx: Fisc015Tx,
+      tenantId: string
+    ): Promise<string> => {
+      const establishmentId = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "fiscal_establishment" (
+          "id", "tenant_id", "code", "address_line", "house_number",
+          "department_code", "city_code", "city_name", "phone", "email"
+        ) VALUES (
+          ${establishmentId}::uuid, ${tenantId}::uuid, '001', 'Av. Siempre Viva',
+          742, 1, 1, 'ASUNCION', '021123456', 'fiscal@example.test'
+        )
+      `;
+      await tx.$executeRaw`
+        INSERT INTO "fiscal_emitter_profile" (
+          "tenant_id", "ruc", "check_digit", "taxpayer_type", "legal_name",
+          "tax_type", "emission_type"
+        ) VALUES (
+          ${tenantId}::uuid, '80012345', '6', 2, 'Veterinaria Sur S.A.', 1, 1
+        )
+      `;
+      return establishmentId;
+    };
+
+    /** The whole default issuance point, which the CHECK requires to be atomic. */
+    const declareIssuancePoint = (tx: Fisc015Tx, tenantId: string, establishmentId: string) =>
+      tx.$executeRaw`
+        UPDATE "fiscal_emitter_profile"
+        SET "default_establishment_id" = ${establishmentId}::uuid,
+            "default_expedition_point" = '001',
+            "default_document_type" = 1
+        WHERE "tenant_id" = ${tenantId}::uuid
+      `;
+
+    it("applies the three enums with the protocol's own value sets", async () => {
+      const rows = await prisma.$queryRaw<{ typname: string; enumlabel: string }[]>`
+        SELECT t.typname, e.enumlabel
+        FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+        WHERE t.typname IN (
+          'fiscal_iva_affectation', 'fiscal_operation_type', 'fiscal_csc_status'
+        )
+        ORDER BY t.typname, e.enumsortorder
+      `;
+
+      // `tiAfecIVA` §21.5, `iTiOpe` §22.3 and the CSC's own lifecycle: the applied
+      // labels are the protocol's, in the order the migration declares them.
+      expect(
+        rows.filter((row) => row.typname === "fiscal_iva_affectation").map((r) => r.enumlabel)
+      ).toEqual(["GRAVADO_IVA", "EXONERADO", "EXENTO", "GRAVADO_PARCIAL"]);
+      expect(
+        rows.filter((row) => row.typname === "fiscal_operation_type").map((r) => r.enumlabel)
+      ).toEqual(["B2B", "B2C", "B2G", "B2F"]);
+      expect(
+        rows.filter((row) => row.typname === "fiscal_csc_status").map((r) => r.enumlabel)
+      ).toEqual(["ACTIVE", "RETIRED"]);
+    }, 30_000);
+
+    it("admits the pairs the protocol pairs, and refuses the rest", async () => {
+      await inRollback(async (tx) => {
+        // Rate 0 with the two untaxed affectations, 5 or 10 with the two taxed
+        // ones — `dTasaIVA`'s observation (§21). EXONERADO shares rate 0 with
+        // EXENTO, so it needs its own tenant: the unique is (tenant, rate code).
+        await expect(insertClassification(tx, tenantAId, "EXEMPT", "EXENTO")).resolves.toBe(1);
+        await expect(insertClassification(tx, tenantAId, "IVA_5", "GRAVADO_IVA")).resolves.toBe(1);
+        await expect(
+          insertClassification(tx, tenantAId, "IVA_10", "GRAVADO_PARCIAL", "50.00")
+        ).resolves.toBe(1);
+        await expect(insertClassification(tx, tenantBId, "EXEMPT", "EXONERADO")).resolves.toBe(1);
+      });
+
+      // A mismatched pair is refused by the trigger, and the message names both
+      // sides so an operator can see which one is wrong.
+      await expect(
+        rejectionMessage((tx) => insertClassification(tx, tenantAId, "IVA_5", "EXENTO"))
+      ).resolves.toBe("affectation EXENTO needs rate 0, but tax rate IVA_5 carries 5.00");
+      await expect(
+        rejectionMessage((tx) => insertClassification(tx, tenantAId, "EXEMPT", "GRAVADO_IVA"))
+      ).resolves.toBe(
+        "affectation GRAVADO_IVA needs a taxed rate, but tax rate EXEMPT carries 0.00"
+      );
+    }, 30_000);
+
+    it("refuses a proportionality that does not belong to its affectation", async () => {
+      // The pairing is an iff, so both directions are refused, and the bound is
+      // `tPorcDesc8`'s own 0..100 rather than the column's wider DECIMAL(5,2).
+      // Each probe pairs a rate the TRIGGER accepts, so the CHECK is what answers.
+      await expect(
+        rejectionMessage((tx) => insertClassification(tx, tenantAId, "IVA_10", "GRAVADO_PARCIAL"))
+      ).resolves.toMatch(/tenant_tax_classification_proportionality_iff_partial/);
+      await expect(
+        rejectionMessage((tx) => insertClassification(tx, tenantAId, "EXEMPT", "EXENTO", "10.00"))
+      ).resolves.toMatch(/tenant_tax_classification_proportionality_iff_partial/);
+      await expect(
+        rejectionMessage((tx) =>
+          insertClassification(tx, tenantAId, "IVA_10", "GRAVADO_PARCIAL", "120.00")
+        )
+      ).resolves.toMatch(/tenant_tax_classification_proportionality_dPropIVA/);
+    }, 30_000);
+
+    it("keeps one declaration per rate code per tenant", async () => {
+      await inRollback(async (tx) => {
+        // Another tenant declares the same code independently: the rate is
+        // global, the declaration is not.
+        await expect(
+          insertClassification(tx, tenantBId, "IVA_5", "GRAVADO_PARCIAL", "20.00")
+        ).resolves.toBe(1);
+      });
+
+      // The duplicate is refused, and a raw unique violation names the KEY it
+      // collided on rather than the index: `(tenant_id, rate_code)` is this
+      // index's own tuple, and the catalog assertion below pins the index itself.
+      await expect(
+        rejectionMessage(async (tx) => {
+          await insertClassification(tx, tenantAId, "IVA_5", "GRAVADO_IVA");
+          return insertClassification(tx, tenantAId, "IVA_5", "GRAVADO_IVA");
+        })
+      ).resolves.toMatch(/Key \(tenant_id, rate_code\)/);
+    }, 30_000);
+
+    it("refuses to move a rate while a tenant classification reads it", async () => {
+      await expect(
+        rejectionMessage(async (tx) => {
+          await insertClassification(tx, tenantAId, "EXEMPT", "EXENTO");
+          return tx.$executeRaw`UPDATE "tax_rate" SET "rate" = 5.00 WHERE "code" = 'EXEMPT'`;
+        })
+      ).resolves.toBe(
+        "the rate of tax rate EXEMPT cannot change while a tenant classification reads it"
+      );
+
+      await inRollback(async (tx) => {
+        await insertClassification(tx, tenantAId, "EXEMPT", "EXENTO");
+        // The seed's own idempotent re-run writes an update that does not move
+        // the rate, and that must keep working: the guard fires only on a move.
+        await expect(
+          tx.$executeRaw`UPDATE "tax_rate" SET "rate" = "rate" WHERE "code" = 'EXEMPT'`
+        ).resolves.toBe(1);
+      });
+    }, 30_000);
+
+    it("bounds a taxpayer's ACTIVE CSCs at two, per environment", async () => {
+      await expect(
+        rejectionMessage(async (tx) => {
+          await insertCsc(tx, tenantAId, "TEST", "0001", "fiscal-csc/0001");
+          await insertCsc(tx, tenantAId, "TEST", "0002", "fiscal-csc/0002");
+          return insertCsc(tx, tenantAId, "TEST", "0003", "fiscal-csc/0003");
+        })
+      ).resolves.toBe(
+        `tenant ${tenantAId} already holds two ACTIVE CSCs for environment TEST: ` +
+          "SIFEN allows up to two active, so retire one first"
+      );
+
+      await inRollback(async (tx) => {
+        // §24.2: "permitiéndose hasta dos códigos de seguridad en estado activo".
+        await expect(insertCsc(tx, tenantAId, "TEST", "0001", "fiscal-csc/0001")).resolves.toBe(1);
+        await expect(insertCsc(tx, tenantAId, "TEST", "0002", "fiscal-csc/0002")).resolves.toBe(1);
+        // The bound is per environment, so production is a separate pair.
+        await expect(
+          insertCsc(tx, tenantAId, "PRODUCTION", "0001", "fiscal-csc/prod-0001")
+        ).resolves.toBe(1);
+        // And another tenant has its own pair.
+        await expect(insertCsc(tx, tenantBId, "TEST", "0001", "fiscal-csc/b-0001")).resolves.toBe(
+          1
+        );
+      });
+    }, 30_000);
+
+    it("refuses a second ACTIVE row for the same identifier", async () => {
+      // One ACTIVE row is not the bound, so this reaches the partial unique index
+      // rather than the trigger: two ACTIVE rows claiming the same `IdCSC` would
+      // make the QR's identifier ambiguous.
+      await expect(
+        rejectionMessage(async (tx) => {
+          await insertCsc(tx, tenantAId, "TEST", "0001", "fiscal-csc/0001");
+          return insertCsc(tx, tenantAId, "TEST", "0001", "fiscal-csc/0001-again");
+        })
+      ).resolves.toMatch(/Key \(tenant_id, environment, id_csc\)/);
+
+      await inRollback(async (tx) => {
+        await insertCsc(tx, tenantAId, "TEST", "0001", "fiscal-csc/0001");
+        // The index's predicate is what makes a retirement free the identifier
+        // again: a RETIRED row is outside it.
+        await tx.$executeRaw`
+          UPDATE "tenant_fiscal_csc"
+          SET "status" = 'RETIRED', "retired_at" = now(), "retirement_reason" = 'rotated'
+          WHERE "tenant_id" = ${tenantAId}::uuid AND "id_csc" = '0001'
+        `;
+        await expect(
+          insertCsc(tx, tenantAId, "TEST", "0001", "fiscal-csc/0001-again")
+        ).resolves.toBe(1);
+      });
+    }, 30_000);
+
+    it("pins the CSC's identifier length and its retirement invariants", async () => {
+      await expect(
+        rejectionMessage((tx) => insertCsc(tx, tenantAId, "TEST", "001", "fiscal-csc/x"))
+      ).resolves.toMatch(/tenant_fiscal_csc_id_csc_four_characters/);
+
+      await expect(
+        rejectionMessage(
+          (tx) =>
+            tx.$executeRaw`
+            INSERT INTO "tenant_fiscal_csc" (
+              "tenant_id", "environment", "id_csc", "secret_ref", "status"
+            ) VALUES (
+              ${tenantAId}::uuid, 'TEST'::fiscal_signing_environment, '0004', 'fiscal-csc/4',
+              'RETIRED'::fiscal_csc_status
+            )
+          `
+        )
+      ).resolves.toMatch(/tenant_fiscal_csc_retired_at_iff_retired/);
+    }, 30_000);
+
+    it("makes the default issuance point atomic and tenant-owned", async () => {
+      // A point without an establishment identifies no range, so a half
+      // declaration is not a state a reader could act on.
+      await expect(
+        rejectionMessage(async (tx) => {
+          await insertEstablishmentAndProfile(tx, tenantAId);
+          return tx.$executeRaw`
+            UPDATE "fiscal_emitter_profile" SET "default_expedition_point" = '001'
+            WHERE "tenant_id" = ${tenantAId}::uuid
+          `;
+        })
+      ).resolves.toMatch(/fiscal_emitter_profile_default_issuance_point_all_or_nothing/);
+
+      // `tiTiDE` (§21.5) admits 1, 4, 5, 6, 7, 9 and 10, and nothing else.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const establishmentId = await insertEstablishmentAndProfile(tx, tenantAId);
+          await declareIssuancePoint(tx, tenantAId, establishmentId);
+          return tx.$executeRaw`
+            UPDATE "fiscal_emitter_profile" SET "default_document_type" = 2
+            WHERE "tenant_id" = ${tenantAId}::uuid
+          `;
+        })
+      ).resolves.toMatch(/fiscal_emitter_profile_default_document_type_tiTiDE/);
+
+      // `tdPunExp` (§21.3) is three zero-padded digits.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const establishmentId = await insertEstablishmentAndProfile(tx, tenantAId);
+          await declareIssuancePoint(tx, tenantAId, establishmentId);
+          return tx.$executeRaw`
+            UPDATE "fiscal_emitter_profile" SET "default_expedition_point" = '1'
+            WHERE "tenant_id" = ${tenantAId}::uuid
+          `;
+        })
+      ).resolves.toMatch(/fiscal_emitter_profile_default_expedition_point_tdPunExp/);
+
+      await inRollback(async (tx) => {
+        const establishmentId = await insertEstablishmentAndProfile(tx, tenantAId);
+        await expect(declareIssuancePoint(tx, tenantAId, establishmentId)).resolves.toBe(1);
+      });
+
+      // The composite FK makes a cross-tenant default establishment
+      // unrepresentable rather than merely rejected by a service.
+      await expect(
+        rejectionMessage(async (tx) => {
+          await insertEstablishmentAndProfile(tx, tenantAId);
+          const foreignEstablishmentId = randomUUID();
+          await tx.$executeRaw`
+            INSERT INTO "fiscal_establishment" (
+              "id", "tenant_id", "code", "address_line", "house_number",
+              "department_code", "city_code", "city_name", "phone", "email"
+            ) VALUES (
+              ${foreignEstablishmentId}::uuid, ${tenantBId}::uuid, '001', 'Otra casa',
+              1, 1, 1, 'ASUNCION', '021999999', 'otra@example.test'
+            )
+          `;
+          return declareIssuancePoint(tx, tenantAId, foreignEstablishmentId);
+        })
+      ).resolves.toMatch(/fiscal_emitter_profile_tenant_id_default_establishment_id_fkey/);
+    }, 30_000);
+
+    it("applies the indexes the migration declares, partial predicate included", async () => {
+      const rows = await prisma.$queryRaw<{ indexname: string; indexdef: string }[]>`
+        SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname IN (
+          'tenant_tax_classification_tenant_id_id_key',
+          'tenant_tax_classification_tenant_id_rate_code_key',
+          'tenant_tax_classification_rate_code_idx',
+          'tenant_fiscal_csc_tenant_id_id_key',
+          'tenant_fiscal_csc_tenant_id_status_idx',
+          'tenant_fiscal_csc_one_active_per_id_key'
+        )
+        ORDER BY indexname
+      `;
+      const byName = new Map(rows.map((row) => [row.indexname, row.indexdef]));
+
+      expect(byName.get("tenant_tax_classification_tenant_id_id_key")).toContain(
+        "USING btree (tenant_id, id)"
+      );
+      expect(byName.get("tenant_tax_classification_tenant_id_rate_code_key")).toContain(
+        "USING btree (tenant_id, rate_code)"
+      );
+      expect(byName.get("tenant_fiscal_csc_tenant_id_id_key")).toContain(
+        "USING btree (tenant_id, id)"
+      );
+      expect(byName.get("tenant_fiscal_csc_tenant_id_status_idx")).toContain(
+        "USING btree (tenant_id, status)"
+      );
+      // The predicate is what makes "at most one ACTIVE row per identifier" real,
+      // and it is the half Prisma cannot express — a plain unique index would
+      // admit a RETIRED duplicate and refuse the second registration.
+      expect(byName.get("tenant_fiscal_csc_one_active_per_id_key")).toContain(
+        "USING btree (tenant_id, environment, id_csc) WHERE (status = 'ACTIVE'::fiscal_csc_status)"
+      );
+    }, 30_000);
+
+    it("leaves the new columns nullable and undefaulted on the applied database", async () => {
+      await inRollback(async (tx) => {
+        const customerId = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "customer" ("id", "tenant_id", "kind", "display_name")
+          VALUES (${customerId}::uuid, ${tenantAId}::uuid, 'COMPANY', 'Cliente sin declarar')
+        `;
+        const [customer] = await tx.$queryRaw<{ fiscal_operation_type: string | null }[]>`
+          SELECT "fiscal_operation_type" FROM "customer" WHERE "id" = ${customerId}::uuid
+        `;
+        // A DEFAULT here would silently classify a customer, which DEC-057 Q2
+        // refused for all four values.
+        expect(customer?.fiscal_operation_type).toBeNull();
+
+        const itemId = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "catalog_item" ("id", "tenant_id", "kind", "name", "tax_rate_id")
+          SELECT ${itemId}::uuid, ${tenantAId}::uuid, 'PRODUCT', 'Item sin unidad', "id"
+          FROM "tax_rate" WHERE "code" = 'IVA_10'
+        `;
+        const [item] = await tx.$queryRaw<{ unit_of_measure_code: string | null }[]>`
+          SELECT "unit_of_measure_code" FROM "catalog_item" WHERE "id" = ${itemId}::uuid
+        `;
+        expect(item?.unit_of_measure_code).toBeNull();
+
+        // And the code the protocol publishes is accepted as supplied.
+        await tx.$executeRaw`
+          UPDATE "catalog_item" SET "unit_of_measure_code" = '2366' WHERE "id" = ${itemId}::uuid
+        `;
+        await expect(
+          tx.$executeRaw`
+            UPDATE "catalog_item" SET "unit_of_measure_code" = '' WHERE "id" = ${itemId}::uuid
+          `
+        ).rejects.toThrow(/catalog_item_unit_of_measure_code_cUniMed/);
+      });
+    }, 30_000);
+
+    it("answers the readers from the tenant's own rows and nothing else", async () => {
+      const cscValue = "ABCD0000000000000000000000000001";
+      const secrets = new InMemorySecretStore();
+      await secrets.put({ tenantId: tenantAId, key: "fiscal-csc/0001", value: cscValue });
+
+      await inRollback(async (tx) => {
+        // Tenant B declares everything; tenant A declares nothing.
+        await insertClassification(tx, tenantBId, "IVA_5", "GRAVADO_IVA");
+        await insertCsc(tx, tenantBId, "TEST", "0001", "fiscal-csc/0001");
+        const customerBId = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "customer" (
+            "id", "tenant_id", "kind", "display_name", "fiscal_operation_type"
+          ) VALUES (
+            ${customerBId}::uuid, ${tenantBId}::uuid, 'COMPANY', 'Cliente B',
+            'B2G'::fiscal_operation_type
+          )
+        `;
+
+        const classifications = createTaxClassificationReader(tx);
+        await expect(classifications.readClassification(tenantAId, "IVA_5")).resolves.toBeNull();
+        await expect(classifications.readClassification(tenantBId, "IVA_5")).resolves.toEqual({
+          rateCode: "IVA_5",
+          affectation: 1,
+          proportionality: null,
+        });
+        await expect(classifications.readClassifications(tenantAId, ["IVA_5"])).resolves.toEqual(
+          []
+        );
+
+        const customers = createCustomerFiscalReader(tx);
+        await expect(customers.readFiscalOperationType(tenantAId, customerBId)).resolves.toBeNull();
+        await expect(customers.readFiscalOperationType(tenantBId, customerBId)).resolves.toBe(
+          "B2G"
+        );
+
+        // The CSC's value comes from the store under the CALLER's tenant, so a
+        // foreign row cannot borrow it: tenant B's row names tenant A's key and
+        // the store's scoping is what refuses.
+        const cscs = createFiscalCscReader({ client: tx, secretStore: secrets });
+        await expect(cscs.read({ tenantId: tenantAId, environment: "TEST" })).resolves.toBeNull();
+        await expect(cscs.read({ tenantId: tenantBId, environment: "TEST" })).resolves.toBeNull();
+      });
+
+      await inRollback(async (tx) => {
+        await insertCsc(tx, tenantAId, "TEST", "0001", "fiscal-csc/0001");
+        const cscs = createFiscalCscReader({ client: tx, secretStore: secrets });
+        await expect(cscs.read({ tenantId: tenantAId, environment: "TEST" })).resolves.toEqual({
+          idCsc: "0001",
+          csc: cscValue,
+        });
+        // The other environment is not a fallback.
+        await expect(
+          cscs.read({ tenantId: tenantAId, environment: "PRODUCTION" })
+        ).resolves.toBeNull();
+      });
+    }, 30_000);
+
+    it("answers the profile's default issuance point from the tenant's own row", async () => {
+      await inRollback(async (tx) => {
+        const establishmentId = await insertEstablishmentAndProfile(tx, tenantAId);
+        const reader = createFiscalProfileReader(tx);
+
+        // Undeclared: the three columns are NULL and the read reports exactly
+        // that, rather than a default.
+        const before = await reader.readProfile(tenantAId);
+        expect(before).toMatchObject({
+          defaultEstablishmentId: null,
+          defaultExpeditionPoint: null,
+          defaultDocumentType: null,
+        });
+
+        await tx.$executeRaw`
+          UPDATE "fiscal_emitter_profile"
+          SET "default_establishment_id" = ${establishmentId}::uuid,
+              "default_expedition_point" = '001',
+              "default_document_type" = 1
+          WHERE "tenant_id" = ${tenantAId}::uuid
+        `;
+        const after = await reader.readProfile(tenantAId);
+        expect(after).toMatchObject({
+          defaultEstablishmentId: establishmentId,
+          defaultExpeditionPoint: "001",
+          defaultDocumentType: 1,
+        });
+        // And the establishment the point names is readable in the same tenant.
+        await expect(reader.readEstablishment(tenantAId, establishmentId)).resolves.not.toBeNull();
+      });
+    }, 30_000);
+
+    it("leaves the new aggregates empty, because every probe rolled back", async () => {
+      expect(await prisma.tenantTaxClassification.count()).toBe(0);
+      expect(await prisma.tenantFiscalCsc.count()).toBe(0);
+      expect(await prisma.customer.count({ where: { fiscalOperationType: { not: null } } })).toBe(
+        0
+      );
+      expect(await prisma.catalogItem.count({ where: { unitOfMeasureCode: { not: null } } })).toBe(
+        0
+      );
+      expect(await prisma.fiscalEmitterProfile.count()).toBe(0);
     }, 30_000);
   });
 });

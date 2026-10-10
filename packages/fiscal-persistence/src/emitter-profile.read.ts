@@ -20,6 +20,13 @@ import type { StoredActivity, StoredEmitterProfile, StoredEstablishment } from "
  * carries; a column the schema marks nullable stays `null` here, and a column the
  * shape requires is read as it is. A default would emit a DE field nobody chose.
  *
+ * **FISC-015 WU-C adds the default issuance point.** The profile row gained the
+ * establishment, the point of expedition and the document type ([[DEC-057]] Q4),
+ * and `readProfile` answers them beside the profile because they are the same
+ * row's columns. They stay `null` when the tenant has declared nothing: resolving
+ * them to a range, and refusing when they do not resolve to exactly one, is the
+ * assembly's step and not this read's.
+ *
  * **Absence is a state, not an error.** A tenant with no profile and an
  * establishment that is not the tenant's are both `null`: the same rule the
  * credential port uses, and the caller decides whether that state is terminal.
@@ -51,6 +58,22 @@ export interface FiscalEmitterProfileRow {
   readonly transactionType: number | null;
   readonly taxType: number;
   readonly emissionType: number;
+  /**
+   * FISC-015 WU-C — the DEFAULT ISSUANCE POINT ([[DEC-057]] Q4), the three
+   * columns that identify the authorisation together. All three are nullable and
+   * all-or-nothing by the migration's CHECK: the tenant declares them, and the
+   * assembly resolves them to exactly one ACTIVE `fiscal_timbrado_range`.
+   *
+   * REQUIRED on the row, nullable in value. Prisma always returns the three
+   * columns, so a client whose SELECT omits one is a row shape the database
+   * cannot produce and must not compile; `null` is the one state "not declared"
+   * and the result below carries it through unchanged.
+   */
+  readonly defaultEstablishmentId: string | null;
+  /** `C006 dPunExp`, three zero-padded digits (§21.3). */
+  readonly defaultExpeditionPoint: string | null;
+  /** `C002 iTiDE` (§21.5): 1 is Factura electrónica. */
+  readonly defaultDocumentType: number | null;
 }
 
 /** One `fiscal_emitter_activity` row: the two `gActEco` columns. */
@@ -102,10 +125,22 @@ export interface FiscalProfileReadClient {
 }
 
 export function createFiscalProfileReader(client: FiscalProfileReadClient): {
-  /** The tenant's emitter profile and its activities, or null when there is none. */
+  /**
+   * The tenant's emitter profile, its activities and its declared default
+   * issuance point — or null when there is no profile.
+   *
+   * The three `default*` fields are the profile row's own columns, mapped 1:1
+   * and not grouped into an object, because that is what they are. They are
+   * all-or-nothing by the migration's CHECK, so `null` on all three is the one
+   * state "the tenant has declared nothing"; the assembly refuses there rather
+   * than defaulting an issuance point.
+   */
   readProfile(tenantId: string): Promise<{
     profile: StoredEmitterProfile;
     activities: readonly StoredActivity[];
+    defaultEstablishmentId: string | null;
+    defaultExpeditionPoint: string | null;
+    defaultDocumentType: number | null;
   } | null>;
   /** One establishment of the tenant, by id. */
   readEstablishment(tenantId: string, establishmentId: string): Promise<StoredEstablishment | null>;
@@ -127,6 +162,9 @@ export function createFiscalProfileReader(client: FiscalProfileReadClient): {
       return {
         profile: toStoredProfile(row),
         activities: activities.map(({ code, description }) => ({ code, description })),
+        defaultEstablishmentId: row.defaultEstablishmentId ?? null,
+        defaultExpeditionPoint: row.defaultExpeditionPoint ?? null,
+        defaultDocumentType: row.defaultDocumentType ?? null,
       };
     },
 

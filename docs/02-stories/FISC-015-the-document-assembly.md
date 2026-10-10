@@ -149,6 +149,29 @@ and against the published worked example of the protocol's own documentation.
 certification run rather than duplicated here: this unit ends when the
 assembly's output is the document FISC-013 submits.
 
+## Known limitations this unit created
+
+- **The at-most-two ACTIVE CSC bound is enforced per statement, not
+  serializably.** Under `READ COMMITTED` two concurrent inserts can each count
+  one active row and both commit, so the trigger can admit a third CSC by one
+  race. Closing the window needs a lock or a slot column, and neither is part of
+  [[DEC-057]].
+- **The units of measure and the currencies have no table anywhere in the
+  repository.** `packages/fiscal/src/dte/dte.catalogues.ts` holds five protocol
+  tables (document type, tax type, transaction type, emission type and
+  departments) and neither `cUniMed`'s nor `cMoneOas`'s; the mapper still takes
+  `currencyDescription` as a caller input. The assembly therefore **adds** two
+  tables from the official XSDs — they are the protocol's own lists, with each
+  code's own description (`PYG → Guarani`, `77 → Unidad - UNI`) — and that work
+  is WU-D's, because it lives in `packages/fiscal`.
+- **`IdCSC`'s alphabet and `cUniMed`'s alphabet are not pinned by any retrieved
+  source**, so the schema enforces only what is cited: four characters for the
+  identifier, and a length for the unit code.
+- **`iTiOpe`'s code-to-name pairing was wrong in the vault**, and the schema
+  stores the four **names** rather than the codes so a re-reading cannot
+  reintroduce it. `SIFEN-BASELINE.md` §22.3 carries the correction and the
+  amendment trail.
+
 ## Out of scope
 
 - **The provider, the stage, the credential and the gate**: [[FISC-012]]'s, and

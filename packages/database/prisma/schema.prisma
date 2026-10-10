@@ -179,6 +179,10 @@ model Tenant {
   fiscalEstablishments        FiscalEstablishment[]
   fiscalTimbradoRanges        FiscalTimbradoRange[]
   fiscalEmitterActivities     FiscalEmitterActivity[]
+  /// EPIC-16 FISC-015: the tenant's own fiscal declarations — which affectation
+  /// each global rate code carries, and the CSCs it holds per environment.
+  tenantTaxClassifications    TenantTaxClassification[]
+  tenantFiscalCscs            TenantFiscalCsc[]
 
   @@map("tenant")
 }
@@ -659,6 +663,27 @@ enum CustomerContactKind {
   @@map("customer_contact_kind")
 }
 
+/// `iTiOpe` (`D202`, `tiTiOpe`): the operation type the tenant declares for a
+/// customer (DEC-057 Q2). The protocol admits exactly four values, `1..4`
+/// (SIFEN-BASELINE.md §22.3), and the four names are the ones the DE's rules
+/// speak in — B2B, B2C, B2G and B2F.
+///
+/// **The names are stored, not the codes, and that is deliberate.** The vault's
+/// record of the code-to-name pairing is NOT consistent: §22.3 reads `D202 = 4`
+/// as B2C, while NT 010's validation `D202`/`1300` reads `4` as B2F and `2` as
+/// B2C. Pinning a code here would freeze one of two conflicting readings into
+/// the database; the declaration the tenant made is what this column carries,
+/// and the code is the assembly's to resolve from a source that decides it.
+/// Values are appended, never reordered or removed. Evolve additively only.
+enum FiscalOperationType {
+  B2B
+  B2C
+  B2G
+  B2F
+
+  @@map("fiscal_operation_type")
+}
+
 /// Tenant-scoped customer aggregate (individual or company). Data
 /// classification: display_name, legal_name, tax_id, first_name, last_name and
 /// document_number are CONFIDENTIAL; application logs must carry IDs only.
@@ -676,6 +701,14 @@ model Customer {
   firstName      String? @map("first_name")
   lastName       String? @map("last_name")
   documentNumber String? @map("document_number")
+
+  /// `iTiOpe` (`D202`): the operation type the tenant declares for this
+  /// customer. NULLABLE AND NOT DEFAULTED — DEC-057 Q2 chose a declaration over
+  /// a derivation and invented no default for any of the four values, because
+  /// `B2G` depends on the DNIT's registry of state entities and the other three
+  /// on facts only the tenant knows. NULL means "not declared", and issuance
+  /// refuses rather than guessing. Data classification: INTERNAL.
+  fiscalOperationType FiscalOperationType? @map("fiscal_operation_type")
 
   isActive Boolean @default(true) @map("is_active")
 
@@ -1290,7 +1323,86 @@ model TaxRate {
   /// reference.
   invoiceLines InvoiceLine[]
 
+  /// EPIC-16 FISC-015: the tenants' fiscal declarations about this rate code.
+  /// The GLOBAL row stays shared; what a code MEANS fiscally is per tenant.
+  tenantClassifications TenantTaxClassification[]
+
   @@map("tax_rate")
+}
+
+/// `iAfecIVA` (`E731`, type `tiAfecIVA`): the four affectations the protocol
+/// admits and nothing else. SIFEN-BASELINE.md §21.5 transcribes the schema's own
+/// pairing — `1` Gravado IVA, `2` Exonerado (Art. 100 - Ley 6380/2019), `3`
+/// Exento, `4` Gravado parcial — and the member order here follows those codes,
+/// but nothing may depend on the ordinal: the pairing is by NAME, exactly as
+/// `dte.catalogues.ts` pairs its codes.
+///
+/// The Manual's TABLA 6 prints a different `Exonerado` wording ("Art.83 -
+/// 125"); the schema's is the current one and the Manual's is historical
+/// (SIFEN-BASELINE.md §22.6). Values are appended, never reordered or removed.
+/// Evolve additively only.
+enum FiscalIvaAffectation {
+  /// `iAfecIVA = 1`: Gravado IVA. `dTasaIVA` is 5 or 10.
+  GRAVADO_IVA
+  /// `iAfecIVA = 2`: Exonerado (Art. 100 - Ley 6380/2019). `dTasaIVA` is 0.
+  EXONERADO
+  /// `iAfecIVA = 3`: Exento. `dTasaIVA` is 0.
+  EXENTO
+  /// `iAfecIVA = 4`: Gravado parcial. `dTasaIVA` is 5 or 10 and `E733 dPropIVA`
+  /// carries the taxed proportion.
+  GRAVADO_PARCIAL
+
+  @@map("fiscal_iva_affectation")
+}
+
+/// INTERNAL: the tenant's fiscal reading of one GLOBAL rate code (DEC-057 Q1).
+///
+/// `tax_rate` is platform-seeded and shared by every tenant, and its `rate` is a
+/// percentage rather than a tax treatment. DEC-057 chose the tenant's
+/// declaration over a derivation because the Manual does not distinguish
+/// _exento_ from _exonerado_: both take rate `0`, and which one a 0% operation
+/// is, is the tenant's tax position rather than something a rate can encode. So
+/// the classification lives here and the rate stays in `tax_rate`.
+///
+/// The protocol's own consistency rule — rate `0` for EXONERADO/EXENTO and rate
+/// `5`/`10` for GRAVADO_IVA/GRAVADO_PARCIAL (`dTasaIVA`'s observation,
+/// SIFEN-BASELINE.md §21) — spans both tables, so the migration enforces it with
+/// a trigger that joins `tax_rate`, plus a guard that refuses to change a rate
+/// while a classification reads it.
+///
+/// A tenant with no row for a rate code has declared nothing, and issuance
+/// refuses; the migration invents no default.
+model TenantTaxClassification {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  /// The GLOBAL rate this declaration reads, by its natural key. RESTRICT, so a
+  /// classified rate cannot be deleted out from under the declaration.
+  rateCode String @map("rate_code")
+
+  /// `E731 iAfecIVA`, the tenant's declaration for this rate code.
+  affectation FiscalIvaAffectation
+
+  /// `E733 dPropIVA`, the taxed proportion of a partially taxed line. Required
+  /// for GRAVADO_PARCIAL and meaningless otherwise; the migration's CHECK
+  /// enforces that pairing and `tPorcDesc8`'s `0..100` bound (SIFEN-BASELINE.md
+  /// §21.4).
+  proportionality Decimal? @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  taxRate TaxRate @relation(fields: [rateCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+
+  /// One declaration per rate code per tenant: a classification is a statement,
+  /// and two statements for one code are not a state.
+  @@unique([tenantId, rateCode])
+  /// Tenant-ownership key: the target a composite reference would use.
+  @@unique([tenantId, id])
+  @@index([rateCode])
+  @@map("tenant_tax_classification")
 }
 
 /// Tenant-scoped catalog item (PRD §15, EPIC-09 WU1). Every item references
@@ -1329,6 +1441,14 @@ model CatalogItem {
   /// explicitly by kind. It is the only stock dimension on the catalog — no
   /// SKU, barcode, category, unit or branch column exists.
   tracksStock Boolean @default(true) @map("tracks_stock")
+
+  /// `cUniMed` (`Unidades_Medida_v141.xsd`, SIFEN-BASELINE.md §22.6): the
+  /// protocol's own unit code, up to four characters (`77` UNI Unidad, `2366`,
+  /// `2329`). NULL is a real state — the item has no declared unit — and the
+  /// assembly refuses rather than guessing one, because the catalogue is the
+  /// protocol's but WHICH unit an item is, is tenant data (DEC-057, "What this
+  /// document does not decide").
+  unitOfMeasureCode String? @map("unit_of_measure_code") @db.VarChar(4)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -2625,6 +2745,19 @@ enum FiscalSigningMaterialStatus {
   @@map("fiscal_signing_material_status")
 }
 
+/// The life of one CSC. `ACTIVE` is the only status the QR builder may use;
+/// `RETIRED` is kept as the permanent record after the secret is destroyed.
+/// Its own enum rather than a reuse of `FiscalSigningMaterialStatus`, following
+/// the repository's per-aggregate status convention (`FiscalTimbradoRangeStatus`
+/// is separate for the same reason). Values are appended, never reordered or
+/// removed. Evolve additively only.
+enum FiscalCscStatus {
+  ACTIVE
+  RETIRED
+
+  @@map("fiscal_csc_status")
+}
+
 /// RESTRICTED: one sealed tenant secret. The plaintext never reaches this
 /// table — only the AES-256-GCM ciphertext, the per-secret data key wrapped by
 /// the master key, and the master-key version that wrapped it (ADR-005). Rows
@@ -2698,6 +2831,59 @@ model TenantFiscalSigningMaterial {
   @@unique([tenantId, id])
   @@index([tenantId, status])
   @@map("tenant_fiscal_signing_material")
+}
+
+/// RESTRICTED: one of the taxpayer's CSCs. The VALUE never reaches this table —
+/// it lives sealed in `tenant_secret` behind `secretRef`, exactly as the private
+/// key does — and `idCsc` is stored beside the reference because the QR carries
+/// the identifier and never the value (§24.2, §24.3).
+///
+/// The Manual's own words are the shape's justification: the CSC is "generado
+/// por el SIFEN y entregado al facturador electrónico" — **per taxpayer**, not
+/// per establishment or per range — and "permitiéndose hasta dos códigos de
+/// seguridad en estado activo" (SIFEN-BASELINE.md §24.2). So it is per tenant
+/// AND per environment, because the test environment's pair is generic while
+/// production's is issued at the emitter's onboarding (DEC-057 Q3).
+///
+/// Two database rules, neither expressible as a plain constraint:
+///
+/// 1. at most one ACTIVE row per `(tenantId, environment, idCsc)` — the partial
+///    unique index the migration declares, because Prisma cannot express one;
+/// 2. at most TWO ACTIVE rows per `(tenantId, environment)` — the bound the
+///    Manual states and a partial unique index cannot express, so the migration
+///    enforces it with a trigger that counts the active rows.
+///
+/// No log, DTO, audit payload or error message may carry `secretRef` or any
+/// secret it names.
+model TenantFiscalCsc {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId    String                      @map("tenant_id") @db.Uuid
+  environment FiscalSigningEnvironment
+  status      FiscalCscStatus @default(ACTIVE)
+
+  /// The QR's `IdCSC` (§24.3): four characters, and the identifier of which of
+  /// the active values was used. Not secret; never the value itself.
+  idCsc String @map("id_csc") @db.VarChar(4)
+
+  /// Opaque key into `tenant_secret`. Never returned by any DTO.
+  secretRef String @map("secret_ref")
+
+  /// Provenance only; the authoritative actor record is the audit row.
+  uploadedByUserProfileId String? @map("uploaded_by_user_profile_id") @db.Uuid
+
+  retiredAt              DateTime? @map("retired_at") @db.Timestamptz(3)
+  retiredByUserProfileId String?   @map("retired_by_user_profile_id") @db.Uuid
+  retirementReason       String?   @map("retirement_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status])
+  @@map("tenant_fiscal_csc")
 }
 
 // ---------------------------------------------------------------------------
@@ -2824,11 +3010,33 @@ model FiscalEmitterProfile {
   /// `iTipEmi`: 1 = Normal, 2 = Contingencia. The default the emitter uses.
   emissionType Int @map("emission_type") @db.SmallInt
 
+  /// The DEFAULT ISSUANCE POINT (DEC-057 Q4): which establishment, which point
+  /// of expedition and which document type the tenant issues from. The three
+  /// together identify the authorisation, and the assembly resolves them to
+  /// exactly one ACTIVE `fiscal_timbrado_range` — refusing when they are absent
+  /// or when they resolve to none or to several.
+  ///
+  /// All three are nullable and none is defaulted, because the tenant declares
+  /// them. The migration makes the declaration ATOMIC (all three or none): a
+  /// point without an establishment identifies no range, so a half-declared
+  /// state would only be a trap.
+  defaultEstablishmentId String? @map("default_establishment_id") @db.Uuid
+  /// `C006 dPunExp`, `tdPunExp`: three digits, zero-padded (§21.3).
+  defaultExpeditionPoint String? @map("default_expedition_point") @db.VarChar(3)
+  /// `C002 iTiDE`, `tiTiDE`: 1, 4, 5, 6, 7, 9 or 10. `1` is Factura
+  /// electrónica (§21.5). The description is derived, never stored.
+  defaultDocumentType Int? @map("default_document_type") @db.SmallInt
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant     Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   activities FiscalEmitterActivity[]
+
+  /// Composite tenant-ownership FK: the default establishment is in the SAME
+  /// tenant, so a cross-tenant default is unrepresentable. Optional as a whole,
+  /// because the declaration itself is optional.
+  defaultEstablishment FiscalEstablishment? @relation(fields: [tenantId, defaultEstablishmentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@map("fiscal_emitter_profile")
@@ -2907,6 +3115,11 @@ model FiscalEstablishment {
 
   tenant Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   ranges FiscalTimbradoRange[]
+
+  /// EPIC-16 FISC-015: the emitter profiles that declare this establishment as
+  /// their default issuance point. The declaration is optional, so this is a
+  /// back-reference and not a requirement.
+  defaultForEmitterProfiles FiscalEmitterProfile[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])

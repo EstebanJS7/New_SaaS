@@ -3,7 +3,7 @@ id: DEC-057
 type: decision
 title:
   The fiscal identity a DE needs — the four product decisions FISC-015 must make
-status: proposed
+status: accepted
 date: 2026-10-10
 related_epics:
   - EPIC-16
@@ -201,8 +201,24 @@ refuses when it does not.
 
 ## Decision
 
-_Pending. The maintainer decides, and the four recommendations above are the
-proposal._
+**Accepted 2026-10-10** by the maintainer, on all four recommendations:
+
+1. **A rate code's fiscal meaning is the tenant's declaration**, carried beside
+   the rate in `tax_rate`; the rate itself is derived, never declared.
+2. **The receptor is derived where the sources pin it and declared where they do
+   not** — `iTiOpe` is the one the tenant declares, because the state-entity
+   determination depends on the DNIT's own registry.
+3. **The CSC is per tenant and per environment, sealed in the secret store**,
+   with its `IdCSC` beside the reference.
+4. **The tenant declares a default issuance point**, validated at issuance
+   against exactly one ACTIVE timbrado range, so the allocation stays inside the
+   confirmation transaction [[DEC-056]] chose.
+
+The four are implemented by [[FISC-015]]: the schema delta in its first
+implementation unit and the assembly in the last one. **No default is invented
+for any of the four**: a tenant that has not declared its classification, its
+operation types, its CSC or its issuance point cannot issue, which is the
+failure this document chose over a document that misstates a tax treatment.
 
 ## PRD Update
 

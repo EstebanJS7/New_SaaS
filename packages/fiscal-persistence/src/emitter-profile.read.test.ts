@@ -11,7 +11,15 @@
 
 import type { Prisma, PrismaService } from "@newsaas/database";
 import { describe, expect, it } from "vitest";
-import { createFiscalProfileReader, type FiscalProfileReadClient } from "./emitter-profile.read.js";
+import {
+  createFiscalProfileReader,
+  type FiscalEmitterProfileRow,
+  type FiscalProfileReadClient,
+} from "./emitter-profile.read.js";
+
+/** A key a value must carry: an optional key resolves to `never` here. */
+type RequiredRowKey<K extends keyof FiscalEmitterProfileRow> =
+  Record<never, never> extends Pick<FiscalEmitterProfileRow, K> ? never : K;
 
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
 const TENANT_B = "22222222-2222-4222-8222-222222222222";
@@ -35,6 +43,9 @@ const PROFILE_ROW = {
   transactionType: 1,
   taxType: 1,
   emissionType: 1,
+  defaultEstablishmentId: ESTABLISHMENT_ID,
+  defaultExpeditionPoint: "001",
+  defaultDocumentType: 1,
   createdAt: new Date("2026-10-01T00:00:00.000Z"),
   updatedAt: new Date("2026-10-02T00:00:00.000Z"),
 };
@@ -90,11 +101,11 @@ class ScopedClient implements FiscalProfileReadClient {
   readonly fiscalEmitterActivity: FiscalProfileReadClient["fiscalEmitterActivity"];
   readonly fiscalEstablishment: FiscalProfileReadClient["fiscalEstablishment"];
 
-  constructor() {
+  constructor(private readonly profileRow: FiscalEmitterProfileRow = PROFILE_ROW) {
     this.fiscalEmitterProfile = {
       findUnique: (args) => {
         this.findUniqueArgs.push(args);
-        return Promise.resolve(args.where.tenantId === TENANT_A ? PROFILE_ROW : null);
+        return Promise.resolve(args.where.tenantId === TENANT_A ? this.profileRow : null);
       },
     };
     this.fiscalEmitterActivity = {
@@ -171,6 +182,50 @@ describe("readProfile", () => {
       { code: "M75000", description: "Actividades veterinarias" },
     ]);
     expect(client.findManyArgs[0]?.orderBy).toEqual({ position: "asc" });
+  });
+
+  it("answers the declared default issuance point beside the profile", async () => {
+    const client = new ScopedClient();
+    const result = await createFiscalProfileReader(client).readProfile(TENANT_A);
+
+    // DEC-057 Q4: the three columns identify the authorisation together and are
+    // answered beside the stored profile, not folded into it.
+    expect(result).toMatchObject({
+      defaultEstablishmentId: ESTABLISHMENT_ID,
+      defaultExpeditionPoint: "001",
+      defaultDocumentType: 1,
+    });
+    expect(result?.profile).not.toHaveProperty("defaultEstablishmentId");
+  });
+
+  it("answers null on all three when the tenant declared no issuance point", async () => {
+    const client = new ScopedClient({
+      ...PROFILE_ROW,
+      defaultEstablishmentId: null,
+      defaultExpeditionPoint: null,
+      defaultDocumentType: null,
+    });
+    const result = await createFiscalProfileReader(client).readProfile(TENANT_A);
+
+    // NULL is the one state "not declared": this read carries it through and
+    // invents no default; resolving or refusing is the assembly's step.
+    expect(result).toMatchObject({
+      defaultEstablishmentId: null,
+      defaultExpeditionPoint: null,
+      defaultDocumentType: null,
+    });
+  });
+
+  it("requires the default issuance columns at the client boundary", () => {
+    // Compile-time: if one of the three ever becomes optional again, its type
+    // here is `never` and this stops compiling. The live-PostgreSQL proof would
+    // not catch the loosening — Prisma's row always carries the columns — so the
+    // unit boundary is what holds it.
+    const establishment: RequiredRowKey<"defaultEstablishmentId"> = "defaultEstablishmentId";
+    const point: RequiredRowKey<"defaultExpeditionPoint"> = "defaultExpeditionPoint";
+    const documentType: RequiredRowKey<"defaultDocumentType"> = "defaultDocumentType";
+
+    expect([establishment, point, documentType]).toHaveLength(3);
   });
 
   it("scopes the profile and its activities to the tenant it was given", async () => {
