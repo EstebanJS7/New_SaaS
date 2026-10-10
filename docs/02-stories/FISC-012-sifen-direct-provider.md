@@ -4,7 +4,7 @@ type: story
 title:
   SifenDirectFiscalProvider — the worker builds, signs and submits a real DE
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-010
@@ -15,7 +15,7 @@ prd_sections:
 permissions: []
 branch: feat/epic-16-fisc-012-sifen-direct-provider
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # FISC-012 — `SifenDirectFiscalProvider`
@@ -381,93 +381,226 @@ added by a **new** migration, never in place.
 
 ## Implementation Summary
 
-**WU-A — the decisions, the Story and the baseline.** [[ADR-009]], [[ADR-010]]
-and [[DEC-055]] accepted 2026-10-08, and `SIFEN-BASELINE.md` **§24** written
+**All six work units are implemented.** The Story replaced the fake with the
+real adapter, gave the worker a document stage, and made the reconciliation walk
+the documents SIFEN has not resolved yet. Twelve commits: six work units, each
+with a record commit beside it.
+
+**WU-A — the decisions, the Story and the baseline** (`7949f04`). [[ADR-009]],
+[[ADR-010]] and [[DEC-055]] accepted, and `SIFEN-BASELINE.md` **§24** written
 from a retrieval that **corrects §14**: the QR was graded open and is pinned by
 the Manual's §13.8, which the earlier extraction had dropped. The finding that
-shaped the rest of the Story: **the QR carries the signature's digest**, so the
-build order is `sign -> qr -> fill`, and the builder needs a placeholder for it.
+shaped the rest: **the QR carries the signature's digest**, so the build order
+is `sign -> qr -> fill`, and the builder needs a placeholder for it.
 
-**WU-B, WU-C, WU-D, WU-E and WU-F are not implemented.** The Story's status
-stays `in-progress`.
+**WU-B — the shared persistence package** (`e20fc6b`). A new
+`@newsaas/fiscal-persistence` holds the Prisma-backed implementations of the
+ports `packages/fiscal` declares — the moved timbrado range store (git records
+both files as **100% renames**), the emitter-profile read and the credential
+read — so the allocation has one implementation instead of two that can drift.
+`packages/fiscal` still depends on neither Prisma nor the database package,
+which is the boundary [[DEC-055]] Q1 protects.
+
+**WU-C — the QR** (`f968843`). `buildQrContent` reproduces **§13.8.4's worked
+example byte for byte**, including its `cHashQR`; the placeholder is exactly 100
+characters (the XSD's minimum, because `buildDteXml` runs the rule before a
+signature exists); and `fillQrContent` escapes and replaces **exactly one**
+occurrence after signing, which the round trip proves: the filled document still
+verifies its signature and still validates against the official XSD.
+
+**WU-D — the stage's four own properties** (`0ca390a`, `8224825`). The port
+carries a required `document: FiscalIssueDocument | null` and
+`requiresSignedDocument`; the worker wires its own secret-store composition root
+and the real credential port, and the stage claims
+`QUEUED -> SIGNING -> SENDING`, stores the signed XML **before** the XSD gate,
+writes `xml_storage_key` only for a document that was stored, and fails closed
+on the assembly behind a seam that answers `UNAVAILABLE`. **[[DEC-056]] narrowed
+this work unit** when the reconnaissance found the assembly's inputs unmodelled.
+
+**WU-E — the provider and the selection** (`5bdd61b`, `9295769`).
+`SifenDirectFiscalProvider` submits a lot of one, answers `SUBMITTED` with the
+lot number and the request's own CDC, chooses its query service by the identity
+it has, and partitions every failure — total, asserted member by member, with
+only the three "the request may never have arrived" failures retryable. `cancel`
+**fails closed** because the event's payload is unprofiled ([[FISC-016]]).
+
+**WU-F — the reconciliation** (`0bdedac`). The sweep walks `SUBMITTED` through a
+new `next_query_at` marker, bounds the `ERROR` re-drive by an attempt cap,
+leaves `PROCESSING` alone, re-drives `0360`, and gates a resend. It closes
+[[TD-028]].
+
+**Two CRITICAL findings arrived before the commit, and both were real.**
+
+1. **`R3-SIFEN-PRODUCTION-DEFAULT` (WU-E2).** `resolveSifenEnvironment`
+   defaulted an absent `SIFEN_ENVIRONMENT` to `TEST` for **every** environment,
+   and the same work unit made the API accept `sifen-direct` in production: a
+   production API could have built the real adapter against the **DNIT test
+   host**. A read-only refuter corroborated it; the bounded correction closed it
+   at the package's factory and the API's schema.
+2. **`R4-001` (WU-F).** The query loop guarded only the provider call, so a
+   rejected write while **applying** an answer threw out of the loop with that
+   row's marker unadvanced — the row was re-selected on every sweep and blocked
+   every other due document. The correction took three rounds; the first two
+   were wrong (a sweep-level catch that hid failures; a diff over the frozen
+   budget).
+
+**Two findings changed the plan rather than the code**, and both are stories
+now:
+
+- **The assembly's inputs are unmodelled** — the invoice's link to its timbrado
+  range, the receptor's fiscal identity, each line's tax treatment, the unit of
+  measure, the currency description and the CSC's storage. [[DEC-056]] records
+  it and [[FISC-015]] owns it; the same decision moved the fiscal number's
+  allocation to **invoice confirmation**.
+- **The cancellation event is unprofiled.** SIFEN's cancellation is an event and
+  `SIFEN-BASELINE.md` §23.3 records that `Evento_v150.xsd`'s field-level rules
+  were never read. [[FISC-016]] owns the profiling, the payload, its signature
+  and the answer's mapping.
 
 ## Verification
 
 ```text
-WU-A   docs only: no code, no migration, no schema, so no package test or live-PG
-       gate applies. `pnpm format-check` green.
+pnpm lint / typecheck / test / build      green - 20/20, 20/20, 21/21, 12/12
+pnpm format-check                         green
+pnpm --filter @newsaas/fiscal test        green - 577 tests, 28 files
+pnpm --filter @newsaas/worker test        green - 140 tests, 11 files
+pnpm --filter @newsaas/database test      green - 445 tests, 24 files
+pnpm --filter @newsaas/api test           green - 1143 passed, 223 skipped
+pnpm --filter @newsaas/fiscal-persistence test  green - 27 tests, 3 files
+pnpm --filter @newsaas/api test:live-pg   green - 223/223
 ```
+
+**Closure run, 2026-10-09, on `feat/epic-16-fisc-012-sifen-direct-provider`**
+(`0bdedac`), against a disposable PostgreSQL 16.13 on `127.0.0.1:55433` started
+with `-c timezone=UTC`, with the migrations and the seed applied by the suite
+itself. The container the earlier runs used (`fisc009-pg`) was unavailable:
+Docker's WSL integration is gone from this environment, so the repo's own
+EPIC-06 practice was followed. **The live-PG suite is timezone-sensitive** — a
+non-UTC server fails a pre-existing FISC-011 date-boundary case by
+constraint-name matching — which is why the server is started with
+`timezone=UTC`, as CI runs it.
 
 ## Tests Added
 
 ```text
-None yet. WU-A adds documents.
+packages/fiscal-persistence/src/*.test.ts       27 cases (the moved store, the
+                                                profile read, the credential read)
+packages/fiscal/src/dte/dte.qr.test.ts          25 cases (the worked example, the
+                                                two hex conversions, the fill)
+packages/fiscal/src/sifen/sifen-direct.provider.test.ts  28 cases (issue, query,
+                                                cancel, the failure partition)
+packages/fiscal/src/fiscal-provider.module.test.ts       the selection and the
+                                                production refusals
+apps/worker/src/fiscal-submission/fiscal-document-builder.test.ts  3 cases
+apps/worker/src/fiscal-submission/fiscal-recovery.service.test.ts  the query
+                                                phase, the cap, the isolation
+apps/worker/src/secret-store/secrets.test.ts     5 cases
+apps/api/src/config/api-env.schema.test.ts       the provider and environment gates
+apps/api/test/live-pg-isolation.e2e-spec.ts      the new column, its index, the
+                                                backfill and the guard's edges
 ```
 
 ## Known Limitations
 
 - **Nothing here is proven against SIFEN.** The CSC's real value comes from the
-  habilitación, the certificate is a fixture, and the test host is behind an F5
-  gate ([[FISC-013]]).
-- **The CSC is per-tenant secret material whose value only SIFEN issues.** The
-  code path is testable with a fixture; the real value is an operator input.
-- **`DTE_XSD_DIR` is an operational requirement.** A deployment that does not
-  provide the schemas cannot submit — fail-closed by decision ([[ADR-010]]).
-- **One certificate serves both uses**, so rotating it invalidates in-flight
-  submissions; [[FISC-007]]'s rotation semantics apply.
-- **The synchronous reception service is implemented and unused by the
-  adapter.** A single-document fast path is a later decision.
-- **A lot holds one document.** A batching window is a later optimization.
+  habilitación, the certificate is a fixture, and no submission has reached
+  DNIT. That is [[FISC-013]]'s homologation run.
+- **The worker cannot build a document yet.** The assembly is [[FISC-015]]'s,
+  and until it lands the stage fails closed with a named reason: a
+  `sifen-direct` deployment cannot issue, by design rather than by accident.
+- **`cancel` fails closed.** The cancellation event's payload is unprofiled
+  ([[FISC-016]]), so the adapter refuses with `CANCELLATION_EVENT_UNPROFILED`
+  rather than sending an event nobody validated.
+- **No deployment input exists for a trust-anchor override** (`caPem`). ADR-008
+  names the per-call list; nothing names an environment variable, so the
+  transport's own trust store is the only reviewed configuration.
+- **A query that can never resolve stays `SUBMITTED` forever**, with its marker
+  moving forward and its reason recorded. There is no query-side cap by design:
+  the row is visible, and [[ADR-007]] §6 leaves a never-resolving document to an
+  operator.
+- **A capped `ERROR` row cannot be revived.** The attempts-monotonic trigger
+  forbids lowering `attempt_count` and no re-drive route exists ([[TD-029]]).
+- **A lost claim after a successful `put` leaves an orphaned storage object.**
+  Nothing deletes it, and no cleanup exists.
+- **The control number is not sequential.** §9.2.1 calls `dId` an emitter
+  responsibility; the adapter draws 15 digits from `node:crypto` with a non-zero
+  leading digit, which satisfies the pattern's enforced properties and not a
+  monotonicity claim only a live service could confirm.
 - **The `0360` re-drive is a reasoned choice, not a proof** ([[DEC-055]] Q3): it
   reads SIFEN's answer as "the lot does not exist", which is the same statement
   as `0420`; only a real service can confirm the reading.
+- **One certificate serves both uses**, so rotating it invalidates in-flight
+  submissions; [[FISC-007]]'s rotation semantics apply.
+- **The synchronous reception service is implemented and unused by the
+  adapter**, and a lot holds one document: a fast path and a batching window are
+  later decisions.
 
 ## Technical Debt
 
-- **The `SUBMITTED` row has no lease of its own**; the reconciliation's clock is
-  `last_attempt_at`, reused from the submission claim ([[ADR-007]] §5 records
-  the reuse). If the two ever need different semantics, a column is the fix.
+- **[[TD-028]] is closed** by WU-F: the sweep re-drives both stuck paths
+  idempotently, with the deterministic job id preserved and each recovery
+  audited.
+- **[[TD-029]] is raised**, not closed: the attempt cap is a **one-way door**,
+  because a capped row cannot be revived by the sweep or by hand. Its own
+  re-evaluation trigger ("EPIC-16 ships a real provider") is met.
 - **The XSD schemas are fetched, not vendored**, so a deployment's gate depends
-  on a step that runs outside this repository ([[ADR-010]], [[FISC-008]]).
-- **The unbounded re-drive is a property of the sweep, not of this Story.**
-  [[ADR-010]]'s Consequences name it: a permanent failure becomes an `ERROR` row
-  the sweep re-drives, and re-driving a document whose data is invalid refuses
-  again. WU-F's criteria bound it; if the bound ends up being a _code list_
-  rather than an attempt count, that list needs a source or it becomes the next
-  guess.
+  on a step outside this repository ([[ADR-010]], [[FISC-008]]).
+- **The review advisories are recorded, not fixed**, in the work-unit records:
+  the `storage.put` failure branch has no test, the leak assertions run on
+  `JSON.stringify(result)` rather than on the sanitized snapshot, and the
+  corrected API test asserts the same production object twice. None is a
+  behavioural defect; each is a test-quality point.
+- **The reconciliation's audit actions are reused** (`fiscal.document.submitted`
+  for a resolution, `fiscal.document.submission_failed` for `0360`), so the
+  reconciliation is distinguishable only through metadata. New vocabulary would
+  need the module doc to grow with it.
 
 ## Decisions / ADRs
 
-- **[[ADR-009]]** — the port's request carries the signed document. Accepted
-  2026-10-08.
-- **[[ADR-010]]** — the XSD gate runs before every submission. Accepted
-  2026-10-08.
-- **[[DEC-055]]** — the scope: the adapters, the QR, the reconciliation.
+- **[[ADR-009]]** — the port's request carries the signed document, and the port
+  gains `requiresSignedDocument`. Accepted 2026-10-08.
+- **[[ADR-010]]** — the XSD gate runs before every submission, and its validator
+  becomes runtime API. Accepted 2026-10-08.
+- **[[DEC-055]]** — the scope: the adapters' home, the QR's ownership and the
+  CSC's, and the reconciliation's rules.
+- **[[DEC-056]]** — the assembly's inputs are unmodelled; the fiscal number is
+  allocated at invoice confirmation; WU-D narrows and [[FISC-015]] is created.
+  Accepted 2026-10-08.
 
 ## Files / Modules
 
 ```text
-docs/04-adrs/ADR-009-the-port-request-carries-the-signed-document.md
-docs/04-adrs/ADR-010-the-runtime-xsd-gate-before-submission.md
-docs/07-decisions/DEC-055-fisc-012-scope-adapters-qr-and-reconciliation.md
-docs/06-fiscal/SIFEN-BASELINE.md          §24 is the QR's source of record
-odd/tasks/fisc-012-sifen-direct-provider.md   the work-unit plan
-```
-
-and, for the WUs that follow:
-
-```text
-packages/fiscal-persistence/**            the Prisma-backed ports (new package)
-packages/fiscal/src/dte/dte.qr.ts         the QR builder (new)
-packages/fiscal/src/dte/dte.builder.ts    the QR placeholder
-packages/fiscal/src/fiscal-provider.port.ts   the document and the flag
-packages/fiscal/src/sifen/sifen.provider.ts   the provider (new)
-apps/worker/src/fiscal-submission/**      the stage, the storage, the sweep
-apps/worker/src/config/worker-env.schema.ts   SECRET_STORE_*, DTE_XSD_DIR
-apps/api/src/fiscal/timbrado/**           the store moves out
+packages/fiscal-persistence/**             the Prisma-backed ports (new package)
+packages/fiscal/src/dte/dte.qr.ts          the QR builder (new)
+packages/fiscal/src/sifen/sifen-direct.provider.ts   the provider (new)
+packages/fiscal/src/fiscal-provider.module.ts        the selection
+packages/fiscal/src/fiscal-provider.port.ts          the document and the flag
+packages/fiscal/src/fiscal-snapshot.sanitizer.ts     the descriptor's keys
+packages/fiscal/src/dte/xsd-validator.ts             the per-process compile
+apps/worker/src/fiscal-submission/**       the stage, the seam and the sweep
+apps/worker/src/secret-store/secrets.ts    the worker's secret boundary (new)
+apps/worker/src/config/worker-env.schema.ts   SECRET_STORE_*, SIFEN_ENVIRONMENT,
+                                           DTE_XSD_DIR, FISCAL_PROVIDER
+apps/api/src/fiscal/fiscal.module.ts       the API's credential port
+apps/api/src/config/api-env.schema.ts      the provider and environment gates
+packages/database/prisma/migrations/20261009000001_fiscal_document_next_query
+packages/storage/src/storage-keys.ts       the fiscal document prefix
 ```
 
 ## Completion Notes
 
-_Status must remain non-`done` until every acceptance criterion and gate
-passes._
+**Done 2026-10-09.** Every acceptance criterion of WU-A..WU-F passes except the
+one that spans a story: WU-D's credential criterion is satisfied by the wiring
+this Story adds and becomes observable in [[FISC-015]]'s assembly and in WU-E's
+provider, and WU-E's `cancel` criterion is recorded as **fail-closed pending
+[[FISC-016]]** rather than checked. Both are noted beside the criteria
+themselves.
+
+Two scope findings changed the plan instead of being implemented quietly, and
+both produced their own story: [[FISC-015]] for the assembly and [[FISC-016]]
+for the cancellation event. The gates pass, the live-PostgreSQL suite passes at
+223/223, and the two CRITICAL findings this Story's own reviews raised were
+corrected and validated before their commits.
+
+**The next step is [[FISC-013]]** (contingency and the homologation run), which
+is what turns all of this from a reviewed implementation into evidence.

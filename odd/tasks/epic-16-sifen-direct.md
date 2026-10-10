@@ -532,123 +532,155 @@ candidate 1 exists.
       the transactional compare-and-swap counter with the series rollover.
       **WU-E, the surface**: the profile/establishment/range routes, the
       permission, the audit and tenant isolation.
-- [~] T8 — **FISC-012: `SifenDirectFiscalProvider` and the worker's real
-  submission — in progress 2026-10-08.** Branch
-  `feat/epic-16-fisc-012-sifen-direct-provider` from **`ff8954e`** (`main` after
-  FISC-010 merged; this branch is **not** stacked on anything). Feature record:
-  `odd/tasks/fisc-012-sifen-direct-provider.md`. Story:
-  `docs/02-stories/FISC-012-sifen-direct-provider.md`. **WU-A, docs-only, is
-  this commit**: [[ADR-009]], [[ADR-010]], [[DEC-055]], the Story and
-  `SIFEN-BASELINE.md` **§24**. **The finding that shaped it**: §14 graded the QR
-  **[O] open** and **that was a tooling gap, not a source gap** — the Manual's
-  **§13.8 (pages 205–209)** pins the composition completely, and the extraction
-  §14 was written from had dropped it. Retrieved 2026-10-08 from the
-  already-local PDF with **PyMuPDF**, which extracts what `pypdf` and
-  `fetch_content` drop — §22.1's lesson, recorded for the third time. §24
-  carries the consultation URL, the nine parameters with their lengths, the
-  hexadecimal conversion of `dFeEmiDE`/`DigestValue`, the SHA-256 over the
-  parameters plus the CSC, the `&cHashQR` parameter and the XML escaping, plus
-  **three defects inside the Manual's own example**. **The consequence the Story
-  had to absorb**: the QR carries the signature's digest, so it is built
-  **after** signing — which is exactly why `gCamFuFD` sits outside the signed
-  `DE` subtree — and the builder therefore needs a QR placeholder. **WU-A landed
-  as commit `7949f04`** — 8 files, 1,533 insertions — and its review is
-  `review-27456c2f386bd5f9`: tier `medium`, lens `review-reliability`, closed
-  **`approved`** with **five advisories** at `WARNING`/`SUGGESTION`, none
-  opening a correction. Three of them were one-line corrections in the documents
-  the review had just read and landed with the record: WU-F's criteria gained
-  **"a permanent failure does not loop"**, WU-D's now pin
-  **store-then-validate**, and the Story's "two Manual defects" became three.
-  **Remaining WUs**: WU-D the worker's document stage, WU-E the provider and the
-  selection, WU-F the reconciliation. **WU-B landed as commit `e20fc6b`** — 13
-  files, 911 insertions, with the two store files recorded as **100% renames** —
-  and its review is `review-fb085a14b38e2ae8`: tier `high`, **four lenses**,
-  closed **`approved`** with three advisories at `WARNING`, none opening a
-  correction. The new `@newsaas/fiscal-persistence` package carries the moved
-  range store, the emitter-profile read and the credential read, and its
-  live-PostgreSQL proof ran at **220/220** against a locally provisioned
-  PostgreSQL 16.13 because Docker's WSL integration is gone from this distro;
-  the suite's **UTC sensitivity** was found there (a non-UTC server fails the
-  FISC-011 boundary case at 219/220). **WU-C landed as commit `f968843`** — 3
-  files, 577 insertions — and its review is `review-5eeef34d2f4685c2`: tier
-  `medium`, one lens, closed **`approved`** with two advisories at `SUGGESTION`.
-  The QR is a pure builder whose acceptance test is §13.8.4's worked example
-  reproduced byte for byte, a placeholder the unsigned document carries, and one
-  fill that escapes and substitutes it after signing — proven by a round trip
-  that still verifies the signature and still validates against the official
-  XSD. **WU-D was narrowed on 2026-10-08 by [[DEC-056]]**: a read-only
-  reconnaissance found the assembly's inputs unmodelled, so WU-D keeps the four
-  properties that are the stage's own (the `QUEUED -> SIGNING -> SENDING` claim
-  with its abandoned-claim recovery, the `requiresSignedDocument` port surface,
-  the credential wiring, and the custody — the fiscal storage prefix,
-  store-then-validate, the `xml_storage_key` writer and the XSD gate with its
-  per-process compile) and **fails closed** on the assembly, which is
-  [[FISC-015]] now. The same decision moves the fiscal number's allocation to
-  **invoice confirmation**. Recorded as commit `89e4625`; FISC-015 is `planned`
-  and its first work unit makes four product decisions before any schema change.
-  **WU-D1 landed as commit `0ca390a`** — 15 files, 441 insertions — and its
-  review is `review-eed5d94fb24e9e54`: tier `medium`, one lens, closed
-  **`approved`** with three advisories (two `WARNING`, one `SUGGESTION`). The
-  port now carries the signed document (ADR-009: a required
-  `document: FiscalIssueDocument | null` plus `requiresSignedDocument`) and the
-  worker wires the real credential port, its own secret-store composition root
-  and the env gates. **WU-D2 landed as commit `8224825`** — 9 files, 890
-  insertions — and its review is `review-736ec8a3be9b5e21`: tier `medium`, one
-  lens, closed **`approved`** with three advisories (one `WARNING`, two
-  `SUGGESTION`). The stage claims `QUEUED -> SIGNING -> SENDING`, the seam fails
-  closed (the assembly is FISC-015's), the custody stores then writes
-  `xml_storage_key` **and the `cdc`** before the gate, and the compiled schema
-  is cached per directory. One advisory is a real follow-up for **WU-F**: a
-  re-claimed `SENDING` row resends without re-running the gate, where ADR-010 §3
-  says "before every submission". **WU-E1 landed as commit `5bdd61b`** — 5
-  files, 1,267 insertions — and its review is `review-ca72a76b131d66e4`: tier
-  `medium`, one lens, closed **`approved`** with two advisories at `SUGGESTION`.
-  The real adapter now implements `issue` (a lot of one, `SUBMITTED` + the lot
-  number + the request's own CDC overlaid), `query` (the reference as the fast
-  path, the CDC as the survivor) and the failure partition — total, asserted
-  member by member, with only the three "the request may never have arrived"
-  failures retryable. **`cancel` fails closed** with
-  `CANCELLATION_EVENT_UNPROFILED`, which is [[FISC-016]]. **WU-E2 landed as
-  commit `9295769`** — 8 files, 521 insertions — and its review is
-  `review-661aab129f50b6f9`: tier `medium`, one lens, **one CRITICAL finding**
-  (`R3-SIFEN-PRODUCTION-DEFAULT`) that a read-only refuter **corroborated**: an
-  absent `SIFEN_ENVIRONMENT` defaulted to `TEST` for every environment, so a
-  production deployment that selected `sifen-direct` could have targeted the
-  DNIT **test** host. The bounded correction (plan 60 diff lines) closes it at
-  the package's factory and the API's schema, and the targeted validator passed
-  both checks. **WU-F landed as commit `0bdedac`** — 8 files, 1,456 insertions —
-  and its review is `review-025e631ba1a38a1b`: tier `high`, **four lenses**,
-  **one CRITICAL finding** (`R4-001`): the query loop guarded only the provider
-  call, so a rejected write while _applying_ an answer threw out of the loop,
-  left that row's marker unadvanced, and blocked every other due document. The
-  correction took **three rounds** — the first added a sweep-level catch that
-  hid failures (reverted), the second exceeded the frozen 200-line budget
-  (rejected), the third passed both checks. The sweep now walks `SUBMITTED`
-  through a new `next_query_at` marker, bounds the `ERROR` re-drive by an
-  attempt cap, and gates a resend. **That closes [[TD-028]]** and makes
-  [[TD-029]] urgent, because a capped row has no revival path. **Inherits from
-  FISC-009 the worker's signing stage** (claim `SIGNING`, sign the DE with
-  `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
-  `SIGNING -> ERROR`), and **from FISC-010 three more things**, per ADR-007 and
-  ADR-008: **(a)** the real `FiscalCredentialPort` in the worker —
-  `@newsaas/secret-store` in `apps/worker/package.json`, `SecretsModule`,
-  `SECRET_STORE_MASTER_KEYS` and the `secretStore.get` path, **none of which
-  exists today**; **(b)** the **reconciliation stage** — the TD-028 sweep
-  extended to `SUBMITTED`, calling `query` and applying the terminal result,
-  with `retryAfterMs` bounding the next attempt; **(c)** **persisting the signed
-  DE** (`xml_storage_key`, still written by nothing) and the submission path's
-  logging, which is where FISC-009's "no secret in a log or a stored snapshot"
-  criterion now lives. **The two consultation services are IN scope**: the
-  Manual's §9.4 CDC query is what resolves a document after the Guide's 48-hour
-  batch window, and §9.6's RUC status query is the sixth service of the endpoint
-  list. **What stays blocked and out of scope is the signed v150 query family**
-  — by protocol, by range, and the RUC archive — whose request signature profile
-  no source pins (FISC-013, against a real service). **Note on this Story's row
-  in the epic**: FISC-010 **adds** the port's asynchronous capability; FISC-012
-  **implements** it. The epic's earlier wording ("the port's asynchronous-status
-  extension") was corrected on 2026-10-08.
+- [x] T8 — **FISC-012: `SifenDirectFiscalProvider` and the worker's real
+      submission — DONE 2026-10-09.** Branch
+      `feat/epic-16-fisc-012-sifen-direct-provider` from **`ff8954e`** (`main`
+      after FISC-010 merged; this branch is **not** stacked on anything).
+      Feature record: `odd/tasks/fisc-012-sifen-direct-provider.md`. Story:
+      `docs/02-stories/FISC-012-sifen-direct-provider.md`. **WU-A, docs-only, is
+      this commit**: [[ADR-009]], [[ADR-010]], [[DEC-055]], the Story and
+      `SIFEN-BASELINE.md` **§24**. **The finding that shaped it**: §14 graded
+      the QR **[O] open** and **that was a tooling gap, not a source gap** — the
+      Manual's **§13.8 (pages 205–209)** pins the composition completely, and
+      the extraction §14 was written from had dropped it. Retrieved 2026-10-08
+      from the already-local PDF with **PyMuPDF**, which extracts what `pypdf`
+      and `fetch_content` drop — §22.1's lesson, recorded for the third time.
+      §24 carries the consultation URL, the nine parameters with their lengths,
+      the hexadecimal conversion of `dFeEmiDE`/`DigestValue`, the SHA-256 over
+      the parameters plus the CSC, the `&cHashQR` parameter and the XML
+      escaping, plus **three defects inside the Manual's own example**. **The
+      consequence the Story had to absorb**: the QR carries the signature's
+      digest, so it is built **after** signing — which is exactly why `gCamFuFD`
+      sits outside the signed `DE` subtree — and the builder therefore needs a
+      QR placeholder. **WU-A landed as commit `7949f04`** — 8 files, 1,533
+      insertions — and its review is `review-27456c2f386bd5f9`: tier `medium`,
+      lens `review-reliability`, closed **`approved`** with **five advisories**
+      at `WARNING`/`SUGGESTION`, none opening a correction. Three of them were
+      one-line corrections in the documents the review had just read and landed
+      with the record: WU-F's criteria gained **"a permanent failure does not
+      loop"**, WU-D's now pin **store-then-validate**, and the Story's "two
+      Manual defects" became three. **Remaining WUs**: WU-D the worker's
+      document stage, WU-E the provider and the selection, WU-F the
+      reconciliation. **WU-B landed as commit `e20fc6b`** — 13 files, 911
+      insertions, with the two store files recorded as **100% renames** — and
+      its review is `review-fb085a14b38e2ae8`: tier `high`, **four lenses**,
+      closed **`approved`** with three advisories at `WARNING`, none opening a
+      correction. The new `@newsaas/fiscal-persistence` package carries the
+      moved range store, the emitter-profile read and the credential read, and
+      its live-PostgreSQL proof ran at **220/220** against a locally provisioned
+      PostgreSQL 16.13 because Docker's WSL integration is gone from this
+      distro; the suite's **UTC sensitivity** was found there (a non-UTC server
+      fails the FISC-011 boundary case at 219/220). **WU-C landed as commit
+      `f968843`** — 3 files, 577 insertions — and its review is
+      `review-5eeef34d2f4685c2`: tier `medium`, one lens, closed **`approved`**
+      with two advisories at `SUGGESTION`. The QR is a pure builder whose
+      acceptance test is §13.8.4's worked example reproduced byte for byte, a
+      placeholder the unsigned document carries, and one fill that escapes and
+      substitutes it after signing — proven by a round trip that still verifies
+      the signature and still validates against the official XSD. **WU-D was
+      narrowed on 2026-10-08 by [[DEC-056]]**: a read-only reconnaissance found
+      the assembly's inputs unmodelled, so WU-D keeps the four properties that
+      are the stage's own (the `QUEUED -> SIGNING -> SENDING` claim with its
+      abandoned-claim recovery, the `requiresSignedDocument` port surface, the
+      credential wiring, and the custody — the fiscal storage prefix,
+      store-then-validate, the `xml_storage_key` writer and the XSD gate with
+      its per-process compile) and **fails closed** on the assembly, which is
+      [[FISC-015]] now. The same decision moves the fiscal number's allocation
+      to **invoice confirmation**. Recorded as commit `89e4625`; FISC-015 is
+      `planned` and its first work unit makes four product decisions before any
+      schema change. **WU-D1 landed as commit `0ca390a`** — 15 files, 441
+      insertions — and its review is `review-eed5d94fb24e9e54`: tier `medium`,
+      one lens, closed **`approved`** with three advisories (two `WARNING`, one
+      `SUGGESTION`). The port now carries the signed document (ADR-009: a
+      required `document: FiscalIssueDocument | null` plus
+      `requiresSignedDocument`) and the worker wires the real credential port,
+      its own secret-store composition root and the env gates. **WU-D2 landed as
+      commit `8224825`** — 9 files, 890 insertions — and its review is
+      `review-736ec8a3be9b5e21`: tier `medium`, one lens, closed **`approved`**
+      with three advisories (one `WARNING`, two `SUGGESTION`). The stage claims
+      `QUEUED -> SIGNING -> SENDING`, the seam fails closed (the assembly is
+      FISC-015's), the custody stores then writes `xml_storage_key` **and the
+      `cdc`** before the gate, and the compiled schema is cached per directory.
+      One advisory is a real follow-up for **WU-F**: a re-claimed `SENDING` row
+      resends without re-running the gate, where ADR-010 §3 says "before every
+      submission". **WU-E1 landed as commit `5bdd61b`** — 5 files, 1,267
+      insertions — and its review is `review-ca72a76b131d66e4`: tier `medium`,
+      one lens, closed **`approved`** with two advisories at `SUGGESTION`. The
+      real adapter now implements `issue` (a lot of one, `SUBMITTED` + the lot
+      number + the request's own CDC overlaid), `query` (the reference as the
+      fast path, the CDC as the survivor) and the failure partition — total,
+      asserted member by member, with only the three "the request may never have
+      arrived" failures retryable. **`cancel` fails closed** with
+      `CANCELLATION_EVENT_UNPROFILED`, which is [[FISC-016]]. **WU-E2 landed as
+      commit `9295769`** — 8 files, 521 insertions — and its review is
+      `review-661aab129f50b6f9`: tier `medium`, one lens, **one CRITICAL
+      finding** (`R3-SIFEN-PRODUCTION-DEFAULT`) that a read-only refuter
+      **corroborated**: an absent `SIFEN_ENVIRONMENT` defaulted to `TEST` for
+      every environment, so a production deployment that selected `sifen-direct`
+      could have targeted the DNIT **test** host. The bounded correction (plan
+      60 diff lines) closes it at the package's factory and the API's schema,
+      and the targeted validator passed both checks. **WU-F landed as commit
+      `0bdedac`** — 8 files, 1,456 insertions — and its review is
+      `review-025e631ba1a38a1b`: tier `high`, **four lenses**, **one CRITICAL
+      finding** (`R4-001`): the query loop guarded only the provider call, so a
+      rejected write while _applying_ an answer threw out of the loop, left that
+      row's marker unadvanced, and blocked every other due document. The
+      correction took **three rounds** — the first added a sweep-level catch
+      that hid failures (reverted), the second exceeded the frozen 200-line
+      budget (rejected), the third passed both checks. The sweep now walks
+      `SUBMITTED` through a new `next_query_at` marker, bounds the `ERROR`
+      re-drive by an attempt cap, and gates a resend. **That closes [[TD-028]]**
+      and makes [[TD-029]] urgent, because a capped row has no revival path.
+      **Inherits from FISC-009 the worker's signing stage** (claim `SIGNING`,
+      sign the DE with `signDteXml`, then `SIGNING -> SENDING`; a signing
+      failure goes to `SIGNING -> ERROR`), and **from FISC-010 three more
+      things**, per ADR-007 and ADR-008: **(a)** the real `FiscalCredentialPort`
+      in the worker — `@newsaas/secret-store` in `apps/worker/package.json`,
+      `SecretsModule`, `SECRET_STORE_MASTER_KEYS` and the `secretStore.get`
+      path, **none of which exists today**; **(b)** the **reconciliation stage**
+      — the TD-028 sweep extended to `SUBMITTED`, calling `query` and applying
+      the terminal result, with `retryAfterMs` bounding the next attempt;
+      **(c)** **persisting the signed DE** (`xml_storage_key`, still written by
+      nothing) and the submission path's logging, which is where FISC-009's "no
+      secret in a log or a stored snapshot" criterion now lives. **The two
+      consultation services are IN scope**: the Manual's §9.4 CDC query is what
+      resolves a document after the Guide's 48-hour batch window, and §9.6's RUC
+      status query is the sixth service of the endpoint list. **What stays
+      blocked and out of scope is the signed v150 query family** — by protocol,
+      by range, and the RUC archive — whose request signature profile no source
+      pins (FISC-013, against a real service). **Note on this Story's row in the
+      epic**: FISC-010 **adds** the port's asynchronous capability; FISC-012
+      **implements** it. The epic's earlier wording ("the port's
+      asynchronous-status extension") was corrected on 2026-10-08. **Closed
+      2026-10-09.** All six work units landed — `7949f04` (WU-A), `e20fc6b`
+      (WU-B), `f968843` (WU-C), `0ca390a` + `8224825` (WU-D), `5bdd61b` +
+      `9295769` (WU-E), `0bdedac` (WU-F) — each with a record commit beside it,
+      and **seven reviews closed `approved`**. Two of them carried a
+      **CRITICAL** finding that arrived before its commit and was corrected and
+      validated: a production deployment that could have targeted the DNIT
+      **test** host (WU-E2), and a sweep that one poisoned row could stop
+      entirely (WU-F, corrected over three rounds). Two findings changed the
+      plan rather than the code and produced their own stories: [[FISC-015]] for
+      the document assembly ([[DEC-056]], which also moved the fiscal number's
+      allocation to invoice confirmation) and [[FISC-016]] for the cancellation
+      event. [[TD-028]] is closed by the sweep; [[TD-029]] is raised by its cap,
+      which is a one-way door. The closure run and its limits are in
+      `docs/10-qa/CI-EVIDENCE.md`, and the module doc lists what is deliberately
+      absent.
+
 - [ ] T9 — FISC-013: contingency + certification evidence.
 - [ ] T10 — FISC-014: epic closure.
+- [ ] T11 — **FISC-015: the document assembly.** Created by [[DEC-056]] when
+      FISC-012's reconnaissance found the fiscal identity a DE needs unmodelled.
+      Its first work unit makes four product decisions — what a rate code means
+      fiscally, what a receptor is, where the CSC lives, which
+      establishment/point/type issues — **before any schema change**. Until it
+      lands the worker's stage fails closed with a named reason.
+- [ ] T12 — **FISC-016: the cancellation event.** Created by FISC-012's own
+      implementation: SIFEN's cancellation is an event and `SIFEN-BASELINE.md`
+      §23.3 records that `Evento_v150.xsd`'s field-level rules were never
+      profiled, so the adapter answers `CANCELLATION_EVENT_UNPROFILED`. Its work
+      is the profiling, the payload, its signature and the answer's mapping.
 
 ## Two lineages are NOT closed, and the second one is why the fixes rest on argument
 

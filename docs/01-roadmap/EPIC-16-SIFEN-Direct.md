@@ -181,6 +181,20 @@ search not yet run; the correction is recorded in `SIFEN-BASELINE.md`
 §23.6/§23.8 and in the Story. The signed family's own signature profile stays
 open and out of scope.
 
+**FISC-012 closed 2026-10-09.** All six work units landed on
+`feat/epic-16-fisc-012-sifen-direct-provider` (`7949f04` … `0bdedac`), each with
+a record commit beside it. The Story replaced the fake with the real adapter,
+gave the worker a document stage, and made the reconciliation walk the documents
+SIFEN has not resolved. **Two CRITICAL findings arrived before their commits** —
+a production deployment that could have targeted the DNIT test host, and a sweep
+one poisoned row could stop — and both were corrected and validated. **Two
+findings changed the plan instead of the code**, and each produced a story:
+[[FISC-015]] for the assembly ([[DEC-056]]), which the worker's stage now fails
+closed against, and [[FISC-016]] for the cancellation event, which is why
+`cancel` refuses. [[TD-028]] is closed by the sweep and [[TD-029]] is raised by
+its cap. The closure evidence is in `docs/10-qa/CI-EVIDENCE.md`, and the module
+doc's limitations list what is deliberately absent.
+
 **FISC-016 was created by FISC-012's own implementation (2026-10-08).** SIFEN's
 cancellation is an **event**, and `SIFEN-BASELINE.md` §23.3 records that
 `Evento_v150.xsd`'s field-level rules were never profiled — the artifacts were
