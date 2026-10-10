@@ -304,26 +304,36 @@ lot is a later optimization: the container and the facade already take a list.
 
 **WU-F — the reconciliation**
 
-- [ ] The sweep walks `SUBMITTED` in addition to `QUEUED`/`ERROR`, bounded by
-      `SIFEN_BATCH_POLL_INTERVAL_MS` rather than the recovery default.
-- [ ] **A permanent failure does not loop.** The sweep's `ERROR` re-drive is
-      bounded, so a schema refusal or a missing fiscal profile reaches an
-      operator instead of being resubmitted forever — the mechanism is decided
-      in this work unit, and the `QUEUED` path keeps its existing semantics.
-- [ ] `PROCESSING` leaves the row `SUBMITTED` and **never** triggers a
-      resubmission; `retryAfterMs` bounds the next attempt.
-- [ ] A terminal resolution applies `APPROVED`/`REJECTED` with its identity and
+- [x] The sweep walks `SUBMITTED` in addition to `QUEUED`/`ERROR`, bounded by
+      `SIFEN_BATCH_POLL_INTERVAL_MS` rather than the recovery default — through
+      a new `next_query_at` marker, because the sweep's own cadence is 60
+      seconds and without it every due row would be queried once a minute.
+- [x] **A permanent failure does not loop.** The sweep's `ERROR` re-drive is
+      bounded by an attempt cap, so a schema refusal or a missing fiscal profile
+      reaches an operator instead of being resubmitted forever; the `QUEUED`
+      path keeps its existing semantics. The mechanism is a count rather than a
+      list of codes, because the result-code catalogue is open and a list would
+      rot. **Its consequence is recorded**: a capped row has no revival path,
+      which is why [[TD-029]] moved from optional to urgent.
+- [x] `PROCESSING` leaves the row `SUBMITTED` and **never** triggers a
+      resubmission — structurally: that phase has no queue to resubmit through —
+      and `retryAfterMs` bounds the next attempt.
+- [x] A terminal resolution applies `APPROVED`/`REJECTED` with its identity and
       `resolvedAt`, and a failed query leaves the row `SUBMITTED`.
-- [ ] `attempt_count` counts submissions, never queries.
-- [ ] The `0360` answer keeps its mapping and the re-drive, with the
-      `PROCESSING` guardrail asserted — [[DEC-055]] Q3's answer, in a test.
+- [x] `attempt_count` counts submissions, never queries: asserted over every
+      answer the query phase can produce.
+- [x] The `0360` answer keeps its mapping and the re-drive, with the
+      `PROCESSING` guardrail asserted beside it — [[DEC-055]] Q3's answer, in a
+      test. The re-drive's loop is bounded by the same cap.
 
 **Gates**
 
-- [ ] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass
+- [x] Lint, typecheck, unit tests, the live-PostgreSQL gate and the build pass
       for `@newsaas/fiscal`, `@newsaas/database`, `@newsaas/api` and
-      `@newsaas/worker`, and the root gates pass.
-- [ ] No protocol constant is written without a cited source in §23 or §24.
+      `@newsaas/worker`, and the root gates pass. **The live-PostgreSQL suite
+      ran at 223/223** against a disposable PostgreSQL 16.13 with
+      `timezone=UTC`.
+- [x] No protocol constant is written without a cited source in §23 or §24.
 
 ## Domain Invariants
 

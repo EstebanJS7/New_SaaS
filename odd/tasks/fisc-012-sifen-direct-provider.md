@@ -213,7 +213,7 @@ are, and it does not get improvised.
       kept), and the `null` credential → `CONFIGURATION_ERROR` mapping.
 - [ ] **WU-F — the reconciliation**: the TD-028 sweep extended to `SUBMITTED`,
       calling `query`, applying a terminal resolution and leaving `PROCESSING`
-      alone, with the `0360` decision recorded.
+      alone, with the `0360` decision recorded. **Landed** — see the Evidence.
 
 ## Out of scope
 
@@ -273,9 +273,19 @@ WU-E2    9295769  feat(FISC-012): the provider selection, and the production hol
                   correction (plan 60 diff lines) → targeted validator **passed
                   both checks** → closed `approved`; the acknowledgement burned
                   the authority
+WU-F     0bdedac  feat(FISC-012): the reconciliation sweep, and the poisoned row
+                  it could not survive — 8 files, 1,456 insertions
+         review-025e631ba1a38a1b  tier `high` (the live-PG process boundary),
+                  **FOUR lenses**, **one CRITICAL finding**
+                  (`R4-001`, deterministic, `introduced`): corrected over THREE
+                  rounds — the first was reverted (a sweep-level catch that hid
+                  failures), the second was over the frozen budget (228 > 200),
+                  the third passed both checks — closed `approved`; the
+                  acknowledgement burned the authority
 gates    format-check green; lint 20/20, typecheck 20/20, test 21/21, build 12/12;
-         fiscal 577, worker 117, api 1143 (+220 live-PG skipped), database 445,
-         web 1087, secret-store 50, fiscal-persistence 27, ui 36, shared 16
+         fiscal 577, worker 140, api 1143 (+223 live-PG), database 445, web 1087,
+         secret-store 50, fiscal-persistence 27, ui 36, shared 16; and the
+         live-PostgreSQL suite at **223/223** on a disposable PG16.13 (UTC)
 ```
 
 ## Review record
@@ -526,6 +536,50 @@ arc is the record worth keeping:
   finding was true, the API's own test encoded the bug, and the correction was
   cheap — because the finding arrived before the commit rather than after a
   production incident.
+
+**WU-F — `review-025e631ba1a38a1b`, `approved` with four lenses and one CRITICAL
+(2026-10-08).** Tier `high` (the process boundary in the live-PG spec), four
+lenses, 8 files and 1,410 changed lines. The finding is the most valuable one
+the epic produced, and the correction took **three rounds** — two of which were
+wrong, which is why they are recorded:
+
+| stage   | what happened                                                                                                                                                                                                                                                                                                                                                                     |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| finding | `R4-001`, `CRITICAL`, deterministic, `introduced`: the query loop wrapped only the **provider call** in try/catch. Applying the answer was unguarded, so a malformed instant or a refused write threw out of the loop with that row's marker unadvanced — the row was re-selected on every sweep and blocked every other due document, and the sweep's own failure was invisible. |
+| refuter | **Not needed**: the finding was `deterministic`, and the contract sends only inferential blockers to a refuter.                                                                                                                                                                                                                                                                   |
+| round 1 | I added a guard around the loop **and** a sweep-level catch. The validator called it: a bare catch returning counters identical to an idle sweep **hides a real failure**, and it was outside the finding's scope. Reverted.                                                                                                                                                      |
+| round 2 | The rewritten candidate was **228 changed lines against a frozen budget of 200** — wrapping the switch re-indented it — and the provider rejected the validation outright. Rewritten smaller: the guard sits where the failure happens, and the diff came to 176.                                                                                                                 |
+| round 3 | The validator passed **both** checks: every original criterion met, no regression. It checked specifically that the guard is scoped to the application, that the counters mean what they say, that nothing surfaces less than before, and that no expectation was weakened.                                                                                                       |
+
+**WU-F's notes.**
+
+- **The sweep's clock and the provider's cadence are different things**, and one
+  nullable marker decouples them: 60 seconds of sweep against §23.7's ten
+  minutes. `null` means "never queried", which is also the migration's
+  compatibility bridge.
+- **The handler must write the first marker**, or the backfill formula would
+  exist only for legacy rows and every new hand-over would be polled a minute
+  later.
+- **A cap is a one-way door.** `attempt_count` counts submissions and the
+  database forbids lowering it, so a capped row cannot be revived — by the sweep
+  or by hand. That is why [[TD-029]] moved from optional to urgent in this
+  commit, and why the cap's consequence is written into the debt item rather
+  than only into a comment.
+- **Leaving `PROCESSING` alone is structural, not a guard**: the query phase has
+  no queue, so it cannot resubmit even if someone wrote the code to try.
+- **`0360` is detected by meaning, not by string**:
+  `describeBatchQuery(reasonCode) .outcome === "unknownLot"` keeps the protocol
+  table in one place.
+- **The live-PG suite is timezone-sensitive**: a non-UTC server fails a
+  pre-existing FISC-011 date-boundary case by constraint-name matching. CI is
+  UTC, and the disposable cluster was started with `-c timezone=UTC` for the
+  same reason.
+- **A frozen budget is a real constraint, not a formality.** The provider
+  rejected a validation whose correction exceeded it, and that rejection is what
+  forced a smaller and better-shaped correction.
+- **Three review rounds is the mechanism working.** The first correction was
+  plausible and wrong; the validator said so, and the second was wrong in a
+  different way. Neither wrongness reached a commit.
 
 **WU-C's notes.**
 

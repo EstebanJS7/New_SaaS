@@ -616,11 +616,22 @@ candidate 1 exists.
   production deployment that selected `sifen-direct` could have targeted the
   DNIT **test** host. The bounded correction (plan 60 diff lines) closes it at
   the package's factory and the API's schema, and the targeted validator passed
-  both checks. **Inherits from FISC-009 the worker's signing stage** (claim
-  `SIGNING`, sign the DE with `signDteXml`, then `SIGNING -> SENDING`; a signing
-  failure goes to `SIGNING -> ERROR`), and **from FISC-010 three more things**,
-  per ADR-007 and ADR-008: **(a)** the real `FiscalCredentialPort` in the worker
-  — `@newsaas/secret-store` in `apps/worker/package.json`, `SecretsModule`,
+  both checks. **WU-F landed as commit `0bdedac`** — 8 files, 1,456 insertions —
+  and its review is `review-025e631ba1a38a1b`: tier `high`, **four lenses**,
+  **one CRITICAL finding** (`R4-001`): the query loop guarded only the provider
+  call, so a rejected write while _applying_ an answer threw out of the loop,
+  left that row's marker unadvanced, and blocked every other due document. The
+  correction took **three rounds** — the first added a sweep-level catch that
+  hid failures (reverted), the second exceeded the frozen 200-line budget
+  (rejected), the third passed both checks. The sweep now walks `SUBMITTED`
+  through a new `next_query_at` marker, bounds the `ERROR` re-drive by an
+  attempt cap, and gates a resend. **That closes [[TD-028]]** and makes
+  [[TD-029]] urgent, because a capped row has no revival path. **Inherits from
+  FISC-009 the worker's signing stage** (claim `SIGNING`, sign the DE with
+  `signDteXml`, then `SIGNING -> SENDING`; a signing failure goes to
+  `SIGNING -> ERROR`), and **from FISC-010 three more things**, per ADR-007 and
+  ADR-008: **(a)** the real `FiscalCredentialPort` in the worker —
+  `@newsaas/secret-store` in `apps/worker/package.json`, `SecretsModule`,
   `SECRET_STORE_MASTER_KEYS` and the `secretStore.get` path, **none of which
   exists today**; **(b)** the **reconciliation stage** — the TD-028 sweep
   extended to `SUBMITTED`, calling `query` and applying the terminal result,

@@ -2,14 +2,14 @@
 id: TD-028
 type: tech-debt
 title: Fiscal submissions have no out-of-band recovery for exhausted retries
-status: scheduled
+status: resolved
 severity: medium
 related_epics:
   - EPIC-15
 related_stories:
   - FISC-004
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-08
 ---
 
 # TD-028 — Fiscal submissions have no out-of-band recovery for exhausted retries
@@ -66,6 +66,16 @@ Close when a scheduled sweep re-drives both paths: it re-enqueues documents
 stuck in `QUEUED` with no job and documents in `ERROR` whose retries are
 exhausted, idempotently, with the deterministic job id preserved and each
 recovery audited.
+
+**Closed 2026-10-08 by [[FISC-012]] WU-F.** The sweep exists and re-drives both
+paths on a one-minute interval: it removes a terminal job before re-adding the
+deterministic identity (a plain `add` would be a silent dedupe no-op), skips a
+live delivery, and audits each recovery as
+`fiscal.document.submission_requeued`. The exit criteria above are met, with one
+addition WU-F made: the `ERROR` re-drive is now **bounded by an attempt cap**,
+so an exhausted retry budget reaches an operator instead of being resubmitted
+forever — and that cap is what makes [[TD-029]] urgent rather than optional,
+because a capped row has no revival path at all.
 
 ## Related
 

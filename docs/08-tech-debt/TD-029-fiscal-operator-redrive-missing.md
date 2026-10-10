@@ -9,7 +9,7 @@ related_epics:
 related_stories:
   - FISC-005
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-08
 ---
 
 # TD-029 — Fiscal submissions have no operator-triggered re-drive
@@ -78,6 +78,16 @@ Re-open when either holds:
 2. [[EPIC-16]] ships a real provider, where a provider-side outage makes a
    manual re-drive materially more valuable because the sweep's staleness window
    no longer dominates the recovery time.
+
+**Trigger 2 is met as of 2026-10-08 ([[FISC-012]] WU-F), and the cap makes this
+debt sharper than it was.** The sweep's `ERROR` re-drive is now bounded by an
+attempt cap: once a document reaches it, the sweep **never selects it again**,
+so the row stays in `ERROR` with its code and count and there is no path forward
+— not by the sweep, and not by an operator, because no re-drive route exists.
+The database's attempts-monotonic trigger forbids lowering `attempt_count`, so a
+capped row cannot be revived even by hand. This is the exit criterion the cap
+created: a capped row needs either the route this item describes or a deliberate
+revival mechanism, and until one lands the cap is a one-way door.
 
 The route, if it ships, must: reuse `redriveFiscalSubmission` rather than adding
 a second re-drive implementation; stay behind `fiscal.invoice.issue`; return the
