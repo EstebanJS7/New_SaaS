@@ -390,3 +390,164 @@ describe("schema · fiscal identity (EPIC-16 FISC-015)", () => {
     );
   });
 });
+
+/**
+ * EPIC-16 FISC-015 WU-B — the fiscal number's authorisation.
+ *
+ * The migration is read as text because the DDL is hand-written: a constraint
+ * that is missing here is a constraint that does not exist. The schema half pins
+ * the model, its ownership keys and the absence of an `updatedAt` — the row is
+ * written once.
+ */
+const FISC_015_ALLOCATION_SQL = findMigration(
+  loadMigrations(),
+  "_fisc_015_invoice_fiscal_allocation"
+).sql;
+
+function allocationFunctionBody(name: string): string {
+  const start = FISC_015_ALLOCATION_SQL.indexOf(`CREATE OR REPLACE FUNCTION "${name}"()`);
+  expect(start, `function ${name} exists`).toBeGreaterThan(-1);
+  const body = FISC_015_ALLOCATION_SQL.slice(start);
+  return body.slice(body.indexOf("BEGIN"), body.indexOf("$$ LANGUAGE plpgsql;"));
+}
+
+describe("migration · invoice fiscal allocation (EPIC-16 FISC-015 WU-B)", () => {
+  it("is additive: one new table, and no existing row rewritten", () => {
+    const created = [...FISC_015_ALLOCATION_SQL.matchAll(/CREATE TABLE "([a-z_]+)"/g)].map(
+      ([, name]) => name
+    );
+    expect(created).toEqual(["invoice_fiscal_allocation"]);
+    expect(FISC_015_ALLOCATION_SQL).not.toMatch(/\bDROP\b/i);
+    expect(FISC_015_ALLOCATION_SQL).not.toMatch(/\bDELETE FROM\b/i);
+    expect(FISC_015_ALLOCATION_SQL).not.toMatch(/\bINSERT INTO\b/i);
+    expect(FISC_015_ALLOCATION_SQL).not.toMatch(/\bUPDATE\s+"/i);
+    // No ALTER of an existing table: the composite FK targets the invoice's own
+    // `invoice_tenant_id_id_key`, and the range is referenced by its primary key.
+    expect(FISC_015_ALLOCATION_SQL).not.toMatch(/ALTER TABLE "(?!invoice_fiscal_allocation)/);
+  });
+
+  it("scopes the allocation to its tenant, its invoice and its range", () => {
+    // No `(tenant_id, id)` key: the convention exists so OTHER tables can
+    // composite-FK to an aggregate, nothing references this leaf row, and the
+    // composite key that carries the tenant is `(tenant_id, invoice_id)` — which
+    // is what the FK to the invoice targets.
+    expect(FISC_015_ALLOCATION_SQL).not.toMatch(/invoice_fiscal_allocation_tenant_id_id_key/);
+    // One allocation per invoice: an invoice is confirmed once, so a second row
+    // for the same invoice is unrepresentable rather than refused by a service.
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /CREATE UNIQUE INDEX "invoice_fiscal_allocation_tenant_id_invoice_id_key"\s+ON "invoice_fiscal_allocation"\("tenant_id", "invoice_id"\)/
+    );
+    // Composite tenant-ownership FK: a cross-tenant invoice is unrepresentable.
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /FOREIGN KEY \("tenant_id", "invoice_id"\)\s+REFERENCES "invoice"\("tenant_id", "id"\)\s+ON DELETE RESTRICT ON UPDATE RESTRICT/
+    );
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /FOREIGN KEY \("range_id"\) REFERENCES "fiscal_timbrado_range"\("id"\)\s+ON DELETE RESTRICT ON UPDATE RESTRICT/
+    );
+  });
+
+  it("pins the protocol's own patterns on the copied identity", () => {
+    // `tdNumTim` (§21.3), `tdPunExp`/`tdEst` (§21.3), `tiTiDE` (§21.5),
+    // `tdSerieNum` (§21.3) and `tdNumDoc` — whose seven zero-padded digits the
+    // CDC's own composition repeats (§22.9).
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /CONSTRAINT "invoice_fiscal_allocation_timbrado_number_tdNumTim"\s+CHECK \("timbrado_number" ~ '\^\[0-9\]\{8\}\$' AND "timbrado_number" <> '00000000'\)/
+    );
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /CONSTRAINT "invoice_fiscal_allocation_expedition_point_tdPunExp"\s+CHECK \("expedition_point" ~ '\^\[0-9\]\{3\}\$'\)/
+    );
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /CONSTRAINT "invoice_fiscal_allocation_document_type_tiTiDE"\s+CHECK \("document_type" IN \(1, 4, 5, 6, 7, 9, 10\)\)/
+    );
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /CONSTRAINT "invoice_fiscal_allocation_series_tdSerieNum"\s+CHECK \("series" IS NULL OR "series" ~ '\^\[A-Z\]\{2\}\$'\)/
+    );
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /CONSTRAINT "invoice_fiscal_allocation_document_number_tdNumDoc"\s+CHECK \("document_number" ~ '\^\[0-9\]\{7\}\$' AND "document_number" <> '0000000'\)/
+    );
+    expect(FISC_015_ALLOCATION_SQL).toMatch(/§21\.3/);
+    expect(FISC_015_ALLOCATION_SQL).toMatch(/§22\.9/);
+    expect(FISC_015_ALLOCATION_SQL).toMatch(/§21\.5/);
+  });
+
+  it("cannot hand the same number out twice under one range", () => {
+    expect(FISC_015_ALLOCATION_SQL).toMatch(
+      /CREATE UNIQUE INDEX "invoice_fiscal_allocation_one_number_per_range_key"\s+ON "invoice_fiscal_allocation"\("tenant_id", "range_id", "document_number"\)/
+    );
+  });
+
+  it("proves the range belongs to the tenant and carries the copied identity", () => {
+    const body = allocationFunctionBody("invoice_fiscal_allocation_matches_range");
+    expect(body).toMatch(/FROM "fiscal_timbrado_range"/);
+    expect(body).toMatch(/WHERE "tenant_id" = NEW\."tenant_id" AND "id" = NEW\."range_id"/);
+    expect(body).toMatch(/IF NOT FOUND THEN/);
+    // All four identity fields plus the fiscal series, so the denormalized copy
+    // cannot drift from the authorisation it claims to be a snapshot of.
+    expect(body).toMatch(/authorized_timbrado IS DISTINCT FROM NEW\."timbrado_number"/);
+    expect(body).toMatch(/authorized_establishment IS DISTINCT FROM NEW\."establishment_id"/);
+    expect(body).toMatch(/authorized_point IS DISTINCT FROM NEW\."expedition_point"/);
+    expect(body).toMatch(/authorized_document_type IS DISTINCT FROM NEW\."document_type"/);
+    // The fiscal series too: the allocation records the SERIES of the
+    // authorisation it names, not just the four identity columns.
+    expect(body).toMatch(/authorized_series IS DISTINCT FROM NEW\."series"/);
+    expect(body).toMatch(/"series"\s*\n\s*INTO/);
+    expect(body).toMatch(/ERRCODE = 'restrict_violation'/);
+    expect(FISC_015_ALLOCATION_SQL).toContain(
+      'CREATE TRIGGER "invoice_fiscal_allocation_matches_range_trigger"\n  BEFORE INSERT ON "invoice_fiscal_allocation"'
+    );
+  });
+
+  it("makes the allocation append-only, in both directions", () => {
+    expect(allocationFunctionBody("invoice_fiscal_allocation_no_update")).toMatch(
+      /ERRCODE = 'restrict_violation'/
+    );
+    expect(allocationFunctionBody("invoice_fiscal_allocation_no_delete")).toMatch(
+      /ERRCODE = 'restrict_violation'/
+    );
+    expect(FISC_015_ALLOCATION_SQL).toContain(
+      'CREATE TRIGGER "invoice_fiscal_allocation_no_update_trigger"\n  BEFORE UPDATE ON "invoice_fiscal_allocation"'
+    );
+    expect(FISC_015_ALLOCATION_SQL).toContain(
+      'CREATE TRIGGER "invoice_fiscal_allocation_no_delete_trigger"\n  BEFORE DELETE ON "invoice_fiscal_allocation"'
+    );
+  });
+});
+
+describe("schema · invoice fiscal allocation (EPIC-16 FISC-015 WU-B)", () => {
+  it("declares the allocation as a tenant-scoped 1:1 of the invoice", () => {
+    const model = modelBlock("InvoiceFiscalAllocation");
+    expect(model).toMatch(/@@map\("invoice_fiscal_allocation"\)/);
+    expect(model).toMatch(/@@unique\(\[tenantId, invoiceId\]\)/);
+    expect(model).not.toMatch(/@@unique\(\[tenantId, id\]\)/);
+    expect(model).toMatch(
+      /invoice Invoice @relation\(fields: \[tenantId, invoiceId\], references: \[tenantId, id\], onDelete: Restrict, onUpdate: Restrict\)/
+    );
+    expect(model).toMatch(
+      /range FiscalTimbradoRange @relation\(fields: \[rangeId\], references: \[id\], onDelete: Restrict, onUpdate: Restrict\)/
+    );
+    // Written once: no `updatedAt` FIELD, because there is no second write.
+    expect(model).toMatch(/createdAt DateTime @default\(now\(\)\) @map\("created_at"\)/);
+    expect(model).not.toMatch(/^\s+updatedAt\s/m);
+  });
+
+  it("keeps the fiscal series and the emitted number separate from Billing's", () => {
+    const model = modelBlock("InvoiceFiscalAllocation");
+    // `dSerieNum` is TWO characters and nullable; the invoice's own `series` is
+    // Billing's (up to eight, default "A"). They coexist and must not be unified.
+    expect(model).toMatch(/series\s+String\? @db\.VarChar\(2\)/);
+    expect(model).toMatch(/documentNumber\s+String @map\("document_number"\) @db\.VarChar\(7\)/);
+    expect(model).toMatch(/timbradoNumber String @map\("timbrado_number"\) @db\.VarChar\(8\)/);
+    expect(model).toMatch(/establishmentId String @map\("establishment_id"\) @db\.Uuid/);
+    expect(model).toMatch(/expeditionPoint String @map\("expedition_point"\) @db\.VarChar\(3\)/);
+    expect(model).toMatch(/documentType\s+Int\s+@map\("document_type"\) @db\.SmallInt/);
+    expect(model).toMatch(/rangeId\s+String @map\("range_id"\) @db\.Uuid/);
+  });
+
+  it("links the aggregate from the invoice, the range and the tenant", () => {
+    expect(modelBlock("Invoice")).toMatch(/fiscalAllocation InvoiceFiscalAllocation\?/);
+    expect(modelBlock("FiscalTimbradoRange")).toMatch(
+      /fiscalAllocations InvoiceFiscalAllocation\[\]/
+    );
+    expect(modelBlock("Tenant")).toMatch(/invoiceFiscalAllocations\s+InvoiceFiscalAllocation\[\]/);
+  });
+});

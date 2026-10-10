@@ -38,6 +38,7 @@ import {
   createCustomerFiscalReader,
   createFiscalCscReader,
   createFiscalProfileReader,
+  createInvoiceAllocationReader,
   createTaxClassificationReader,
   createTimbradoRangeStore,
 } from "@newsaas/fiscal-persistence";
@@ -17704,6 +17705,716 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         0
       );
       expect(await prisma.fiscalEmitterProfile.count()).toBe(0);
+    }, 30_000);
+  });
+
+  describe("EPIC-16 FISC-015 WU-B invoice fiscal allocation", () => {
+    /**
+     * [[DEC-056]]'s property, against real PostgreSQL and through the REAL
+     * command: a confirmed invoice's number comes from the tenant's timbrado
+     * range, allocated INSIDE the confirmation's transaction, with the range's
+     * identity persisted beside the invoice — and a failure AFTER the claim rolls
+     * the claim back with it, which is the property the whole design exists for.
+     *
+     * Every case gets a DEDICATED tenant: `fiscal_timbrado_range` refuses to be
+     * deleted, `fiscal_emitter_profile` is unique per tenant and the numbering
+     * counters are per `(tenant, series)`, so the fixtures cannot be cleaned up
+     * and must not disturb another block's rows.
+     */
+
+    /** The two stable `409` messages, mirrored as literals (never imported). */
+    const ALLOCATION_NO_RANGE_MESSAGE =
+      "The issuance point this tenant declared has no ACTIVE timbrado range.";
+    const ALLOCATION_AMBIGUOUS_MESSAGE =
+      "The issuance point this tenant declared matches more than one ACTIVE timbrado range.";
+
+    class AllocationRollback extends Error {}
+
+    type AllocationTx = Prisma.TransactionClient;
+
+    let exemptRateId: string;
+
+    /** The database's PRIMARY message only, never the row detail it echoes. */
+    const databaseMessage = (error: unknown): string => {
+      const text = error instanceof Error ? error.message : String(error);
+      const match = /Message: `([\s\S]*?)`/.exec(text);
+      const serverRender = (match ? match[1] : text).replace(/^ERROR: /, "");
+      return serverRender.split("\n")[0];
+    };
+
+    /**
+     * Runs exactly ONE statement, expects the database to refuse it, and answers
+     * the refusal: a rejected statement aborts its transaction, so each probe
+     * needs its own.
+     */
+    const rejectionMessage = async (
+      statement: (tx: AllocationTx) => Promise<unknown>
+    ): Promise<string> => {
+      const outcome = await prisma
+        .$transaction(async (tx) => {
+          await statement(tx);
+          throw new AllocationRollback();
+        })
+        .then(
+          () => null,
+          (error: unknown) => error
+        );
+      if (outcome === null || outcome instanceof AllocationRollback) {
+        throw new Error("Expected the statement to be rejected by the database");
+      }
+      return databaseMessage(outcome);
+    };
+
+    /** One OWNER-membership tenant WITH the `billing` entitlement and a session. */
+    const provisionTenant = async (slug: string): Promise<{ tenantId: string; cookie: string }> => {
+      const tenant = await prisma.tenant.create({ data: { slug, name: slug } });
+      const role = await prisma.role.findUnique({ where: { code: "OWNER" } });
+      if (!role) {
+        throw new Error("Reference seed did not create OWNER role");
+      }
+      const profile = await prisma.userProfile.create({
+        data: { email: `${slug}@live.test`, displayName: slug, status: "active" },
+      });
+      await prisma.tenantMembership.create({
+        data: {
+          tenantId: tenant.id,
+          userProfileId: profile.id,
+          roleId: role.id,
+          status: "ACTIVE",
+        },
+      });
+      const feature = await prisma.featureCode.upsert({
+        where: { code: "billing" },
+        create: { code: "billing" },
+        update: {},
+      });
+      await prisma.tenantEntitlement.upsert({
+        where: {
+          tenantId_featureCodeId: { tenantId: tenant.id, featureCodeId: feature.id },
+        },
+        create: { tenantId: tenant.id, featureCodeId: feature.id },
+        update: {},
+      });
+      const session = await app.get(SessionService).issue(profile.id);
+      return { tenantId: tenant.id, cookie: `${STAFF_SESSION_COOKIE}=${session.token}` };
+    };
+
+    /** A raw catalog item and a raw COMPLETED sale with one frozen line. */
+    const insertCompletedSale = async (tenantId: string): Promise<string> => {
+      const itemId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "catalog_item" ("id", "tenant_id", "kind", "name", "tax_rate_id")
+        VALUES (
+          ${itemId}::uuid, ${tenantId}::uuid, 'SUPPLY'::catalog_item_kind,
+          'Fiscal item', ${exemptRateId}::uuid
+        )
+      `;
+      const saleId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+        VALUES (${saleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+      `;
+      await prisma.$executeRaw`
+        INSERT INTO "sale_line" (
+          "id", "tenant_id", "sale_id", "catalog_item_id", "rate_code",
+          "unit_price", "quantity", "line_total", "taxable_base", "tax_amount"
+        )
+        VALUES (
+          ${randomUUID()}::uuid, ${tenantId}::uuid, ${saleId}::uuid, ${itemId}::uuid,
+          'EXEMPT', 100.00::decimal, 1.000::decimal, 100.00::decimal, 100.00::decimal,
+          0.00::decimal
+        )
+      `;
+      return saleId;
+    };
+
+    const createDraft = async (cookie: string, tenantId: string): Promise<string> => {
+      const saleId = await insertCompletedSale(tenantId);
+      const response = await supertest(serverUrl)
+        .post("/invoices")
+        .set("Cookie", cookie)
+        .send({ saleId })
+        .expect(201);
+      return (response.body as { id: string }).id;
+    };
+
+    const confirm = (cookie: string, id: string) =>
+      supertest(serverUrl).post(`/invoices/${id}/confirm`).set("Cookie", cookie);
+
+    /**
+     * The declaration, atomic because the migration's CHECK makes it so: the
+     * establishment, the point of expedition and the document type together.
+     */
+    const declarePoint = async (tenantId: string): Promise<string> => {
+      const establishmentId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_establishment" (
+          "id", "tenant_id", "code", "address_line", "house_number",
+          "department_code", "city_code", "city_name", "phone", "email"
+        ) VALUES (
+          ${establishmentId}::uuid, ${tenantId}::uuid, '001', 'Av. Mcal. López',
+          1234, 1, 7, 'ASUNCION', '021123456', 'fiscal@vetsur.example'
+        )
+      `;
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_emitter_profile" (
+          "tenant_id", "ruc", "check_digit", "taxpayer_type", "legal_name",
+          "tax_type", "emission_type", "default_establishment_id",
+          "default_expedition_point", "default_document_type"
+        ) VALUES (
+          ${tenantId}::uuid, '80012345', '6', 2, 'Veterinaria Sur S.A.', 1, 1,
+          ${establishmentId}::uuid, '001', 1
+        )
+      `;
+      return establishmentId;
+    };
+
+    const insertRange = async (
+      tenantId: string,
+      establishmentId: string,
+      overrides: {
+        timbradoNumber?: string;
+        series?: string | null;
+        rangeFrom?: number;
+        rangeTo?: number;
+        nextNumber?: number;
+        validityStart?: string;
+      } = {}
+    ): Promise<string> => {
+      const rangeId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_timbrado_range" (
+          "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+          "series", "timbrado_number", "range_from", "range_to", "validity_start",
+          "next_number", "status"
+        ) VALUES (
+          ${rangeId}::uuid, ${tenantId}::uuid, ${establishmentId}::uuid, '001', 1,
+          ${overrides.series === undefined ? null : overrides.series}::varchar,
+          ${overrides.timbradoNumber ?? "12345678"},
+          ${overrides.rangeFrom ?? 1}, ${overrides.rangeTo ?? 9999999},
+          ${overrides.validityStart ?? "2019-09-01 00:00:00+00"}::timestamptz,
+          ${overrides.nextNumber ?? 1}, 'ACTIVE'::fiscal_timbrado_range_status
+        )
+      `;
+      return rangeId;
+    };
+
+    const rawInvoiceHeader = (invoiceId: string) =>
+      prisma.$queryRaw<
+        { status: string; number: number | null; confirmed_at: Date | null; series: string }[]
+      >`
+        SELECT "status"::text AS status, "number", "confirmed_at", "series"
+        FROM "invoice" WHERE "id" = ${invoiceId}::uuid
+      `;
+
+    const rawAllocation = (invoiceId: string) =>
+      prisma.$queryRaw<
+        {
+          tenant_id: string;
+          range_id: string;
+          timbrado_number: string;
+          establishment_id: string;
+          expedition_point: string;
+          document_type: number;
+          series: string | null;
+          document_number: string;
+        }[]
+      >`
+        SELECT
+          "tenant_id"::text AS tenant_id, "range_id"::text AS range_id,
+          "timbrado_number", "establishment_id"::text AS establishment_id,
+          "expedition_point", "document_type", "series", "document_number"
+        FROM "invoice_fiscal_allocation" WHERE "invoice_id" = ${invoiceId}::uuid
+      `;
+
+    const rawRange = (rangeId: string) =>
+      prisma.$queryRaw<{ next_number: number; status: string; series: string | null }[]>`
+        SELECT "next_number", "status"::text AS status, "series"
+        FROM "fiscal_timbrado_range" WHERE "id" = ${rangeId}::uuid
+      `;
+
+    const sequenceRows = (tenantId: string) =>
+      prisma.$queryRaw<{ series: string; next_value: number }[]>`
+        SELECT "series", "next_value" FROM "invoice_number_sequence"
+        WHERE "tenant_id" = ${tenantId}::uuid
+      `;
+
+    beforeAll(async () => {
+      const rate = await prisma.taxRate.findUnique({ where: { code: "EXEMPT" } });
+      if (!rate) {
+        throw new Error("Reference seed did not create the EXEMPT tax rate");
+      }
+      exemptRateId = rate.id;
+    }, 30_000);
+
+    it("allocates from the declared range, persists its identity and moves the counter once", async () => {
+      const { tenantId, cookie } = await provisionTenant(
+        `fisc015-wub-alloc-${randomUUID().slice(0, 8)}`
+      );
+      const establishmentId = await declarePoint(tenantId);
+      const rangeId = await insertRange(tenantId, establishmentId, { nextNumber: 1 });
+      const invoiceId = await createDraft(cookie, tenantId);
+
+      const response = await confirm(cookie, invoiceId).expect(200);
+      const body = response.body as { number: number | null; status: string; series: string };
+
+      // The invoice's own number is Billing's counter — an integer — and the
+      // FISCAL number is the allocation's seven-digit `dNumDoc`. Two identities,
+      // deliberately: writing the fiscal number here would collide the moment a
+      // successor range restarted at 1 (finding R3-001).
+      expect(body.status).toBe("CONFIRMED");
+      expect(body.number).toBe(1);
+      // Billing's own series is untouched; the allocation carries the FISCAL one.
+      expect(body.series).toBe("A");
+
+      const [header] = await rawInvoiceHeader(invoiceId);
+      expect(header?.status).toBe("CONFIRMED");
+      expect(header?.number).toBe(1);
+
+      // The identity is persisted beside the invoice, so the worker reads it
+      // instead of reconstructing a range key a confirmed invoice cannot recover.
+      const allocations = await rawAllocation(invoiceId);
+      expect(allocations).toEqual([
+        {
+          tenant_id: tenantId,
+          range_id: rangeId,
+          timbrado_number: "12345678",
+          establishment_id: establishmentId,
+          expedition_point: "001",
+          document_type: 1,
+          series: null,
+          document_number: "0000001",
+        },
+      ]);
+
+      // The counter moved EXACTLY once, inside the confirmation's transaction.
+      const [range] = await rawRange(rangeId);
+      expect(range?.next_number).toBe(2);
+      expect(range?.status).toBe("ACTIVE");
+
+      // The counter moved exactly once too: the invoice's own number comes from
+      // it, and the allocation is a SEPARATE identity rather than a replacement.
+      expect(await sequenceRows(tenantId)).toEqual([{ series: "A", next_value: 2 }]);
+
+      // The reader the worker consumes answers the allocation for its OWN
+      // tenant and `null` for another one, which is what makes it tenant-safe.
+      const reader = createInvoiceAllocationReader(prisma);
+      await expect(reader.read(tenantId, invoiceId)).resolves.toEqual({
+        rangeId,
+        timbradoNumber: "12345678",
+        establishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+        series: null,
+        documentNumber: "0000001",
+      });
+      await expect(reader.read(tenantBId, invoiceId)).resolves.toBeNull();
+      // A counter-path invoice of another tenant has no row either, and the two
+      // absences are deliberately indistinguishable.
+      await expect(reader.read(tenantId, randomUUID())).resolves.toBeNull();
+    }, 60_000);
+
+    it("carries the fiscal series once the initial range is spent, and keeps Billing's series separate", async () => {
+      const { tenantId, cookie } = await provisionTenant(
+        `fisc015-wub-series-${randomUUID().slice(0, 8)}`
+      );
+      const establishmentId = await declarePoint(tenantId);
+      // The initial range is SPENT: one number, already consumed. The allocator
+      // closes it and continues under `AA`, inheriting the same authorisation.
+      const spentRangeId = await insertRange(tenantId, establishmentId, {
+        rangeFrom: 1,
+        rangeTo: 1,
+        nextNumber: 2,
+      });
+      const invoiceId = await createDraft(cookie, tenantId);
+
+      const body = (await confirm(cookie, invoiceId).expect(200)).body as {
+        number: number | null;
+        series: string;
+      };
+
+      // The invoice's own `number` and `series` stay Billing's; the FISCAL
+      // identity — the restarted number and its series — is the allocation's.
+      // The two are separate on purpose: the invoice's series is immutable
+      // across a permitted transition and its uniqueness is
+      // `(tenant_id, series, number)`, so writing the fiscal number here would
+      // collide the moment a successor range restarted at 1 (finding R3-001).
+      expect(body.number).toBe(1);
+      expect(body.series).toBe("A");
+      const allocations = await rawAllocation(invoiceId);
+      expect(allocations).toHaveLength(1);
+      expect(allocations[0]?.series).toBe("AA");
+      expect(allocations[0]?.document_number).toBe("0000001");
+      expect(allocations[0]?.timbrado_number).toBe("12345678");
+      expect(allocations[0]?.range_id).not.toBe(spentRangeId);
+
+      // The spent range is closed, and its successor carries the SAME
+      // authorisation's span.
+      const [spent] = await rawRange(spentRangeId);
+      expect(spent?.status).toBe("EXHAUSTED");
+      const [successor] = await rawRange(allocations[0]?.range_id ?? "");
+      expect(successor).toMatchObject({ series: "AA", next_number: 2, status: "ACTIVE" });
+    }, 60_000);
+
+    it("rolls the claim back when the confirmation fails AFTER it", async () => {
+      // The property the whole design exists for: the range's compare-and-swap
+      // and the invoice's transition commit together or not at all. The failure
+      // is REAL and not injected: the invoice's own
+      // `invoice_tenant_id_series_number_key` already holds `A/1` for this tenant
+      // — the collision a tenant that switches from the counter to the fiscal
+      // path really hits — so the conditional transition violates it AFTER the
+      // number was claimed and the allocation row written.
+      const { tenantId, cookie } = await provisionTenant(
+        `fisc015-wub-rollback-${randomUUID().slice(0, 8)}`
+      );
+      const establishmentId = await declarePoint(tenantId);
+      const rangeId = await insertRange(tenantId, establishmentId, { nextNumber: 1 });
+
+      // A CONFIRMED invoice of the SAME tenant and series holding number 1.
+      const takenSaleId = await insertCompletedSale(tenantId);
+      await prisma.$executeRaw`
+        INSERT INTO "invoice" (
+          "id", "tenant_id", "sale_id", "currency", "status", "series", "number",
+          "confirmed_at"
+        ) VALUES (
+          ${randomUUID()}::uuid, ${tenantId}::uuid, ${takenSaleId}::uuid, 'PYG',
+          'CONFIRMED'::invoice_status, 'A', 1, CURRENT_TIMESTAMP
+        )
+      `;
+      const invoiceId = await createDraft(cookie, tenantId);
+
+      const response = await confirm(cookie, invoiceId);
+      // The unique index decides, and the failure is NOT translated into a
+      // domain error: what this case proves is the ROLLBACK, not the envelope.
+      expect(response.status).toBe(500);
+
+      const [header] = await rawInvoiceHeader(invoiceId);
+      expect(header?.status).toBe("DRAFT");
+      expect(header?.number).toBeNull();
+      expect(header?.confirmed_at).toBeNull();
+
+      // The allocation row rolled back with it...
+      expect(await rawAllocation(invoiceId)).toEqual([]);
+      // ...and so did the CLAIM: the range's counter is exactly where it was,
+      // which is what keeps a number from being burnt by a failed confirmation.
+      const [range] = await rawRange(rangeId);
+      expect(range?.next_number).toBe(1);
+      expect(range?.status).toBe("ACTIVE");
+    }, 60_000);
+
+    it("refuses a declared point with no ACTIVE range and leaves the invoice unconfirmed", async () => {
+      const { tenantId, cookie } = await provisionTenant(
+        `fisc015-wub-none-${randomUUID().slice(0, 8)}`
+      );
+      await declarePoint(tenantId);
+      const invoiceId = await createDraft(cookie, tenantId);
+
+      const response = await confirm(cookie, invoiceId).expect(409);
+      expect((response.body as { error: { message: string } }).error.message).toBe(
+        ALLOCATION_NO_RANGE_MESSAGE
+      );
+
+      const [header] = await rawInvoiceHeader(invoiceId);
+      expect(header?.status).toBe("DRAFT");
+      expect(header?.number).toBeNull();
+      expect(await rawAllocation(invoiceId)).toEqual([]);
+      // The counter was not reached either: the refusal is the whole answer.
+      expect(await sequenceRows(tenantId)).toEqual([]);
+    }, 60_000);
+
+    it("refuses a declared point that matches more than one ACTIVE range", async () => {
+      const { tenantId, cookie } = await provisionTenant(
+        `fisc015-wub-ambiguous-${randomUUID().slice(0, 8)}`
+      );
+      const establishmentId = await declarePoint(tenantId);
+      // Two authorisations, each ACTIVE — the state the partial unique index
+      // deliberately admits, and the one the allocator's "greatest validity
+      // start" rule would resolve behind the tenant's back.
+      const firstRangeId = await insertRange(tenantId, establishmentId);
+      const secondRangeId = await insertRange(tenantId, establishmentId, {
+        timbradoNumber: "87654321",
+        validityStart: "2026-01-01 00:00:00+00",
+      });
+      const invoiceId = await createDraft(cookie, tenantId);
+
+      const response = await confirm(cookie, invoiceId).expect(409);
+      expect((response.body as { error: { message: string } }).error.message).toBe(
+        ALLOCATION_AMBIGUOUS_MESSAGE
+      );
+
+      const [header] = await rawInvoiceHeader(invoiceId);
+      expect(header?.status).toBe("DRAFT");
+      expect(header?.number).toBeNull();
+      expect(await rawAllocation(invoiceId)).toEqual([]);
+      // Neither counter moved: nothing was claimed under a range the tenant did
+      // not mean.
+      expect((await rawRange(firstRangeId))[0]?.next_number).toBe(1);
+      expect((await rawRange(secondRangeId))[0]?.next_number).toBe(1);
+    }, 60_000);
+
+    it("keeps the counter as the non-fiscal path for a tenant that declared nothing", async () => {
+      const { tenantId, cookie } = await provisionTenant(
+        `fisc015-wub-counter-${randomUUID().slice(0, 8)}`
+      );
+      const invoiceId = await createDraft(cookie, tenantId);
+
+      const body = (await confirm(cookie, invoiceId).expect(200)).body as {
+        number: number | null;
+      };
+
+      // The existing behaviour, pinned against real PostgreSQL: no declaration,
+      // no range, no allocation row — the counter numbers the invoice.
+      expect(body.number).toBe(1);
+      expect(await rawAllocation(invoiceId)).toEqual([]);
+      expect(await sequenceRows(tenantId)).toEqual([{ series: "A", next_value: 2 }]);
+    }, 60_000);
+
+    it("proves the allocation's own constraints on the applied database", async () => {
+      const { tenantId } = await provisionTenant(
+        `fisc015-wub-constraints-${randomUUID().slice(0, 8)}`
+      );
+      const establishmentId = await declarePoint(tenantId);
+
+      /** One invoice of `tenantId` and one range, inside the caller's tx. */
+      const withInvoiceAndRange = async (
+        tx: AllocationTx,
+        rangeOverrides: { timbradoNumber?: string } = {}
+      ): Promise<{ invoiceId: string; rangeId: string }> => {
+        const saleId = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+          VALUES (${saleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+        `;
+        const invoiceId = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "invoice" ("id", "tenant_id", "sale_id", "currency", "status")
+          VALUES (
+            ${invoiceId}::uuid, ${tenantId}::uuid, ${saleId}::uuid, 'PYG',
+            'DRAFT'::invoice_status
+          )
+        `;
+        const rangeId = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "fiscal_timbrado_range" (
+            "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+            "series", "timbrado_number", "range_from", "range_to", "validity_start",
+            "next_number", "status"
+          ) VALUES (
+            ${rangeId}::uuid, ${tenantId}::uuid, ${establishmentId}::uuid, '001', 1,
+            NULL, ${rangeOverrides.timbradoNumber ?? "12345678"}, 1, 9999999,
+            TIMESTAMPTZ '2019-09-01 00:00:00+00', 1, 'ACTIVE'::fiscal_timbrado_range_status
+          )
+        `;
+        return { invoiceId, rangeId };
+      };
+
+      const insertAllocation = (
+        tx: AllocationTx,
+        row: {
+          tenantId?: string;
+          invoiceId: string;
+          rangeId: string;
+          timbradoNumber?: string;
+          establishmentId?: string;
+          expeditionPoint?: string;
+          documentType?: number;
+          series?: string | null;
+          documentNumber?: string;
+        }
+      ) =>
+        tx.$executeRaw`
+          INSERT INTO "invoice_fiscal_allocation" (
+            "tenant_id", "invoice_id", "range_id", "timbrado_number", "establishment_id",
+            "expedition_point", "document_type", "series", "document_number"
+          ) VALUES (
+            ${row.tenantId ?? tenantId}::uuid, ${row.invoiceId}::uuid, ${row.rangeId}::uuid,
+            ${row.timbradoNumber ?? "12345678"}, ${row.establishmentId ?? establishmentId}::uuid,
+            ${row.expeditionPoint ?? "001"}, ${row.documentType ?? 1},
+            ${row.series === undefined ? null : row.series}::varchar,
+            ${row.documentNumber ?? "0000001"}
+          )
+        `;
+
+      // A range of ANOTHER tenant cannot authorise this tenant's invoice: the
+      // trigger resolves the range under the allocation's own tenant.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const foreignEstablishmentId = randomUUID();
+          await tx.$executeRaw`
+            INSERT INTO "fiscal_establishment" (
+              "id", "tenant_id", "code", "address_line", "house_number",
+              "department_code", "city_code", "city_name", "phone", "email"
+            ) VALUES (
+              ${foreignEstablishmentId}::uuid, ${tenantBId}::uuid, '001', 'Otra casa',
+              1, 1, 1, 'ASUNCION', '021999999', 'otra@example.test'
+            )
+          `;
+          const foreignRangeId = randomUUID();
+          await tx.$executeRaw`
+            INSERT INTO "fiscal_timbrado_range" (
+              "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+              "series", "timbrado_number", "range_from", "range_to", "validity_start",
+              "next_number", "status"
+            ) VALUES (
+              ${foreignRangeId}::uuid, ${tenantBId}::uuid, ${foreignEstablishmentId}::uuid,
+              '001', 1, NULL, '12345678', 1, 9999999,
+              TIMESTAMPTZ '2019-09-01 00:00:00+00', 1, 'ACTIVE'::fiscal_timbrado_range_status
+            )
+          `;
+          const { invoiceId } = await withInvoiceAndRange(tx);
+          return insertAllocation(tx, { invoiceId, rangeId: foreignRangeId });
+        })
+      ).resolves.toMatch(/does not belong to tenant/);
+
+      // The copied identity must BE the range's identity — the timbrado number,
+      // the establishment, the point, the document type AND the fiscal series —
+      // so a denormalized copy that drifts is refused at the database. The
+      // per-column pattern CHECKs (`tdNumTim`, `tdPunExp`, `tiTiDE`,
+      // `tdSerieNum`) are defense in depth rather than the first line: the
+      // trigger requires agreement with a range whose own CHECKs already pin
+      // those patterns, which is why a probe that breaks one of them is answered
+      // by the trigger.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          return insertAllocation(tx, {
+            invoiceId,
+            rangeId,
+            timbradoNumber: "87654321",
+          });
+        })
+      ).resolves.toMatch(/does not match the authorisation of range/);
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          return insertAllocation(tx, { invoiceId, rangeId, series: "AB" });
+        })
+      ).resolves.toMatch(/does not match the authorisation of range/);
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          return insertAllocation(tx, { invoiceId, rangeId, expeditionPoint: "002" });
+        })
+      ).resolves.toMatch(/does not match the authorisation of range/);
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          return insertAllocation(tx, { invoiceId, rangeId, documentType: 4 });
+        })
+      ).resolves.toMatch(/does not match the authorisation of range/);
+
+      // A cross-tenant (or unknown) INVOICE is unrepresentable: the composite FK
+      // resolves the invoice under the allocation's OWN tenant, so a foreign id
+      // cannot be named even when the range is legitimate.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { rangeId } = await withInvoiceAndRange(tx);
+          return insertAllocation(tx, {
+            invoiceId: randomUUID(),
+            rangeId,
+          });
+        })
+      ).resolves.toMatch(/invoice_fiscal_allocation_tenant_id_invoice_id_fkey/);
+
+      // One number per range: the invariant's last line of defence. A raw unique
+      // violation names the KEY it collided on rather than the index, and the
+      // index-catalog case below pins the index itself.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          await insertAllocation(tx, { invoiceId, rangeId });
+          const secondSaleId = randomUUID();
+          await tx.$executeRaw`
+            INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+            VALUES (${secondSaleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+          `;
+          const secondInvoiceId = randomUUID();
+          await tx.$executeRaw`
+            INSERT INTO "invoice" ("id", "tenant_id", "sale_id", "currency", "status")
+            VALUES (
+              ${secondInvoiceId}::uuid, ${tenantId}::uuid, ${secondSaleId}::uuid, 'PYG',
+              'DRAFT'::invoice_status
+            )
+          `;
+          return insertAllocation(tx, { invoiceId: secondInvoiceId, rangeId });
+        })
+      ).resolves.toMatch(/Key \(tenant_id, range_id, document_number\)/);
+
+      // One allocation per invoice: an invoice is confirmed once, so a second row
+      // for the same invoice is unrepresentable rather than refused by a service.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          await insertAllocation(tx, { invoiceId, rangeId });
+          return insertAllocation(tx, { invoiceId, rangeId, documentNumber: "0000002" });
+        })
+      ).resolves.toMatch(/Key \(tenant_id, invoice_id\)/);
+
+      // The number itself is the one value the range row does not carry — it is
+      // the counter's OUTPUT — so its pattern is the guard that can be reached
+      // independently: seven zero-padded digits, never all zero.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          return insertAllocation(tx, { invoiceId, rangeId, documentNumber: "000000" });
+        })
+      ).resolves.toMatch(/invoice_fiscal_allocation_document_number_tdNumDoc/);
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          return insertAllocation(tx, { invoiceId, rangeId, documentNumber: "0000000" });
+        })
+      ).resolves.toMatch(/invoice_fiscal_allocation_document_number_tdNumDoc/);
+
+      // A consumed number is burnt: the allocation is a record, never a draft.
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          await insertAllocation(tx, { invoiceId, rangeId });
+          return tx.$executeRaw`
+            UPDATE "invoice_fiscal_allocation" SET "document_number" = '0000009'
+            WHERE "invoice_id" = ${invoiceId}::uuid
+          `;
+        })
+      ).resolves.toMatch(/written once and cannot be updated/);
+      await expect(
+        rejectionMessage(async (tx) => {
+          const { invoiceId, rangeId } = await withInvoiceAndRange(tx);
+          await insertAllocation(tx, { invoiceId, rangeId });
+          return tx.$executeRaw`
+            DELETE FROM "invoice_fiscal_allocation" WHERE "invoice_id" = ${invoiceId}::uuid
+          `;
+        })
+      ).resolves.toMatch(/cannot be deleted; the number is burnt/);
+    }, 120_000);
+
+    it("applies the new table's indexes and leaves no probe behind", async () => {
+      const rows = await prisma.$queryRaw<{ indexname: string; indexdef: string }[]>`
+        SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname IN (
+          'invoice_fiscal_allocation_tenant_id_invoice_id_key',
+          'invoice_fiscal_allocation_one_number_per_range_key'
+        )
+        ORDER BY indexname
+      `;
+      const byName = new Map(rows.map((row) => [row.indexname, row.indexdef]));
+
+      expect(byName.get("invoice_fiscal_allocation_tenant_id_invoice_id_key")).toContain(
+        "USING btree (tenant_id, invoice_id)"
+      );
+      expect(byName.get("invoice_fiscal_allocation_one_number_per_range_key")).toContain(
+        "USING btree (tenant_id, range_id, document_number)"
+      );
+
+      // Every probe above rolled back. The rows that remain are exactly the ones
+      // this block's two SUCCESSFUL confirmations committed (the allocation case
+      // and the series-rollover case), and nothing else in the repository writes
+      // this table — which is the evidence that a refusal leaves no row behind.
+      const committed = await prisma.invoiceFiscalAllocation.findMany({
+        select: { invoiceId: true },
+      });
+      expect(committed).toHaveLength(2);
+      expect(new Set(committed.map((row) => row.invoiceId)).size).toBe(2);
     }, 30_000);
   });
 });

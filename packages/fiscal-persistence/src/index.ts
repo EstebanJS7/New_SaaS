@@ -49,6 +49,17 @@ export type {
   FiscalOperationType,
 } from "./customer-fiscal.read.js";
 
+// FISC-015 WU-B: the authorisation a confirmed invoice's fiscal number came from
+// (DEC-056). Its consumer is the worker's assembly, which must not need to know
+// whether the number came from a timbrado range or from Billing's counter — the
+// counter path is answered as `null`.
+export { createInvoiceAllocationReader } from "./invoice-allocation.read.js";
+export type {
+  InvoiceAllocationReadClient,
+  InvoiceFiscalAllocation,
+  InvoiceFiscalAllocationRow,
+} from "./invoice-allocation.read.js";
+
 // The CSC read returns RESTRICTED material. Its shape is the credential port's,
 // and nothing that consumes it may log, serialize or echo the value.
 export { createFiscalCscReader } from "./fiscal-csc.reader.js";

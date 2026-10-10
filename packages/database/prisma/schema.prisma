@@ -168,6 +168,9 @@ model Tenant {
   invoices                    Invoice[]
   invoiceLines                InvoiceLine[]
   invoiceNumberSequences      InvoiceNumberSequence[]
+  /// EPIC-16 FISC-015 WU-B: the fiscal authorisations behind confirmed invoices
+  /// (DEC-056). Empty for a tenant that numbers invoices with the counter.
+  invoiceFiscalAllocations    InvoiceFiscalAllocation[]
   /// EPIC-15 FiscalDocument records owned by this tenant.
   fiscalDocuments             FiscalDocument[]
   /// EPIC-16 FISC-007 sealed tenant secrets, and the signing materials that
@@ -2502,6 +2505,12 @@ model Invoice {
   /// The immutable snapshot lines copied from the sale's frozen `SaleLine` rows.
   lines InvoiceLine[]
 
+  /// EPIC-16 FISC-015 WU-B: the authorisation its fiscal number was drawn from
+  /// (DEC-056), present exactly for an invoice confirmed under a timbrado range.
+  /// OPTIONAL: a tenant that has declared no issuance point numbers its
+  /// invoices with `invoice_number_sequence` and has no row here.
+  fiscalAllocation InvoiceFiscalAllocation?
+
   /// Tenant-ownership key: target of the composite invoice FK from
   /// `InvoiceLine`.
   @@unique([tenantId, id])
@@ -3179,10 +3188,96 @@ model FiscalTimbradoRange {
   tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   establishment FiscalEstablishment @relation(fields: [tenantId, establishmentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
+  /// EPIC-16 FISC-015 WU-B: the invoice numbers this authorisation handed out.
+  fiscalAllocations InvoiceFiscalAllocation[]
+
   /// The Manual's whole sequence: the timbrado number is part of the identity, so a
   /// second authorisation for the same key is a different range rather than a
   /// collision.
   @@unique([tenantId, establishmentId, expeditionPoint, documentType, series, timbradoNumber])
   @@index([tenantId, status])
   @@map("fiscal_timbrado_range")
+}
+
+/// EPIC-16 FISC-015 WU-B — the authorisation behind a confirmed invoice's fiscal
+/// number (DEC-056).
+///
+/// The fiscal number is allocated AT CONFIRMATION, from the tenant's timbrado
+/// range, INSIDE the confirmation transaction; this row is the allocation's
+/// IDENTITY, persisted beside the invoice so the worker READS it instead of
+/// reconstructing a range key that a confirmed invoice cannot recover (DEC-056:
+/// `TimbradoRangeKey` needs the establishment, the point of expedition and the
+/// document type, and neither `invoice` nor `fiscal_document` carries them).
+///
+/// ONE ROW PER INVOICE, and only for an invoice whose tenant declared its
+/// issuance point. A tenant that has declared nothing numbers its invoices with
+/// `invoice_number_sequence` and has no row here: the ABSENCE is the state, not
+/// an error, and `createInvoiceAllocationReader` answers `null` for it.
+///
+/// The identity is DENORMALIZED on purpose — the timbrado number, the
+/// establishment, the point and the document type are copied from the range at
+/// allocation time. It is a snapshot of the authorisation the number was drawn
+/// under, so the reader needs no join and a later change to the range cannot
+/// rewrite what a confirmed document was issued under.
+///
+/// `series` here is the FISCAL series (`dSerieNum`, `[A-Z]{2}`, NULL for the
+/// initial range the Manual consumes first), NOT the invoice's own `series`
+/// (Billing's, up to eight characters, default `"A"`). The two coexist: the DE
+/// carries this one, and they must not be "unified".
+///
+/// `documentNumber` is `dNumDoc` in its EMITTED form — seven digits, zero-padded
+/// (`SIFEN-BASELINE.md` §21.3; the CDC's own composition repeats the width,
+/// §22.9) — while the invoice's `number` stays the INTEGER the allocation
+/// returned.
+///
+/// Data classification: the authorisation's identity and the number are INTERNAL
+/// (PRD §41); logs and audit carry ids and field names only.
+model InvoiceFiscalAllocation {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId  String @map("tenant_id") @db.Uuid
+  /// The invoice this allocation numbers. One per tenant: an invoice is confirmed
+  /// once, and a number is burnt the moment it is handed out.
+  invoiceId String @map("invoice_id") @db.Uuid
+  /// The range the number was drawn from, `fiscal_timbrado_range.id`. A PLAIN FK
+  /// and not a composite one, because the range carries no `(tenant_id, id)`
+  /// unique key; the migration's own guard is what proves the row belongs to THIS
+  /// tenant and carries the same identity.
+  rangeId   String @map("range_id") @db.Uuid
+
+  /// `dNumTim`, `tdNumTim`: exactly eight digits, never all zero.
+  timbradoNumber String @map("timbrado_number") @db.VarChar(8)
+  /// `D107 dEst`, `tdEst`: three digits, zero-padded.
+  establishmentId String @map("establishment_id") @db.Uuid
+  /// `C006 dPunExp`, `tdPunExp`: three digits, zero-padded.
+  expeditionPoint String @map("expedition_point") @db.VarChar(3)
+  /// `C002 iTiDE`, `tiTiDE`: 1, 4, 5, 6, 7, 9 or 10.
+  documentType    Int    @map("document_type") @db.SmallInt
+  /// `dSerieNum`, `tdSerieNum`: `[A-Z]{2}`, or NULL for the initial range.
+  series          String? @db.VarChar(2)
+  /// `C007 dNumDoc`, `tdNumDoc`: seven digits, zero-padded, never all zero.
+  documentNumber  String @map("document_number") @db.VarChar(7)
+
+  /// Written once, inside the confirmation transaction — there is deliberately no
+  /// `updatedAt`, and the migration rejects every UPDATE and every DELETE.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Composite tenant-ownership FK: the invoice must be in the SAME tenant.
+  invoice Invoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// The authorisation itself, by id: a range cannot be deleted (its own trigger),
+  /// so an allocation can never lose the row it names.
+  range FiscalTimbradoRange @relation(fields: [rangeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// One allocation per invoice: the number is allocated exactly once, inside the
+  /// transaction that also applies the `DRAFT -> CONFIRMED` transition.
+  ///
+  /// There is deliberately no `(tenantId, id)` unique key here, and that is the
+  /// one place this aggregate departs from the tenant-ownership convention. That
+  /// key exists so OTHER tables can composite-FK to an aggregate, and nothing
+  /// references this leaf row: the composite key that carries the tenant is
+  /// `(tenant_id, invoice_id)` — the target of the FK to the invoice — and the
+  /// migration's guard proves the range belongs to the same tenant.
+  @@unique([tenantId, invoiceId])
+  @@map("invoice_fiscal_allocation")
 }
