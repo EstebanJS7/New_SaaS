@@ -728,6 +728,13 @@ candidate 1 exists.
       assembly consumes are in, plus two gaps recorded rather than papered over:
       **the receptor's city code has no source** and **the address country is
       alpha-2 while the DE's is alpha-3**. **Next: WU-D2**, the assembly itself.
+      **WU-D2 landed as commit `20d309f`** — 6 files, 1,457 insertions — and its
+      review is `review-f545f1ccc3f7e13e`: tier `medium`, one lens, closed
+      **`approved`** with four advisories. **The worker can now build a real
+      DE**: the assembly implements FISC-012's seam, and the built, signed and
+      QR-filled document **validates against the official XSDs**. Three stale
+      `iTiOpe` lines were corrected (comment-only, verified against every
+      branch). What is left for the story is FISC-013's homologation run.
 - [ ] T12 — **FISC-016: the cancellation event.** Created by FISC-012's own
       implementation: SIFEN's cancellation is an event and `SIFEN-BASELINE.md`
       §23.3 records that `Evento_v150.xsd`'s field-level rules were never

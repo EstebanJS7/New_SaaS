@@ -167,6 +167,24 @@ compare. DEC-056's sentence about "the invoice's printed number" is satisfied
 for the document the customer sees; the API's invoice DTO showing the fiscal
 number when an allocation exists is a follow-up.
 
+## Known limitations of the assembly
+
+- **The composition root is not test-covered**: `worker.module.ts`'s new
+  providers are proven by typecheck and build only, because `main.test.ts`
+  bypasses Nest and no module spec exists.
+- **The worker's signature verification uses `node:crypto`**, not `xml-crypto`
+  (not a worker dependency): the test documents the two canonicalization rules
+  it applies.
+- **The QR's totals are the DE's own `F014`/`F017` strings** (`"200.00000000"`),
+  not the integer form the Manual's example prints — the sources state no
+  reformatting, so this is unpinned.
+- **`dFeEmiDE`/`dFecFirma` are rendered in UTC**, and the emitter's local wall
+  clock is modelled nowhere; SIFEN's field is a local-time one.
+- **A non-PYG invoice cannot be issued**: `F023` has no source, and with it
+  `dCondTiCam`/`dTiCam` are unmodelled.
+- **A counter-path invoice is refused**, so a tenant that declared no issuance
+  point can never issue a DE.
+
 ## The gaps WU-D1 found
 
 - **The receptor's city code has no source anywhere in the repository.** The

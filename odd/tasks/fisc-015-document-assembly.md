@@ -44,10 +44,10 @@ The retrieval's own findings, worth keeping:
       the Evidence.
 - [ ] **WU-D — the assembly**, split in two:
   - **WU-D1 — the protocol tables and the reads**. Landed — see the Evidence.
-  - **WU-D2 — the assembly**: the mapping from the tenant's rows to
-    `DteMappingInput`, plugged into FISC-012's seam, proven against the official
-    XSD. It also fixes the two pre-existing comment defects WU-D1 found (see the
-    notes below).
+  - **WU-D2 — the assembly**. Landed — see the Evidence. It also corrected the
+    three stale `iTiOpe` lines (two comments and one baseline sentence), all
+    comment-only, after verifying every branch already matched the corrected
+    pairing.
 - [ ] **WU-E — the homologation of one real document**: handed to [[FISC-013]].
 
 ## Evidence
@@ -80,6 +80,11 @@ into a successor lineage review-935a71a795da88ed the recovered review: tier
 WU-D1 e7e9b45 feat(FISC-015): the protocol tables and the reads the assembly
 consumes — 14 files, 3,249 insertions review-edb12ca102650758 tier `high`, four
 lenses as one group, closed **`approved`** with six advisories at
+`WARNING`/`SUGGESTION`, none opening a correction
+
+WU-D2 20d309f feat(FISC-015): the document assembly — the worker can build a
+real DE — 6 files, 1,457 insertions review-f545f1ccc3f7e13e tier `medium`, one
+lens (`review-reliability`), closed **`approved`** with four advisories at
 `WARNING`/`SUGGESTION`, none opening a correction
 
 ## Review record
@@ -118,6 +123,37 @@ correction: the allocation's race window (`R3-ALLOC-RACE`, `R4-001`), the
 live-PG spec's own count (`R4-002`), the counter's documentation
 (`R3-COUNTER-DOC`) and four readability points. The reviewers' full text is
 never retained, so each reading above is ours.
+
+## WU-D2's notes
+
+- **The XSD proof ran and passed** — the built, signed and QR-filled document
+  validates against the official schemas. That is the Story's own criterion and
+  the first time this code has proven a document against them.
+- **`signDteXml` returns a string, not a pair**, so the QR's `DigestValue` is
+  read out of the signed document. The read is safe because the profile pins one
+  `Reference` and the signer refuses any other signature count — and it is the
+  one place to revisit if the signer ever returns the digest beside the XML.
+- **The identity step straddles the mapping step**: `dCodSeg` is both
+  `gOpeDE.dCodSeg` and the CDC's tenth field, so the order is
+  `security code -> CDC -> mapper -> xml -> sign -> QR -> fill`, not the Story's
+  numbered list read literally.
+- **The allocation snapshot carries everything for `gTimb` except `dFeIniT`**,
+  so one extra range read by `rangeId` is needed — and taking the identity from
+  the snapshot rather than from a "current range" read is what stops a
+  rolled-over range from rewriting what a number was issued under.
+- **A thrown error is worse than a named reason here**: a throw is a BullMQ
+  retry that leaves the row claimed in `SIGNING`, while `UNAVAILABLE` lands it
+  on a terminal `ERROR` with a code an operator reads. That is why the pure
+  builders' typed refusals are converted too.
+- **The worker cannot verify the signature with `xml-crypto`** (not a worker
+  dependency), so its test does it with `node:crypto` and two C14N rules it
+  documents — an apex element inherits its parent's namespace declaration, and
+  empty elements expand to start/end pairs. A wrong canonical form cannot
+  reproduce a digest, so the check fails loudly.
+- **The composition root has no test** (see the Story's limitations): the new
+  providers are proven by typecheck and build only.
+- **A third stale line was found in the baseline** (§22.3's "A B2C document
+  (`D202 = 4`)"), which is the same wrong pairing; it is corrected here.
 
 ## WU-D1's notes
 
