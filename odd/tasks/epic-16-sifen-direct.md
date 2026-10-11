@@ -720,6 +720,14 @@ candidate 1 exists.
       **recovered** with the maintainer's authorization and the predecessor
       preserved. **Next: WU-D** (the assembly, which also adds the units and the
       currencies tables the protocol's XSDs carry and the repository does not).
+      **WU-D1 landed as commit `e7e9b45`** — 14 files, 3,249 insertions — and
+      its review is `review-edb12ca102650758`: tier `high`, four lenses as one
+      group, closed **`approved`** with six advisories. The protocol tables that
+      existed nowhere (units, currencies, countries — generated from the
+      official XSDs, with each artifact's own quirks kept) and the reads the
+      assembly consumes are in, plus two gaps recorded rather than papered over:
+      **the receptor's city code has no source** and **the address country is
+      alpha-2 while the DE's is alpha-3**. **Next: WU-D2**, the assembly itself.
 - [ ] T12 — **FISC-016: the cancellation event.** Created by FISC-012's own
       implementation: SIFEN's cancellation is an event and `SIFEN-BASELINE.md`
       §23.3 records that `Evento_v150.xsd`'s field-level rules were never

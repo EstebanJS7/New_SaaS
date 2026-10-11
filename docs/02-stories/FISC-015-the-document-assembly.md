@@ -167,6 +167,26 @@ compare. DEC-056's sentence about "the invoice's printed number" is satisfied
 for the document the customer sees; the API's invoice DTO showing the fiscal
 number when an allocation exists is a follow-up.
 
+## The gaps WU-D1 found
+
+- **The receptor's city code has no source anywhere in the repository.** The
+  Manual's Tabla 2.2 is not profiled, so `cCiuRec`/`dDesCiuRec` cannot be built
+  and the conditional address group is omitted; a remission note or an exterior
+  operation, whose receptor _must_ carry an address, is refused. Profiling the
+  table is a retrieval, not a guess.
+- **`customer_address.country_code` is alpha-2 while `cPaisRec` is alpha-3**, so
+  a customer with a stored country is refused until one side is converted or
+  migrated.
+- **`CatalogItem` has no code column**, so `dCodInt` carries the item's UUID —
+  legal and stable, but it publishes an internal identifier the schema
+  classifies CONFIDENTIAL.
+- **A walk-in invoice is refused**, not defaulted: the innominado receptor needs
+  a customer row with both identity columns NULL, and DEC-057 pinned the
+  operation type "per customer".
+- **Two pre-existing comment defects** in `dte.types.ts` and `dte.rules.ts`
+  carry the old, wrong `iTiOpe` pairing. The behaviour is right; the comments
+  mislead. WU-D2 fixes them.
+
 ## Known limitations this unit created
 
 - **The at-most-two ACTIVE CSC bound is enforced per statement, not

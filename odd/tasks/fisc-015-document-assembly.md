@@ -76,6 +76,11 @@ into a successor lineage review-935a71a795da88ed the recovered review: tier
 `high`, four lenses as one group, closed **`approved`** with eight advisories at
 `WARNING`/`SUGGESTION`, none opening a correction
 
+WU-D1 e7e9b45 feat(FISC-015): the protocol tables and the reads the assembly
+consumes — 14 files, 3,249 insertions review-edb12ca102650758 tier `high`, four
+lenses as one group, closed **`approved`** with six advisories at
+`WARNING`/`SUGGESTION`, none opening a correction
+
 ## Review record
 
 **WU-C — `review-9ddfb96df63fba50`, `approved` with four lenses (2026-10-10).**
@@ -112,6 +117,37 @@ correction: the allocation's race window (`R3-ALLOC-RACE`, `R4-001`), the
 live-PG spec's own count (`R4-002`), the counter's documentation
 (`R3-COUNTER-DOC`) and four readability points. The reviewers' full text is
 never retained, so each reading above is ours.
+
+## WU-D1's notes
+
+- **The tables are generated from the artifacts**, and the artifacts have quirks
+  worth keeping rather than correcting: `MKD` appears twice in
+  `Paises_v100.xsd`, a two-character sentinel is published that is not ISO 3166,
+  and fifteen currency names are longer than the twenty characters
+  `tdDMoneTiPag` allows — the table stays faithful and the lookup refuses what
+  cannot be emitted.
+- **`dDesUniMed` is `tdDesUniMed` (1..10)**, so the unit's _documentation_ and
+  its _symbol_ are two parallel enumerations: the table carries both, and the
+  symbol is what the DE emits.
+- **Two gaps, both recorded rather than papered over.** The receptor's **city
+  code has no source anywhere in the repository** — the Manual's Tabla 2.2 is
+  not profiled — so the conditional address group is omitted and a remission
+  note or an exterior operation is refused. And
+  **`customer_address.country_code` is alpha-2 while `cPaisRec` is alpha-3**, so
+  a customer with a stored country is refused until one side is fixed.
+- **`CatalogItem` has no code column**, so `dCodInt` carries the item's UUID:
+  legal and stable, but it publishes an internal identifier the schema
+  classifies CONFIDENTIAL. A `code` column, or a refusal, is the decision —
+  flagged.
+- **A walk-in invoice is refused**, not defaulted: the innominado receptor is
+  reachable only through a customer row with both identity columns NULL.
+- **Two pre-existing comment defects found while reading the receptor rules**
+  (the behaviour is right, the comments are not): `dte.types.ts` says "3 is B2G,
+  4 is B2C" and `dte.rules.ts`'s `D210` comment reads "For B2C (D202 = 4)". Both
+  contradict §22.3's corrected pairing. **WU-D2 fixes them.**
+- **`E737`'s exact division is refused rather than rounded** when NT 013's
+  formula does not divide exactly, because the Nota Técnica states no rounding
+  rule.
 
 ## Notes
 
