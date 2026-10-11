@@ -39,8 +39,12 @@ import {
   createFiscalCscReader,
   createFiscalProfileReader,
   createInvoiceAllocationReader,
+  createInvoiceSnapshotReader,
+  createReceptorReader,
   createTaxClassificationReader,
   createTimbradoRangeStore,
+  InvoiceSnapshotReadError,
+  ReceptorReadError,
 } from "@newsaas/fiscal-persistence";
 import { InMemorySecretStore } from "@newsaas/secret-store";
 
@@ -17692,6 +17696,168 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         });
         // And the establishment the point names is readable in the same tenant.
         await expect(reader.readEstablishment(tenantAId, establishmentId)).resolves.not.toBeNull();
+      });
+    }, 30_000);
+
+    it("answers WU-D's two reads from the tenant's own rows and nothing else", async () => {
+      // The unit suites prove the mapping against fakes. This proves the SQL: the
+      // tenant in every `where`, the composite foreign keys that make a line's
+      // catalog item and rate row reachable, and the decoder for the columns a
+      // `Decimal` reaches the read as. A wrong column or a missing tenant filter
+      // is invisible to a fake and loud here.
+      const exemptRate = await prisma.taxRate.findUnique({ where: { code: "EXEMPT" } });
+      if (!exemptRate) {
+        throw new Error("Reference seed did not create the EXEMPT tax rate");
+      }
+      const customerId = randomUUID();
+      const itemId = randomUUID();
+      const saleId = randomUUID();
+      const invoiceId = randomUUID();
+
+      await inRollback(async (tx) => {
+        await tx.$executeRaw`
+          INSERT INTO "customer" (
+            "id", "tenant_id", "kind", "display_name", "legal_name", "tax_id",
+            "fiscal_operation_type"
+          ) VALUES (
+            ${customerId}::uuid, ${tenantAId}::uuid, 'COMPANY', 'Veterinaria Sur',
+            'Veterinaria Sur S.A.', '80012345', 'B2B'::fiscal_operation_type
+          )
+        `;
+        // The customer's address carries NO country: PRY is then the only honest
+        // answer, which is the branch a receptor for a national customer takes.
+        await tx.$executeRaw`
+          INSERT INTO "customer_address" (
+            "id", "tenant_id", "customer_id", "line1", "city", "country_code"
+          ) VALUES (
+            ${randomUUID()}::uuid, ${tenantAId}::uuid, ${customerId}::uuid,
+            'Av. Mcal. López 1234', 'ASUNCION', NULL
+          )
+        `;
+        await tx.$executeRaw`
+          INSERT INTO "catalog_item" (
+            "id", "tenant_id", "kind", "name", "tax_rate_id", "unit_of_measure_code"
+          ) VALUES (
+            ${itemId}::uuid, ${tenantAId}::uuid, 'SUPPLY'::catalog_item_kind,
+            'Fiscal item', ${exemptRate.id}::uuid, '77'
+          )
+        `;
+        await tx.$executeRaw`
+          INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+          VALUES (
+            ${saleId}::uuid, ${tenantAId}::uuid, 'PYG', 'COMPLETED'::sale_status
+          )
+        `;
+        await tx.$executeRaw`
+          INSERT INTO "invoice" (
+            "id", "tenant_id", "sale_id", "customer_id", "currency", "status",
+            "series", "number", "confirmed_at"
+          ) VALUES (
+            ${invoiceId}::uuid, ${tenantAId}::uuid, ${saleId}::uuid,
+            ${customerId}::uuid, 'PYG', 'CONFIRMED'::invoice_status, 'A', 1,
+            '2026-10-10 14:02:26.123+00'::timestamptz
+          )
+        `;
+        // Two lines, and only ONE of them classified below: the refusal for the
+        // other is the point of the first assertion.
+        await tx.$executeRaw`
+          INSERT INTO "invoice_line" (
+            "id", "tenant_id", "invoice_id", "catalog_item_id", "position",
+            "description", "rate_code", "unit_price", "quantity", "line_total",
+            "taxable_base", "tax_amount"
+          ) VALUES (
+            ${randomUUID()}::uuid, ${tenantAId}::uuid, ${invoiceId}::uuid,
+            ${itemId}::uuid, 1, 'Consulta veterinaria', 'EXEMPT',
+            100.00::decimal, 1.000::decimal, 100.00::decimal, 100.00::decimal,
+            0.00::decimal
+          )
+        `;
+        await tx.$executeRaw`
+          INSERT INTO "invoice_line" (
+            "id", "tenant_id", "invoice_id", "catalog_item_id", "position",
+            "description", "rate_code", "unit_price", "quantity", "line_total",
+            "taxable_base", "tax_amount"
+          ) VALUES (
+            ${randomUUID()}::uuid, ${tenantAId}::uuid, ${invoiceId}::uuid,
+            ${itemId}::uuid, 2, 'Antibiótico', 'IVA_5',
+            50.00::decimal, 2.000::decimal, 100.00::decimal, 95.24::decimal,
+            4.76::decimal
+          )
+        `;
+        await insertClassification(tx, tenantAId, "EXEMPT", "EXENTO");
+
+        const receptor = await createReceptorReader(tx).readReceptor({
+          tenantId: tenantAId,
+          customerId,
+          documentType: 1,
+        });
+        expect(receptor).toEqual({
+          iNatRec: 1,
+          iTiOpe: 1,
+          cPaisRec: "PRY",
+          dDesPaisRe: "Paraguay",
+          iTiContRec: 2,
+          dRucRec: "80012345",
+          // Módulo 11 over the RUC, computed by the read and NOT read from the
+          // row: the stored taxId here carries no digit at all.
+          dDVRec: "0",
+          dNomRec: "Veterinaria Sur S.A.",
+        });
+
+        const snapshots = createInvoiceSnapshotReader(tx);
+
+        // The second line's rate code is not classified, and the read refuses the
+        // whole invoice rather than defaulting one line's tax treatment.
+        await expect(
+          snapshots.readInvoiceSnapshot({ tenantId: tenantAId, invoiceId, receptor })
+        ).rejects.toBeInstanceOf(InvoiceSnapshotReadError);
+
+        await insertClassification(tx, tenantAId, "IVA_5", "GRAVADO_IVA");
+        const snapshot = await snapshots.readInvoiceSnapshot({
+          tenantId: tenantAId,
+          invoiceId,
+          receptor,
+        });
+        expect(snapshot).toMatchObject({
+          issuedAt: "2026-10-10T14:02:26",
+          currency: "PYG",
+          currencyDescription: "Guarani",
+          lines: [
+            {
+              itemCode: itemId,
+              description: "Consulta veterinaria",
+              unitOfMeasureCode: "77",
+              unitOfMeasureDescription: "UNI",
+              quantity: "1.000",
+              unitPrice: "100.00",
+              affectation: 3,
+              ivaRate: 0,
+              exemptBase: "0",
+            },
+            {
+              description: "Antibiótico",
+              quantity: "2.000",
+              unitPrice: "50.00",
+              lineTotal: "100.00",
+              affectation: 1,
+              ivaRate: 5,
+              exemptBase: "0",
+            },
+          ],
+        });
+
+        // Tenant B owns nothing here, and neither read can reach across: the
+        // customer answers as absent and the invoice as missing.
+        await expect(
+          createReceptorReader(tx).readReceptor({
+            tenantId: tenantBId,
+            customerId,
+            documentType: 1,
+          })
+        ).rejects.toBeInstanceOf(ReceptorReadError);
+        await expect(
+          snapshots.readInvoiceSnapshot({ tenantId: tenantBId, invoiceId, receptor })
+        ).resolves.toBeNull();
       });
     }, 30_000);
 
