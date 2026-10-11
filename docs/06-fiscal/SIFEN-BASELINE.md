@@ -997,7 +997,7 @@ Two consequences worth naming:
   `5 = Innominado`, `6 = Tarjeta Diplomática de exoneración fiscal` and `9`. The
   schema's `tiTipDocRec` (`[1-6]|9`) is the one that matches. **The generator
   must use the receptor enumeration, not the emitter's.**
-- **A B2C document (`D202 = 4`) carries no identity document at all**, by the
+- **A B2F document (`D202 = 4`) carries no identity document at all**, by the
   `No informar` rule. That is a rule no schema expresses.
 
 **Nota Técnica 24 already amended this block** (§16): it amends `D208c`
