@@ -42,11 +42,12 @@ The retrieval's own findings, worth keeping:
       declaration, not of the code path.
 - [x] **WU-C — the fiscal data** (the schema delta and the reads). Landed — see
       the Evidence.
-- [ ] **WU-D — the assembly**: the mapping from the tenant's rows to
-      `DteMappingInput`, plugged into FISC-012's seam, proven against the
-      official XSD. **It also owns two protocol tables that do not exist
-      anywhere in the repository**: the units of measure and the currencies,
-      both of which the official XSDs carry with their descriptions.
+- [ ] **WU-D — the assembly**, split in two:
+  - **WU-D1 — the protocol tables and the reads**. Landed — see the Evidence.
+  - **WU-D2 — the assembly**: the mapping from the tenant's rows to
+    `DteMappingInput`, plugged into FISC-012's seam, proven against the official
+    XSD. It also fixes the two pre-existing comment defects WU-D1 found (see the
+    notes below).
 - [ ] **WU-E — the homologation of one real document**: handed to [[FISC-013]].
 
 ## Evidence
