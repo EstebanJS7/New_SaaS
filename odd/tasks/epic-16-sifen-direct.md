@@ -611,8 +611,9 @@ candidate 1 exists.
       fast path, the CDC as the survivor) and the failure partition — total,
       asserted member by member, with only the three "the request may never have
       arrived" failures retryable. **`cancel` fails closed** with
-      `CANCELLATION_EVENT_UNPROFILED`, which is [[FISC-016]]. **WU-E2 landed as
-      commit `9295769`** — 8 files, 521 insertions — and its review is
+      `CANCELLATION_EVENT_UNPROFILED` — retired by [[FISC-016]] WU-C, which
+      built the event and made `cancel` submit. **WU-E2 landed as commit
+      `9295769`** — 8 files, 521 insertions — and its review is
       `review-661aab129f50b6f9`: tier `medium`, one lens, **one CRITICAL
       finding** (`R3-SIFEN-PRODUCTION-DEFAULT`) that a read-only refuter
       **corroborated**: an absent `SIFEN_ENVIRONMENT` defaulted to `TEST` for

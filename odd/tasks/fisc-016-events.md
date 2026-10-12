@@ -71,9 +71,23 @@ it.
       tolerate leading zeros, because the schema's facets admit them and state
       no canonical form; and the lot's `@Id` uniqueness is asserted by the
       signer, which is where the reference is built.
-- [ ] **WU-C — the provider's `cancel`.** `SifenDirectFiscalProvider.cancel`
-      stops answering `CANCELLATION_EVENT_UNPROFILED` and submits the event
-      through `receiveEvent`; an unlisted result code is carried, never coerced.
+- [x] **WU-C — the provider's `cancel`.** Done.
+      `SifenDirectFiscalProvider.cancel` stops answering
+      `CANCELLATION_EVENT_UNPROFILED` (the reason code is retired) and submits
+      the caller's signed `gGroupGesEve` through `receiveEvent`; the answer's
+      `dEstRes` maps `Aprobado`/`Aprobado con observación` to `CANCELLED` and
+      `Rechazado` to `REJECTED`, and an unlisted `dCodRes` is carried verbatim,
+      never coerced (§25.5). A requiring provider handed `document: null`
+      answers the same `CONFIGURATION_ERROR` `issue` does — ADR-009 amended for
+      cancel. **The defect on the way is fixed**: `serializeEventReception`
+      embeds the `gGroupGesEve` under `dEvReg`, asserts that root (leading
+      indentation aside, because the group is rendered at its envelope's
+      column), and `buildEventXml` composes the same group bytes so the two
+      surfaces cannot drift. The API builds and signs the event for a requiring
+      provider — `buildEventGroupXml → signEventXml`, credential read per call,
+      local `dFecFirma` from its own clock. Proof: the whole serialized envelope
+      validates against `WS_SiRecepEvento_v150.xsd` with `DTE_XSD_REQUIRED=1`
+      (`xsd-event-validation.test.ts`).
 - [ ] **WU-D — the inutilización's surface.** Voiding a range is a business
       operation with its own reason, and its range is validated against the
       tenant's timbrado.
@@ -84,7 +98,12 @@ it.
 
 ```text
 996d86e  docs(FISC-016): profile the event family (WU-A)   review-6283a69635a236fe (low)
+(pending)  feat(FISC-016): the provider's cancel — the submission, the fix and
+           the proof (WU-C)
 ```
+
+The WU-C line is owed by the parent orchestrator: this implementation unit does
+not commit.
 
 ## Open
 

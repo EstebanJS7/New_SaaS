@@ -181,9 +181,10 @@ are never audited.
   with the lot number as `providerReference` and the document's own CDC, which
   the batch answer does not carry. `query` asks by the reference when it has one
   and by the CDC otherwise, so a lost hand-over answer does not lose the
-  document ([[ADR-007]] §2). `cancel` **fails closed** with
-  `CANCELLATION_EVENT_UNPROFILED`: SIFEN's cancellation is an event and its
-  payload is unprofiled ([[FISC-016]]).
+  document ([[ADR-007]] §2). `cancel` **fails closed** with the caller's signed
+  event: the adapter submits it through the event service and maps the answer.
+  Until FISC-016 WU-C it answered `CANCELLATION_EVENT_UNPROFILED`, because
+  SIFEN's cancellation is an event and its payload is unprofiled ([[FISC-016]]).
 - **The failure partition is total.** The transport's nine failures and the
   facade's one are mapped explicitly, and only the three where the request may
   never have arrived — `NETWORK_FAILURE`, `TIMEOUT`, `ABORTED` — are
@@ -467,7 +468,12 @@ because they are deployment concerns rather than tenant behavior.
 - **The worker cannot build a document.** The stage fails closed behind a seam
   whose reason names [[FISC-015]], so a `sifen-direct` deployment cannot issue
   until the assembly lands.
-- **`cancel` fails closed** with `CANCELLATION_EVENT_UNPROFILED`: the
+- **`cancel` submits the caller's signed event** (FISC-016 WU-C). A requiring
+  provider handed `document: null` answers `CONFIGURATION_ERROR` and sends
+  nothing; otherwise the event group goes through `receiveEvent` and the answer
+  maps onto the port's cancel outcomes, with an unlisted result code carried
+  verbatim.
+- **`cancel` used to fail closed** with `CANCELLATION_EVENT_UNPROFILED`: the
   cancellation event's payload is unprofiled and [[FISC-016]] owns it.
 - **Nothing has been proven against DNIT.** No submission has reached SIFEN, the
   certificate is a fixture and the CSC is a stand-in; that is [[FISC-013]].

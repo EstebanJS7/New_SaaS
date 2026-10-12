@@ -1735,6 +1735,49 @@ frozen 200-line correction budget.
 - **`cancel` refuses.** SIFEN's cancellation is an event and its payload is
   unprofiled ([[FISC-016]]), so the adapter answers
   `CANCELLATION_EVENT_UNPROFILED` rather than sending an event nobody validated.
+  **Superseded**: [[FISC-016]] WU-C profiled the family, built the event, and
+  the reason code is gone from the source — `cancel` now submits the caller's
+  signed event group.
 - **The reconciliation's real behaviour against SIFEN is unproven.** The batch
   poll cadence, the `0360` reading and the duplicate protection are reasoned
   from §23.7 and [[ADR-007]], not observed.
+
+## FISC-016 WU-C — the event family's XSD gate, and the provider's `cancel`
+
+**The XSD job now fetches eleven artifacts, not seven.** WU-C added the event
+family's four (`WS_SiRecepEvento_v150.xsd`, `protProcesEventos_v141.xsd`,
+`Evento_v150.xsd`, `Evento_Types_v150.xsd`) to the prepared set, because the job
+runs `pnpm --filter @newsaas/fiscal test` with `DTE_XSD_REQUIRED=1` and that
+suite now covers both document families. The job's own assertion is unchanged in
+kind: every artifact must arrive with a 200 and a plausible size, and a fetch
+that does not produce all of them fails rather than degrading to a skip.
+
+**Two defects the gate was hiding, both found by using it:**
+
+1. The DNIT ships the include attribute as `schemaLocation= "..."` **with a
+   space** in two of the event schemas. A rewrite that matched only the tight
+   form left six absolute URLs in place, and the inspection reported the
+   prepared directory **usable** while validation would still have reached the
+   network.
+2. FISC-012's `serializeEventReception` emitted `dEvReg` around a bare
+   `rGesEve`, omitting the `gGroupGesEve` wrapper. The official schema rejects
+   it in its own words — "Element rGesEve: This element is not expected.
+   Expected is ( gGroupGesEve )" — so the serializer had been producing a
+   document that could not validate.
+
+**Evidence, FISC-016 WU-C** (2026-10-11):
+
+```text
+fiscal            lint, typecheck, build clean
+                  test 671/671 with DTE_XSD_REQUIRED=1 (0 skipped)
+                  xsd-event-validation 13/13, xsd-validation 11/11
+api               lint, typecheck, build clean
+                  test 1152 passed | 223 skipped (the live-PostgreSQL suite)
+worker            test 140/140 — the shared gate's own consumer
+root              lint 20/20, typecheck 20/20, test 21/21, build 12/12
+format-check      clean
+```
+
+The signature round trip added by the correction proves what schema validity
+cannot: the signature still verifies **after** the serializer embeds the signed
+group. It fails without the group's namespace declaration and passes with it.

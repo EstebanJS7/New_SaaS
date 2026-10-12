@@ -133,9 +133,11 @@ jobs:
   xsd-validation:
     # FISC-008 WU-B. The acceptance criterion is "a DTE XML validates against the
     # official XSD before any submission". The schemas are copyrighted and are
-    # NOT vendored, so this job fetches the seven official artifacts into a
+    # NOT vendored, so this job fetches the eleven official artifacts (the DE's
+    # seven plus the event family's four, FISC-016 WU-C) into a
     # job-local directory that is never committed and never cached across runs,
-    # asserts every one of them, and then runs the schema-validation suite with
+    # asserts every one of them, and then runs the schema-validation suites -- the
+    # DE's and the event family's -- with
     # its skip DISABLED. A fetch that does not produce all seven fails the job
     # rather than degrading to a skip, so a green run can never be the product
     # of having validated nothing.
@@ -164,7 +166,7 @@ jobs:
         run: pnpm build --filter=@newsaas/fiscal
 
       - name: Fetch and assert the official DNIT schemas
-        # Fails unless all seven artifacts arrive with a 200 and a plausible
+        # Fails unless all eleven artifacts arrive with a 200 and a plausible
         # size, and rewrites their absolute includes so the next step is
         # hermetic.
         env:

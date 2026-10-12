@@ -24,11 +24,11 @@ updated: 2026-10-11
 
 Make cancellation work against SIFEN, and add the second event the DNIT's own
 homologation requires. [[FISC-012]] left `cancel` answering
-`CANCELLATION_EVENT_UNPROFILED` because SIFEN's cancellation is an _event_ and
-the event's payload was never read; §25 of the baseline is now that profiling,
-and this Story builds from it. Its outcome is that a tenant can cancel an
-authorized document and void a number range, and that the events the test matrix
-demands are implemented and tested.
+`CANCELLATION_EVENT_UNPROFILED` — a code this Story **retired** — because
+SIFEN's cancellation is an _event_ and the event's payload was never read; §25
+of the baseline is now that profiling, and this Story builds from it. Its
+outcome is that a tenant can cancel an authorized document and void a number
+range, and that the events the test matrix demands are implemented and tested.
 
 ## Context
 
@@ -96,11 +96,19 @@ signed cancellation, a signed inutilización, a mixed two-event lot and a
 fifteen-event lot all validate against the DNIT's own bytes with the skip
 disabled.
 
-**WU-C — the provider's `cancel`.** `SifenDirectFiscalProvider.cancel` stops
-answering `CANCELLATION_EVENT_UNPROFILED` and submits the event through
-`receiveEvent`, mapping the answer onto the port's cancel outcomes. The outcome
-vocabulary is open (§25.5), so an unlisted code is carried and a transport
-failure keeps the partition [[FISC-012]] established.
+**WU-C — the provider's `cancel`.** **Landed.**
+`SifenDirectFiscalProvider.cancel` stops answering
+`CANCELLATION_EVENT_UNPROFILED` — the code is gone from the source — and submits
+the caller's signed event group through `receiveEvent`, mapping the answer onto
+the port's cancel outcomes. `FiscalCancelRequest` gains ADR-009's required
+`document`, so a requiring provider handed `null` refuses with
+`CONFIGURATION_ERROR` and sends nothing. The outcome vocabulary is open (§25.5),
+so an unlisted code is carried verbatim and a transport failure keeps the
+partition [[FISC-012]] established. **It also fixed a defect FISC-012 left**:
+its `serializeEventReception` omitted the `gGroupGesEve` wrapper the schema
+requires, so what it produced would not have validated — proven by the official
+XSD's own message, _"Element rGesEve: This element is not expected. Expected is
+( gGroupGesEve )"_.
 
 **WU-D — the inutilización.** The same builder's second payload and the surface
 that triggers it: voiding a number range is a business operation with its own
@@ -133,7 +141,7 @@ requires are the ones FISC-013 sends.
 - [x] The event builder produces a document that **validates against the
       official event XSDs** and whose signature verifies with the certificate it
       carries.
-- [ ] `cancel` submits through the facade and maps the answer onto the port's
+- [x] `cancel` submits through the facade and maps the answer onto the port's
       outcomes, with an unlisted result code carried rather than coerced.
 - [ ] The inutilización is built and its range validated against the tenant's
       timbrado, with a named refusal for every state the schema does not assert.
@@ -147,6 +155,8 @@ requires are the ones FISC-013 sends.
 
 **In progress 2026-10-11.** WU-A landed: the event family is profiled in
 `SIFEN-BASELINE.md` §25. **WU-B landed**: the document exists, is signed with
-the DE's profile, and validates against the official schemas — the first exit
-criterion is met. **Next: WU-C**, the provider's `cancel`, which is what retires
-`CANCELLATION_EVENT_UNPROFILED`.
+the DE's profile, and validates against the official schemas. **WU-C landed**:
+`cancel` submits the caller's signed event and maps the answer, the retired
+reason code is gone from the source, and the whole submitted envelope is proven
+against the official schema — the second exit criterion is met. **Next: WU-D**,
+the inutilización's business surface.
