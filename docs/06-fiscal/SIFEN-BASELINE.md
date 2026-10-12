@@ -2399,6 +2399,14 @@ gGroupTiEvt          xs:choice of the nine payload elements
 
 A lot carries **up to fifteen events**, each signed separately.
 
+**The submitted envelope carries the group.** `dEvReg` holds a `gGroupGesEve`
+and not a `rGesEve` directly, so the element a caller builds and signs is the
+group, and the envelope's `dId` belongs to whoever wraps it: the client's
+serializer asserts the group root and embeds the group's bytes verbatim, the
+same rule the DE's `xDE` follows (FISC-016 WU-C). A serializer that put the
+event document's `rGesEve` under `dEvReg` produced an envelope that validates
+against nothing — the defect WU-C fixed.
+
 ### 25.2 The event's type is the ELEMENT NAME, not a code
 
 **This corrects an assumption the earlier sections invited.**
@@ -2473,6 +2481,15 @@ enumeration**, and `tdCodRes` only fixes the four-digit shape — so **the event
 result codes are not evidenced by any retrieved source**, exactly as the DE's
 own `dCodRes` catalogue is recorded as open (§22.12). A mapping must carry an
 unlisted code rather than coerce it.
+
+**What this client's mapping does with that open catalogue** (FISC-016 WU-C): it
+carries the first reported `dCodRes` as the result's reason code, verbatim —
+there is no catalogue to coerce it into, and an unlisted four-digit code reaches
+the caller as itself. `Aprobado` and `Aprobado con observación` both map to an
+accepted cancellation and `Rechazado` to a rejected one, which is §10's
+three-value `dEstRes` mapping the DE already receives; a failed transport keeps
+the partition FISC-012 established, where only an unanswered or dropped
+connection is retryable.
 
 ### 25.6 The clock is LOCAL, and the environment is not in the document
 

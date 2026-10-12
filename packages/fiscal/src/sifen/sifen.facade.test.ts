@@ -53,7 +53,7 @@ const CLOCK = new Date("2026-10-08T15:00:00.000Z");
 
 const DE_XML = buildDteXml(validFacturaElectronicaRequest());
 const DE_ELEMENT = DE_XML.trimEnd();
-const EVENT_XML = `<rGesEve xmlns="${SIFEN_NS}"><gGroupGesEve><rGesEve/></gGroupGesEve></rGesEve>`;
+const EVENT_GROUP_XML = `<gGroupGesEve xmlns="${SIFEN_NS}"><rGesEve/></gGroupGesEve>`;
 
 const CREDENTIAL: FiscalTransportCredential = {
   certificatePem: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
@@ -378,7 +378,8 @@ const FACADE_CASES: readonly FacadeCase[] = [
         },
       ],
     },
-    invoke: (facade) => facade.receiveEvent({ tenantId: TENANT_A, dId: D_ID, eventXml: EVENT_XML }),
+    invoke: (facade) =>
+      facade.receiveEvent({ tenantId: TENANT_A, dId: D_ID, eventGroupXml: EVENT_GROUP_XML }),
   },
 ];
 
@@ -419,6 +420,21 @@ describe("createSifenServiceFacade", () => {
       expect(result).toEqual(row.expected);
     }
   );
+
+  it("receiveEvent embeds the group inside dEvReg, the wrapper §25.1 requires", async () => {
+    const transport = respondingTransport(EVENT_BODY);
+    const facade = buildFacade({ transport });
+
+    await facade.receiveEvent({
+      tenantId: TENANT_A,
+      dId: D_ID,
+      eventGroupXml: EVENT_GROUP_XML,
+    });
+
+    const args = transportArgs(transport);
+    expect(args.envelope).toContain("<rEnviEventoDe");
+    expect(args.envelope).toContain(`<dEvReg>${EVENT_GROUP_XML}</dEvReg>`);
+  });
 
   it("resolves the endpoint against the environment's host when no base URL is given", async () => {
     for (const environment of ["TEST", "PRODUCTION"] as const) {

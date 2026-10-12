@@ -47,6 +47,12 @@ export type {
   FiscalProviderEnvValue,
   FiscalProviderModuleOptions,
 } from "./fiscal-provider.module.js";
+// FISC-016 WU-C: the API composes the cancellation event and therefore reads
+// the tenant's signing material itself, which means it must resolve the same
+// environment the provider module resolved. The resolver is exported rather
+// than copied so both callers answer with one vocabulary and one production
+// refusal (ADR-008 §3).
+export { resolveSifenEnvironment } from "./fiscal-provider.module.js";
 // FISC-010 WU-C / ADR-008 §2: the credential boundary the transport reads per
 // call. The port lives here; its implementation lands in the worker (FISC-012),
 // because `packages/fiscal` must not depend on Prisma or `@newsaas/secret-store`.
@@ -125,9 +131,10 @@ export { buildDteXml } from "./dte/dte.builder.js";
 // both identifiers as arguments (the schema states no uniqueness for either);
 // the signer applies the DE's XMLDSig profile, one signature per event, each
 // referencing `#<rEve/@Id>`; the rules are the ones the schema does not assert.
-// Keeping the provider answering `CANCELLATION_EVENT_UNPROFILED` in step with
-// this is WU-C's, and voiding a range as a business operation is WU-D's.
-export { buildEventXml, EVENT_SIGNATURE_PLACEHOLDER } from "./dte/dte.event.js";
+// `buildEventGroupXml` is WU-C's hand-off surface — the group a caller signs and
+// the facade embeds — and `buildEventXml` composes it, so the two cannot drift;
+// voiding a range as a business operation is WU-D's.
+export { buildEventGroupXml, buildEventXml, EVENT_SIGNATURE_PLACEHOLDER } from "./dte/dte.event.js";
 export { DteEventValidationError, assertValidEventRequest } from "./dte/dte.event.rules.js";
 export type { DteEventValidationFailure } from "./dte/dte.event.rules.js";
 export { DteEventSigningError, signEventXml } from "./dte/dte.event-signing.js";
@@ -522,21 +529,21 @@ export {
   SIFEN_RECEPTION_MESSAGE_ABSENT_REASON,
 } from "./sifen/sifen.outcomes.js";
 export type { SifenOutcomeContext, SifenRucQueryOutcome } from "./sifen/sifen.outcomes.js";
-// FISC-012 WU-E / ADR-009: the real SIFEN provider behind the port. `issue`
-// submits a lot of one through the asynchronous service and answers `SUBMITTED`
-// with the lot number; `query` asks by the reference first and by the CDC when
-// the reference was lost; `cancel` fails closed because §23.3 leaves the
-// cancellation event's payload unprofiled. The failure partition is exported so
-// the terminal/retryable table is auditable: every transport and facade member
-// is mapped by name, and anything unrecognised is a configuration error rather
-// than a blind retry. The snapshots are descriptors — the CDC, the service and
-// the byte count — never the signed document.
+// FISC-012 WU-E / ADR-009, extended by FISC-016 WU-C: the real SIFEN provider
+// behind the port. `issue` submits a lot of one through the asynchronous service
+// and answers `SUBMITTED` with the lot number; `query` asks by the reference
+// first and by the CDC when the reference was lost; `cancel` submits the
+// caller's signed event group and maps the event answer, carrying an unlisted
+// result code rather than coercing it (§25.5). The failure partition is exported
+// so the terminal/retryable table is auditable: every transport and facade
+// member is mapped by name, and anything unrecognised is a configuration error
+// rather than a blind retry. The snapshots are descriptors — the CDC, the
+// service and the byte count — never the signed document.
 export {
   createSifenDirectFiscalProvider,
   generateSifenControlNumber,
+  mapEventReceptionCancelOutcome,
   mapSifenFailure,
-  SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON,
-  SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON_CODE,
   SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON,
   SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON_CODE,
   SIFEN_DIRECT_QUERY_IDENTITY_MISSING_REASON,

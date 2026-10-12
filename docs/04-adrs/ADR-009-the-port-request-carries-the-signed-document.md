@@ -16,6 +16,7 @@ related_stories:
   - FISC-012
   - FISC-008
   - FISC-009
+  - FISC-016
 approval_record:
   decision_proposal: none
   decision_status: accepted
@@ -58,6 +59,23 @@ So the **caller** builds the document and the request carries it:
 a DE _is_. The request carries bytes and an identity; the adapter is the only
 thing that knows they are a `rDE` document, and the port still carries no SIFEN
 constant (ADR-007 §6).
+
+## Amendment — FISC-016 WU-C (2026-10-11)
+
+**The cancel request carries the same document, under the same rules.**
+`FiscalCancelRequest` gains the required `document: FiscalIssueDocument | null`
+field, and nothing else in this ADR changes for it: a provider whose
+`requiresSignedDocument` is `true` and that is handed `null` answers the same
+terminal `CONFIGURATION_ERROR` and **never** submits, while `null` remains the
+caller's explicit statement that the selected provider answers `false`.
+
+What the bytes are stays the provider's business, exactly as `signedXml` is for
+issue: for `issue` it is the signed DE, and for `cancel` it is the signed
+`gGroupGesEve` event group SIFEN's cancellation event travels in
+(`SIFEN-BASELINE.md` §25). One field, one flag, one rule: the caller builds and
+signs the document the selected provider's protocol submits, and the provider
+submits those bytes unchanged. SIFEN's cancellation is an event rather than a
+second protocol shape, so it is the same decision applied — not a second one.
 
 ## Context
 

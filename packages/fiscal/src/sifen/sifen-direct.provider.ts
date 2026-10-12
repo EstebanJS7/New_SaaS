@@ -3,12 +3,12 @@
  *
  * The adapter over `sifen.facade.ts`: `issue` hands **a lot of one** to the
  * asynchronous reception service, `query` asks by the identity the caller has,
- * and `cancel` fails closed because the cancellation event's payload is not
- * profiled. Everything protocol-shaped stays in the facade and in the outcome
- * mapping — this module owns the port's answer, the failure partition and the
- * snapshot descriptors, and nothing else. It reads no ambient clock (the `now`
- * dependency is the result's `resolvedAt`), logs nothing, and holds no
- * credential, envelope or socket of its own.
+ * and `cancel` submits the caller's signed event group through the event
+ * reception service. Everything protocol-shaped stays in the facade and in the
+ * outcome mapping — this module owns the port's answer, the failure partition
+ * and the snapshot descriptors, and nothing else. It reads no ambient clock
+ * (the `now` dependency is the result's `resolvedAt`), logs nothing, and holds
+ * no credential, envelope or socket of its own.
  *
  * Five decisions live here:
  *
@@ -35,11 +35,13 @@
  *    descriptor carries the CDC, the service and the byte count, and the answer
  *    descriptor carries the answer's own code and message (ADR-009's
  *    Consequences).
- * 5. **`cancel` fails closed.** SIFEN's cancellation is an **event**, and the
- *    event payload's profile is not recorded in `SIFEN-BASELINE.md` §23.3,
- *    which assigns that profiling to the story that builds one. Returning
- *    `CONFIGURATION_ERROR` with a reason that says so is honest; inventing an
- *    event payload would be the opposite.
+ * 5. **`cancel` submits the caller's signed event group.** §25 profiles the
+ *    family: SIFEN's cancellation is an `rGeVeCan` event inside the signed
+ *    `gGroupGesEve` the caller hands over — ADR-009 applied to cancel, which is
+ *    why this adapter refuses a `null` document exactly as `issue` does — and
+ *    the answer's `dEstRes` maps onto `CANCELLED`/`REJECTED` while its result
+ *    codes travel as strings. §25.5 records that no retrieved source enumerates
+ *    the event result codes, so an unlisted code is carried, never coerced.
  *
  * **Nothing here retries.** A `TRANSIENT_FAILURE` is a statement the caller acts
  * on — the worker rethrows and BullMQ applies its backoff — and a
@@ -50,6 +52,7 @@
 import { randomInt } from "node:crypto";
 
 import type {
+  FiscalCancelOutcome,
   FiscalCancelRequest,
   FiscalCancelResult,
   FiscalIssueRequest,
@@ -63,10 +66,13 @@ import {
   type SifenFacadeFailure,
   type SifenServiceFacade,
 } from "./sifen.facade.js";
+import type { SifenEstadoResultado } from "./sifen.codes.js";
+import type { SifenEventReceptionResponse, SifenEventResult } from "./sifen.messages.js";
 import {
   mapBatchQueryOutcome,
   mapBatchReceptionOutcome,
   mapCdcQueryOutcome,
+  type SifenOutcomeContext,
 } from "./sifen.outcomes.js";
 import { SifenParseError } from "./sifen.parser.js";
 import { SifenSerializationError } from "./sifen.serializer.js";
@@ -80,9 +86,9 @@ const SIFEN_DIRECT_PROVIDER = "SIFEN_DIRECT" as const;
  *
  * The adapter's own name for the operation, not a protocol path: the facade owns
  * the §8 paths, and this union only tells a reader of the snapshot which of the
- * three calls produced it. A future event call extends it.
+ * calls produced it.
  */
-export type SifenDirectService = "receiveBatch" | "queryBatch" | "queryDe";
+export type SifenDirectService = "receiveBatch" | "queryBatch" | "queryDe" | "receiveEvent";
 
 /**
  * What the adapter asked SIFEN, as a descriptor.
@@ -109,7 +115,13 @@ export interface SifenDirectRequestSnapshot {
 export interface SifenDirectResponseSnapshot {
   readonly provider: typeof SIFEN_DIRECT_PROVIDER;
   readonly service: SifenDirectService;
-  readonly statusCode: string;
+  /**
+   * The answer's own status: `dCodRes` for the three DE services, where it is
+   * always present, and the first `gResProcEVe`'s `dEstRes` for the event
+   * family. `null` only for an event answer with no entry at all — unreachable
+   * through `parseEventReceptionResponse`, but not a status to invent.
+   */
+  readonly statusCode: string | null;
   readonly message: string | null;
 }
 
@@ -135,21 +147,11 @@ export const SIFEN_DIRECT_QUERY_IDENTITY_MISSING_REASON =
   "The query carries neither a provider reference nor a CDC, so there is no identity to ask " +
   "SIFEN with (ADR-007 §2).";
 
-/** `reasonCode` for the deliberate, fail-closed cancellation refusal. */
-export const SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON_CODE =
-  "CANCELLATION_EVENT_UNPROFILED" as const;
-
 /**
- * `reason` for the cancellation refusal.
- *
- * It must not claim the cancellation succeeded or failed at SIFEN: nothing was
- * sent. §23.3 records that the event payload's field-level rules are not
- * profiled and that "profiling it is the work of the Story that builds one".
+ * The separator between two `dMsgRes` values in a cancel `reason`, matching
+ * `sifen.outcomes.ts`'s; the schema says nothing about how messages compose.
  */
-export const SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON =
-  "SIFEN's cancellation is an event whose payload is not profiled in SIFEN-BASELINE.md §23.3; " +
-  "that section assigns the profiling to the story that builds the event. Nothing was sent to " +
-  "SIFEN, so this is not a statement about the document's state there.";
+const REASON_SEPARATOR = "; ";
 
 /** `reasonCode` for an error the adapter cannot name. */
 export const SIFEN_DIRECT_UNMAPPED_FAILURE_REASON_CODE = "UNMAPPED_PROVIDER_FAILURE" as const;
@@ -311,6 +313,101 @@ export function mapSifenFailure(error: unknown): SifenFailureMapping {
   };
 }
 
+/**
+ * The event reception's answer, mapped onto the port's cancel vocabulary.
+ *
+ * Pure and total, in `sifen.outcomes.ts`'s style: every field of the result is
+ * set, with `null` for what the answer did not provide. §10's three `dEstRes`
+ * values map exactly as `issue`'s do — `Aprobado` and `Aprobado con observación`
+ * are an accepted cancellation, `Rechazado` a rejected one — and the answer's
+ * `dCodRes` values are **carried as strings, never coerced**: §25.5 records that
+ * no retrieved source enumerates the event family's result codes, so an unlisted
+ * four-digit code reaches the caller as itself, exactly as §23.8 item 7's open
+ * catalogue does for the DE's own codes.
+ *
+ * The **first** `gResProcEVe` entry is the one that answers: the adapter submits
+ * a lot of one event, and `gResProcEVe` is `1..15` (§25.5). An answer carrying
+ * no entry at all — which `parseEventReceptionResponse` refuses before this
+ * point — resolved nothing, so it is a `CONFIGURATION_ERROR` rather than an
+ * outcome this module would have to invent.
+ */
+export function mapEventReceptionCancelOutcome(
+  args: SifenOutcomeContext & { readonly response: SifenEventReceptionResponse }
+): FiscalCancelResult {
+  const event = args.response.gResProcEVe[0];
+  if (event === undefined) {
+    return cancelResult(args, { outcome: "CONFIGURATION_ERROR", reasonCode: null, reason: null });
+  }
+
+  return cancelResult(args, {
+    outcome: cancelOutcomeForEventStatus(event.dEstRes),
+    reasonCode: firstEventResultCode(event),
+    reason: eventMessages(event).join(REASON_SEPARATOR) || null,
+  });
+}
+
+/**
+ * `dEstRes` -> the cancel vocabulary: an exhaustive `switch` over the validated
+ * union, so a fourth published status stops this file from compiling instead of
+ * falling through a default.
+ */
+function cancelOutcomeForEventStatus(dEstRes: SifenEstadoResultado): FiscalCancelOutcome {
+  switch (dEstRes) {
+    case "Aprobado":
+    case "Aprobado con observación":
+      return "CANCELLED";
+    case "Rechazado":
+      return "REJECTED";
+  }
+}
+
+/**
+ * The first result code the event's answer reports, as a string.
+ *
+ * §25.3 and §25.5 mark `dCodRes` optional inside a `gResProc` entry, so an entry
+ * may carry only a message; skipping one that carries no code keeps a code-less
+ * observation from erasing the code behind it — the rule `sifen.outcomes.ts`
+ * applies to the DE's protocols too.
+ */
+function firstEventResultCode(event: SifenEventResult): string | null {
+  for (const group of event.gResProc) {
+    if (group.dCodRes !== undefined) {
+      return group.dCodRes;
+    }
+  }
+  return null;
+}
+
+/** The event's `dMsgRes` values, in the order reported, with empty ones skipped. */
+function eventMessages(event: SifenEventResult): readonly string[] {
+  return event.gResProc
+    .map((group) => group.dMsgRes)
+    .filter((message): message is string => message !== undefined && message !== "");
+}
+
+/** The fields a cancel result may set; anything unset is `null`, never omitted. */
+interface CancelResultFields {
+  readonly outcome: FiscalCancelOutcome;
+  readonly reasonCode?: string | null;
+  readonly reason?: string | null;
+}
+
+/** One cancel result, constructed field by field, for the reason above. */
+function cancelResult(
+  context: SifenOutcomeContext,
+  fields: CancelResultFields
+): FiscalCancelResult {
+  return {
+    outcome: fields.outcome,
+    reasonCode: fields.reasonCode ?? null,
+    reason: fields.reason ?? null,
+    retryAfterMs: null,
+    providerRequest: context.providerRequest,
+    providerResponse: context.providerResponse,
+    resolvedAt: context.resolvedAt,
+  };
+}
+
 /** The 15 digits `dId` carries (§23.3, §23.4). */
 const SIFEN_DIRECT_CONTROL_NUMBER_DIGITS = 15;
 
@@ -365,6 +462,15 @@ interface QueryFailureFields {
   readonly resolvedAt: string;
 }
 
+/** One cancel result's failure fields, for the same reason. */
+interface CancelFailureFields {
+  readonly outcome: SifenFailureOutcome;
+  readonly reasonCode: string;
+  readonly reason: string;
+  readonly providerRequest: SifenDirectRequestSnapshot | null;
+  readonly resolvedAt: string;
+}
+
 /**
  * Creates the provider over one facade.
  *
@@ -393,7 +499,7 @@ export function createSifenDirectFiscalProvider(
 
   function responseSnapshot(args: {
     readonly service: SifenDirectService;
-    readonly statusCode: string;
+    readonly statusCode: string | null;
     readonly message: string | null;
   }): SifenDirectResponseSnapshot {
     return {
@@ -426,6 +532,18 @@ export function createSifenDirectFiscalProvider(
       outcome: args.outcome,
       cdc: null,
       externalId: null,
+      reasonCode: args.reasonCode,
+      reason: args.reason,
+      retryAfterMs: null,
+      providerRequest: args.providerRequest,
+      providerResponse: null,
+      resolvedAt: args.resolvedAt,
+    };
+  }
+
+  function cancelFailure(args: CancelFailureFields): FiscalCancelResult {
+    return {
+      outcome: args.outcome,
       reasonCode: args.reasonCode,
       reason: args.reason,
       retryAfterMs: null,
@@ -561,18 +679,62 @@ export function createSifenDirectFiscalProvider(
     });
   }
 
-  function cancel(_request: FiscalCancelRequest): Promise<FiscalCancelResult> {
-    // Fail closed, deliberately: §23.3 leaves the event payload unprofiled, so
-    // there is no payload to build and no call to make. `CONFIGURATION_ERROR`
-    // is terminal (DEC-049) and the reason says exactly what is missing.
-    return Promise.resolve({
-      outcome: "CONFIGURATION_ERROR",
-      reasonCode: SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON_CODE,
-      reason: SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON,
-      retryAfterMs: null,
-      providerRequest: null,
-      providerResponse: null,
-      resolvedAt: clock().toISOString(),
+  async function cancel(request: FiscalCancelRequest): Promise<FiscalCancelResult> {
+    const resolvedAt = clock().toISOString();
+    const document = request.document;
+
+    if (document === null) {
+      // ADR-009 §3 applied to cancel: never a throw, never a submission. No
+      // facade call, so no control number is drawn and no snapshot describes a
+      // call that did not happen.
+      return cancelFailure({
+        outcome: "CONFIGURATION_ERROR",
+        reasonCode: SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON_CODE,
+        reason: SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON,
+        providerRequest: null,
+        resolvedAt,
+      });
+    }
+
+    const providerRequest = requestSnapshot({
+      service: "receiveEvent",
+      cdc: document.cdc,
+      xmlBytes: Buffer.byteLength(document.signedXml, "utf8"),
+    });
+
+    try {
+      const response = await dependencies.facade.receiveEvent({
+        tenantId: request.tenantId,
+        dId: controlNumber(),
+        eventGroupXml: document.signedXml,
+      });
+      return mapEventReceptionCancelOutcome({
+        providerRequest,
+        providerResponse: eventResponseSnapshot(response),
+        resolvedAt,
+        response,
+      });
+    } catch (error) {
+      return cancelFailure({ ...mapSifenFailure(error), providerRequest, resolvedAt });
+    }
+  }
+
+  /**
+   * The event answer's descriptor: its first `dEstRes`, and its `dMsgRes`
+   * values joined the way `reason` joins them.
+   *
+   * The parser refuses an answer outside `gResProcEVe` 1..15, so a parsed
+   * answer always carries an entry; the `null`s keep the descriptor total
+   * without inventing a status the service never stated.
+   */
+  function eventResponseSnapshot(
+    response: SifenEventReceptionResponse
+  ): SifenDirectResponseSnapshot {
+    const event = response.gResProcEVe[0];
+    return responseSnapshot({
+      service: "receiveEvent",
+      statusCode: event === undefined ? null : event.dEstRes,
+      message: event === undefined ? null : eventMessages(event).join(REASON_SEPARATOR) || null,
     });
   }
 

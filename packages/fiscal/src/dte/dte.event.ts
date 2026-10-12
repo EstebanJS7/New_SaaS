@@ -1,5 +1,5 @@
 /**
- * FISC-016 WU-B — the pure event builder.
+ * FISC-016 WU-B — the pure event builder; WU-C adds its hand-off surface.
  *
  * `buildEventXml` is a total function from a validated request to an XML string:
  * no ambient clock, no randomness, no I/O, no tenant context. Element order is
@@ -7,6 +7,13 @@
  * one `rGesEve` per event, and inside it `rEve` with its three children — so a
  * lot whose groups are reordered is invalid rather than merely unconventional
  * (`docs/06-fiscal/SIFEN-BASELINE.md` §25.1, §25.3).
+ *
+ * **`buildEventGroupXml` is the hand-off surface** (WU-C): the facade owns the
+ * `rEnviEventoDe` envelope and its `dId`, so what a caller builds, signs and
+ * hands over is the `gGroupGesEve` element. `buildEventXml` composes that same
+ * rendering — it does not re-render the group — so the bytes a signer receives
+ * are exactly the bytes the envelope carries, and the `rGesEve` indentation the
+ * signature placeholder depends on cannot drift between the two.
  *
  * **Two things this module deliberately does not do:**
  *
@@ -59,21 +66,66 @@ interface EventXmlElement {
   readonly children?: readonly EventXmlElement[];
 }
 
+/**
+ * The request id {@link buildEventGroupXml} hands the request-shaped validator.
+ *
+ * The group has no `dId` — the envelope owns it (§25.1) — while the rules are
+ * the request's. The value is inside `dId`'s range and is **never rendered**: it
+ * exists so the events a group carries are validated by the same rules their
+ * envelope form is, instead of a second rule set that could drift.
+ */
+const GROUP_VALIDATION_REQUEST_ID = "1";
+
+/**
+ * The `gGroupGesEve` element: one `rGesEve` per event, each with its signature
+ * placeholder — the document a caller signs and the envelope embeds verbatim.
+ *
+ * The indentation is the envelope's, because `EVENT_SIGNATURE_PLACEHOLDER` is an
+ * exact line literal and `signEventXml` removes it by exact match: a group
+ * rendered at any other column would produce a document the signer refuses.
+ *
+ * **The group declares the namespace itself.** It is signed standalone and then
+ * embedded in an envelope that declares the same default namespace, and the
+ * signature covers the canonical form of `rEve`. Without the declaration the
+ * standalone subtree's elements are in **no** namespace and the embedded ones
+ * are in the SIFEN namespace, so the canonical forms differ and the signature
+ * would not verify at SIFEN. Declaring it here makes both contexts render the
+ * same bytes, which is the whole premise of signing before the hand-off
+ * (ADR-009): the envelope's own declaration then becomes the redundant one.
+ */
+export function buildEventGroupXml(events: readonly DteEvent[]): string {
+  assertValidEventRequest({ dId: GROUP_VALIDATION_REQUEST_ID, events });
+
+  return [
+    `    <gGroupGesEve xmlns="${DTE_NAMESPACE}">`,
+    ...events.flatMap((event) => renderEvent(event, 6)),
+    `    </gGroupGesEve>`,
+    "",
+  ].join("\n");
+}
+
+/**
+ * The full `rEnviEventoDe` envelope — `dId` plus the group — composed from
+ * {@link buildEventGroupXml} so the two surfaces cannot drift.
+ *
+ * The group's first line lands exactly where the envelope used to render it and
+ * `trimEnd` removes only the group's own trailing newline, so the envelope is
+ * WU-B's plus the group's now-explicit `xmlns`: a redundant declaration under
+ * this element, and the price of the group being signed on its own (see
+ * {@link buildEventGroupXml}).
+ */
 export function buildEventXml(request: DteEventRequest): string {
   assertValidEventRequest(request);
 
-  const lines = [
+  return [
     `<rEnviEventoDe xmlns="${DTE_NAMESPACE}">`,
     `  <dId>${escapeXmlText(request.dId)}</dId>`,
     `  <dEvReg>`,
-    `    <gGroupGesEve>`,
-    ...request.events.flatMap((event) => renderEvent(event, 6)),
-    `    </gGroupGesEve>`,
+    ...buildEventGroupXml(request.events).trimEnd().split("\n"),
     `  </dEvReg>`,
     `</rEnviEventoDe>`,
-  ];
-
-  return `${lines.join("\n")}\n`;
+    "",
+  ].join("\n");
 }
 
 /**

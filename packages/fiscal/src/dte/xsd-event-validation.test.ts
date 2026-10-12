@@ -2,10 +2,12 @@ import { cp, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { buildEventXml } from "./dte.event.js";
+import { SignedXml } from "xml-crypto";
+import { buildEventGroupXml, buildEventXml } from "./dte.event.js";
 import { signEventXml } from "./dte.event-signing.js";
 import type { DteEventRequest } from "./dte.event.types.js";
 import { FIXTURE_CERTIFICATE_PEM, FIXTURE_PRIVATE_KEY_PEM } from "./dte.fixture.js";
+import { serializeEventReception } from "../sifen/sifen.serializer.js";
 import {
   defaultDteSchemaDirectory,
   DTE_EVENT_XSD_ARTIFACTS,
@@ -93,6 +95,51 @@ function signedLot(request: DteEventRequest = lot()): string {
   });
 }
 
+/** The event group alone, built and really signed — the hand-off surface. */
+function signedGroup(request: DteEventRequest = lot()): string {
+  return signEventXml({
+    xml: buildEventGroupXml(request.events),
+    privateKeyPem: FIXTURE_PRIVATE_KEY_PEM,
+    certificatePem: FIXTURE_CERTIFICATE_PEM,
+  });
+}
+
+/**
+ * The signature element's own bytes, for a verifier that must be handed them.
+ *
+ * `xml-crypto` v6 requires the signature to be loaded explicitly rather than
+ * discovered from the document, so this is the extraction the round trip needs
+ * and nothing more: the first `Signature` element, which the schema allows
+ * exactly one of.
+ */
+function signatureOf(xml: string): string {
+  const match = /<Signature[\s\S]*?<\/Signature>/.exec(xml);
+  if (match === null) {
+    throw new Error("The document carries no signature.");
+  }
+  return match[0];
+}
+
+/**
+ * The SIFEN payload inside the SOAP message `serializeEventReception` emits.
+ *
+ * The official schema validates the message's payload — `rEnviEventoDe`, the
+ * element `WS_SiRecepEvento_v150.xsd` declares — and the SOAP envelope is the
+ * transport's, declared by no retrieved artifact. The slice uses the
+ * serializer's own delimiter strings, so what is validated is exactly the
+ * envelope the fix produced.
+ */
+function sifenBodyOf(soapMessage: string): string {
+  const open = "<soap:Body>";
+  const close = "</soap:Body>";
+  const start = soapMessage.indexOf(open);
+  const end = soapMessage.lastIndexOf(close);
+  if (start === -1 || end < start) {
+    throw new Error("The serializer did not emit a SOAP body.");
+  }
+  return soapMessage.slice(start + open.length, end);
+}
+
 describe.skipIf(skipped)(
   `event XML validates against the official DNIT XSD${skipped ? ` ${skipReason}` : ""}`,
   () => {
@@ -106,6 +153,43 @@ describe.skipIf(skipped)(
       expect(DTE_EVENT_XSD_ARTIFACTS).toHaveLength(4);
       expect(DTE_XSD_PREPARED_ARTIFACTS).toHaveLength(11);
       expect(inspection.missing).not.toContain(DTE_EVENT_XSD_ENTRY_ARTIFACT);
+    });
+
+    it("accepts the WHOLE SUBMITTED ENVELOPE the serializer builds around a signed event group", async () => {
+      // WU-C's acceptance criterion: the serializer's `dEvReg` carries the
+      // `gGroupGesEve` wrapper §25.1 requires, the caller's signed group is
+      // embedded verbatim, and the envelope that is actually posted validates.
+      const group = signedGroup();
+      const submitted = serializeEventReception({ dId: LOT_ID, eventGroupXml: group });
+
+      expect(submitted).toContain(`<dEvReg>${group}</dEvReg>`);
+
+      const result = await validateEventAgainstOfficialXsd(sifenBodyOf(submitted), schemaDirectory);
+
+      expect(result.errors).toEqual([]);
+      expect(result.valid).toBe(true);
+    });
+
+    it("still VERIFIES the signature once the serializer embeds the signed group", () => {
+      // The refuter's finding, and the reason the group declares the namespace
+      // itself: the signature covers the canonical form of `rEve`, the group is
+      // signed standalone and then embedded under an envelope that declares the
+      // same default namespace, and a namespace-less group would be signed in
+      // one namespace and verified in another. Schema validity is not signature
+      // validity -- the case above passed either way, which is exactly how a
+      // namespace-induced mismatch would have shipped silently.
+      const group = signedGroup();
+      const body = sifenBodyOf(serializeEventReception({ dId: LOT_ID, eventGroupXml: group }));
+
+      const embedded = new SignedXml({ publicCert: FIXTURE_CERTIFICATE_PEM });
+      embedded.loadSignature(signatureOf(body));
+      expect(embedded.checkSignature(body)).toBe(true);
+
+      // And the same bytes still verify standalone, so the two contexts agree
+      // rather than each being self-consistent.
+      const standalone = new SignedXml({ publicCert: FIXTURE_CERTIFICATE_PEM });
+      standalone.loadSignature(signatureOf(group));
+      expect(standalone.checkSignature(group)).toBe(true);
     });
 
     it("accepts a built and REALLY SIGNED cancellation event", async () => {

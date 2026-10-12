@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { EVENT_SIGNATURE_PLACEHOLDER, buildEventXml } from "./dte.event.js";
+import { EVENT_SIGNATURE_PLACEHOLDER, buildEventGroupXml, buildEventXml } from "./dte.event.js";
 import { DteEventValidationError } from "./dte.event.rules.js";
 import {
   EVENT_ID_MAX,
@@ -92,7 +92,7 @@ describe("buildEventXml — the envelope (§25.1)", () => {
       "<rEnviEventoDe",
       "<dId>123456789012345</dId>",
       "<dEvReg>",
-      "<gGroupGesEve>",
+      '<gGroupGesEve xmlns="http://ekuatia.set.gov.py/sifen/xsd">',
       "<rGesEve>",
       "<rEve ",
       "</rEve>",
@@ -140,6 +140,70 @@ describe("buildEventXml — the envelope (§25.1)", () => {
 
     expectOrdered(xml, ["</rEve>", EVENT_SIGNATURE_PLACEHOLDER.trimStart(), "</rGesEve>"]);
     expect(xml.split("\n").filter((line) => line === EVENT_SIGNATURE_PLACEHOLDER)).toHaveLength(2);
+  });
+});
+
+describe("buildEventGroupXml — the hand-off surface (WU-C)", () => {
+  it("renders exactly the group the envelope carries, so a signer signs the bytes that are submitted", () => {
+    const request = validRequest();
+
+    const group = buildEventGroupXml(request.events);
+
+    expect(buildEventXml(request)).toContain(group);
+    // The composed envelope adds only its own scaffold around those bytes.
+    expect(buildEventXml(request).split("\n").slice(3, -3).join("\n") + "\n").toBe(group);
+  });
+
+  it("keeps rGesEve at the envelope's indentation and the placeholder at its exact line", () => {
+    const group = buildEventGroupXml(validRequest().events);
+    const lines = group.split("\n");
+
+    expect(lines[0]).toBe('    <gGroupGesEve xmlns="http://ekuatia.set.gov.py/sifen/xsd">');
+    expect(lines).toContain("      <rGesEve>");
+    expect(lines.filter((line) => line === EVENT_SIGNATURE_PLACEHOLDER)).toHaveLength(2);
+    expect(lines).toContain("    </gGroupGesEve>");
+    // A complete document: exactly one trailing newline, and nothing after it.
+    expect(group.endsWith("    </gGroupGesEve>\n")).toBe(true);
+  });
+
+  it("declares the namespace on the group itself, so signing it standalone matches the embedded form", () => {
+    // The group is signed on its own and then embedded under an envelope that
+    // declares the same default namespace. Without this declaration the
+    // standalone subtree is in no namespace and the embedded one is in the
+    // SIFEN namespace, so the canonical form the signature covers would differ
+    // from the one SIFEN verifies. `xsd-event-validation.test.ts` proves the
+    // consequence; this pins the cause.
+    const group = buildEventGroupXml(validRequest().events);
+    const namespace = 'xmlns="http://ekuatia.set.gov.py/sifen/xsd"';
+
+    expect(group).toContain(`<gGroupGesEve ${namespace}>`);
+    // The envelope's own declaration is now the redundant one, and redundant is
+    // legal: the same namespace, declared twice, is the same infoset.
+    expect(buildEventXml(validRequest()).match(new RegExp(namespace, "g")) ?? []).toHaveLength(2);
+  });
+
+  it("validates the events it carries with the request's own rules", () => {
+    expect(failureOf(() => buildEventGroupXml([]))).toBe("INVALID_EVENT_COUNT");
+    expect(
+      failureOf(() =>
+        buildEventGroupXml([
+          cancellation({ payload: { kind: "cancellation", cdc: "123", reason: REASON } }),
+        ])
+      )
+    ).toBe("INVALID_CANCELLATION_CDC");
+    expect(
+      failureOf(() =>
+        buildEventGroupXml(
+          Array.from({ length: 16 }, (_unused, index) => cancellation({ id: String(index + 1) }))
+        )
+      )
+    ).toBe("INVALID_EVENT_COUNT");
+  });
+
+  it("is a total function of its arguments: the same events twice are byte-identical", () => {
+    const events = validRequest().events;
+
+    expect(buildEventGroupXml(events)).toBe(buildEventGroupXml(events));
   });
 });
 

@@ -48,7 +48,9 @@ export class FakeFiscalProvider implements FiscalProviderPort {
   readonly provider: FiscalProviderId = "FAKE";
   /**
    * The fake submits nothing, so it needs no document (ADR-009): a demo tenant
-   * without an emitter profile must stay issuable in development.
+   * without an emitter profile must stay issuable in development. The flag
+   * covers `cancel` too, and the fake's `cancel` ignores the request's document
+   * field exactly as a provider that declares `false` may.
    */
   readonly requiresSignedDocument = false;
   private calls = 0;

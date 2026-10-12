@@ -1,11 +1,15 @@
 import { Module, type Provider } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
-import { FISCAL_CREDENTIAL_PORT, FiscalProviderModule } from "@newsaas/fiscal";
+import {
+  FISCAL_CREDENTIAL_PORT,
+  FiscalProviderModule,
+  resolveSifenEnvironment,
+} from "@newsaas/fiscal";
 import { createFiscalCredentialReader } from "@newsaas/fiscal-persistence";
 import { SECRET_STORE, type SecretStore } from "@newsaas/secret-store";
 import { FiscalController } from "./fiscal.controller.js";
 import { FiscalRepository } from "./fiscal.repository.js";
-import { FiscalService } from "./fiscal.service.js";
+import { FISCAL_SIGNING_ENVIRONMENT, FiscalService } from "./fiscal.service.js";
 import { FiscalSigningMaterialRepository } from "./signing-material/signing-material.repository.js";
 import { SigningMaterialController } from "./signing-material/signing-material.controller.js";
 import { SigningMaterialPipe } from "./signing-material/signing-material.pipe.js";
@@ -42,6 +46,20 @@ const credentialPort: Provider = {
 };
 
 /**
+ * The environment the API's own signing reads use — the cancellation event it
+ * builds and signs for the DEC-051 hand-off.
+ *
+ * The provider module resolved the same value from the same two variables for
+ * the adapter it built; routing both through one resolver keeps the material a
+ * cancellation signs with and the material the adapter authenticates with in
+ * one environment (ADR-008 §3), and keeps the production refusal in one place.
+ */
+const signingEnvironment: Provider = {
+  provide: FISCAL_SIGNING_ENVIRONMENT,
+  useFactory: () => resolveSifenEnvironment(process.env.SIFEN_ENVIRONMENT, process.env.NODE_ENV),
+};
+
+/**
  * The concrete implementation is created only in the shared Fiscal provider
  * module; this remains the API-side composition root for API-owned providers
  * and the fiscal submission producer. FISC-012 WU-E2 wires the real credential
@@ -62,6 +80,7 @@ const credentialPort: Provider = {
   providers: [
     FiscalRepository,
     FiscalService,
+    signingEnvironment,
     FiscalSigningMaterialRepository,
     FiscalSigningMaterialService,
     SigningMaterialPipe,

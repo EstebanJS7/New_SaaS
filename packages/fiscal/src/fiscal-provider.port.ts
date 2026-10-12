@@ -55,7 +55,10 @@ export interface FiscalIssueLine {
 export interface FiscalIssueDocument {
   /** The CDC, which the signature's reference also carries. */
   readonly cdc: string;
-  /** The signed DE, with its QR already filled. */
+  /**
+   * The signed document, exactly as it was signed: for issue the DE with its QR
+   * already filled, for cancel the signed `gGroupGesEve` event group.
+   */
   readonly signedXml: string;
 }
 
@@ -224,6 +227,25 @@ export interface FiscalCancelRequest {
   readonly reason: string;
   readonly externalId: string | null;
   readonly cdc: string | null;
+  /**
+   * The caller's built document, or `null` when the provider does not require
+   * one — ADR-009 applied to cancel.
+   *
+   * The same two facts meet here as at issue: the port's request carries a
+   * reason and identities while a real provider cancels with an **event**, and
+   * the caller is the side that can build and sign one — the signing
+   * material and the tenant's document live where `packages/fiscal` cannot
+   * reach. The rule is therefore the same one {@link FiscalIssueRequest.document}
+   * carries, and it is the same contract both sides read: a provider whose
+   * {@link FiscalProviderPort.requiresSignedDocument} is `true` and that is
+   * handed `null` answers `CONFIGURATION_ERROR` and **never** submits; `null` is
+   * the caller's explicit statement that the selected provider answers `false`.
+   *
+   * `signedXml` is the signed document in the shape the provider submits — a DE
+   * for issue, a `gGroupGesEve` event group for cancel — and a provider that
+   * re-serialized it would invalidate the signature it was handed.
+   */
+  readonly document: FiscalIssueDocument | null;
   /**
    * Optional abort signal. The caller has already enforced a deadline, so an
    * adapter that can abandon the provider call should do so when this fires;

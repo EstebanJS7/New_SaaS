@@ -19,7 +19,7 @@
  *    (§23.3's `xDE`/`dEvReg` wildcards), never escaped and never base64, and
  *    never re-indented: they are signed bytes, and moving a whitespace character
  *    inside them would break the signature this package produced. The document's
- *    root is asserted before it is embedded (`<rDE`, `<rGesEve`), which is
+ *    root is asserted before it is embedded (`<rDE`, `<gGroupGesEve`), which is
  *    ADR-008's rule — "asserted to be the DE our own builder produced".
  * 3. **`dId`, `dProtConsLote` and every CDC stay strings.** A 15-digit control
  *    number and a 28-digit batch number do not survive `number`, and the
@@ -248,22 +248,24 @@ export function serializeRucQuery(request: SifenRucQueryRequest): string {
 }
 
 /**
- * The event reception — §23.3, `WS_SiRecepEvento_v150.xsd`:
+ * The event reception — §23.3 and §25.1, `WS_SiRecepEvento_v150.xsd`:
  * `rEnviEventoDe { dId, dEvReg { gGroupGesEve } }`.
  *
- * The event document is embedded verbatim, exactly as the DE is: this module
- * wraps what it is given and asserts its root is `rGesEve` (§23.3), and profiles
- * nothing inside it — `Evento_v150.xsd` is retrieved but not profiled (§23.8
- * item 6), and building an event's payload is the caller's.
+ * The event **group** is embedded verbatim, exactly as the DE is: this module
+ * wraps what it is given, asserts the root is `gGroupGesEve` — the element
+ * `dEvReg` carries and the one `buildEventGroupXml` renders — and profiles
+ * nothing inside it. The group is the hand-off surface because the envelope's
+ * `dId` is the facade's while the events are the caller's, and the caller signs
+ * the group it built.
  */
 export function serializeEventReception(request: SifenEventReceptionRequest): string {
   const dId = assertDocumentId(request.dId);
-  assertDocumentRoot(request.eventXml, "rGesEve", "the event document");
+  assertEventGroupRoot(request.eventGroupXml);
 
   return envelope([
     `    <rEnviEventoDe xmlns="${SIFEN_NAMESPACE}">`,
     `      <dId>${escapeXmlText(dId)}</dId>`,
-    `      <dEvReg>${request.eventXml}</dEvReg>`,
+    `      <dEvReg>${request.eventGroupXml}</dEvReg>`,
     `    </rEnviEventoDe>`,
   ]);
 }
@@ -377,16 +379,31 @@ function assertBatchNumber(dProtConsLote: string): string {
 /**
  * The embedded document's root, asserted before it is embedded.
  *
- * `<rDE` and `<rGesEve` are this package's own bytes (ADR-008: "asserted to be
- * the DE our own builder produced"), so a leading namespace prefix is **not**
- * accepted: the builder emits `<rDE xmlns="…">` from column zero, and a document
- * that does not is not the one whose signature this envelope is meant to carry.
+ * `<rDE` and `<gGroupGesEve` are this package's own bytes (ADR-008: "asserted to
+ * be the DE our own builder produced"), so a leading namespace prefix is **not**
+ * accepted: the builder emits the root element of the document it hands over,
+ * and a document that does not is not the one whose signature this envelope is
+ * meant to carry.
+ *
+ * `assertEventGroupRoot` is the one variant: `buildEventGroupXml` renders the
+ * group at the indentation its envelope gives it, so the group's first line
+ * carries leading whitespace. That whitespace is outside the root element — it
+ * moves no signed byte — while a different or prefixed root is still refused.
  */
 function assertDocumentRoot(xml: string, root: string, what: string): void {
-  const expected = `<${root}`;
-  const following = xml.charAt(expected.length);
+  assertRootShape(xml, xml, `<${root}`, what);
+}
+
+/** The event group's root, with the indentation `buildEventGroupXml` emits. */
+function assertEventGroupRoot(xml: string): void {
+  assertRootShape(xml, xml.trimStart(), "<gGroupGesEve", "The event group");
+}
+
+/** The shape check both root assertions share. */
+function assertRootShape(xml: string, candidate: string, expected: string, what: string): void {
+  const following = candidate.charAt(expected.length);
   const terminated = following === ">" || following === " " || following === "/";
-  if (!xml.startsWith(expected) || !terminated) {
+  if (!candidate.startsWith(expected) || !terminated) {
     throw new SifenSerializationError(
       "UNEXPECTED_DOCUMENT_ROOT",
       `${what} must start with ${expected}> and is embedded verbatim (§23.3); it starts ` +

@@ -33,6 +33,9 @@ const cancelRequest: FiscalCancelRequest = {
   reason: "Operator request",
   externalId: "fake-1",
   cdc: null,
+  // ADR-009 applied to cancel: the fake declares `requiresSignedDocument`
+  // false, so `null` is the caller's explicit statement, not a violation.
+  document: null,
 };
 
 async function cancel(
@@ -176,6 +179,20 @@ describe("FakeFiscalProvider", () => {
     expect(result.reasonCode).toBe(code);
     expect(result.reason === null).toBe(code === null);
     expect(result.retryAfterMs).toBe(retry);
+  });
+
+  it("accepts the cancel request's document field and keeps its contract", async () => {
+    const provider = createFakeFiscalProvider({ cancelOutcomes: ["CANCELLED"] });
+    const withDocument = await provider.cancel({
+      ...cancelRequest,
+      document: { cdc: "cdc-1", signedXml: "<gGroupGesEve/>" },
+    });
+    const withoutDocument = await provider.cancel({ ...cancelRequest, document: null });
+
+    // ADR-009 applied to cancel: the flag is false, so both are the fake's
+    // normal path and neither is a contract violation.
+    expect(withDocument.outcome).toBe("CANCELLED");
+    expect(withoutDocument.outcome).toBe("CANCELLED");
   });
 
   it("keeps issue and cancellation scripts on independent counters", async () => {
