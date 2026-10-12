@@ -84,12 +84,17 @@ record (five artifacts, HTTP 200, byte sizes and md5s — two of which match
 §23.3's record exactly), the envelope, the two payloads field by field, the
 signature finding, the response, and the two findings above.
 
-**WU-B — the event document.** The builder for `rGesEve`: the envelope, the two
-payloads, and the **signature with the DE's own profile** — the signer
-`packages/fiscal` already has, over the event's `rEve` subtree, with the same
-certificate the DE uses (baseline §6: one certificate serves both). Plus the
-decisions the schema leaves open: the event's `@Id` strategy (an integer up to
-ten digits with no stated uniqueness) and the request's 15-digit `dId`.
+**WU-B — the event document.** **Landed.** The builder for `rGesEve`: the
+envelope, the two payloads, and the **signature with the DE's own profile** —
+the profile's constants imported from the DE's signer, one signature per event,
+each referencing `#<rEve/@Id>` and inserted after `rEve` inside its own
+`rGesEve`. Plus the decisions the schema leaves open: both identifiers are
+**caller-supplied and validated, never generated** (the schema states no
+uniqueness for either), the lot carries 1..15 events, and the rules the schema
+does not assert are named refusals. **The acceptance criterion is met**: a
+signed cancellation, a signed inutilización, a mixed two-event lot and a
+fifteen-event lot all validate against the DNIT's own bytes with the skip
+disabled.
 
 **WU-C — the provider's `cancel`.** `SifenDirectFiscalProvider.cancel` stops
 answering `CANCELLATION_EVENT_UNPROFILED` and submits the event through
@@ -125,7 +130,7 @@ requires are the ones FISC-013 sends.
 
 ## Exit Criteria
 
-- [ ] The event builder produces a document that **validates against the
+- [x] The event builder produces a document that **validates against the
       official event XSDs** and whose signature verifies with the certificate it
       carries.
 - [ ] `cancel` submits through the facade and maps the answer onto the port's
@@ -141,6 +146,7 @@ requires are the ones FISC-013 sends.
 ## Status
 
 **In progress 2026-10-11.** WU-A landed: the event family is profiled in
-`SIFEN-BASELINE.md` §25, which corrects three assumptions the earlier sections
-invited and records two findings that change the plan. The implementation begins
-with WU-B.
+`SIFEN-BASELINE.md` §25. **WU-B landed**: the document exists, is signed with
+the DE's profile, and validates against the official schemas — the first exit
+criterion is met. **Next: WU-C**, the provider's `cancel`, which is what retires
+`CANCELLATION_EVENT_UNPROFILED`.

@@ -617,294 +617,6 @@ statement that it is undefined — and **the clauses of Notas Técnicas 23, 24 a
 | FISC-012 the provider                  | The three-state result model and the `dCodRes`/`dMsgRes` mapping, that a rejected DE is **retryable with the same CDC**, and the whole QR composition with its build order (§24)                    | The full `dCodRes` catalogue; the CSC's value                                                     |
 | FISC-013 contingency and certification | **The test guide's sequence and test data**, the test and production environments, and that documents in test have no legal value                                                                   | A contingency protocol: DNIT has not defined one                                                  |
 
-## 25. The event family, profiled
-
-**[R]** §23.3 recorded the event _service_ and said the payload was never
-profiled: "the event _payload_ is the emitter's own document to build, and
-profiling it is the work of the Story that builds one". This is that profiling,
-and it corrects three things a reader of the earlier sections would otherwise
-assume.
-
-**The retrieval**, 2026-10-11, from `https://ekuatia.set.gov.py/sifen/xsd/`,
-each HTTP 200:
-
-```text
-Evento_v150.xsd                 23,255 bytes   md5 571f62b692caa82e61a2ffb38a5490eb
-Evento_Types_v150.xsd           23,320 bytes   md5 a7f86be032aa8fb52d7190853d7deeca
-siRecepEvento_v150.xsd             417 bytes   md5 8bf18c1a344e8ce00482f6579bc4b436
-WS_SiRecepEvento_v150.xsd        2,618 bytes   md5 61e668a682e397a00c1ee76d4814e627
-protProcesEventos_v141.xsd       3,660 bytes   the response's group, missing from §23.3's set
-```
-
-The first two sizes are **exactly** the ones §23.3 recorded, so the artifacts
-are stable across retrievals. `protProcesEventos_v141.xsd` is the linchpin the
-earlier set lacked: the response's `tgResProcEVe` is defined there and nowhere
-else.
-
-### 25.1 The envelope
-
-```text
-rEnviEventoDe        { dId (15-digit integer), dEvReg { gGroupGesEve } }
-gGroupGesEve         element of type tgGroupGesEve
-tgGroupGesEve        { rGesEve 1..15 }
-rGesEve              { rEve, ds:Signature }        the signature is REQUIRED
-rEve  @Id            tdIdEve: integer 1..9999999999, pattern [0-9]+
-rEve                 { dFecFirma (fecHhmmss), dVerFor (tVerFor), gGroupTiEvt }
-gGroupTiEvt          xs:choice of the nine payload elements
-```
-
-A lot carries **up to fifteen events**, each signed separately.
-
-### 25.2 The event's type is the ELEMENT NAME, not a code
-
-**This corrects an assumption the earlier sections invited.**
-`Evento_Types_v150.xsd` declares three enumerations and only one of them is what
-its name suggests:
-
-- **`tdTiGDE`** (documentation "Tipo de Evento", values
-  `1, 2, 3, 10, 11, 12, 13`) is a **dead catalogue**: the only element that
-  would carry it is commented out, and no payload element references it. **A
-  builder that emitted a `dTiGDE` field would produce a document that validates
-  against nothing.**
-- **`tiTipEve`** is the **receptor** type (`1 = Contribuyente`,
-  `2 = No Contribuyente`) despite a stray `<!-- Tipo de Evento -->` comment
-  above it.
-- **`tiTiDEEv`** is the **document** type (`1`..`9`, including
-  `9 = Boleta de Venta Electrónica`), carried by `iTiDE` in the inutilización.
-
-The event's type is expressed by **which element is present** under
-`gGroupTiEvt`.
-
-### 25.3 The two payloads this epic builds
-
-**Cancellation** — `rGeVeCan` / `trGeVeCan`, exactly two required children:
-
-```text
-Id       tId       xs:string length=44, pattern [0-9]{2}([0-9]{7}[0-9A-D]?)[0-9]{34}
-                   the CDC of the DTE being cancelled
-mOtEve   tmotEve   xs:string, 5..500      the reason
-```
-
-**Inutilización** — `rGeVeInu` / `trGeVeInu`, seven required and one optional:
-
-```text
-dNumTim    tdNumTim    8 digits, pattern 0+[1-9][0-9]*|[1-9]+[0-9]+
-dEst       tdEst       [0-9]{3}          the establishment
-dPunExp    tdPunExp    [0-9]{3}          the point of expedition
-dNumIn     tdNumDE     7+ digits         the range's first number
-dNumFin    tdNumDE     same              the range's last number
-iTiDE      tiTiDEEv    1..9              the document type
-mOtEve     tmotEve     5..500            the reason
-dSerieNum  tserieNum   [A-Z]{2}, optional
-```
-
-**It carries no `Id`**: an inutilización voids a _number range_, not a document,
-so a symmetric implementation that expected a CDC there would be wrong.
-
-### 25.4 The event is signed, with the DE's own profile
-
-`rGesEve` is `{ rEve, ds:Signature }` and the signature is **required**, as a
-sibling of the event rather than inside it. `Evento_v150.xsd` imports the
-**same** `xmldsig-core-schema.xsd` the DE imports, so the event reuses the DE's
-XMLDSig profile — no second signing profile exists. **The schema does not pin
-the algorithms**: `CanonicalizationMethod` and `SignatureMethod` are bare
-`anyURI` attributes, so the profile comes from the Manual's technology section
-(§7.6/§7.7) and not from the schema.
-
-The wrappers the _received_ services use (`trGesEveRecep`, `trGesEveEmi`,
-`trGesEveSet`) carry **no signature** and their bodies have no `@Id`.
-
-### 25.5 The response
-
-```text
-rRetEnviEventoDe     { dFecProc (fecUTC), gResProcEVe (tgResProcEVe, 1..15) }
-tgResProcEVe         { dEstRes (tdEstRes), dProtAut? (tdProtAut), id (tid),
-                       gResProc (tgResProc, 1..100) }
-tgResProc            { dCodRes (tdCodRes), dMsgRes (tdMsgRes) }
-```
-
-`dFecProc` is the **only UTC field in the family** (the events' own timestamps
-are local, §25.6). `tdEstRes` is a free string of 8..30 characters with **no
-enumeration**, and `tdCodRes` only fixes the four-digit shape — so **the event
-result codes are not evidenced by any retrieved source**, exactly as the DE's
-own `dCodRes` catalogue is recorded as open (§22.12). A mapping must carry an
-unlisted code rather than coerce it.
-
-### 25.6 The clock is LOCAL, and the environment is not in the document
-
-The events' `dFecFirma` and the receptor events' `dFecEmi`/`dFecRecep` are
-`fecHhmmss` — `xs:dateTime` with no timezone suffix and no fractional seconds —
-the **same type the DE's `dFeEmiDE` uses**. `tDateTimeUTC` exists in the same
-file and is referenced **nowhere**: it is a dead definition for this family. The
-environment is likewise absent: `iAmbType` is declared and never referenced, so
-the endpoint and the certificate are what select Prueba versus Producción.
-
-### 25.7 What the schema does not pin
-
-- **The event's identifier.** `rEve/@Id` is an integer up to ten digits with no
-  stated uniqueness, monotonicity or relation to the events it names; the
-  request's `dId` is a separate 15-digit integer with no stated relation to
-  either.
-- **The reason's content.** `mOtEve` is a bare string 5..500 with no domain.
-- **The range's sanity.** Nothing asserts `dNumIn ≤ dNumFin`, that the range
-  lies inside the timbrado's grant, or that `iTiDE` matches the timbrado.
-- **The signature's coverage and algorithms** (§25.4).
-
-### 25.8 Two findings that change the plan
-
-1. **The Guide's "Ajuste del Evento" has no payload.** The homologation's test
-   matrix requires five receptor events, and `tgGroupEvtRecep` defines exactly
-   **four** (`rGeVeNotRec`, `rGeVeConf`, `rGeVeDisconf`, `rGeVeDescon`). The
-   string "ajuste" appears nowhere in either event schema. Either the Guide
-   names one of the four, or the action has no published payload — the retrieved
-   set cannot resolve which, and **the matrix cannot be completed as written**.
-2. **`protProcesEventos_v141.xsd` was missing from §23.3's set**, and with it
-   the response's whole structure. It is now retrieved and recorded above.
-
-## 25. The event family, profiled
-
-**[R]** §23.3 recorded the event _service_ and said the payload was never
-profiled: "the event _payload_ is the emitter's own document to build, and
-profiling it is the work of the Story that builds one". This is that profiling,
-and it corrects three things a reader of the earlier sections would otherwise
-assume.
-
-**The retrieval**, 2026-10-11, from `https://ekuatia.set.gov.py/sifen/xsd/`,
-each HTTP 200:
-
-```text
-Evento_v150.xsd                 23,255 bytes   md5 571f62b692caa82e61a2ffb38a5490eb
-Evento_Types_v150.xsd           23,320 bytes   md5 a7f86be032aa8fb52d7190853d7deeca
-siRecepEvento_v150.xsd             417 bytes   md5 8bf18c1a344e8ce00482f6579bc4b436
-WS_SiRecepEvento_v150.xsd        2,618 bytes   md5 61e668a682e397a00c1ee76d4814e627
-protProcesEventos_v141.xsd       3,660 bytes   the response's group, missing from §23.3's set
-```
-
-The first two sizes are **exactly** the ones §23.3 recorded, so the artifacts
-are stable across retrievals. `protProcesEventos_v141.xsd` is the linchpin the
-earlier set lacked: the response's `tgResProcEVe` is defined there and nowhere
-else.
-
-### 25.1 The envelope
-
-```text
-rEnviEventoDe        { dId (15-digit integer), dEvReg { gGroupGesEve } }
-gGroupGesEve         element of type tgGroupGesEve
-tgGroupGesEve        { rGesEve 1..15 }
-rGesEve              { rEve, ds:Signature }        the signature is REQUIRED
-rEve  @Id            tdIdEve: integer 1..9999999999, pattern [0-9]+
-rEve                 { dFecFirma (fecHhmmss), dVerFor (tVerFor), gGroupTiEvt }
-gGroupTiEvt          xs:choice of the nine payload elements
-```
-
-A lot carries **up to fifteen events**, each signed separately.
-
-### 25.2 The event's type is the ELEMENT NAME, not a code
-
-**This corrects an assumption the earlier sections invited.**
-`Evento_Types_v150.xsd` declares three enumerations and only one of them is what
-its name suggests:
-
-- **`tdTiGDE`** (documentation "Tipo de Evento", values
-  `1, 2, 3, 10, 11, 12, 13`) is a **dead catalogue**: the only element that
-  would carry it is commented out, and no payload element references it. **A
-  builder that emitted a `dTiGDE` field would produce a document that validates
-  against nothing.**
-- **`tiTipEve`** is the **receptor** type (`1 = Contribuyente`,
-  `2 = No Contribuyente`) despite a stray `<!-- Tipo de Evento -->` comment
-  above it.
-- **`tiTiDEEv`** is the **document** type (`1`..`9`, including
-  `9 = Boleta de Venta Electrónica`), carried by `iTiDE` in the inutilización.
-
-The event's type is expressed by **which element is present** under
-`gGroupTiEvt`.
-
-### 25.3 The two payloads this epic builds
-
-**Cancellation** — `rGeVeCan` / `trGeVeCan`, exactly two required children:
-
-```text
-Id       tId       xs:string length=44, pattern [0-9]{2}([0-9]{7}[0-9A-D]?)[0-9]{34}
-                   the CDC of the DTE being cancelled
-mOtEve   tmotEve   xs:string, 5..500      the reason
-```
-
-**Inutilización** — `rGeVeInu` / `trGeVeInu`, seven required and one optional:
-
-```text
-dNumTim    tdNumTim    8 digits, pattern 0+[1-9][0-9]*|[1-9]+[0-9]+
-dEst       tdEst       [0-9]{3}          the establishment
-dPunExp    tdPunExp    [0-9]{3}          the point of expedition
-dNumIn     tdNumDE     7+ digits         the range's first number
-dNumFin    tdNumDE     same              the range's last number
-iTiDE      tiTiDEEv    1..9              the document type
-mOtEve     tmotEve     5..500            the reason
-dSerieNum  tserieNum   [A-Z]{2}, optional
-```
-
-**It carries no `Id`**: an inutilización voids a _number range_, not a document,
-so a symmetric implementation that expected a CDC there would be wrong.
-
-### 25.4 The event is signed, with the DE's own profile
-
-`rGesEve` is `{ rEve, ds:Signature }` and the signature is **required**, as a
-sibling of the event rather than inside it. `Evento_v150.xsd` imports the
-**same** `xmldsig-core-schema.xsd` the DE imports, so the event reuses the DE's
-XMLDSig profile — no second signing profile exists. **The schema does not pin
-the algorithms**: `CanonicalizationMethod` and `SignatureMethod` are bare
-`anyURI` attributes, so the profile comes from the Manual's technology section
-(§7.6/§7.7) and not from the schema.
-
-The wrappers the _received_ services use (`trGesEveRecep`, `trGesEveEmi`,
-`trGesEveSet`) carry **no signature** and their bodies have no `@Id`.
-
-### 25.5 The response
-
-```text
-rRetEnviEventoDe     { dFecProc (fecUTC), gResProcEVe (tgResProcEVe, 1..15) }
-tgResProcEVe         { dEstRes (tdEstRes), dProtAut? (tdProtAut), id (tid),
-                       gResProc (tgResProc, 1..100) }
-tgResProc            { dCodRes (tdCodRes), dMsgRes (tdMsgRes) }
-```
-
-`dFecProc` is the **only UTC field in the family** (the events' own timestamps
-are local, §25.6). `tdEstRes` is a free string of 8..30 characters with **no
-enumeration**, and `tdCodRes` only fixes the four-digit shape — so **the event
-result codes are not evidenced by any retrieved source**, exactly as the DE's
-own `dCodRes` catalogue is recorded as open (§22.12). A mapping must carry an
-unlisted code rather than coerce it.
-
-### 25.6 The clock is LOCAL, and the environment is not in the document
-
-The events' `dFecFirma` and the receptor events' `dFecEmi`/`dFecRecep` are
-`fecHhmmss` — `xs:dateTime` with no timezone suffix and no fractional seconds —
-the **same type the DE's `dFeEmiDE` uses**. `tDateTimeUTC` exists in the same
-file and is referenced **nowhere**: it is a dead definition for this family. The
-environment is likewise absent: `iAmbType` is declared and never referenced, so
-the endpoint and the certificate are what select Prueba versus Producción.
-
-### 25.7 What the schema does not pin
-
-- **The event's identifier.** `rEve/@Id` is an integer up to ten digits with no
-  stated uniqueness, monotonicity or relation to the events it names; the
-  request's `dId` is a separate 15-digit integer with no stated relation to
-  either.
-- **The reason's content.** `mOtEve` is a bare string 5..500 with no domain.
-- **The range's sanity.** Nothing asserts `dNumIn ≤ dNumFin`, that the range
-  lies inside the timbrado's grant, or that `iTiDE` matches the timbrado.
-- **The signature's coverage and algorithms** (§25.4).
-
-### 25.8 Two findings that change the plan
-
-1. **The Guide's "Ajuste del Evento" has no payload.** The homologation's test
-   matrix requires five receptor events, and `tgGroupEvtRecep` defines exactly
-   **four** (`rGeVeNotRec`, `rGeVeConf`, `rGeVeDisconf`, `rGeVeDescon`). The
-   string "ajuste" appears nowhere in either event schema. Either the Guide
-   names one of the four, or the action has no published payload — the retrieved
-   set cannot resolve which, and **the matrix cannot be completed as written**.
-2. **`protProcesEventos_v141.xsd` was missing from §23.3's set**, and with it
-   the response's whole structure. It is now retrieved and recorded above.
-
 ## Sources
 
 Retrieved **2026-10-03**:
@@ -2648,3 +2360,174 @@ buildDteXml  ->  signDteXml  ->  buildQrContent  ->  fill the QR placeholder
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | FISC-012 the provider              | The whole QR composition and its build order; the DE chain's inputs; that one certificate serves both the signature and mutual TLS | The CSC's value; whether SIFEN validates the hash                      |
 | FISC-013 contingency/certification | That the QR can be built before any SIFEN call, so the homologation run exercises it                                               | Anything about a live service's behaviour before a habilitación exists |
+
+## 25. The event family, profiled
+
+**[R]** §23.3 recorded the event _service_ and said the payload was never
+profiled: "the event _payload_ is the emitter's own document to build, and
+profiling it is the work of the Story that builds one". This is that profiling,
+and it corrects three things a reader of the earlier sections would otherwise
+assume.
+
+**The retrieval**, 2026-10-11, from `https://ekuatia.set.gov.py/sifen/xsd/`,
+each HTTP 200:
+
+```text
+Evento_v150.xsd                 23,255 bytes   md5 571f62b692caa82e61a2ffb38a5490eb
+Evento_Types_v150.xsd           23,320 bytes   md5 a7f86be032aa8fb52d7190853d7deeca
+siRecepEvento_v150.xsd             417 bytes   md5 8bf18c1a344e8ce00482f6579bc4b436
+WS_SiRecepEvento_v150.xsd        2,618 bytes   md5 61e668a682e397a00c1ee76d4814e627
+protProcesEventos_v141.xsd       3,660 bytes   the response's group, missing from §23.3's set
+```
+
+The first two sizes are **exactly** the ones §23.3 recorded, so the artifacts
+are stable across retrievals. `protProcesEventos_v141.xsd` is the linchpin the
+earlier set lacked: the response's `tgResProcEVe` is defined there and nowhere
+else.
+
+### 25.1 The envelope
+
+```text
+rEnviEventoDe        { dId (15-digit integer), dEvReg { gGroupGesEve } }
+gGroupGesEve         element of type tgGroupGesEve
+tgGroupGesEve        { rGesEve 1..15 }
+rGesEve              { rEve, ds:Signature }        the signature is REQUIRED
+rEve  @Id            tdIdEve: integer 1..9999999999, pattern [0-9]+
+rEve                 { dFecFirma (fecHhmmss), dVerFor (tVerFor), gGroupTiEvt }
+gGroupTiEvt          xs:choice of the nine payload elements
+```
+
+A lot carries **up to fifteen events**, each signed separately.
+
+### 25.2 The event's type is the ELEMENT NAME, not a code
+
+**This corrects an assumption the earlier sections invited.**
+`Evento_Types_v150.xsd` declares three enumerations and only one of them is what
+its name suggests:
+
+- **`tdTiGDE`** (documentation "Tipo de Evento", values
+  `1, 2, 3, 10, 11, 12, 13`) is a **dead catalogue**: the only element that
+  would carry it is commented out, and no payload element references it. **A
+  builder that emitted a `dTiGDE` field would produce a document that validates
+  against nothing.**
+- **`tiTipEve`** is the **receptor** type (`1 = Contribuyente`,
+  `2 = No Contribuyente`) despite a stray `<!-- Tipo de Evento -->` comment
+  above it.
+- **`tiTiDEEv`** is the **document** type (`1`..`9`, including
+  `9 = Boleta de Venta Electrónica`), carried by `iTiDE` in the inutilización.
+
+The event's type is expressed by **which element is present** under
+`gGroupTiEvt`.
+
+### 25.3 The two payloads this epic builds
+
+**Cancellation** — `rGeVeCan` / `trGeVeCan`, exactly two required children:
+
+```text
+Id       tId       xs:string length=44, pattern [0-9]{2}([0-9]{7}[0-9A-D]?)[0-9]{34}
+                   the CDC of the DTE being cancelled
+mOtEve   tmotEve   xs:string, 5..500      the reason
+```
+
+**Inutilización** — `rGeVeInu` / `trGeVeInu`, seven required and one optional:
+
+```text
+dNumTim    tdNumTim    8 digits, pattern 0+[1-9][0-9]*|[1-9]+[0-9]+
+dEst       tdEst       [0-9]{3}          the establishment
+dPunExp    tdPunExp    [0-9]{3}          the point of expedition
+dNumIn     tdNumDE     7+ digits         the range's first number
+dNumFin    tdNumDE     same              the range's last number
+iTiDE      tiTiDEEv    1..9              the document type
+mOtEve     tmotEve     5..500            the reason
+dSerieNum  tserieNum   [A-Z]{2}, optional
+```
+
+**It carries no `Id`**: an inutilización voids a _number range_, not a document,
+so a symmetric implementation that expected a CDC there would be wrong.
+
+### 25.4 The event is signed, with the DE's own profile
+
+`rGesEve` is `{ rEve, ds:Signature }` and the signature is **required**, as a
+sibling of the event rather than inside it. `Evento_v150.xsd` imports the
+**same** `xmldsig-core-schema.xsd` the DE imports, so the event reuses the DE's
+XMLDSig profile — no second signing profile exists. **The schema does not pin
+the algorithms**: `CanonicalizationMethod` and `SignatureMethod` are bare
+`anyURI` attributes, so the profile comes from the Manual's technology section
+(§7.6/§7.7) and not from the schema.
+
+The wrappers the _received_ services use (`trGesEveRecep`, `trGesEveEmi`,
+`trGesEveSet`) carry **no signature** and their bodies have no `@Id`.
+
+### 25.5 The response
+
+```text
+rRetEnviEventoDe     { dFecProc (fecUTC), gResProcEVe (tgResProcEVe, 1..15) }
+tgResProcEVe         { dEstRes (tdEstRes), dProtAut? (tdProtAut), id (tid),
+                       gResProc (tgResProc, 1..100) }
+tgResProc            { dCodRes (tdCodRes), dMsgRes (tdMsgRes) }
+```
+
+`dFecProc` is the **only UTC field in the family** (the events' own timestamps
+are local, §25.6). `tdEstRes` is a free string of 8..30 characters with **no
+enumeration**, and `tdCodRes` only fixes the four-digit shape — so **the event
+result codes are not evidenced by any retrieved source**, exactly as the DE's
+own `dCodRes` catalogue is recorded as open (§22.12). A mapping must carry an
+unlisted code rather than coerce it.
+
+### 25.6 The clock is LOCAL, and the environment is not in the document
+
+The events' `dFecFirma` and the receptor events' `dFecEmi`/`dFecRecep` are
+`fecHhmmss` — `xs:dateTime` with no timezone suffix and no fractional seconds —
+the **same type the DE's `dFeEmiDE` uses**. `tDateTimeUTC` exists in the same
+file and is referenced **nowhere**: it is a dead definition for this family. The
+environment is likewise absent: `iAmbType` is declared and never referenced, so
+the endpoint and the certificate are what select Prueba versus Producción.
+
+### 25.7 What the schema does not pin
+
+- **The event's identifier.** `rEve/@Id` is an integer up to ten digits with no
+  stated uniqueness, monotonicity or relation to the events it names; the
+  request's `dId` is a separate 15-digit integer with no stated relation to
+  either.
+- **The reason's content.** `mOtEve` is a bare string 5..500 with no domain.
+- **The range's sanity.** Nothing asserts `dNumIn ≤ dNumFin`, that the range
+  lies inside the timbrado's grant, or that `iTiDE` matches the timbrado.
+- **The signature's coverage and algorithms** (§25.4).
+
+### 25.8 The include chain, and the spelling that hides an absolute URL
+
+The event family's entry artifact is **`WS_SiRecepEvento_v150.xsd`** (it is the
+one that declares `rEnviEventoDe`), and its chain is:
+
+```text
+WS_SiRecepEvento_v150.xsd
+├─ protProcesEventos_v141.xsd   -> imports xmldsig-core-schema.xsd
+└─ Evento_v150.xsd              -> imports xmldsig-core-schema.xsd
+   ├─ Evento_Types_v150.xsd
+   ├─ Paises_v100.xsd            (already fetched for the DE)
+   ├─ Departamentos_v141.xsd     (already fetched for the DE)
+   └─ DE_Types_v150.xsd          (already fetched for the DE)
+```
+
+So four artifacts are new and seven were already fetched.
+**`siRecepEvento_v150.xsd` is not in the chain** and is not fetched, even though
+it declares `gGroupGesEve` too.
+
+**The spelling matters.** The DNIT ships the include attribute as
+`schemaLocation= "…"` — **with a space** — in `WS_SiRecepEvento_v150.xsd` and
+`Evento_v150.xsd`. A rewrite that matches only the tight form leaves those six
+absolute URLs in place, and an inspection that matches only the tight form
+reports the directory **usable** while validation would still reach the network.
+Both must tolerate the whitespace, which is why the gate's regexes were widened
+when the event schemas were added.
+
+### 25.9 Two findings that change the plan
+
+1. **The Guide's "Ajuste del Evento" has no payload.** The homologation's test
+   matrix requires five receptor events, and `tgGroupEvtRecep` defines exactly
+   **four** (`rGeVeNotRec`, `rGeVeConf`, `rGeVeDisconf`, `rGeVeDescon`). The
+   string "ajuste" appears nowhere in either event schema. Either the Guide
+   names one of the four, or the action has no published payload — the retrieved
+   set cannot resolve which, and **the matrix cannot be completed as written**.
+2. **`protProcesEventos_v141.xsd` was missing from §23.3's set**, and with it
+   the response's whole structure. It is now retrieved and recorded above.
