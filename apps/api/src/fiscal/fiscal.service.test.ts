@@ -250,6 +250,7 @@ function buildCancelHarness(options: CancelHarnessOptions): CancelHarness {
       cancelRequests.push(request);
       return Promise.resolve(cancelResult("CANCELLED"));
     },
+    voidRange: () => Promise.reject(new Error("voidRange is not under test")),
   };
   const producer = { enqueue: () => Promise.resolve() } as unknown as FiscalSubmissionProducer;
   const credentialPort = {

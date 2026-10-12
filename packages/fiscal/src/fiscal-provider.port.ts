@@ -53,11 +53,20 @@ export interface FiscalIssueLine {
  * would invalidate the signature it was handed.
  */
 export interface FiscalIssueDocument {
-  /** The CDC, which the signature's reference also carries. */
-  readonly cdc: string;
+  /**
+   * The identity of what the document is about, when its family carries one.
+   *
+   * For a document it is the CDC, which the signature's reference also carries.
+   * It is `null` for a document family that names **no document at all**: the
+   * void of a numbering range is such a family (baseline §25.3 — the range is
+   * what is named, so a symmetric implementation that fabricated a CDC here
+   * would put a value on a record that no service ever issued).
+   */
+  readonly cdc: string | null;
   /**
    * The signed document, exactly as it was signed: for issue the DE with its QR
-   * already filled, for cancel the signed `gGroupGesEve` event group.
+   * already filled, for cancel the signed `gGroupGesEve` event group, and for a
+   * range void the same group carrying the range's own event.
    */
   readonly signedXml: string;
 }
@@ -260,6 +269,85 @@ export type FiscalCancelOutcome =
   "CANCELLED" | "CANCEL_PENDING" | "REJECTED" | "CONFIGURATION_ERROR" | "TRANSIENT_FAILURE";
 
 /**
+ * Request to void the numbers of a numbering range that will never be used.
+ *
+ * It is a business operation of its own and not a variant of a cancellation:
+ * nothing is being withdrawn — the numbers were authorised and were never
+ * consumed — so the provider is *told*, in advance, that they will not be.
+ *
+ * **The caller supplies the reason and nothing else about the decision.** The
+ * numbers are carried because the caller is the side that owns them, and they
+ * are the range's **remaining** tail: a number that was already handed out is
+ * burnt (`fiscal_timbrado_range.next_number` is never lowered), so a void that
+ * covered it would describe history that never happened.
+ */
+export interface FiscalRangeVoidRequest {
+  readonly tenantId: string;
+  readonly provider: FiscalProviderId;
+  /** The first number the provider is told will not be used. */
+  readonly from: number;
+  /** The last number the provider is told will not be used, inclusive. */
+  readonly to: number;
+  readonly reason: string;
+  /**
+   * The caller's built document, or `null` when the provider does not require
+   * one — ADR-009 applied to the void.
+   *
+   * The same two facts meet here as at issue and cancel: the port's request
+   * carries numbers and a reason while a real provider is told with a **signed
+   * document**, and the caller is the side that can build and sign one. The rule
+   * is therefore the one {@link FiscalIssueRequest.document} carries: a provider
+   * whose {@link FiscalProviderPort.requiresSignedDocument} is `true` and that is
+   * handed `null` answers `CONFIGURATION_ERROR` and **never** submits, and `null`
+   * is the caller's explicit statement that the selected provider answers
+   * `false`.
+   */
+  readonly document: FiscalIssueDocument | null;
+  /**
+   * Optional abort signal. The caller has already enforced a deadline, so an
+   * adapter that can abandon the provider call should do so when this fires; an
+   * adapter that ignores it still gets a bounded caller, because the command
+   * races the call against its own deadline.
+   */
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * The outcomes of one range void.
+ *
+ * Deliberately **its own union**: the cancellation's vocabulary is about a
+ * document's fate (`CANCELLED`, and a `CANCEL_PENDING` that says the answer is
+ * still coming), and a range void has neither — nothing was issued, so nothing
+ * is pending and nothing was cancelled. The accepted member is `VOIDED`.
+ */
+export type FiscalRangeVoidOutcome =
+  "VOIDED" | "REJECTED" | "CONFIGURATION_ERROR" | "TRANSIENT_FAILURE";
+
+/**
+ * Range-void result. Raw provider payloads must be sanitized by the Fiscal
+ * boundary before persistence.
+ */
+export interface FiscalRangeVoidResult {
+  readonly outcome: FiscalRangeVoidOutcome;
+  /**
+   * The provider's reference for the operation, when it issued one.
+   *
+   * `null` for a provider that resolves the void without a handle of its own,
+   * and for an answer that names nothing — the same "set every field" rule the
+   * other result shapes follow.
+   */
+  readonly providerReference: string | null;
+  readonly reasonCode: string | null;
+  readonly reason: string | null;
+  readonly retryAfterMs: number | null;
+  /** RAW provider request; sanitize at the Fiscal boundary before persistence. */
+  readonly providerRequest: unknown;
+  /** RAW provider response; sanitize at the Fiscal boundary before persistence. */
+  readonly providerResponse: unknown;
+  readonly resolvedAt: string;
+}
+
+/**
  * Cancellation result. Raw provider payloads must be sanitized by the Fiscal
  * boundary before persistence.
  */
@@ -301,6 +389,17 @@ export interface FiscalProviderPort {
   query(request: FiscalQueryRequest): Promise<FiscalQueryResult>;
   /** DEC-048 assigns both capabilities to the epic; FISC-003 deferred cancel to its flow-owning slice. */
   cancel(request: FiscalCancelRequest): Promise<FiscalCancelResult>;
+  /**
+   * Tells the provider that a range's remaining numbers will not be used.
+   *
+   * It is a capability of its own rather than a mode of {@link cancel}: what is
+   * reported is a decision about numbers that were authorised and never issued,
+   * and the port states it in the caller's own terms — an interval and a reason.
+   * No protocol vocabulary enters here for the same reason it enters nowhere else
+   * in this file (ADR-007 §6): the adapter is the side that knows how a provider
+   * is told, and the names a provider gives its answers stay there.
+   */
+  voidRange(request: FiscalRangeVoidRequest): Promise<FiscalRangeVoidResult>;
 }
 
 /**
@@ -311,6 +410,8 @@ export interface FiscalProviderPort {
  * `TRANSIENT_FAILURE` — and a BullMQ retry after a hand-over that worked is
  * exactly the duplicate submission the provider's rules punish.
  */
-export function isRetryableOutcome(outcome: FiscalIssueOutcome | FiscalCancelOutcome): boolean {
+export function isRetryableOutcome(
+  outcome: FiscalIssueOutcome | FiscalCancelOutcome | FiscalRangeVoidOutcome
+): boolean {
   return outcome === "TRANSIENT_FAILURE";
 }

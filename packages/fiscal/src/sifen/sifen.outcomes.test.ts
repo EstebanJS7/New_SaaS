@@ -18,10 +18,12 @@ import { describe, expect, it } from "vitest";
 
 import { buildDteXml } from "../dte/dte.builder.js";
 import { FIXTURE_CDC, validFacturaElectronicaRequest } from "../dte/dte.fixture.js";
+import { isRetryableOutcome } from "../fiscal-provider.port.js";
 import type {
   FiscalIssueOutcome,
   FiscalIssueResult,
   FiscalQueryResult,
+  FiscalRangeVoidOutcome,
 } from "../fiscal-provider.port.js";
 import { SIFEN_BATCH_POLL_INTERVAL_MS, type SifenEstadoResultado } from "./sifen.codes.js";
 import type {
@@ -30,6 +32,7 @@ import type {
   SifenBatchReceptionResponse,
   SifenCdcQueryResponse,
   SifenDeContent,
+  SifenEventReceptionResponse,
   SifenProcessingProtocol,
   SifenRucQueryResponse,
   SifenRucStatus,
@@ -38,6 +41,7 @@ import {
   mapBatchQueryOutcome,
   mapBatchReceptionOutcome,
   mapCdcQueryOutcome,
+  mapEventReceptionVoidOutcome,
   mapReceptionOutcome,
   mapRucQueryOutcome,
   SIFEN_BATCH_CONCLUDED_WITHOUT_RESULTS_REASON,
@@ -689,5 +693,185 @@ describe("mapRucQueryOutcome", () => {
     const result = mapRucQueryOutcome({ ...context(), response: rucQuery() });
 
     expect(Object.keys(result).sort()).toEqual(["dCodRes", "outcome", "status"]);
+  });
+});
+
+/**
+ * FISC-016 WU-D — the void's answer, mapped onto the port's own vocabulary.
+ *
+ * §25.5's `tgResProcEVe` is the same group the cancellation maps, and the rules
+ * are the same ones: an exhaustive `switch` over the three published `dEstRes`
+ * values, an unlisted `dCodRes` carried verbatim, and every field of the result
+ * set — with `null` where the answer is silent, because the row the caller
+ * persists reads them.
+ */
+describe("mapEventReceptionVoidOutcome (FISC-016 WU-D)", () => {
+  /** §25.5's answer: one entry, with an optional code, message and reference. */
+  function voidAnswer(args: {
+    readonly dEstRes: SifenEstadoResultado;
+    readonly dCodRes?: string;
+    readonly dMsgRes?: string;
+    readonly dProtAut?: string;
+  }): SifenEventReceptionResponse {
+    return {
+      dFecProc: "2026-10-08T18:00:00-03:00",
+      gResProcEVe: [
+        {
+          id: "1",
+          dEstRes: args.dEstRes,
+          dProtAut: args.dProtAut,
+          gResProc: [{ dCodRes: args.dCodRes, dMsgRes: args.dMsgRes }],
+        },
+      ],
+    };
+  }
+
+  it("maps Aprobado to VOIDED, carrying the code, the message and the reference", () => {
+    const result = mapEventReceptionVoidOutcome({
+      ...context(),
+      response: voidAnswer({
+        dEstRes: "Aprobado",
+        dCodRes: "0300",
+        dMsgRes: "Evento aceptado",
+        dProtAut: "1234567890",
+      }),
+    });
+
+    expect(result).toEqual({
+      outcome: "VOIDED",
+      providerReference: "1234567890",
+      reasonCode: "0300",
+      reason: "Evento aceptado",
+      retryAfterMs: null,
+      providerRequest: PROVIDER_REQUEST,
+      providerResponse: PROVIDER_RESPONSE,
+      resolvedAt: RESOLVED_AT,
+    });
+  });
+
+  it("maps Aprobado con observación to VOIDED and keeps the observation in reason (§10)", () => {
+    const result = mapEventReceptionVoidOutcome({
+      ...context(),
+      response: voidAnswer({
+        dEstRes: "Aprobado con observación",
+        dCodRes: "0300",
+        dMsgRes: "El rango contiene números ya utilizados",
+      }),
+    });
+
+    expect(result.outcome).toBe("VOIDED");
+    expect(result.reason).toBe("El rango contiene números ya utilizados");
+  });
+
+  it("maps Rechazado to REJECTED", () => {
+    const result = mapEventReceptionVoidOutcome({
+      ...context(),
+      response: voidAnswer({ dEstRes: "Rechazado", dCodRes: "0301", dMsgRes: "Rango inválido" }),
+    });
+
+    expect(result.outcome).toBe("REJECTED");
+    expect(result.reasonCode).toBe("0301");
+  });
+
+  it("carries an unlisted result code verbatim rather than coercing it (§25.5)", () => {
+    const result = mapEventReceptionVoidOutcome({
+      ...context(),
+      response: voidAnswer({ dEstRes: "Rechazado", dCodRes: "9999", dMsgRes: "Código nuevo" }),
+    });
+
+    // The catalogue is recorded as open: no retrieved source enumerates the
+    // event family's codes, so a four-digit code this client has never seen is
+    // data and reaches the caller as itself.
+    expect(result.reasonCode).toBe("9999");
+    expect(result.outcome).toBe("REJECTED");
+  });
+
+  it("sets every field to null when the answer is silent, rather than omitting it", () => {
+    const result = mapEventReceptionVoidOutcome({
+      ...context(),
+      response: voidAnswer({ dEstRes: "Aprobado" }),
+    });
+
+    expect(result).toEqual({
+      outcome: "VOIDED",
+      providerReference: null,
+      reasonCode: null,
+      reason: null,
+      retryAfterMs: null,
+      providerRequest: PROVIDER_REQUEST,
+      providerResponse: PROVIDER_RESPONSE,
+      resolvedAt: RESOLVED_AT,
+    });
+    expect(Object.keys(result).sort()).toEqual([
+      "outcome",
+      "providerReference",
+      "providerRequest",
+      "providerResponse",
+      "reason",
+      "reasonCode",
+      "resolvedAt",
+      "retryAfterMs",
+    ]);
+  });
+
+  it("joins several gResProc messages the way the reception's reason does", () => {
+    const result = mapEventReceptionVoidOutcome({
+      ...context(),
+      response: {
+        dFecProc: "2026-10-08T18:00:00-03:00",
+        gResProcEVe: [
+          {
+            id: "1",
+            dEstRes: "Aprobado con observación",
+            dProtAut: undefined,
+            gResProc: [
+              { dCodRes: undefined, dMsgRes: "Primera observación" },
+              { dCodRes: "0300", dMsgRes: "Segunda observación" },
+              { dCodRes: "0301", dMsgRes: "" },
+            ],
+          },
+        ],
+      },
+    });
+
+    // The first reported CODE is the code behind a code-less observation, and
+    // the empty message is skipped rather than joined twice.
+    expect(result.reason).toBe("Primera observación; Segunda observación");
+    expect(result.reasonCode).toBe("0300");
+  });
+
+  it("maps an answer carrying no entry to CONFIGURATION_ERROR and invents nothing", () => {
+    const result = mapEventReceptionVoidOutcome({
+      ...context(),
+      response: { dFecProc: "2026-10-08T18:00:00-03:00", gResProcEVe: [] },
+    });
+
+    // `parseEventReceptionResponse` refuses an answer with no entry (§25.5:
+    // `gResProcEVe` is 1..15), so this is unreachable through the adapter — and
+    // the mapping still has to be total, with nothing invented for a state the
+    // service never stated.
+    expect(result).toEqual({
+      outcome: "CONFIGURATION_ERROR",
+      providerReference: null,
+      reasonCode: null,
+      reason: null,
+      retryAfterMs: null,
+      providerRequest: PROVIDER_REQUEST,
+      providerResponse: PROVIDER_RESPONSE,
+      resolvedAt: RESOLVED_AT,
+    });
+  });
+
+  it("answers only TRANSIENT_FAILURE as retryable, exactly as the other families do", () => {
+    const outcomes: readonly FiscalRangeVoidOutcome[] = [
+      "VOIDED",
+      "REJECTED",
+      "CONFIGURATION_ERROR",
+      "TRANSIENT_FAILURE",
+    ];
+
+    expect(outcomes.filter((outcome) => isRetryableOutcome(outcome))).toEqual([
+      "TRANSIENT_FAILURE",
+    ]);
   });
 });

@@ -8,6 +8,9 @@ import type {
   FiscalQueryOutcome,
   FiscalQueryRequest,
   FiscalQueryResult,
+  FiscalRangeVoidOutcome,
+  FiscalRangeVoidRequest,
+  FiscalRangeVoidResult,
 } from "./fiscal-provider.port.js";
 
 const request: FiscalIssueRequest = {
@@ -42,6 +45,26 @@ async function cancel(
   provider: ReturnType<typeof createFakeFiscalProvider>
 ): Promise<FiscalCancelResult> {
   return provider.cancel(cancelRequest);
+}
+
+/**
+ * The void's request. It carries an interval and a reason, no document identity
+ * and — for a non-requiring provider — no document at all (ADR-009 applied to
+ * the void).
+ */
+const voidRequest: FiscalRangeVoidRequest = {
+  tenantId: "tenant-1",
+  provider: "FAKE",
+  from: 42,
+  to: 9_999_999,
+  reason: "Operator requested the range be voided",
+  document: null,
+};
+
+async function voidRange(
+  provider: ReturnType<typeof createFakeFiscalProvider>
+): Promise<FiscalRangeVoidResult> {
+  return provider.voidRange(voidRequest);
 }
 
 /** The recovery path's request: the handle is absent, the document's identity is not. */
@@ -406,5 +429,107 @@ describe("FakeFiscalProvider", () => {
         false
       );
     }
+  });
+});
+
+/**
+ * FISC-016 WU-D — the fake's range void.
+ *
+ * DEC-048: the fake simulates no protocol detail, so it answers the port's own
+ * vocabulary from a script and carries the `FAKE_*` reason-code style. The one
+ * thing it does model is the contract the caller reads: a `VOIDED` answer is the
+ * only one that carries a provider reference, because a refusal names no
+ * operation the service accepted.
+ */
+describe("FakeFiscalProvider.voidRange", () => {
+  it("answers VOIDED by default, including an empty script", async () => {
+    expect((await voidRange(createFakeFiscalProvider())).outcome).toBe("VOIDED");
+    const provider = createFakeFiscalProvider({ voidRangeOutcomes: [] });
+    expect((await voidRange(provider)).outcome).toBe("VOIDED");
+    expect((await voidRange(provider)).outcome).toBe("VOIDED");
+  });
+
+  it("walks the scripted outcomes in order, repeating the last", async () => {
+    const provider = createFakeFiscalProvider({
+      voidRangeOutcomes: ["REJECTED", "VOIDED"],
+    });
+
+    expect((await voidRange(provider)).outcome).toBe("REJECTED");
+    expect((await voidRange(provider)).outcome).toBe("VOIDED");
+    expect((await voidRange(provider)).outcome).toBe("VOIDED");
+  });
+
+  it.each([
+    ["VOIDED", null, null, "fake-ref-1"],
+    ["REJECTED", "FAKE_REJECTED", null, null],
+    ["CONFIGURATION_ERROR", "FAKE_CONFIGURATION_ERROR", null, null],
+    ["TRANSIENT_FAILURE", "FAKE_TRANSIENT_FAILURE", 1_000, null],
+  ] as const)("returns the required void shape for %s", async (outcome, code, retry, reference) => {
+    const result = await voidRange(createFakeFiscalProvider({ voidRangeOutcomes: [outcome] }));
+
+    expect(result.outcome).toBe(outcome);
+    expect(result.reasonCode).toBe(code);
+    expect(result.reason === null).toBe(code === null);
+    expect(result.retryAfterMs).toBe(retry);
+    // Only an accepted void carries the operation's handle: a refusal resolved
+    // nothing for the caller to persist as a reference.
+    expect(result.providerReference).toBe(reference);
+  });
+
+  it("accepts the void request's document field either way, without requiring it", async () => {
+    const provider = createFakeFiscalProvider({ voidRangeOutcomes: ["VOIDED"] });
+
+    const withDocument = await provider.voidRange({
+      ...voidRequest,
+      document: { cdc: null, signedXml: "<gGroupGesEve/>" },
+    });
+    const withoutDocument = await provider.voidRange({ ...voidRequest, document: null });
+
+    // The fake declares `requiresSignedDocument` false, so `null` is the
+    // caller's explicit statement and neither call is a contract violation.
+    expect(withDocument.outcome).toBe("VOIDED");
+    expect(withoutDocument.outcome).toBe("VOIDED");
+  });
+
+  it("keeps the void's counter independent of issue and cancel", async () => {
+    const provider = createFakeFiscalProvider({
+      outcomes: ["APPROVED"],
+      cancelOutcomes: ["CANCELLED"],
+      voidRangeOutcomes: ["REJECTED", "VOIDED"],
+    });
+
+    expect((await voidRange(provider)).outcome).toBe("REJECTED");
+    expect((await issue(provider)).outcome).toBe("APPROVED");
+    expect((await cancel(provider)).outcome).toBe("CANCELLED");
+    expect((await voidRange(provider)).outcome).toBe("VOIDED");
+  });
+
+  it("uses the injected clock for the void", async () => {
+    const result = await voidRange(
+      createFakeFiscalProvider({ clock: () => new Date("2026-01-02T03:04:05.000Z") })
+    );
+
+    expect(result.resolvedAt).toBe("2026-01-02T03:04:05.000Z");
+  });
+
+  it("returns void payloads without protocol artefacts and without the request's reason", async () => {
+    const result = await voidRange(createFakeFiscalProvider());
+
+    // PRD §23: the fake invents no SIFEN XML, signature or protocol artefact,
+    // and the operator's reason never becomes protocol data.
+    expect(JSON.stringify(result)).not.toContain("<");
+    expect(JSON.stringify(result)).not.toContain(voidRequest.reason);
+    expect(result.providerRequest).toEqual({ kind: "fake", outcome: "VOIDED" });
+  });
+
+  it("answers with the void vocabulary the port declares, never the cancellation's", () => {
+    const outcomes: readonly FiscalRangeVoidOutcome[] = [
+      "VOIDED",
+      "REJECTED",
+      "CONFIGURATION_ERROR",
+      "TRANSIENT_FAILURE",
+    ];
+
+    expect(outcomes).not.toContain("CANCELLED");
   });
 });

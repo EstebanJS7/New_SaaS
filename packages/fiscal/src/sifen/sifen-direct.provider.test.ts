@@ -34,6 +34,8 @@ import type {
   FiscalIssueRequest,
   FiscalProviderPort,
   FiscalQueryRequest,
+  FiscalRangeVoidOutcome,
+  FiscalRangeVoidRequest,
 } from "../fiscal-provider.port.js";
 import { isRetryableOutcome } from "../fiscal-provider.port.js";
 import {
@@ -302,6 +304,34 @@ function cancelRequest(document: FiscalIssueDocument | null): FiscalCancelReques
     externalId: null,
     cdc: CDC,
     document,
+  };
+}
+
+/**
+ * The signed event group the API hands over for a range void.
+ *
+ * **`cdc: null`** — and that is the honest value, not a gap: an inutilización
+ * names a number range and no document (§25.3), so there is no CDC for the
+ * port's carrier to hold. The bytes are the same-shaped group a cancellation
+ * travels in, because the event family has one envelope.
+ */
+const SIGNED_RANGE_VOID_EVENT: FiscalIssueDocument = {
+  cdc: null,
+  signedXml: SIGNED_EVENT_GROUP,
+};
+
+function voidRequest(
+  document: FiscalIssueDocument | null,
+  overrides: Partial<FiscalRangeVoidRequest> = {}
+): FiscalRangeVoidRequest {
+  return {
+    tenantId: TENANT_A,
+    provider: "SIFEN_DIRECT",
+    from: 42,
+    to: 9_999_999,
+    reason: "Operator requested the range be voided",
+    document,
+    ...overrides,
   };
 }
 
@@ -865,5 +895,200 @@ describe("the snapshot descriptors (ADR-009)", () => {
     // fragment either.
     expect(JSON.stringify(request.snapshot)).not.toContain("<rDE");
     expect(JSON.stringify(result)).not.toContain(DOCUMENT_MARKER);
+  });
+});
+
+/**
+ * FISC-016 WU-D — the void of a range's remaining numbers.
+ *
+ * It is the cancellation's sibling one level down: the same signed event group,
+ * the same service and the same failure partition, with the port's **own**
+ * vocabulary on the way out (`VOIDED`, never `CANCELLED`) and no document
+ * identity to report, because an inutilización names a range and no document
+ * (§25.3).
+ */
+describe("voidRange", () => {
+  const VOID_CASES: readonly FiscalRangeVoidOutcome[] = [
+    "VOIDED",
+    "REJECTED",
+    "CONFIGURATION_ERROR",
+    "TRANSIENT_FAILURE",
+  ];
+
+  it("submits the caller's signed group and answers VOIDED with the answer's reference", async () => {
+    const { provider, transport, read } = buildProvider({ body: EVENT_APPROVED_BODY });
+
+    expect(read, "construction reads no credential").not.toHaveBeenCalled();
+
+    const result = await provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT));
+
+    expect(transport).toHaveBeenCalledTimes(1);
+    const args = transportArgs(transport);
+    expect(args.endpoint).toBe(`${BASE_URL}/de/ws/eventos/evento.wsdl`);
+    expect(args.envelope).toContain("<rEnviEventoDe");
+    // The envelope's `dId` is the adapter's control number for the operation,
+    // one per submission (§25.7 states no relation between it and anything
+    // else).
+    expect(args.envelope).toContain(`<dId>${D_ID}</dId>`);
+    // The caller's bytes are embedded verbatim: re-serializing would invalidate
+    // the signature the caller produced (ADR-009).
+    expect(args.envelope).toContain(`<dEvReg>${SIGNED_EVENT_GROUP}</dEvReg>`);
+    // ADR-008 §2: the credential is read per call inside the facade.
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith({ tenantId: TENANT_A, environment: ENVIRONMENT });
+
+    expect(result).toEqual({
+      outcome: "VOIDED",
+      providerReference: AUTHORIZATION_PROTOCOL,
+      reasonCode: "0300",
+      reason: "Evento aceptado",
+      retryAfterMs: null,
+      providerRequest: {
+        provider: "SIFEN_DIRECT",
+        service: "receiveEvent",
+        // No document identity: the void is about a range (§25.3).
+        cdc: null,
+        xmlBytes: EVENT_GROUP_BYTES,
+      },
+      providerResponse: {
+        provider: "SIFEN_DIRECT",
+        service: "receiveEvent",
+        statusCode: "Aprobado",
+        message: "Evento aceptado",
+      },
+      resolvedAt: CLOCK.toISOString(),
+    });
+    // ADR-009's descriptor rule: the signed group never enters the result.
+    expect(JSON.stringify(result)).not.toContain(EVENT_GROUP_MARKER);
+  });
+
+  it("maps 'Aprobado con observación' to VOIDED and keeps the observation as the reason", async () => {
+    const { provider } = buildProvider({
+      body: eventReceptionBody({
+        dEstRes: "Aprobado con observación",
+        dCodRes: "0301",
+        dMsgRes: "Evento aceptado con observación",
+      }),
+    });
+
+    const result = await provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT));
+
+    expect(result.outcome).toBe("VOIDED");
+    expect(result.reasonCode).toBe("0301");
+    expect(result.reason).toBe("Evento aceptado con observación");
+  });
+
+  it("maps Rechazado to REJECTED, which is terminal", async () => {
+    const { provider } = buildProvider({
+      body: eventReceptionBody({
+        dEstRes: "Rechazado",
+        dCodRes: "0400",
+        dMsgRes: "Evento rechazado",
+      }),
+    });
+
+    const result = await provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT));
+
+    expect(result.outcome).toBe("REJECTED");
+    expect(result.reasonCode).toBe("0400");
+    expect(result.reason).toBe("Evento rechazado");
+    expect(result.providerReference).toBe(AUTHORIZATION_PROTOCOL);
+    expect(isRetryableOutcome(result.outcome)).toBe(false);
+  });
+
+  it("carries an unlisted result code verbatim rather than coercing it (§25.5)", async () => {
+    const { provider } = buildProvider({
+      body: eventReceptionBody({
+        dEstRes: "Aprobado",
+        dCodRes: "9999",
+        dMsgRes: "Código no publicado",
+      }),
+    });
+
+    const result = await provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT));
+
+    expect(result.outcome).toBe("VOIDED");
+    expect(result.reasonCode).toBe("9999");
+    expect(typeof result.reasonCode).toBe("string");
+  });
+
+  it("answers CONFIGURATION_ERROR without a facade call when the request carries no document", async () => {
+    const { provider, transport, read } = buildProvider();
+
+    const result = await provider.voidRange(voidRequest(null));
+
+    expect(result.outcome).toBe("CONFIGURATION_ERROR");
+    expect(result.reasonCode).toBe(SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON_CODE);
+    expect(result.reason).toContain("document");
+    expect(result.providerReference).toBeNull();
+    expect(isRetryableOutcome(result.outcome)).toBe(false);
+    expect(result.providerRequest).toBeNull();
+    expect(result.providerResponse).toBeNull();
+    expect(transport).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("takes resolvedAt from the injected clock", async () => {
+    const resolved = new Date("2026-10-08T21:30:00.000Z");
+    const { provider } = buildProvider({ body: EVENT_APPROVED_BODY, now: () => resolved });
+
+    const result = await provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT));
+
+    expect(result.resolvedAt).toBe(resolved.toISOString());
+  });
+
+  it("draws one control number per event envelope, from the injected source", async () => {
+    const controlNumber = vi.fn(() => D_ID);
+    const { provider, transport } = buildProvider({ body: EVENT_APPROVED_BODY, controlNumber });
+
+    await provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT));
+
+    expect(controlNumber).toHaveBeenCalledTimes(1);
+    expect(transportArgs(transport).envelope).toContain(`<dId>${D_ID}</dId>`);
+  });
+
+  it.each(TRANSPORT_CASES)(
+    "maps $failure to $outcome, the same partition cancel uses",
+    async (row) => {
+      const message = `Transport failure: ${row.failure}`;
+      const { provider, transport } = buildProvider({
+        transport: failingTransport(new SifenTransportError(row.failure, message)),
+      });
+
+      const result = await provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT));
+
+      expect(result.outcome).toBe(row.outcome);
+      expect(result.reasonCode).toBe(row.failure);
+      expect(result.reason).toBe(message);
+      expect(result.providerReference).toBeNull();
+      expect(isRetryableOutcome(result.outcome)).toBe(row.outcome === "TRANSIENT_FAILURE");
+      expect(transport).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("maps a null credential read to a terminal CONFIGURATION_ERROR and submits nothing", async () => {
+    const read = credentialRead(null);
+    const transport = respondingTransport(EVENT_APPROVED_BODY);
+    const { provider } = buildProvider({ read, transport });
+
+    const result = await provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT));
+
+    expect(result.outcome).toBe("CONFIGURATION_ERROR");
+    expect(result.reasonCode).toBe("CREDENTIAL_UNAVAILABLE");
+    expect(isRetryableOutcome(result.outcome)).toBe(false);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("exposes the void's own outcome vocabulary, never the cancellation's", () => {
+    // The port declares the union this adapter answers with: `CANCELLED` and
+    // `CANCEL_PENDING` are about a document's fate, and nothing here cancels a
+    // document. The assertion is a compile-time one first — the array is typed
+    // with the void union — and a value check second.
+    expect(VOID_CASES).not.toContain("CANCELLED");
+    expect(VOID_CASES).not.toContain("CANCEL_PENDING");
+    expect(VOID_CASES).toContain("VOIDED");
+    expect(VOID_CASES.filter((outcome) => isRetryableOutcome(outcome))).toEqual([
+      "TRANSIENT_FAILURE",
+    ]);
   });
 });

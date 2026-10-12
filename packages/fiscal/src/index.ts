@@ -15,6 +15,9 @@ export type {
   FiscalCancelOutcome,
   FiscalCancelRequest,
   FiscalCancelResult,
+  FiscalRangeVoidOutcome,
+  FiscalRangeVoidRequest,
+  FiscalRangeVoidResult,
   FiscalIssueLine,
   FiscalIssueOutcome,
   FiscalIssueRequest,
@@ -519,6 +522,11 @@ export {
   mapBatchQueryOutcome,
   mapBatchReceptionOutcome,
   mapCdcQueryOutcome,
+  // FISC-016 WU-D: the void's answer. It lives here rather than in the adapter
+  // because it is the same kind of thing its siblings are — a pure, total
+  // mapping from a parsed answer onto the port's vocabulary — with the void's
+  // own outcome union and no document identity to report (§25.3, §25.5).
+  mapEventReceptionVoidOutcome,
   mapReceptionOutcome,
   mapRucQueryOutcome,
   SIFEN_BATCH_CONCLUDED_WITHOUT_RESULTS_REASON,
@@ -529,12 +537,15 @@ export {
   SIFEN_RECEPTION_MESSAGE_ABSENT_REASON,
 } from "./sifen/sifen.outcomes.js";
 export type { SifenOutcomeContext, SifenRucQueryOutcome } from "./sifen/sifen.outcomes.js";
-// FISC-012 WU-E / ADR-009, extended by FISC-016 WU-C: the real SIFEN provider
-// behind the port. `issue` submits a lot of one through the asynchronous service
-// and answers `SUBMITTED` with the lot number; `query` asks by the reference
-// first and by the CDC when the reference was lost; `cancel` submits the
-// caller's signed event group and maps the event answer, carrying an unlisted
-// result code rather than coercing it (§25.5). The failure partition is exported
+// FISC-012 WU-E / ADR-009, extended by FISC-016 WU-C and WU-D: the real SIFEN
+// provider behind the port. `issue` submits a lot of one through the
+// asynchronous service and answers `SUBMITTED` with the lot number; `query` asks
+// by the reference first and by the CDC when the reference was lost; `cancel`
+// submits the caller's signed event group and maps the event answer, carrying an
+// unlisted result code rather than coercing it (§25.5); `voidRange` submits the
+// same kind of signed group for a range that will not be used and answers the
+// void's own vocabulary, so nothing about a void borrows the cancellation's
+// words (§25.3). The failure partition is exported
 // so the terminal/retryable table is auditable: every transport and facade
 // member is mapped by name, and anything unrecognised is a configuration error
 // rather than a blind retry. The snapshots are descriptors — the CDC, the

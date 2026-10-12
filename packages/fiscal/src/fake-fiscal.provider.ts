@@ -10,6 +10,9 @@ import type {
   FiscalQueryOutcome,
   FiscalQueryRequest,
   FiscalQueryResult,
+  FiscalRangeVoidOutcome,
+  FiscalRangeVoidRequest,
+  FiscalRangeVoidResult,
 } from "./fiscal-provider.port.js";
 
 export interface FakeFiscalProviderOptions {
@@ -22,6 +25,13 @@ export interface FakeFiscalProviderOptions {
    */
   readonly queryOutcomes?: readonly FiscalQueryOutcome[];
   readonly cancelOutcomes?: readonly FiscalCancelOutcome[];
+  /**
+   * The ordered answers {@link FakeFiscalProvider.voidRange} returns; the last
+   * entry repeats, exactly like the other two scripts. A range void has its own
+   * script and its own counter because it is its own operation: nothing about it
+   * is a cancellation's answer renamed.
+   */
+  readonly voidRangeOutcomes?: readonly FiscalRangeVoidOutcome[];
   readonly externalIdPrefix?: string;
   /**
    * Prefix of the operation handle a scripted `SUBMITTED` answer returns,
@@ -49,16 +59,18 @@ export class FakeFiscalProvider implements FiscalProviderPort {
   /**
    * The fake submits nothing, so it needs no document (ADR-009): a demo tenant
    * without an emitter profile must stay issuable in development. The flag
-   * covers `cancel` too, and the fake's `cancel` ignores the request's document
+   * covers `cancel` and `voidRange` too, and both ignore the request's document
    * field exactly as a provider that declares `false` may.
    */
   readonly requiresSignedDocument = false;
   private calls = 0;
   private queryCalls = 0;
   private cancelCalls = 0;
+  private voidCalls = 0;
   private readonly outcomes: readonly FiscalIssueOutcome[];
   private readonly queryOutcomes: readonly FiscalQueryOutcome[];
   private readonly cancelOutcomes: readonly FiscalCancelOutcome[];
+  private readonly voidRangeOutcomes: readonly FiscalRangeVoidOutcome[];
   private readonly externalIdPrefix: string;
   private readonly providerReferencePrefix: string;
   private readonly queryRetryAfterMs: number | null;
@@ -68,6 +80,9 @@ export class FakeFiscalProvider implements FiscalProviderPort {
     this.outcomes = options.outcomes?.length ? options.outcomes : ["APPROVED"];
     this.queryOutcomes = options.queryOutcomes?.length ? options.queryOutcomes : ["APPROVED"];
     this.cancelOutcomes = options.cancelOutcomes?.length ? options.cancelOutcomes : ["CANCELLED"];
+    this.voidRangeOutcomes = options.voidRangeOutcomes?.length
+      ? options.voidRangeOutcomes
+      : ["VOIDED"];
     this.externalIdPrefix = options.externalIdPrefix ?? "fake";
     this.providerReferencePrefix = options.providerReferencePrefix ?? "fake-ref";
     this.queryRetryAfterMs = options.queryRetryAfterMs ?? null;
@@ -91,6 +106,49 @@ export class FakeFiscalProvider implements FiscalProviderPort {
       retryAfterMs,
       providerRequest: { kind: "fake", outcome },
       providerResponse: { kind: "fake", outcome, reasonCode, retryAfterMs },
+      resolvedAt: this.clock().toISOString(),
+    });
+  }
+
+  /**
+   * The scripted answer to "these numbers will not be used".
+   *
+   * Same mechanics as {@link cancel} — the ordered script with its last entry
+   * repeating, the `FAKE_*` reason-code style, `retryAfterMs` only for a
+   * transient failure — with two differences that are the contract's, not the
+   * fake's taste:
+   *
+   * - **The accepted answer is `VOIDED`**, the void's own vocabulary. Nothing
+   *   here cancels a document, so no answer borrows the cancellation's words.
+   * - **Only `VOIDED` carries a `providerReference`.** The reference is the
+   *   provider's handle for an operation it accepted; a refusal accepted
+   *   nothing, and a caller that persisted a handle from one would be storing an
+   *   identifier no service ever issued.
+   *
+   * The request's reason is never echoed into the payloads: it is the caller's
+   * text, and the fake's snapshots carry the scripted outcome, never the
+   * operator's words (PRD §23).
+   */
+  voidRange(_request: FiscalRangeVoidRequest): Promise<FiscalRangeVoidResult> {
+    this.voidCalls += 1;
+    const index = this.voidCalls;
+    const outcome = this.voidRangeOutcomes[Math.min(index - 1, this.voidRangeOutcomes.length - 1)];
+    const hasReason =
+      outcome === "REJECTED" ||
+      outcome === "CONFIGURATION_ERROR" ||
+      outcome === "TRANSIENT_FAILURE";
+    const reasonCode = hasReason ? `FAKE_${outcome}` : null;
+    const retryAfterMs = outcome === "TRANSIENT_FAILURE" ? 1_000 : null;
+    const providerReference =
+      outcome === "VOIDED" ? `${this.providerReferencePrefix}-${index}` : null;
+    return Promise.resolve({
+      outcome,
+      providerReference,
+      reasonCode,
+      reason: reasonCode === null ? null : `Simulated ${outcome.toLowerCase()}`,
+      retryAfterMs,
+      providerRequest: { kind: "fake", outcome },
+      providerResponse: { kind: "fake", outcome, reasonCode, retryAfterMs, providerReference },
       resolvedAt: this.clock().toISOString(),
     });
   }

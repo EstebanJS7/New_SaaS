@@ -42,6 +42,16 @@
  *    the answer's `dEstRes` maps onto `CANCELLED`/`REJECTED` while its result
  *    codes travel as strings. §25.5 records that no retrieved source enumerates
  *    the event result codes, so an unlisted code is carried, never coerced.
+ * 6. **`voidRange` is the same submission with its own answer.** A range void
+ *    travels in the same signed event group, through the same service, so this
+ *    adapter hands the same bytes over and maps the same answer through
+ *    `sifen.outcomes.ts` — with the void's own outcome union, because nothing
+ *    here cancels a document. The request's numbers never enter the envelope:
+ *    they are already inside the group the caller signed, and re-rendering them
+ *    would produce a second copy of a fact that is the document's (ADR-009).
+ *    What the void's document does **not** carry is a document identity — it
+ *    names a number range, not a document (§25.3) — so the snapshot's `cdc` is
+ *    `null` and the adapter fabricates nothing.
  *
  * **Nothing here retries.** A `TRANSIENT_FAILURE` is a statement the caller acts
  * on — the worker rethrows and BullMQ applies its backoff — and a
@@ -60,6 +70,8 @@ import type {
   FiscalProviderPort,
   FiscalQueryRequest,
   FiscalQueryResult,
+  FiscalRangeVoidRequest,
+  FiscalRangeVoidResult,
 } from "../fiscal-provider.port.js";
 import {
   SifenFacadeError,
@@ -72,6 +84,7 @@ import {
   mapBatchQueryOutcome,
   mapBatchReceptionOutcome,
   mapCdcQueryOutcome,
+  mapEventReceptionVoidOutcome,
   type SifenOutcomeContext,
 } from "./sifen.outcomes.js";
 import { SifenParseError } from "./sifen.parser.js";
@@ -471,6 +484,15 @@ interface CancelFailureFields {
   readonly resolvedAt: string;
 }
 
+/** One range-void result's failure fields, for the same reason. */
+interface VoidFailureFields {
+  readonly outcome: SifenFailureOutcome;
+  readonly reasonCode: string;
+  readonly reason: string;
+  readonly providerRequest: SifenDirectRequestSnapshot | null;
+  readonly resolvedAt: string;
+}
+
 /**
  * Creates the provider over one facade.
  *
@@ -544,6 +566,21 @@ export function createSifenDirectFiscalProvider(
   function cancelFailure(args: CancelFailureFields): FiscalCancelResult {
     return {
       outcome: args.outcome,
+      reasonCode: args.reasonCode,
+      reason: args.reason,
+      retryAfterMs: null,
+      providerRequest: args.providerRequest,
+      providerResponse: null,
+      resolvedAt: args.resolvedAt,
+    };
+  }
+
+  function voidFailure(args: VoidFailureFields): FiscalRangeVoidResult {
+    return {
+      outcome: args.outcome,
+      // A failure names no operation the service accepted, and the port's rule
+      // is that every field is set: `null`, never an omitted key.
+      providerReference: null,
       reasonCode: args.reasonCode,
       reason: args.reason,
       retryAfterMs: null,
@@ -719,6 +756,52 @@ export function createSifenDirectFiscalProvider(
     }
   }
 
+  async function voidRange(request: FiscalRangeVoidRequest): Promise<FiscalRangeVoidResult> {
+    const resolvedAt = clock().toISOString();
+    const document = request.document;
+
+    if (document === null) {
+      // ADR-009 §3 applied to the void, the same refusal `issue` and `cancel`
+      // answer: never a throw and never a submission, so no facade call is made
+      // and no control number is drawn.
+      return voidFailure({
+        outcome: "CONFIGURATION_ERROR",
+        reasonCode: SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON_CODE,
+        reason: SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON,
+        providerRequest: null,
+        resolvedAt,
+      });
+    }
+
+    // The request's numbers are deliberately NOT rendered into the envelope: the
+    // group the caller signed is the document, and the interval is already
+    // inside it. Re-rendering would hand SIFEN a second copy of a fact the
+    // signed bytes own — and a copy this adapter cannot sign.
+    const providerRequest = requestSnapshot({
+      service: "receiveEvent",
+      // The void names a number range, not a document (§25.3), so the
+      // descriptor records no identity rather than a fabricated one.
+      cdc: document.cdc,
+      xmlBytes: Buffer.byteLength(document.signedXml, "utf8"),
+    });
+
+    try {
+      const response = await dependencies.facade.receiveEvent({
+        tenantId: request.tenantId,
+        dId: controlNumber(),
+        eventGroupXml: document.signedXml,
+      });
+      return mapEventReceptionVoidOutcome({
+        providerRequest,
+        providerResponse: eventResponseSnapshot(response),
+        resolvedAt,
+        response,
+      });
+    } catch (error) {
+      return voidFailure({ ...mapSifenFailure(error), providerRequest, resolvedAt });
+    }
+  }
+
   /**
    * The event answer's descriptor: its first `dEstRes`, and its `dMsgRes`
    * values joined the way `reason` joins them.
@@ -744,5 +827,6 @@ export function createSifenDirectFiscalProvider(
     issue,
     query,
     cancel,
+    voidRange,
   };
 }
