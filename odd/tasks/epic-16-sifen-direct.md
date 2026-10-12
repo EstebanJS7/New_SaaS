@@ -676,11 +676,17 @@ candidate 1 exists.
       fiscally, what a receptor is, where the CSC lives, which
       establishment/point/type issues — **before any schema change**. Until it
       lands the worker's stage fails closed with a named reason.
-- [ ] T12 — **FISC-016: the cancellation event.** Created by FISC-012's own
-      implementation: SIFEN's cancellation is an event and `SIFEN-BASELINE.md`
-      §23.3 records that `Evento_v150.xsd`'s field-level rules were never
-      profiled, so the adapter answers `CANCELLATION_EVENT_UNPROFILED`. Its work
-      is the profiling, the payload, its signature and the answer's mapping.
+- [~] T12 — **FISC-016: the event family — in progress 2026-10-11.** Branch
+  `feat/epic-16-fisc-016-events`. **WU-A landed**: `SIFEN-BASELINE.md` **§25**
+  profiles the family from five retrieved artifacts (two of whose byte sizes
+  match §23.3's record exactly). It **corrects three assumptions**: the event's
+  type is the **element name** (`tdTiGDE` is a dead catalogue), the event
+  **reuses the DE's XMLDSig profile**, and the clock is **local**
+  (`tDateTimeUTC` is dead). And it records **two findings**: the Guide's "Ajuste
+  del Evento" **has no payload** (the schema defines four receptor events, not
+  five), and the response's **result codes are not evidenced** (`tdEstRes` is
+  free text, `tdCodRes` only fixes four digits). **Next: WU-B**, the event
+  document.
 
 ## Two lineages are NOT closed, and the second one is why the fixes rest on argument
 
