@@ -745,8 +745,12 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // EPIC-14 BILL-001 adds the four `billing.*` keys (DEC-040), moving it
       // 52 -> 56. FISC-005b adds read-wide `fiscal.read` (D7), moving 56 -> 57.
       // FISC-007 adds `fiscal.signing_material.manage` for the two owning roles
-      // (DEC-053/ADR-005), moving 57 -> 58.
-      permissions: 59,
+      // (DEC-053/ADR-005), moving 57 -> 58. FISC-011 adds
+      // `fiscal.profile.manage` (58 -> 59), and FISC-016 WU-D adds
+      // `fiscal.range.void` for the same two roles, moving 59 -> 60: retiring a
+      // range locally and telling the tax administration its numbers will never
+      // be used are different acts with different blast radii.
+      permissions: 60,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

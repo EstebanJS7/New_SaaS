@@ -179,6 +179,8 @@ model Tenant {
   fiscalEstablishments        FiscalEstablishment[]
   fiscalTimbradoRanges        FiscalTimbradoRange[]
   fiscalEmitterActivities     FiscalEmitterActivity[]
+  /// EPIC-16 FISC-016 WU-D: the range void's own record, append-only.
+  fiscalRangeVoids            FiscalRangeVoid[]
 
   @@map("tenant")
 }
@@ -2965,6 +2967,8 @@ model FiscalTimbradoRange {
 
   tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   establishment FiscalEstablishment @relation(fields: [tenantId, establishmentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// The voids this range received, one row per attempt (FISC-016 WU-D).
+  voids         FiscalRangeVoid[]
 
   /// The Manual's whole sequence: the timbrado number is part of the identity, so a
   /// second authorisation for the same key is a different range rather than a
@@ -2972,4 +2976,81 @@ model FiscalTimbradoRange {
   @@unique([tenantId, establishmentId, expeditionPoint, documentType, series, timbradoNumber])
   @@index([tenantId, status])
   @@map("fiscal_timbrado_range")
+}
+
+/// The provider's answer to a void, mirrored from the Fiscal port's
+/// `FiscalRangeVoidOutcome` (FISC-016 WU-D).
+///
+/// It is its own enum and NOT a reuse of the cancellation's vocabulary: nothing
+/// about a range void cancels a document, so no member of this set names a
+/// document's fate. Values are appended, never reordered or removed.
+enum FiscalRangeVoidOutcome {
+  /// The service accepted the void: the numbers will not be used.
+  VOIDED
+  /// The service refused it. The range stays usable and the row says so.
+  REJECTED
+  /// A condition a retry cannot change — a deployment's endpoint, a tenant
+  /// without usable signing material, a request that skipped the document stage.
+  CONFIGURATION_ERROR
+  /// The hand-over did not complete: whether the service received it is unknown,
+  /// and the caller may ask again.
+  TRANSIENT_FAILURE
+
+  @@map("fiscal_range_void_outcome")
+}
+
+/// INTERNAL, append-only: the record of one attempt to void a numbering range's
+/// remaining numbers (EPIC-16 FISC-016 WU-D, `SIFEN-BASELINE.md` §25.3).
+///
+/// **The interval is the range's remaining TAIL**, `from_number` being the
+/// counter at the moment of the attempt and `to_number` its authorised end.
+/// Numbers already consumed can never be voided: a consumed number is burnt,
+/// because it is part of a CDC a rejected DE keeps (Manual §6.5, baseline §12),
+/// so a void that covered one would describe history that never happened.
+///
+/// **One row per attempt, written once and never edited.** `outcome` carries the
+/// provider's own answer, so a refusal is recorded as faithfully as an
+/// acceptance, and `range_status` records where the attempt left the range —
+/// `RETIRED` when this operation performed the flip, unchanged when it did not.
+/// A CHECK keeps the two from disagreeing, and the migration's triggers refuse
+/// every UPDATE and every DELETE.
+///
+/// It is a tenant-scoped aggregate rather than columns on the range because a
+/// range may be attempted more than once: the row that matters is the one that
+/// succeeded, and the ones that did not are the record of what was tried.
+model FiscalRangeVoid {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  rangeId  String @map("range_id") @db.Uuid
+
+  /// The first number the provider was told will not be used. The range's
+  /// counter at the moment of the attempt, never lowered.
+  fromNumber Int @map("from_number")
+  /// The last number, inclusive: the range's authorised end.
+  toNumber   Int @map("to_number")
+
+  /// `mOtEve`, `tmotEve`: the operator's reason, 5..500.
+  reason String @db.VarChar(500)
+
+  /// The provider's answer's outcome.
+  outcome           FiscalRangeVoidOutcome
+  /// The answer's own code, verbatim; ours when the refusal never reached a
+  /// service (a deadline, a skipped document stage).
+  reasonCode        String?                @map("reason_code")
+  /// The service's own message, kept apart from the operator's `reason`.
+  providerReason    String?                @map("provider_reason")
+  /// The provider's handle for the operation, when its answer carried one.
+  providerReference String?                @map("provider_reference")
+
+  /// The range's status as this attempt left it.
+  rangeStatus FiscalTimbradoRangeStatus @map("range_status")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  range  FiscalTimbradoRange @relation(fields: [rangeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId, rangeId, createdAt])
+  @@map("fiscal_range_void")
 }

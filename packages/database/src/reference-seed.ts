@@ -212,6 +212,11 @@ export const PERMISSION_SEEDS = [
   // cannot be taken back, so this is a configuration capability rather than a
   // routine one.
   { key: "fiscal.profile.manage", name: "Manage the emitter fiscal profile" },
+  // FISC-016 WU-D: voiding a numbering range's remaining numbers. Its own key
+  // and not `fiscal.profile.manage`: this is the one range operation that leaves
+  // the tenant's database — it tells the tax administration that numbers will
+  // never be used — and it cannot be undone.
+  { key: "fiscal.range.void", name: "Void a timbrado range's remaining numbers" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -281,6 +286,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.cancel",
     "fiscal.signing_material.manage",
     "fiscal.profile.manage",
+    "fiscal.range.void",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -342,6 +348,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.cancel",
     "fiscal.signing_material.manage",
     "fiscal.profile.manage",
+    "fiscal.range.void",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
