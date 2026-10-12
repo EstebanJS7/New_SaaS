@@ -121,6 +121,34 @@ export type {
 } from "./signing-material/pkcs12.fixture.js";
 // FISC-008 WU-A: pure typed request -> XML builder for unsigned SIFEN DTEs.
 export { buildDteXml } from "./dte/dte.builder.js";
+// FISC-016 WU-B: the event family's document. The builder is pure and takes
+// both identifiers as arguments (the schema states no uniqueness for either);
+// the signer applies the DE's XMLDSig profile, one signature per event, each
+// referencing `#<rEve/@Id>`; the rules are the ones the schema does not assert.
+// Keeping the provider answering `CANCELLATION_EVENT_UNPROFILED` in step with
+// this is WU-C's, and voiding a range as a business operation is WU-D's.
+export { buildEventXml, EVENT_SIGNATURE_PLACEHOLDER } from "./dte/dte.event.js";
+export { DteEventValidationError, assertValidEventRequest } from "./dte/dte.event.rules.js";
+export type { DteEventValidationFailure } from "./dte/dte.event.rules.js";
+export { DteEventSigningError, signEventXml } from "./dte/dte.event-signing.js";
+export type { DteEventSigningFailure, SignEventXmlArgs } from "./dte/dte.event-signing.js";
+export {
+  EVENT_ID_MAX,
+  EVENT_MAX_EVENTS_PER_LOT,
+  EVENT_REASON_MAX_LENGTH,
+  EVENT_REASON_MIN_LENGTH,
+  EVENT_REQUEST_ID_MAX,
+  EVENT_XML_VERSION,
+  INUTILIZACION_DOCUMENT_TYPE_VALUES,
+} from "./dte/dte.event.types.js";
+export type {
+  DteCancellationEventPayload,
+  DteEvent,
+  DteEventPayload,
+  DteEventRequest,
+  DteInutilizacionDocumentType,
+  DteInutilizacionEventPayload,
+} from "./dte/dte.event.types.js";
 // FISC-012 WU-D2 / ADR-010 §1: the official-schema gate becomes runtime API.
 // `validateDeAgainstOfficialXsd`, `buildDteEntrySchema`, `inspectDteSchemas` and
 // `prepareDteSchemas` move here from `testing.ts`, which keeps its re-exports so
@@ -129,8 +157,21 @@ export { buildDteXml } from "./dte/dte.builder.js";
 // `defaultDteSchemaDirectory` is here because it is what resolves the
 // deployment's `DTE_XSD_DIR` input, and `DteSchemaError` is the typed failure
 // the stage catches to refuse a submission.
-export { buildDteEntrySchema, validateDeAgainstOfficialXsd } from "./dte/xsd-validator.js";
-export type { DteXsdValidationResult } from "./dte/xsd-validator.js";
+// FISC-016 WU-B generalizes it: the entry artifact is a parameter
+// (`DTE_SCHEMA_ENTRY` for a DE, `DTE_EVENT_SCHEMA_ENTRY` for an event lot),
+// `validateDeAgainstOfficialXsd` keeps its signature for its callers, and
+// `validateEventAgainstOfficialXsd` is the event family's entry point. The
+// compiled schema is keyed by directory AND entry, because one directory now
+// serves both families.
+export {
+  buildDteEntrySchema,
+  buildXsdEntrySchema,
+  DTE_EVENT_SCHEMA_ENTRY,
+  DTE_SCHEMA_ENTRY,
+  validateDeAgainstOfficialXsd,
+  validateEventAgainstOfficialXsd,
+} from "./dte/xsd-validator.js";
+export type { DteXsdEntry, DteXsdValidationResult } from "./dte/xsd-validator.js";
 export {
   defaultDteSchemaDirectory,
   DteSchemaError,
