@@ -5,7 +5,7 @@ title:
   Contingency and the certification evidence run — what the sources pin, and
   what only DNIT can give
 epic: EPIC-16
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - FISC-012
@@ -13,9 +13,9 @@ prd_sections:
   - "22"
   - "23"
 permissions: []
-branch:
+branch: docs/epic-16-fisc-013-runbook
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-13
 ---
 
 # FISC-013 — contingency and the certification evidence run
@@ -109,10 +109,9 @@ document can be delivered while the system is unavailable.
 
 ## What this story can do before the epic closes
 
-1. **The runbook** (WU-A): the six steps, the requirements checklist, the test
-   data's shape and the test matrix, written as the procedure an operator
-   follows. It needs no credential to write, and it is what makes the real run
-   short.
+1. **The runbook** (WU-A): **landed 2026-10-13** at
+   `docs/06-fiscal/SIFEN-HOMOLOGATION-RUNBOOK.md`. It needs no credential to
+   write, and it is what makes the real run short.
 2. **The decisions the run forces**: where the CSC lives ([[DEC-057]] Q3), which
    environment the deployment targets, what the test data's placeholders are,
    and how the contingency flag is treated.
@@ -120,7 +119,9 @@ document can be delivered while the system is unavailable.
    `Evento_Types_v150.xsd` — the same work [[FISC-016]] needs, on **public
    artifacts**, with no credential required. It unblocks the cancellation, the
    inutilización and the receptor's five events, and it is the homologation's
-   own prerequisite.
+   own prerequisite. **As landed**, the profiling answered the emitter's two
+   payloads; the receptor's four have no builder and "ajuste" has no payload at
+   all (see WU-B and the runbook's §4.4).
 4. **The KuDE's generation**: one per document type, which is a rendering task
    with its own rules (the Manual's chapter 13 and the QR that §24 already
    pins).
@@ -137,22 +138,31 @@ document can be delivered while the system is unavailable.
 
 ## Work units
 
-_Provisional: pinned when the first one lands, which is [[FISC-012]]'s pattern._
+_Pinned by WU-A (2026-10-13), which is [[FISC-012]]'s pattern: the first one to
+land fixes the list._
 
-**WU-A — the runbook and the decisions.** The procedure, the checklist, the test
-data's shape and the matrix; the CSC's storage and environment ([[DEC-057]] Q3);
-the contingency flag's treatment; and the record of what is pending from DNIT.
-
-**WU-B — the events.** The profiling of the event schemas and the implementation
-of the event the homologation requires (the inutilización), sharing
-[[FISC-016]]'s profiling rather than repeating it.
-
-**WU-C — the KuDE.** The graphical representation, one per document type, with
-the QR already pinned by §24.
-
-**WU-D — the run and its evidence.** The actual test matrix against the test
-environment, recorded in `docs/10-qa/CI-EVIDENCE.md` with its outcome —
-including a negative or pending one.
+- [x] **WU-A — the runbook and the decisions.** Landed 2026-10-13. The procedure
+      an operator follows, at `docs/06-fiscal/SIFEN-HOMOLOGATION-RUNBOOK.md`:
+      the six steps with their performer, input, output and blocker; the
+      requirements checklist; the test data's shape with the two generic CSCs
+      and the production one's provenance; the matrix as a runnable checklist
+      with what the repository does per row and what blocks it; the CSC's
+      storage and environment ([[DEC-057]] Q3); the contingency flag's
+      treatment; and the record of what is pending from DNIT. Its §5.5 lists the
+      gaps the run exposes beyond the four decisions.
+- [x] **WU-B — the events.** Landed by [[FISC-016]] rather than repeated here:
+      the family is profiled in `SIFEN-BASELINE.md` §25, both emitter payloads
+      are built and signed, the cancellation submits through the provider, and
+      the inutilización has its own business surface. **The receptor's four
+      payloads are still missing**, which is what five matrix rows need.
+- [ ] **WU-C — the KuDE.** The graphical representation, one per document type,
+      with the QR already pinned by §24. Blocked on nothing but its own work.
+- [ ] **WU-D — the run and its evidence.** The actual test matrix against the
+      test environment, recorded in `docs/10-qa/CI-EVIDENCE.md` with its outcome
+      — including a negative or pending one. Blocked on the DNIT (the
+      habilitación and the test data set) and on the run blockers the runbook
+      names: the CSC's registration surface, the batch composition, the
+      synchronous and incorrect-data harnesses, and the receptor events.
 
 ## Out of scope
 
@@ -188,3 +198,11 @@ including a negative or pending one.
 questions the epic's row left open and found that the test matrix requires the
 events. Nothing is started: its first work unit is the runbook, and its last one
 cannot begin until the DNIT hands over the habilitación and the test data.
+
+**In progress 2026-10-13.** WU-A landed: the runbook exists, the story's work
+units are pinned, and the four decisions carry their state. [[FISC-016]] closed
+the events (WU-B). **The run itself (WU-D) is blocked** on the DNIT's
+habilitación and test data set, and on the run blockers the runbook names — the
+CSC's registration surface, the batch composition, the two harnesses with no
+product surface, and the receptor events. WU-C, the KuDE, is unblocked and
+unstarted.
