@@ -15,6 +15,9 @@ export type {
   FiscalCancelOutcome,
   FiscalCancelRequest,
   FiscalCancelResult,
+  FiscalRangeVoidOutcome,
+  FiscalRangeVoidRequest,
+  FiscalRangeVoidResult,
   FiscalIssueLine,
   FiscalIssueOutcome,
   FiscalIssueRequest,
@@ -47,6 +50,12 @@ export type {
   FiscalProviderEnvValue,
   FiscalProviderModuleOptions,
 } from "./fiscal-provider.module.js";
+// FISC-016 WU-C: the API composes the cancellation event and therefore reads
+// the tenant's signing material itself, which means it must resolve the same
+// environment the provider module resolved. The resolver is exported rather
+// than copied so both callers answer with one vocabulary and one production
+// refusal (ADR-008 §3).
+export { resolveSifenEnvironment } from "./fiscal-provider.module.js";
 // FISC-010 WU-C / ADR-008 §2: the credential boundary the transport reads per
 // call. The port lives here; its implementation lands in the worker (FISC-012),
 // because `packages/fiscal` must not depend on Prisma or `@newsaas/secret-store`.
@@ -121,6 +130,35 @@ export type {
 } from "./signing-material/pkcs12.fixture.js";
 // FISC-008 WU-A: pure typed request -> XML builder for unsigned SIFEN DTEs.
 export { buildDteXml } from "./dte/dte.builder.js";
+// FISC-016 WU-B: the event family's document. The builder is pure and takes
+// both identifiers as arguments (the schema states no uniqueness for either);
+// the signer applies the DE's XMLDSig profile, one signature per event, each
+// referencing `#<rEve/@Id>`; the rules are the ones the schema does not assert.
+// `buildEventGroupXml` is WU-C's hand-off surface — the group a caller signs and
+// the facade embeds — and `buildEventXml` composes it, so the two cannot drift;
+// voiding a range as a business operation is WU-D's.
+export { buildEventGroupXml, buildEventXml, EVENT_SIGNATURE_PLACEHOLDER } from "./dte/dte.event.js";
+export { DteEventValidationError, assertValidEventRequest } from "./dte/dte.event.rules.js";
+export type { DteEventValidationFailure } from "./dte/dte.event.rules.js";
+export { DteEventSigningError, signEventXml } from "./dte/dte.event-signing.js";
+export type { DteEventSigningFailure, SignEventXmlArgs } from "./dte/dte.event-signing.js";
+export {
+  EVENT_ID_MAX,
+  EVENT_MAX_EVENTS_PER_LOT,
+  EVENT_REASON_MAX_LENGTH,
+  EVENT_REASON_MIN_LENGTH,
+  EVENT_REQUEST_ID_MAX,
+  EVENT_XML_VERSION,
+  INUTILIZACION_DOCUMENT_TYPE_VALUES,
+} from "./dte/dte.event.types.js";
+export type {
+  DteCancellationEventPayload,
+  DteEvent,
+  DteEventPayload,
+  DteEventRequest,
+  DteInutilizacionDocumentType,
+  DteInutilizacionEventPayload,
+} from "./dte/dte.event.types.js";
 // FISC-012 WU-D2 / ADR-010 §1: the official-schema gate becomes runtime API.
 // `validateDeAgainstOfficialXsd`, `buildDteEntrySchema`, `inspectDteSchemas` and
 // `prepareDteSchemas` move here from `testing.ts`, which keeps its re-exports so
@@ -129,8 +167,21 @@ export { buildDteXml } from "./dte/dte.builder.js";
 // `defaultDteSchemaDirectory` is here because it is what resolves the
 // deployment's `DTE_XSD_DIR` input, and `DteSchemaError` is the typed failure
 // the stage catches to refuse a submission.
-export { buildDteEntrySchema, validateDeAgainstOfficialXsd } from "./dte/xsd-validator.js";
-export type { DteXsdValidationResult } from "./dte/xsd-validator.js";
+// FISC-016 WU-B generalizes it: the entry artifact is a parameter
+// (`DTE_SCHEMA_ENTRY` for a DE, `DTE_EVENT_SCHEMA_ENTRY` for an event lot),
+// `validateDeAgainstOfficialXsd` keeps its signature for its callers, and
+// `validateEventAgainstOfficialXsd` is the event family's entry point. The
+// compiled schema is keyed by directory AND entry, because one directory now
+// serves both families.
+export {
+  buildDteEntrySchema,
+  buildXsdEntrySchema,
+  DTE_EVENT_SCHEMA_ENTRY,
+  DTE_SCHEMA_ENTRY,
+  validateDeAgainstOfficialXsd,
+  validateEventAgainstOfficialXsd,
+} from "./dte/xsd-validator.js";
+export type { DteXsdEntry, DteXsdValidationResult } from "./dte/xsd-validator.js";
 export {
   defaultDteSchemaDirectory,
   DteSchemaError,
@@ -510,6 +561,11 @@ export {
   mapBatchQueryOutcome,
   mapBatchReceptionOutcome,
   mapCdcQueryOutcome,
+  // FISC-016 WU-D: the void's answer. It lives here rather than in the adapter
+  // because it is the same kind of thing its siblings are — a pure, total
+  // mapping from a parsed answer onto the port's vocabulary — with the void's
+  // own outcome union and no document identity to report (§25.3, §25.5).
+  mapEventReceptionVoidOutcome,
   mapReceptionOutcome,
   mapRucQueryOutcome,
   SIFEN_BATCH_CONCLUDED_WITHOUT_RESULTS_REASON,
@@ -520,21 +576,24 @@ export {
   SIFEN_RECEPTION_MESSAGE_ABSENT_REASON,
 } from "./sifen/sifen.outcomes.js";
 export type { SifenOutcomeContext, SifenRucQueryOutcome } from "./sifen/sifen.outcomes.js";
-// FISC-012 WU-E / ADR-009: the real SIFEN provider behind the port. `issue`
-// submits a lot of one through the asynchronous service and answers `SUBMITTED`
-// with the lot number; `query` asks by the reference first and by the CDC when
-// the reference was lost; `cancel` fails closed because §23.3 leaves the
-// cancellation event's payload unprofiled. The failure partition is exported so
-// the terminal/retryable table is auditable: every transport and facade member
-// is mapped by name, and anything unrecognised is a configuration error rather
-// than a blind retry. The snapshots are descriptors — the CDC, the service and
-// the byte count — never the signed document.
+// FISC-012 WU-E / ADR-009, extended by FISC-016 WU-C and WU-D: the real SIFEN
+// provider behind the port. `issue` submits a lot of one through the
+// asynchronous service and answers `SUBMITTED` with the lot number; `query` asks
+// by the reference first and by the CDC when the reference was lost; `cancel`
+// submits the caller's signed event group and maps the event answer, carrying an
+// unlisted result code rather than coercing it (§25.5); `voidRange` submits the
+// same kind of signed group for a range that will not be used and answers the
+// void's own vocabulary, so nothing about a void borrows the cancellation's
+// words (§25.3). The failure partition is exported
+// so the terminal/retryable table is auditable: every transport and facade
+// member is mapped by name, and anything unrecognised is a configuration error
+// rather than a blind retry. The snapshots are descriptors — the CDC, the
+// service and the byte count — never the signed document.
 export {
   createSifenDirectFiscalProvider,
   generateSifenControlNumber,
+  mapEventReceptionCancelOutcome,
   mapSifenFailure,
-  SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON,
-  SIFEN_DIRECT_CANCELLATION_UNPROFILED_REASON_CODE,
   SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON,
   SIFEN_DIRECT_DOCUMENT_REQUIRED_REASON_CODE,
   SIFEN_DIRECT_QUERY_IDENTITY_MISSING_REASON,

@@ -112,7 +112,7 @@ describe("the envelope, shared by all six services", () => {
       serializeBatchQuery({ dId: "1", dCDC: FIXTURE_CDC }),
       serializeCdcQuery({ dId: "1", dCDC: FIXTURE_CDC }),
       serializeRucQuery({ dId: "1", dRUCCons: "80012345" }),
-      serializeEventReception({ dId: "1", eventXml: "<rGesEve/>" }),
+      serializeEventReception({ dId: "1", eventGroupXml: "<gGroupGesEve/>" }),
     ]) {
       expect(xml.endsWith("</soap:Envelope>\n")).toBe(true);
     }
@@ -337,11 +337,13 @@ describe("the two consultations, §23.6", () => {
   });
 });
 
-describe("the event reception embeds the event document as a child element", () => {
-  const EVENT = '<rGesEve xmlns="http://ekuatia.set.gov.py/sifen/xsd"><rEve Id="1"/></rGesEve>';
+describe("the event reception embeds the event group as a child element", () => {
+  const EVENT_GROUP =
+    '<gGroupGesEve xmlns="http://ekuatia.set.gov.py/sifen/xsd">' +
+    '<rGesEve><rEve Id="1"/></rGesEve></gGroupGesEve>';
 
-  it("emits rEnviEventoDe with dEvReg holding the document verbatim", () => {
-    const xml = serializeEventReception({ dId: "1", eventXml: EVENT });
+  it("emits rEnviEventoDe with dEvReg holding the group verbatim (§25.1)", () => {
+    const xml = serializeEventReception({ dId: "1", eventGroupXml: EVENT_GROUP });
     expect(xml).toBe(
       [
         SOAP_OPEN,
@@ -349,22 +351,38 @@ describe("the event reception embeds the event document as a child element", () 
         "  <soap:Body>",
         `    <rEnviEventoDe xmlns="${SIFEN_NAMESPACE}">`,
         "      <dId>1</dId>",
-        `      <dEvReg>${EVENT}</dEvReg>`,
+        `      <dEvReg>${EVENT_GROUP}</dEvReg>`,
         "    </rEnviEventoDe>",
         "  </soap:Body>",
         "</soap:Envelope>",
         "",
       ].join("\n")
     );
-    expect(xml).not.toContain("&lt;rGesEve");
+    expect(xml).not.toContain("&lt;gGroupGesEve");
+    // The wrapper FISC-012 omitted: without it dEvReg holds rGesEve directly and
+    // the envelope validates against nothing.
+    expect(xml).toContain("<gGroupGesEve");
   });
 
-  it("asserts the event's root, which §23.3 pins only as the group's element", () => {
-    expect(failureOf(() => serializeEventReception({ dId: "1", eventXml: "<rEve/>" }))).toBe(
+  it("asserts the group's root, which is what dEvReg requires", () => {
+    // The old input — the event lot's `rGesEve` — is refused now: `dEvReg`
+    // carries `gGroupGesEve`, and embedding the old root nested it wrongly.
+    expect(
+      failureOf(() =>
+        serializeEventReception({
+          dId: "1",
+          eventGroupXml: '<rGesEve xmlns="http://ekuatia.set.gov.py/sifen/xsd"/>',
+        })
+      )
+    ).toBe("UNEXPECTED_DOCUMENT_ROOT");
+    expect(failureOf(() => serializeEventReception({ dId: "1", eventGroupXml: "<rEve/>" }))).toBe(
       "UNEXPECTED_DOCUMENT_ROOT"
     );
-    expect(failureOf(() => serializeEventReception({ dId: "1", eventXml: "" }))).toBe(
+    expect(failureOf(() => serializeEventReception({ dId: "1", eventGroupXml: "" }))).toBe(
       "UNEXPECTED_DOCUMENT_ROOT"
     );
+    expect(() =>
+      serializeEventReception({ dId: "1", eventGroupXml: "<gGroupGesEve/>" })
+    ).not.toThrow();
   });
 });

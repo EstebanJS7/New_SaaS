@@ -269,6 +269,8 @@ lot is a later optimization: the container and the facade already take a list.
       "profiling it is the work of the Story that builds one". That story is
       [[FISC-016]], and until it lands `cancel` answers `CONFIGURATION_ERROR`
       with `CANCELLATION_EVENT_UNPROFILED`, sends nothing, and says so.
+      (FISC-016 WU-C later retired that code, built the event and made `cancel`
+      submit.)
 - [x] `issue` submits a lot of one, maps the hand-over answer through the
       outcome mapping, and answers `SUBMITTED` with the provider reference. The
       batch answer identifies an **operation and never a document**, so the
@@ -509,7 +511,7 @@ apps/api/test/live-pg-isolation.e2e-spec.ts      the new column, its index, the
   and until it lands the stage fails closed with a named reason: a
   `sifen-direct` deployment cannot issue, by design rather than by accident.
 - **`cancel` fails closed.** The cancellation event's payload is unprofiled
-  ([[FISC-016]]), so the adapter refuses with `CANCELLATION_EVENT_UNPROFILED`
+  ([[FISC-016]]), so the adapter refused with `CANCELLATION_EVENT_UNPROFILED`
   rather than sending an event nobody validated.
 - **No deployment input exists for a trust-anchor override** (`caPem`). ADR-008
   names the per-call list; nothing names an environment variable, so the

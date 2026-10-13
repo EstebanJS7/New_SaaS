@@ -6,10 +6,12 @@ import { FISCAL_PERMISSIONS } from "../fiscal.permissions.js";
 import {
   toEmitterProfileResponse,
   toEstablishmentResponse,
+  toFiscalRangeVoidResponse,
   toTimbradoRangeResponse,
   type EmitterProfileResponse,
   type EstablishmentListResponse,
   type EstablishmentResponse,
+  type FiscalRangeVoidResponse,
   type TimbradoRangeListResponse,
   type TimbradoRangeResponse,
 } from "./timbrado.dto.js";
@@ -20,14 +22,18 @@ import {
   retireRangeBodySchema,
   saveEstablishmentBodySchema,
   saveProfileBodySchema,
+  voidRangeBodySchema,
 } from "./timbrado.zod.js";
 
 /**
  * The emitter profile, its establishments and its numbering ranges.
  *
- * Every route carries `fiscal.profile.manage`. There is deliberately **no route
- * that allocates a number**: the allocation is an internal call, and exposing it
- * would let a caller burn numbers without issuing anything.
+ * Every route carries `fiscal.profile.manage`, except the void, which carries
+ * its own `fiscal.range.void`: it is the one range operation that reaches the tax
+ * administration and cannot be undone, so a caller trusted to configure numbering
+ * is not thereby trusted to declare its numbers unused. There is deliberately
+ * **no route that allocates a number**: the allocation is an internal call, and
+ * exposing it would let a caller burn numbers without issuing anything.
  *
  * A cross-tenant resource id reaches the service as a scoped read that finds
  * nothing, so it answers `404` rather than confirming the row exists elsewhere.
@@ -119,6 +125,25 @@ export class FiscalProfileController {
         validityStart: new Date(`${parsed.validityStart}T00:00:00Z`),
       })
     );
+  }
+
+  /**
+   * Voids the range's remaining numbers at the tax administration.
+   *
+   * The body carries the reason and nothing else: the interval is the range's own
+   * remaining tail, read server-side, because a caller that could name it could
+   * ask the provider to void numbers that were already issued (FISC-016 WU-D).
+   */
+  @Post("timbrado-ranges/:id/void")
+  @HttpCode(200)
+  @RequirePermissions(FISCAL_PERMISSIONS.rangeVoid)
+  async voidRange(
+    @Param() params: unknown,
+    @Body() body: unknown
+  ): Promise<FiscalRangeVoidResponse> {
+    const { id } = parseInput(fiscalIdParamSchema, params, "Invalid timbrado range id.");
+    const { reason } = parseInput(voidRangeBodySchema, body, "Invalid range void body.");
+    return toFiscalRangeVoidResponse(await this.service.voidRange(id, reason));
   }
 
   @Post("timbrado-ranges/:id/retire")

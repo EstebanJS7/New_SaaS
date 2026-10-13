@@ -193,16 +193,18 @@ function setup(
     resolvedAt: "2026-01-02T03:05:00.000Z",
   };
   const issue = vi.fn(() => Promise.resolve(result));
-  // The submission handler never cancels or queries, but the port requires both
-  // methods: a double missing one is a contract the test would not be testing.
+  // The submission handler never cancels, queries or voids, but the port requires
+  // those methods: a double missing one is a contract the test would not be testing.
   const cancel = vi.fn(() => Promise.reject(new Error("cancel is not used by the handler")));
   const query = vi.fn(() => Promise.reject(new Error("query is not used by the handler")));
+  const voidRange = vi.fn(() => Promise.reject(new Error("voidRange is not used by the handler")));
   const provider: FiscalProviderPort = {
     provider: "FAKE",
     requiresSignedDocument: stage.requiresSignedDocument ?? false,
     issue,
     query,
     cancel,
+    voidRange,
   };
 
   const buildOutcome: FiscalDocumentBuildOutcome = stage.build ?? {

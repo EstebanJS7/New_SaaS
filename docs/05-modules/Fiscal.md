@@ -34,14 +34,16 @@ against DNIT; that is [[FISC-013]].
 
 ## Owned tables
 
-| Table                                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fiscal_document`                                               | The tenant-scoped submission record: source `invoice_id`, `provider`, `status`, provider references (`external_id`, `cdc`), XML/KuDE storage keys, sanitized request/response snapshots, attempt counters, last-error fields, the `submitted_at` / `resolved_at` / `cancelled_at` timestamps, and `next_query_at` — the instant the reconciliation may next query the provider, written by the handler when the row enters `SUBMITTED` and moved forward by the sweep. |
-| `fiscal_provider`                                               | The provider vocabulary enum: `THIRD_PARTY`, `SIFEN_DIRECT`, `FAKE`.                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `fiscal_document_status`                                        | The lifecycle enum: `PENDING`, `QUEUED`, `SENDING`, `SUBMITTED`, `APPROVED`, `REJECTED`, `ERROR`, `CANCEL_PENDING`, `CANCELLED`, `SIGNING`. The SIFEN signing stage was deliberately absent while a fake stood in for the provider ([[DEC-047]]); [[FISC-009]] returns it. `SIGNING` is declared **last** because PostgreSQL's `ALTER TYPE ... ADD VALUE` appends — the lifecycle's order lives in the transition guard, not in the enum.                              |
-| `tenant_secret`                                                 | **RESTRICTED.** One sealed tenant secret: the AES-256-GCM ciphertext, the per-secret data key wrapped by the platform master key, and the master-key version that wrapped it. No plaintext, no unwrapped key and no password is ever stored, and no log, DTO or audit payload may carry a column of this table.                                                                                                                                                        |
-| `tenant_fiscal_signing_material`                                | **INTERNAL.** The tenant's SIFEN certificate and its metadata, plus an opaque `credential_ref` into `tenant_secret` for the private key. A partial unique index permits at most one `ACTIVE` material per tenant and environment; retirement destroys the stored key and keeps the row as the record.                                                                                                                                                                  |
-| `fiscal_signing_environment` / `fiscal_signing_material_status` | The `TEST`/`PRODUCTION` environment enum and the `ACTIVE`/`RETIRED` status enum. Evolve additively only.                                                                                                                                                                                                                                                                                                                                                               |
+| Table                                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fiscal_document`                                               | The tenant-scoped submission record: source `invoice_id`, `provider`, `status`, provider references (`external_id`, `cdc`), XML/KuDE storage keys, sanitized request/response snapshots, attempt counters, last-error fields, the `submitted_at` / `resolved_at` / `cancelled_at` timestamps, and `next_query_at` — the instant the reconciliation may next query the provider, written by the handler when the row enters `SUBMITTED` and moved forward by the sweep.                                                |
+| `fiscal_provider`                                               | The provider vocabulary enum: `THIRD_PARTY`, `SIFEN_DIRECT`, `FAKE`.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `fiscal_document_status`                                        | The lifecycle enum: `PENDING`, `QUEUED`, `SENDING`, `SUBMITTED`, `APPROVED`, `REJECTED`, `ERROR`, `CANCEL_PENDING`, `CANCELLED`, `SIGNING`. The SIFEN signing stage was deliberately absent while a fake stood in for the provider ([[DEC-047]]); [[FISC-009]] returns it. `SIGNING` is declared **last** because PostgreSQL's `ALTER TYPE ... ADD VALUE` appends — the lifecycle's order lives in the transition guard, not in the enum.                                                                             |
+| `tenant_secret`                                                 | **RESTRICTED.** One sealed tenant secret: the AES-256-GCM ciphertext, the per-secret data key wrapped by the platform master key, and the master-key version that wrapped it. No plaintext, no unwrapped key and no password is ever stored, and no log, DTO or audit payload may carry a column of this table.                                                                                                                                                                                                       |
+| `tenant_fiscal_signing_material`                                | **INTERNAL.** The tenant's SIFEN certificate and its metadata, plus an opaque `credential_ref` into `tenant_secret` for the private key. A partial unique index permits at most one `ACTIVE` material per tenant and environment; retirement destroys the stored key and keeps the row as the record.                                                                                                                                                                                                                 |
+| `fiscal_signing_environment` / `fiscal_signing_material_status` | The `TEST`/`PRODUCTION` environment enum and the `ACTIVE`/`RETIRED` status enum. Evolve additively only.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `fiscal_range_void`                                             | **INTERNAL, append-only.** One row per attempt to void a numbering range's remaining numbers: the tenant, the range, the interval (`from_number .. to_number`), the operator's `reason`, the provider's answer (`outcome`, `reason_code`, `provider_reason`, `provider_reference`) and `range_status` — the status the attempt left the range in. The migration refuses every UPDATE and every DELETE, and a trigger asserts the range belongs to the row's tenant (the composite key `fiscal_timbrado_range` lacks). |
+| `fiscal_range_void_outcome`                                     | The void's own answer vocabulary: `VOIDED`, `REJECTED`, `CONFIGURATION_ERROR`, `TRANSIENT_FAILURE`. Not a reuse of the cancellation's — nothing about a void cancels a document. Evolve additively only.                                                                                                                                                                                                                                                                                                              |
 
 `fiscal_document` is tenant-scoped, carries the composite `(tenant_id, id)`
 ownership key and a composite `RESTRICT` foreign key to `invoice`. It duplicates
@@ -55,6 +57,15 @@ tenant-ownership reference. Migrations: `20261002000001_fiscal_data_foundation`,
 `submitted_at` writer and the `SUBMITTED` edges) and
 `20261009000001_fiscal_document_next_query` (the reconciliation's marker, with a
 bounded backfill for rows already `SUBMITTED`).
+
+`fiscal_range_void` (FISC-016 WU-D) is tenant-scoped, reaches its range through
+`range_id` plus a `BEFORE INSERT` trigger that asserts the range belongs to the
+row's tenant — `fiscal_timbrado_range` carries no `(tenant_id, id)` key to
+composite against — and is append-only by two more triggers. Migration:
+`20261011000001_fisc_016_range_void`. Its reader and writer live in
+`packages/fiscal-persistence` (`createFiscalRangeVoidStore`), so the API's
+transaction and the live-PostgreSQL suite share one implementation of the
+statement and its tenant scope.
 
 `tenant_secret` and `tenant_fiscal_signing_material` are tenant-scoped with a
 composite `(tenant_id, id)` ownership key, and the secret table's reads are
@@ -70,23 +81,34 @@ Every route requires the `fiscal` entitlement and its listed permission; the
 entitlement is asserted before the granular permission, reads included. Tenant
 identity comes from authenticated server context, not caller input.
 
-| Route                                      | Permission                       | Contract                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------------ | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /fiscal-documents`                   | `fiscal.invoice.issue`           | Create and queue a document from one confirmed in-tenant invoice (`201`); body carries the invoice reference only. A second live document is `409`.                                                                                                                                                                                       |
-| `GET /fiscal-documents`                    | `fiscal.read`                    | List tenant documents, ordered `createdAt desc`; optional `status` filter with no implicit default. There is no pagination.                                                                                                                                                                                                               |
-| `GET /fiscal-documents/:id`                | `fiscal.read`                    | Read one document; foreign and unknown IDs share a byte-equivalent `404`.                                                                                                                                                                                                                                                                 |
-| `POST /fiscal-documents/:id/cancel`        | `fiscal.invoice.issue`           | Cancel (`200`) with a required reason of at most 500 characters. An already cancelled document replays as `200`; a `SENDING` document is `409`. No idempotency key.                                                                                                                                                                       |
-| `POST /fiscal/signing-material`            | `fiscal.signing_material.manage` | Load a signing material (`201`). `multipart/form-data` with `file` (a PKCS#12, at most 64 KiB), `password` and `environment` (`TEST`/`PRODUCTION`); part order is not assumed. A material already `ACTIVE` for that environment is retired and its stored key destroyed in the same transaction. Every rejection carries its own message. |
-| `GET /fiscal/signing-material`             | `fiscal.signing_material.manage` | List the tenant's materials, newest first. Metadata only: the `credentialRef`, the certificate PEM and the private key are never returned.                                                                                                                                                                                                |
-| `POST /fiscal/signing-material/:id/retire` | `fiscal.signing_material.manage` | Retire (`200`) with a required reason of at most 500 characters. The stored private key is destroyed in the same transaction and the row survives as the record. A repeat is `409`; an unknown or foreign id is a byte-equivalent `404`.                                                                                                  |
+| Route                                      | Permission                       | Contract                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /fiscal-documents`                   | `fiscal.invoice.issue`           | Create and queue a document from one confirmed in-tenant invoice (`201`); body carries the invoice reference only. A second live document is `409`.                                                                                                                                                                                                                    |
+| `GET /fiscal-documents`                    | `fiscal.read`                    | List tenant documents, ordered `createdAt desc`; optional `status` filter with no implicit default. There is no pagination.                                                                                                                                                                                                                                            |
+| `GET /fiscal-documents/:id`                | `fiscal.read`                    | Read one document; foreign and unknown IDs share a byte-equivalent `404`.                                                                                                                                                                                                                                                                                              |
+| `POST /fiscal-documents/:id/cancel`        | `fiscal.invoice.issue`           | Cancel (`200`) with a required reason of at most 500 characters. An already cancelled document replays as `200`; a `SENDING` document is `409`. No idempotency key.                                                                                                                                                                                                    |
+| `POST /fiscal/signing-material`            | `fiscal.signing_material.manage` | Load a signing material (`201`). `multipart/form-data` with `file` (a PKCS#12, at most 64 KiB), `password` and `environment` (`TEST`/`PRODUCTION`); part order is not assumed. A material already `ACTIVE` for that environment is retired and its stored key destroyed in the same transaction. Every rejection carries its own message.                              |
+| `GET /fiscal/signing-material`             | `fiscal.signing_material.manage` | List the tenant's materials, newest first. Metadata only: the `credentialRef`, the certificate PEM and the private key are never returned.                                                                                                                                                                                                                             |
+| `POST /fiscal/signing-material/:id/retire` | `fiscal.signing_material.manage` | Retire (`200`) with a required reason of at most 500 characters. The stored private key is destroyed in the same transaction and the row survives as the record. A repeat is `409`; an unknown or foreign id is a byte-equivalent `404`.                                                                                                                               |
+| `POST /fiscal/timbrado-ranges/:id/void`    | `fiscal.range.void`              | Void the range's **remaining numbers** at the provider (`200`). The body carries a reason only — the interval is read from the range — and the answer is the `fiscal_range_void` record. A retired range, an empty tail, a document type the event cannot express and an invalid reason are each a named refusal; an unknown or foreign id is a byte-equivalent `404`. |
 
 There is no update, delete, retry, status patch or reopen route. Cancellation
 reuses `fiscal.invoice.issue` because no separate cancel key was accepted
-([[DEC-048]]); `fiscal.read` was added by FISC-005b for the read contract. Reads
-are never audited.
+([[DEC-048]]); `fiscal.read` was added by FISC-005b for the read contract. The
+range void has its own `fiscal.range.void` (FISC-016 WU-D) rather than
+`fiscal.profile.manage`: it is the one range operation that leaves the tenant's
+database and it cannot be undone, so a caller trusted to configure numbering is
+not thereby trusted to declare its numbers unused. Reads are never audited.
 
 ## Invariants
 
+- **A void covers only a range's remaining tail, and each attempt is one
+  append-only row.** `from_number` is the counter at the moment of the attempt
+  and `to_number` the authorised end; a consumed number can never be voided,
+  because it is burnt the moment it is handed out. The flip to `RETIRED` and the
+  record of the attempt are one transaction, and only an accepted answer
+  (`VOIDED`) flips anything: a refusal must not retire a range as a side effect,
+  since `RETIRED` has no way back. See `SIFEN-BASELINE.md` §25.10.
 - **One live document per invoice.** The partial unique index
   `fiscal_document_tenant_id_invoice_id_key` covers `(tenant_id, invoice_id)`
   while `status <> 'CANCELLED'`. Re-issuing therefore requires an explicit
@@ -181,9 +203,10 @@ are never audited.
   with the lot number as `providerReference` and the document's own CDC, which
   the batch answer does not carry. `query` asks by the reference when it has one
   and by the CDC otherwise, so a lost hand-over answer does not lose the
-  document ([[ADR-007]] §2). `cancel` **fails closed** with
-  `CANCELLATION_EVENT_UNPROFILED`: SIFEN's cancellation is an event and its
-  payload is unprofiled ([[FISC-016]]).
+  document ([[ADR-007]] §2). `cancel` **fails closed** with the caller's signed
+  event: the adapter submits it through the event service and maps the answer.
+  Until FISC-016 WU-C it answered `CANCELLATION_EVENT_UNPROFILED`, because
+  SIFEN's cancellation is an event and its payload is unprofiled ([[FISC-016]]).
 - **The failure partition is total.** The transport's nine failures and the
   facade's one are mapped explicitly, and only the three where the request may
   never have arrived — `NETWORK_FAILURE`, `TIMEOUT`, `ABORTED` — are
@@ -327,6 +350,46 @@ can release the invoice's slot at the partial unique index. The transaction
 handle crosses the boundary through a minimal structural read type, so Billing
 never imports the Fiscal package or its persistence types.
 
+## The range void
+
+Voiding a number range is a fiscal operation in its own right: the emitter tells
+the tax administration that the numbers of an authorised range **will not be
+used**. It is not a cancellation — nothing is being withdrawn — and it is not a
+local edit either, which is why it has its own permission and its own record.
+
+The three phases are the cancellation's, for the same reason (AGENTS.md forbids
+external fiscal calls inside a long-running transaction):
+
+1. the gates in order — the `fiscal` entitlement, then `fiscal.range.void` — and
+   a tenant-scoped read of the range plus its establishment;
+2. the provider `voidRange` call, outside any transaction, bounded by a 10 s
+   deadline (`FISCAL_RANGE_VOID_TIMEOUT_MS`) with an `AbortSignal` handed to the
+   adapter;
+3. one transaction that flips the range with a compare-and-swap on `ACTIVE`,
+   writes the `fiscal_range_void` record and co-commits the audit row.
+
+**The caller supplies a reason and nothing else.** The interval is the range's
+remaining tail — `nextNumber .. rangeTo`, emitted zero-padded to `tdNumDE`'s
+seven digits — and the payload's other fields are read from the range: its
+timbrado number, its establishment's `dEst`, its `dPunExp`, its document type
+and its series. A caller that could name the interval could ask the provider to
+void numbers that were already issued.
+
+Every refusal is by name, and each is a state the schema does not assert
+(`SIFEN-BASELINE.md` §25.7): `RETIRED`, an empty tail (the range is `EXHAUSTED`,
+whether the column says so or the counter has simply reached one past the end),
+a document type the event cannot express (`tiTiDEEv` admits 1..9 while the range
+may carry 10), and a reason outside `mOtEve`'s 5..500. The reason is checked
+whether or not the selected provider requires a document, because it is stored
+either way.
+
+**Only `VOIDED` retires the range.** A refusal is recorded — outcome, code,
+message, reference — and reported as a `409` naming the provider's own reason;
+the range keeps whatever status it had. A `VOIDED` answer whose compare-and-swap
+fails (a concurrent retirement, or numbers consumed while the call was in
+flight) is a `409` too, and the record still names the interval that was
+**sent**: reading the counter again after the call would rewrite history.
+
 ## The signing-material boundary
 
 SIFEN Direct makes this system the issuer, so the tenant's signing private key
@@ -404,17 +467,23 @@ Accepted mutations write one co-committed audit row:
 `fiscal.document.submitted`, `fiscal.document.submission_failed` and
 `fiscal.document.submission_requeued` from the worker with `actorType: SYSTEM`.
 The signing-material commands write `fiscal.signing_material.uploaded` and
-`fiscal.signing_material.retired`. Audit metadata carries a schema version, the
-outcome and field names only — never the cancellation reason text, never a
-provider payload, never a certificate PEM, a private key or a `credentialRef`.
-Reads are not audited.
+`fiscal.signing_material.retired`, and the range void writes
+`fiscal.timbrado_range.voided` or `fiscal.timbrado_range.void_failed` (FISC-016
+WU-D). Audit metadata carries a schema version, the outcome and field names only
+— never the cancellation reason text, never the void's reason either (it lives
+in the `fiscal_range_void` row the metadata points at), never a provider
+payload, never a certificate PEM, a private key or a `credentialRef`. Reads are
+not audited.
 
 Provider references (`external_id`, `cdc`, storage keys) and the
 request/response snapshots are CONFIDENTIAL; status, attempt counters,
-timestamps and the signing certificate's metadata are INTERNAL (PRD §41). A
-tenant's signing private key is **RESTRICTED**: `tenant_secret` stores only
-ciphertext, the store never logs, and no DTO exposes it. Logs and audit carry
-IDs and field names only.
+timestamps, the signing certificate's metadata and the `fiscal_range_void`
+record are INTERNAL (PRD §41). The void's `reason` is the operator's own text
+about an authorisation rather than protocol data, and both it and the provider's
+message are written through the same 500-character scrub the cancellation's
+error columns use. A tenant's signing private key is **RESTRICTED**:
+`tenant_secret` stores only ciphertext, the store never logs, and no DTO exposes
+it. Logs and audit carry IDs and field names only.
 
 ## Settings
 
@@ -428,35 +497,49 @@ because they are deployment concerns rather than tenant behavior.
 
 - `packages/database/src/schema-fiscal.test.ts`,
   `schema-fiscal-transition-guard.test.ts`,
-  `schema-fiscal-cancellation-guard.test.ts` and `reference-seed.test.ts` —
-  tables, constraints, the trigger catalogue, the transition graph per edge and
-  the seed probes. Database suite: **21 files / 416 tests**.
+  `schema-fiscal-cancellation-guard.test.ts`, `schema-fiscal-range-void.test.ts`
+  and `reference-seed.test.ts` — tables, constraints, the trigger catalogue, the
+  transition graph per edge, the void's append-only and tenant-agreement guards
+  and the seed probes (the seed's permission count moved 59 -> 60 with
+  `fiscal.range.void`). Database suite: **25 files / 455 tests**.
 - `packages/fiscal/src/*` — the port, the fake's ordered scripts, the sanitizer,
   the queue contract, the PKCS#12 extraction with its base64 fixture, the DE
   builder and its official-schema gate, the XMLDSig signer, the SIFEN client
   (messages, serializer, parser, transport, facade, outcome mapping), the QR
   with §13.8.4's worked example, the timbrado ranges and profile assembly, the
-  real adapter with its failure partition, and the provider selection. Fiscal
-  suite: **28 files / 577 tests**.
+  real adapter with its failure partition — cancel and the range void, which is
+  the same submission with its own answer — and the provider selection. Fiscal
+  suite: **31 files / 683 tests**, or **708** with the schema-dependent suites
+  enabled (`DTE_XSD_REQUIRED=1`).
 - `packages/secret-store/src/*` — the port, the envelope crypto, the key ring,
   the two drivers and the opaque key factory. Suite: **5 files / 50 tests**.
 - `apps/api/src/fiscal/*` — the issue, cancel and read integration suites (**21
   cases**), the signing-material service (**22 cases**) and HTTP boundary (**4
-  cases**), the boundary rule, the producer deadline and the module composition.
-  API suite: **84 files / 1105 tests**.
+  cases**), the emitter-profile service and its refuse-every-state range void
+  (**40 cases**, 21 of them the void's: each refusal by name, the tail it sends,
+  the record it writes, the deadline and the inutilización it composes and
+  signs), the boundary rule, the producer deadline and the module composition.
+  API suite: **87 files / 1406 tests** (1172 passed, 232 skipped without a
+  database, and the route-contract probe's two pins — see Known limitations).
 - `apps/worker/src/fiscal-submission/*` — the handler's claim, lease, stage,
   custody, outcome mapping and audit, the document seam, the consumer, and the
   reconciliation sweep with its two phases, its cap and its isolation. Worker
   suite: **11 files / 140 tests**.
 - `packages/fiscal-persistence/src/*` — the moved timbrado range store, the
-  emitter-profile read and the credential read. Suite: **3 files / 27 tests**.
+  emitter-profile read, the credential read and the range-void store (insert,
+  tenant-scoped read, and the cross-tenant read that answers nothing). Suite:
+  **4 files / 32 tests**.
 - `apps/web/src/app/(app)/app/fiscal/*` and
   `apps/web/src/app/api/fiscal/[[...path]]/route.test.ts` — client, display,
   validation, outcome, panels, workspace states and the proxy contract (**7
   cases**). Web suite: **99 files / 1087 tests**.
 - `apps/api/test/live-pg-isolation.e2e-spec.ts` — the applied schema, the
   trigger catalogue, the transition graph per edge including the cancellation
-  edges, and the `APPROVED -> CANCEL_PENDING -> CANCELLED` path: **213 cases**.
+  edges, the `APPROVED -> CANCEL_PENDING -> CANCELLED` path, and the range
+  void's application path (a foreign tenant's range and an unknown range are
+  `404` with nothing written, an unentitled tenant is refused by the entitlement
+  alone, and the record's append-only, tenant-agreement and status CHECKs are
+  probed): **232 cases**.
 - The FISC-007 integration suite runs against the in-memory database double,
   which now models `tenant_secret` and `tenant_fiscal_signing_material`. The
   partial unique index and the CHECK constraints are enforced by PostgreSQL
@@ -464,10 +547,24 @@ because they are deployment concerns rather than tenant behavior.
 
 ## Known limitations
 
+- **The route-contract probe pins a route inventory and a fiscal permission map,
+  and the void route is in neither.** Both failures are in
+  `apps/api/src/rbac/route-contract.probe.test.ts` — a file outside FISC-016
+  WU-D's edit surface — and each names the new route
+  (`UNDECLARED NEW ROUTE: POST /fiscal/timbrado-ranges/:id/void` and
+  `UNDECLARED FISCAL ROUTE: POST /fiscal/timbrado-ranges/:id/void`). The fix is
+  two lines in that file: the route in `EXPECTED_ROUTE_INVENTORY` and the route
+  mapped to `FISCAL_PERMISSIONS.rangeVoid` in `FISCAL_PERMISSION_BY_ROUTE`. The
+  suite's other 1172 cases pass.
 - **The worker cannot build a document.** The stage fails closed behind a seam
   whose reason names [[FISC-015]], so a `sifen-direct` deployment cannot issue
   until the assembly lands.
-- **`cancel` fails closed** with `CANCELLATION_EVENT_UNPROFILED`: the
+- **`cancel` submits the caller's signed event** (FISC-016 WU-C). A requiring
+  provider handed `document: null` answers `CONFIGURATION_ERROR` and sends
+  nothing; otherwise the event group goes through `receiveEvent` and the answer
+  maps onto the port's cancel outcomes, with an unlisted result code carried
+  verbatim.
+- **`cancel` used to fail closed** with `CANCELLATION_EVENT_UNPROFILED`: the
   cancellation event's payload is unprofiled and [[FISC-016]] owns it.
 - **Nothing has been proven against DNIT.** No submission has reached SIFEN, the
   certificate is a fixture and the CSC is a stand-in; that is [[FISC-013]].

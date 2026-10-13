@@ -2371,3 +2371,234 @@ buildDteXml  ->  signDteXml  ->  buildQrContent  ->  fill the QR placeholder
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | FISC-012 the provider              | The whole QR composition and its build order; the DE chain's inputs; that one certificate serves both the signature and mutual TLS | The CSC's value; whether SIFEN validates the hash                      |
 | FISC-013 contingency/certification | That the QR can be built before any SIFEN call, so the homologation run exercises it                                               | Anything about a live service's behaviour before a habilitación exists |
+
+## 25. The event family, profiled
+
+**[R]** §23.3 recorded the event _service_ and said the payload was never
+profiled: "the event _payload_ is the emitter's own document to build, and
+profiling it is the work of the Story that builds one". This is that profiling,
+and it corrects three things a reader of the earlier sections would otherwise
+assume.
+
+**The retrieval**, 2026-10-11, from `https://ekuatia.set.gov.py/sifen/xsd/`,
+each HTTP 200:
+
+```text
+Evento_v150.xsd                 23,255 bytes   md5 571f62b692caa82e61a2ffb38a5490eb
+Evento_Types_v150.xsd           23,320 bytes   md5 a7f86be032aa8fb52d7190853d7deeca
+siRecepEvento_v150.xsd             417 bytes   md5 8bf18c1a344e8ce00482f6579bc4b436
+WS_SiRecepEvento_v150.xsd        2,618 bytes   md5 61e668a682e397a00c1ee76d4814e627
+protProcesEventos_v141.xsd       3,660 bytes   the response's group, missing from §23.3's set
+```
+
+The first two sizes are **exactly** the ones §23.3 recorded, so the artifacts
+are stable across retrievals. `protProcesEventos_v141.xsd` is the linchpin the
+earlier set lacked: the response's `tgResProcEVe` is defined there and nowhere
+else.
+
+### 25.1 The envelope
+
+```text
+rEnviEventoDe        { dId (15-digit integer), dEvReg { gGroupGesEve } }
+gGroupGesEve         element of type tgGroupGesEve
+tgGroupGesEve        { rGesEve 1..15 }
+rGesEve              { rEve, ds:Signature }        the signature is REQUIRED
+rEve  @Id            tdIdEve: integer 1..9999999999, pattern [0-9]+
+rEve                 { dFecFirma (fecHhmmss), dVerFor (tVerFor), gGroupTiEvt }
+gGroupTiEvt          xs:choice of the nine payload elements
+```
+
+A lot carries **up to fifteen events**, each signed separately.
+
+**The submitted envelope carries the group.** `dEvReg` holds a `gGroupGesEve`
+and not a `rGesEve` directly, so the element a caller builds and signs is the
+group, and the envelope's `dId` belongs to whoever wraps it: the client's
+serializer asserts the group root and embeds the group's bytes verbatim, the
+same rule the DE's `xDE` follows (FISC-016 WU-C). A serializer that put the
+event document's `rGesEve` under `dEvReg` produced an envelope that validates
+against nothing — the defect WU-C fixed.
+
+### 25.2 The event's type is the ELEMENT NAME, not a code
+
+**This corrects an assumption the earlier sections invited.**
+`Evento_Types_v150.xsd` declares three enumerations and only one of them is what
+its name suggests:
+
+- **`tdTiGDE`** (documentation "Tipo de Evento", values
+  `1, 2, 3, 10, 11, 12, 13`) is a **dead catalogue**: the only element that
+  would carry it is commented out, and no payload element references it. **A
+  builder that emitted a `dTiGDE` field would produce a document that validates
+  against nothing.**
+- **`tiTipEve`** is the **receptor** type (`1 = Contribuyente`,
+  `2 = No Contribuyente`) despite a stray `<!-- Tipo de Evento -->` comment
+  above it.
+- **`tiTiDEEv`** is the **document** type (`1`..`9`, including
+  `9 = Boleta de Venta Electrónica`), carried by `iTiDE` in the inutilización.
+
+The event's type is expressed by **which element is present** under
+`gGroupTiEvt`.
+
+### 25.3 The two payloads this epic builds
+
+**Cancellation** — `rGeVeCan` / `trGeVeCan`, exactly two required children:
+
+```text
+Id       tId       xs:string length=44, pattern [0-9]{2}([0-9]{7}[0-9A-D]?)[0-9]{34}
+                   the CDC of the DTE being cancelled
+mOtEve   tmotEve   xs:string, 5..500      the reason
+```
+
+**Inutilización** — `rGeVeInu` / `trGeVeInu`, seven required and one optional:
+
+```text
+dNumTim    tdNumTim    8 digits, pattern 0+[1-9][0-9]*|[1-9]+[0-9]+
+dEst       tdEst       [0-9]{3}          the establishment
+dPunExp    tdPunExp    [0-9]{3}          the point of expedition
+dNumIn     tdNumDE     7+ digits         the range's first number
+dNumFin    tdNumDE     same              the range's last number
+iTiDE      tiTiDEEv    1..9              the document type
+mOtEve     tmotEve     5..500            the reason
+dSerieNum  tserieNum   [A-Z]{2}, optional
+```
+
+**It carries no `Id`**: an inutilización voids a _number range_, not a document,
+so a symmetric implementation that expected a CDC there would be wrong.
+
+### 25.4 The event is signed, with the DE's own profile
+
+`rGesEve` is `{ rEve, ds:Signature }` and the signature is **required**, as a
+sibling of the event rather than inside it. `Evento_v150.xsd` imports the
+**same** `xmldsig-core-schema.xsd` the DE imports, so the event reuses the DE's
+XMLDSig profile — no second signing profile exists. **The schema does not pin
+the algorithms**: `CanonicalizationMethod` and `SignatureMethod` are bare
+`anyURI` attributes, so the profile comes from the Manual's technology section
+(§7.6/§7.7) and not from the schema.
+
+The wrappers the _received_ services use (`trGesEveRecep`, `trGesEveEmi`,
+`trGesEveSet`) carry **no signature** and their bodies have no `@Id`.
+
+### 25.5 The response
+
+```text
+rRetEnviEventoDe     { dFecProc (fecUTC), gResProcEVe (tgResProcEVe, 1..15) }
+tgResProcEVe         { dEstRes (tdEstRes), dProtAut? (tdProtAut), id (tid),
+                       gResProc (tgResProc, 1..100) }
+tgResProc            { dCodRes (tdCodRes), dMsgRes (tdMsgRes) }
+```
+
+`dFecProc` is the **only UTC field in the family** (the events' own timestamps
+are local, §25.6). `tdEstRes` is a free string of 8..30 characters with **no
+enumeration**, and `tdCodRes` only fixes the four-digit shape — so **the event
+result codes are not evidenced by any retrieved source**, exactly as the DE's
+own `dCodRes` catalogue is recorded as open (§22.12). A mapping must carry an
+unlisted code rather than coerce it.
+
+**What this client's mapping does with that open catalogue** (FISC-016 WU-C): it
+carries the first reported `dCodRes` as the result's reason code, verbatim —
+there is no catalogue to coerce it into, and an unlisted four-digit code reaches
+the caller as itself. `Aprobado` and `Aprobado con observación` both map to an
+accepted cancellation and `Rechazado` to a rejected one, which is §10's
+three-value `dEstRes` mapping the DE already receives; a failed transport keeps
+the partition FISC-012 established, where only an unanswered or dropped
+connection is retryable.
+
+### 25.6 The clock is LOCAL, and the environment is not in the document
+
+The events' `dFecFirma` and the receptor events' `dFecEmi`/`dFecRecep` are
+`fecHhmmss` — `xs:dateTime` with no timezone suffix and no fractional seconds —
+the **same type the DE's `dFeEmiDE` uses**. `tDateTimeUTC` exists in the same
+file and is referenced **nowhere**: it is a dead definition for this family. The
+environment is likewise absent: `iAmbType` is declared and never referenced, so
+the endpoint and the certificate are what select Prueba versus Producción.
+
+### 25.7 What the schema does not pin
+
+- **The event's identifier.** `rEve/@Id` is an integer up to ten digits with no
+  stated uniqueness, monotonicity or relation to the events it names; the
+  request's `dId` is a separate 15-digit integer with no stated relation to
+  either.
+- **The reason's content.** `mOtEve` is a bare string 5..500 with no domain.
+- **The range's sanity.** Nothing asserts `dNumIn ≤ dNumFin`, that the range
+  lies inside the timbrado's grant, or that `iTiDE` matches the timbrado.
+- **The signature's coverage and algorithms** (§25.4).
+
+### 25.8 The include chain, and the spelling that hides an absolute URL
+
+The event family's entry artifact is **`WS_SiRecepEvento_v150.xsd`** (it is the
+one that declares `rEnviEventoDe`), and its chain is:
+
+```text
+WS_SiRecepEvento_v150.xsd
+├─ protProcesEventos_v141.xsd   -> imports xmldsig-core-schema.xsd
+└─ Evento_v150.xsd              -> imports xmldsig-core-schema.xsd
+   ├─ Evento_Types_v150.xsd
+   ├─ Paises_v100.xsd            (already fetched for the DE)
+   ├─ Departamentos_v141.xsd     (already fetched for the DE)
+   └─ DE_Types_v150.xsd          (already fetched for the DE)
+```
+
+So four artifacts are new and seven were already fetched.
+**`siRecepEvento_v150.xsd` is not in the chain** and is not fetched, even though
+it declares `gGroupGesEve` too.
+
+**The spelling matters.** The DNIT ships the include attribute as
+`schemaLocation= "…"` — **with a space** — in `WS_SiRecepEvento_v150.xsd` and
+`Evento_v150.xsd`. A rewrite that matches only the tight form leaves those six
+absolute URLs in place, and an inspection that matches only the tight form
+reports the directory **usable** while validation would still reach the network.
+Both must tolerate the whitespace, which is why the gate's regexes were widened
+when the event schemas were added.
+
+### 25.9 Two findings that change the plan
+
+1. **The Guide's "Ajuste del Evento" has no payload.** The homologation's test
+   matrix requires five receptor events, and `tgGroupEvtRecep` defines exactly
+   **four** (`rGeVeNotRec`, `rGeVeConf`, `rGeVeDisconf`, `rGeVeDescon`). The
+   string "ajuste" appears nowhere in either event schema. Either the Guide
+   names one of the four, or the action has no published payload — the retrieved
+   set cannot resolve which, and **the matrix cannot be completed as written**.
+2. **`protProcesEventos_v141.xsd` was missing from §23.3's set**, and with it
+   the response's whole structure. It is now retrieved and recorded above.
+
+### 25.10 The inutilización as a business operation (FISC-016 WU-D)
+
+§25.3 gives the payload; this is what the operation built on top of it decides,
+and every rule below is **ours** because §25.7 records that the schemas assert
+none of them.
+
+**The operation voids the range's REMAINING TAIL.** The caller supplies a reason
+and nothing else: `dNumIn` is the range's `next_number` at the moment of the
+attempt and `dNumFin` is its authorised end. A number that was already consumed
+can never be voided — `fiscal_timbrado_range.next_number` is never lowered
+because a consumed number is burnt (Manual §6.5, §13) — so a void covering one
+would describe history that never happened.
+
+**The terminal status is `RETIRED`**, the status the range enum already carries
+for exactly this operation ("An operator stopped using it. Kept as the permanent
+record: its consumed numbers are burnt and can never be reissued"). No enum
+value was added. The flip and the operation's record are **one transaction**, so
+a record that says the service accepted the void cannot sit beside a range that
+stayed usable.
+
+**An empty tail is `EXHAUSTED`, refused by name.** §13's rollover means an
+ACTIVE range may already be spent — the claim that takes the LAST number
+increments the counter one past the end while the status is still ACTIVE — so
+the check is on the tail (`nextNumber > rangeTo`) rather than on the status
+column, and both shapes are refused with the same name. `RETIRED` has its own
+refusal.
+
+**A document type the event cannot express is refused too.** `tiTiDEEv` admits
+`1..9` while the DE's `tiTiDE` admits `1, 4, 5, 6, 7, 9, 10` (§25.2), so a range
+whose document type is `10` is DE-legal and event-illegal: the operation is
+refused rather than sent as a document that would validate against nothing.
+
+**Each attempt is recorded once, append-only** (`fiscal_range_void`): the tenant
+and the range, the interval that was sent, the operator's reason, the answer's
+outcome with its result code, message and reference, and the status the attempt
+left the range in. A refusal is recorded as faithfully as an acceptance, because
+"these numbers were offered and the service refused them" is a fact an operator
+has to be able to read back.
+
+**Only `VOIDED` retires the range.** A refusal never flips it: `RETIRED` has no
+way back, so losing an authorisation to a failed submission would be worse than
+the refusal that reported it. The record says which of the two happened.

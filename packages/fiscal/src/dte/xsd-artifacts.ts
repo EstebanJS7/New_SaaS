@@ -9,18 +9,28 @@
  * **Two facts make the naive version of this job wrong, and both were verified
  * against the published artifacts rather than assumed:**
  *
- * 1. **It is not three schemas, it is seven.** `DE_v150.xsd` `xs:include`s
- *    `Paises_v100.xsd`, `Departamentos_v141.xsd`, `Monedas_v150.xsd`,
- *    `Unidades_Medida_v141.xsd` and `DE_Types_v150.xsd`. Without those five the
- *    schema does not compile. Fetching only the three named in the Story leaves
- *    a directory that cannot validate anything.
- * 2. **Co-locating them is not enough, because five of those includes are
+ * 1. **It is not three schemas, it is seven** — plus, since [[FISC-016]] WU-B,
+ *    the event chain's four. `DE_v150.xsd` `xs:include`s `Paises_v100.xsd`,
+ *    `Departamentos_v141.xsd`, `Monedas_v150.xsd`, `Unidades_Medida_v141.xsd`
+ *    and `DE_Types_v150.xsd`, and `WS_SiRecepEvento_v150.xsd` `xs:include`s
+ *    `protProcesEventos_v141.xsd` and `Evento_v150.xsd`, which in turn includes
+ *    `Evento_Types_v150.xsd`, `Paises_v100.xsd`, `Departamentos_v141.xsd` and
+ *    `DE_Types_v150.xsd`. Without those companions the schema does not compile.
+ *    Fetching only the files named in the Story leaves a directory that cannot
+ *    validate anything. `siRecepEvento_v150.xsd` is deliberately **not** in
+ *    either chain: fetching it would assert bytes nothing reads.
+ * 2. **Co-locating them is not enough, because many of those includes are
  *    absolute HTTPS URLs.** A validator therefore ignores the local copies and
  *    fetches from DNIT at validation time: with the network blocked,
- *    compilation fails with `global component '{...}tCDC' not found`. So the
- *    fetched `DE_v150.xsd` is **rewritten** in the job-local directory to
- *    reference its siblings by file name, which is what makes the gate
- *    hermetic and what makes the byte assertions above cover every artifact.
+ *    compilation fails with `global component '{...}tCDC' not found`. So every
+ *    fetched artifact is **rewritten** in the job-local directory to reference
+ *    its siblings by file name, which is what makes the gate hermetic and what
+ *    makes the byte assertions above cover every artifact. Every artifact is
+ *    rewritten rather than only the entries because the chain has intermediate
+ *    carriers: `Evento_v150.xsd` is reached through
+ *    `WS_SiRecepEvento_v150.xsd` and itself carries four absolute includes, so
+ *    rewriting the entries alone would leave the network in the loop an event
+ *    validation depends on.
  *
  * Neither transformation invents a constraint: every length, pattern, facet and
  * enumeration still comes from DNIT's bytes.
@@ -37,7 +47,10 @@ export interface DteXsdArtifact {
   readonly fileName: string;
   /** Asserted floor. Well below the retrieved size, to survive a DNIT update. */
   readonly minimumBytes: number;
-  /** The size retrieved on 2026-10-04, recorded so the floor is auditable. */
+  /**
+   * The size retrieved from DNIT — 2026-10-04 for the DE's seven, 2026-10-11 for
+   * the event chain's four — recorded so the floor is auditable.
+   */
   readonly retrievedBytes: number;
   readonly expectedNamespace: string;
 }
@@ -97,6 +110,56 @@ export const DTE_XSD_FILE_NAMES: readonly string[] = DTE_XSD_ARTIFACTS.map(
 );
 
 /**
+ * [[FISC-016]] WU-B — the four artifacts the event chain adds, retrieved
+ * 2026-10-11 from the same index. The event's entry is
+ * `WS_SiRecepEvento_v150.xsd`; through `Evento_v150.xsd` it reaches
+ * `Evento_Types_v150.xsd`, `Paises_v100.xsd`, `Departamentos_v141.xsd` and
+ * `DE_Types_v150.xsd`, four of which the DE's set already carries.
+ */
+export const DTE_EVENT_XSD_ARTIFACTS: readonly DteXsdArtifact[] = [
+  {
+    fileName: "WS_SiRecepEvento_v150.xsd",
+    minimumBytes: 1_200,
+    retrievedBytes: 2_618,
+    expectedNamespace: SIFEN_XSD_NAMESPACE,
+  },
+  {
+    fileName: "protProcesEventos_v141.xsd",
+    minimumBytes: 1_800,
+    retrievedBytes: 3_660,
+    expectedNamespace: SIFEN_XSD_NAMESPACE,
+  },
+  {
+    fileName: "Evento_v150.xsd",
+    minimumBytes: 10_000,
+    retrievedBytes: 23_255,
+    expectedNamespace: SIFEN_XSD_NAMESPACE,
+  },
+  {
+    fileName: "Evento_Types_v150.xsd",
+    minimumBytes: 10_000,
+    retrievedBytes: 23_320,
+    expectedNamespace: SIFEN_XSD_NAMESPACE,
+  },
+];
+
+/**
+ * Everything a prepared directory holds: the DE's seven and the event chain's
+ * four. One directory serves both families, because the four shared artifacts
+ * (`DE_Types_v150.xsd`, `xmldsig-core-schema.xsd`, `Paises_v100.xsd`,
+ * `Departamentos_v141.xsd`) are in both chains and a second copy would be a
+ * second set of bytes to assert.
+ */
+export const DTE_XSD_PREPARED_ARTIFACTS: readonly DteXsdArtifact[] = [
+  ...DTE_XSD_ARTIFACTS,
+  ...DTE_EVENT_XSD_ARTIFACTS,
+];
+
+export const DTE_XSD_PREPARED_FILE_NAMES: readonly string[] = DTE_XSD_PREPARED_ARTIFACTS.map(
+  (artifact) => artifact.fileName
+);
+
+/**
  * Where the prepared schemas live when nothing says otherwise. Inside the OS
  * temp directory on purpose: the artifacts are copyrighted, are never
  * committed, and are never cached across runs.
@@ -105,8 +168,19 @@ export function defaultDteSchemaDirectory(): string {
   return process.env.DTE_XSD_DIR ?? join(tmpdir(), "newsaas-dte-xsd");
 }
 
-/** The document whose absolute `schemaLocation`s are rewritten to file names. */
+/**
+ * The DE's entry artifact: the document the DE validator compiles from. Its
+ * absolute `schemaLocation`s are rewritten to file names, as are every other
+ * artifact's.
+ */
 export const DTE_XSD_ENTRY_ARTIFACT = "DE_v150.xsd";
+
+/**
+ * [[FISC-016]] WU-B — the event lot's entry artifact. Unlike `DE_v150.xsd` it
+ * declares `rEnviEventoDe` itself, which is why the event entry needs no
+ * generated wrapper element.
+ */
+export const DTE_EVENT_XSD_ENTRY_ARTIFACT = "WS_SiRecepEvento_v150.xsd";
 
 export type DteSchemaFailure =
   | "ARTIFACT_MISSING"
@@ -288,7 +362,16 @@ function isSchemaDocument(contents: string, expectedNamespace: string): boolean 
   return declaresSchemaRoot && contents.includes(`targetNamespace="${expectedNamespace}"`);
 }
 
-/** Rewrites every absolute `schemaLocation` under `baseUrl` to a file name. */
+/**
+ * Rewrites every absolute `schemaLocation` under `baseUrl` to a file name.
+ *
+ * **The attribute is matched with optional whitespace around `=`**, because DNIT
+ * ships both spellings in the same chain: `DE_v150.xsd` writes
+ * `schemaLocation="https://…"` while `WS_SiRecepEvento_v150.xsd` and
+ * `Evento_v150.xsd` write `schemaLocation= "https://…"`. A rewrite that only
+ * matched the tight form would silently leave the event chain reaching DNIT, and
+ * the assertion below would not see it either -- both read the same attribute.
+ */
 export function rewriteAbsoluteSchemaLocations(
   entryXsd: string,
   baseUrl: string
@@ -296,7 +379,7 @@ export function rewriteAbsoluteSchemaLocations(
   const rewritten: string[] = [];
   const prefix = `${baseUrl}/`;
   const contents = entryXsd.replace(
-    /schemaLocation="([^"]+)"/g,
+    /schemaLocation\s*=\s*"([^"]+)"/g,
     (match: string, location: string) => {
       if (!location.startsWith(prefix)) {
         return match;
@@ -311,7 +394,7 @@ export function rewriteAbsoluteSchemaLocations(
 
 /** Refuses a directory that would make the validator reach the network. */
 export function assertNoAbsoluteSchemaLocations(entryXsd: string, fileName: string): void {
-  const absolute = [...entryXsd.matchAll(/schemaLocation="(https?:\/\/[^"]+)"/g)].map(
+  const absolute = [...entryXsd.matchAll(/schemaLocation\s*=\s*"(https?:\/\/[^"]+)"/g)].map(
     (match) => match[1]
   );
   if (absolute.length > 0) {
@@ -325,9 +408,9 @@ export function assertNoAbsoluteSchemaLocations(entryXsd: string, fileName: stri
 }
 
 /**
- * Fetches all seven artifacts, asserts each, rewrites the entry schema's
- * absolute includes, and writes the prepared directory. A run that does not
- * produce every artifact throws rather than degrading to a skip.
+ * Fetches and asserts every artifact of both chains, rewrites their absolute
+ * includes, and writes the prepared directory. A run that does not produce every
+ * artifact throws rather than degrading to a skip.
  */
 export async function prepareDteSchemas(
   options: PrepareDteSchemasOptions
@@ -353,7 +436,7 @@ export async function prepareDteSchemas(
   const { mkdir } = await import("node:fs/promises");
   await mkdir(options.targetDir, { recursive: true });
 
-  for (const artifact of DTE_XSD_ARTIFACTS) {
+  for (const artifact of DTE_XSD_PREPARED_ARTIFACTS) {
     let contents: string;
     let status = 200;
     let byteSource: "fetched" | "local" = "fetched";
@@ -374,31 +457,36 @@ export async function prepareDteSchemas(
     });
   }
 
-  const entry = contentsByFile.get(DTE_XSD_ENTRY_ARTIFACT);
-  if (entry === undefined) {
-    throw new DteSchemaError(
-      "ARTIFACT_MISSING",
-      `${DTE_XSD_ENTRY_ARTIFACT} was not produced.`,
-      DTE_XSD_ENTRY_ARTIFACT
-    );
+  // The validators compile from these two, so a prepared directory that did not
+  // produce one of them would be silently unusable rather than empty.
+  const rewrittenIncludes: string[] = [];
+  for (const entryArtifact of [DTE_XSD_ENTRY_ARTIFACT, DTE_EVENT_XSD_ENTRY_ARTIFACT]) {
+    if (!contentsByFile.has(entryArtifact)) {
+      throw new DteSchemaError(
+        "ARTIFACT_MISSING",
+        `${entryArtifact} was not produced.`,
+        entryArtifact
+      );
+    }
   }
-  const { contents: rewrittenEntry, rewritten } = rewriteAbsoluteSchemaLocations(entry, baseUrl);
-  assertNoAbsoluteSchemaLocations(rewrittenEntry, DTE_XSD_ENTRY_ARTIFACT);
-  contentsByFile.set(DTE_XSD_ENTRY_ARTIFACT, rewrittenEntry);
 
-  // Every artifact, not only the entry one: the rewrite above only touches
-  // `DE_v150.xsd`, so a nested absolute include inside a companion schema would
-  // survive it and reach the network at validation time. Failing here names the
-  // file while preparation is still the caller's context.
-  for (const [fileName, contents] of contentsByFile) {
-    assertNoAbsoluteSchemaLocations(contents, fileName);
+  // Every artifact, not only the entries: the chain has intermediate carriers,
+  // and `Evento_v150.xsd` -- reached through `WS_SiRecepEvento_v150.xsd` --
+  // carries four absolute includes of its own. Rewriting the entries alone would
+  // leave those reaching DNIT at validation time, which the assertion below
+  // would then report while preparation is still the caller's context.
+  for (const [fileName, contents] of [...contentsByFile]) {
+    const result = rewriteAbsoluteSchemaLocations(contents, baseUrl);
+    rewrittenIncludes.push(...result.rewritten);
+    assertNoAbsoluteSchemaLocations(result.contents, fileName);
+    contentsByFile.set(fileName, result.contents);
   }
 
   for (const [fileName, contents] of contentsByFile) {
     await writeFileImpl(`${options.targetDir}/${fileName}`, contents);
   }
 
-  return { directory: options.targetDir, artifacts, rewrittenIncludes: rewritten };
+  return { directory: options.targetDir, artifacts, rewrittenIncludes };
 }
 
 /** Reads a prepared directory without touching the network. */
@@ -408,7 +496,12 @@ export async function inspectDteSchemas(directory: string): Promise<DteSchemaDir
   const tooSmall: string[] = [];
   const unrewrittenIncludes: string[] = [];
 
-  for (const artifact of DTE_XSD_ARTIFACTS) {
+  // The whole prepared set, both chains: one directory is prepared in one run,
+  // so "usable" means the run produced everything either validator compiles
+  // from. A DE-only directory now reports the event artifacts as missing rather
+  // than reporting a green DE gate over a directory an event submission could
+  // not use.
+  for (const artifact of DTE_XSD_PREPARED_ARTIFACTS) {
     // An absent artifact must not throw: it is the ordinary "not prepared yet"
     // state that makes the suite skip. `contents` is therefore a `const` of a
     // never-throwing read, narrowed before any use, so no path can reach the
@@ -424,7 +517,7 @@ export async function inspectDteSchemas(directory: string): Promise<DteSchemaDir
     if (Buffer.byteLength(contents, "utf8") < artifact.minimumBytes) {
       tooSmall.push(artifact.fileName);
     }
-    if (/schemaLocation="https?:\/\//.test(contents)) {
+    if (/schemaLocation\s*=\s*"https?:\/\//.test(contents)) {
       unrewrittenIncludes.push(artifact.fileName);
     }
   }

@@ -58,6 +58,8 @@ import type {
   FiscalIssueResult,
   FiscalQueryOutcome,
   FiscalQueryResult,
+  FiscalRangeVoidOutcome,
+  FiscalRangeVoidResult,
 } from "../fiscal-provider.port.js";
 import {
   describeBatchQuery,
@@ -73,7 +75,9 @@ import {
   type SifenBatchReceptionResponse,
   type SifenCdcQueryResponse,
   type SifenDeContent,
+  type SifenEventReceptionResponse,
   type SifenProcessingProtocol,
+  type SifenProcessingResultGroup,
   type SifenRucQueryResponse,
   type SifenRucStatus,
 } from "./sifen.messages.js";
@@ -515,6 +519,105 @@ function receptionReason(protocol: SifenProcessingProtocol): string {
     return SIFEN_OBSERVATION_UNSTATED_REASON;
   }
   return SIFEN_RECEPTION_MESSAGE_ABSENT_REASON;
+}
+
+/**
+ * The event reception's answer to a range void — §25.5, `rRetEnviEventoDe`.
+ *
+ * The void travels as an event, so the answer is the event family's own group
+ * and the mapping rules are the ones §25.5 records: `Aprobado` and
+ * `Aprobado con observación` are a void the service accepted, `Rechazado` is a
+ * rejected one, and the answer's result codes are **carried, never coerced** —
+ * no retrieved source enumerates them, so an unlisted four-digit code reaches
+ * the caller as itself, exactly as the DE's own open catalogue does.
+ *
+ * **The reason codes and the reference stay strings.** `dCodRes` is at most a
+ * four-digit code and `dProtAut` is an `xs:long`, so neither is read as a
+ * number: the caller persists them and a `number` would lose leading zeros.
+ *
+ * **`providerReference` is `dProtAut`** — the answer's own handle for the
+ * operation it accepted. It is deliberately not the group's `id`: that field is
+ * "the emitter's own identifier for what the event is about", and what a void
+ * is about is a number range, which this answer does not name. An answer that
+ * carries no `dProtAut` resolved the void without a handle, which is `null` and
+ * not a value to invent.
+ *
+ * `retryAfterMs` is `null` on every row: the event service publishes no retry
+ * hint, and the caller's own backoff is the caller's (mirroring the
+ * cancellation's mapping, which carries none either).
+ */
+export function mapEventReceptionVoidOutcome(
+  args: SifenOutcomeContext & { readonly response: SifenEventReceptionResponse }
+): FiscalRangeVoidResult {
+  const event = args.response.gResProcEVe[0];
+  if (event === undefined) {
+    // Unreachable through the adapter — the parser refuses an answer outside
+    // `gResProcEVe` 1..15 (§25.5) — and the mapping is total anyway: an answer
+    // that names no event resolved nothing, and inventing an outcome for it
+    // would report a fate the service never stated.
+    return rangeVoidResult(args, { outcome: "CONFIGURATION_ERROR" });
+  }
+
+  return rangeVoidResult(args, {
+    outcome: rangeVoidOutcomeForEventStatus(event.dEstRes),
+    providerReference: event.dProtAut ?? null,
+    reasonCode: firstResultCode(event.gResProc),
+    reason: joinMessages(event.gResProc),
+  });
+}
+
+/**
+ * `dEstRes` -> the void vocabulary: an exhaustive `switch` over the validated
+ * union, so a fourth published status stops this file from compiling instead of
+ * falling through a default.
+ */
+function rangeVoidOutcomeForEventStatus(dEstRes: SifenEstadoResultado): FiscalRangeVoidOutcome {
+  switch (dEstRes) {
+    case "Aprobado":
+    case "Aprobado con observación":
+      return "VOIDED";
+    case "Rechazado":
+      return "REJECTED";
+  }
+}
+
+/**
+ * The event group's `dMsgRes` values, joined.
+ *
+ * The same `REASON_SEPARATOR` the reception uses, and an empty message is
+ * skipped rather than joined: §25.3 and §25.5 mark `dMsgRes` optional inside a
+ * group, and `null` is what an answer with no message at all reports.
+ */
+function joinMessages(groups: readonly SifenProcessingResultGroup[]): string | null {
+  const messages = groups
+    .map((group) => group.dMsgRes)
+    .filter((message): message is string => message !== undefined && message !== "");
+  return messages.length > 0 ? messages.join(REASON_SEPARATOR) : null;
+}
+
+/** The fields a range-void result may set; anything unset is `null`, never omitted. */
+interface RangeVoidResultFields {
+  readonly outcome: FiscalRangeVoidOutcome;
+  readonly providerReference?: string | null;
+  readonly reasonCode?: string | null;
+  readonly reason?: string | null;
+}
+
+/** One range-void result, constructed field by field, for the reason above. */
+function rangeVoidResult(
+  context: SifenOutcomeContext,
+  fields: RangeVoidResultFields
+): FiscalRangeVoidResult {
+  return {
+    outcome: fields.outcome,
+    providerReference: fields.providerReference ?? null,
+    reasonCode: fields.reasonCode ?? null,
+    reason: fields.reason ?? null,
+    retryAfterMs: null,
+    providerRequest: context.providerRequest,
+    providerResponse: context.providerResponse,
+    resolvedAt: context.resolvedAt,
+  };
 }
 
 /**

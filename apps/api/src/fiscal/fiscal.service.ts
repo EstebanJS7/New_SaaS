@@ -2,13 +2,23 @@ import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
 import {
+  buildEventGroupXml,
+  DteEventValidationError,
+  FISCAL_CREDENTIAL_PORT,
   FISCAL_PROVIDER,
   FISCAL_PROVIDER_VALUES,
+  signEventXml,
   type FiscalCancelResult,
+  type FiscalCredentialPort,
+  type FiscalIssueDocument,
   type FiscalProviderId,
   type FiscalProviderPort,
+  type FiscalSigningEnvironment,
+  type FiscalTransportCredential,
 } from "@newsaas/fiscal";
 import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.js";
+import { runWithinDeadline } from "./fiscal.deadline.js";
+import { scrubProviderText } from "./fiscal.provider-text.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
@@ -48,6 +58,70 @@ export const FISCAL_PROVIDER_UNRECOGNISED_MESSAGE = "The stored fiscal provider 
 export const FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION =
   "fiscal.document.cancellation_requested";
 export const FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION = "fiscal.document.cancellation_failed";
+
+/**
+ * The DNIT environment the API reads the tenant's signing material for.
+ *
+ * ADR-008 §3: the credential for the other environment is never substituted, so
+ * this must be the same value the provider module resolved for the adapter it
+ * built. `fiscal.module.ts` provides the token from the package's own resolver;
+ * the service only consumes it.
+ */
+export const FISCAL_SIGNING_ENVIRONMENT = Symbol("FISCAL_SIGNING_ENVIRONMENT");
+
+/** `rEve/@Id` for a lot of one: its ordinal, the strategy FISC-016 pinned (§25.7). */
+export const FISCAL_CANCELLATION_EVENT_ID = "1" as const;
+
+/**
+ * `fecHhmmss` — `AAAA-MM-DDThh:mm:ss`, **local**, with no timezone suffix and no
+ * fractional seconds, the same type `dFeEmiDE` uses (§25.6).
+ *
+ * The local accessors are the point: a `toISOString()` `Z` or an emitted UTC
+ * offset would fail the builder's own `INVALID_TIMESTAMP` rule. The instant is
+ * the caller's (`new Date()` at the call site) and the components read are the
+ * server's, which is the same reading `dFeEmiDE` gets; this function only
+ * renders it and never reads a clock.
+ */
+export function formatFiscalTimestamp(now: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  const date = `${String(now.getFullYear()).padStart(4, "0")}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  return `${date}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+/**
+ * Builds and signs the cancellation event the SIFEN_DIRECT provider submits.
+ *
+ * The composition is FISC-016 WU-C's hand-off: `buildEventGroupXml` renders the
+ * `gGroupGesEve` the facade's envelope will carry, `signEventXml` applies the
+ * DE's XMLDSig profile to each event, and the provider receives the signed group
+ * verbatim as `document.signedXml` (ADR-009 applied to cancel). The event's
+ * `@Id` is `1` — a lot of one — and `dFecFirma` comes from the caller's clock.
+ *
+ * The private key is RESTRICTED material: it enters `signEventXml` and nothing
+ * here logs, returns or persists it.
+ */
+export function buildCancellationEventDocument(args: {
+  readonly cdc: string;
+  readonly reason: string;
+  readonly now: Date;
+  readonly credential: FiscalTransportCredential;
+}): FiscalIssueDocument {
+  return {
+    cdc: args.cdc,
+    signedXml: signEventXml({
+      xml: buildEventGroupXml([
+        {
+          id: FISCAL_CANCELLATION_EVENT_ID,
+          dFecFirma: formatFiscalTimestamp(args.now),
+          payload: { kind: "cancellation", cdc: args.cdc, reason: args.reason },
+        },
+      ]),
+      privateKeyPem: args.credential.privateKeyPem,
+      certificatePem: args.credential.certificatePem,
+    }),
+  };
+}
+
 /** Deadline for one synchronous provider cancel call. */
 export const FISCAL_CANCEL_TIMEOUT_MS = 10_000;
 export const FISCAL_CANCEL_TIMEOUT_REASON_CODE = "FISCAL_CANCEL_TIMEOUT";
@@ -68,38 +142,27 @@ export interface FiscalCancellationWrite {
  * request: past the deadline the call is abandoned and reported as a retryable
  * `TRANSIENT_FAILURE`, which the shared {@link mapFiscalCancelOutcome} mapping
  * already persists as `last_error_*` with NO status change and a
- * `fiscal.document.cancellation_failed` audit row. The timer is always cleared,
- * so a fast provider leaves no pending handle behind.
+ * `fiscal.document.cancellation_failed` audit row. The mechanism itself is
+ * `runWithinDeadline`'s, shared with the range void (FISC-016 WU-D) so the two
+ * commands cannot drift; this function is this command's naming of it.
  */
 export async function cancelWithinDeadline(
   call: (signal: AbortSignal) => Promise<FiscalCancelResult>,
   deadlineMs: number
 ): Promise<FiscalCancelResult> {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<FiscalCancelResult>((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      resolve({
-        outcome: "TRANSIENT_FAILURE",
-        reasonCode: FISCAL_CANCEL_TIMEOUT_REASON_CODE,
-        reason: FISCAL_CANCEL_TIMEOUT_REASON,
-        retryAfterMs: deadlineMs,
-        providerRequest: null,
-        providerResponse: null,
-        resolvedAt: new Date().toISOString(),
-      });
-    }, deadlineMs);
+  return runWithinDeadline({
+    call,
+    deadlineMs,
+    onTimeout: () => ({
+      outcome: "TRANSIENT_FAILURE",
+      reasonCode: FISCAL_CANCEL_TIMEOUT_REASON_CODE,
+      reason: FISCAL_CANCEL_TIMEOUT_REASON,
+      retryAfterMs: deadlineMs,
+      providerRequest: null,
+      providerResponse: null,
+      resolvedAt: new Date().toISOString(),
+    }),
   });
-  try {
-    return await Promise.race([call(controller.signal), deadline]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-function scrub(value: string | null): string | null {
-  return value === null ? null : value.replace(/[\r\n\t]+/g, " ").slice(0, 500);
 }
 
 export function mapFiscalCancelOutcome(
@@ -122,8 +185,8 @@ export function mapFiscalCancelOutcome(
       accepted: true,
     };
   return {
-    lastErrorCode: scrub(result.reasonCode),
-    lastErrorMessage: scrub(result.reason),
+    lastErrorCode: scrubProviderText(result.reasonCode),
+    lastErrorMessage: scrubProviderText(result.reason),
     accepted: false,
   };
 }
@@ -158,7 +221,10 @@ export class FiscalService {
     private readonly permissionResolver: PermissionResolver,
     private readonly audit: AuditWriter,
     @Inject(FISCAL_PROVIDER) private readonly provider: FiscalProviderPort,
-    @Inject(FISCAL_SUBMISSION_PRODUCER) private readonly producer: FiscalSubmissionProducer
+    @Inject(FISCAL_SUBMISSION_PRODUCER) private readonly producer: FiscalSubmissionProducer,
+    @Inject(FISCAL_CREDENTIAL_PORT) private readonly credentialPort: FiscalCredentialPort,
+    @Inject(FISCAL_SIGNING_ENVIRONMENT)
+    private readonly signingEnvironment: FiscalSigningEnvironment
   ) {}
 
   /**
@@ -205,6 +271,9 @@ export class FiscalService {
     if (observed.status === "CANCELLED") return toResponse(observed);
     if (observed.status === "SENDING")
       throw new DomainError("CONFLICT", FISCAL_DOCUMENT_CANCEL_SENDING_MESSAGE);
+    // ADR-009 applied to cancel: a provider that requires a signed document is
+    // handed the caller's built-and-signed event; one that does not gets `null`.
+    const document = await this.cancellationDocument(observed, reason);
     // Phase B — provider call, OUTSIDE any transaction, bounded by a deadline.
     const result = await cancelWithinDeadline(
       (signal) =>
@@ -215,6 +284,7 @@ export class FiscalService {
           reason,
           externalId: observed.externalId,
           cdc: observed.cdc,
+          document,
           signal,
         }),
       FISCAL_CANCEL_TIMEOUT_MS
@@ -249,11 +319,53 @@ export class FiscalService {
     if (!applied.accepted)
       throw new DomainError(
         "CONFLICT",
-        scrub(result.reason) ?? FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE
+        scrubProviderText(result.reason) ?? FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE
       );
     if (!applied.updated)
       throw new DomainError("INTERNAL", FISCAL_DOCUMENT_CANCEL_CONFLICT_MESSAGE);
     return toResponse(applied.updated);
+  }
+
+  /**
+   * The document the provider is handed, or `null` when it requires none.
+   *
+   * Three things make this `null` rather than a refusal: the provider's own
+   * `requiresSignedDocument` answer (ADR-009's flag — the fake answers `false`),
+   * a row with no CDC to cancel, and a tenant with no active signing material
+   * for the deployment's environment. The first is the contract; the other two
+   * are states in which no honest event can be built, and a requiring provider
+   * answers `CONFIGURATION_ERROR` for a `null` document and never submits — the
+   * refusal stays in the one place that can phrase it for the provider it is.
+   *
+   * A reason the event's `mOtEve` cannot carry is a client-input problem, so the
+   * builder's typed refusal becomes a 400 (`VALIDATION_FAILED`) before any
+   * provider call instead of an internal fault.
+   */
+  private async cancellationDocument(
+    observed: FiscalDocumentRow,
+    reason: string
+  ): Promise<FiscalIssueDocument | null> {
+    if (!this.provider.requiresSignedDocument) return null;
+    if (observed.cdc === null) return null;
+    const credential = await this.credentialPort.read({
+      tenantId: observed.tenantId,
+      environment: this.signingEnvironment,
+    });
+    if (credential === null) return null;
+
+    try {
+      return buildCancellationEventDocument({
+        cdc: observed.cdc,
+        reason,
+        now: new Date(),
+        credential,
+      });
+    } catch (error) {
+      if (error instanceof DteEventValidationError) {
+        throw new DomainError("VALIDATION_FAILED", error.message);
+      }
+      throw error;
+    }
   }
 
   private toProviderId(value: string): FiscalProviderId {

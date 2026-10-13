@@ -154,7 +154,7 @@ export interface SifenServiceFacade {
   receiveEvent(args: {
     readonly tenantId: string;
     readonly dId: string;
-    readonly eventXml: string;
+    readonly eventGroupXml: string;
   }): Promise<SifenEventReceptionResponse>;
 }
 
@@ -279,11 +279,11 @@ export function createSifenServiceFacade(
         parse: parseRucQueryResponse,
       }),
 
-    receiveEvent: ({ tenantId, dId, eventXml }) =>
+    receiveEvent: ({ tenantId, dId, eventGroupXml }) =>
       call({
         tenantId,
         path: SIFEN_SERVICE_PATHS.receiveEvent,
-        serialize: () => serializeEventReception({ dId, eventXml }),
+        serialize: () => serializeEventReception({ dId, eventGroupXml }),
         parse: parseEventReceptionResponse,
       }),
   };

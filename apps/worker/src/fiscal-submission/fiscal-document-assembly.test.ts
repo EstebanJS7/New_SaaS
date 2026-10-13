@@ -333,7 +333,14 @@ function built(result: FiscalDocumentBuildOutcome): {
   if (result.outcome !== "BUILT") {
     throw new Error(`expected BUILT, received ${result.outcome}`);
   }
-  return result.document;
+  // `FiscalIssueDocument.cdc` is nullable since FISC-016: a range void has no
+  // document identity to report, and the port says so instead of inventing one.
+  // A BUILT document always carries its CDC, so this is the assertion that the
+  // widening did not turn into a silent hole here.
+  if (result.document.cdc === null) {
+    throw new Error("a BUILT document always carries its CDC");
+  }
+  return { cdc: result.document.cdc, signedXml: result.document.signedXml };
 }
 
 /** Asserts one named refusal, and that no secret travels inside it. */

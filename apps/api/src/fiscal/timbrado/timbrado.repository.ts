@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
+import type { FiscalRangeVoidOutcome } from "@newsaas/fiscal";
 import { RequestContextService } from "../../context/request-context.service.js";
 import type { AuditAppendTx } from "../../audit/audit-writer.service.js";
 
@@ -83,9 +84,59 @@ export interface TimbradoRangeRow {
   validityStart: Date;
   nextNumber: number;
   seriesStartedAt: Date | null;
-  status: "ACTIVE" | "EXHAUSTED" | "RETIRED";
+  /**
+   * `VOIDING` is the claim: an in-flight void holds the range, and no allocation
+   * may draw from it (`findCurrentRange` selects `ACTIVE`).
+   */
+  status: "ACTIVE" | "VOIDING" | "EXHAUSTED" | "RETIRED";
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * The claim's own states, as the record's enum declares them: `PENDING` is the
+ * written claim, `IN_FLIGHT` the claim whose submission is being awaited.
+ */
+export type FiscalRangeVoidClaimState = "PENDING" | "IN_FLIGHT";
+
+/**
+ * One row of `fiscal_range_void`, in the shape this boundary reads and writes.
+ *
+ * The record is written `PENDING` and enters `IN_FLIGHT` in the claim's own
+ * transaction, before any provider call; those two are claim states, and never
+ * the outcome of a settled row.
+ */
+export interface FiscalRangeVoidWriteRow {
+  id: string;
+  tenantId: string;
+  rangeId: string;
+  fromNumber: number;
+  toNumber: number;
+  reason: string;
+  outcome: FiscalRangeVoidOutcome | FiscalRangeVoidClaimState;
+  /** The claim's identity: the adoption bumps it and the settlement CASes on it. */
+  attempt: number;
+  /** The in-flight claim's lease; `null` on a record that never entered flight. */
+  claimedAt: Date | null;
+  reasonCode: string | null;
+  providerReason: string | null;
+  providerReference: string | null;
+  rangeStatus: TimbradoRangeRow["status"];
+  createdAt: Date;
+}
+
+/** What one void attempt records; the caller has already made every decision. */
+export type RecordRangeVoidInput = Omit<FiscalRangeVoidWriteRow, "id" | "tenantId" | "createdAt">;
+
+/** The provider's answer as the settlement closes the claim with it. */
+export interface SettleRangeVoidInput {
+  readonly id: string;
+  readonly attempt: number;
+  readonly outcome: FiscalRangeVoidOutcome;
+  readonly reasonCode: string | null;
+  readonly providerReason: string | null;
+  readonly providerReference: string | null;
+  readonly rangeStatus: "ACTIVE" | "RETIRED";
 }
 
 /**
@@ -132,8 +183,37 @@ export interface FiscalProfileDelegate {
     findFirst(args: { where: { tenantId: string; id: string } }): Promise<TimbradoRangeRow | null>;
     create(args: { data: Record<string, unknown> }): Promise<TimbradoRangeRow>;
     updateMany(args: {
-      where: { id: string; tenantId: string; status: "ACTIVE" };
-      data: { status: "RETIRED" };
+      where: {
+        id: string;
+        tenantId: string;
+        status: TimbradoRangeRow["status"];
+        nextNumber?: number;
+        voids?: { some: { outcome: FiscalRangeVoidClaimState; attempt: number } };
+      };
+      data: { status: TimbradoRangeRow["status"] };
+    }): Promise<{ count: number }>;
+  };
+  /**
+   * The void's own record. The claim inserts it `PENDING` and flips it
+   * `IN_FLIGHT` before the provider is asked, the settlement closes it exactly
+   * once; this structural declaration is what lets a fake satisfy it in a unit
+   * test.
+   */
+  fiscalRangeVoid: {
+    create(args: { data: Record<string, unknown> }): Promise<FiscalRangeVoidWriteRow>;
+    findFirst(args: {
+      where: { tenantId: string; rangeId: string; outcome: FiscalRangeVoidClaimState };
+      orderBy: { createdAt: "desc" };
+    }): Promise<FiscalRangeVoidWriteRow | null>;
+    updateMany(args: {
+      where: {
+        id: string;
+        tenantId: string;
+        outcome: FiscalRangeVoidClaimState;
+        attempt?: number;
+        claimedAt?: { lte: Date };
+      };
+      data: Record<string, unknown>;
     }): Promise<{ count: number }>;
   };
 }
@@ -143,6 +223,7 @@ export interface FiscalProfileTx {
   fiscalEmitterActivity: FiscalProfileDelegate["fiscalEmitterActivity"];
   fiscalEstablishment: FiscalProfileDelegate["fiscalEstablishment"];
   fiscalTimbradoRange: FiscalProfileDelegate["fiscalTimbradoRange"];
+  fiscalRangeVoid: FiscalProfileDelegate["fiscalRangeVoid"];
 }
 
 export type FiscalProfileWriteTx = FiscalProfileTx & {
@@ -239,6 +320,159 @@ export class FiscalProfileRepository {
     const result = await tx.fiscalTimbradoRange.updateMany({
       where: { id, tenantId: this.context.requireTenantId(), status: "ACTIVE" },
       data: { status: "RETIRED" },
+    });
+    return result.count;
+  }
+
+  /**
+   * Claims the range for a void: `ACTIVE → VOIDING` only while the counter is
+   * still the one the caller observed. `0` means the range moved, was retired or
+   * is already claimed by another void — and the caller must not submit.
+   */
+  async claimRangeVoid(
+    id: string,
+    expectedNextNumber: number,
+    tx: FiscalProfileTx
+  ): Promise<number> {
+    const result = await tx.fiscalTimbradoRange.updateMany({
+      where: {
+        id,
+        tenantId: this.context.requireTenantId(),
+        status: "ACTIVE",
+        nextNumber: expectedNextNumber,
+      },
+      data: { status: "VOIDING" },
+    });
+    return result.count;
+  }
+
+  /**
+   * Adopts a STALE in-flight claim as a compare-and-swap on its lease and its
+   * attempt together: only a claim whose lease is at or before `staleBefore`
+   * matches, and winning refreshes the lease to `claimedAt`. `0` means the
+   * lease is live or a newer adoption moved the attempt, so the caller must not
+   * re-drive the submission. A live lease is the guard an observer cannot
+   * bypass: it is read and CASed in the same statement.
+   */
+  async adoptRangeVoid(
+    id: string,
+    expectedAttempt: number,
+    staleBefore: Date,
+    claimedAt: Date,
+    tx: FiscalProfileTx
+  ): Promise<number> {
+    const result = await tx.fiscalRangeVoid.updateMany({
+      where: {
+        id,
+        tenantId: this.context.requireTenantId(),
+        outcome: "IN_FLIGHT",
+        attempt: expectedAttempt,
+        claimedAt: { lte: staleBefore },
+      },
+      data: { attempt: { increment: 1 }, claimedAt },
+    });
+    return result.count;
+  }
+
+  /**
+   * Moves the claim the transaction just wrote from `PENDING` into `IN_FLIGHT`,
+   * stamping its lease. Called inside the claim's transaction, before any
+   * provider call, so a second arrival sees a claim in flight rather than a
+   * merely planned submission. `0` means the row was not the caller's.
+   */
+  async markRangeVoidInFlight(
+    id: string,
+    expectedAttempt: number,
+    claimedAt: Date,
+    tx: FiscalProfileTx
+  ): Promise<number> {
+    const result = await tx.fiscalRangeVoid.updateMany({
+      where: {
+        id,
+        tenantId: this.context.requireTenantId(),
+        outcome: "PENDING",
+        attempt: expectedAttempt,
+      },
+      data: { outcome: "IN_FLIGHT", claimedAt },
+    });
+    return result.count;
+  }
+
+  /**
+   * Settles a claimed range on the same counter and attempt: `VOIDING → RETIRED`
+   * when the provider accepted, `VOIDING → ACTIVE` when it refused. `0` means the
+   * claim is gone or a newer adoption replaced this attempt.
+   */
+  async settleRangeVoid(
+    id: string,
+    expectedNextNumber: number,
+    expectedAttempt: number,
+    status: "ACTIVE" | "RETIRED",
+    tx: FiscalProfileTx
+  ): Promise<number> {
+    const result = await tx.fiscalTimbradoRange.updateMany({
+      where: {
+        id,
+        tenantId: this.context.requireTenantId(),
+        status: "VOIDING",
+        nextNumber: expectedNextNumber,
+        // A stale attempt settles nothing: the claim's attempt is its identity.
+        voids: { some: { outcome: "IN_FLIGHT", attempt: expectedAttempt } },
+      },
+      data: { status },
+    });
+    return result.count;
+  }
+
+  /**
+   * Writes the claim's `PENDING` row inside the caller's transaction.
+   *
+   * The write precedes any provider call, so a crash after the service accepted
+   * still leaves the attempt durably recorded. The tenant is the resolved request
+   * context's, never a caller-supplied value, which is what makes a cross-tenant
+   * range id unrepresentable here.
+   */
+  async recordRangeVoid(
+    input: RecordRangeVoidInput,
+    tx: FiscalProfileTx
+  ): Promise<FiscalRangeVoidWriteRow> {
+    return tx.fiscalRangeVoid.create({
+      data: { ...input, tenantId: this.context.requireTenantId() },
+    });
+  }
+
+  /**
+   * The range's open claim, if any: the `IN_FLIGHT` record a fresh void adopts
+   * once the claim's lease is stale. `null` means the range and its record
+   * disagree, and the caller refuses by name rather than guessing.
+   */
+  async findOpenRangeVoid(rangeId: string): Promise<FiscalRangeVoidWriteRow | null> {
+    return this.prisma.fiscalRangeVoid.findFirst({
+      where: { tenantId: this.context.requireTenantId(), rangeId, outcome: "IN_FLIGHT" },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  /**
+   * Closes an `IN_FLIGHT` claim with the provider's answer. `0` means there was
+   * no claim in flight matching this attempt: the settlement is idempotent and
+   * cannot rewrite a settled record or a newer adoption's claim.
+   */
+  async settleRangeVoidRecord(input: SettleRangeVoidInput, tx: FiscalProfileTx): Promise<number> {
+    const result = await tx.fiscalRangeVoid.updateMany({
+      where: {
+        id: input.id,
+        tenantId: this.context.requireTenantId(),
+        outcome: "IN_FLIGHT",
+        attempt: input.attempt,
+      },
+      data: {
+        outcome: input.outcome,
+        reasonCode: input.reasonCode,
+        providerReason: input.providerReason,
+        providerReference: input.providerReference,
+        rangeStatus: input.rangeStatus,
+      },
     });
     return result.count;
   }

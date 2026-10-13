@@ -611,8 +611,9 @@ candidate 1 exists.
       fast path, the CDC as the survivor) and the failure partition — total,
       asserted member by member, with only the three "the request may never have
       arrived" failures retryable. **`cancel` fails closed** with
-      `CANCELLATION_EVENT_UNPROFILED`, which is [[FISC-016]]. **WU-E2 landed as
-      commit `9295769`** — 8 files, 521 insertions — and its review is
+      `CANCELLATION_EVENT_UNPROFILED` — retired by [[FISC-016]] WU-C, which
+      built the event and made `cancel` submit. **WU-E2 landed as commit
+      `9295769`** — 8 files, 521 insertions — and its review is
       `review-661aab129f50b6f9`: tier `medium`, one lens, **one CRITICAL
       finding** (`R3-SIFEN-PRODUCTION-DEFAULT`) that a read-only refuter
       **corroborated**: an absent `SIFEN_ENVIRONMENT` defaulted to `TEST` for
@@ -735,11 +736,24 @@ candidate 1 exists.
       QR-filled document **validates against the official XSDs**. Three stale
       `iTiOpe` lines were corrected (comment-only, verified against every
       branch). What is left for the story is FISC-013's homologation run.
-- [ ] T12 — **FISC-016: the cancellation event.** Created by FISC-012's own
-      implementation: SIFEN's cancellation is an event and `SIFEN-BASELINE.md`
-      §23.3 records that `Evento_v150.xsd`'s field-level rules were never
-      profiled, so the adapter answers `CANCELLATION_EVENT_UNPROFILED`. Its work
-      is the profiling, the payload, its signature and the answer's mapping.
+- [x] T12 — **FISC-016: the event family — closed 2026-10-12** (PR #115). Branch
+      `feat/epic-16-fisc-016-events`. **WU-A landed**: `SIFEN-BASELINE.md`
+      **§25** profiles the family from five retrieved artifacts (two of whose
+      byte sizes match §23.3's record exactly). It **corrects three
+      assumptions**: the event's type is the **element name** (`tdTiGDE` is a
+      dead catalogue), the event **reuses the DE's XMLDSig profile**, and the
+      clock is **local** (`tDateTimeUTC` is dead). And it records **two
+      findings**: the Guide's "Ajuste del Evento" **has no payload** (the schema
+      defines four receptor events, not five), and the response's **result codes
+      are not evidenced** (`tdEstRes` is free text, `tdCodRes` only fixes four
+      digits). **WU-B, WU-C, WU-D and WU-E all landed**: the document is built,
+      signed and XSD-proven; `cancel` submits; the inutilización has a real
+      surface with a claim/submit/settle protocol and an in-flight guard; and
+      the hand-off to FISC-013's matrix is recorded. **The story is `done`** —
+      six exit criteria met, gates green on the final tree (root
+      lint/typecheck/test 21-21/build/format, fiscal 708 with the XSD proof, api
+      1183, database 459, live-PostgreSQL 234-234), PR #115's three CI jobs
+      pass, and four review findings are recorded as [[TD-033]].
 
 ## Two lineages are NOT closed, and the second one is why the fixes rest on argument
 

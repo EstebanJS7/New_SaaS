@@ -27,6 +27,7 @@ import {
   type FiscalIssueOutcome,
   type FiscalIssueRequest,
   type FiscalProviderPort,
+  type FiscalRangeVoidRequest,
 } from "@newsaas/fiscal";
 import type { FiscalSubmissionJob } from "@newsaas/fiscal";
 import { createIsolationDatabase, type IsolationDatabase } from "./in-memory-database.js";
@@ -54,6 +55,16 @@ export interface ScriptableFiscalProvider extends FiscalProviderPort {
   scriptIssue(outcomes: readonly FiscalIssueOutcome[]): void;
   readonly cancelRequests: FiscalCancelRequest[];
   readonly issueRequests: FiscalIssueRequest[];
+  /**
+   * The range voids this double was asked for (FISC-016 WU-D).
+   *
+   * No `scriptVoidRange` hook accompanies it for the reason the query hook is
+   * absent too: no API-level test drives the void here — its refusals are the
+   * service's and its record is the live-PostgreSQL suite's — so a script
+   * nothing drives would be a surface to re-review the day its first caller
+   * lands. The forwarder exists because the port declares the capability.
+   */
+  readonly voidRangeRequests: FiscalRangeVoidRequest[];
 }
 
 export interface BootedTestApp {
@@ -112,12 +123,14 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
 
   const cancelRequests: FiscalCancelRequest[] = [];
   const issueRequests: FiscalIssueRequest[] = [];
+  const voidRangeRequests: FiscalRangeVoidRequest[] = [];
   let fakeProvider = createFakeFiscalProvider();
   const fiscalProvider: ScriptableFiscalProvider = {
     provider: "FAKE",
     requiresSignedDocument: false,
     cancelRequests,
     issueRequests,
+    voidRangeRequests,
     scriptCancel: (outcomes) => {
       fakeProvider = createFakeFiscalProvider({ cancelOutcomes: outcomes });
     },
@@ -138,6 +151,12 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     // given a `scriptQuery` hook here: a script nothing drives is a surface that
     // would only have to be re-reviewed when its first caller lands.
     query: (request) => fakeProvider.query(request),
+    // FISC-016 WU-D: the port gained the void capability, so this double
+    // forwards it exactly as it forwards the query above.
+    voidRange: (request) => {
+      voidRangeRequests.push(request);
+      return fakeProvider.voidRange(request);
+    },
   };
 
   const captured: string[] = [];

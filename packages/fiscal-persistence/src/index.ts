@@ -15,6 +15,20 @@ export type {
   TimbradoRangePrismaDelegate,
 } from "./timbrado-range.store.js";
 
+// FISC-016 WU-D: the range void's record. Append-only by construction — the
+// store inserts and reads, and the migration refuses an UPDATE or a DELETE — so
+// the API's business surface and the live-PostgreSQL proof share one
+// implementation of the statement and its tenant scope.
+export { createFiscalRangeVoidStore } from "./range-void.store.js";
+export type {
+  FiscalRangeVoidKey,
+  FiscalRangeVoidPrismaClient,
+  FiscalRangeVoidPrismaDelegate,
+  FiscalRangeVoidRow,
+  FiscalTimbradoRangeStatus,
+  RecordRangeVoidArgs,
+} from "./range-void.store.js";
+
 export { createFiscalProfileReader } from "./emitter-profile.read.js";
 export type {
   FiscalEmitterActivityRow,

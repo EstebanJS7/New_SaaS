@@ -362,21 +362,19 @@ export interface SifenRucQueryResponse {
 }
 
 /**
- * §23.3 — `rEnviEventoDe { dId, dEvReg { gGroupGesEve } }`.
+ * §23.3 / §25.1 — `rEnviEventoDe { dId, dEvReg { gGroupGesEve } }`.
  *
- * The **event document is embedded as a child element**, exactly as the DE is in
- * the synchronous reception. Which element that is: §23.3 records that
- * `siRecepEvento_v150.xsd` declares `gGroupGesEve` as `tgGroupGesEve`, defined in
- * `Evento_v150.xsd`, and that the three directions' wrapper schemas declare
- * `rGesEve` as `trGesEveEmi`/`trGesEveRecep`/`trGesEveSet`. `Evento_v150.xsd` is
- * retrieved but **not profiled** (§23.8 item 6), so this reader asserts the root
- * is `rGesEve` and does not profile what that element carries — building an
- * event's payload is the caller's, exactly as building a DE is.
+ * The **event group is embedded as a child element**, exactly as the DE is in
+ * the synchronous reception, and the element is `gGroupGesEve`: §25.1 profiled
+ * the family and §25.8 records the include chain, so the request's content model
+ * is the artifact's — `dEvReg` carries the group, the group carries up to
+ * fifteen `rGesEve`, and each of those carries its `rEve` and its required
+ * signature. The serializer asserts the group root before embedding it.
  */
 export interface SifenEventReceptionRequest {
   readonly dId: string;
-  /** The event document's XML, inserted verbatim; never escaped and never base64. */
-  readonly eventXml: string;
+  /** The `gGroupGesEve` element, inserted verbatim; never escaped and never base64. */
+  readonly eventGroupXml: string;
 }
 
 /** §23.3 — one `gResProcEVe` entry. */

@@ -17170,6 +17170,399 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     }, 30_000);
   });
 
+  /**
+   * EPIC-16 FISC-016 WU-D — the range void's application path and its record.
+   *
+   * The void is the one operation on a numbering range that leaves the tenant's
+   * database, so what this block proves is what the route and the migration
+   * enforce: a range that is not the caller's tenant is a `404` and writes
+   * nothing, an unentitled tenant is refused by the entitlement gate alone, and
+   * the record is append-only, tenant-agreement-checked and unable to contradict
+   * its own interval or the status its attempt left behind.
+   *
+   * **The provider is never reached, deliberately.** A `404` and the entitlement
+   * refusal both happen before any provider call, so this proof does not depend
+   * on which provider the environment selected.
+   */
+  describe("EPIC-16 FISC-016 WU-D range-void application-path isolation", () => {
+    let owningTenantId: string;
+    let owningCookie: string;
+    let otherTenantId: string;
+    let otherCookie: string;
+    let unentitledCookie: string;
+    let rangeId: string;
+
+    /** The implementation's own refusal, as the wire carries it. */
+    const RANGE_NOT_FOUND_MESSAGE = "The timbrado range was not found.";
+
+    beforeAll(async () => {
+      const provision = async (
+        slug: string,
+        email: string,
+        entitled: boolean
+      ): Promise<{ tenantId: string; cookie: string }> => {
+        const tenant = await prisma.tenant.create({ data: { slug, name: slug } });
+        const role = await prisma.role.findUnique({ where: { code: "OWNER" } });
+        if (!role) {
+          throw new Error("Reference seed did not create OWNER role");
+        }
+        const profile = await prisma.userProfile.create({
+          data: { email, displayName: email, status: "active" },
+        });
+        await prisma.tenantMembership.create({
+          data: {
+            tenantId: tenant.id,
+            userProfileId: profile.id,
+            roleId: role.id,
+            status: "ACTIVE",
+          },
+        });
+        if (entitled) {
+          // DEC-026: entitlement is a direct row, not a plan inference. The
+          // OWNER role already holds `fiscal.range.void` (the reference seed's
+          // matrix), so the unentitled tenant is refused by the ENTITLEMENT gate
+          // alone and never by a missing permission.
+          const feature = await prisma.featureCode.upsert({
+            where: { code: "fiscal" },
+            create: { code: "fiscal" },
+            update: {},
+          });
+          await prisma.tenantEntitlement.upsert({
+            where: {
+              tenantId_featureCodeId: { tenantId: tenant.id, featureCodeId: feature.id },
+            },
+            create: { tenantId: tenant.id, featureCodeId: feature.id },
+            update: {},
+          });
+        }
+        const session = await app.get(SessionService).issue(profile.id);
+        return { tenantId: tenant.id, cookie: `${STAFF_SESSION_COOKIE}=${session.token}` };
+      };
+
+      const owning = await provision(
+        `range-void-owning-${randomUUID().slice(0, 8)}`,
+        "range-void-owning@isolation.test",
+        true
+      );
+      owningTenantId = owning.tenantId;
+      owningCookie = owning.cookie;
+      const other = await provision(
+        `range-void-other-${randomUUID().slice(0, 8)}`,
+        "range-void-other@isolation.test",
+        true
+      );
+      otherTenantId = other.tenantId;
+      otherCookie = other.cookie;
+      unentitledCookie = (
+        await provision(
+          `range-void-unentitled-${randomUUID().slice(0, 8)}`,
+          "range-void-unentitled@isolation.test",
+          false
+        )
+      ).cookie;
+
+      // A committed establishment and range for the owning tenant: committed
+      // because the HTTP cases read them through the production path, which
+      // opens its own transaction. The tail is non-empty (`next_number` inside
+      // the authorised span), which is the only shape a void is allowed on.
+      const establishmentId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_establishment" (
+          "id", "tenant_id", "code", "address_line", "house_number",
+          "department_code", "city_code", "city_name", "phone", "email"
+        ) VALUES (
+          ${establishmentId}::uuid, ${owningTenantId}::uuid, '001', 'Av. Siempre Viva',
+          742, 1, 1, 'ASUNCION', '021123456', 'range-void@example.test'
+        )
+      `;
+      rangeId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_timbrado_range" (
+          "id", "tenant_id", "establishment_id", "expedition_point", "document_type",
+          "series", "timbrado_number", "range_from", "range_to",
+          "validity_start", "next_number", "status"
+        ) VALUES (
+          ${rangeId}::uuid, ${owningTenantId}::uuid, ${establishmentId}::uuid, '001', 1,
+          NULL, '12345678', 1, 999,
+          TIMESTAMPTZ '2019-09-01 00:00:00+00', 42, 'ACTIVE'::fiscal_timbrado_range_status
+        )
+      `;
+    }, 60_000);
+
+    it("answers 404 for another tenant's range and writes no record for it", async () => {
+      // The tenant-ownership rule: the read is scoped by the resolved tenant, so
+      // a foreign id cannot be distinguished from one that does not exist — and
+      // a `403` would confirm the row exists somewhere else.
+      const response = await supertest(app.getHttpServer())
+        .post(`/fiscal/timbrado-ranges/${rangeId}/void`)
+        .set("Cookie", otherCookie)
+        .send({ reason: "Stealing another tenant's range" })
+        .expect(404);
+
+      const body = response.body as { error: { code: string; message: string } };
+      expect(body.error.code).toBe("NOT_FOUND");
+      expect(body.error.message).toBe(RANGE_NOT_FOUND_MESSAGE);
+      expect(await prisma.fiscalRangeVoid.count({ where: { tenantId: otherTenantId } })).toBe(0);
+      expect(await prisma.fiscalRangeVoid.count({ where: { tenantId: owningTenantId } })).toBe(0);
+      // The owning tenant's range is untouched by the refused attempt.
+      const range = await prisma.fiscalTimbradoRange.findUnique({ where: { id: rangeId } });
+      expect(range?.status).toBe("ACTIVE");
+      expect(range?.nextNumber).toBe(42);
+    }, 30_000);
+
+    it("answers 404 for a range that does not exist in the caller's own tenant", async () => {
+      const response = await supertest(app.getHttpServer())
+        .post(`/fiscal/timbrado-ranges/${randomUUID()}/void`)
+        .set("Cookie", owningCookie)
+        .send({ reason: "A range that was never registered" })
+        .expect(404);
+
+      expect((response.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect(await prisma.fiscalRangeVoid.count({ where: { tenantId: owningTenantId } })).toBe(0);
+    }, 30_000);
+
+    it("refuses an unentitled tenant with 403 before the range is even read", async () => {
+      // The gate order: the `fiscal` entitlement, then `fiscal.range.void`. The
+      // OWNER role holds the permission, so this refusal is the entitlement's.
+      const response = await supertest(app.getHttpServer())
+        .post(`/fiscal/timbrado-ranges/${rangeId}/void`)
+        .set("Cookie", unentitledCookie)
+        .send({ reason: "An unentitled tenant asking to void" })
+        .expect(403);
+
+      expect((response.body as ErrorEnvelope).error.code).toBe("FEATURE_NOT_ENTITLED");
+    }, 30_000);
+
+    it("applies the void outcome enum exactly, in order", async () => {
+      const rows = await prisma.$queryRaw<{ enumlabel: string; enumsortorder: number }[]>`
+        SELECT e.enumlabel, e.enumsortorder
+          FROM pg_enum e
+          JOIN pg_type t ON t.oid = e.enumtypid
+         WHERE t.typname = 'fiscal_range_void_outcome'
+         ORDER BY e.enumsortorder
+      `;
+      const expected = [
+        "VOIDED",
+        "REJECTED",
+        "CONFIGURATION_ERROR",
+        "TRANSIENT_FAILURE",
+        "PENDING",
+        "IN_FLIGHT",
+      ];
+      expect(rows.map((row) => row.enumlabel)).toEqual(expected);
+      expect(rows.map((row) => row.enumsortorder)).toEqual(expected.map((_, index) => index + 1));
+    }, 30_000);
+
+    /**
+     * One attempt's record, at the migration's exact shape.
+     *
+     * The tenant is the argument because two cases need the two halves to
+     * disagree: an insert whose range belongs to someone else.
+     */
+    const insertRangeVoid = (
+      tx: Prisma.TransactionClient,
+      args: {
+        readonly tenantId: string;
+        readonly rangeId: string;
+        readonly fromNumber?: number;
+        readonly toNumber?: number;
+        readonly reason?: string;
+        readonly outcome?: string;
+        readonly rangeStatus?: string;
+        readonly claimedAt?: Date;
+      }
+    ) =>
+      tx.$executeRaw`
+        INSERT INTO "fiscal_range_void" (
+          "tenant_id", "range_id", "from_number", "to_number", "reason",
+          "outcome", "claimed_at", "reason_code", "provider_reason", "provider_reference", "range_status"
+        ) VALUES (
+          ${args.tenantId}::uuid, ${args.rangeId}::uuid,
+          ${args.fromNumber ?? 42}, ${args.toNumber ?? 999},
+          ${args.reason ?? "We stopped using this authorisation"},
+          ${args.outcome ?? "VOIDED"}::fiscal_range_void_outcome,
+          ${args.claimedAt ?? null}::timestamptz,
+          '0300', 'Evento aceptado', '1234567890',
+          ${args.rangeStatus ?? "RETIRED"}::fiscal_timbrado_range_status
+        )
+      `;
+
+    const inRolledBackTransaction = async (
+      work: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<void> => {
+      const sentinel = new Error("range-void-rollback");
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await work(tx);
+          throw sentinel;
+        })
+      ).rejects.toThrow(sentinel);
+    };
+
+    it("records an attempt whose range belongs to its own tenant, and refuses every edit afterwards", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        await expect(insertRangeVoid(tx, { tenantId: owningTenantId, rangeId })).resolves.toBe(1);
+        // Written once: the record of an operation that reached a provider is
+        // history, exactly like the fiscal number allocation.
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_range_void" SET "reason" = 'rewritten' WHERE "range_id" = ${rangeId}::uuid`
+        ).rejects.toThrow(/written once and cannot be updated/);
+      });
+    }, 30_000);
+
+    it("refuses to delete the record, because the operation happened", async () => {
+      await inRolledBackTransaction(async (tx) => {
+        await insertRangeVoid(tx, { tenantId: owningTenantId, rangeId });
+        await expect(
+          tx.$executeRaw`DELETE FROM "fiscal_range_void" WHERE "range_id" = ${rangeId}::uuid`
+        ).rejects.toThrow(/cannot be deleted; the operation happened/);
+      });
+    }, 30_000);
+
+    it("admits exactly one settlement of an IN_FLIGHT claim, then freezes the row", async () => {
+      const claimedAt = new Date("2026-10-11T12:00:00.000Z");
+      await inRolledBackTransaction(async (tx) => {
+        await insertRangeVoid(tx, {
+          tenantId: owningTenantId,
+          rangeId,
+          outcome: "IN_FLIGHT",
+          rangeStatus: "VOIDING",
+          claimedAt,
+        });
+        // The stale-lease adoption's CAS bumps the attempt and refreshes the
+        // lease while the claim stays in flight...
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_range_void" SET "attempt" = "attempt" + 1, "claimed_at" = "claimed_at" + INTERVAL '2 minutes' WHERE "range_id" = ${rangeId}::uuid`
+        ).resolves.toBe(1);
+        // The settlement, as the repository's relation filter runs it, carries
+        // the attempt: after the adoption bumped it, the old attempt settles
+        // nothing. The same predicate in SQL settles the range for the new
+        // attempt alone.
+        await expect(
+          tx.fiscalTimbradoRange.updateMany({
+            where: {
+              id: rangeId,
+              tenantId: owningTenantId,
+              voids: { some: { outcome: "IN_FLIGHT", attempt: 1 } },
+            },
+            data: { status: "RETIRED" },
+          })
+        ).resolves.toMatchObject({ count: 0 });
+        const settleRange = (attempt: number) =>
+          tx.$executeRaw`UPDATE "fiscal_timbrado_range" SET "status" = 'RETIRED'
+            WHERE "id" = ${rangeId}::uuid AND EXISTS (SELECT 1 FROM "fiscal_range_void"
+              WHERE "range_id" = ${rangeId}::uuid AND "outcome" = 'IN_FLIGHT' AND "attempt" = ${attempt})`;
+        await expect(settleRange(1)).resolves.toBe(0);
+        await expect(settleRange(2)).resolves.toBe(1);
+        // The settlement closes the claim...
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_range_void" SET "outcome" = 'VOIDED'::fiscal_range_void_outcome, "range_status" = 'RETIRED'::fiscal_timbrado_range_status WHERE "range_id" = ${rangeId}::uuid`
+        ).resolves.toBe(1);
+        // ...and after that the row is history again.
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_range_void" SET "reason" = 'again' WHERE "range_id" = ${rangeId}::uuid`
+        ).rejects.toThrow(/written once and cannot be updated/);
+      });
+    }, 30_000);
+
+    it("refuses to adopt a claim with a live lease or without the next attempt", async () => {
+      // The trigger is the last line of the duplicate-submission guard: even a
+      // caller that ignored the application's CAS cannot flip the claim into
+      // another flight without a newer lease and the next attempt. One
+      // transaction per attempt, because a refused statement aborts its own.
+      const claimedAt = new Date("2026-10-11T12:00:00.000Z");
+      const seedClaim = (tx: Prisma.TransactionClient) =>
+        insertRangeVoid(tx, {
+          tenantId: owningTenantId,
+          rangeId,
+          outcome: "IN_FLIGHT",
+          rangeStatus: "VOIDING",
+          claimedAt,
+        });
+      const adopt = (tx: Prisma.TransactionClient, attempt: number, renew: boolean) =>
+        tx.$executeRaw`UPDATE "fiscal_range_void"
+          SET "attempt" = ${attempt},
+              "claimed_at" = CASE WHEN ${renew} THEN "claimed_at" + INTERVAL '2 minutes' ELSE "claimed_at" END
+          WHERE "range_id" = ${rangeId}::uuid`;
+
+      for (const [label, attempt, renew] of [
+        ["the attempt did not advance", 1, true],
+        ["the lease was not renewed", 2, false],
+      ] as const) {
+        await inRolledBackTransaction(async (tx) => {
+          await seedClaim(tx);
+          await expect(adopt(tx, attempt, renew), label).rejects.toThrow(
+            /written once and cannot be updated/
+          );
+        });
+      }
+
+      // The adoption that states both the next attempt and a newer lease passes.
+      await inRolledBackTransaction(async (tx) => {
+        await seedClaim(tx);
+        await expect(adopt(tx, 2, true)).resolves.toBe(1);
+      });
+    }, 30_000);
+
+    it("refuses a record whose range belongs to another tenant", async () => {
+      // The composite ownership FK the table cannot have — `fiscal_timbrado_range`
+      // carries no `(tenant_id, id)` key — is bought by the trigger instead, and
+      // this is the case that proves it is not merely decorative.
+      await inRolledBackTransaction(async (tx) => {
+        await expect(insertRangeVoid(tx, { tenantId: otherTenantId, rangeId })).rejects.toThrow(
+          /does not belong to tenant/
+        );
+      });
+    }, 30_000);
+
+    it("refuses a record that contradicts its interval or the status of an accepted void", async () => {
+      // A reversed interval is OURS to refuse (§25.7 asserts nothing), and the
+      // status CHECK is what keeps an accepted void from sitting beside a range
+      // that stayed usable.
+      const cases = [
+        [
+          "a reversed interval",
+          { fromNumber: 999, toNumber: 42 },
+          /fiscal_range_void_interval_ordered/,
+        ],
+        [
+          "an accepted void that left the range ACTIVE",
+          { outcome: "VOIDED", rangeStatus: "ACTIVE" },
+          /fiscal_range_void_voided_left_the_range_unusable/,
+        ],
+        ["a reason outside mOtEve's domain", { reason: "no" }, /fiscal_range_void_reason_tmotEve/],
+      ] as const;
+
+      for (const [label, overrides, expected] of cases) {
+        await inRolledBackTransaction(async (tx) => {
+          let failure: unknown;
+          try {
+            await insertRangeVoid(tx, { tenantId: owningTenantId, rangeId, ...overrides });
+          } catch (error) {
+            failure = error;
+          }
+          expect(failure, label).toBeDefined();
+          expect(String(failure), label).toMatch(expected);
+        });
+      }
+    }, 60_000);
+
+    it("admits a refused attempt that leaves the range ACTIVE", async () => {
+      // The other side of the implication: a refusal is a real record and the
+      // range keeps whatever status it had.
+      await inRolledBackTransaction(async (tx) => {
+        await expect(
+          insertRangeVoid(tx, {
+            tenantId: owningTenantId,
+            rangeId,
+            outcome: "TRANSIENT_FAILURE",
+            rangeStatus: "ACTIVE",
+          })
+        ).resolves.toBe(1);
+      });
+    }, 30_000);
+  });
+
   describe("EPIC-16 FISC-015 fiscal identity", () => {
     /**
      * The applied database is where a hand-written migration is actually proved:

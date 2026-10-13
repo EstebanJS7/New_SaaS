@@ -16,6 +16,7 @@ import {
   defaultDteSchemaDirectory,
   DTE_XSD_ARTIFACTS,
   DTE_XSD_ENTRY_ARTIFACT,
+  DTE_XSD_PREPARED_ARTIFACTS,
   inspectDteSchemas,
 } from "./xsd-artifacts.js";
 import { SIFEN_TEST_EMITTER_NAME } from "./dte.types.js";
@@ -63,14 +64,17 @@ const skipReason = `[SKIPPED: official schemas absent from ${schemaDirectory}; r
 describe.skipIf(skipped)(
   `DE XML validates against the official DNIT XSD${skipped ? ` ${skipReason}` : ""}`,
   () => {
-    it("has a prepared directory holding all seven official artifacts", () => {
+    it("has a prepared directory holding the DE's seven artifacts and the event chain's four", () => {
       expect({
         usable: inspection.usable,
         missing: inspection.missing,
         tooSmall: inspection.tooSmall,
         unrewrittenIncludes: inspection.unrewrittenIncludes,
       }).toEqual({ usable: true, missing: [], tooSmall: [], unrewrittenIncludes: [] });
+      // The seven the DE needs are unchanged; one preparation now produces the
+      // union, so the same directory also serves FISC-016's event lots.
       expect(DTE_XSD_ARTIFACTS).toHaveLength(7);
+      expect(DTE_XSD_PREPARED_ARTIFACTS).toHaveLength(11);
     });
 
     it("accepts the document the builder emits once the signature is structurally complete", async () => {
