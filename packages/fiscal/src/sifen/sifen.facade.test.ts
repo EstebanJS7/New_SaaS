@@ -191,6 +191,40 @@ function failingTransport(error: Error): Mock<typeof sendSifenRequest> {
   });
 }
 
+/** The transport's own `ABORTED` sentence, so the double speaks the real vocabulary. */
+const ABORTED_MESSAGE = "The request to SIFEN was aborted.";
+
+/**
+ * A transport that behaves like the real one on the abort paths, and never
+ * settles otherwise: an already-aborted signal fails before the hand-over, and a
+ * signal that fires while the call is open fails it then (`sifen.transport.ts`
+ * owns those statements; this suite only needs the shape). A facade that failed
+ * to forward the caller's signal leaves this promise pending — which is exactly
+ * the hole the tests below exist to catch.
+ */
+function abortObservingTransport(): Mock<typeof sendSifenRequest> {
+  return vi.fn((args: SendSifenRequestArgs): Promise<SifenTransportResponse> => {
+    if (args.signal?.aborted === true) {
+      return Promise.reject(new SifenTransportError("ABORTED", ABORTED_MESSAGE));
+    }
+    return new Promise<SifenTransportResponse>((_resolve, reject) => {
+      args.signal?.addEventListener("abort", () => {
+        reject(new SifenTransportError("ABORTED", ABORTED_MESSAGE));
+      });
+    });
+  });
+}
+
+/**
+ * One macrotask, so the facade's credential read has settled and its call is at
+ * the transport — which is what makes an abort fired after this mid-flight.
+ */
+function onceThroughTheFacade(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 /**
  * The credential port, in line: a `vi.fn` that answers the given credentials in
  * order, repeating the last one.
@@ -275,7 +309,7 @@ interface FacadeCase {
   readonly requestElement: string;
   readonly body: string;
   readonly expected: unknown;
-  readonly invoke: (facade: SifenServiceFacade) => Promise<unknown>;
+  readonly invoke: (facade: SifenServiceFacade, signal?: AbortSignal) => Promise<unknown>;
 }
 
 const FACADE_CASES: readonly FacadeCase[] = [
@@ -293,7 +327,8 @@ const FACADE_CASES: readonly FacadeCase[] = [
         gResProc: [{ dCodRes: "0300", dMsgRes: "RUC del receptor inactivo" }],
       },
     },
-    invoke: (facade) => facade.receiveDe({ tenantId: TENANT_A, dId: D_ID, signedDteXml: DE_XML }),
+    invoke: (facade, signal) =>
+      facade.receiveDe({ tenantId: TENANT_A, dId: D_ID, signedDteXml: DE_XML, signal }),
   },
   {
     name: "receiveBatch",
@@ -307,8 +342,8 @@ const FACADE_CASES: readonly FacadeCase[] = [
       dProtConsLote: BATCH_NUMBER,
       dTpoProces: "1",
     },
-    invoke: (facade) =>
-      facade.receiveBatch({ tenantId: TENANT_A, dId: D_ID, deXmls: [DE_XML, DE_XML] }),
+    invoke: (facade, signal) =>
+      facade.receiveBatch({ tenantId: TENANT_A, dId: D_ID, deXmls: [DE_XML, DE_XML], signal }),
   },
   {
     name: "queryBatch",
@@ -328,8 +363,8 @@ const FACADE_CASES: readonly FacadeCase[] = [
         },
       ],
     },
-    invoke: (facade) =>
-      facade.queryBatch({ tenantId: TENANT_A, dId: D_ID, dProtConsLote: BATCH_NUMBER }),
+    invoke: (facade, signal) =>
+      facade.queryBatch({ tenantId: TENANT_A, dId: D_ID, dProtConsLote: BATCH_NUMBER, signal }),
   },
   {
     name: "queryDe",
@@ -342,7 +377,8 @@ const FACADE_CASES: readonly FacadeCase[] = [
       dMsgRes: "CDC encontrado",
       xContenDE: { deXml: DE_ELEMENT, dProtAut: undefined, wrappedInContainer: false },
     },
-    invoke: (facade) => facade.queryDe({ tenantId: TENANT_A, dId: D_ID, dCDC: CDC }),
+    invoke: (facade, signal) =>
+      facade.queryDe({ tenantId: TENANT_A, dId: D_ID, dCDC: CDC, signal }),
   },
   {
     name: "queryRuc",
@@ -360,7 +396,8 @@ const FACADE_CASES: readonly FacadeCase[] = [
         dRUCFactElec: "S",
       },
     },
-    invoke: (facade) => facade.queryRuc({ tenantId: TENANT_A, dId: D_ID, dRUCCons: RUC }),
+    invoke: (facade, signal) =>
+      facade.queryRuc({ tenantId: TENANT_A, dId: D_ID, dRUCCons: RUC, signal }),
   },
   {
     name: "receiveEvent",
@@ -378,8 +415,13 @@ const FACADE_CASES: readonly FacadeCase[] = [
         },
       ],
     },
-    invoke: (facade) =>
-      facade.receiveEvent({ tenantId: TENANT_A, dId: D_ID, eventGroupXml: EVENT_GROUP_XML }),
+    invoke: (facade, signal) =>
+      facade.receiveEvent({
+        tenantId: TENANT_A,
+        dId: D_ID,
+        eventGroupXml: EVENT_GROUP_XML,
+        signal,
+      }),
   },
 ];
 
@@ -577,5 +619,89 @@ describe("createSifenServiceFacade", () => {
     expect(args.timeoutMs).toBe(1234);
     expect(args.caPem).toBe(caPem);
     expect(args.signal).toBe(controller.signal);
+  });
+
+  it.each(FACADE_CASES)("$name forwards a per-call signal to the transport", async (row) => {
+    const transport = respondingTransport(row.body);
+    const facade = buildFacade({ transport });
+    const controller = new AbortController();
+
+    await row.invoke(facade, controller.signal);
+
+    // No construction-level signal is configured, so the caller's signal is the
+    // transport's, by reference: the facade forwards and does not wrap it.
+    expect(transportArgs(transport).signal).toBe(controller.signal);
+  });
+
+  it("aborts a call in flight when the caller's per-call signal fires", async () => {
+    const transport = abortObservingTransport();
+    const facade = buildFacade({ transport });
+    const controller = new AbortController();
+
+    const pending = facade.receiveDe({
+      tenantId: TENANT_A,
+      dId: D_ID,
+      signedDteXml: DE_XML,
+      signal: controller.signal,
+    });
+    await onceThroughTheFacade();
+    expect(transportArgs(transport).signal?.aborted, "the call is mid-flight").toBe(false);
+
+    controller.abort();
+
+    const error = await failureOf(pending);
+    expect(error).toBeInstanceOf(SifenTransportError);
+    expect((error as SifenTransportError).failure).toBe("ABORTED");
+    expect(transportArgs(transport).signal?.aborted).toBe(true);
+  });
+
+  it.each(["construction", "call"] as const)(
+    "aborts when only the %s signal fires while both are configured",
+    async (fired) => {
+      const transport = abortObservingTransport();
+      const construction = new AbortController();
+      const perCall = new AbortController();
+      const facade = buildFacade({ transport, signal: construction.signal });
+
+      const pending = facade.receiveDe({
+        tenantId: TENANT_A,
+        dId: D_ID,
+        signedDteXml: DE_XML,
+        signal: perCall.signal,
+      });
+      await onceThroughTheFacade();
+
+      if (fired === "construction") {
+        construction.abort();
+      } else {
+        perCall.abort();
+      }
+
+      const error = await failureOf(pending);
+      expect((error as SifenTransportError).failure).toBe("ABORTED");
+      expect(transportArgs(transport).signal?.aborted).toBe(true);
+      // Composition is one-way: neither signal aborts the other.
+      expect((fired === "construction" ? perCall : construction).signal.aborted).toBe(false);
+    }
+  );
+
+  it("fails an already-aborted per-call signal instead of hanging the call", async () => {
+    const transport = abortObservingTransport();
+    const facade = buildFacade({ transport });
+    const controller = new AbortController();
+    controller.abort();
+
+    const error = await failureOf(
+      facade.receiveDe({
+        tenantId: TENANT_A,
+        dId: D_ID,
+        signedDteXml: DE_XML,
+        signal: controller.signal,
+      })
+    );
+
+    expect(error).toBeInstanceOf(SifenTransportError);
+    expect((error as SifenTransportError).failure).toBe("ABORTED");
+    expect(transportArgs(transport).signal?.aborted).toBe(true);
   });
 });

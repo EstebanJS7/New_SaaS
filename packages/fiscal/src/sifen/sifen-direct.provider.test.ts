@@ -215,6 +215,40 @@ function failingTransport(error: Error): Mock<typeof sendSifenRequest> {
   });
 }
 
+/** The transport's own `ABORTED` sentence, so the double speaks the real vocabulary. */
+const ABORTED_MESSAGE = "The request to SIFEN was aborted.";
+
+/**
+ * A transport that behaves like the real one on the abort paths, and never
+ * settles otherwise: an already-aborted signal fails before the hand-over, and a
+ * signal that fires while the call is open fails it then (`sifen.transport.ts`
+ * owns those statements). A request whose signal the adapter dropped leaves this
+ * promise pending — which is the hole these tests exist to catch.
+ */
+function abortObservingTransport(): Mock<typeof sendSifenRequest> {
+  return vi.fn((args: SendSifenRequestArgs): Promise<SifenTransportResponse> => {
+    if (args.signal?.aborted === true) {
+      return Promise.reject(new SifenTransportError("ABORTED", ABORTED_MESSAGE));
+    }
+    return new Promise<SifenTransportResponse>((_resolve, reject) => {
+      args.signal?.addEventListener("abort", () => {
+        reject(new SifenTransportError("ABORTED", ABORTED_MESSAGE));
+      });
+    });
+  });
+}
+
+/**
+ * One macrotask, so the facade's credential read has settled and the adapter's
+ * call is at the transport — which is what makes an abort fired after this
+ * mid-flight.
+ */
+function onceThroughTheFacade(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 /**
  * The credential port, in line: a `vi.fn` that answers the given credentials in
  * order, repeating the last one.
@@ -295,7 +329,10 @@ function queryRequest(overrides: Partial<FiscalQueryRequest> = {}): FiscalQueryR
   };
 }
 
-function cancelRequest(document: FiscalIssueDocument | null): FiscalCancelRequest {
+function cancelRequest(
+  document: FiscalIssueDocument | null,
+  overrides: Partial<FiscalCancelRequest> = {}
+): FiscalCancelRequest {
   return {
     fiscalDocumentId: "document-1",
     tenantId: TENANT_A,
@@ -304,6 +341,7 @@ function cancelRequest(document: FiscalIssueDocument | null): FiscalCancelReques
     externalId: null,
     cdc: CDC,
     document,
+    ...overrides,
   };
 }
 
@@ -1090,5 +1128,85 @@ describe("voidRange", () => {
     expect(VOID_CASES.filter((outcome) => isRetryableOutcome(outcome))).toEqual([
       "TRANSIENT_FAILURE",
     ]);
+  });
+});
+
+/**
+ * The port's requests carry the caller's abort signal on `query`, `cancel` and
+ * `voidRange` (`FiscalIssueRequest` carries none), and the adapter must hand it
+ * to the facade so it reaches the transport. Without that, the abort the API's
+ * `runWithinDeadline` fires reaches nothing: the HTTP call keeps running past
+ * the deadline and the local state can disagree with SIFEN's.
+ */
+describe("the caller's abort signal", () => {
+  it.each([
+    {
+      name: "queryBatch",
+      body: BATCH_QUERY_CONCLUDED_BODY,
+      call: (provider: FiscalProviderPort, signal: AbortSignal) =>
+        provider.query(queryRequest({ providerReference: BATCH_NUMBER, signal })),
+    },
+    {
+      name: "queryDe",
+      body: CDC_QUERY_BODY,
+      call: (provider: FiscalProviderPort, signal: AbortSignal) =>
+        provider.query(queryRequest({ signal })),
+    },
+    {
+      name: "voidRange",
+      body: EVENT_APPROVED_BODY,
+      call: (provider: FiscalProviderPort, signal: AbortSignal) =>
+        provider.voidRange(voidRequest(SIGNED_RANGE_VOID_EVENT, { signal })),
+    },
+  ])("forwards $name's signal to the transport by reference", async (row) => {
+    const { provider, transport } = buildProvider({ body: row.body });
+    const controller = new AbortController();
+
+    await row.call(provider, controller.signal);
+
+    expect(transportArgs(transport).signal).toBe(controller.signal);
+  });
+
+  it("forwards cancel's signal to the transport by reference", async () => {
+    const { provider, transport } = buildProvider({ body: EVENT_APPROVED_BODY });
+    const controller = new AbortController();
+
+    await provider.cancel(cancelRequest(SIGNED_CANCELLATION_EVENT, { signal: controller.signal }));
+
+    expect(transportArgs(transport).signal).toBe(controller.signal);
+  });
+
+  it("fails a cancel in flight with TRANSIENT_FAILURE when the caller's signal fires", async () => {
+    const transport = abortObservingTransport();
+    const { provider } = buildProvider({ transport });
+    const controller = new AbortController();
+
+    const pending = provider.cancel(
+      cancelRequest(SIGNED_CANCELLATION_EVENT, { signal: controller.signal })
+    );
+    await onceThroughTheFacade();
+    expect(transportArgs(transport).signal?.aborted, "the call is mid-flight").toBe(false);
+
+    controller.abort();
+
+    const result = await pending;
+    expect(result.outcome).toBe("TRANSIENT_FAILURE");
+    expect(result.reasonCode).toBe("ABORTED");
+    expect(isRetryableOutcome(result.outcome)).toBe(true);
+  });
+
+  it("fails an already-aborted cancel signal instead of hanging the call", async () => {
+    const transport = abortObservingTransport();
+    const { provider } = buildProvider({ transport });
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await provider.cancel(
+      cancelRequest(SIGNED_CANCELLATION_EVENT, { signal: controller.signal })
+    );
+
+    expect(result.outcome).toBe("TRANSIENT_FAILURE");
+    expect(result.reasonCode).toBe("ABORTED");
+    expect(transportArgs(transport).signal?.aborted).toBe(true);
   });
 });
