@@ -471,6 +471,10 @@ is secret.
   v150, Notas técnicas, Recomendaciones - servicio asíncrono, Listado Checksum
   MD5, **Estructura xml_DE** and **Estructura_DE xsd**.
 
+**The procedure is `SIFEN-HOMOLOGATION-RUNBOOK.md`**: the habilitación's six
+steps, the requirements checklist, the test data's shape and the minimum matrix
+as a runnable checklist with this repository's capability per row.
+
 ## 16. Notas Técnicas
 
 **[R]** All three notes that amend v150 were retrieved in full. Each is dated
@@ -548,6 +552,10 @@ contingent.
 **Consequence:** [[EPIC-16]]'s FISC-013 cannot implement a contingency protocol
 from the baseline, because there is none to implement. It must either record the
 flag and treat the rules as pending DNIT, or be reframed.
+
+**Accepted 2026-10-13:** FISC-013 recorded the flag and implemented nothing.
+`SIFEN-HOMOLOGATION-RUNBOOK.md` §5.4 carries the decision and the sources' own
+framing; the story's WU-A is the unit that landed it.
 
 ## 19. Open questions
 
