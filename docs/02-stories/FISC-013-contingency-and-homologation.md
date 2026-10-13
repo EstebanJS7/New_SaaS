@@ -155,8 +155,14 @@ land fixes the list._
       are built and signed, the cancellation submits through the provider, and
       the inutilización has its own business surface. **The receptor's four
       payloads are still missing**, which is what five matrix rows need.
-- [ ] **WU-C — the KuDE.** The graphical representation, one per document type,
-      with the QR already pinned by §24. Blocked on nothing but its own work.
+- [ ] **WU-C — the KuDE.** Its profiling half **landed 2026-10-13**:
+      `SIFEN-BASELINE.md` §26 profiles the Manual's chapter 13 — the definition
+      and what a KuDE is not, the characteristics and the content rule, the
+      seven denominations with their pagination rules, the header/items/totals
+      field map a renderer starts from, the per-type layouts that exist only as
+      images, and what the chapter does not pin. **The renderer is still
+      pending**: one graphical representation per document type, with the QR
+      already pinned by §24 and built by `dte.qr.ts`.
 - [ ] **WU-D — the run and its evidence.** The actual test matrix against the
       test environment, recorded in `docs/10-qa/CI-EVIDENCE.md` with its outcome
       — including a negative or pending one. Blocked on the DNIT (the
@@ -204,5 +210,6 @@ units are pinned, and the four decisions carry their state. [[FISC-016]] closed
 the events (WU-B). **The run itself (WU-D) is blocked** on the DNIT's
 habilitación and test data set, and on the run blockers the runbook names — the
 CSC's registration surface, the batch composition, the two harnesses with no
-product surface, and the receptor events. WU-C, the KuDE, is unblocked and
-unstarted.
+product surface, and the receptor events. WU-C, the KuDE, is unblocked: its
+profiling half landed 2026-10-13 (`SIFEN-BASELINE.md` §26) and the renderer is
+next.

@@ -103,3 +103,45 @@ follow-up it is.
 
 The finding `R1-002` in its original, pre-void form was this hole on the
 cancellation path; the signal-forwarding half of it is now closed.
+
+## 5. A timed-out cancel leaves the document cancellable, and the fix has a wedge of its own
+
+`apps/api/src/fiscal/fiscal.service.ts` (the cancel mapping) and the lifecycle
+in `docs/05-modules/Fiscal.md`. Item 4 narrowed the abort window; this is what
+remains, and reading it again made it worse than the original entry said.
+
+**Today**: a cancel that ends in `TRANSIENT_FAILURE` — a deadline or a transport
+failure — persists `last_error_*` and **leaves the status unchanged**. So the
+document stays `APPROVED`, which means it is **still cancellable**: a second
+attempt is allowed, and the tax administration receives a second cancellation
+for the same document while the first one's fate is unknown. That is the
+duplicate-submission family again, in a surface that has no claim state to
+protect it.
+
+**The obvious fix is not enough on its own.** Moving the document to
+`CANCEL_PENDING` is the honest description of what happened — the lifecycle
+already means exactly that — but the transition guard has
+`APPROVED -> CANCEL_PENDING -> CANCELLED` and **no way back**, so a document
+parked there can never be cancelled again, and:
+
+- **there is no evidenced way to ask SIFEN about a cancellation's fate.** Every
+  `siRecepEvento*` artifact in the baseline is a _reception_ wrapper; no
+  retrieved source describes an event _query_. The signed v150 query family is
+  FISC-013's territory and the sources do not pin it.
+- the submission sweep walks `SUBMITTED` only, so nothing would pick a
+  `CANCEL_PENDING` row up.
+
+A state change without a way out is the wedge this epic already spent four
+review rounds fixing on the range void. **The fix therefore needs both halves,
+and they are one design**: the state change **and** a lease, so a
+`CANCEL_PENDING` document becomes cancellable again once the window has passed —
+the first attempt's fate stays unknown either way, and a second attempt after a
+window is legitimate rather than a race. The reconciliation (an event query, or
+an operator's release path) stays blocked on a protocol the sources do not
+evidence, and it is what would let a document leave `CANCEL_PENDING` without a
+second submission.
+
+**Why it is not done here**: it changes FISC-012's reviewed behaviour, it needs
+a column and a migration for the lease, and the alternative — a state with no
+exit — is worse than the status quo it replaces. It is a unit of its own, and it
+should be decided with the lease on the table rather than half-done.

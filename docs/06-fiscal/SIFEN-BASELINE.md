@@ -2365,9 +2365,11 @@ buildDteXml  ->  signDteXml  ->  buildQrContent  ->  fill the QR placeholder
    never a constant — and the `IdCSC` that names which one was used is part of
    the URL.
 2. **The `J002` field's placement in the KuDE.** §13.8.1 says the QR's _content_
-   goes in `J002` of the DE file and that the image is printed on the KuDE; the
-   KuDE as a printable layout is out of [[EPIC-16]]'s scope, so only the content
-   is built here.
+   goes in `J002` of the DE file and that the image is printed on the KuDE. The
+   KuDE as a printable layout was out of [[EPIC-16]]'s scope when this section
+   was written; **§26 profiles it (2026-10-13)**, because [[FISC-013]]'s test
+   matrix requires one KuDE per document type. Only the QR's content is built
+   here.
 3. **Whether SIFEN validates the QR's hash.** The schema requires `dCarQR` with
    a length of 100–600 characters ([[FISC-008]]'s rules), and the composition
    above is the Manual's; only a live service can confirm that a wrong hash is
@@ -2610,3 +2612,372 @@ has to be able to read back.
 **Only `VOIDED` retires the range.** A refusal never flips it: `RETIRED` has no
 way back, so losing an authorisation to a failed submission would be worse than
 the refusal that reported it. The record says which of the two happened.
+
+## 26. The KuDE, profiled from chapter 13 (retrieved 2026-10-13)
+
+**[R]** Chapter **13 — Gráfica (KUDE)** of the Manual v150, pages **194–211**
+(printed 193–210), read in this pass through a text extraction
+(`/tmp/kude-ch13.md`, 28,309 characters) whose page markers
+(`===== PDF page N (printed N-1) =====`) date every citation below. **The PDF
+itself was not re-opened in this pass**, and the tool that produced the
+extraction is not recorded here; §24.1 records that PyMuPDF reads this Manual's
+prose and tables where `pypdf` and the fetch extractor return titles only.
+Everything graded [R] in this section therefore arrives **through the
+extraction**, not from a fresh read of the artifact — and the extraction could
+not carry the chapter's diagrams (§26.4.6).
+
+**This section corrects §24.6(2).** That item called the KuDE as a printable
+layout "out of [[EPIC-16]]'s scope", because only the QR's content was built.
+[[FISC-013]]'s test matrix requires **one KuDE per document type and two QR
+queries per type**, so the chapter's rules are now on the epic's path and this
+section is their profiling. §24.6(2) carries a pointer here.
+
+### 26.1 What a KuDE is, and what it is not (§13.1)
+
+**[R]** Page 194:
+
+> Se entiende por representación gráfica al contenido de un DE (KuDE), la cual
+> puede ser entregada al receptor no electrónico o consumidor final en formato
+> físico o digitalizado. Es un documento tributario auxiliar que expresa de
+> manera simplificada una transacción que ha sido respaldada por un DE. […] su
+> naturaleza simplificada obedece a que el KuDE contiene sólo algunos campos
+> representativos del DE.
+
+- It is the **graphical representation of a DE's content**, delivered to a
+  **non-electronic receptor or final consumer**, on paper or digitized.
+- It is an **auxiliary tax document**, not the DE: it expresses a transaction
+  that a DE already backs, and it carries **only some representative fields**,
+  which is where its "simplified" nature comes from.
+- The three purposes (page 194): to be the **physical tax document** of the
+  transaction for a non-electronic receptor or final consumer; to **cover the
+  movement of merchandise** between the emitter's premises or between them and
+  the buyer; and to be the **physical document that supports the fiscal
+  credits** of a receptor who is not a SIFEN electronic issuer — that receptor
+  being obliged to consult and check the DTE in SIFEN using **fields printed in
+  the KuDE body** as query criteria.
+- The Manual's glossary (page 216) gives the name: KuDE is _Kuatia_ (paper, in
+  Guaraní) plus DE, and "Representación Gráfica" includes **a QR code to
+  facilitate its validation**.
+
+**What it is not.** It is not the XML, and chapter 13 gives it no issuance of
+its own: it represents a transaction a DE already backs. It is also not free
+composition — §26.2's content rule binds it to the signed DE. Chapter 13 does
+not restate that the KuDE's legal force depends on SIFEN's approval; §14
+recorded that condition, and §26.6 keeps the issuance-timing question open.
+
+### 26.2 The characteristics and the hard rules (§13.2)
+
+**[R]** Page 194. All four bullets are binding; the third is the one a renderer
+has to be checked against.
+
+- **Public query.** "KuDE posibilita la consulta pública del DTE en la página
+  web de SIFEN con el llenado de la información impresa del CDC o con la lectura
+  del QR Code impreso." The printed CDC and the printed QR are **both** query
+  routes, and §26.4.4 records the consultation block that tells the reader where
+  to go.
+- **Generation duty.** "La generación del KuDE cuando se trata del facturador
+  electrónico debe ser realizada directamente en los sistemas de facturación, y
+  en la base de datos oficial del SIFEN. Igualmente puede ser consultada
+  mediante la solución gratuita provista por este sistema." The emitter's own
+  invoicing system generates it; the sentence then names SIFEN's official
+  database and its free solution **without saying whether SIFEN generates a KuDE
+  of its own** (§26.6).
+- **The content rule — the one this section exists for**, verbatim:
+
+  > **No puede existir información en el KuDE que no forme parte del formato del
+  > DE firmado** (XML), salvo las que se mencionen en el presente capítulo.
+
+  **The KuDE may contain nothing that is not part of the signed DE's format** —
+  the XML — **except what chapter 13 itself names.** The exception is not
+  decoration: the additions the chapter names are the emitter's logo (opcional,
+  §13.4.1), the free `J003` block that is explicitly **not sent to SIFEN**
+  (§13.4.5), and the consultation/QR block. A field a renderer wants to add that
+  is neither in the signed XML nor named by the chapter breaks this rule.
+
+- **Paper durability.** "La duración del papel del KuDE así como su impresión y
+  legibilidad debe ser de un plazo no menor a seis (6) meses." The printed KuDE,
+  its print and its legibility must last **at least six months**. The chapter
+  states no paper, ink or printer specification (§26.6).
+
+### 26.3 The denomination per document type (§13.3)
+
+**[R]** Pages 194–195 name seven:
+
+```text
+KuDE de Factura Electrónica
+KuDE de Factura de Exportación Electrónica
+KuDE de Factura de Importación Electrónica
+KuDE de Autofactura Electrónica
+KuDE de Nota de Débito Electrónica
+KuDE de Nota de Crédito Electrónica
+KuDE de Nota de Remisión Electrónica
+```
+
+**[R]** Page 195 adds the pagination rules: a KuDE may span one or several
+numbered pages; when there are several, print the page number against the total
+(the chapter's example is `2/5`); **subtotals and totals belong on the last
+page**; and the **QR is printed at least on the first page**. The last two rules
+are what a multi-page renderer must respect; §24 pins the QR's content.
+
+### 26.4 The content, per document type (§13.4)
+
+**[R]** Page 195: "Independiente del formato, el KuDE estará compuesto por la
+siguiente estructura:" the header's fields; the fields describing the
+operation's items, prices, discounts and per-item total and taxes; the subtotal
+and total fields of the documented transaction, the IVA settlement totals and
+the total in guaraníes; the fields of SIFEN's own query information; and the QR.
+
+**The structure is generic, not per type.** §13.4 gives one field map for every
+document type. The per-type difference lives in the reference layouts of
+§13.5–§13.7, and those are images the extraction could not carry (§26.4.6).
+Everything a renderer can cite from text is below.
+
+#### 26.4.1 The header (§13.4.1)
+
+**[R]** Page 196. Each element with the DE field it comes from, in the chapter's
+own order:
+
+```text
+Logo             espacio reservado para el logo del emisor (opcional) — not a DE field
+Emisor           D105 nombre o razón social       D106 nombre fantasía
+                 D131 descripción de actividad    D107 dirección
+                 D116 descripción ciudad
+Timbrado         D101 RUC del emisor              C004 timbrado Nº
+                 C008 fecha de inicio de vigencia C009 fecha de fin de vigencia
+                 C007 número de documento
+Datos generales  D002 fecha y hora de emisión     E602 condición de la operación
+                 E644 número de cuotas (para operaciones a crédito)
+                 D016 descripción de moneda       D018 tipo de cambio
+Receptor         D206 RUC del contribuyente (si D201=1)
+                 D210 nº de documento de identidad (si D201=2)
+                 D211 nombre/razón social         D213 dirección
+                 D214 teléfono                    D216 correo electrónico
+Transacción      D012 descripción del tipo de transacción
+```
+
+Page 196 also carries a worked **header example for an FE**, with the printed
+title `KuDE DE FACTURA ELECTRÓNICA` and these labels: "Fecha y hora de Emisión",
+"Condición de Venta", "Cuotas", "Moneda", "Tipo de Cambio", "RUC/Documento de
+Identidad Nº", "Nombre o Razón Social", "Dirección", "Teléfono", "Correo
+Electrónico" and "Tipo de Operación". That label set is the closest the chapter
+comes to a text-level layout, and it is still an example rather than a
+requirement.
+
+#### 26.4.2 The items (§13.4.2)
+
+**[R]** Page 197. The extraction's header row repeats the IVA-affectation label
+three times, once per rate column; the field row is:
+
+```text
+Código del ítem                          E701-E707
+Descripción del producto y/o servicio    E708
+Descripción de la unidad de medida       E710
+Cantidad                                 E711
+Precio unitario                          E721
+Descuento del producto por ítem          EA002
+Descripción de la forma de afectación
+  tributaria del IVA                     E732 (0%)  E732 (5%)  E732 (10%)
+```
+
+The chapter's example row puts the sale value under the `10%` column (110,000
+with a 10,000 IVA settlement, page 197). §22.14 names `E731` as `iAfecIVA` and
+`E734` as the rate for the same area; **the field-code-to-element map a renderer
+should trust is §21/§22, not this chapter** — §26.4.3 shows why.
+
+#### 26.4.3 The subtotals, totals and IVA settlement (§13.4.3)
+
+**[R]** Page 197 prints this map:
+
+```text
+Exentas                   F002
+5%                        F004
+10%                       F005
+Subtotal                  the three above
+Total de la operación     F007
+Total en Guaraníes        F022
+Liquidación IVA (5%)      F014
+Liquidación IVA (10%)     F015
+Total de IVA              F016
+```
+
+**Do not copy those codes.** Three of them conflict with a map in §13.8.2 or in
+§22, and one conflicts with itself within chapter 13:
+
+```text
+                         §13.4.3  §13.8.2 (prose / table)   §22.11/§22.12
+Total de la operación    F007     F013 / F014               F014 is the operation's
+                                                             general total (§24.3
+                                                             calls it dTotGralOpe)
+Total en Guaraníes       F022     —                         F023 dTotalGs
+Liquidación IVA (5%)     F014     —                         F014 — a collision with
+                                                             the row above
+Liquidación IVA (10%)    F015     —                         —
+Total de IVA             F016     F016 / F017               —
+```
+
+`F002`, `F004` and `F005` are the only chapter codes that agree with §22.14
+(`dSubExe`, `dSub5`, `dSub10`). **`F014` names the 5% IVA settlement in §13.4.3
+and the operation's total in §13.8.2 and §22.11/§22.12.** §24.3 already records
+§13.8.2's table, and §24.4 its other defects. A renderer must select values by
+the element names §21/§22 pin and treat the chapter's F-codes as printed labels,
+not as a mapping.
+
+The page's number example prints `SUBTOTAL: 110.000`, `TOTAL A PAGAR: 110.000`,
+`TOTAL EN GUARANIES 110.000`, `LIQUIDACIÓN IVA: (5%) —, (10%)` and
+`TOTAL IVA: 10.000`. Those numbers reconcile only if the displayed price
+**includes** IVA, and the chapter never states whether it does (§26.6).
+
+#### 26.4.4 The SIFEN consultation block (§13.4.4)
+
+**[R]** Pages 197–198. The block's own text is short:
+
+- "En el portal ingresar en Servicios y consultas" with
+  `https://ekuatia.set.gov.py/consultas/` (Producción) and
+  `https://ekuatia.set.gov.py/consultas-test/` (Test).
+- "CDC en once grupos de 4 posiciones" — the 44-digit CDC printed in **eleven
+  groups of four**.
+- A pointer: "Ver información del QR, delineamientos, conformación y validación
+  del QR", which is §13.8 and §24.
+
+Those general consultation pages are **not** the QR endpoints §24.3 records
+(`/consultas/qr?` and `/consultas-test/qr?`); they are what the KuDE tells a
+human reader to open. **Which printed fields serve as the query criteria is not
+named** — §13.1 says only "algunos campos", and this block adds the CDC.
+
+#### 26.4.5 The emitter's free space (§13.4.5)
+
+**[R]** Page 198:
+
+> Este es un espacio libre de utilización del emisor facturador electrónico con
+> referencia a información de los demás campos del DE, información comercial
+> promocional o mensajes personalizados al receptor: Campo J003. Esta
+> información no debe ser enviada en el archivo XML a SIFEN. No puede existir
+> información propia de la operación que haya sido generada en el archivo
+> electrónico firmado digitalmente.
+
+- `J003` is a free block for the emitter: references to other DE fields,
+  promotional content and personalized messages.
+- It is **not sent to SIFEN** in the XML, and the chapter names it, so it is the
+  chapter-sanctioned exception to §26.2's content rule.
+- **The second sentence does not parse as extracted.** Read literally it would
+  forbid every piece of operation information that _was_ generated in the signed
+  XML — that is, every field of the KuDE — which contradicts the rest of the
+  chapter. Either the source restates §26.2's rule with a dropped "no" ("...que
+  **no** haya sido generada...") or the extraction lost one, and the extraction
+  alone cannot settle which. **Resolving it needs a visual re-read of page
+  198**, image layer included. Until then, no renderer rule should cite that
+  sentence.
+
+#### 26.4.6 The layouts are images, and the extraction could not carry them
+
+**[R]** Pages 198–205 (printed 197–204) announce the per-type reference models,
+and the extraction carries **only their captions** — the pages themselves are
+embedded images:
+
+```text
+Gráfica N° 09   KuDE FE, Formato 1 convencional           page 199 (printed 198)
+Gráfica N° 10   KuDE NCE, Formato 1 convencional          page 200 (printed 199)
+Gráfica N° 11   KuDE NDE, Formato 1 convencional          page 201 (printed 200)
+Gráfica N° 12   KuDE AFE, Formato 1 convencional          page 202 (printed 201)
+Gráfica N° 13   KuDE NRE, Formato 1 convencional          page 203 (printed 202)
+Gráfica N° 14   KuDE FE, Formato 2 (cinta de papel)       page 204 (printed 203)
+Gráfica N° 15   Cinta papel resumen del KuDE              page 205 (printed 204)
+```
+
+**A text extraction cannot carry a diagram.** The layouts exist in the PDF as
+images; nothing in this pass read them. What would resolve it: **rasterize pages
+199–205** with the PyMuPDF §24.1 records and read the images directly or OCR
+them; or obtain the "reglamentaciones emitidas por la Administración Tributaria"
+that §13.5 points at for the mandatory fields.
+
+**[R]** The rules that surround the images, in text:
+
+- **§13.5 (page 198):** any standard paper format and size; the graphics are
+  **referential models** for each document type; each taxpayer **may include
+  other fields present in the XML**; and "Los campos obligatorios, que se deben
+  mostrar, son los que están especificados por las reglamentaciones emitidas por
+  la Administración Tributaria" — the mandatory-field list is delegated outside
+  the chapter.
+- **§13.6 (page 204):** the paper-roll format "se constituye en el más adecuado
+  para ventas al consumidor final (como supermercados, farmacias, restaurantes,
+  estaciones de servicio, etc.)" — a suitability statement, not a rule.
+- **§13.7 (page 205):** **if the consumer asks**, a **summary** KuDE may be
+  printed without item or tax detail — only the **total quantity of items and
+  the total amount**; the full KuDE, details included, can be printed from the
+  public e-Kuatia query by CDC or by QR.
+
+### 26.5 The QR's place (§13.8) — see §24
+
+**[R]** §13.8 **is §24's source**. §24 already carries its composition, the
+SHA-256 methodology, the worked example and the three defects inside that
+example; nothing is restated here. What chapter 13 adds around the QR, and §24
+does not carry:
+
+- **§13.4** lists the QR as the structure's last block (page 195), and §13.8.1
+  puts its content in `J002` of the DE (§24.2 already records this).
+- **§13.3** requires the QR **at least on the first page** of a multi-page KuDE
+  (page 195).
+- **§13.2** makes the printed QR one of the two public-query routes, the printed
+  CDC being the other (page 194).
+- **§13.7** allows the full KuDE to be printed from the portal's public query by
+  CDC or by QR (page 205).
+- **§13.8.5 (pages 210–211)** prints the portal's three messages: the DTE exists
+  and is `Aprobado` or `Aprobado con observaciones (Extemporáneo)` — "se
+  presenta el KuDE en Cinta (para B2C) o consulta por pestañas (B2B o B2G)"; the
+  DE does **not** exist — "CDC no existente en el SIFEN, consulte con el emisor
+  del documento." plus that DTE's number, type, emitter, emitter RUC, emission
+  date, item count, total and total IVA; and an invalid QR — "Código QR
+  inválido, consulte con el emisor del DE." Those are the portal page's
+  messages, not the KuDE's, and they are what FISC-013's QR-query test rows will
+  observe.
+
+### 26.6 What the chapter does not pin
+
+**[O]** The following are not answered by chapter 13 or by the extraction:
+
+1. **The per-type content beyond §13.4's generic structure.** The reference
+   models are images (§26.4.6); a text-level statement of what differs per type
+   is not in the extraction.
+2. **The mandatory-field list.** §13.5 delegates it to the AT's regulations and
+   does not enumerate them.
+3. **The export and import facturas' layouts.** §13.3 names seven denominations,
+   but §13.5's models list **five** — FE, NCE, NDE, AFE, NRE — exactly the five
+   the test matrix exercises. The export/import KuDE's content is not shown.
+4. **Which printed fields are the receptor's query criteria.** §13.1 says
+   "algunos campos presentes en el cuerpo del KuDE"; §13.4.4 adds the CDC.
+5. **The total and IVA field codes** (§26.4.3): the chapter contradicts itself
+   and §22's map.
+6. **The §13.4.5 sentence's missing word** (§26.4.5).
+7. **Whether the displayed prices include IVA**, and any decimal or rounding
+   rule. The example's numbers reconcile only under "IVA included", and the
+   chapter never says so.
+8. **The `J003` block's shape.** No length, format or validation is given.
+9. **The logo's rules.** Optional, with no size, format or placement.
+10. **The paper specification** behind the six-month durability rule: no paper
+    type, weight or printer requirement.
+11. **When the KuDE may be issued relative to SIFEN's approval.** Chapter 13
+    does not address it; §14's "conditional on approval" and the
+    posterior-validation note in §12 are the closest facts.
+12. **The digital delivery's format.** §13.1 admits "formato físico o
+    digitalizado" without naming a file format, a fidelity rule, or whether the
+    digital KuDE must carry the QR.
+13. **§13.2's generation sentence's second half**: whether SIFEN generates its
+    own KuDE for the portal's free solution or only hosts the DTE. FISC-013
+    WU-D's query against the test environment is the observation that would
+    answer it.
+
+### 26.7 Consequences for FISC-013 WU-C
+
+- The renderer **may pin** the generic structure and the header, item and total
+  field maps (§26.4), the seven denominations and the pagination rules (§26.3),
+  the six-month durability rule and the content rule (§26.2), whose named
+  exceptions are the logo and `J003`.
+- The renderer **must not** turn §13.4.3's F-codes into a value mapping
+  (§26.4.3); values come from the element names §21/§22 pin, and the QR's
+  content is §24's build order.
+- The per-type layouts and the mandatory-field list **wait** on the diagram
+  extraction or the AT's regulations (§26.6.1–3). Until then, a rendering driven
+  by §13.4's generic structure plus the FE header example is what the text
+  supports.
+- `J003` is not sent to SIFEN, so it is not part of the DE the builder emits; if
+  the renderer fills it, the content is the emitter's own.

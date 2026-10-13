@@ -2,7 +2,7 @@
 
 **Branch**: `docs/epic-16-fisc-013-runbook` (from `main`) **Story**:
 `docs/02-stories/FISC-013-contingency-and-homologation.md` **Baseline**:
-`docs/06-fiscal/SIFEN-BASELINE.md` §11, §15, §18, §22.5, §23.7, §24, §25
+`docs/06-fiscal/SIFEN-BASELINE.md` §11, §15, §18, §22.5, §23.7, §24, §25, §26
 
 ## Goal
 
@@ -58,9 +58,14 @@ record the flag and name the pending question instead of inventing rules.
       the signer, the cancellation through the provider and the inutilización's
       business surface. **What the matrix still needs and does not have is the
       receptor's four payloads** — recorded below as a blocked half.
-- [ ] **WU-C — the KuDE.** The graphical representation, one per document type,
-      with the QR pinned by §24. **Blocked on nothing but its own work**: the QR
-      content builder (`dte.qr.ts`) and the CSC read exist.
+- [ ] **WU-C — the KuDE.** Two halves. **The profiling half landed 2026-10-13**:
+      `SIFEN-BASELINE.md` §26 profiles the Manual's chapter 13 — the definition
+      and scope, the characteristics together with the content rule, the seven
+      denominations and their pagination rules, the header/items/totals field
+      map, the layouts that exist only as images, and what the chapter does not
+      pin. **The renderer is pending**: one graphical representation per
+      document type, with the QR pinned by §24 and built by `dte.qr.ts`, and the
+      CSC read in place.
 - [ ] **WU-D — the run and its evidence.** **Blocked on the DNIT** (the
       habilitación and the test data set) and on the run blockers the runbook
       names: the CSC's registration surface, the batch composition, the
@@ -91,10 +96,13 @@ record the flag and name the pending question instead of inventing rules.
 ```text
 (pending)  docs(FISC-013): the homologation runbook, and the story's work units
            pinned (WU-A)
+(pending)  docs(FISC-013): the Manual's chapter 13 profiled into the baseline as
+           §26 — the KuDE's definition, rules, denominations and field map, with
+           its image-only layouts named (WU-C, first half)
 ```
 
-The line is owed by the parent orchestrator: this implementation unit does not
-commit.
+The new line is owed by the parent orchestrator: this implementation unit does
+not commit.
 
 ## Open
 
