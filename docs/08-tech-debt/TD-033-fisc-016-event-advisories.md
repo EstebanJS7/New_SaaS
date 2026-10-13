@@ -8,7 +8,7 @@ status: open
 severity: low
 owner: fiscal
 created: 2026-10-12
-updated: 2026-10-12
+updated: 2026-10-13
 related:
   - FISC-016
   - FISC-012
@@ -19,7 +19,9 @@ related:
 
 Four findings from FISC-016's reviews were accepted as debt rather than fixed.
 Each is recorded with the coordinates a later reader needs, because the review's
-full text is not retained.
+full text is not retained. Item 4's diagnosis has since been corrected and its
+signal-forwarding fix landed; the residual it leaves is recorded there as the
+follow-up it is.
 
 ## 1. A re-drive carries the caller's new reason while the record keeps the original
 
@@ -62,15 +64,42 @@ real there.
 out of the guard changes a suite whose skip discipline is deliberate (a missing
 directory must be a _visible_ skip, not a silent pass).
 
-## 4. The cancellation path has the same timeout hole the void had
+## 4. The caller's abort signal reached nothing, and cancel is where it matters
 
-`packages/fiscal/src/sifen/sifen-direct.provider.ts`. `voidRange` now reads
-`request.signal`; `cancel` still does not, so a cancelled-at-the-deadline
-cancellation can complete at SIFEN while the document stays uncancelled locally
-— the finding `R1-002` in its original, pre-void form. The port's own doc says
-an adapter that ignores the signal "still gets a bounded caller", so this is
-tolerated behaviour rather than a contract violation.
+`packages/fiscal/src/sifen/sifen.facade.ts` and
+`packages/fiscal/src/sifen/sifen-direct.provider.ts`. **Corrected diagnosis
+(2026-10-13):** the original entry said "`voidRange` now reads `request.signal`;
+`cancel` still does not". That was false. No method of the adapter forwarded the
+caller's signal — not `cancel`, not `voidRange`, not `query`, and not `issue` —
+because the facade bound exactly one signal, `dependencies.signal`, passed at
+construction, and offered no per-call override. The abort `runWithinDeadline`
+fires (`apps/api/src/fiscal/fiscal.deadline.ts`) therefore reached nothing, and
+the HTTP call kept running past the deadline: whether SIFEN received the cancel
+was unknown locally while the call completed remotely. The consequence that
+matters is the cancellation's: the API maps a cancel timeout to
+`TRANSIENT_FAILURE`, which persists `last_error_*` with no status change, so the
+document stays locally cancellable/usable while the tax administration may
+already have cancelled it. The void is protected against the same class of
+problem not by its signal but by its own state machine (`VOIDING`/`IN_FLIGHT`).
 
-**Why it was not fixed**: it is FISC-012's surface, and the review's scope was
-the void. It is the smallest of the four and the one most likely to matter in
-production, so it should be the first to go.
+**Fixed (branch `fix/td-033-cancel-reads-the-signal`).** The facade's `call()`
+now takes an optional per-call `signal` and hands the transport a signal that
+honours **both** the construction-level and the per-call one (`AbortSignal.any`
+when both are present; the single one by reference otherwise; `undefined` when
+neither is). All six public facade methods accept and forward it, and the
+adapter forwards `request.signal` on the three port requests that carry one —
+`query`, `cancel` and `voidRange`. `FiscalIssueRequest` declares no `signal`, so
+`issue` has none to forward.
+
+**What the fix does not do — the residual, as a follow-up.** It narrows the
+window; it does not close the race. A request already on the wire may still
+complete at SIFEN after the abort, so the local state can still disagree with
+the tax administration's. Closing that needs the domain-level answer the void
+already has: a cancel that ends in `TRANSIENT_FAILURE` should leave the document
+in a state that is **not** locally cancellable/usable (`CANCEL_PENDING` exists
+for exactly that meaning), plus a reconciliation for documents parked there.
+That is a bigger design decision than this fix and is recorded here as the
+follow-up it is.
+
+The finding `R1-002` in its original, pre-void form was this hole on the
+cancellation path; the signal-forwarding half of it is now closed.

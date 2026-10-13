@@ -123,38 +123,49 @@ export interface SifenFacadeDependencies {
  * transport, the envelope or the credential is visible to the caller. The
  * answers are the parsed shapes of `sifen.messages.ts`, which is what
  * `sifen.outcomes.ts` maps onto the provider port.
+ *
+ * Every method also takes an optional per-call `signal`, because a caller's
+ * deadline is per request: when the facade was constructed with a signal too,
+ * the two are composed ({@link combineSignals}) so either can abandon the call;
+ * when only the call carries one, that signal is the transport's.
  */
 export interface SifenServiceFacade {
   receiveDe(args: {
     readonly tenantId: string;
     readonly dId: string;
     readonly signedDteXml: string;
+    readonly signal?: AbortSignal;
   }): Promise<SifenReceptionResponse>;
   receiveBatch(args: {
     readonly tenantId: string;
     readonly dId: string;
     readonly deXmls: readonly string[];
+    readonly signal?: AbortSignal;
   }): Promise<SifenBatchReceptionResponse>;
   queryBatch(args: {
     readonly tenantId: string;
     readonly dId: string;
     readonly dProtConsLote?: string;
     readonly dCDC?: string;
+    readonly signal?: AbortSignal;
   }): Promise<SifenBatchQueryResponse>;
   queryDe(args: {
     readonly tenantId: string;
     readonly dId: string;
     readonly dCDC: string;
+    readonly signal?: AbortSignal;
   }): Promise<SifenCdcQueryResponse>;
   queryRuc(args: {
     readonly tenantId: string;
     readonly dId: string;
     readonly dRUCCons: string;
+    readonly signal?: AbortSignal;
   }): Promise<SifenRucQueryResponse>;
   receiveEvent(args: {
     readonly tenantId: string;
     readonly dId: string;
     readonly eventGroupXml: string;
+    readonly signal?: AbortSignal;
   }): Promise<SifenEventReceptionResponse>;
 }
 
@@ -187,6 +198,30 @@ export class SifenFacadeError extends Error {
 }
 
 /**
+ * The signal one call hands the transport.
+ *
+ * Two signals can apply to the same call: the one the facade was constructed
+ * with — a process-wide deadline or a shutdown — and the one the caller passes
+ * for this request. Both bound the call, so both are honoured: `AbortSignal.any`
+ * composes them without either replacing the other. When only one is present it
+ * is passed **by reference**, so the transport sees the caller's own signal and
+ * not a wrapper, and when neither is present the transport gets `undefined`,
+ * exactly as before this option existed.
+ */
+function combineSignals(
+  constructionSignal: AbortSignal | undefined,
+  callSignal: AbortSignal | undefined
+): AbortSignal | undefined {
+  if (constructionSignal === undefined) {
+    return callSignal;
+  }
+  if (callSignal === undefined) {
+    return constructionSignal;
+  }
+  return AbortSignal.any([constructionSignal, callSignal]);
+}
+
+/**
  * Binds the six services to one environment, one credential port and one
  * transport.
  *
@@ -205,13 +240,16 @@ export function createSifenServiceFacade(
    *
    * `serialize` and `parse` are thunks and not values: the envelope is built
    * **after** the credential check, which is the order the contract pins, and
-   * nothing is serialized for a call that will not be made.
+   * nothing is serialized for a call that will not be made. The per-call
+   * `signal`, when present, is composed with the construction-level one rather
+   * than replacing it.
    */
   async function call<T>(args: {
     readonly tenantId: string;
     readonly path: string;
     readonly serialize: () => string;
     readonly parse: (body: string) => T;
+    readonly signal?: AbortSignal;
   }): Promise<T> {
     const credential = await dependencies.credentialPort.read({
       tenantId: args.tenantId,
@@ -232,57 +270,63 @@ export function createSifenServiceFacade(
       now: clock(),
       timeoutMs: dependencies.timeoutMs,
       caPem: dependencies.caPem,
-      signal: dependencies.signal,
+      signal: combineSignals(dependencies.signal, args.signal),
     });
 
     return args.parse(response.body);
   }
 
   return {
-    receiveDe: ({ tenantId, dId, signedDteXml }) =>
+    receiveDe: ({ tenantId, dId, signedDteXml, signal }) =>
       call({
         tenantId,
         path: SIFEN_SERVICE_PATHS.receiveDe,
+        signal,
         serialize: () => serializeReception({ dId, deXml: signedDteXml }),
         parse: parseReceptionResponse,
       }),
 
-    receiveBatch: ({ tenantId, dId, deXmls }) =>
+    receiveBatch: ({ tenantId, dId, deXmls, signal }) =>
       call({
         tenantId,
         path: SIFEN_SERVICE_PATHS.receiveBatch,
+        signal,
         serialize: () => serializeBatchReception({ dId, deXmls }),
         parse: parseBatchReceptionResponse,
       }),
 
-    queryBatch: ({ tenantId, dId, dProtConsLote, dCDC }) =>
+    queryBatch: ({ tenantId, dId, dProtConsLote, dCDC, signal }) =>
       call({
         tenantId,
         path: SIFEN_SERVICE_PATHS.queryBatch,
+        signal,
         serialize: () => serializeBatchQuery({ dId, dProtConsLote, dCDC }),
         parse: parseBatchQueryResponse,
       }),
 
-    queryDe: ({ tenantId, dId, dCDC }) =>
+    queryDe: ({ tenantId, dId, dCDC, signal }) =>
       call({
         tenantId,
         path: SIFEN_SERVICE_PATHS.queryDe,
+        signal,
         serialize: () => serializeCdcQuery({ dId, dCDC }),
         parse: parseCdcQueryResponse,
       }),
 
-    queryRuc: ({ tenantId, dId, dRUCCons }) =>
+    queryRuc: ({ tenantId, dId, dRUCCons, signal }) =>
       call({
         tenantId,
         path: SIFEN_SERVICE_PATHS.queryRuc,
+        signal,
         serialize: () => serializeRucQuery({ dId, dRUCCons }),
         parse: parseRucQueryResponse,
       }),
 
-    receiveEvent: ({ tenantId, dId, eventGroupXml }) =>
+    receiveEvent: ({ tenantId, dId, eventGroupXml, signal }) =>
       call({
         tenantId,
         path: SIFEN_SERVICE_PATHS.receiveEvent,
+        signal,
         serialize: () => serializeEventReception({ dId, eventGroupXml }),
         parse: parseEventReceptionResponse,
       }),

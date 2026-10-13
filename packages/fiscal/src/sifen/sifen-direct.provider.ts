@@ -615,6 +615,9 @@ export function createSifenDirectFiscalProvider(
     });
 
     try {
+      // `FiscalIssueRequest` carries no `signal` — the port declares none — so
+      // there is no per-call signal to forward here; only the facade's own
+      // construction-level signal, when configured, bounds this call.
       const response = await dependencies.facade.receiveBatch({
         tenantId: request.tenantId,
         dId: controlNumber(),
@@ -649,10 +652,8 @@ export function createSifenDirectFiscalProvider(
   async function query(request: FiscalQueryRequest): Promise<FiscalQueryResult> {
     const resolvedAt = clock().toISOString();
 
-    // The `signal` on the request is not forwarded: the facade binds one at
-    // construction and offers no per-call override. The caller's own deadline
-    // still bounds this call (the port documents the race), and changing the
-    // facade's signature is not this slice's.
+    // The caller's signal travels with each query below, and the facade
+    // composes it with any construction-level one it was built with.
     if (request.providerReference !== null) {
       const providerRequest = requestSnapshot({
         service: "queryBatch",
@@ -664,6 +665,7 @@ export function createSifenDirectFiscalProvider(
           tenantId: request.tenantId,
           dId: controlNumber(),
           dProtConsLote: request.providerReference,
+          signal: request.signal,
         });
         return mapBatchQueryOutcome({
           providerRequest,
@@ -691,6 +693,7 @@ export function createSifenDirectFiscalProvider(
           tenantId: request.tenantId,
           dId: controlNumber(),
           dCDC: request.cdc,
+          signal: request.signal,
         });
         return mapCdcQueryOutcome({
           providerRequest,
@@ -744,6 +747,7 @@ export function createSifenDirectFiscalProvider(
         tenantId: request.tenantId,
         dId: controlNumber(),
         eventGroupXml: document.signedXml,
+        signal: request.signal,
       });
       return mapEventReceptionCancelOutcome({
         providerRequest,
@@ -790,6 +794,7 @@ export function createSifenDirectFiscalProvider(
         tenantId: request.tenantId,
         dId: controlNumber(),
         eventGroupXml: document.signedXml,
+        signal: request.signal,
       });
       return mapEventReceptionVoidOutcome({
         providerRequest,
