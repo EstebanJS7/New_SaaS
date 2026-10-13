@@ -17,6 +17,8 @@ import {
   type FiscalTransportCredential,
 } from "@newsaas/fiscal";
 import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.js";
+import { runWithinDeadline } from "./fiscal.deadline.js";
+import { scrubProviderText } from "./fiscal.provider-text.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
@@ -140,38 +142,27 @@ export interface FiscalCancellationWrite {
  * request: past the deadline the call is abandoned and reported as a retryable
  * `TRANSIENT_FAILURE`, which the shared {@link mapFiscalCancelOutcome} mapping
  * already persists as `last_error_*` with NO status change and a
- * `fiscal.document.cancellation_failed` audit row. The timer is always cleared,
- * so a fast provider leaves no pending handle behind.
+ * `fiscal.document.cancellation_failed` audit row. The mechanism itself is
+ * `runWithinDeadline`'s, shared with the range void (FISC-016 WU-D) so the two
+ * commands cannot drift; this function is this command's naming of it.
  */
 export async function cancelWithinDeadline(
   call: (signal: AbortSignal) => Promise<FiscalCancelResult>,
   deadlineMs: number
 ): Promise<FiscalCancelResult> {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<FiscalCancelResult>((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      resolve({
-        outcome: "TRANSIENT_FAILURE",
-        reasonCode: FISCAL_CANCEL_TIMEOUT_REASON_CODE,
-        reason: FISCAL_CANCEL_TIMEOUT_REASON,
-        retryAfterMs: deadlineMs,
-        providerRequest: null,
-        providerResponse: null,
-        resolvedAt: new Date().toISOString(),
-      });
-    }, deadlineMs);
+  return runWithinDeadline({
+    call,
+    deadlineMs,
+    onTimeout: () => ({
+      outcome: "TRANSIENT_FAILURE",
+      reasonCode: FISCAL_CANCEL_TIMEOUT_REASON_CODE,
+      reason: FISCAL_CANCEL_TIMEOUT_REASON,
+      retryAfterMs: deadlineMs,
+      providerRequest: null,
+      providerResponse: null,
+      resolvedAt: new Date().toISOString(),
+    }),
   });
-  try {
-    return await Promise.race([call(controller.signal), deadline]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-function scrub(value: string | null): string | null {
-  return value === null ? null : value.replace(/[\r\n\t]+/g, " ").slice(0, 500);
 }
 
 export function mapFiscalCancelOutcome(
@@ -194,8 +185,8 @@ export function mapFiscalCancelOutcome(
       accepted: true,
     };
   return {
-    lastErrorCode: scrub(result.reasonCode),
-    lastErrorMessage: scrub(result.reason),
+    lastErrorCode: scrubProviderText(result.reasonCode),
+    lastErrorMessage: scrubProviderText(result.reason),
     accepted: false,
   };
 }
@@ -328,7 +319,7 @@ export class FiscalService {
     if (!applied.accepted)
       throw new DomainError(
         "CONFLICT",
-        scrub(result.reason) ?? FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE
+        scrubProviderText(result.reason) ?? FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE
       );
     if (!applied.updated)
       throw new DomainError("INTERNAL", FISCAL_DOCUMENT_CANCEL_CONFLICT_MESSAGE);

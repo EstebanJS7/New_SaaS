@@ -2786,6 +2786,9 @@ enum FiscalTimbradoRangeStatus {
   /// An operator stopped using it. Kept as the permanent record: its consumed
   /// numbers are burnt and can never be reissued.
   RETIRED
+  /// An in-flight void holds the range (FISC-016 WU-D): the tail is claimed for
+  /// a submission and no allocation may draw from it.
+  VOIDING
 
   @@map("fiscal_timbrado_range_status")
 }
@@ -2978,8 +2981,8 @@ model FiscalTimbradoRange {
   @@map("fiscal_timbrado_range")
 }
 
-/// The provider's answer to a void, mirrored from the Fiscal port's
-/// `FiscalRangeVoidOutcome` (FISC-016 WU-D).
+/// The provider's answer to a void, plus the claim's own PENDING state
+/// (FISC-016 WU-D).
 ///
 /// It is its own enum and NOT a reuse of the cancellation's vocabulary: nothing
 /// about a range void cancels a document, so no member of this set names a
@@ -2995,6 +2998,13 @@ enum FiscalRangeVoidOutcome {
   /// The hand-over did not complete: whether the service received it is unknown,
   /// and the caller may ask again.
   TRANSIENT_FAILURE
+  /// The claim's own state, written before it enters flight. A settled row is
+  /// never PENDING.
+  PENDING
+  /// The claim is IN FLIGHT: its submission is out (or about to leave) and its
+  /// lease has not expired. A second arrival is refused while the lease lives;
+  /// a stale one may be adopted.
+  IN_FLIGHT
 
   @@map("fiscal_range_void_outcome")
 }
@@ -3035,6 +3045,12 @@ model FiscalRangeVoid {
 
   /// The provider's answer's outcome.
   outcome           FiscalRangeVoidOutcome
+  /// The claim's identity: every adoption bumps it, and the settlement CASes
+  /// on it, so a stale attempt cannot close a newer claim.
+  attempt           Int                    @default(1)
+  /// The in-flight claim's lease: written when the record enters IN_FLIGHT and
+  /// refreshed by each stale-lease adoption. Null on a record never in flight.
+  claimedAt         DateTime?              @map("claimed_at") @db.Timestamptz(3)
   /// The answer's own code, verbatim; ours when the refusal never reached a
   /// service (a deadline, a skipped document stage).
   reasonCode        String?                @map("reason_code")

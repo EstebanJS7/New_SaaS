@@ -220,7 +220,7 @@ describe("migration · timbrado and numbering ranges (EPIC-16 FISC-011)", () => 
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0 && !line.startsWith("//") && !line.startsWith("@@"));
-    expect(values).toEqual(["ACTIVE", "EXHAUSTED", "RETIRED"]);
+    expect(values).toEqual(["ACTIVE", "EXHAUSTED", "RETIRED", "VOIDING"]);
     expect(SQL).toMatch(
       /CREATE TYPE "fiscal_timbrado_range_status" AS ENUM \('ACTIVE', 'EXHAUSTED', 'RETIRED'\);/
     );

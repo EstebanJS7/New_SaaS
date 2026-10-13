@@ -135,4 +135,25 @@ export const retireRangeBodySchema = z.object({
   reason: z.string().trim().min(1).max(500),
 });
 
+/**
+ * The void's body: **the reason and nothing else**.
+ *
+ * The interval is not a caller's choice. It is the range's remaining tail —
+ * `nextNumber .. rangeTo` — and a caller that could name it could ask SIFEN to
+ * void numbers that were already issued, which a consumed number's being burnt
+ * makes a lie about the tenant's own history. The service reads the range and
+ * builds the interval from it.
+ *
+ * `strict()` mirrors the cancellation's body: an unknown key (a `from`, a
+ * `tenantId`, a status) is a 400 rather than a silently ignored field.
+ */
+export const voidRangeBodySchema = z
+  .object({
+    // `tmotEve`'s own domain: the service refuses anything outside it with the
+    // event's own rule, and this is the boundary that turns a bad body into a
+    // 400 before a transaction or a provider call is opened.
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
 export const fiscalIdParamSchema = z.object({ id: z.string().uuid() });

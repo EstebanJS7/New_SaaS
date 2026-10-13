@@ -221,6 +221,7 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /fiscal/timbrado-ranges",
   "POST /fiscal/timbrado-ranges",
   "POST /fiscal/timbrado-ranges/:id/retire",
+  "POST /fiscal/timbrado-ranges/:id/void",
   // EPIC-15 FISC-004 — explicit fiscal submission command.
   "POST /fiscal-documents",
   // FISC-005b / D7 — tenant-scoped fiscal read contract.
@@ -464,6 +465,7 @@ const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /fiscal/timbrado-ranges": FISCAL_PERMISSIONS.profileManage,
   "POST /fiscal/timbrado-ranges": FISCAL_PERMISSIONS.profileManage,
   "POST /fiscal/timbrado-ranges/:id/retire": FISCAL_PERMISSIONS.profileManage,
+  "POST /fiscal/timbrado-ranges/:id/void": FISCAL_PERMISSIONS.rangeVoid,
   "GET /fiscal-documents": FISCAL_PERMISSIONS.read,
   "GET /fiscal-documents/:id": FISCAL_PERMISSIONS.read,
   "POST /fiscal-documents": FISCAL_PERMISSIONS.issue,

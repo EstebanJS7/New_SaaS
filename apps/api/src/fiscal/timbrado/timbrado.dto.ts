@@ -1,6 +1,7 @@
 import type {
   EmitterProfileView,
   EstablishmentView,
+  FiscalRangeVoidView,
   TimbradoRangeView,
 } from "./timbrado.service.js";
 
@@ -53,6 +54,28 @@ export interface TimbradoRangeListResponse {
   readonly items: TimbradoRangeResponse[];
 }
 
+/**
+ * FISC-016 WU-D: what the void command answers with — the record of the attempt.
+ *
+ * The provider's answer travels in its own fields and the operator's `reason` is
+ * kept apart from the provider's message. The raw provider snapshots are
+ * CONFIDENTIAL and deliberately never returned, exactly like the issuance and
+ * cancellation responses.
+ */
+export interface FiscalRangeVoidResponse {
+  readonly id: string;
+  readonly rangeId: string;
+  readonly fromNumber: number;
+  readonly toNumber: number;
+  readonly reason: string;
+  readonly outcome: FiscalRangeVoidView["outcome"];
+  readonly reasonCode: string | null;
+  readonly providerReason: string | null;
+  readonly providerReference: string | null;
+  readonly rangeStatus: FiscalRangeVoidView["rangeStatus"];
+  readonly createdAt: string;
+}
+
 export function toEmitterProfileResponse(view: EmitterProfileView): EmitterProfileResponse {
   return {
     ruc: view.ruc,
@@ -81,6 +104,22 @@ export function toEstablishmentResponse(view: EstablishmentView): EstablishmentR
     cityCode: view.cityCode,
     createdAt: view.createdAt.toISOString(),
     updatedAt: view.updatedAt.toISOString(),
+  };
+}
+
+export function toFiscalRangeVoidResponse(view: FiscalRangeVoidView): FiscalRangeVoidResponse {
+  return {
+    id: view.id,
+    rangeId: view.rangeId,
+    fromNumber: view.fromNumber,
+    toNumber: view.toNumber,
+    reason: view.reason,
+    outcome: view.outcome,
+    reasonCode: view.reasonCode,
+    providerReason: view.providerReason,
+    providerReference: view.providerReference,
+    rangeStatus: view.rangeStatus,
+    createdAt: view.createdAt.toISOString(),
   };
 }
 

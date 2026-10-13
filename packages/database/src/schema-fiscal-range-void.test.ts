@@ -9,6 +9,7 @@ import { findMigration, loadMigrations, loadPrismaSchema } from "./schema-files.
  * here is a CHECK that does not exist.
  */
 const SQL = findMigration(loadMigrations(), "_fisc_016_range_void").sql;
+const CLAIM_SQL = findMigration(loadMigrations(), "_fisc_016_range_void_claim").sql;
 const SCHEMA = loadPrismaSchema();
 const TABLE = "fiscal_range_void";
 
@@ -145,16 +146,71 @@ describe("migration · the voided numbering range (EPIC-16 FISC-016 WU-D)", () =
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0 && !line.startsWith("//") && !line.startsWith("@@"));
-    expect(values).toEqual(["VOIDED", "REJECTED", "CONFIGURATION_ERROR", "TRANSIENT_FAILURE"]);
+    expect(values).toEqual([
+      "VOIDED",
+      "REJECTED",
+      "CONFIGURATION_ERROR",
+      "TRANSIENT_FAILURE",
+      "PENDING",
+      "IN_FLIGHT",
+    ]);
     // The existing range enum is untouched: the terminal status of a void is
-    // `RETIRED`, which already means exactly this operation.
+    // `RETIRED`, which already means exactly this operation; the correction
+    // appends the claim's own `VOIDING`.
     const rangeEnum = /enum FiscalTimbradoRangeStatus \{([\s\S]*?)\n\}/.exec(SCHEMA)?.[1] ?? "";
     expect(rangeEnum).toContain("RETIRED");
+    expect(rangeEnum).toContain("VOIDING");
     expect(SQL).not.toMatch(/ALTER TYPE "fiscal_timbrado_range_status"/);
   });
 
   it("adds no column to an existing table", () => {
     expect(SQL).not.toMatch(/\bADD COLUMN\b/i);
     expect(SQL).not.toMatch(/\bCREATE TABLE "(?!fiscal_range_void")/i);
+  });
+});
+
+/**
+ * The correction's own migration: the claim's two states and the single
+ * settlement transition the append-only trigger now admits.
+ */
+describe("migration · the void's claim (FISC-016 WU-D)", () => {
+  it("appends VOIDING, PENDING and IN_FLIGHT, and never uses them in the migration itself", () => {
+    expect(CLAIM_SQL).toMatch(/ALTER TYPE "fiscal_timbrado_range_status" ADD VALUE 'VOIDING'/);
+    expect(CLAIM_SQL).toMatch(/ALTER TYPE "fiscal_range_void_outcome" ADD VALUE 'PENDING'/);
+    expect(CLAIM_SQL).toMatch(/ALTER TYPE "fiscal_range_void_outcome" ADD VALUE 'IN_FLIGHT'/);
+    // PG16 forbids using a new enum value in the transaction that adds it.
+    expect(CLAIM_SQL).not.toMatch(/CHECK|INSERT INTO|UPDATE "/);
+  });
+
+  it("lets the settlement close an IN_FLIGHT record exactly once", () => {
+    expect(CLAIM_SQL).toMatch(/CREATE OR REPLACE FUNCTION "fiscal_range_void_no_update"/);
+    // The claim's own entry into flight, before any provider call.
+    expect(CLAIM_SQL).toMatch(
+      /OLD\."outcome"::text = 'PENDING' AND NEW\."outcome"::text = 'IN_FLIGHT'/
+    );
+    // The settlement closes exactly that in-flight state...
+    expect(CLAIM_SQL).toMatch(/OLD\."outcome"::text = 'IN_FLIGHT'/);
+    // ...and the state it replaced is no longer closable directly.
+    expect(CLAIM_SQL).not.toMatch(/NEW\."outcome"::text <> 'PENDING'/);
+    expect(CLAIM_SQL).toContain("cannot be updated");
+  });
+
+  it("adopts an in-flight claim only with the next attempt and a NEWER lease", () => {
+    // The lease is the guard an observer cannot bypass: an adoption must state
+    // both its attempt identity and a lease newer than the one it replaces.
+    expect(CLAIM_SQL).toMatch(/NEW\."attempt" = OLD\."attempt" \+ 1/);
+    expect(CLAIM_SQL).toMatch(/NEW\."claimed_at" > OLD\."claimed_at"/);
+    expect(CLAIM_SQL).toMatch(/NEW\."claimed_at" IS NOT NULL/);
+  });
+
+  it("gives the claim an attempt identity and a lease the settlement CASes on", () => {
+    expect(CLAIM_SQL).toMatch(
+      /ALTER TABLE "fiscal_range_void" ADD COLUMN "attempt" INTEGER NOT NULL DEFAULT 1/
+    );
+    expect(CLAIM_SQL).toMatch(
+      /ALTER TABLE "fiscal_range_void" ADD COLUMN "claimed_at" TIMESTAMPTZ\(3\)/
+    );
+    expect(SCHEMA).toMatch(/attempt\s+Int\s+@default\(1\)/);
+    expect(SCHEMA).toMatch(/claimedAt\s+DateTime\?\s+@map\("claimed_at"\)/);
   });
 });
