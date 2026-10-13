@@ -677,17 +677,24 @@ candidate 1 exists.
       fiscally, what a receptor is, where the CSC lives, which
       establishment/point/type issues — **before any schema change**. Until it
       lands the worker's stage fails closed with a named reason.
-- [~] T12 — **FISC-016: the event family — in progress 2026-10-11.** Branch
-  `feat/epic-16-fisc-016-events`. **WU-A landed**: `SIFEN-BASELINE.md` **§25**
-  profiles the family from five retrieved artifacts (two of whose byte sizes
-  match §23.3's record exactly). It **corrects three assumptions**: the event's
-  type is the **element name** (`tdTiGDE` is a dead catalogue), the event
-  **reuses the DE's XMLDSig profile**, and the clock is **local**
-  (`tDateTimeUTC` is dead). And it records **two findings**: the Guide's "Ajuste
-  del Evento" **has no payload** (the schema defines four receptor events, not
-  five), and the response's **result codes are not evidenced** (`tdEstRes` is
-  free text, `tdCodRes` only fixes four digits). **Next: WU-B**, the event
-  document.
+- [x] T12 — **FISC-016: the event family — closed 2026-10-12** (PR #115). Branch
+      `feat/epic-16-fisc-016-events`. **WU-A landed**: `SIFEN-BASELINE.md`
+      **§25** profiles the family from five retrieved artifacts (two of whose
+      byte sizes match §23.3's record exactly). It **corrects three
+      assumptions**: the event's type is the **element name** (`tdTiGDE` is a
+      dead catalogue), the event **reuses the DE's XMLDSig profile**, and the
+      clock is **local** (`tDateTimeUTC` is dead). And it records **two
+      findings**: the Guide's "Ajuste del Evento" **has no payload** (the schema
+      defines four receptor events, not five), and the response's **result codes
+      are not evidenced** (`tdEstRes` is free text, `tdCodRes` only fixes four
+      digits). **WU-B, WU-C, WU-D and WU-E all landed**: the document is built,
+      signed and XSD-proven; `cancel` submits; the inutilización has a real
+      surface with a claim/submit/settle protocol and an in-flight guard; and
+      the hand-off to FISC-013's matrix is recorded. **The story is `done`** —
+      six exit criteria met, gates green on the final tree (root
+      lint/typecheck/test 21-21/build/format, fiscal 708 with the XSD proof, api
+      1183, database 459, live-PostgreSQL 234-234), PR #115's three CI jobs
+      pass, and four review findings are recorded as [[TD-033]].
 
 ## Two lineages are NOT closed, and the second one is why the fixes rest on argument
 

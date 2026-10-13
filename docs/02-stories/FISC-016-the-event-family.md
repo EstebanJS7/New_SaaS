@@ -5,7 +5,7 @@ title:
   The event family — the cancellation and the inutilización a real submission
   needs
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-012
@@ -15,7 +15,7 @@ prd_sections:
 permissions: []
 branch: feat/epic-16-fisc-016-events
 created: 2026-10-08
-updated: 2026-10-11
+updated: 2026-10-12
 ---
 
 # FISC-016 — the event family
@@ -137,9 +137,26 @@ carry 10), and a reason outside `mOtEve`'s domain. Its own permission
 `fiscal.range.void` was added rather than overloading `fiscal.invoice.issue` or
 `fiscal.profile.manage`.
 
-**WU-E — the events' evidence.** The homologation's event cases, handed to
-[[FISC-013]] rather than duplicated: this unit ends when the events the matrix
-requires are the ones FISC-013 sends.
+**WU-E — the events' evidence.** **Landed.** The hand-off is recorded rather
+than duplicated: the homologation's matrix lives in [[FISC-013]]'s story, which
+is on `feat/epic-16-fisc-015-document-assembly` (PR #114) and reaches `main`
+with it. What this unit fixes is **which rows the events now satisfy**:
+
+- **Cancellation ×5** — satisfied by the provider's `cancel`, which submits the
+  caller's signed event group and maps the answer
+  (`Aprobado`/`Aprobado con observación` → `CANCELLED`, `Rechazado` →
+  `REJECTED`, an unlisted `dCodRes` carried verbatim).
+- **Inutilización ×5** — satisfied by `POST /fiscal/timbrado-ranges/:id/void`,
+  which is the same submission path with the range's own interval.
+- **Five receptor events ×3** — **not satisfiable**: four of them are the
+  schema's four payloads and the fifth, the Guide's "Ajuste del Evento", **has
+  no payload at all** (§25.9). This row cannot be completed as written, and the
+  finding belongs to FISC-013.
+- The document rows (5 sync + 5 async per type, KuDE + QR) are FISC-015's and
+  FISC-012's, already landed.
+
+The events the matrix requires are now the ones this epic sends; the run itself
+waits on the DNIT's habilitación, which is FISC-013's.
 
 ## Out of scope
 
@@ -169,11 +186,22 @@ requires are the ones FISC-013 sends.
       timbrado, with a named refusal for every state the schema does not assert
       (FISC-016 WU-D: `assertRangeVoidable`, and the tenant-scoped read that
       makes another tenant's range a `404`).
-- [ ] No secret — the CSC, the private key — reaches a log, a snapshot or an
-      error message.
-- [ ] Lint/typecheck/tests/build green, `format-check` clean, and the events the
-      matrix requires are the ones FISC-013 sends.
-- [ ] Every protocol constant cites §25 or the Manual's section that set it.
+- [x] No secret — the CSC, the private key — reaches a log, a snapshot or an
+      error message. Checked by reading every error and log path in the event's
+      code: the key is never named outside the signer's arguments, the
+      provider's text is scrubbed to 500 characters before it is persisted
+      (`fiscal.provider-text.ts`), and no snapshot carries key material.
+- [x] Lint/typecheck/tests/build green, `format-check` clean, and the events the
+      matrix requires are the ones FISC-013 sends. The gates ran on the final
+      tree: root lint, typecheck, test 21/21, build and `format-check` green;
+      fiscal **708** with `DTE_XSD_REQUIRED=1` (0 skipped), api **1183**,
+      database **459**, fiscal-persistence **32**, worker **140**,
+      live-PostgreSQL **234/234**. CI's three jobs pass on PR #115.
+- [x] Every protocol constant cites §25 or the Manual's section that set it. The
+      event's constants each carry their source (`tVerFor` §25.6, `tdIdEve`,
+      `dId`, `tmotEve`, `tiTiDEEv` with the artifact and line), and the void's
+      own (the deadline, the lease and its ratio to the deadline) say what set
+      them.
 
 ## Status
 
@@ -187,13 +215,17 @@ the inutilización's business surface — the port's `voidRange`, the adapter's
 submission, the `fiscal_range_void` record with its migration and tenant-scoped
 store, the route with its own permission, and a named refusal for every state
 the schema does not assert. Its rules are recorded in `SIFEN-BASELINE.md`
-§25.10. **Next: WU-E**, the events' evidence handed to [[FISC-013]].
+§25.10. **WU-E landed**: the hand-off is recorded — which matrix rows the events
+satisfy and which they cannot — and the story closes.
 
-**One known verification gap, recorded rather than hidden.** The route-contract
-probe (`apps/api/src/rbac/route-contract.probe.test.ts`) pins the full route
-inventory and the fiscal permission map, and it is outside WU-D's edit surface:
-its two pins fail by name until the new route is added to
-`EXPECTED_ROUTE_INVENTORY` and to `FISCAL_PERMISSION_BY_ROUTE` (mapped to
-`FISCAL_PERMISSIONS.rangeVoid`). Every other API case passes (1172), and the
-live-PostgreSQL suite's 232 cases pass with the void's own isolation block
-included.
+**Done 2026-10-12.** All six exit criteria are met and the gates ran on the
+final tree. What the epic leaves open belongs to other stories: the homologation
+run waits on the DNIT's habilitación ([[FISC-013]]), the receptor events are a
+different product decision, and the Guide's "Ajuste del Evento" has no payload
+to build. Four findings from the reviews are recorded as [[TD-033]].
+
+**The verification gap is closed.** The route-contract probe's two pins
+(`EXPECTED_ROUTE_INVENTORY` and `FISCAL_PERMISSION_BY_ROUTE`, the latter mapped
+to `FISCAL_PERMISSIONS.rangeVoid`) were added with WU-D unit 1, and the suite is
+green: api **1183**, live-PostgreSQL **234/234** with the void's own isolation
+block.
