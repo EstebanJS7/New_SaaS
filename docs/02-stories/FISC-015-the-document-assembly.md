@@ -76,21 +76,50 @@ from.
    reference lives, how `IdCSC` is stored, and how the secret reaches the QR
    builder without entering a URL, a log or a snapshot.
 
-### The decisions this story needs before its work units are written
+### The four decisions, made
 
-These are product decisions, and [[DEC-056]] says so explicitly. The story's
-first work unit is to make them, in the house form (a DEC per decision, or one
-DEC that carries them all with their citations):
+**[[DEC-057]] makes them**, from a retrieval that read the Manual v150, the
+Notas Técnicas that amend it, the official XSDs and the DNIT's own guides. In
+summary:
 
-- **What a rate code means fiscally**: which `iAfecIVA`, which rate, and whether
-  a 0% rate is exempt or exonerated.
-- **What a receptor is**: which operation type, which country, which document
-  type, and what an invoice with no customer produces.
-- **Where the CSC lives**: which table holds its reference, who writes it, and
-  how it is rotated.
-- **Which establishment, point of expedition and document type issue**: the
-  tenant-level policy that selects the timbrado range, or the explicit statement
-  that a tenant has exactly one and it is derived.
+1. **A rate code's fiscal meaning is the tenant's declaration.** `tax_rate`
+   gains the fiscal classification (`iAfecIVA`, and the proportionality for a
+   partially taxed line) while `rate` stays where it is. The Manual **does not
+   distinguish _exento_ from _exonerado_** — it labels both and gives both rate
+   `0` — so a code that derived the affectation from the rate would be choosing
+   a legal characterisation on the tenant's behalf. The tenant declares it; the
+   system carries it and refuses the combinations the protocol forbids.
+2. **The receptor is derived where the sources pin it, and declared where they
+   do not.** `iNatRec`, `iTiContRec`, `dRucRec` with its check digit,
+   `iTipIDRec`, `dNumIDRec`, `dNomRec` and the innominado case all follow from
+   `customer`'s own columns; `iTiOpe` does not, because `B2G` depends on the
+   DNIT's registry of state entities and `B2B`/`B2C`/`B2F` on facts only the
+   tenant knows. The validations the Notas Técnicas add are ours to enforce
+   before SIFEN does: innominado only for `B2C`, never for NC/ND/NR, and not
+   above NT 021's threshold.
+3. **The CSC is per tenant and per environment, sealed in the secret store**,
+   with its `IdCSC` beside the reference — the value is secret by the sources'
+   own words and the test environment's pair is generic while production's is
+   issued at the emitter's onboarding.
+4. **The tenant declares a default issuance point**, validated against exactly
+   one ACTIVE timbrado range at issuance, which is what lets the allocation
+   happen inside the confirmation transaction [[DEC-056]] chose.
+
+### The schema delta this implies
+
+- `tax_rate` gains the fiscal classification (one column or one small table).
+- The fiscal profile gains the default issuance point, the CSC's reference and
+  its `IdCSC`.
+- `customer` gains the operation type, or the fiscal profile carries a default.
+- **One additive migration**, with the tenant-isolation proof each new aggregate
+  requires.
+
+Two things the assembly still needs and this story owns: **the currency's
+description** is the protocol's own table (`Monedas_v150.xsd` carries
+`PYG → Guarani`, so it is a static mapping and not tenant data), and **the unit
+of measure** is the protocol's list too (`Unidades_Medida_v141.xsd`,
+`77 → Unidad - UNI`) but _which_ unit an item is, is tenant data that needs a
+field or a default.
 
 ## Work units
 
@@ -119,6 +148,85 @@ and against the published worked example of the protocol's own documentation.
 **WU-E — the homologation of one real document.** Handed to [[FISC-013]]'s
 certification run rather than duplicated here: this unit ends when the
 assembly's output is the document FISC-013 submits.
+
+## The design finding WU-B's review produced
+
+**[[DEC-056]]'s "the fiscal number IS the invoice's number" collides with two
+pre-existing Billing invariants**: the invoice's series is **immutable across a
+permitted transition** (a header guard from BILL-003) and its uniqueness is
+`(tenant_id, series, number)`. A successor timbrado range restarts at 1, so
+writing the fiscal number to the invoice collides with the invoice the previous
+range numbered 1 — and the confirmation fails.
+
+The resolution is **two identities, deliberately**: the invoice's own `number`
+and `series` stay Billing's (the counter) and the **fiscal** number lives in
+`invoice_fiscal_allocation.document_number`, with its own unique index per
+range. No collision is possible, no guard is touched, and **the DE and the KuDE
+carry the fiscal number**, which is what a customer and the tax authority
+compare. DEC-056's sentence about "the invoice's printed number" is satisfied
+for the document the customer sees; the API's invoice DTO showing the fiscal
+number when an allocation exists is a follow-up.
+
+## Known limitations of the assembly
+
+- **The composition root is not test-covered**: `worker.module.ts`'s new
+  providers are proven by typecheck and build only, because `main.test.ts`
+  bypasses Nest and no module spec exists.
+- **The worker's signature verification uses `node:crypto`**, not `xml-crypto`
+  (not a worker dependency): the test documents the two canonicalization rules
+  it applies.
+- **The QR's totals are the DE's own `F014`/`F017` strings** (`"200.00000000"`),
+  not the integer form the Manual's example prints — the sources state no
+  reformatting, so this is unpinned.
+- **`dFeEmiDE`/`dFecFirma` are rendered in UTC**, and the emitter's local wall
+  clock is modelled nowhere; SIFEN's field is a local-time one.
+- **A non-PYG invoice cannot be issued**: `F023` has no source, and with it
+  `dCondTiCam`/`dTiCam` are unmodelled.
+- **A counter-path invoice is refused**, so a tenant that declared no issuance
+  point can never issue a DE.
+
+## The gaps WU-D1 found
+
+- **The receptor's city code has no source anywhere in the repository.** The
+  Manual's Tabla 2.2 is not profiled, so `cCiuRec`/`dDesCiuRec` cannot be built
+  and the conditional address group is omitted; a remission note or an exterior
+  operation, whose receptor _must_ carry an address, is refused. Profiling the
+  table is a retrieval, not a guess.
+- **`customer_address.country_code` is alpha-2 while `cPaisRec` is alpha-3**, so
+  a customer with a stored country is refused until one side is converted or
+  migrated.
+- **`CatalogItem` has no code column**, so `dCodInt` carries the item's UUID —
+  legal and stable, but it publishes an internal identifier the schema
+  classifies CONFIDENTIAL.
+- **A walk-in invoice is refused**, not defaulted: the innominado receptor needs
+  a customer row with both identity columns NULL, and DEC-057 pinned the
+  operation type "per customer".
+- **Two pre-existing comment defects** in `dte.types.ts` and `dte.rules.ts`
+  carry the old, wrong `iTiOpe` pairing. The behaviour is right; the comments
+  mislead. WU-D2 fixes them.
+
+## Known limitations this unit created
+
+- **The at-most-two ACTIVE CSC bound is enforced per statement, not
+  serializably.** Under `READ COMMITTED` two concurrent inserts can each count
+  one active row and both commit, so the trigger can admit a third CSC by one
+  race. Closing the window needs a lock or a slot column, and neither is part of
+  [[DEC-057]].
+- **The units of measure and the currencies have no table anywhere in the
+  repository.** `packages/fiscal/src/dte/dte.catalogues.ts` holds five protocol
+  tables (document type, tax type, transaction type, emission type and
+  departments) and neither `cUniMed`'s nor `cMoneOas`'s; the mapper still takes
+  `currencyDescription` as a caller input. The assembly therefore **adds** two
+  tables from the official XSDs — they are the protocol's own lists, with each
+  code's own description (`PYG → Guarani`, `77 → Unidad - UNI`) — and that work
+  is WU-D's, because it lives in `packages/fiscal`.
+- **`IdCSC`'s alphabet and `cUniMed`'s alphabet are not pinned by any retrieved
+  source**, so the schema enforces only what is cited: four characters for the
+  identifier, and a length for the unit code.
+- **`iTiOpe`'s code-to-name pairing was wrong in the vault**, and the schema
+  stores the four **names** rather than the codes so a re-reading cannot
+  reintroduce it. `SIFEN-BASELINE.md` §22.3 carries the correction and the
+  amendment trail.
 
 ## Out of scope
 
@@ -156,7 +264,8 @@ assembly's output is the document FISC-013 submits.
 
 ## Status
 
-**Planned 2026-10-08.** Created by [[DEC-056]]'s decision to narrow
-[[FISC-012]]: its WU-D keeps the stage's four own properties and this story
-carries the assembly. It is **not started**: its first work unit makes the four
-product decisions above, and no schema change happens before they are made.
+**Planned 2026-10-10, and its decisions are made.** Created by [[DEC-056]] when
+[[FISC-012]]'s reconnaissance found the assembly's inputs unmodelled;
+[[DEC-057]] now carries the four product decisions and the schema delta they
+imply. It is **not started**: the decisions are `proposed` until the maintainer
+accepts them, and no schema change happens before that.

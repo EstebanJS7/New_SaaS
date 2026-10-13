@@ -49,7 +49,11 @@ export const TIP_CONT_VALUES = [1, 2] as const;
 export const NAT_REC_VALUES = [1, 2] as const;
 /** §22.11 `/ D208 iTipIDRec`, type `tiTipDocRec`: `[1-6]|9`. NOT `tiTipDoc`. */
 export const TIP_DOC_REC_VALUES = [1, 2, 3, 4, 5, 6, 9] as const;
-/** `tiTiOpe` (`[1-4]`): 3 is B2G, 4 is B2C (§22.11). */
+/**
+ * `tiTiOpe` (`[1-4]`): `1` is B2B, `2` is B2C, `3` is B2G, `4` is B2F (§22.3's
+ * corrected pairing; NT 010's `D202`/1300 agrees). The Manual's own receptor
+ * table is the source: "1= B2B 2= B2C 3= B2G 4= B2F".
+ */
 export const TIP_OPE_VALUES = [1, 2, 3, 4] as const;
 /** `tdCondTiCam`: 1 = global, 2 = por ítem. */
 export const COND_TI_CAM_VALUES = [1, 2] as const;

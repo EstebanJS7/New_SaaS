@@ -668,14 +668,73 @@ candidate 1 exists.
       `docs/10-qa/CI-EVIDENCE.md`, and the module doc lists what is deliberately
       absent.
 
-- [ ] T9 — FISC-013: contingency + certification evidence.
+- [ ] T9 — **FISC-013: contingency + certification evidence — planned
+      2026-10-10.** The retrieval answered the epic's row: the habilitación's
+      six steps, the test data set (with the **generic CSC**, whose first value
+      is the one in the Manual's QR example) and the Guía de Pruebas' minimum
+      matrix. **The finding**: the matrix requires the **events** (cancellation
+      ×5, **inutilización** ×5 as emitter, five receptor events ×3), so
+      [[FISC-016]] is on this story's critical path and the inutilización is a
+      second event type. The contingency half is DNIT's gap — the Manual §14
+      removes its own contingency section — so only the `dDesTipEmi = 2` flag is
+      recorded. Its runbook can be written now; the run itself waits for the
+      habilitación and the test data.
 - [ ] T10 — FISC-014: epic closure.
-- [ ] T11 — **FISC-015: the document assembly.** Created by [[DEC-056]] when
-      FISC-012's reconnaissance found the fiscal identity a DE needs unmodelled.
-      Its first work unit makes four product decisions — what a rate code means
-      fiscally, what a receptor is, where the CSC lives, which
-      establishment/point/type issues — **before any schema change**. Until it
-      lands the worker's stage fails closed with a named reason.
+- [ ] T11 — **FISC-015: the document assembly — in progress 2026-10-10.**
+      Feature record: `odd/tasks/fisc-015-document-assembly.md`. Branch
+      `feat/epic-16-fisc-015-document-assembly` from `main` = `4b9281b`. **Its
+      decisions are made** ([[DEC-057]]). The four product decisions, from a
+      retrieval of the Manual, the Notas Técnicas and the XSDs: the tenant
+      declares a rate code's affectation (the Manual does not distinguish
+      _exento_ from _exonerado_), the receptor is derived except `iTiOpe`, the
+      CSC is per tenant and per environment sealed in the secret store, and the
+      tenant declares its default issuance point. The schema delta is one
+      additive migration. Created by [[DEC-056]] when FISC-012's reconnaissance
+      found the fiscal identity a DE needs unmodelled. Its first work unit makes
+      four product decisions — what a rate code means fiscally, what a receptor
+      is, where the CSC lives, which establishment/point/type issues — **before
+      any schema change**. Until it lands the worker's stage fails closed with a
+      named reason. **WU-C landed as commit `4156d22`** — 17 files, 2,568
+      insertions — and its review is `review-9ddfb96df63fba50`: tier `high`,
+      **four lenses run as ONE group**, closed **`approved`** with six
+      advisories, none opening a correction. The schema delta and the reads are
+      in: a tenant-scoped classification table (the affectation is the tenant's
+      declaration, because `tax_rate` is global and the Manual does not
+      distinguish _exento_ from _exonerado_), two triggers holding the
+      rate/affectation consistency in both directions, the receptor's declared
+      operation type, the CSC per tenant and per environment with its two-active
+      bound, and the declared issuance point. Every reader answers `null` rather
+      than a default when the tenant has not declared. **Next: WU-B** (the
+      number's authorisation at confirmation) and **WU-D** (the assembly, which
+      also adds the units and the currencies tables the protocol's XSDs carry
+      and the repository does not). **WU-B landed as commit `b382108`** — 13
+      files, 2,545 insertions — and its review is `review-935a71a795da88ed`
+      (recovered from `review-582d2ef98bf0938f`): tier `high`, four lenses as
+      one group, closed **`approved`** with eight advisories. Its refuter
+      **corroborated** a CRITICAL finding — the fiscal number collided with a
+      confirmed invoice because the invoice's Billing series is immutable and
+      its uniqueness is `(tenant, series, number)` — and the correction became
+      **two identities**: the invoice's number stays Billing's and the fiscal
+      number is the allocation's, which is what the DE and the KuDE carry. That
+      correction widened the candidate's scope by one file, so the review was
+      **recovered** with the maintainer's authorization and the predecessor
+      preserved. **Next: WU-D** (the assembly, which also adds the units and the
+      currencies tables the protocol's XSDs carry and the repository does not).
+      **WU-D1 landed as commit `e7e9b45`** — 14 files, 3,249 insertions — and
+      its review is `review-edb12ca102650758`: tier `high`, four lenses as one
+      group, closed **`approved`** with six advisories. The protocol tables that
+      existed nowhere (units, currencies, countries — generated from the
+      official XSDs, with each artifact's own quirks kept) and the reads the
+      assembly consumes are in, plus two gaps recorded rather than papered over:
+      **the receptor's city code has no source** and **the address country is
+      alpha-2 while the DE's is alpha-3**. **Next: WU-D2**, the assembly itself.
+      **WU-D2 landed as commit `20d309f`** — 6 files, 1,457 insertions — and its
+      review is `review-f545f1ccc3f7e13e`: tier `medium`, one lens, closed
+      **`approved`** with four advisories. **The worker can now build a real
+      DE**: the assembly implements FISC-012's seam, and the built, signed and
+      QR-filled document **validates against the official XSDs**. Three stale
+      `iTiOpe` lines were corrected (comment-only, verified against every
+      branch). What is left for the story is FISC-013's homologation run.
 - [ ] T12 — **FISC-016: the cancellation event.** Created by FISC-012's own
       implementation: SIFEN's cancellation is an event and `SIFEN-BASELINE.md`
       §23.3 records that `Evento_v150.xsd`'s field-level rules were never
