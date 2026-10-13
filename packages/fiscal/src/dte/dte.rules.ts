@@ -416,7 +416,7 @@ function assertReceptor(request: DteRequest): void {
   }
 
   // D208 / D210 for D201 = 2 and D202 != 4 (NT 023): the identity document is
-  // obligatory. For B2C (D202 = 4) it is neither required nor forbidden.
+  // obligatory. For B2F (D202 = 4) it is neither required nor forbidden.
   if (receptor.iTiOpe !== 4 && identityFieldCount < 3) {
     throw new DteValidationError(
       "INVALID_RECEPTOR",

@@ -216,16 +216,55 @@ export {
   describeDepartment,
   describeDocumentType,
   describeEmissionType,
+  describeReceptorIdentityType,
   describeTaxType,
   describeTransactionType,
   DTE_DEPARTMENT_NAMES,
   DTE_DOCUMENT_TYPE_DESCRIPTIONS,
   DTE_EMISSION_TYPE_DESCRIPTIONS,
+  DTE_RECEPTOR_IDENTITY_TYPE_CODES,
+  DTE_RECEPTOR_IDENTITY_TYPE_DESCRIPTIONS,
   DTE_TAX_TYPE_DESCRIPTIONS,
   DTE_TRANSACTION_TYPE_DESCRIPTIONS,
   DteCatalogueError,
+  namedCodeFor,
+  // The two narrowing helpers travel with the tables they narrow: a caller that
+  // holds a stored integer (WU-D's reads hold several) needs them to answer the
+  // protocol's union without a cast, and the failure they raise is this module's.
+  narrowCode,
+  narrowTaxpayerType,
 } from "./dte/dte.catalogues.js";
-export type { DteCatalogueFailure, DteCodeDescription } from "./dte/dte.catalogues.js";
+export type {
+  DteCatalogueFailure,
+  DteCodeDescription,
+  DteNamedCode,
+} from "./dte/dte.catalogues.js";
+// FISC-015 WU-D: the three protocol tables the DE needs and the repository did
+// not have — the units of measure, the currencies and the countries. Each is
+// generated from the official XSD's own bytes (artifact, size, md5 and date in
+// its header), each holds EVERY code the artifact publishes, and each refuses an
+// unknown code with `DteCatalogueError` rather than answering undefined: a code
+// the protocol does not publish must never become a document SIFEN rejects.
+//
+// Units and currencies are the lists the mapper's `unitOfMeasureCode`/
+// `currencyDescription` inputs are resolved against; the countries are what the
+// receptor's `cPaisRec`/`dDesPaisRe` come from.
+export {
+  describeUnitOfMeasure,
+  DTE_UNITS_OF_MEASURE,
+  unitOfMeasureFor,
+  unitOfMeasureSymbol,
+} from "./dte/dte.units.js";
+export type { DteUnitOfMeasure } from "./dte/dte.units.js";
+export {
+  currencyFor,
+  describeCurrency,
+  DTE_CURRENCIES,
+  DTE_CURRENCY_DESCRIPTION_MAX_LENGTH,
+} from "./dte/dte.currencies.js";
+export type { DteCurrency } from "./dte/dte.currencies.js";
+export { countryFor, describeCountry, DTE_COUNTRIES } from "./dte/dte.countries.js";
+export type { DteCountry } from "./dte/dte.countries.js";
 // FISC-011: the Manual §10.5 series order, which is a validation and not just a
 // sequence — SIFEN refuses a series that is not the previous, the same or the
 // next one.

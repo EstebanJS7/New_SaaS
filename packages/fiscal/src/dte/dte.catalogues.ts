@@ -24,16 +24,25 @@
  *                               dDesTipTra    13 values   Manual p.66, D011/D012
  * iTipEmi    1|2                tdDesTipEmi    2 values   DE_Types_v150.xsd
  * tDepartamentos 1..20          tDesDepartamento 20      Departamentos_v141.xsd
+ * tiTipDocRec  1-6|9            tdDtipDocRec   6 values   DE_Types_v150.xsd + §22.11
  * ```
+ *
+ * **The string-keyed protocol tables live in their own modules**, because their
+ * codes are not integers: `dte.units.ts` (`tcUniMed`/`tdDesUniMed`),
+ * `dte.currencies.ts` (`cMondT`) and `dte.countries.ts` (`paisType`). They share
+ * this module's failure type and, through `namedCodeFor`, its refusal shape —
+ * three tables of 64, 200 and 249 codes would drown the five catalogues above.
  */
 
 import {
   T_IMP_VALUES,
   TI_DE_VALUES,
   TIP_CONT_VALUES,
+  TIP_DOC_REC_VALUES,
   TIP_TRA_VALUES,
   type DteTipoContribuyente,
   type DteTipoDocumentoElectronico,
+  type DteTipoDocumentoReceptor,
   type DteTipoImpuesto,
   type DteTipoTransaccion,
 } from "./dte.types.js";
@@ -51,7 +60,16 @@ export interface DteCodeDescription<C extends number = number, D extends string 
   readonly description: D;
 }
 
-export type DteCatalogueFailure = "UNKNOWN_CODE" | "INVALID_CODE";
+export type DteCatalogueFailure =
+  | "UNKNOWN_CODE"
+  | "INVALID_CODE"
+  /**
+   * The protocol publishes the code but the value this table would answer for it
+   * cannot be carried by the DE's own type — see `describeReceptorIdentityType`,
+   * where §22.11's name for code `9` is too short for `tdDtipDocRec`'s free
+   * branch. The code is not unknown; the answer is unusable.
+   */
+  | "UNSUPPORTED_DESCRIPTION";
 
 export class DteCatalogueError extends Error {
   readonly failure: DteCatalogueFailure;
@@ -140,6 +158,37 @@ export type DteEmissionTypeDescription =
   (typeof DTE_EMISSION_TYPE_DESCRIPTIONS)[number]["description"];
 
 /**
+ * `tiTipDocRec` / `tdDtipDocRec`: the receptor's identity document type.
+ *
+ * The codes and their names come from **§22.11, last set by NT 023** — the same
+ * list that gives `D208`'s conditions — and five of the six names are ALSO the
+ * XSD's own enumeration (`tdDtipDocRec`), which is why `dDTipIDRec` is one of
+ * the few descriptions `packages/fiscal` encodes: the schema states the pairing.
+ *
+ * **Code `9` is the exception, and it is recorded rather than smoothed over.**
+ * §22.11 names it `Otro`; `tdDtipDocRec`'s enumeration does not contain that
+ * string, and its second branch requires 9..41 characters, so the name the
+ * sources give code `9` cannot be emitted at all. The entry stays in this
+ * catalogue — the code is one the protocol admits — and
+ * `describeReceptorIdentityType` refuses it, because a description the schema
+ * cannot carry must not become a document SIFEN rejects.
+ *
+ * `tRuc`'s and `tCDC`'s use of `[0-9A-D]` for a check digit does not extend
+ * here: `D208` admits exactly these seven values (`tiTipDocRec` = `[1-6]|9`),
+ * which is NOT the emitter's `tiTipDoc` (`[1-4]`).
+ */
+export const DTE_RECEPTOR_IDENTITY_TYPE_DESCRIPTIONS: readonly DteCodeDescription<DteTipoDocumentoReceptor>[] =
+  [
+    { code: 1, description: "Cédula paraguaya" },
+    { code: 2, description: "Pasaporte" },
+    { code: 3, description: "Cédula extranjera" },
+    { code: 4, description: "Carnet de residencia" },
+    { code: 5, description: "Innominado" },
+    { code: 6, description: "Tarjeta Diplomática de exoneración fiscal" },
+    { code: 9, description: "Otro" },
+  ];
+
+/**
  * `tDepartamentos` / `tDesDepartamento`, the twenty pairs from
  * `Departamentos_v141.xsd`. Both enumerations live in that file in the same
  * order, so this one IS positional — and the file is the authority for `D111`.
@@ -218,6 +267,7 @@ export function narrowTaxpayerType(code: number): DteTipoContribuyente {
 export const DTE_TAX_TYPE_CODES = T_IMP_VALUES;
 export const DTE_DOCUMENT_TYPE_CODES = TI_DE_VALUES;
 export const DTE_TRANSACTION_TYPE_CODES = TIP_TRA_VALUES;
+export const DTE_RECEPTOR_IDENTITY_TYPE_CODES = TIP_DOC_REC_VALUES;
 
 /** The description for a document type, or a failure naming the code. */
 export function describeDocumentType(code: number): string {
@@ -242,6 +292,63 @@ export function describeEmissionType(code: number): DteEmissionTypeDescription {
 /** The department name for a code, or a failure naming the code. */
 export function describeDepartment(code: number): string {
   return describeFrom(DTE_DEPARTMENT_NAMES, code, "department");
+}
+
+/**
+ * The `dDTipIDRec` description for a receptor identity type, or a failure.
+ *
+ * Code `9` is refused with `UNSUPPORTED_DESCRIPTION`: §22.11 names it `Otro`, and
+ * `tdDtipDocRec` cannot carry that string (its enumeration omits it and its free
+ * branch needs 9..41 characters). Every other code answers the XSD's own
+ * enumeration value.
+ */
+export function describeReceptorIdentityType(code: number): string {
+  if (code === 9) {
+    throw new DteCatalogueError(
+      "UNSUPPORTED_DESCRIPTION",
+      'D208 = 9 is published as "Otro", and dDTipIDRec (tdDtipDocRec) carries neither ' +
+        "that enumeration value nor a string shorter than 9 characters, so the name the " +
+        "sources give this code cannot be emitted."
+    );
+  }
+  return describeFrom(DTE_RECEPTOR_IDENTITY_TYPE_DESCRIPTIONS, code, "receptor identity type");
+}
+
+/**
+ * A protocol table's entry when its code is a **string**, not an integer.
+ *
+ * `DteCodeDescription` above is the integer-keyed twin; the two are separate
+ * because a `tcUniMed`, a `cMondT` and a `paisType` code are all strings, and
+ * widening one type to serve both would make `entryFor`'s code narrowing
+ * meaningless.
+ */
+export interface DteNamedCode<C extends string = string> {
+  readonly code: C;
+  readonly description: string;
+}
+
+/**
+ * The entry for a string code in one of the protocol's own tables, or a failure
+ * naming the code and the table.
+ *
+ * This is the string-keyed twin of `describeFrom`: `dte.units.ts`,
+ * `dte.currencies.ts` and `dte.countries.ts` each expose their frozen map and
+ * one lookup built on this, so all four tables refuse the same way and a caller
+ * catches one error type.
+ */
+export function namedCodeFor<E extends DteNamedCode>(
+  table: ReadonlyMap<string, E>,
+  code: string,
+  label: string
+): E {
+  const found = table.get(code);
+  if (found === undefined) {
+    throw new DteCatalogueError(
+      "UNKNOWN_CODE",
+      `"${code}" is not a ${label}; the protocol's table holds ${String(table.size)} codes.`
+    );
+  }
+  return found;
 }
 
 function assertIntegerCode(code: number, label: string): void {

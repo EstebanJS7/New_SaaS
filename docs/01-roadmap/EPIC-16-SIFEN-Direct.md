@@ -195,6 +195,18 @@ closed against, and [[FISC-016]] for the cancellation event, which is why
 its cap. The closure evidence is in `docs/10-qa/CI-EVIDENCE.md`, and the module
 doc's limitations list what is deliberately absent.
 
+**FISC-013's row is answered, and it found a prerequisite (2026-10-10).** A
+retrieval of the DNIT's own guides settled what that row left open: the
+habilitación is a six-step procedure, the test environment's data set includes a
+**generic CSC** (whose first value is the one in the Manual's QR example), and
+the Guía de Pruebas (February 2026) prints the minimum test matrix. **That
+matrix requires the events** — the cancellation event five times and the
+**inutilización** event five times, both as the emitter — so [[FISC-016]] is on
+FISC-013's critical path rather than optional, and the inutilización is a second
+event type the epic had not named. The contingency half is DNIT's own gap: the
+Manual §14 removes its contingency section ("sigue en etapa de definición"), so
+there is no protocol to implement and only the `dDesTipEmi = 2` flag to record.
+
 **FISC-016 was created by FISC-012's own implementation (2026-10-08).** SIFEN's
 cancellation is an **event**, and `SIFEN-BASELINE.md` §23.3 records that
 `Evento_v150.xsd`'s field-level rules were never profiled — the artifacts were

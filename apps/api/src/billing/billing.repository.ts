@@ -438,6 +438,9 @@ export class BillingRepository {
     const client = tx ?? this.prisma;
     const result = await client.invoice.updateMany({
       where: { id, tenantId, status: "DRAFT" },
+      // The series is NOT written: the header guard makes it immutable across a
+      // permitted transition, and the fiscal number is a separate identity in
+      // `invoice_fiscal_allocation` rather than this row's `number`.
       data: { status: "CONFIRMED", number, confirmedAt: new Date() },
     });
     return result.count;

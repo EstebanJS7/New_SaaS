@@ -7,6 +7,7 @@ import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.j
 import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
 import { FiscalService } from "../fiscal/fiscal.service.js";
+import { FiscalAllocationService, type FiscalAllocationTx } from "../fiscal/fiscal.module.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { SaleRepository, type SaleLineRow, type SaleTx } from "../sales/sales.repository.js";
 import { TenantSettingsService } from "../settings/tenant-settings.service.js";
@@ -30,8 +31,17 @@ import { BILLING_DTO_SCHEMA_VERSION, type CreateInvoiceInput } from "./billing.z
  * repository seam, the sibling {@link SaleRepository} seam the source sale is
  * read through, and `auditLog` the append-only {@link AuditWriter}, so the
  * invoice, its lines and its audit row commit atomically.
+ *
+ * FISC-015 WU-B adds {@link FiscalAllocationTx} — the delegates the Fiscal
+ * application boundary's allocation reads and writes THROUGH this handle
+ * ([[DEC-056]]). It is the same one-way seam the DEC-051 `fiscalDocument` read
+ * already is: Billing names no fiscal table and imports no fiscal client, and
+ * the type itself is declared by the boundary that owns those tables. The real
+ * Prisma transaction client carries every one of these delegates, so the
+ * intersection is what the handle actually is.
  */
-export type BillingWriteTx = SaleTx & BillingTx & { auditLog: AuditAppendTx["auditLog"] };
+export type BillingWriteTx = SaleTx &
+  BillingTx & { auditLog: AuditAppendTx["auditLog"] } & FiscalAllocationTx;
 
 export interface BillingPrisma {
   $transaction: <T>(work: (tx: BillingWriteTx) => Promise<T>) => Promise<T>;
@@ -394,7 +404,8 @@ export class BillingService {
     private readonly requestContext: RequestContextService,
     private readonly permissionResolver: PermissionResolver,
     private readonly audit: AuditWriter,
-    private readonly fiscal: FiscalService
+    private readonly fiscal: FiscalService,
+    private readonly fiscalAllocation: FiscalAllocationService
   ) {}
 
   /**
@@ -546,9 +557,26 @@ export class BillingService {
    * 4. re-reads the invoice and returns its allowlisted DTO with `series`,
    *    `number`, `status: "CONFIRMED"` and `confirmedAt` populated.
    *
+   * THE NUMBER'S SOURCE (DEC-039, DEC-056). Which of the two sources numbers this
+   * invoice is a property of the TENANT'S OWN DECLARATION, not of this code path:
+   *
+   * - a tenant that has declared its issuance point — the three profile fields
+   *   DEC-057 Q4 added — draws its numbers from its timbrado range, allocated by
+   *   {@link FiscalAllocationService} INSIDE this same transaction, with the
+   *   range's identity persisted beside the invoice. A declaration that resolves
+   *   to no ACTIVE range, or to more than one, is a stable `409` that names the
+   *   state and rolls this whole transaction back: a tenant that declared a point
+   *   the fiscal data cannot resolve must not be handed a number under a range it
+   *   did not mean.
+   * - a tenant that has declared NOTHING keeps `invoice_number_sequence`, exactly
+   *   as before. That counter is not a second truth: no invoice is ever numbered
+   *   by both, and `allocateNumber` is reached only when the fiscal path answered
+   *   `null`.
+   *
    * The command writes NO line, NO amount, NO payment, NO cash, NO stock and NO
-   * fiscal state, and emits NO event: it changes only the header's own status,
-   * number and confirmation timestamp (DEC-041, DEC-042).
+   * fiscal state beyond the allocation's own row, and emits NO event: it changes
+   * only the header's own status, number and confirmation timestamp (DEC-041,
+   * DEC-042, DEC-056).
    */
   async confirmInvoice(id: string): Promise<InvoiceResponse> {
     await this.assertBillingEnabled();
@@ -578,8 +606,24 @@ export class BillingService {
         throw new DomainError("CONFLICT", INVOICE_NOT_DRAFT_MESSAGE);
       }
 
-      // The allocation is ONE atomic statement that also creates the counter row
-      // when the tenant has none, so no read-then-write window exists (DEC-039).
+      // DEC-056: the fiscal number's authorisation. The allocation happens HERE,
+      // inside this transaction and with THIS handle, so the range's
+      // compare-and-swap and the `DRAFT -> CONFIRMED` transition commit together
+      // or not at all — a crash between them can neither lose a number nor hand
+      // out two. A tenant that has declared nothing is answered `null`, and only
+      // then does the counter below number the invoice (DEC-039): one source per
+      // invoice, chosen by the tenant's declaration and not by this code path.
+      await this.fiscalAllocation.allocateForConfirmation({ invoiceId: locked.id, tx });
+
+      // The invoice's own number is Billing's, always, and the allocation is a
+      // SEPARATE identity: the fiscal number lives in `invoice_fiscal_allocation`
+      // and is what the DE and the KuDE carry. Writing the fiscal number here
+      // would collide, because a successor range restarts at 1 while the
+      // invoice's series is immutable across a permitted transition and its
+      // uniqueness is `(tenant_id, series, number)` (finding R3-001).
+      //
+      // The counter is ONE atomic statement that also creates its row when the
+      // tenant has none, so no read-then-write window exists (DEC-039).
       const number = await this.billing.allocateNumber(locked.series, tx);
 
       // The conditional `WHERE status = 'DRAFT'` write is the backstop of the
