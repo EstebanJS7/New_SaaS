@@ -2548,3 +2548,46 @@ when the event schemas were added.
    set cannot resolve which, and **the matrix cannot be completed as written**.
 2. **`protProcesEventos_v141.xsd` was missing from §23.3's set**, and with it
    the response's whole structure. It is now retrieved and recorded above.
+
+### 25.10 The inutilización as a business operation (FISC-016 WU-D)
+
+§25.3 gives the payload; this is what the operation built on top of it decides,
+and every rule below is **ours** because §25.7 records that the schemas assert
+none of them.
+
+**The operation voids the range's REMAINING TAIL.** The caller supplies a reason
+and nothing else: `dNumIn` is the range's `next_number` at the moment of the
+attempt and `dNumFin` is its authorised end. A number that was already consumed
+can never be voided — `fiscal_timbrado_range.next_number` is never lowered
+because a consumed number is burnt (Manual §6.5, §13) — so a void covering one
+would describe history that never happened.
+
+**The terminal status is `RETIRED`**, the status the range enum already carries
+for exactly this operation ("An operator stopped using it. Kept as the permanent
+record: its consumed numbers are burnt and can never be reissued"). No enum
+value was added. The flip and the operation's record are **one transaction**, so
+a record that says the service accepted the void cannot sit beside a range that
+stayed usable.
+
+**An empty tail is `EXHAUSTED`, refused by name.** §13's rollover means an
+ACTIVE range may already be spent — the claim that takes the LAST number
+increments the counter one past the end while the status is still ACTIVE — so
+the check is on the tail (`nextNumber > rangeTo`) rather than on the status
+column, and both shapes are refused with the same name. `RETIRED` has its own
+refusal.
+
+**A document type the event cannot express is refused too.** `tiTiDEEv` admits
+`1..9` while the DE's `tiTiDE` admits `1, 4, 5, 6, 7, 9, 10` (§25.2), so a range
+whose document type is `10` is DE-legal and event-illegal: the operation is
+refused rather than sent as a document that would validate against nothing.
+
+**Each attempt is recorded once, append-only** (`fiscal_range_void`): the tenant
+and the range, the interval that was sent, the operator's reason, the answer's
+outcome with its result code, message and reference, and the status the attempt
+left the range in. A refusal is recorded as faithfully as an acceptance, because
+"these numbers were offered and the service refused them" is a fact an operator
+has to be able to read back.
+
+**Only `VOIDED` retires the range.** A refusal never flips it: `RETIRED` has no
+way back, so losing an authorisation to a failed submission would be worse than
+the refusal that reported it. The record says which of the two happened.

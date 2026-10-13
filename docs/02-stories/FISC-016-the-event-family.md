@@ -110,10 +110,32 @@ requires, so what it produced would not have validated — proven by the officia
 XSD's own message, _"Element rGesEve: This element is not expected. Expected is
 ( gGroupGesEve )"_.
 
-**WU-D — the inutilización.** The same builder's second payload and the surface
-that triggers it: voiding a number range is a business operation with its own
-reason, and its range must be validated against the tenant's timbrado — the
-schema asserts none of it (§25.7).
+**WU-D — the inutilización.** **Landed.** The same builder's second payload and
+the business operation that triggers it. The port gains its own `voidRange`
+capability with its own outcome union
+(`VOIDED`/`REJECTED`/`CONFIGURATION_ERROR`/ `TRANSIENT_FAILURE` — the
+cancellation's words are about a document's fate and none of them applies here),
+the adapter submits the caller's signed `gGroupGesEve` through the same service
+and never fabricates a document identity (an inutilización names a range,
+§25.3), and the fake scripts it. `POST /fiscal/timbrado-ranges/:id/void` carries
+a reason and nothing else: the interval is the range's **remaining tail**
+(`nextNumber .. rangeTo`), because a consumed number is burnt and a void
+covering one would be a lie about the tenant's own history. `fiscal_range_void`
+records each attempt once, append-only, and the flip to `RETIRED` and that
+record are one transaction. The operation is **claim → submit → settle**: the
+range is claimed before any provider call, and the claim carries an in-flight
+state with a lease, so a second void answers a named `409` **without submitting
+anything** while a claim whose lease expired is still recoverable. Getting that
+right took **four review rounds and four findings of one family** — the
+ordering, a Prisma transaction that committed partial writes on a `null` return,
+and the duplicate submission twice — and the final review approved it with nine
+non-blocking advisories. Every state the schema does not assert (§25.7) is
+refused **by name**: `RETIRED`, an empty tail (the range is exhausted, whether
+the column says so or the counter has simply reached one past the end), a
+document type the event cannot express (`tiTiDEEv` stops at 9 while a range may
+carry 10), and a reason outside `mOtEve`'s domain. Its own permission
+`fiscal.range.void` was added rather than overloading `fiscal.invoice.issue` or
+`fiscal.profile.manage`.
 
 **WU-E — the events' evidence.** The homologation's event cases, handed to
 [[FISC-013]] rather than duplicated: this unit ends when the events the matrix
@@ -143,8 +165,10 @@ requires are the ones FISC-013 sends.
       carries.
 - [x] `cancel` submits through the facade and maps the answer onto the port's
       outcomes, with an unlisted result code carried rather than coerced.
-- [ ] The inutilización is built and its range validated against the tenant's
-      timbrado, with a named refusal for every state the schema does not assert.
+- [x] The inutilización is built and its range validated against the tenant's
+      timbrado, with a named refusal for every state the schema does not assert
+      (FISC-016 WU-D: `assertRangeVoidable`, and the tenant-scoped read that
+      makes another tenant's range a `404`).
 - [ ] No secret — the CSC, the private key — reaches a log, a snapshot or an
       error message.
 - [ ] Lint/typecheck/tests/build green, `format-check` clean, and the events the
@@ -158,5 +182,18 @@ requires are the ones FISC-013 sends.
 the DE's profile, and validates against the official schemas. **WU-C landed**:
 `cancel` submits the caller's signed event and maps the answer, the retired
 reason code is gone from the source, and the whole submitted envelope is proven
-against the official schema — the second exit criterion is met. **Next: WU-D**,
-the inutilización's business surface.
+against the official schema — the second exit criterion is met. **WU-D landed**:
+the inutilización's business surface — the port's `voidRange`, the adapter's
+submission, the `fiscal_range_void` record with its migration and tenant-scoped
+store, the route with its own permission, and a named refusal for every state
+the schema does not assert. Its rules are recorded in `SIFEN-BASELINE.md`
+§25.10. **Next: WU-E**, the events' evidence handed to [[FISC-013]].
+
+**One known verification gap, recorded rather than hidden.** The route-contract
+probe (`apps/api/src/rbac/route-contract.probe.test.ts`) pins the full route
+inventory and the fiscal permission map, and it is outside WU-D's edit surface:
+its two pins fail by name until the new route is added to
+`EXPECTED_ROUTE_INVENTORY` and to `FISCAL_PERMISSION_BY_ROUTE` (mapped to
+`FISCAL_PERMISSIONS.rangeVoid`). Every other API case passes (1172), and the
+live-PostgreSQL suite's 232 cases pass with the void's own isolation block
+included.
