@@ -226,17 +226,21 @@ describe("Fiscal HTTP boundary — cancel command", () => {
     );
   });
 
-  it("persists a TRANSIENT_FAILURE without moving the document to ERROR", async () => {
+  it("parks a TRANSIENT_FAILURE in CANCEL_PENDING without moving the document to ERROR", async () => {
     const row = document(entitled.tenant.id, "APPROVED");
     booted.fiscalProvider.scriptCancel(["TRANSIENT_FAILURE"]);
-    const failedBefore = auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION).length;
-    const response = await cancel(entitled.actor.cookie, row.id).expect(409);
-    expect((response.body as ErrorDto).error.message).toBe("Simulated transient_failure");
-    expect(row.status).toBe("APPROVED");
+    const requestedBefore = auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION).length;
+    // TD-033 item 5: a retryable outcome means the request was made and its fate
+    // is unknown, which is exactly what CANCEL_PENDING describes. Leaving the
+    // document APPROVED would leave it cancellable, and a second attempt would
+    // reach the tax administration while the first one's outcome is unknown.
+    const response = await cancel(entitled.actor.cookie, row.id).expect(200);
+    expect((response.body as FiscalDocumentDto).status).toBe("CANCEL_PENDING");
+    expect(row.status).toBe("CANCEL_PENDING");
     expect(row.status).not.toBe("ERROR");
     expect(row.lastErrorCode).toBe("FAKE_TRANSIENT_FAILURE");
-    expect(auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_FAILED_ACTION)).toHaveLength(
-      failedBefore + 1
+    expect(auditsFor(booted, FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION)).toHaveLength(
+      requestedBefore + 1
     );
   });
 

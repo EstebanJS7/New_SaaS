@@ -2720,6 +2720,20 @@ model FiscalDocument {
   resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(3)
   cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(3)
 
+  /// The cancellation's lease: the instant the document ENTERED
+  /// `CANCEL_PENDING`, refreshed by every later attempt (INTERNAL). The status
+  /// means "a cancellation was requested and its outcome is unknown", so while
+  /// this instant is younger than `FISCAL_CANCEL_PENDING_LEASE_MS` (five
+  /// minutes, the submission path's own claim lease) a second cancel is refused
+  /// by name and the provider is never asked again for the same document; once
+  /// it is stale, a fresh attempt proceeds and rewrites it. The transition
+  /// guard admits `CANCEL_PENDING -> CANCEL_PENDING` only when this instant
+  /// moves strictly forward, and admits a NULL one as a first lease, because a
+  /// parked row with no lease must never be a wedge. A migration cannot import a
+  /// TypeScript constant, so the window lives in the API and this column only
+  /// records the instant.
+  cancelPendingSince DateTime? @map("cancel_pending_since") @db.Timestamptz(3)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
