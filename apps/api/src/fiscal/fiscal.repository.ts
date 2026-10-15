@@ -41,6 +41,13 @@ export interface FiscalDocumentRow {
   createdAt: Date;
   updatedAt: Date;
   cancelledAt?: Date | null;
+  /**
+   * The cancellation lease: when the document entered `CANCEL_PENDING`, and
+   * `null`/absent for a row that was parked without one (a pre-existing row, or
+   * a write that never set it). The API treats both as stale, so a missing lease
+   * can never park a document forever.
+   */
+  cancelPendingSince?: Date | null;
   requestSnapshot?: unknown;
   responseSnapshot?: unknown;
 }
@@ -79,6 +86,7 @@ export interface FiscalRepositoryTx extends FiscalDocumentReadTx {
       data: {
         status?: FiscalDocumentStatus;
         cancelledAt?: Date;
+        cancelPendingSince?: Date;
         lastErrorCode?: string | null;
         lastErrorMessage?: string | null;
       };
@@ -139,6 +147,7 @@ export class FiscalRepository {
     write: {
       status?: FiscalDocumentStatus;
       cancelledAt?: Date;
+      cancelPendingSince?: Date;
       lastErrorCode?: string | null;
       lastErrorMessage?: string | null;
     },

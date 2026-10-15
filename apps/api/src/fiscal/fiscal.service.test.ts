@@ -9,6 +9,7 @@ import {
   type FiscalTransportCredential,
 } from "@newsaas/fiscal";
 import { FIXTURE_CERTIFICATE_PEM, FIXTURE_PRIVATE_KEY_PEM } from "@newsaas/fiscal/testing";
+import { DomainError } from "@newsaas/shared";
 import type { AuditWriter } from "../audit/audit-writer.service.js";
 import type { RequestContextService } from "../context/request-context.service.js";
 import type { EntitlementsService } from "../entitlements/entitlements.service.js";
@@ -20,11 +21,15 @@ import {
   buildCancellationEventDocument,
   cancelWithinDeadline,
   FISCAL_CANCELLATION_EVENT_ID,
+  FISCAL_CANCEL_PENDING_LEASE_MS,
   FISCAL_CANCEL_TIMEOUT_MS,
   FISCAL_CANCEL_TIMEOUT_REASON,
   FISCAL_CANCEL_TIMEOUT_REASON_CODE,
+  FISCAL_DOCUMENT_CANCEL_PENDING_MESSAGE,
   FiscalService,
   formatFiscalTimestamp,
+  isFiscalCancelPendingLeaseStale,
+  mapFiscalCancelOutcome,
   type FiscalCancellationWrite,
   type FiscalPrisma,
 } from "./fiscal.service.js";
@@ -181,20 +186,27 @@ describe("the API's cancellation composition (WU-C)", () => {
 interface CancelHarness {
   readonly service: FiscalService;
   readonly cancelRequests: FiscalCancelRequest[];
+  readonly cancellationWrites: FiscalCancellationWrite[];
   readonly credentialReads: { readonly tenantId: string; readonly environment: string }[];
+  readonly row: FiscalDocumentRow;
 }
 
 interface CancelHarnessOptions {
   readonly requiresDocument: boolean;
   readonly credential?: FiscalTransportCredential | null;
   readonly cdc?: string | null;
+  readonly status?: FiscalDocumentRow["status"];
+  readonly cancelPendingSince?: Date | null;
+  /** The provider's whole answer, so a case can hand the command any outcome. */
+  readonly cancelResult?: FiscalCancelResult;
 }
 
 /**
  * A `FiscalService` wired with fakes just rich enough to reach the provider.
  *
  * The point is the one thing `cancel` decides about the request: whether it
- * carries a document, and whether a credential was read to build it.
+ * carries a document, whether a credential was read to build it, and — since
+ * the cancellation lease exists — whether the call happens at all.
  */
 function buildCancelHarness(options: CancelHarnessOptions): CancelHarness {
   const createdAt = new Date("2026-10-08T15:00:00.000Z");
@@ -203,7 +215,7 @@ function buildCancelHarness(options: CancelHarnessOptions): CancelHarness {
     tenantId: TENANT_A,
     invoiceId: "invoice-1",
     provider: "SIFEN_DIRECT",
-    status: "APPROVED",
+    status: options.status ?? "APPROVED",
     attemptCount: 1,
     externalId: "provider-1",
     cdc: options.cdc === undefined ? CDC : options.cdc,
@@ -211,8 +223,10 @@ function buildCancelHarness(options: CancelHarnessOptions): CancelHarness {
     createdAt,
     updatedAt: createdAt,
     cancelledAt: null,
+    cancelPendingSince: options.cancelPendingSince ?? null,
   };
   const cancelRequests: FiscalCancelRequest[] = [];
+  const cancellationWrites: FiscalCancellationWrite[] = [];
   const credentialReads: { tenantId: string; environment: string }[] = [];
 
   const repository = {
@@ -223,8 +237,10 @@ function buildCancelHarness(options: CancelHarnessOptions): CancelHarness {
       _observed: string,
       write: FiscalCancellationWrite
     ): Promise<number> => {
+      cancellationWrites.push(write);
       if (write.status !== undefined) row.status = write.status;
       if (write.cancelledAt !== undefined) row.cancelledAt = write.cancelledAt;
+      if (write.cancelPendingSince !== undefined) row.cancelPendingSince = write.cancelPendingSince;
       row.lastErrorCode = write.lastErrorCode;
       return Promise.resolve(1);
     },
@@ -248,7 +264,7 @@ function buildCancelHarness(options: CancelHarnessOptions): CancelHarness {
     query: () => Promise.reject(new Error("query is not under test")),
     cancel: (request) => {
       cancelRequests.push(request);
-      return Promise.resolve(cancelResult("CANCELLED"));
+      return Promise.resolve(options.cancelResult ?? cancelResult("CANCELLED"));
     },
     voidRange: () => Promise.reject(new Error("voidRange is not under test")),
   };
@@ -273,7 +289,7 @@ function buildCancelHarness(options: CancelHarnessOptions): CancelHarness {
     ENVIRONMENT
   );
 
-  return { service, cancelRequests, credentialReads };
+  return { service, cancelRequests, cancellationWrites, credentialReads, row };
 }
 
 describe("FiscalService.cancel — the document it hands the provider (ADR-009 applied to cancel)", () => {
@@ -325,5 +341,234 @@ describe("FiscalService.cancel — the document it hands the provider (ADR-009 a
       code: "VALIDATION_FAILED",
     });
     expect(harness.cancelRequests).toHaveLength(0);
+  });
+});
+
+/**
+ * TD-033 item 5 — an attempt whose fate is unknown must not look cancellable.
+ *
+ * The mapping is the whole decision, so it is pinned field by field: what the
+ * document becomes, when its lease starts, and whether the command reports the
+ * request as accepted.
+ */
+describe("mapFiscalCancelOutcome — an unknown fate is parked, not ignored (TD-033 item 5)", () => {
+  const now = new Date("2026-10-13T10:00:00.000Z");
+
+  it("parks a TRANSIENT_FAILURE in CANCEL_PENDING with a fresh lease and accepts the request", () => {
+    const write = mapFiscalCancelOutcome(
+      {
+        ...cancelResult("TRANSIENT_FAILURE"),
+        reasonCode: "SIFEN_TIMEOUT",
+        reason: "The provider did not answer.",
+      },
+      now
+    );
+
+    expect(write.status).toBe("CANCEL_PENDING");
+    expect(write.cancelPendingSince).toBe(now);
+    // The request WAS made: the tax administration may already have it, so the
+    // command reports it as accepted and never as a refusal.
+    expect(write.accepted).toBe(true);
+    // The reason code is the operator's evidence of why the document is parked.
+    expect(write.lastErrorCode).toBe("SIFEN_TIMEOUT");
+    expect(write.cancelledAt).toBeUndefined();
+  });
+
+  it("leaves the document where it was when the provider answered REJECTED", () => {
+    const write = mapFiscalCancelOutcome(
+      { ...cancelResult("REJECTED"), reasonCode: "SIFEN_REJECTED", reason: "Refused." },
+      now
+    );
+
+    // A rejection is the provider's own answer: the cancellation did not take
+    // effect, so the document is honestly still cancellable.
+    expect(write.status).toBeUndefined();
+    expect(write.cancelPendingSince).toBeUndefined();
+    expect(write.accepted).toBe(false);
+    expect(write.lastErrorCode).toBe("SIFEN_REJECTED");
+  });
+
+  it("leaves the document where it was when nothing was sent at all", () => {
+    const write = mapFiscalCancelOutcome(
+      {
+        ...cancelResult("CONFIGURATION_ERROR"),
+        reasonCode: "SIFEN_NO_CREDENTIAL",
+        reason: "No credential is configured.",
+      },
+      now
+    );
+
+    // A configuration failure means the request never left: no fate to be
+    // unknown, so no lease and no parked state.
+    expect(write.status).toBeUndefined();
+    expect(write.cancelPendingSince).toBeUndefined();
+    expect(write.accepted).toBe(false);
+    expect(write.lastErrorCode).toBe("SIFEN_NO_CREDENTIAL");
+  });
+
+  it("keeps CANCELLED's own write, with no lease to hold", () => {
+    const write = mapFiscalCancelOutcome(cancelResult("CANCELLED"), now);
+
+    expect(write.status).toBe("CANCELLED");
+    expect(write.cancelledAt).toBe(now);
+    expect(write.accepted).toBe(true);
+    expect(write.cancelPendingSince).toBeUndefined();
+  });
+
+  it("leases the provider's own CANCEL_PENDING, so a second cancel cannot resubmit", () => {
+    const write = mapFiscalCancelOutcome(cancelResult("CANCEL_PENDING"), now);
+
+    expect(write.status).toBe("CANCEL_PENDING");
+    expect(write.cancelPendingSince).toBe(now);
+    expect(write.accepted).toBe(true);
+    // The provider's own pending answer carries no error text, as it always has.
+    expect(write.lastErrorCode).toBeNull();
+    expect(write.lastErrorMessage).toBeNull();
+  });
+});
+
+describe("the cancellation lease (TD-033 item 5)", () => {
+  const at = (ageMs: number): Date => new Date(Date.now() - ageMs);
+
+  it("is live strictly before the window and stale at or after it", () => {
+    // `null` counts as stale: nothing renewed the lease, and refusing to retry
+    // would park a document forever — the wedge this design exists to avoid.
+    expect(isFiscalCancelPendingLeaseStale({ cancelPendingSince: null }, new Date())).toBe(true);
+    expect(
+      isFiscalCancelPendingLeaseStale(
+        { cancelPendingSince: at(FISCAL_CANCEL_PENDING_LEASE_MS - 1) },
+        new Date()
+      )
+    ).toBe(false);
+    expect(
+      isFiscalCancelPendingLeaseStale(
+        { cancelPendingSince: at(FISCAL_CANCEL_PENDING_LEASE_MS) },
+        new Date()
+      )
+    ).toBe(true);
+  });
+
+  it("uses the submission's own window, so the house has one number for an unknown fate", () => {
+    expect(FISCAL_CANCEL_PENDING_LEASE_MS).toBe(5 * 60_000);
+  });
+
+  it("refuses a second cancel while the lease is live, by name, and never calls the provider", async () => {
+    const harness = buildCancelHarness({
+      requiresDocument: true,
+      status: "CANCEL_PENDING",
+      cancelPendingSince: at(60_000),
+    });
+
+    const error = await harness.service.cancel(DOCUMENT_ID, REASON).then(
+      () => null,
+      (rejection: unknown) => rejection
+    );
+
+    expect(error).toBeInstanceOf(DomainError);
+    const failure = error as DomainError;
+    expect(failure.code).toBe("CONFLICT");
+    expect(failure.message).toBe(FISCAL_DOCUMENT_CANCEL_PENDING_MESSAGE);
+    // The retry-after rides the 409: the caller is told when the lease allows a
+    // fresh attempt instead of being left to poll.
+    const details = failure.details as { retryAfterMs: number };
+    expect(Object.keys(details)).toEqual(["retryAfterMs"]);
+    expect(details.retryAfterMs).toBeGreaterThan(0);
+    expect(details.retryAfterMs).toBeLessThanOrEqual(FISCAL_CANCEL_PENDING_LEASE_MS);
+    // The refusal is the API's half of the design: the provider is NEVER asked
+    // a second time while the first attempt's fate is still unknown.
+    expect(harness.cancelRequests).toHaveLength(0);
+    expect(harness.cancellationWrites).toHaveLength(0);
+    expect(harness.credentialReads).toHaveLength(0);
+    expect(harness.row.status).toBe("CANCEL_PENDING");
+  });
+
+  it("proceeds once the lease has expired and lets the document leave the parked state", async () => {
+    const stale = at(FISCAL_CANCEL_PENDING_LEASE_MS + 1_000);
+    const harness = buildCancelHarness({
+      requiresDocument: false,
+      status: "CANCEL_PENDING",
+      cancelPendingSince: stale,
+    });
+
+    const response = await harness.service.cancel(DOCUMENT_ID, REASON);
+
+    expect(harness.cancelRequests).toHaveLength(1);
+    expect(response.status).toBe("CANCELLED");
+    expect(harness.cancellationWrites.at(-1)?.cancelledAt).toBeInstanceOf(Date);
+  });
+
+  it("refreshes the lease when a retry after the window ends unknown again", async () => {
+    const stale = at(FISCAL_CANCEL_PENDING_LEASE_MS + 1_000);
+    const harness = buildCancelHarness({
+      requiresDocument: false,
+      status: "CANCEL_PENDING",
+      cancelPendingSince: stale,
+      cancelResult: {
+        ...cancelResult("TRANSIENT_FAILURE"),
+        reasonCode: FISCAL_CANCEL_TIMEOUT_REASON_CODE,
+        reason: FISCAL_CANCEL_TIMEOUT_REASON,
+        retryAfterMs: FISCAL_CANCEL_TIMEOUT_MS,
+      },
+    });
+
+    const response = await harness.service.cancel(DOCUMENT_ID, REASON);
+
+    expect(response.status).toBe("CANCEL_PENDING");
+    const lease = harness.cancellationWrites.at(-1)?.cancelPendingSince;
+    expect(lease).toBeInstanceOf(Date);
+    // A fresh lease, not the stale one: otherwise the retry would be immediately
+    // retryable again while this attempt's fate is unknown.
+    expect(lease?.getTime()).toBeGreaterThan(stale.getTime());
+  });
+
+  it("proceeds when a parked document carries no lease at all", async () => {
+    // A row parked before the column existed, and the provider's own
+    // CANCEL_PENDING before this unit: a lease that was never written is stale.
+    const harness = buildCancelHarness({
+      requiresDocument: false,
+      status: "CANCEL_PENDING",
+      cancelPendingSince: null,
+    });
+
+    const response = await harness.service.cancel(DOCUMENT_ID, REASON);
+
+    expect(harness.cancelRequests).toHaveLength(1);
+    expect(response.status).toBe("CANCELLED");
+  });
+
+  it("leaves a document that is not parked alone", async () => {
+    const harness = buildCancelHarness({
+      requiresDocument: false,
+      status: "APPROVED",
+      cancelPendingSince: new Date(),
+    });
+
+    await expect(harness.service.cancel(DOCUMENT_ID, REASON)).resolves.toMatchObject({
+      status: "CANCELLED",
+    });
+    expect(harness.cancelRequests).toHaveLength(1);
+  });
+
+  it("reports a terminal failure with no local effect, as it always has", async () => {
+    const harness = buildCancelHarness({
+      requiresDocument: true,
+      status: "APPROVED",
+      cancelResult: {
+        ...cancelResult("CONFIGURATION_ERROR"),
+        reasonCode: "SIFEN_NO_CREDENTIAL",
+        reason: "No credential is configured.",
+      },
+    });
+
+    await expect(harness.service.cancel(DOCUMENT_ID, REASON)).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "No credential is configured.",
+    });
+    expect(harness.cancelRequests).toHaveLength(1);
+    expect(harness.row.status).toBe("APPROVED");
+    const write = harness.cancellationWrites.at(-1);
+    expect(write?.accepted).toBe(false);
+    expect(write?.status).toBeUndefined();
+    expect(write?.cancelPendingSince).toBeUndefined();
   });
 });
