@@ -2868,11 +2868,12 @@ named** — §13.1 says only "algunos campos", and this block adds the CDC.
   198**, image layer included. Until then, no renderer rule should cite that
   sentence.
 
-#### 26.4.6 The layouts are images, and the extraction could not carry them
+#### 26.4.6 The seven reference models, read from the rasterized pages
 
-**[R]** Pages 198–205 (printed 197–204) announce the per-type reference models,
-and the extraction carries **only their captions** — the pages themselves are
-embedded images:
+**[R]** Pages 198–205 (printed 197–204) announce the per-type reference models.
+The extraction carries **only their captions** — the pages themselves are
+embedded images — so this pass **rasterized pages 199–205** and read the
+diagrams directly, which is the resolution §24.1's records anticipated:
 
 ```text
 Gráfica N° 09   KuDE FE, Formato 1 convencional           page 199 (printed 198)
@@ -2884,11 +2885,144 @@ Gráfica N° 14   KuDE FE, Formato 2 (cinta de papel)       page 204 (printed 20
 Gráfica N° 15   Cinta papel resumen del KuDE              page 205 (printed 204)
 ```
 
-**A text extraction cannot carry a diagram.** The layouts exist in the PDF as
-images; nothing in this pass read them. What would resolve it: **rasterize pages
-199–205** with the PyMuPDF §24.1 records and read the images directly or OCR
-them; or obtain the "reglamentaciones emitidas por la Administración Tributaria"
-that §13.5 points at for the mandatory fields.
+**The seven are four shapes, not one layout with variations.** FE, NCE and NDE
+share §13.4's generic structure; the **AFE and the NRE each carry their own**;
+and the two paper rolls are a third and a fourth. Every caption reads
+**"convencional"** — chapter 13 shows no "con código" variant of any type.
+
+**The elements every layout carries.** All seven pages, in the same order:
+
+1. **The e-kuatia mark**: the leaf graphic at the top left and the e-kuatia logo
+   with "Sistema Integrado de Facturación Electrónica Nacional" at the top
+   right.
+2. **A centred title strip** naming the KuDE's type: "KuDE de Factura
+   Electrónica", "KuDE de Nota de Crédito Electrónica", "KuDE de Nota de Débito
+   Electrónica", "KuDE de Autofactura Electrónica", "KuDE de Nota de Remisión
+   Electrónica", "KuDE Cinta Papel", "KuDE Cinta Papel Resumen".
+3. **The emitter's block**: the e-kuatia mark repeated, the SIFEN legend, the
+   address, the city, the phone, the e-mail and "Actividad económica" on the
+   left; the **RUC**, the **Timbrado N°** and the **Fecha de Inicio de
+   Vigencia** on the right. The samples fill these with the administration's own
+   address because the sample emitter is fictitious; the _fields_ are the
+   emitter's.
+4. **The document title and its number**: "FACTURA ELECTRÓNICA" and
+   `001-001-0000001` — the establishment–point–sequence form.
+5. **The QR block**: the code, a sentence naming the document type, the URL
+   `https://ekuatia.set.gov.py/consultas/`, and the CDC printed **in groups of
+   four**.
+6. **The footer**: "ESTE DOCUMENTO ES UNA REPRESENTACIÓN GRÁFICA DE UN DOCUMENTO
+   ELECTRÓNICO (XML)" and "Información de interés del facturador electrónico
+   emisor.", plus the 72-hour sentence on the five sheet layouts — the two rolls
+   omit it.
+
+**A branding consequence the renderer has to honour.** The e-kuatia mark is a
+**fixed element of the KuDE**, so the KuDE is not a surface for tenant branding:
+it reproduces the administration's identity and the emitter's fiscal data, and
+nothing in chapter 13 admits a tenant logo or a tenant palette. §26.6.9's
+optional logo is the **emitter's**, and §13.2 names it as one of the content
+rule's two exceptions.
+
+**FE (N° 09), NCE (N° 10) and NDE (N° 11): one structure, one row apart.** The
+title strip, the document title and a single row distinguish them:
+
+- **The data box's left column**: "Fecha y hora de emisión"; "Condición de
+  venta: Contado | Crédito"; "Cuotas"; "Moneda"; "Tipo de Cambio"; "Tipo de
+  cambio global o por ítem"; "Documento asociado CDC o preimpreso"; "Tipo de
+  documento asociado: FE o preimpreso".
+- **The data box's right column**: "RUC/Documento de Identidad N°"; "Nombre o
+  Razón Social"; "Dirección"; "Teléfono"; "Correo Electrónico"; "Tipo de
+  transacción".
+- **The NCE and the NDE add a seventh row, "Motivo de la emisión".** The FE does
+  not carry it. That row is the only structural difference between the three.
+- **The items table**:
+  `Cod | Descripción | Unidad de medida | Cantidad | Precio Unitario | Descuento | Valor de Venta`,
+  and "Valor de Venta" spans three columns — **Exentas | 5% | 10%**.
+- **The totals rows**, in this order: `SUBTOTAL:`; `TOTAL DE LA OPERACIÓN:`;
+  `TOTAL EN GUARANÍES`; `LIQUIDACIÓN IVA:` carrying `(5%)` and `(10%)` and a
+  `TOTAL IVA:` cell.
+- **The QR sentence names the type**: "Consulte la validez de esta Factura
+  Electrónica …" / "… de esta Nota de Crédito Electrónica …" / "… de esta Nota
+  de Débito Electrónica …".
+
+**AFE (N° 12): its own layout.** The autofactura does not reuse the generic
+structure:
+
+- **The data box**, left column: "Fecha y hora de emisión"; "Descripción de la
+  naturaleza del vendedor"; "N° de documento de identidad del vendedor"; "Nombre
+  y apellido del vendedor"; "Dirección del vendedor"; "Número de casa del
+  vendedor"; "Nombre o razón social del comprador"; "RUC del comprador"; "DV del
+  comprador"; "Descripción del departamento del vendedor"; "Descripción del
+  distrito del vendedor". Right column: "Descripción de la ciudad del vendedor";
+  "Tipo de constancia"; "N° Constancia"; "N° de Control"; "N° de Comprobante de
+  retención".
+- **The items table is narrower**:
+  `Cod | Cantidad | Descripción | Precio Unitario | Valor de Venta`. There is
+  **no** unit of measure, **no** discount and **no** IVA split.
+- **The only totals row is `TOTAL A PAGAR:`** — no subtotal, no total de la
+  operación, no total en guaraníes, no IVA settlement.
+- **The QR sentence**: "Consulte la validez de esta Autofactura Electrónica con
+  el número de CDC impreso abajo en:".
+
+**NRE (N° 13): its own layout, six blocks, no prices.**
+
+1. **The associated document**: "Documento asociado CDC (cuando se asocie un
+   DE)"; "Documento asociado: preimpreso (N° del timbrado del documento impreso
+   de referencia, Establecimiento, Punto de expedición, N° de comprobante)";
+   "Tipo de documento asociado: FE".
+2. **"Fecha y hora de emisión"** and the block **"DESTINATARIO DE LA
+   MERCADERÍA"**: "Nombre o razón social"; "RUC/Documento de Identidad N°".
+3. **"DATOS DEL TRASLADO"**: "Motivo de emisión"; "Responsable de la emisión";
+   "Fecha de inicio del traslado"; "Fecha estimada de fin de traslado";
+   "Dirección del Punto de Partida"; "Ciudad del punto de partida";
+   "Departamento del punto de partida"; "Kilómetros estimados de recorrido"; "N°
+   de casa de salida"; "N° de casa de la entrega".
+4. **"DATOS DEL VEHÍCULO DEL TRANSPORTE"**: "Tipo de transporte"; "Modalidad del
+   transporte"; "Responsable del costo del flete"; "Condición de la
+   negociación"; "Fecha estimada de inicio de traslado"; "Fecha estimada de fin
+   de traslado"; "Marca del vehículo"; "N° de identificación del vehículo"; "N°
+   de matrícula (chapa) del vehículo"; "Tipo de vehículo".
+5. **"DATOS DEL CONDUCTOR DEL VEHÍCULO"**: "Naturaleza de la transportista";
+   "Nombre o razón social del transportista"; "Número de documento de identidad
+   del chofer"; "Nombre y apellido del chofer"; "Nombre o razón social del
+   agente"; "RUC/Documento de Identidad"; "Dirección".
+6. **"DATOS DE LA MERCADERÍA"**:
+   `Cantidad | Unidad de medida | Descripción detallada (incluir cantidad o porcentaje de tolerancia de quieta o mermas/datos de relevancia de la mercadería)`.
+
+The QR sentence: "Consulte la validez de esta Nota de Remisión Electrónica con
+el número de CDC impreso abajo en:".
+
+**Gráfica N° 14 — "KuDE Cinta Papel", the FE's Formato 2 (§13.6).** A narrow,
+centred layout:
+
+- the emitter's block centred, then "Timbrado" and "Inicio de Vigencia", then
+  "Factura Electrónica" and the number, then "Fecha y hora de emisión";
+- **the items table is four columns**:
+  `Cod.Art | Descripción | Cantidad | Total` — no unit of measure, no unit
+  price, no discount, no IVA split;
+- **the totals** are three stacked rows — "Total", "Guaraníes", "Total pago" —
+  then "Total Descuento en Gs:", then a "Detalle totales (Base imponible)" group
+  carrying "Gravadas 10% .", then a "Detalle del impuesto" group carrying "IVA
+  5%" and "IVA 10%:" and "Liquidación total del IVA";
+- **the receptor's block sits at the bottom**, not the top: "Nombre del
+  cliente"; "Documento de Identidad"; "RUC"; "Condición de venta";
+- the footer keeps the two fixed lines and **drops** the 72-hour sentence.
+
+**Gráfica N° 15 — "KuDE Cinta Papel Resumen" (§13.7).** The summary the chapter
+permits **if the consumer asks**:
+
+- **no items table**: a single "Cantidad de ítems" row carries the count;
+- the totals are "Total", "Guaraníes", "Total pago" and "Liquidación total del
+  IVA";
+- the receptor's block carries "Nombre del cliente", "Documento de Identidad"
+  and "RUC" — **without** "Condición de venta";
+- the QR sentence is worded differently from the other six: "**Consulte esta**
+  Factura Electrónica con el número de CDC impreso abajo en:".
+
+**What the layouts still do not resolve.** They show no decimals rule and no
+statement that the printed prices include IVA, so §26.6.7 stays open. They do
+not enumerate the mandatory fields — §13.5 still delegates those to the AT's
+regulations, which keeps §26.6.2 open — and they show nothing for the export and
+import facturas §13.3 names, which keeps §26.6.3 open as well.
 
 **[R]** The rules that surround the images, in text:
 
@@ -2935,9 +3069,10 @@ does not carry:
 
 **[O]** The following are not answered by chapter 13 or by the extraction:
 
-1. **The per-type content beyond §13.4's generic structure.** The reference
-   models are images (§26.4.6); a text-level statement of what differs per type
-   is not in the extraction.
+1. **The per-type content beyond §13.4's generic structure** — **resolved** by
+   §26.4.6, which records the seven rasterized models and the four shapes they
+   form. The mandatory-field list is a separate question, and it stays open:
+   §13.5 delegates it to the AT's regulations.
 2. **The mandatory-field list.** §13.5 delegates it to the AT's regulations and
    does not enumerate them.
 3. **The export and import facturas' layouts.** §13.3 names seven denominations,
@@ -2975,9 +3110,12 @@ does not carry:
 - The renderer **must not** turn §13.4.3's F-codes into a value mapping
   (§26.4.3); values come from the element names §21/§22 pin, and the QR's
   content is §24's build order.
-- The per-type layouts and the mandatory-field list **wait** on the diagram
-  extraction or the AT's regulations (§26.6.1–3). Until then, a rendering driven
-  by §13.4's generic structure plus the FE header example is what the text
-  supports.
+- The renderer **may now pin the per-type layouts** (§26.4.6): the four shapes,
+  the row that separates the NCE and the NDE from the FE, the AFE's narrower
+  item table and single total, the NRE's six blocks, and the two rolls. It
+  **must still not** invent the mandatory-field list, which §13.5 delegates to
+  the AT's regulations and which the layouts do not enumerate (§26.6.2).
+- The renderer reproduces **the administration's mark and the emitter's fiscal
+  data**, and admits no tenant branding on the KuDE (§26.4.6).
 - `J003` is not sent to SIFEN, so it is not part of the DE the builder emits; if
   the renderer fills it, the content is the emitter's own.
