@@ -157,7 +157,10 @@ describe("the KuDE builder · the hard rule (§13.2)", () => {
   it("carries the QR's content and the CDC the DE states", () => {
     const document = built(requestWith({}));
     expect(document.qr.content).toBe(FIXTURE_QR);
-    expect(document.qr.consultationUrl).toBe("https://ekuatia.set.gov.py/consultas-test/qr?");
+    // The printed address is the consultation page, not the prefix the QR's
+    // content is composed from -- that one ends in a bare `?`.
+    expect(document.qr.consultationUrl).toBe("https://ekuatia.set.gov.py/consultas-test/");
+    expect(document.qr.consultationUrl).not.toContain("/qr?");
     // §26.4.6 prints the CDC in groups of four, and the fixture's is 44 digits.
     expect(document.qr.cdcGrouped).toMatch(/^(\d{4} ){10}\d{4}$/);
     expect(document.qr.cdcGrouped.replace(/ /g, "")).toBe(validFacturaElectronicaRequest().cdc);
@@ -331,15 +334,40 @@ describe("the KuDE builder · the totals (§26.4.3)", () => {
     expect(document.totals.payable).toBe("200.000");
   });
 
-  it("reports an unreadable subtotal as an absence instead of throwing", () => {
+  it("reports an unreadable subtotal as an absence that names the field", () => {
     // `addDecimalStrings` feeds `BigInt`, which raises `SyntaxError` on anything
     // that is not a plain integer. A malformed field must not be able to stop the
-    // page: the row goes missing and says why, and the rest of the block still
-    // prints.
+    // page: the row goes missing, the reason says why, and the rest of the block
+    // still prints.
     const document = built(requestWith({ sub5: "no es un número" }));
     expect(document.totals.subtotal).toBeNull();
-    expect(document.absences.map((absence) => absence.label)).toContain("SUBTOTAL:");
+    const absence = document.absences.find((entry) => entry.label === "SUBTOTAL:");
+    expect(absence).toBeDefined();
+    // The reason names the field that raised it and not the whole set: a message
+    // that indicted all three would not say which one to fix.
+    expect(absence?.reason).toContain("dSub5");
+    expect(absence?.reason).not.toContain("dSubExe");
+    expect(absence?.reason).not.toContain("dSub10");
     expect(document.totals.operation).toBe("0");
+  });
+
+  it("names every offending field when more than one is unreadable", () => {
+    const document = built(requestWith({ subExe: "x", sub10: "y" }));
+    const absence = document.absences.find((entry) => entry.label === "SUBTOTAL:");
+    expect(absence?.reason).toContain("dSubExe");
+    expect(absence?.reason).toContain("dSub10");
+    expect(absence?.reason).not.toContain("dSub5");
+  });
+
+  it("carries a sign through the sum instead of producing a non-number", () => {
+    // `padStart` pads *before* a sign, so a negative sum used to come back as
+    // `0-50`: a string that is not a number at all. The magnitude is padded and
+    // the sign goes back on the finished string.
+    expect(built(requestWith({ subExe: "-100.0000", sub5: "50.0000" })).totals.subtotal).toBe(
+      "-50"
+    );
+    // A sum that lands on zero is not negative zero.
+    expect(built(requestWith({ subExe: "-50.0000", sub5: "50.0000" })).totals.subtotal).toBe("0");
   });
 
   it("prints each type's own QR sentence, taken from its profile", () => {

@@ -246,6 +246,22 @@ export const KUDE_FOOTER_LINES = Object.freeze([
 export const KUDE_ADMINISTRATION_LEGEND =
   "Sistema Integrado de Facturación Electrónica Nacional" as const;
 
+/**
+ * The address the reference models print under the QR (§26.4.6).
+ *
+ * It is **not** `QR_CONSULTATION_URLS`. That constant is the prefix the QR's
+ * *content* is composed from, and it ends in a bare `?`, so printing it would
+ * send a reader to a page waiting for query parameters. What the models print is
+ * the consultation page itself.
+ *
+ * The test value follows §13.8.2's own test URL with the same suffix removed,
+ * which is the rule the production value states rather than a second invention.
+ */
+export const KUDE_CONSULTATION_URLS = Object.freeze({
+  production: "https://ekuatia.set.gov.py/consultas/",
+  test: "https://ekuatia.set.gov.py/consultas-test/",
+} as const);
+
 /** §13.4.1's labels, in the chapter's own order. */
 export const KUDE_LABELS = Object.freeze({
   issuedAt: "Fecha y hora de emisión:",
