@@ -389,9 +389,10 @@ Triaged at closure; **none resolved by it**.
 - [[TD-034]], [[TD-035]], [[TD-036]], [[TD-037]] — `done`: the KuDE renderer's
   four advisory rounds, eleven findings, none blocking. The last two fixes each
   removed code.
-- [[TD-038]] — `open`: the schema gate's test copies a directory under vitest's
-  five-second default timeout, so it can go red for a reason unrelated to what
-  it gates. It was raised by this closure's own CI run.
+- [[TD-038]] — `resolved`: the schema gate's two copying cases inherited
+  vitest's five-second default, which timed one out once. They now carry an
+  explicit budget, and the record says what was measured rather than what was
+  assumed — with the schemas present those cases take about a tenth of a second.
 - [[TD-022]] — `open`, not this epic's: the portal fiscal document surface.
 - [[TD-026]] — `open`: unbounded list endpoints, which the new read surfaces
   must not worsen.
