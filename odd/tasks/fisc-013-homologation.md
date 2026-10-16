@@ -78,7 +78,10 @@ record the flag and name the pending question instead of inventing rules.
       Three review advisories were [[TD-034]], now resolved by the unit that
       named them; the review that approved those fixes raised four more,
       recorded as [[TD-035]], now resolved in turn; the review that approved
-      those fixes raised one further finding, recorded as [[TD-036]].
+      those fixes raised one further finding, recorded as [[TD-036]] and now
+      resolved too — by deleting the renderer's second copy of the package's
+      decimal sum rather than exporting it. That review's two new findings are
+      [[TD-037]].
 - [ ] **WU-D — the run and its evidence.** **Blocked on the DNIT** (the
       habilitación and the test data set) and on the run blockers the runbook
       names: the CSC's registration surface, the batch composition, the
@@ -124,8 +127,10 @@ e93e340    docs(FISC-013): the Manual's chapter 13 profiled into the baseline as
            as TD-035
 f3ddafc    fix(FISC-013): the KuDE renderer's second advisory round (TD-035
            resolved)
-(pending)  docs(FISC-013): TD-035 closed and its third advisory round recorded
-           as TD-036
+31ed1c1    fix(FISC-013): TD-036 — the KuDE's sum is the package's, not a second
+           copy (TD-036 resolved by deleting the duplicate)
+(pending)  docs(FISC-013): TD-036 closed and its fourth advisory round recorded
+           as TD-037
 ```
 
 The last line is owed by the parent orchestrator: this implementation unit does
