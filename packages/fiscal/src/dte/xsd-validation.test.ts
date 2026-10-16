@@ -61,6 +61,24 @@ const inspection = await inspectDteSchemas(schemaDirectory);
 const skipped = !inspection.usable && !required;
 const skipReason = `[SKIPPED: official schemas absent from ${schemaDirectory}; run pnpm fetch:dte-schemas]`;
 
+/**
+ * The budget for the two cases that copy the whole schema directory and compile
+ * the official schemas against it.
+ *
+ * Vitest's default is 5 s, and it is neither the case's budget nor the runner's:
+ * with the schemas present these cases take about a **tenth of a second** on a
+ * developer's machine and the whole file runs in under three, yet PR #124's run
+ * reported `Test timed out in 5000ms` for the first of them while the same file
+ * passed in every other job and run. What the case does is filesystem I/O over a
+ * directory of schemas plus a native `libxml2` compile, and a loaded runner can
+ * make that arbitrarily slower than a laptop — so the failure is real, the
+ * default is what made it possible, and the headroom is what removes it.
+ *
+ * Thirty seconds is the repository's usual budget for this shape of case.
+ * TD-038 records the observation and the measurement.
+ */
+const COPY_CASE_TIMEOUT_MS = 30_000;
+
 describe.skipIf(skipped)(
   `DE XML validates against the official DNIT XSD${skipped ? ` ${skipReason}` : ""}`,
   () => {
@@ -227,56 +245,64 @@ describe.skipIf(skipped)(
       await expect(failure).rejects.toThrow(directory);
     });
 
-    it("compiles the official schema once per process, keyed by the directory", async () => {
-      const directory = await mkdtemp(join(tmpdir(), "newsaas-dte-cache-"));
-      await cp(schemaDirectory, directory, { recursive: true });
-      const xml = withStructuralSignature(buildDteXml(validFacturaElectronicaRequest()));
+    it(
+      "compiles the official schema once per process, keyed by the directory",
+      async () => {
+        const directory = await mkdtemp(join(tmpdir(), "newsaas-dte-cache-"));
+        await cp(schemaDirectory, directory, { recursive: true });
+        const xml = withStructuralSignature(buildDteXml(validFacturaElectronicaRequest()));
 
-      parseXmlSpy.mockClear();
-      const first = await validateDeAgainstOfficialXsd(xml, directory);
-      const afterFirst = schemaCompiles();
-      const second = await validateDeAgainstOfficialXsd(xml, directory);
-      const afterSecond = schemaCompiles();
+        parseXmlSpy.mockClear();
+        const first = await validateDeAgainstOfficialXsd(xml, directory);
+        const afterFirst = schemaCompiles();
+        const second = await validateDeAgainstOfficialXsd(xml, directory);
+        const afterSecond = schemaCompiles();
 
-      expect(first.valid).toBe(true);
-      expect(second.valid).toBe(true);
-      expect(afterFirst).toBe(1);
-      // The second submission validated against the cached compile: one compile
-      // for two submissions, and the document itself was parsed both times.
-      expect(afterSecond).toBe(1);
-      // One schema compile plus one document parse per submission.
-      expect(parseXmlSpy.mock.calls.length).toBe(3);
-    });
+        expect(first.valid).toBe(true);
+        expect(second.valid).toBe(true);
+        expect(afterFirst).toBe(1);
+        // The second submission validated against the cached compile: one compile
+        // for two submissions, and the document itself was parsed both times.
+        expect(afterSecond).toBe(1);
+        // One schema compile plus one document parse per submission.
+        expect(parseXmlSpy.mock.calls.length).toBe(3);
+      },
+      COPY_CASE_TIMEOUT_MS
+    );
 
-    it("never caches a failed compile as a usable schema", async () => {
-      const directory = await mkdtemp(join(tmpdir(), "newsaas-dte-broken-"));
-      await cp(schemaDirectory, directory, { recursive: true });
-      // Large enough and URL-free enough to pass the directory inspection, so
-      // the failure is the compile and nothing earlier.
-      const corrupted = `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">${" ".repeat(
-        32_000
-      )}`;
-      await writeFile(join(directory, DTE_XSD_ENTRY_ARTIFACT), corrupted, "utf8");
+    it(
+      "never caches a failed compile as a usable schema",
+      async () => {
+        const directory = await mkdtemp(join(tmpdir(), "newsaas-dte-broken-"));
+        await cp(schemaDirectory, directory, { recursive: true });
+        // Large enough and URL-free enough to pass the directory inspection, so
+        // the failure is the compile and nothing earlier.
+        const corrupted = `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">${" ".repeat(
+          32_000
+        )}`;
+        await writeFile(join(directory, DTE_XSD_ENTRY_ARTIFACT), corrupted, "utf8");
 
-      await expect(
-        validateDeAgainstOfficialXsd(
+        await expect(
+          validateDeAgainstOfficialXsd(
+            withStructuralSignature(buildDteXml(validFacturaElectronicaRequest())),
+            directory
+          )
+        ).rejects.toMatchObject({ failure: "SCHEMA_UNUSABLE" });
+
+        await cp(
+          join(schemaDirectory, DTE_XSD_ENTRY_ARTIFACT),
+          join(directory, DTE_XSD_ENTRY_ARTIFACT)
+        );
+        const result = await validateDeAgainstOfficialXsd(
           withStructuralSignature(buildDteXml(validFacturaElectronicaRequest())),
           directory
-        )
-      ).rejects.toMatchObject({ failure: "SCHEMA_UNUSABLE" });
+        );
 
-      await cp(
-        join(schemaDirectory, DTE_XSD_ENTRY_ARTIFACT),
-        join(directory, DTE_XSD_ENTRY_ARTIFACT)
-      );
-      const result = await validateDeAgainstOfficialXsd(
-        withStructuralSignature(buildDteXml(validFacturaElectronicaRequest())),
-        directory
-      );
-
-      // If the failed compile had been cached, this second call would still
-      // have refused. It compiles again and accepts.
-      expect(result.valid).toBe(true);
-    });
+        // If the failed compile had been cached, this second call would still
+        // have refused. It compiles again and accepts.
+        expect(result.valid).toBe(true);
+      },
+      COPY_CASE_TIMEOUT_MS
+    );
   }
 );
