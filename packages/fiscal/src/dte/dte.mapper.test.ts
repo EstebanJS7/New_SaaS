@@ -6,6 +6,7 @@ import {
   addDecimals,
   buildDteRequestFromInvoice,
   emitterNameForEnvironment,
+  isPlainDecimal,
   scale,
   type ConfirmedInvoiceLineSnapshot,
   type DteMappingInput,
@@ -292,13 +293,42 @@ describe("exact decimal helpers", () => {
   });
 
   it("refuses a value that is not a non-negative plain decimal", () => {
-    // The refusal is part of this helper's contract, and it is what a caller
-    // that must degrade -- the KuDE renderer -- catches to turn an unreadable
-    // field into a named absence. Coercing instead would put a value on a
+    // The refusal is part of this helper's contract. A caller that must degrade
+    // -- the KuDE renderer -- asks `isPlainDecimal` first rather than catching
+    // this, because the code it raises is shared with `scale`'s, which is a
+    // different failure. Coercing instead of refusing would put a value on a
     // document the signed DE does not carry.
     for (const unreadable of ["-0.2", "no es un número", "1e3", "", " 1", "+1", "1,5"]) {
       expect(() => addDecimals("0.1", unreadable), unreadable).toThrow(DteValidationError);
       expect(() => addDecimals(unreadable, "0.1"), unreadable).toThrow(DteValidationError);
+    }
+  });
+
+  it("states the same acceptance rule the sum refuses by", () => {
+    // The predicate is exported so a caller that must not fail can *ask* instead
+    // of catching: this refusal shares its code with `scale`'s, which is a
+    // different failure, so a catch would be right for the wrong reason. What
+    // matters is that the two agree -- every value the predicate accepts, the sum
+    // accepts, and every value it refuses, the sum refuses.
+    for (const accepted of ["0", "10", "0.1", "100.00000000", "999999999999999.99999999"]) {
+      expect(isPlainDecimal(accepted), accepted).toBe(true);
+      expect(() => addDecimals("0", accepted), accepted).not.toThrow();
+    }
+    for (const refused of [
+      "-1",
+      "+1",
+      " 1",
+      "1 ",
+      "",
+      ".5",
+      "1.",
+      "1,5",
+      "1e3",
+      "00",
+      "no es un número",
+    ]) {
+      expect(isPlainDecimal(refused), refused).toBe(false);
+      expect(() => addDecimals("0", refused), refused).toThrow(DteValidationError);
     }
   });
 

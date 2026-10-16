@@ -359,7 +359,7 @@ describe("the KuDE builder · the totals (§26.4.3)", () => {
     expect(absence?.reason).not.toContain("dSub5");
   });
 
-  it("refuses a negative subtotal, naming the field, because money here is non-negative", () => {
+  it("refuses a negative subtotal, naming that field and only that field", () => {
     // The sum is the mapper's `addDecimals`, whose own contract is that a decimal
     // value is a *non-negative* plain decimal -- the same rule the package's
     // validation states, and the reason it refuses the sign rather than carrying
@@ -369,16 +369,28 @@ describe("the KuDE builder · the totals (§26.4.3)", () => {
     expect(document.totals.subtotal).toBeNull();
     const absence = document.absences.find((entry) => entry.label === "SUBTOTAL:");
     expect(absence?.reason).toContain("dSubExe");
+    // The other two were readable, and a reader told otherwise would go and look
+    // at fields that are not the problem.
+    expect(absence?.reason).not.toContain("dSub5");
+    expect(absence?.reason).not.toContain("dSub10");
   });
 
-  it("adds at the scale the DE carries, through the shared arithmetic", () => {
-    // The case the mapper's own tests pin for `addDecimals`: the sum loses no
-    // digits to a float and never rounds. If this module grew a second sum, this
-    // is where the two would part company.
-    const document = built(
-      requestWith({ subExe: "0.00000001", sub10: "999999999999999.99999999" })
-    );
-    expect(document.totals.subtotal).toBe("1.000.000.000.000.000");
+  it("agrees with the shared arithmetic on the cases that arithmetic pins", () => {
+    // These are `addDecimals`'s own cases in the mapper's test, expressed as KuDE
+    // amounts. A second sum here would have to reproduce all three, so this is
+    // where a divergence would show -- including at the scale where the old copy
+    // padded before a sign.
+    const cases: readonly (readonly [string, string, string])[] = [
+      ["0.1000", "0.2000", "0.3"],
+      ["10.0000", "5.0000", "15"],
+      ["0.00000001", "999999999999999.99999999", "1.000.000.000.000.000"],
+    ];
+    for (const [left, right, expected] of cases) {
+      expect(
+        built(requestWith({ subExe: left, sub10: right })).totals.subtotal,
+        `${left} + ${right}`
+      ).toBe(expected);
+    }
   });
 
   it("prints each type's own QR sentence, taken from its profile", () => {

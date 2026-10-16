@@ -174,7 +174,11 @@ land fixes the list._
       as [[TD-035]], now resolved in turn; the review that approved those fixes
       raised one further finding, recorded as [[TD-036]] and now resolved too —
       by deleting the renderer's second copy of the package's decimal sum, not
-      by exporting it. That review's two new findings are [[TD-037]].
+      by exporting it. That review's two findings became [[TD-037]] and are now
+      resolved too, by publishing the shared arithmetic's acceptance rule so the
+      renderer asks it instead of catching a code two failures share. The review
+      that approved that returned **no advisories** — four rounds, eleven items,
+      none blocking.
 - [ ] **WU-D — the run and its evidence.** The actual test matrix against the
       test environment, recorded in `docs/10-qa/CI-EVIDENCE.md` with its outcome
       — including a negative or pending one. Blocked on the DNIT (the

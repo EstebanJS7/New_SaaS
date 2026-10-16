@@ -468,16 +468,29 @@ export function addDecimals(left: string, right: string): string {
   return `${digits.slice(0, digits.length - sumScale)}.${digits.slice(digits.length - sumScale)}`;
 }
 
+/**
+ * Whether a value is what {@link addDecimals} accepts as money: a non-negative
+ * plain decimal string.
+ *
+ * It is exported because the rule is part of `addDecimals`'s contract, and a
+ * caller that must **not** fail -- the KuDE renderer degrades rather than throws
+ * -- would otherwise have to catch the refusal or copy the pattern. Catching
+ * couples that caller to an error *code* that `scale` raises for a different
+ * failure, and copying would be a second implementation of a rule this package
+ * has already spent a round learning to keep in one place.
+ */
+export function isPlainDecimal(value: string): boolean {
+  return /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value);
+}
+
 function normalize(value: string): { readonly integer: bigint; readonly scale: number } {
-  const match = /^(?:0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(value);
-  if (match === null) {
+  if (!isPlainDecimal(value)) {
     throw new DteValidationError(
       "INVALID_MONEY_SCALE",
       `Decimal values must be non-negative plain decimal strings, received "${value}".`
     );
   }
-  const fraction = match[1] ?? "";
-  const [integerPart = "0"] = value.split(".");
+  const [integerPart = "0", fraction = ""] = value.split(".");
   return { integer: BigInt(`${integerPart}${fraction}`), scale: fraction.length };
 }
 

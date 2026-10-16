@@ -81,7 +81,10 @@ record the flag and name the pending question instead of inventing rules.
       those fixes raised one further finding, recorded as [[TD-036]] and now
       resolved too — by deleting the renderer's second copy of the package's
       decimal sum rather than exporting it. That review's two new findings are
-      [[TD-037]].
+      [[TD-037]], now resolved too — by publishing the shared arithmetic's
+      acceptance rule so the renderer asks it instead of catching a code two
+      failures share. The review that approved that returned **no advisories**:
+      four rounds, eleven items, none blocking.
 - [ ] **WU-D — the run and its evidence.** **Blocked on the DNIT** (the
       habilitación and the test data set) and on the run blockers the runbook
       names: the CSC's registration surface, the batch composition, the
@@ -129,8 +132,12 @@ f3ddafc    fix(FISC-013): the KuDE renderer's second advisory round (TD-035
            resolved)
 31ed1c1    fix(FISC-013): TD-036 — the KuDE's sum is the package's, not a second
            copy (TD-036 resolved by deleting the duplicate)
-(pending)  docs(FISC-013): TD-036 closed and its fourth advisory round recorded
+b3cc2ec    docs(FISC-013): TD-036 closed and its fourth advisory round recorded
            as TD-037
+655128c    fix(FISC-013): TD-037 — the renderer asks the shared rule instead of
+           catching it (TD-037 resolved; the review returned no advisories)
+(pending)  docs(FISC-013): TD-037 closed, and the sequence's first clean review
+           recorded
 ```
 
 The last line is owed by the parent orchestrator: this implementation unit does

@@ -341,6 +341,7 @@ export {
   buildDteRequestFromInvoice,
   DTE_IVA_RATES,
   emitterNameForEnvironment,
+  isPlainDecimal,
   scale,
 } from "./dte/dte.mapper.js";
 export type {

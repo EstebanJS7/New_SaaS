@@ -18,8 +18,7 @@
  * rest; that is the honest outcome, not a defect of the renderer.
  */
 
-import { addDecimals } from "../dte/dte.mapper.js";
-import { DteValidationError } from "../dte/dte.rules.js";
+import { addDecimals, isPlainDecimal } from "../dte/dte.mapper.js";
 import type { DteRequest, DteXmlElement } from "../dte/dte.types.js";
 import {
   formatKudeAmount,
@@ -140,7 +139,7 @@ function buildTotals(request: DteRequest): {
       entry.value !== undefined
   );
   const unreadableSubtotals = carried
-    .filter((entry) => !isKudeDecimal(entry.value))
+    .filter((entry) => !isPlainDecimal(entry.value))
     .map((entry) => entry.name);
   const summed =
     unreadableSubtotals.length > 0 || carried.length === 0
@@ -173,11 +172,6 @@ function buildTotals(request: DteRequest): {
 /** The three subtotal fields §26.4.3's map names, in the chapter's own order. */
 const SUBTOTAL_FIELDS = ["dSubExe", "dSub5", "dSub10"] as const;
 
-/** Whether the shared arithmetic accepts a value as money. */
-function isKudeDecimal(value: string): boolean {
-  return addKudeDecimals("0", value) !== undefined;
-}
-
 /**
  * Add two of the DE's own decimal strings, or answer `undefined` when one is not
  * a value the shared arithmetic accepts.
@@ -189,20 +183,16 @@ function isKudeDecimal(value: string): boolean {
  * version cannot have, because `padStart` pads *before* a sign. A duplicate is a
  * second set of edge cases, so the duplicate is gone.
  *
- * `addDecimals` refuses a value that is not a non-negative plain decimal by
- * throwing, which is right for the mapper and wrong for a renderer: the KuDE
- * degrades, it does not fail. So that one refusal is caught here and becomes the
- * absence the caller reports, and every other error still travels.
+ * **The acceptance rule is the mapper's `isPlainDecimal`, also not a copy.** The
+ * first version of this adapter caught `addDecimals`'s refusal instead: it
+ * worked, but it coupled the renderer to an error *code* that `scale` in the
+ * same module raises for a different failure, so the renderer would have gone on
+ * being right for the wrong reason the day one of them changed. Asking the
+ * shared predicate first removes the coupling and the catch with it, and the
+ * renderer still degrades rather than failing.
  */
 function addKudeDecimals(left: string, right: string): string | undefined {
-  try {
-    return addDecimals(left, right);
-  } catch (error) {
-    if (error instanceof DteValidationError && error.failure === "INVALID_MONEY_SCALE") {
-      return undefined;
-    }
-    throw error;
-  }
+  return isPlainDecimal(left) && isPlainDecimal(right) ? addDecimals(left, right) : undefined;
 }
 
 /** The generic shape's own absences, which the AFE and the NRE share in part. */

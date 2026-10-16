@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The KuDE renderer's fourth advisory round — the caught refusal, and the two
   tests around it
-status: open
+status: done
 severity: low
 owner: fiscal
 created: 2026-10-15
@@ -16,11 +16,23 @@ related:
 
 # TD-037 — the KuDE renderer's fourth advisory round
 
+**Resolved 2026-10-15**, both items, and the first one by **removing the
+coupling rather than documenting it**: the acceptance rule is now published next
+to the sum (`isPlainDecimal`, exported from the mapper and used by `normalize`
+itself), so the renderer asks it instead of catching a code that `scale` also
+raises for a different failure. The catch and the second regex are gone with it.
+
+The review that approved the fix returned **no advisories** — the first clean
+approval in this sequence. Four rounds so far: TD-034 (three items), TD-035
+(four), TD-036 (one), TD-037 (two). None was blocking, and the last two fixes
+each _removed_ code — a duplicate sum and a shared error code — which is the
+shape that lets a round end.
+
 Two findings from the review that approved TD-036's fix were accepted as debt
-rather than fixed, for the reason the previous three rounds record: their
-disposition is informational, neither opened a correction, and editing the
-candidate after its authority was burned would have invalidated the approval
-without producing a new one.
+rather than fixed, for the reason the previous rounds record: their disposition
+is informational, neither opened a correction, and editing the candidate after
+its authority was burned would have invalidated the approval without producing a
+new one.
 
 **The review's full text is not retained**, so this carries the coordinates the
 closure published and a reading of each, marked as a reading. Anyone acting on
