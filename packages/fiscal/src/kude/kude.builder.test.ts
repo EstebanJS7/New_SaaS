@@ -359,15 +359,26 @@ describe("the KuDE builder · the totals (§26.4.3)", () => {
     expect(absence?.reason).not.toContain("dSub5");
   });
 
-  it("carries a sign through the sum instead of producing a non-number", () => {
-    // `padStart` pads *before* a sign, so a negative sum used to come back as
-    // `0-50`: a string that is not a number at all. The magnitude is padded and
-    // the sign goes back on the finished string.
-    expect(built(requestWith({ subExe: "-100.0000", sub5: "50.0000" })).totals.subtotal).toBe(
-      "-50"
+  it("refuses a negative subtotal, naming the field, because money here is non-negative", () => {
+    // The sum is the mapper's `addDecimals`, whose own contract is that a decimal
+    // value is a *non-negative* plain decimal -- the same rule the package's
+    // validation states, and the reason it refuses the sign rather than carrying
+    // it. So a negative subtotal is not a value this renderer can add, and it
+    // becomes an absence instead of a signed total nothing else here produces.
+    const document = built(requestWith({ subExe: "-100.0000", sub5: "50.0000" }));
+    expect(document.totals.subtotal).toBeNull();
+    const absence = document.absences.find((entry) => entry.label === "SUBTOTAL:");
+    expect(absence?.reason).toContain("dSubExe");
+  });
+
+  it("adds at the scale the DE carries, through the shared arithmetic", () => {
+    // The case the mapper's own tests pin for `addDecimals`: the sum loses no
+    // digits to a float and never rounds. If this module grew a second sum, this
+    // is where the two would part company.
+    const document = built(
+      requestWith({ subExe: "0.00000001", sub10: "999999999999999.99999999" })
     );
-    // A sum that lands on zero is not negative zero.
-    expect(built(requestWith({ subExe: "-50.0000", sub5: "50.0000" })).totals.subtotal).toBe("0");
+    expect(document.totals.subtotal).toBe("1.000.000.000.000.000");
   });
 
   it("prints each type's own QR sentence, taken from its profile", () => {
