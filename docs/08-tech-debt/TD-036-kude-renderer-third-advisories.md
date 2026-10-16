@@ -4,17 +4,26 @@ type: tech-debt
 title:
   The KuDE renderer's third advisory round — the sign test asserts a formatted
   value, not the arithmetic
-status: open
+status: done
 severity: low
 owner: fiscal
 created: 2026-10-15
 updated: 2026-10-15
 related:
   - FISC-013
-  - TD-035
+  - TD-037
 ---
 
 # TD-036 — the KuDE renderer's third advisory round
+
+**Resolved 2026-10-15** — and by deleting code rather than exporting it. The
+finding was that the sign test could not isolate the sum; looking for where to
+test it showed the sum should not have been this module's at all. `addDecimals`
+in the mapper is the package's one exact decimal addition — exported, tested
+where it lives, and scale-aware by construction — so the KuDE's copy is gone,
+the renderer calls the shared one, and the helper's own refusal is pinned in the
+mapper's test. The review that approved that raised two new findings, which are
+[[TD-037]].
 
 One finding from the review that approved TD-035's four fixes was accepted as
 debt rather than fixed, for the reason the previous two rounds record: its

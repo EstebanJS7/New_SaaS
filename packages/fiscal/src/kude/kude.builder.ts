@@ -18,6 +18,8 @@
  * rest; that is the honest outcome, not a defect of the renderer.
  */
 
+import { addDecimals } from "../dte/dte.mapper.js";
+import { DteValidationError } from "../dte/dte.rules.js";
 import type { DteRequest, DteXmlElement } from "../dte/dte.types.js";
 import {
   formatKudeAmount,
@@ -138,7 +140,7 @@ function buildTotals(request: DteRequest): {
       entry.value !== undefined
   );
   const unreadableSubtotals = carried
-    .filter((entry) => !isDecimal(entry.value))
+    .filter((entry) => !isKudeDecimal(entry.value))
     .map((entry) => entry.name);
   const summed =
     unreadableSubtotals.length > 0 || carried.length === 0
@@ -146,7 +148,7 @@ function buildTotals(request: DteRequest): {
       : carried
           .map((entry) => entry.value)
           .reduce<string | undefined>(
-            (total, part) => (total === undefined ? undefined : addDecimalStrings(total, part)),
+            (total, part) => (total === undefined ? undefined : addKudeDecimals(total, part)),
             "0"
           );
   return {
@@ -171,43 +173,36 @@ function buildTotals(request: DteRequest): {
 /** The three subtotal fields §26.4.3's map names, in the chapter's own order. */
 const SUBTOTAL_FIELDS = ["dSubExe", "dSub5", "dSub10"] as const;
 
-/** Whether a value is a plain decimal this module can add without a float. */
-function isDecimal(value: string): boolean {
-  return /^-?\d+(\.\d+)?$/.test(value.trim());
+/** Whether the shared arithmetic accepts a value as money. */
+function isKudeDecimal(value: string): boolean {
+  return addKudeDecimals("0", value) !== undefined;
 }
 
 /**
- * Exact addition of two decimal strings, without a float.
+ * Add two of the DE's own decimal strings, or answer `undefined` when one is not
+ * a value the shared arithmetic accepts.
  *
- * It answers `undefined` for a value it cannot read rather than letting
- * `BigInt` raise `SyntaxError`. The subtotals are the DE's fields, which this
- * renderer does not control, and every other path here degrades instead of
- * failing: `formatKudeAmount` returns an unreadable value unchanged, and the
- * builder reports what the DE does not carry as an absence. A sum that threw
- * would be the one place a malformed field could stop the page.
+ * **The sum is the mapper's `addDecimals`, not a copy of it.** That is the
+ * package's one implementation of exact decimal addition: exported, tested where
+ * it lives, and scale-aware by construction. This module carried a second one --
+ * string surgery that padded to a scale -- and it had a sign bug the shared
+ * version cannot have, because `padStart` pads *before* a sign. A duplicate is a
+ * second set of edge cases, so the duplicate is gone.
  *
- * **The sign is carried.** `BigInt` adds signed values natively, but the string
- * surgery below pads to a scale, and `padStart` pads *before* a sign -- `-5`
- * would come back as `0-5`, which is not a number. So the magnitude is padded
- * and the sign is put back on the finished string, and `isDecimal`'s optional
- * sign is a sign this function can actually honour.
+ * `addDecimals` refuses a value that is not a non-negative plain decimal by
+ * throwing, which is right for the mapper and wrong for a renderer: the KuDE
+ * degrades, it does not fail. So that one refusal is caught here and becomes the
+ * absence the caller reports, and every other error still travels.
  */
-function addDecimalStrings(left: string, right: string): string | undefined {
-  if (!isDecimal(left) || !isDecimal(right)) return undefined;
-  const scaleOf = (value: string) => value.split(".")[1]?.length ?? 0;
-  const scale = Math.max(scaleOf(left), scaleOf(right));
-  const toUnits = (value: string) => {
-    const [integer, fraction = ""] = value.trim().split(".");
-    return BigInt(`${integer}${fraction.padEnd(scale, "0")}`);
-  };
-  const sum = toUnits(left) + toUnits(right);
-  const negative = sum < 0n;
-  const digits = (negative ? -sum : sum).toString().padStart(scale + 1, "0");
-  const magnitude =
-    scale === 0
-      ? digits
-      : `${digits.slice(0, digits.length - scale)}.${digits.slice(digits.length - scale)}`;
-  return negative ? `-${magnitude}` : magnitude;
+function addKudeDecimals(left: string, right: string): string | undefined {
+  try {
+    return addDecimals(left, right);
+  } catch (error) {
+    if (error instanceof DteValidationError && error.failure === "INVALID_MONEY_SCALE") {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 /** The generic shape's own absences, which the AFE and the NRE share in part. */

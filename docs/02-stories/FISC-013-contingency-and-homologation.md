@@ -172,7 +172,9 @@ land fixes the list._
       rather than inventions. Three review advisories were [[TD-034]], now
       resolved; the review that approved those fixes raised four more, recorded
       as [[TD-035]], now resolved in turn; the review that approved those fixes
-      raised one further finding, recorded as [[TD-036]].
+      raised one further finding, recorded as [[TD-036]] and now resolved too —
+      by deleting the renderer's second copy of the package's decimal sum, not
+      by exporting it. That review's two new findings are [[TD-037]].
 - [ ] **WU-D — the run and its evidence.** The actual test matrix against the
       test environment, recorded in `docs/10-qa/CI-EVIDENCE.md` with its outcome
       — including a negative or pending one. Blocked on the DNIT (the

@@ -291,6 +291,17 @@ describe("exact decimal helpers", () => {
     expect(addDecimals("10", "5")).toBe("15");
   });
 
+  it("refuses a value that is not a non-negative plain decimal", () => {
+    // The refusal is part of this helper's contract, and it is what a caller
+    // that must degrade -- the KuDE renderer -- catches to turn an unreadable
+    // field into a named absence. Coercing instead would put a value on a
+    // document the signed DE does not carry.
+    for (const unreadable of ["-0.2", "no es un número", "1e3", "", " 1", "+1", "1,5"]) {
+      expect(() => addDecimals("0.1", unreadable), unreadable).toThrow(DteValidationError);
+      expect(() => addDecimals(unreadable, "0.1"), unreadable).toThrow(DteValidationError);
+    }
+  });
+
   it("pads to a type's scale and refuses to round", () => {
     expect(scale("100", 8, "x")).toBe("100.00000000");
     expect(scale("100.5", 8, "x")).toBe("100.50000000");
