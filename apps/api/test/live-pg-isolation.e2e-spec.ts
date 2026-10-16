@@ -15800,6 +15800,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         createdAt?: Date;
         submittedAt?: Date | null;
         nextQueryAt?: Date | null;
+        cancelPendingSince?: Date | null;
       } = {}
     ): Promise<string> => {
       const id = randomUUID();
@@ -15807,7 +15808,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         INSERT INTO "fiscal_document" (
           "id", "tenant_id", "invoice_id", "provider", "status", "external_id",
           "cdc", "attempt_count", "cancelled_at", "resolved_at", "provider_reference",
-          "created_at", "submitted_at", "next_query_at"
+          "created_at", "submitted_at", "next_query_at", "cancel_pending_since"
         ) VALUES (
           ${id}::uuid, ${tenantId}::uuid, ${invoiceId}::uuid,
           ${options.provider ?? "THIRD_PARTY"}::fiscal_provider,
@@ -15818,7 +15819,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           ${options.providerReference ?? null},
           COALESCE(${options.createdAt ?? null}::timestamptz, CURRENT_TIMESTAMP),
           ${options.submittedAt ?? null}::timestamptz,
-          ${options.nextQueryAt ?? null}::timestamptz
+          ${options.nextQueryAt ?? null}::timestamptz,
+          ${options.cancelPendingSince ?? null}::timestamptz
         )
       `;
       return id;
@@ -16364,6 +16366,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         // EPIC-16 FISC-012 WU-F appended the reconciliation's query marker the
         // same way.
         "next_query_at",
+        // TD-033 item 5 appended the cancellation's lease the same way.
+        "cancel_pending_since",
       ]);
       const types = new Map(
         rows.map((row) => [row.column_name, `${row.data_type}:${row.udt_name}`])
@@ -16391,6 +16395,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         "created_at",
         "updated_at",
         "next_query_at",
+        "cancel_pending_since",
       ])
         expect(types.get(column), column).toBe("timestamp with time zone:timestamptz");
     }, 30_000);
@@ -17038,13 +17043,184 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       });
     }, 30_000);
 
+    it("admits a newer lease on a parked row: re-entering the state is a fresh attempt", async () => {
+      // TD-033 item 5. The retry policy is the API's; this is the structural half
+      // the database can see, and the admitted direction of it.
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const parkedAt = new Date("2026-10-13T10:00:00.000Z");
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCEL_PENDING",
+          cancelPendingSince: parkedAt,
+        });
+
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "cancel_pending_since" = ${new Date(parkedAt.getTime() + 60_000)}::timestamptz WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        const [refreshed] = await tx.$queryRaw<{ cancel_pending_since: Date | null }[]>`
+          SELECT "cancel_pending_since" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(refreshed?.cancel_pending_since?.getTime()).toBe(parkedAt.getTime() + 60_000);
+      });
+    }, 30_000);
+
+    // One failing statement per rolled-back transaction: PostgreSQL aborts a
+    // transaction on the first error, so a second probe inside the same one would
+    // report "current transaction is aborted" instead of the guard's message.
+    const refusesLeaseWrite = async (work: (tx: Prisma.TransactionClient) => Promise<void>) => {
+      await inRolledBackTransaction(work);
+    };
+
+    it("admits an unchanged lease: a terminal outcome carries no lease and must still be persistable", async () => {
+      // The finding two lenses and a refuter corroborated: SQL cannot tell a
+      // write that sets the same value from one that never mentions the column,
+      // and the terminal outcomes (REJECTED, CONFIGURATION_ERROR) carry only
+      // last_error_* -- so refusing an unchanged lease would refuse the
+      // candidate's own write and discard the operator's evidence.
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const parkedAt = new Date("2026-10-13T10:00:00.000Z");
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCEL_PENDING",
+          cancelPendingSince: parkedAt,
+        });
+        // Exactly the shape the API's terminal-outcome write has: the error
+        // fields, no status, no lease.
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "last_error_code" = 'FISCAL_CANCEL_REJECTED' WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        const [row] = await tx.$queryRaw<{ status: string; cancel_pending_since: Date | null }[]>`
+          SELECT "status", "cancel_pending_since" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(row?.status).toBe("CANCEL_PENDING");
+        expect(row?.cancel_pending_since?.getTime()).toBe(parkedAt.getTime());
+      });
+    }, 30_000);
+
+    it("admits a terminal write on a parked row that carries no lease at all", async () => {
+      // The other half of the same finding. A row parked before this column
+      // existed carries no lease, so the terminal write's NULL -> NULL is not an
+      // unchanged lease but a missing one, and the earlier condition refused it
+      // while its own comment claimed the write was persistable. Refusing it
+      // rolls back the audit row and the error on the row they describe.
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCEL_PENDING",
+        });
+        // Exactly the shape the API's terminal-outcome write has: the error
+        // fields, no status, no lease.
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "last_error_code" = 'FISCAL_CANCEL_REJECTED' WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        const [row] = await tx.$queryRaw<{ status: string; cancel_pending_since: Date | null }[]>`
+          SELECT "status", "cancel_pending_since" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(row?.status).toBe("CANCEL_PENDING");
+        expect(row?.cancel_pending_since).toBeNull();
+      });
+    }, 30_000);
+
+    it("refuses an older lease: it would rewind the record of when the fate became unknown", async () => {
+      await refusesLeaseWrite(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const parkedAt = new Date("2026-10-13T10:00:00.000Z");
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCEL_PENDING",
+          cancelPendingSince: new Date(parkedAt.getTime() + 60_000),
+        });
+        const older = await captureDatabaseMessage(
+          () =>
+            tx.$executeRaw`UPDATE "fiscal_document" SET "cancel_pending_since" = ${parkedAt}::timestamptz WHERE "id" = ${id}::uuid`
+        );
+        expect(older).toBe("fiscal document cancel_pending_since may never be cleared or rewound");
+      });
+    }, 30_000);
+
+    it("refuses clearing the lease: a parked row must keep saying when its fate became unknown", async () => {
+      await refusesLeaseWrite(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCEL_PENDING",
+          cancelPendingSince: new Date("2026-10-13T10:00:00.000Z"),
+        });
+        const missing = await captureDatabaseMessage(
+          () =>
+            tx.$executeRaw`UPDATE "fiscal_document" SET "cancel_pending_since" = NULL WHERE "id" = ${id}::uuid`
+        );
+        expect(missing).toBe(
+          "fiscal document cancel_pending_since may never be cleared or rewound"
+        );
+      });
+    }, 30_000);
+
+    it("admits a first lease on a parked row that carries none, so the state is never a wedge", async () => {
+      // A row parked before the column existed (or by a write that never set it)
+      // must still be retryable: the API treats a missing lease as stale, and the
+      // guard admits the NULL -> non-NULL edge as that first lease.
+      await inRolledBackTransaction(async (tx) => {
+        const sale = await insertRawFiscalSale(tx, tenantAId);
+        const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+        const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+          status: "CANCEL_PENDING",
+        });
+
+        await expect(
+          tx.$executeRaw`UPDATE "fiscal_document" SET "cancel_pending_since" = now() WHERE "id" = ${id}::uuid`
+        ).resolves.toBe(1);
+        const [row] = await tx.$queryRaw<{ cancel_pending_since: Date | null }[]>`
+          SELECT "cancel_pending_since" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+        `;
+        expect(row?.cancel_pending_since).not.toBeNull();
+      });
+    }, 30_000);
+
+    it.each([
+      ["PENDING", "CANCEL_PENDING"],
+      ["QUEUED", "CANCEL_PENDING"],
+      ["REJECTED", "CANCEL_PENDING"],
+      ["ERROR", "CANCEL_PENDING"],
+    ] as const)(
+      "admits parking the document from %s after a cancel whose fate is unknown",
+      async (from, to) => {
+        // The cancel command admits every one of these pre-states, and a timeout
+        // on any of them is the same "submitted, fate unknown" state as one from
+        // SUBMITTED or APPROVED. Refusing the edge aborts the transaction that
+        // carries the audit row and last_error_*, losing the evidence of the
+        // attempt the operator has to act on.
+        await inRolledBackTransaction(async (tx) => {
+          const sale = await insertRawFiscalSale(tx, tenantAId);
+          const invoice = await insertRawFiscalInvoice(tx, tenantAId, sale);
+          const id = await insertRawFiscalDocument(tx, tenantAId, invoice, {
+            status: from,
+          });
+          await expect(
+            tx.$executeRawUnsafe(
+              `UPDATE "fiscal_document" SET "status" = $1::fiscal_document_status, "cancel_pending_since" = now() WHERE "id" = $2::uuid`,
+              to,
+              id
+            )
+          ).resolves.toBe(1);
+          const [row] = await tx.$queryRaw<{ status: string }[]>`
+            SELECT "status" FROM "fiscal_document" WHERE "id" = ${id}::uuid
+          `;
+          expect(row?.status).toBe("CANCEL_PENDING");
+        });
+      },
+      30_000
+    );
+
     it.each([
       ["APPROVED", "PENDING", null],
       ["SENDING", "CANCELLED", null],
       ["PENDING", "APPROVED", null],
       ["PENDING", "REJECTED", null],
       ["PENDING", "SUBMITTED", null],
-      ["PENDING", "CANCEL_PENDING", null],
       ["QUEUED", "SUBMITTED", null],
       ["SUBMITTED", "SENDING", null],
       // An unresolved document is neither resolved nor cancelled: the

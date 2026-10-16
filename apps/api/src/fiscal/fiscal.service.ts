@@ -54,6 +54,15 @@ export const FISCAL_DOCUMENT_CANCEL_CONFLICT_MESSAGE =
   "The fiscal document changed while the cancellation was in progress.";
 export const FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE =
   "The fiscal provider refused the cancellation.";
+/**
+ * The named refusal for a cancellation whose fate is still unknown: the
+ * document carries a live lease, so a second attempt would be a second
+ * cancellation submitted for a document the tax administration may already be
+ * processing.
+ */
+export const FISCAL_DOCUMENT_CANCEL_PENDING_MESSAGE =
+  "This fiscal document already has a cancellation in flight: its outcome is still " +
+  "unknown, so it cannot be cancelled again until the cancellation lease expires.";
 export const FISCAL_PROVIDER_UNRECOGNISED_MESSAGE = "The stored fiscal provider is not recognised.";
 export const FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION =
   "fiscal.document.cancellation_requested";
@@ -127,9 +136,32 @@ export const FISCAL_CANCEL_TIMEOUT_MS = 10_000;
 export const FISCAL_CANCEL_TIMEOUT_REASON_CODE = "FISCAL_CANCEL_TIMEOUT";
 export const FISCAL_CANCEL_TIMEOUT_REASON = "The fiscal provider did not respond in time.";
 
+/**
+ * How long a `CANCEL_PENDING` lease holds before a fresh attempt may proceed:
+ * five minutes, the same number the submission path's own claim lease uses
+ * (`CLAIM_LEASE_MS`, `apps/worker/src/fiscal-submission/fiscal-submission.handler.ts`),
+ * so the house has ONE number for "an attempt's fate has been unknown for this
+ * long" instead of two that would drift apart.
+ *
+ * The lease is what makes the parked state an exit rather than a wedge: while it
+ * is live a second cancel is refused by name and the provider is never asked
+ * again, and once it is stale the attempt may be repeated — which is the only
+ * recovery available while no retrieved source evidences a way to query a
+ * cancellation's fate (ADR-007 §6, TD-033 item 5).
+ */
+export const FISCAL_CANCEL_PENDING_LEASE_MS = 5 * 60_000;
+
 export interface FiscalCancellationWrite {
   readonly status?: FiscalDocumentStatus;
   readonly cancelledAt?: Date;
+  /**
+   * Written whenever the document ENTERS `CANCEL_PENDING`, from either side of
+   * the boundary (our own unknown fate, or the provider's own pending answer),
+   * and rewritten by every later attempt. It is the lease the refusal above
+   * reads, so an entry into the parked state without it would be immediately
+   * retryable.
+   */
+  readonly cancelPendingSince?: Date;
   readonly lastErrorCode: string | null;
   readonly lastErrorMessage: string | null;
   readonly accepted: boolean;
@@ -141,10 +173,12 @@ export interface FiscalCancellationWrite {
  * A hung provider must never turn a staff cancellation into an unbounded open
  * request: past the deadline the call is abandoned and reported as a retryable
  * `TRANSIENT_FAILURE`, which the shared {@link mapFiscalCancelOutcome} mapping
- * already persists as `last_error_*` with NO status change and a
- * `fiscal.document.cancellation_failed` audit row. The mechanism itself is
- * `runWithinDeadline`'s, shared with the range void (FISC-016 WU-D) so the two
- * commands cannot drift; this function is this command's naming of it.
+ * persists as `last_error_*` **and a `CANCEL_PENDING` status with a fresh
+ * lease** — the request was made and its fate is unknown, so the document must
+ * stop being locally cancellable while a second submission would be a duplicate
+ * (TD-033 item 5). The mechanism itself is `runWithinDeadline`'s, shared with
+ * the range void (FISC-016 WU-D) so the two commands cannot drift; this function
+ * is this command's naming of it.
  */
 export async function cancelWithinDeadline(
   call: (signal: AbortSignal) => Promise<FiscalCancelResult>,
@@ -165,6 +199,25 @@ export async function cancelWithinDeadline(
   });
 }
 
+/**
+ * Maps the provider's answer to the write the flag row receives.
+ *
+ * **The decision an unknown fate forces (TD-033 item 5).** A `TRANSIENT_FAILURE`
+ * leaves the document in `CANCEL_PENDING` with a fresh lease and reports the
+ * request as ACCEPTED: the call was made, whether SIFEN received it is unknown,
+ * and the reason code carries the timeout. Before this, the status stayed put,
+ * so the document looked cancellable and a second attempt reached the tax
+ * administration while the first one's fate was unknown.
+ *
+ * The two non-retryable outcomes keep the old behaviour because neither leaves a
+ * fate unknown: `CONFIGURATION_ERROR` means the request never left (a missing
+ * credential, a document that could not be built), and `REJECTED` is the
+ * provider's own answer that the cancellation did not take effect — in both cases
+ * the document genuinely is still cancellable, and parking it would hide that.
+ * `CANCELLED` and the provider's own `CANCEL_PENDING` keep the behaviour they
+ * had; the provider's pending answer ALSO starts a lease, because that document
+ * is exactly as unresolvable as a timed-out one.
+ */
 export function mapFiscalCancelOutcome(
   result: FiscalCancelResult,
   now: Date
@@ -180,8 +233,17 @@ export function mapFiscalCancelOutcome(
   if (result.outcome === "CANCEL_PENDING")
     return {
       status: "CANCEL_PENDING",
+      cancelPendingSince: now,
       lastErrorCode: null,
       lastErrorMessage: null,
+      accepted: true,
+    };
+  if (result.outcome === "TRANSIENT_FAILURE")
+    return {
+      status: "CANCEL_PENDING",
+      cancelPendingSince: now,
+      lastErrorCode: scrubProviderText(result.reasonCode),
+      lastErrorMessage: scrubProviderText(result.reason),
       accepted: true,
     };
   return {
@@ -189,6 +251,38 @@ export function mapFiscalCancelOutcome(
     lastErrorMessage: scrubProviderText(result.reason),
     accepted: false,
   };
+}
+
+/**
+ * Whether a `CANCEL_PENDING` row's lease has expired at `now`, making a fresh
+ * attempt admissible.
+ *
+ * `null` (and a missing value, which is how a row read through the persistence
+ * seam that never wrote one arrives) counts as stale: nothing renewed the lease,
+ * and refusing to retry would park the document forever. That is the same rule
+ * `isRangeVoidClaimStale` follows for the range void's claim (`timbrado.service.ts`),
+ * and it is the exit this design exists to leave open.
+ */
+export function isFiscalCancelPendingLeaseStale(
+  document: Pick<FiscalDocumentRow, "cancelPendingSince">,
+  now: Date
+): boolean {
+  const since = document.cancelPendingSince ?? null;
+  return since === null || now.getTime() - since.getTime() >= FISCAL_CANCEL_PENDING_LEASE_MS;
+}
+
+/**
+ * What the live-lease refusal's 409 tells the caller to wait: the time left on
+ * the lease, so a retry is a decision rather than a poll. A row with no lease is
+ * never refused, so `0` is only reachable through the clock moving backwards.
+ */
+function cancelPendingRetryAfterMs(
+  document: Pick<FiscalDocumentRow, "cancelPendingSince">,
+  now: Date
+): number {
+  const since = document.cancelPendingSince ?? null;
+  if (since === null) return 0;
+  return Math.max(0, since.getTime() + FISCAL_CANCEL_PENDING_LEASE_MS - now.getTime());
 }
 export type FiscalWriteTx = FiscalRepositoryTx & { auditLog: AuditAppendTx["auditLog"] };
 export interface FiscalPrisma {
@@ -257,7 +351,18 @@ export class FiscalService {
     return toResponse(row);
   }
 
-  /** Cancels a fiscal document; the synchronous provider call is deadline-bounded. */
+  /**
+   * Cancels a fiscal document; the synchronous provider call is deadline-bounded.
+   *
+   * Gate order and phases are the story's: entitlement, permission, actor, a
+   * short locking classification, the provider call outside any transaction, and
+   * one conditional write that co-commits the audit row. Two states are refused
+   * before the provider is asked: `SENDING`, because a worker holds that claim
+   * and is mid-work, and `CANCEL_PENDING` with a LIVE lease, because the first
+   * cancellation's fate is still unknown and a second one would be a second
+   * submission for the same document. A parked document whose lease has expired
+   * is retried, and the mapping writes a fresh lease (TD-033 item 5).
+   */
   async cancel(id: string, reason: string): Promise<FiscalDocumentResponse> {
     await this.assertFiscalEnabled();
     await this.requirePermission(FISCAL_PERMISSIONS.issue);
@@ -271,6 +376,14 @@ export class FiscalService {
     if (observed.status === "CANCELLED") return toResponse(observed);
     if (observed.status === "SENDING")
       throw new DomainError("CONFLICT", FISCAL_DOCUMENT_CANCEL_SENDING_MESSAGE);
+    if (observed.status === "CANCEL_PENDING") {
+      const classifiedAt = new Date();
+      if (!isFiscalCancelPendingLeaseStale(observed, classifiedAt)) {
+        throw new DomainError("CONFLICT", FISCAL_DOCUMENT_CANCEL_PENDING_MESSAGE, {
+          details: { retryAfterMs: cancelPendingRetryAfterMs(observed, classifiedAt) },
+        });
+      }
+    }
     // ADR-009 applied to cancel: a provider that requires a signed document is
     // handed the caller's built-and-signed event; one that does not gets `null`.
     const document = await this.cancellationDocument(observed, reason);
