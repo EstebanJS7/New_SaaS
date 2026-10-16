@@ -80,7 +80,7 @@ claim.
 - [x] Add the epic-closure section to `docs/10-qa/CI-EVIDENCE.md`, including the
       homologation's **pending** outcome
 - [x] Bring `docs/05-modules/Fiscal.md` current: it still said the provider, the
-      signing and the KuDE rendering were *not* owned, that the worker could not
+      signing and the KuDE rendering were _not_ owned, that the worker could not
       build a document, and that two named tests were failing when both had been
       fixed. Added the KuDE section and the test counts
 - [x] Verify: `pnpm format-check`, `git diff --check`, and the gates on the
