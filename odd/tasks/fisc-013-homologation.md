@@ -58,19 +58,24 @@ record the flag and name the pending question instead of inventing rules.
       the signer, the cancellation through the provider and the inutilización's
       business surface. **What the matrix still needs and does not have is the
       receptor's four payloads** — recorded below as a blocked half.
-- [ ] **WU-C — the KuDE.** Two halves. **The profiling half landed 2026-10-13
-      and was completed 2026-10-15**: `SIFEN-BASELINE.md` §26 profiles the
-      Manual's chapter 13 — the definition and scope, the characteristics
-      together with the content rule, the seven denominations and their
-      pagination rules, the header/items/totals field map, the **seven reference
-      models read from the rasterized pages** (§26.4.6, rewritten around the
-      four shapes they form), and what the chapter does not pin. **The renderer
-      is pending**: one graphical representation per document type, with the QR
-      pinned by §24 and built by `dte.qr.ts`, and the CSC read in place. Its
-      bound, found while profiling: the DE this repository builds carries **only
-      the items** in `gDtipDE`, so the payment condition, the cuotas, the motive
-      and the AFE/NRE blocks are not in the signed document and may not be
-      rendered (§13.2's content rule).
+- [x] **WU-C — the KuDE.** Two halves, both landed. **The profiling half landed
+      2026-10-13 and was completed 2026-10-15**: `SIFEN-BASELINE.md` §26
+      profiles the Manual's chapter 13 — the definition and scope, the
+      characteristics together with the content rule, the seven denominations
+      and their pagination rules, the header/items/totals field map, the **seven
+      reference models read from the rasterized pages** (§26.4.6, rewritten
+      around the four shapes they form), and what the chapter does not pin.
+      **The renderer landed 2026-10-15** in `packages/fiscal/src/kude/`: it
+      builds the KuDE from `DteRequest` — the object `buildDteXml` serializes
+      and the signer signs, so §13.2's content rule holds by construction — and
+      renders it as a standalone printable HTML document with the QR §24 pins,
+      with every value escaped because the data is tenant-supplied. Its bound,
+      found while profiling and confirmed in the mapper: the DE this repository
+      builds carries **only the items** in `gDtipDE`, so the payment condition,
+      the cuotas, the motive, the per-rate IVA settlement and the AFE/NRE blocks
+      are not in the signed document and are reported as **named absences**
+      rather than invented (§13.2). A type code no source profiles is refused.
+      Three review advisories are [[TD-034]].
 - [ ] **WU-D — the run and its evidence.** **Blocked on the DNIT** (the
       habilitación and the test data set) and on the run blockers the runbook
       names: the CSC's registration surface, the batch composition, the
@@ -104,9 +109,13 @@ record the flag and name the pending question instead of inventing rules.
 e93e340    docs(FISC-013): the Manual's chapter 13 profiled into the baseline as
            §26 — the KuDE's definition, rules, denominations and field map, with
            its image-only layouts named (WU-C, first half)
-(pending)  docs(FISC-013): the seven reference models read from the rasterized
+0aaed9e    docs(FISC-013): the seven reference models read from the rasterized
            pages and §26.4.6 rewritten around the four shapes they form
            (WU-C, first half completed)
+2ae3deb    feat(FISC-013): the KuDE, generated from the signed DE's own model
+           (WU-C, renderer)
+(pending)  docs(FISC-013): the KuDE's three review advisories recorded as TD-034,
+           and WU-C closed (WU-C, record)
 ```
 
 The last line is owed by the parent orchestrator: this implementation unit does

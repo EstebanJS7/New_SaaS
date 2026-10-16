@@ -155,15 +155,21 @@ land fixes the list._
       are built and signed, the cancellation submits through the provider, and
       the inutilización has its own business surface. **The receptor's four
       payloads are still missing**, which is what five matrix rows need.
-- [ ] **WU-C — the KuDE.** Its profiling half **landed 2026-10-13** and was
+- [x] **WU-C — the KuDE.** Its profiling half **landed 2026-10-13** and was
       **completed 2026-10-15**: `SIFEN-BASELINE.md` §26 profiles the Manual's
       chapter 13 — the definition and what a KuDE is not, the characteristics
       and the content rule, the seven denominations with their pagination rules,
       the header/items/totals field map a renderer starts from, the **seven
       reference models read from the rasterized pages** (the four shapes they
-      form, per-type), and what the chapter does not pin. **The renderer is
-      still pending**: one graphical representation per document type, with the
-      QR already pinned by §24 and built by `dte.qr.ts`.
+      form, per-type), and what the chapter does not pin. **The renderer landed
+      2026-10-15**: `packages/fiscal/src/kude/` builds the KuDE from
+      `DteRequest` — the object `buildDteXml` serializes and the signer signs,
+      so §13.2's content rule holds by construction — and renders it as a
+      standalone printable HTML document, with the QR pinned by §24. Its bound
+      is recorded in the status below: the assembly emits only the items under
+      `gDtipDE`, so the sale condition, the cuotas, the motive, the per-rate IVA
+      settlement and the AFE's and the NRE's own blocks are named absences
+      rather than inventions. Three review advisories are [[TD-034]].
 - [ ] **WU-D — the run and its evidence.** The actual test matrix against the
       test environment, recorded in `docs/10-qa/CI-EVIDENCE.md` with its outcome
       — including a negative or pending one. Blocked on the DNIT (the
@@ -211,7 +217,19 @@ units are pinned, and the four decisions carry their state. [[FISC-016]] closed
 the events (WU-B). **The run itself (WU-D) is blocked** on the DNIT's
 habilitación and test data set, and on the run blockers the runbook names — the
 CSC's registration surface, the batch composition, the two harnesses with no
-product surface, and the receptor events. WU-C, the KuDE, is unblocked: its
-profiling half landed 2026-10-13 (`SIFEN-BASELINE.md` §26) and was **completed
-2026-10-15**, when the seven reference models were read from the rasterized
-pages and §26.4.6 was rewritten around them. The renderer is next.
+product surface, and the receptor events. WU-C, the KuDE, is **complete**: its
+profiling half landed 2026-10-13 (`SIFEN-BASELINE.md` §26) and was completed
+2026-10-15, when the seven reference models were read from the rasterized pages
+and §26.4.6 was rewritten around them, and its renderer landed the same day in
+`packages/fiscal/src/kude/`.
+
+**What the renderer bound, and how the KuDE criterion is met as far as the
+sources allow.** The builder reads the signed DE's own model, so a KuDE can only
+show what the document carries. The assembly emits the items and nothing else
+under `gDtipDE`, so the sale condition, the cuotas, the NCE's and the NDE's
+motive, the per-rate IVA settlement and every one of the AFE's and the NRE's own
+blocks are **named absences** — not blanks, and not inventions. A type code no
+retrieved source profiles is refused rather than given a layout. That is the
+honest reading of "the KuDE is generated for every document type the tenant
+issues": the tenant issues the type its timbrado declares, and the renderer
+serves the five §13.5 models while stating what each of them cannot show.
