@@ -97,4 +97,5 @@ Fiscal.md
 ```
 
 `Fiscal.md` is a single module document: [[EPIC-16]] extended it with the tenant
-signing-material boundary ([[FISC-007]]) rather than adding a second file.
+signing-material boundary ([[FISC-007]]), the real SIFEN provider behind the
+boundary and the KuDE's generation, rather than adding a second file.

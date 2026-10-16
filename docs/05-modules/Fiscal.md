@@ -436,6 +436,35 @@ fails (a concurrent retirement, or numbers consumed while the call was in
 flight) is a `409` too, and the record still names the interval that was
 **sent**: reading the counter again after the call would rewrite history.
 
+## The KuDE
+
+A KuDE is the **printed representation of a signed DE**, and
+`packages/fiscal/src/kude/` generates it. Its one hard rule is the Manual's
+§13.2: _«No puede existir información en el KuDE que no forme parte del formato
+del DE firmado»_ — so the builder reads `DteRequest`, the object `buildDteXml`
+serializes and the signer signs, and **a value the request does not carry cannot
+reach the page**.
+
+- **The shapes are the Manual's own** (baseline §26.4.6, read from the chapter's
+  seven reference models): the FE, the NCE and the NDE share one structure and a
+  single row separates them — the NCE and the NDE print "Motivo de la emisión" —
+  and the AFE and the NRE each carry their own. A type code no retrieved source
+  profiles is **refused**, never given an invented layout.
+- **What the models print and the DE does not carry is a named absence**, with
+  its reason: the sale condition, the cuotas, the motive, the per-rate IVA
+  settlement and the AFE's and the NRE's own blocks, because the assembly emits
+  only the items under `gDtipDE`. An unreadable subtotal is named too, rather
+  than coerced.
+- **The sums are the package's shared arithmetic** (`addDecimals`), the dates
+  are sliced rather than parsed into a `Date` — the DE's instants are
+  timezone-less by §21 — and the printed forms never round, because the chapter
+  states no rounding rule.
+- **The renderer returns a standalone printable HTML document**, with no route,
+  no UI and no dependency, and it escapes every value: the emitter's name, the
+  receptor's name and the item descriptions are tenant data reaching an HTML
+  sink. The two paper rolls §13.6 and §13.7 describe are profiled and not
+  rendered.
+
 ## The signing-material boundary
 
 SIFEN Direct makes this system the issuer, so the tenant's signing private key
@@ -490,9 +519,15 @@ rule.
 
 ## Does Not Own
 
-- **A real fiscal provider, SIFEN Direct, XAdES signing or KuDE rendering** —
-  the rest of [[EPIC-16]]; PRD §23 forbids implementing protocol details from
-  memory.
+- **The SIFEN certification itself.** The provider, the assembly and signing of
+  the DE and the KuDE are implemented ([[EPIC-16]]); _certifying_ a tenant is an
+  operator act against the DNIT's own environment, and it needs the
+  habilitación, a certificate from a real PSC and the production CSC issued at
+  the emitter's `ingreso`. **Nothing in this module has been tested against the
+  DNIT.**
+- **The KuDE's delivery surface.** The renderer generates the representation;
+  printing, exporting or serving it is deferred with printed documents
+  ([[DEC-039]], [[DEC-044]]).
 - **The secret-store capability itself** — a reusable platform boundary in
   `packages/secret-store` ([[ADR-005]]); Fiscal consumes the port and never
   reaches a concrete driver.
@@ -557,9 +592,11 @@ because they are deployment concerns rather than tenant behavior.
   (messages, serializer, parser, transport, facade, outcome mapping), the QR
   with §13.8.4's worked example, the timbrado ranges and profile assembly, the
   real adapter with its failure partition — cancel and the range void, which is
-  the same submission with its own answer — and the provider selection. Fiscal
-  suite: **31 files / 683 tests**, or **708** with the schema-dependent suites
-  enabled (`DTE_XSD_REQUIRED=1`).
+  the same submission with its own answer — the KuDE's builder, its printed
+  forms and its renderer, and the provider selection. Fiscal suite: **34 files /
+  762 tests**. The schema-dependent cases are skipped locally unless the
+  official XSDs are present, and CI's `DTE XSD validation` job runs them with
+  `DTE_XSD_REQUIRED=1`.
 - `packages/secret-store/src/*` — the port, the envelope crypto, the key ring,
   the two drivers and the opaque key factory. Suite: **5 files / 50 tests**.
 - `apps/api/src/fiscal/*` — the issue, cancel and read integration suites (**21
@@ -606,35 +643,21 @@ because they are deployment concerns rather than tenant behavior.
 
 ## Known limitations
 
-- **One HTTP-boundary case still asserts the superseded mapping.**
-  `apps/api/src/fiscal/fiscal.integration.test.ts`'s
-  `persists a TRANSIENT_FAILURE without moving the document to ERROR` expects
-  the old `409` and an unchanged status; the lease changes both ([[TD-033]] item
-  5), and that file is outside this unit's edit surface. Until it is updated the
-  API suite reports that one failure, and the in-memory Prisma double it boots
-  does not model `cancel_pending_since`, so the lease's refusal has no
-  route-level proof.
-- **The route-contract probe pins a route inventory and a fiscal permission map,
-  and the void route is in neither.** Both failures are in
-  `apps/api/src/rbac/route-contract.probe.test.ts` — a file outside FISC-016
-  WU-D's edit surface — and each names the new route
-  (`UNDECLARED NEW ROUTE: POST /fiscal/timbrado-ranges/:id/void` and
-  `UNDECLARED FISCAL ROUTE: POST /fiscal/timbrado-ranges/:id/void`). The fix is
-  two lines in that file: the route in `EXPECTED_ROUTE_INVENTORY` and the route
-  mapped to `FISCAL_PERMISSIONS.rangeVoid` in `FISCAL_PERMISSION_BY_ROUTE`. The
-  suite's other 1172 cases pass.
-- **The worker cannot build a document.** The stage fails closed behind a seam
-  whose reason names [[FISC-015]], so a `sifen-direct` deployment cannot issue
-  until the assembly lands.
-- **`cancel` submits the caller's signed event** (FISC-016 WU-C). A requiring
-  provider handed `document: null` answers `CONFIGURATION_ERROR` and sends
-  nothing; otherwise the event group goes through `receiveEvent` and the answer
-  maps onto the port's cancel outcomes, with an unlisted result code carried
-  verbatim.
-- **`cancel` used to fail closed** with `CANCELLATION_EVENT_UNPROFILED`: the
-  cancellation event's payload is unprofiled and [[FISC-016]] owns it.
 - **Nothing has been proven against DNIT.** No submission has reached SIFEN, the
-  certificate is a fixture and the CSC is a stand-in; that is [[FISC-013]].
+  certificate is a fixture and the CSC is a stand-in; the certification run is
+  recorded as **pending** and is [[FISC-013]]'s WU-D. This is the module's
+  largest limitation and the one that keeps `done` from meaning ready.
+- **The worker's assembly needs the tenant's declared fiscal identity**: a
+  tenant that has not declared its timbrado, its activity and its default
+  issuance point cannot issue ([[DEC-057]]).
+- **The AFE and the NRE render their header, their items and their CDC, and name
+  the rest**: their own blocks are `gDtipDE` members the assembly does not emit,
+  so §13.2's content rule forbids printing them.
+- **A non-PYG invoice cannot be issued** (`F023` has no source), and a
+  counter-path invoice is refused (`FISCAL_NUMBER_NOT_ALLOCATED`).
+- **A remission note, an exterior operation and a customer with a stored country
+  are refused** by the city code, the alpha-2/alpha-3 mismatch and
+  `CatalogItem`'s missing code column.
 - **No deployment input exists for a trust-anchor override** (`caPem`): the
   transport's own trust store is the only reviewed configuration.
 - **A capped `ERROR` row cannot be revived** — the sweep stops selecting it and

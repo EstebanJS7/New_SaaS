@@ -2,7 +2,7 @@
 id: EPIC-16
 type: epic
 title: SIFEN Direct
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-15
@@ -16,7 +16,7 @@ prd_sections:
   - "40"
   - "41"
 created: 2026-10-03
-updated: 2026-10-08
+updated: 2026-10-15
 ---
 
 # EPIC-16 — SIFEN Direct
@@ -108,31 +108,47 @@ word.
 
 ## Acceptance Criteria
 
-- [ ] The DNIT baseline is revalidated and cited with publisher, version and
+- [x] The DNIT baseline is revalidated and cited with publisher, version and
       date, and every protocol constant in the code traces to a cited source.
-- [ ] A DTE XML validates against the official XSD before any submission.
-- [ ] A tenant's signing material is stored as RESTRICTED material, never in
+      Evidence: [[FISC-006]] closed 2026-10-03 with nine cited artifacts, and
+      `docs/06-fiscal/SIFEN-BASELINE.md` grew §24–§26 during the epic. The
+      claims no retrieved source answers are marked `[O]` there and in the
+      runbook, and **none of them is encoded as a constant**.
+- [x] A DTE XML validates against the official XSD before any submission.
+      Evidence: [[FISC-008]]'s CI gate and [[ADR-010]]'s runtime gate, which a
+      deployment that cannot validate cannot bypass.
+- [x] A tenant's signing material is stored as RESTRICTED material, never in
       plaintext, never in a log, never in an application record, and is
-      removable and rotatable.
-- [ ] Signing produces a verifiable XMLDSig signature and drives the `SIGNING`
-      state. ([[FISC-009]] implemented it against the profile of
-      `SIFEN-BASELINE.md` §5; the criterion stays open until the epic closes.)
-- [ ] The DNIT web services are called outside database transactions, with
+      removable and rotatable. Evidence: [[FISC-007]] PR #105, [[ADR-005]].
+- [x] Signing produces a verifiable XMLDSig signature and drives the `SIGNING`
+      state. Evidence: [[FISC-009]] PR #107; FISC-016 WU-C added the round trip
+      that re-verifies the signature **after** the event group is embedded.
+- [x] The DNIT web services are called outside database transactions, with
       bounded retry for transient failures and no retry for functional or schema
-      rejections (PRD §22).
-- [ ] Timbrado and numbering ranges are enforced per establishment, point and
-      document type.
-- [ ] Contingency behavior is explicit and tested.
-- [ ] `SIFEN_DIRECT` is selectable through `FISCAL_PROVIDER`, and a production
-      boot still refuses to select the fake.
-- [ ] Tenant isolation is enforced on every new aggregate and every new read.
-- [ ] Backend authorization is enforced on every new route and command.
-- [ ] The certification/homologation run is recorded as evidence, or explicitly
-      recorded as not yet performed.
-- [ ] EPIC-16 exits with required checks green or explicit non-green evidence
-      recorded.
+      rejections (PRD §22). Evidence: [[FISC-010]] PR #111, [[FISC-012]] PR
+      #113, and TD-033's deadline, abort and lease work.
+- [x] Timbrado and numbering ranges are enforced per establishment, point and
+      document type. Evidence: [[FISC-011]] PRs #108 and #112.
+- [x] Contingency behavior is explicit and tested. Evidence: [[FISC-013]] WU-A's
+      runbook records the flag and names the absent protocol as the DNIT's; no
+      protocol is invented.
+- [x] `SIFEN_DIRECT` is selectable through `FISCAL_PROVIDER`, and a production
+      boot still refuses to select the fake. Evidence: FISC-012 WU-E2, whose
+      CRITICAL was a default that resolved the environment to TEST.
+- [x] Tenant isolation is enforced on every new aggregate and every new read.
+      Evidence: the live-PostgreSQL suite, **266 cases** on the merged tree.
+- [x] Backend authorization is enforced on every new route and command.
+      Evidence: the fiscal routes' contracts and the RBAC route-contract probe.
+- [x] The certification/homologation run is recorded as evidence, or explicitly
+      recorded as not yet performed. Evidence: `docs/10-qa/CI-EVIDENCE.md`
+      records it **pending**, naming the three operator inputs that block it.
+- [x] EPIC-16 exits with required checks green or explicit non-green evidence
+      recorded. Evidence: the receipts and the local gates in the closure record
+      below.
 
 ## Stories
+
+Every Story is `done`. [[FISC-014]] is this closure.
 
 | Story    | Scope                                                                                                                                                                                                                                                                                                                                                                                   | Depends on         |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
@@ -232,15 +248,57 @@ FISC-006 and must not be written from memory.
 
 ## Exit Criteria
 
-- [ ] Lint/typecheck/tests/build required for the epic are green.
-- [ ] The live-PostgreSQL gate covers every new aggregate, guard and constraint.
-- [ ] Every protocol constant traces to a cited DNIT source.
-- [ ] Documentation is current: `docs/05-modules/Fiscal.md`, the module README,
-      CI evidence, changelog and roadmap.
-- [ ] The certification/homologation outcome is recorded, including a negative
-      or pending result.
-- [ ] No secret material is reachable from a log, an API response or a
-      repository file.
+- [x] Lint/typecheck/tests/build required for the epic are green. Evidence: the
+      local gates in the closure record below, and a green CI run per receipt.
+- [x] The live-PostgreSQL gate covers every new aggregate, guard and constraint.
+      Evidence: `apps/api/test/live-pg-isolation.e2e-spec.ts`, 266 cases.
+- [x] Every protocol constant traces to a cited DNIT source. Evidence:
+      `docs/06-fiscal/SIFEN-BASELINE.md`, whose unanswered claims are marked
+      `[O]` and none of which is a constant in the code.
+- [x] Documentation is current: `docs/05-modules/Fiscal.md`, the module README,
+      CI evidence, changelog and roadmap. Evidence: this closure.
+- [x] The certification/homologation outcome is recorded, including a negative
+      or pending result. Evidence: `docs/10-qa/CI-EVIDENCE.md`.
+- [x] No secret material is reachable from a log, an API response or a
+      repository file. Evidence: [[FISC-007]]'s `SecretStore` boundary, its
+      RESTRICTED classification and the snapshot sanitizer.
+
+## Closure
+
+**Closed 2026-10-15.** Every Story is `done`, every criterion above is checked
+against a merged receipt or a recorded limitation, and the debt is triaged
+without resolving any of it. The receipts are one per Story, and the last
+thirteen are the review rounds the epic's own findings produced.
+
+**The epic built everything the certification needs and it certified nothing.**
+The run is an operator act against the DNIT's own environment: it needs the
+habilitación (six steps), the test data set the DNIT hands over, a certificate
+from a real PSC and the production CSC issued at the emitter's `ingreso`. The
+matrix is therefore **unrun**, and this epic's `done` says implementation
+closure, **never** SIFEN readiness. The limitation list below is where that is
+stated in full.
+
+## Limitations
+
+- **The certification run has not been performed**, and no row of the matrix has
+  an outcome. `docs/10-qa/CI-EVIDENCE.md` records it as pending by name.
+- **The receptor's four event payloads are missing** (five matrix rows); the
+  emitter's two are built and signed.
+- **Three surfaces no Story owns** are needed by the run: the synchronous
+  service, a deliberate-invalid DE harness, and a batch composition of five
+  documents.
+- **Contingency has no protocol**, because the DNIT has not defined one.
+- **A non-PYG invoice cannot be issued** (`F023` has no source), and a
+  counter-path invoice is refused (`FISCAL_NUMBER_NOT_ALLOCATED`).
+- **The KuDE renders only what the signed DE carries**: the sale condition, the
+  cuotas, the motive, the per-rate IVA settlement and the AFE's and the NRE's
+  own blocks are named absences, and the two paper rolls are profiled but not
+  rendered ([[TD-034]] through [[TD-037]] closed the renderer's own advisories).
+- **The city code, the alpha-2/alpha-3 country mismatch and `CatalogItem`'s
+  missing code column** still refuse a remission note, an exterior operation and
+  a customer with a stored country.
+- **`done` is not production readiness.** [[EPIC-20]] Production Hardening
+  remains, and the debt below is untouched.
 
 ## Decisions / ADRs
 
@@ -316,10 +374,24 @@ Architectural changes need an **ADR**, because `DOCUMENTATION-RULES.md` names
 
 ## Technical Debt
 
-- [[TD-022]] — the portal fiscal document surface stays deferred.
-- [[TD-029]] — the operator-triggered re-drive: EPIC-16 should close it against
-  a real provider primitive rather than a local invention.
-- [[TD-030]] — the EPIC-15 review advisories, several of which sit in the cancel
+Triaged at closure; **none resolved by it**.
+
+- [[TD-028]] — `resolved` by FISC-012 WU-F (the reconciliation sweep).
+- [[TD-029]] — `scheduled`: the operator-triggered re-drive, which needs a
+  provider primitive rather than a local invention.
+- [[TD-030]] — `scheduled`: EPIC-15's review advisories, several in the cancel
   and read paths this epic extends.
-- [[TD-026]] — unbounded list endpoints, which the new read surfaces must not
-  worsen.
+- [[TD-031]] — `open`: FISC-007's signing-material advisories.
+- [[TD-032]] — `open`: FISC-008's DTE XML advisories.
+- [[TD-033]] — `open`: FISC-016's event advisories. Items 4 and 5 were fixed
+  during the epic (PRs #116 and #118); the re-drive reason, the lease sweep and
+  the XSD-gated signature round trip stay.
+- [[TD-034]], [[TD-035]], [[TD-036]], [[TD-037]] — `done`: the KuDE renderer's
+  four advisory rounds, eleven findings, none blocking. The last two fixes each
+  removed code.
+- [[TD-038]] — `open`: the schema gate's test copies a directory under vitest's
+  five-second default timeout, so it can go red for a reason unrelated to what
+  it gates. It was raised by this closure's own CI run.
+- [[TD-022]] — `open`, not this epic's: the portal fiscal document surface.
+- [[TD-026]] — `open`: unbounded list endpoints, which the new read surfaces
+  must not worsen.

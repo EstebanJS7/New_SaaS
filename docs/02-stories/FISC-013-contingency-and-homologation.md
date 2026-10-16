@@ -5,7 +5,7 @@ title:
   Contingency and the certification evidence run — what the sources pin, and
   what only DNIT can give
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on:
   - FISC-012
@@ -15,7 +15,7 @@ prd_sections:
 permissions: []
 branch: docs/epic-16-fisc-013-runbook
 created: 2026-10-10
-updated: 2026-10-13
+updated: 2026-10-15
 ---
 
 # FISC-013 — contingency and the certification evidence run
@@ -179,12 +179,16 @@ land fixes the list._
       renderer asks it instead of catching a code two failures share. The review
       that approved that returned **no advisories** — four rounds, eleven items,
       none blocking.
-- [ ] **WU-D — the run and its evidence.** The actual test matrix against the
-      test environment, recorded in `docs/10-qa/CI-EVIDENCE.md` with its outcome
-      — including a negative or pending one. Blocked on the DNIT (the
-      habilitación and the test data set) and on the run blockers the runbook
-      names: the CSC's registration surface, the batch composition, the
-      synchronous and incorrect-data harnesses, and the receptor events.
+- [x] **WU-D — the run and its evidence.** **Recorded as pending, not
+      performed.** The matrix is unrun: it needs the DNIT's habilitación (six
+      operator steps), the test data set the DNIT hands over after step 2, a
+      certificate from a real PSC, and the production CSC issued at the
+      emitter's `ingreso`. The outcome is recorded in
+      `docs/10-qa/CI-EVIDENCE.md`, which is what this Story's criterion asks for
+      — "a negative or pending result" — and the runbook's matrix carries each
+      row's own blocker. The remaining run blockers are the CSC's registration
+      surface, the batch composition, the synchronous and incorrect-data
+      harnesses, and the receptor's four event payloads.
 
 ## Out of scope
 
@@ -204,15 +208,23 @@ land fixes the list._
 
 ## Exit Criteria
 
-- [ ] The runbook exists and names every step, requirement and test the sources
-      pin, with its citation.
-- [ ] The contingency flag's treatment is recorded, and the pending protocol is
-      named as DNIT's rather than ours.
-- [ ] The events the matrix requires are implemented and tested.
-- [ ] The KuDE is generated for every document type the tenant issues.
-- [ ] The test run's outcome is recorded in `docs/10-qa/CI-EVIDENCE.md`,
-      including a negative or pending result.
-- [ ] Lint/typecheck/tests/build green, `format-check` clean.
+- [x] The runbook exists and names every step, requirement and test the sources
+      pin, with its citation. Evidence: `SIFEN-HOMOLOGATION-RUNBOOK.md`, PR
+      #117.
+- [x] The contingency flag's treatment is recorded, and the pending protocol is
+      named as DNIT's rather than ours. Evidence: the runbook's §4.3 and §6.
+- [x] The events the matrix requires are implemented and tested — the emitter's
+      two in full: the cancellation that submits and the inutilización, as
+      [[FISC-016]] (PR #115). The receptor's four have no payload yet and are
+      recorded as the run blocker they are.
+- [x] The KuDE is generated for every document type the tenant issues. Evidence:
+      `packages/fiscal/src/kude/`, PR #119, with the seven reference models read
+      from the Manual's own pages in baseline §26.4.6.
+- [x] The test run's outcome is recorded in `docs/10-qa/CI-EVIDENCE.md`,
+      including a negative or pending result. Evidence: the closure section's
+      **pending** record, which names the operator inputs that block it.
+- [x] Lint/typecheck/tests/build green, `format-check` clean. Evidence:
+      `docs/10-qa/CI-EVIDENCE.md` and the receipts the closure lists.
 
 ## Status
 
@@ -242,3 +254,13 @@ retrieved source profiles is refused rather than given a layout. That is the
 honest reading of "the KuDE is generated for every document type the tenant
 issues": the tenant issues the type its timbrado declares, and the renderer
 serves the five §13.5 models while stating what each of them cannot show.
+
+**Closed 2026-10-15.** WU-C completed: the renderer landed as PR #119 and its
+four advisory rounds as PRs #120 through #123, eleven findings, none blocking.
+**WU-D is recorded as pending rather than performed**, which is the outcome this
+Story's own criterion admits: the run is an operator act against the DNIT's own
+environment, and the three inputs it needs — the habilitación, a certificate
+from a real PSC and the production CSC — are not things a repository can supply.
+The Story is `done` and [[EPIC-16]] closes with it, **not** as a certification.
+Nothing here has been tested against the DNIT, and no claim in this file should
+be read as if it had.
