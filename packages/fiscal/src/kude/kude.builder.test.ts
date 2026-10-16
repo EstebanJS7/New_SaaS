@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 import { FIXTURE_QR, validFacturaElectronicaRequest } from "../dte/dte.fixture.js";
-import type { DteRequest, DteXmlElement } from "../dte/dte.types.js";
+import type { DteReceptor, DteRequest, DteXmlElement } from "../dte/dte.types.js";
 import { buildKudeDocument } from "./kude.builder.js";
 import {
   formatKudeAmount,
@@ -27,6 +27,7 @@ import {
   formatKudeDateTime,
   groupKudeCdc,
 } from "./kude.format.js";
+import { KUDE_TYPE_PROFILES } from "./kude.types.js";
 
 interface LineSpec {
   readonly code: string;
@@ -81,6 +82,8 @@ function requestWith(options: {
   readonly operationTotal?: string;
   readonly ivaTotal?: string;
   readonly emitterName?: string;
+  /** Overrides on the fixture's receptor, so §22.11's two branches are reachable. */
+  readonly receptor?: Partial<DteReceptor>;
 }): DteRequest {
   const base = validFacturaElectronicaRequest();
   const totals: DteXmlElement[] = [
@@ -101,6 +104,7 @@ function requestWith(options: {
         ...base.gDatGralOpe.gEmis,
         dNomEmi: options.emitterName ?? base.gDatGralOpe.gEmis.dNomEmi,
       },
+      gDatRec: { ...base.gDatGralOpe.gDatRec, ...options.receptor },
     },
     gDtipDE: (options.lines ?? []).map(itemElement),
     gTotSub: totals,
@@ -325,6 +329,61 @@ describe("the KuDE builder · the totals (§26.4.3)", () => {
   it("gives the autofactura its single payable row", () => {
     const document = built(requestWith({ typeCode: 4, operationTotal: "200000.0000" }));
     expect(document.totals.payable).toBe("200.000");
+  });
+
+  it("reports an unreadable subtotal as an absence instead of throwing", () => {
+    // `addDecimalStrings` feeds `BigInt`, which raises `SyntaxError` on anything
+    // that is not a plain integer. A malformed field must not be able to stop the
+    // page: the row goes missing and says why, and the rest of the block still
+    // prints.
+    const document = built(requestWith({ sub5: "no es un número" }));
+    expect(document.totals.subtotal).toBeNull();
+    expect(document.absences.map((absence) => absence.label)).toContain("SUBTOTAL:");
+    expect(document.totals.operation).toBe("0");
+  });
+
+  it("prints each type's own QR sentence, taken from its profile", () => {
+    // §26.4.6's sentence names the document type, and the profile is where that
+    // literal lives -- so the sentence must be the profile's, not a copy of it
+    // that can drift.
+    for (const code of [1, 4, 5, 6, 7]) {
+      const document = built(requestWith({ typeCode: code }));
+      expect(document.qr.sentence).toBe(KUDE_TYPE_PROFILES[document.type].qrSentence);
+    }
+    expect(built(requestWith({ typeCode: 1 })).qr.sentence).toContain(
+      "de esta Factura Electrónica"
+    );
+    expect(built(requestWith({ typeCode: 5 })).qr.sentence).toContain(
+      "de esta Nota de Crédito Electrónica"
+    );
+    expect(built(requestWith({ typeCode: 6 })).qr.sentence).toContain(
+      "de esta Nota de Débito Electrónica"
+    );
+    expect(built(requestWith({ typeCode: 4 })).qr.sentence).toContain(
+      "de esta Autofactura Electrónica"
+    );
+    expect(built(requestWith({ typeCode: 7 })).qr.sentence).toContain(
+      "de esta Nota de Remisión Electrónica"
+    );
+  });
+
+  it("prints the receptor's identity document when it is not a contributor", () => {
+    // §22.11: `dRucRec` is obligatory when `iNatRec = 1` and not informed when it
+    // is `2`, so the one identity row carries the document instead of a RUC.
+    const contributor = built(requestWith({}));
+    expect(contributor.receptor[0]?.value).toBe("7654321-9");
+
+    const innominado = built(
+      requestWith({
+        receptor: {
+          iNatRec: 2,
+          dRucRec: undefined,
+          dDVRec: undefined,
+          dNumIDRec: "1234567",
+        },
+      })
+    );
+    expect(innominado.receptor[0]?.value).toBe("1234567");
   });
 });
 
