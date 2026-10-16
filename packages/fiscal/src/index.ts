@@ -609,3 +609,42 @@ export type {
   SifenFailureMapping,
   SifenFailureOutcome,
 } from "./sifen/sifen-direct.provider.js";
+
+// FISC-013 WU-C: the KuDE, the printed representation of a signed DE. The
+// builder reads `DteRequest` -- the object `buildDteXml` serializes and the
+// signer signs -- so §13.2's content rule holds by construction, and the
+// renderer returns a standalone HTML string: no route, no UI, no dependency.
+export { buildKudeDocument } from "./kude/kude.builder.js";
+export {
+  formatKudeAmount,
+  formatKudeDate,
+  formatKudeDateTime,
+  groupKudeCdc,
+} from "./kude/kude.format.js";
+export { escapeHtml, renderKudeHtml } from "./kude/kude.html.js";
+export type { KudeHtmlOptions } from "./kude/kude.html.js";
+export {
+  KUDE_ADMINISTRATION_LEGEND,
+  KUDE_DOCUMENT_TYPES,
+  KUDE_FOOTER_LINES,
+  KUDE_ITEM_COLUMNS,
+  KUDE_LABELS,
+  KUDE_REFUSALS,
+  KUDE_SHAPES,
+  KUDE_TYPE_PROFILES,
+  kudeProfileFor,
+} from "./kude/kude.types.js";
+export type {
+  KudeAbsence,
+  KudeBuildResult,
+  KudeDocument,
+  KudeDocumentType,
+  KudeItem,
+  KudeItemColumn,
+  KudeQrBlock,
+  KudeRefusal,
+  KudeRow,
+  KudeShape,
+  KudeTotals,
+  KudeTypeProfile,
+} from "./kude/kude.types.js";
