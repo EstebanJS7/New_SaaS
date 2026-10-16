@@ -4,17 +4,23 @@ type: tech-debt
 title:
   The KuDE renderer's second advisory round — a sign the guard admits and the
   sum mishandles, and the printed consultation address
-status: open
+status: done
 severity: low
 owner: fiscal
 created: 2026-10-15
 updated: 2026-10-15
 related:
   - FISC-013
-  - TD-034
+  - TD-036
 ---
 
 # TD-035 — the KuDE renderer's second advisory round
+
+**Resolved 2026-10-15**, all four: the sum carries its sign, the QR block prints
+`KUDE_CONSULTATION_URLS` instead of the composition prefix, the unreadable
+subtotal's absence names the field that raised it, and its test pins the reason.
+The review that approved those fixes raised one new finding, which is
+[[TD-036]].
 
 Four findings from the review that approved TD-034's fixes were accepted as debt
 rather than fixed, for the same reason as the first round: their disposition is
