@@ -4,16 +4,24 @@ type: tech-debt
 title:
   The KuDE renderer's three advisories — a throwing sum, a rebuilt QR sentence,
   and an untested branch
-status: open
+status: done
 severity: low
 owner: fiscal
 created: 2026-10-15
 updated: 2026-10-15
 related:
   - FISC-013
+  - TD-035
 ---
 
 # TD-034 — the KuDE renderer's advisories
+
+**Resolved 2026-10-15**, by the unit the items themselves named: the sum no
+longer throws and reports a named absence instead, `KudeQrBlock` carries the
+sentence from the type's profile so the renderer stops composing one, and the
+receptor's identity row has both of §22.11's branches asserted. The review that
+approved those fixes raised four new non-blocking findings, which are
+[[TD-035]].
 
 Three findings from FISC-013 WU-C's review were accepted as debt rather than
 fixed. Each carries the coordinates a later reader needs, because the review's

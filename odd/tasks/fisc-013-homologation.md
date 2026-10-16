@@ -75,7 +75,9 @@ record the flag and name the pending question instead of inventing rules.
       the cuotas, the motive, the per-rate IVA settlement and the AFE/NRE blocks
       are not in the signed document and are reported as **named absences**
       rather than invented (§13.2). A type code no source profiles is refused.
-      Three review advisories are [[TD-034]].
+      Three review advisories were [[TD-034]], now resolved by the unit that
+      named them; the review that approved those fixes raised four more,
+      recorded as [[TD-035]].
 - [ ] **WU-D — the run and its evidence.** **Blocked on the DNIT** (the
       habilitación and the test data set) and on the run blockers the runbook
       names: the CSC's registration surface, the batch composition, the
@@ -114,8 +116,11 @@ e93e340    docs(FISC-013): the Manual's chapter 13 profiled into the baseline as
            (WU-C, first half completed)
 2ae3deb    feat(FISC-013): the KuDE, generated from the signed DE's own model
            (WU-C, renderer)
-(pending)  docs(FISC-013): the KuDE's three review advisories recorded as TD-034,
+4995f53    docs(FISC-013): the KuDE's three review advisories recorded as TD-034,
            and WU-C closed (WU-C, record)
+64b4bbb    fix(FISC-013): the KuDE renderer's three advisories (TD-034 resolved)
+(pending)  docs(FISC-013): TD-034 closed and its second advisory round recorded
+           as TD-035
 ```
 
 The last line is owed by the parent orchestrator: this implementation unit does
