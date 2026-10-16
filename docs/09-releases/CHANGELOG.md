@@ -6,6 +6,49 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-16 — SIFEN Direct, the DNIT's own e-invoicing integration behind the
+  Fiscal boundary (FISC-006 to FISC-016, closed 2026-10-15):
+  - The **DNIT protocol baseline** revalidated as the epic's precondition, with
+    nine cited artifacts and every constant traced to a source; no retrieved
+    source answered, the claim is marked open rather than encoded.
+  - **Tenant signing material** through a reusable `SecretStore` capability:
+    envelope encryption in PostgreSQL, classified RESTRICTED, never in a log or
+    an API response, removable and rotatable.
+  - **DTE XML generation** with the document validated against the DNIT's own
+    XSDs **before any submission** — the CI gate for a fixture and the runtime
+    gate for the tenant's document, where a deployment that cannot validate
+    cannot submit.
+  - **XMLDSig signing** against the schema's own profile, driving the `SIGNING`
+    lifecycle state, with the signature re-verified after embedding.
+  - The **DNIT web services**: reception, query and events over SOAP with mutual
+    TLS and no pooled socket, an asynchronous outcome model on the provider
+    port, and bounded retry for transient failures with none for functional or
+    schema rejections.
+  - **Timbrado and numbering ranges** enforced per establishment, point and
+    document type, with the number allocated at confirmation under the range's
+    own authorisation.
+  - `SifenDirectFiscalProvider` behind the existing port, selected through
+    `FISCAL_PROVIDER`, with the worker's submission and reconciliation stages
+    and a claim lease that recovers a worker which dies mid-call.
+  - The **document assembly**: the worker builds a real, signed DE from the
+    confirmed invoice, the emitter's declared fiscal identity and the tenant's
+    timbrado.
+  - The **event family**: the cancellation that submits, the inutilización, and
+    the cancelled and void range states with their own claim, lease and
+    single-submission guarantees.
+  - The **KuDE**, the printed representation of a signed DE, generated from the
+    signed document itself and rendered as a standalone printable HTML page with
+    the QR the Manual specifies.
+
+### Changed
+
+- **The certification run for SIFEN Direct has not been performed.** SIFEN's
+  test matrix needs the DNIT's habilitación, a certificate from a real PSC and
+  the production CSC issued at the emitter's `ingreso`;
+  `docs/10-qa/CI-EVIDENCE.md` records it as **pending**. Choosing SIFEN Direct
+  therefore does not by itself authorise live e-invoicing, and the epic's
+  limitation list names every row it leaves unrun.
+
 - EPIC-15 — Fiscal Abstraction (FISC-003 to FISC-005, completing the epic):
   - The reusable Core Fiscal boundary: a provider port with a normalized outcome
     taxonomy (`APPROVED`, `REJECTED`, `FUNCTIONAL_REJECTION`,

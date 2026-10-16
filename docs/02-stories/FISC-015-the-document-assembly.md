@@ -4,7 +4,7 @@ type: story
 title:
   The document assembly — the fiscal identity a DE needs before it can be built
 epic: EPIC-16
-status: planned
+status: done
 priority: high
 depends_on:
   - FISC-011

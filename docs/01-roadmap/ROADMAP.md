@@ -6,29 +6,29 @@ updated: 2026-10-04
 
 # ROADMAP
 
-| Epic    | Name                               |      Status | Depends on                |
-| ------- | ---------------------------------- | ----------: | ------------------------- |
-| EPIC-00 | Foundation                         |        done | —                         |
-| EPIC-01 | Database/Auth/Tenancy              |        done | EPIC-00                   |
-| EPIC-02 | RBAC/Entitlements/Tenant Settings  |        done | EPIC-01                   |
-| EPIC-03 | Staff Shell/Design System/Branding |        done | EPIC-01                   |
-| EPIC-04 | Customers                          |        done | EPIC-02, EPIC-03          |
-| EPIC-05 | Veterinary Patients                |        done | EPIC-04                   |
-| EPIC-06 | Clinical                           |        done | EPIC-05                   |
-| EPIC-07 | Scheduling                         |        done | EPIC-04, EPIC-05          |
-| EPIC-08 | Portal                             |        done | EPIC-04, EPIC-05, EPIC-07 |
-| EPIC-09 | Catalog/Taxes                      |        done | EPIC-02                   |
-| EPIC-10 | Inventory                          |        done | EPIC-09                   |
-| EPIC-11 | Suppliers/Purchases                |        done | EPIC-10                   |
-| EPIC-12 | POS/Payments                       |        done | EPIC-09, EPIC-10          |
-| EPIC-13 | Cash                               |        done | EPIC-12                   |
-| EPIC-14 | Billing                            |        done | EPIC-12                   |
-| EPIC-15 | Fiscal Abstraction                 |        done | EPIC-14                   |
-| EPIC-16 | SIFEN Direct                       | in-progress | EPIC-15                   |
-| EPIC-17 | Notifications                      |     planned | EPIC-07                   |
-| EPIC-18 | Dashboards/Reports                 |     planned | prior domains             |
-| EPIC-19 | Imports                            |     planned | EPIC-04, EPIC-05          |
-| EPIC-20 | Production Hardening               |     planned | MVP feature epics         |
+| Epic    | Name                               |  Status | Depends on                |
+| ------- | ---------------------------------- | ------: | ------------------------- |
+| EPIC-00 | Foundation                         |    done | —                         |
+| EPIC-01 | Database/Auth/Tenancy              |    done | EPIC-00                   |
+| EPIC-02 | RBAC/Entitlements/Tenant Settings  |    done | EPIC-01                   |
+| EPIC-03 | Staff Shell/Design System/Branding |    done | EPIC-01                   |
+| EPIC-04 | Customers                          |    done | EPIC-02, EPIC-03          |
+| EPIC-05 | Veterinary Patients                |    done | EPIC-04                   |
+| EPIC-06 | Clinical                           |    done | EPIC-05                   |
+| EPIC-07 | Scheduling                         |    done | EPIC-04, EPIC-05          |
+| EPIC-08 | Portal                             |    done | EPIC-04, EPIC-05, EPIC-07 |
+| EPIC-09 | Catalog/Taxes                      |    done | EPIC-02                   |
+| EPIC-10 | Inventory                          |    done | EPIC-09                   |
+| EPIC-11 | Suppliers/Purchases                |    done | EPIC-10                   |
+| EPIC-12 | POS/Payments                       |    done | EPIC-09, EPIC-10          |
+| EPIC-13 | Cash                               |    done | EPIC-12                   |
+| EPIC-14 | Billing                            |    done | EPIC-12                   |
+| EPIC-15 | Fiscal Abstraction                 |    done | EPIC-14                   |
+| EPIC-16 | SIFEN Direct                       |    done | EPIC-15                   |
+| EPIC-17 | Notifications                      | planned | EPIC-07                   |
+| EPIC-18 | Dashboards/Reports                 | planned | prior domains             |
+| EPIC-19 | Imports                            | planned | EPIC-04, EPIC-05          |
+| EPIC-20 | Production Hardening               | planned | MVP feature epics         |
 
 Update this table when Epic status changes.
 
@@ -90,6 +90,24 @@ writer complies with its protocol.
 ## Architecture baseline
 
 Architecture freeze: PRD v1.3. Structural changes require an accepted ADR.
+
+[[EPIC-16]] SIFEN Direct moved to `done` on 2026-10-15 after its Stories closed
+with the required CI checks green. The kickoff and the decisions were PR #104,
+FISC-007 PR #105, FISC-008 PR #106, FISC-009 PR #107, FISC-011 PRs #108 and
+#112, FISC-010 PR #111, FISC-012 PR #113, FISC-015 PR #114, FISC-016 PR #115,
+FISC-013's runbook and KuDE PRs #117 and #119, and the five units that closed
+the findings the epic's own reviews raised — TD-033's two items and TD-034
+through TD-037 — as PRs #116, #118 and #120 through #123. The merged tree
+carries **43 migrations** and a green
+`pnpm test`/`typecheck`/`lint`/`build`/`format-check` set (database 491, fiscal
+762, API 1214 with the live-PostgreSQL spec's **266 cases**, worker 163, web
+1087), and `SIFEN-BASELINE.md` grew §24–§26 as the epic's protocol constants
+earned their citations. **The certification run has not been performed.** It is
+an operator act against the DNIT's own environment and needs the habilitación, a
+certificate from a real PSC and the production CSC issued at the emitter's
+`ingreso`, so `docs/10-qa/CI-EVIDENCE.md` records the matrix as **pending** and
+the epic's limitation list names what it leaves unrun. This is an epic-closure
+record, **never** a SIFEN-readiness claim.
 
 [[EPIC-15]] Fiscal Abstraction moved to `done` on 2026-10-03 after its five
 Stories closed with the required CI checks green. The kickoff and Decisions were

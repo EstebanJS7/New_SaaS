@@ -1781,3 +1781,86 @@ format-check      clean
 The signature round trip added by the correction proves what schema validity
 cannot: the signature still verifies **after** the serializer embeds the signed
 group. It fails without the group's namespace declaration and passes with it.
+
+## EPIC-16 SIFEN Direct — closure (2026-10-15)
+
+Every Story merged with both required checks green. The runs, one per pull
+request:
+
+| Slice                                               | Pull request | Merge     | CI run                                                                           |
+| --------------------------------------------------- | ------------ | --------- | -------------------------------------------------------------------------------- |
+| Kickoff and accepted decisions                      | #104         | `b05d411` | [`37163263998`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37163263998) |
+| FISC-007 tenant signing material                    | #105         | `a6c0e3d` | [`37212031601`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37212031601) |
+| FISC-008 DTE XML generation                         | #106         | `fc7f2fc` | [`37568594968`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37568594968) |
+| FISC-009 XMLDSig signing and the `SIGNING` state    | #107         | `e1a29d7` | [`37577259214`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37577259214) |
+| FISC-011 timbrado and numbering ranges              | #108         | `ffd08a1` | [`37679607152`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37679607152) |
+| Bookkeeping                                         | #109         | `a87c9d9` | [`37856456426`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37856456426) |
+| FISC-010 the DNIT web services                      | #111         | `ff8954e` | [`37858286869`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37858286869) |
+| FISC-011 completion                                 | #112         | `2bcef15` | [`37857255751`](https://github.com/EstebanJS7/New_SaaS/actions/runs/37857255751) |
+| FISC-012 `SifenDirectFiscalProvider`                | #113         | `4b9281b` | [`38063054740`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38063054740) |
+| FISC-015 the document assembly                      | #114         | `a697a1f` | [`38187813491`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38187813491) |
+| FISC-016 the event family                           | #115         | `7e6d081` | [`38341050528`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38341050528) |
+| TD-033 item 4 — the caller's abort signal           | #116         | `a801cdf` | [`38345828265`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38345828265) |
+| FISC-013 WU-A — the homologation runbook            | #117         | `d6b1b69` | [`38350593496`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38350593496) |
+| TD-033 item 5 — the cancel's `CANCEL_PENDING` lease | #118         | `0522222` | [`38783343957`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38783343957) |
+| FISC-013 WU-C — the KuDE                            | #119         | `d35c58e` | [`38917370580`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38917370580) |
+| TD-034 — the renderer's first advisory round        | #120         | `718d201` | [`38922321806`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38922321806) |
+| TD-035 — the second                                 | #121         | `18ad895` | [`38936275397`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38936275397) |
+| TD-036 — the third                                  | #122         | `441a069` | [`38941606206`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38941606206) |
+| TD-037 — the fourth                                 | #123         | `deca629` | [`38944955659`](https://github.com/EstebanJS7/New_SaaS/actions/runs/38944955659) |
+
+FISC-006, the epic's precondition, closed on 2026-10-03 before the kickoff's
+implementation slices.
+
+### The local gates on the merged tree
+
+```text
+database  26 files / 491 tests
+fiscal    34 files / 762 tests
+API       89 files / 1214 tests
+          (with DATABASE_URL_TEST exported, the live-PostgreSQL spec runs
+           inside it: 266 cases)
+worker    12 files / 163 tests
+web       90 files / 1087 tests
+pnpm lint / typecheck   -> 20/20, 20/20
+pnpm build              -> 12/12
+pnpm format-check       -> clean
+```
+
+The schema carries **43 migrations**; the last one this epic added is
+`20261013000001_fisc_012_cancel_pending_lease`.
+
+### The certification run: PENDING, and that is the headline
+
+**FISC-013's WU-D — the DNIT's own minimum test matrix against its test
+environment — has not been performed.** No row of it has an outcome. The epic's
+acceptance criterion admits exactly this ("recorded as evidence, **or explicitly
+recorded as not yet performed**"), and FISC-013's admits "a negative **or
+pending** result", so this section is the evidence that criterion asks for: the
+run is recorded as pending, by name, with what blocks it.
+
+```text
+The run needs                          Who provides it
+-------------------------------------- ------------------------------------------
+the habilitación (six operator steps)  the DNIT, after the emitter's request
+the test data set                      the DNIT, after step 2
+a certificate from a real PSC          the operator's certification provider
+the production CSC                     the emitter's `ingreso` at the DNIT
+```
+
+The repository side is as ready as the sources allow, and the runbook
+(`docs/06-fiscal/SIFEN-HOMOLOGATION-RUNBOOK.md`) carries the per-row statement
+of what the repository does and what blocks each row:
+
+- **What exists**: the emitter's two event payloads — the cancellation that
+  submits and the inutilización — built and signed; the document assembly, which
+  builds and signs a real DE from a confirmed invoice; the runtime XSD gate; the
+  KuDE for the five types §13.5 models; and the QR §24 pins.
+- **What the run still cannot do**: the receptor's four event payloads (five
+  matrix rows), the synchronous service (`receiveDe` exists and nothing calls
+  it), a deliberate-invalid DE harness, and a batch composition of five
+  documents of one type.
+
+**Nothing in this epic has been tested against the DNIT**, and no claim anywhere
+in its documentation should be read as if it had. `done` means implementation
+closure.
