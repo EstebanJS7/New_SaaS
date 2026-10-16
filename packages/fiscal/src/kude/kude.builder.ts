@@ -18,7 +18,6 @@
  * rest; that is the honest outcome, not a defect of the renderer.
  */
 
-import { QR_CONSULTATION_URLS } from "../dte/dte.qr.js";
 import type { DteRequest, DteXmlElement } from "../dte/dte.types.js";
 import {
   formatKudeAmount,
@@ -28,6 +27,7 @@ import {
 } from "./kude.format.js";
 import {
   KUDE_ADMINISTRATION_LEGEND,
+  KUDE_CONSULTATION_URLS,
   KUDE_FOOTER_LINES,
   KUDE_LABELS,
   KUDE_REFUSALS,
@@ -121,8 +121,8 @@ function buildItem(element: DteXmlElement): KudeItem {
  */
 function buildTotals(request: DteRequest): {
   readonly totals: KudeTotals;
-  /** Whether the DE carries a subtotal this renderer cannot add. */
-  readonly subtotalUnreadable: boolean;
+  /** The subtotal fields the DE carries but this renderer cannot add. */
+  readonly unreadableSubtotals: readonly string[];
 } {
   const sub = request.gTotSub;
   const isPyg = request.gDatGralOpe.gOpeCom?.cMoneOpe === "PYG";
@@ -131,18 +131,24 @@ function buildTotals(request: DteRequest): {
   // `SUBTOTAL` is "the three above" (§26.4.3), so it is their exact sum. A
   // document that carries none of the three reports no subtotal rather than a
   // zero it never stated, and one that carries a value this module cannot add
-  // reports none either: the alternative is a renderer a malformed field can
-  // stop, which is the opposite of what every other path here does.
-  const parts = ["dSubExe", "dSub5", "dSub10"]
-    .map((name) => childValue(sub, name))
-    .filter((value): value is string => value !== undefined);
+  // reports none either -- and **names the field**, so a reader knows what to
+  // fix instead of being told the whole set is suspect.
+  const carried = SUBTOTAL_FIELDS.map((name) => ({ name, value: childValue(sub, name) })).filter(
+    (entry): entry is { name: (typeof SUBTOTAL_FIELDS)[number]; value: string } =>
+      entry.value !== undefined
+  );
+  const unreadableSubtotals = carried
+    .filter((entry) => !isDecimal(entry.value))
+    .map((entry) => entry.name);
   const summed =
-    parts.length === 0
+    unreadableSubtotals.length > 0 || carried.length === 0
       ? undefined
-      : parts.reduce<string | undefined>(
-          (total, part) => (total === undefined ? undefined : addDecimalStrings(total, part)),
-          "0"
-        );
+      : carried
+          .map((entry) => entry.value)
+          .reduce<string | undefined>(
+            (total, part) => (total === undefined ? undefined : addDecimalStrings(total, part)),
+            "0"
+          );
   return {
     totals: {
       subtotal: summed === undefined ? null : formatKudeAmount(summed),
@@ -158,9 +164,12 @@ function buildTotals(request: DteRequest): {
       ivaTotal: ivaTotal === undefined ? null : formatKudeAmount(ivaTotal),
       payable: operation === undefined ? null : formatKudeAmount(operation),
     },
-    subtotalUnreadable: parts.length > 0 && summed === undefined,
+    unreadableSubtotals,
   };
 }
+
+/** The three subtotal fields §26.4.3's map names, in the chapter's own order. */
+const SUBTOTAL_FIELDS = ["dSubExe", "dSub5", "dSub10"] as const;
 
 /** Whether a value is a plain decimal this module can add without a float. */
 function isDecimal(value: string): boolean {
@@ -168,7 +177,7 @@ function isDecimal(value: string): boolean {
 }
 
 /**
- * Exact addition of two non-negative decimal strings, without a float.
+ * Exact addition of two decimal strings, without a float.
  *
  * It answers `undefined` for a value it cannot read rather than letting
  * `BigInt` raise `SyntaxError`. The subtotals are the DE's fields, which this
@@ -176,6 +185,12 @@ function isDecimal(value: string): boolean {
  * failing: `formatKudeAmount` returns an unreadable value unchanged, and the
  * builder reports what the DE does not carry as an absence. A sum that threw
  * would be the one place a malformed field could stop the page.
+ *
+ * **The sign is carried.** `BigInt` adds signed values natively, but the string
+ * surgery below pads to a scale, and `padStart` pads *before* a sign -- `-5`
+ * would come back as `0-5`, which is not a number. So the magnitude is padded
+ * and the sign is put back on the finished string, and `isDecimal`'s optional
+ * sign is a sign this function can actually honour.
  */
 function addDecimalStrings(left: string, right: string): string | undefined {
   if (!isDecimal(left) || !isDecimal(right)) return undefined;
@@ -186,10 +201,13 @@ function addDecimalStrings(left: string, right: string): string | undefined {
     return BigInt(`${integer}${fraction.padEnd(scale, "0")}`);
   };
   const sum = toUnits(left) + toUnits(right);
-  const digits = sum.toString().padStart(scale + 1, "0");
-  return scale === 0
-    ? digits
-    : `${digits.slice(0, digits.length - scale)}.${digits.slice(digits.length - scale)}`;
+  const negative = sum < 0n;
+  const digits = (negative ? -sum : sum).toString().padStart(scale + 1, "0");
+  const magnitude =
+    scale === 0
+      ? digits
+      : `${digits.slice(0, digits.length - scale)}.${digits.slice(digits.length - scale)}`;
+  return negative ? `-${magnitude}` : magnitude;
 }
 
 /** The generic shape's own absences, which the AFE and the NRE share in part. */
@@ -316,20 +334,25 @@ export function buildKudeDocument(request: DteRequest): KudeBuildResult {
     .filter((element) => element.name === "gCamItem")
     .map(buildItem);
 
-  const { totals, subtotalUnreadable } = buildTotals(request);
+  const { totals, unreadableSubtotals } = buildTotals(request);
   const absences: KudeAbsence[] = [
     ...GENERIC_ABSENCES,
     ...(profile.shape === "autofactura" ? AUTOFACTURA_ABSENCES : []),
     ...(profile.shape === "remision" ? REMISION_ABSENCES : []),
     // A subtotal the DE carries but this renderer cannot add is named rather
-    // than silently dropped: the reader sees why the row is missing.
-    ...(subtotalUnreadable
+    // than silently dropped, and the reason names the field that raised it: a
+    // message that indicted all three would not say which one to fix.
+    ...(unreadableSubtotals.length > 0
       ? [
           {
             label: "SUBTOTAL:",
             reason:
-              "The DE's dSubExe, dSub5 and dSub10 are not decimal values this renderer can " +
-              "sum exactly, and it does not round or coerce (§26.6.7 leaves the rule open).",
+              `The DE's ${unreadableSubtotals.join(", ")} ` +
+              (unreadableSubtotals.length === 1
+                ? "is not a decimal value"
+                : "are not decimal values") +
+              " this renderer can sum exactly, and it does not round or coerce " +
+              "(§26.6.7 leaves the rule open).",
           },
         ]
       : []),
@@ -354,7 +377,7 @@ export function buildKudeDocument(request: DteRequest): KudeBuildResult {
       // profile, so there is one source for it rather than two: the renderer
       // prints this and never composes one of its own (§26.4.6).
       sentence: profile.qrSentence,
-      consultationUrl: QR_CONSULTATION_URLS[environment],
+      consultationUrl: KUDE_CONSULTATION_URLS[environment],
       cdcGrouped: groupKudeCdc(request.cdc),
     },
     footer: KUDE_FOOTER_LINES,

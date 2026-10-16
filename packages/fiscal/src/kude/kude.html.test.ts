@@ -98,7 +98,11 @@ describe("the KuDE's HTML · the document", () => {
     const html = withLine({});
     // The fixture's own CDC, grouped the way §26.4.6 prints it.
     expect(html).toContain("0144 4444 0170 0100 1001 4528 2201 7012 5158 7326 0988");
-    expect(html).toContain("https://ekuatia.set.gov.py/consultas-test/qr?");
+    // The printed address is the consultation page. The QR's own content, which
+    // the same block prints when it has no image, is the composition URL -- a
+    // different string for a different purpose.
+    expect(html).toContain("https://ekuatia.set.gov.py/consultas-test/");
+    expect(html).not.toContain("consultas-test/qr?");
   });
 
   it("does not print the absences: they are the caller's metadata", () => {

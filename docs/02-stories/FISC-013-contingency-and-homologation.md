@@ -171,7 +171,8 @@ land fixes the list._
       settlement and the AFE's and the NRE's own blocks are named absences
       rather than inventions. Three review advisories were [[TD-034]], now
       resolved; the review that approved those fixes raised four more, recorded
-      as [[TD-035]].
+      as [[TD-035]], now resolved in turn; the review that approved those fixes
+      raised one further finding, recorded as [[TD-036]].
 - [ ] **WU-D — the run and its evidence.** The actual test matrix against the
       test environment, recorded in `docs/10-qa/CI-EVIDENCE.md` with its outcome
       — including a negative or pending one. Blocked on the DNIT (the

@@ -77,7 +77,8 @@ record the flag and name the pending question instead of inventing rules.
       rather than invented (§13.2). A type code no source profiles is refused.
       Three review advisories were [[TD-034]], now resolved by the unit that
       named them; the review that approved those fixes raised four more,
-      recorded as [[TD-035]].
+      recorded as [[TD-035]], now resolved in turn; the review that approved
+      those fixes raised one further finding, recorded as [[TD-036]].
 - [ ] **WU-D — the run and its evidence.** **Blocked on the DNIT** (the
       habilitación and the test data set) and on the run blockers the runbook
       names: the CSC's registration surface, the batch composition, the
@@ -119,8 +120,12 @@ e93e340    docs(FISC-013): the Manual's chapter 13 profiled into the baseline as
 4995f53    docs(FISC-013): the KuDE's three review advisories recorded as TD-034,
            and WU-C closed (WU-C, record)
 64b4bbb    fix(FISC-013): the KuDE renderer's three advisories (TD-034 resolved)
-(pending)  docs(FISC-013): TD-034 closed and its second advisory round recorded
+21897eb    docs(FISC-013): TD-034 closed and its second advisory round recorded
            as TD-035
+f3ddafc    fix(FISC-013): the KuDE renderer's second advisory round (TD-035
+           resolved)
+(pending)  docs(FISC-013): TD-035 closed and its third advisory round recorded
+           as TD-036
 ```
 
 The last line is owed by the parent orchestrator: this implementation unit does
