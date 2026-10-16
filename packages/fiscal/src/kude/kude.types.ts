@@ -98,6 +98,12 @@ export interface KudeTotals {
 export interface KudeQrBlock {
   /** `dCarQR`, the content `dte.qr.ts` builds (§24). */
   readonly content: string;
+  /**
+   * The sentence the model prints above the code, which **names the document
+   * type** (§26.4.6). It travels on the document so the renderer has one source
+   * for it rather than composing its own.
+   */
+  readonly sentence: string;
   /** §13.8.2's consultation URL, environment-dependent. */
   readonly consultationUrl: string;
   /** The CDC, printed **in groups of four** (§26.4.6). */

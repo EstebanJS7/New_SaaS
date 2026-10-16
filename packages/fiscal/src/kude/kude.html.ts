@@ -175,21 +175,11 @@ function qrHtml(document: KudeDocument, options: KudeHtmlOptions): string {
   return `<div class="qr-block">
     ${image}
     <div class="qr-text">
-      <p>${escapeHtml(qrSentenceFor(document))}</p>
+      <p>${escapeHtml(document.qr.sentence)}</p>
       <p class="url">${escapeHtml(document.qr.consultationUrl)}</p>
       <p class="cdc">CDC: ${escapeHtml(document.qr.cdcGrouped)}</p>
     </div>
   </div>`;
-}
-
-/**
- * The QR sentence names the document type (§26.4.6). It is rebuilt here from the
- * title rather than stored twice, and the shape's own title is the model's.
- */
-function qrSentenceFor(document: KudeDocument): string {
-  return document.type === "AFE"
-    ? "Consulte la validez de esta Autofactura Electrónica con el número de CDC impreso abajo en:"
-    : "Consulte la validez de este documento electrónico con el número de CDC impreso abajo en:";
 }
 
 /**
