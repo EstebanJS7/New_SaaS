@@ -243,10 +243,23 @@ export class NotificationDeliveryHandler {
           },
         };
       }
-      return this.recordRetryableFailure(delivery, {
+      // `recordRetryableFailure` NEVER RETURNS: it records the reason on the row
+      // and then throws so BullMQ retries within its bounded budget. Awaiting it
+      // as a STATEMENT, with an explicit unreachable throw after it, is what makes
+      // that visible here.
+      //
+      // The earlier `return this.recordRetryableFailure(...)` was correct at
+      // runtime — the declared `Promise<never>` means no value can reach the
+      // `in` check in `deliver` — but it read as though a value flowed back into
+      // a union of decisions, and a review of this very file concluded that the
+      // retryable path could then settle a delivery twice. It cannot, and the case
+      // named "records a trace when a gate throws" is what asserts it; the shape
+      // was still worth making unambiguous.
+      await this.recordRetryableFailure(delivery, {
         reasonCode: NOTIFICATION_DELIVERY_REASON.GATE_FAILED,
         reason: `The ${step} gate failed before the message could be sent.`,
       });
+      throw new Error("Unreachable: recordRetryableFailure always throws.");
     }
   }
 

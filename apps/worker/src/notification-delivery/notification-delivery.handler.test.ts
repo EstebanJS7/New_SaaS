@@ -413,6 +413,13 @@ describe("the delivery handler's outcome", () => {
     // field most likely to carry a row's value.
     expect(String(write.data.lastErrorMessage)).toContain("recipient");
     expect(String(write.data.lastErrorMessage)).not.toContain("connection terminated");
+    // And it NEVER settles: no write on this path sets FAILED, so a delivery
+    // cannot be settled twice or settled after a retryable record. The claim plus
+    // this one write is the whole trail.
+    expect(writes).toHaveLength(2);
+    for (const issued of writes) {
+      expect(issued.data.status).not.toBe("FAILED");
+    }
   });
 
   it("names the failing gate, not a generic reason", async () => {
