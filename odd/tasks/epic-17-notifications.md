@@ -64,11 +64,17 @@ by any service.
       (status, attempts, dedupe key, `scheduled_at`), its migration, the
       lifecycle guard, the queue name and the deterministic job identity.
       Mirrors `apps/worker/src/fiscal-submission/`. → [[NOTIF-001]] Evidence:
-      `@newsaas/notifications` 13 cases, the database schema gate 18 cases, and
-      `pnpm db:live-verify`'s 28 live cases on PostgreSQL 16. The payload-refs
-      column was dropped (no consumer) and the worker consumer moved to
-      [[NOTIF-002]] — both recorded in the Story, not absorbed silently. Commit
-      and review receipts are appended below once they exist.
+      commits `9b321cf` (the unit) and `12cf12c` (the review correction); review
+      `review-2ab7f3074e541ccd`, medium tier, one lens (`review-reliability`),
+      consent relayed and granted, **R3-001 CRITICAL** found and corrected then
+      validated, advisories R3-002/R3-003, `approved` + acknowledged, authority
+      burned. Gates: `@newsaas/notifications` 14 cases, the database schema gate
+      18 cases, and `pnpm db:live-verify`'s 28 live cases on PostgreSQL 16. Two
+      shape changes, both recorded in the Story rather than absorbed: the
+      payload-refs column was dropped (no consumer) and the worker consumer
+      moved to [[NOTIF-002]]. The review also exposed **[[TD-039]]**, a
+      production blocker in the closed fiscal epic, which is out of this unit's
+      scope and recorded instead of fixed here.
 - [ ] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
       deterministic fake, the real adapters, fail-closed production selection,
       and the recipient's contact data classified **RESTRICTED**. The email
@@ -97,6 +103,14 @@ by any service.
   that crossing is declared in the epic file as boundary debt.
 
 ## Found while reading the code (carried into the artifacts)
+
+- **BullMQ refuses a custom job id containing `:`** unless it splits into
+  exactly three segments. Measured against `bullmq@5.81.3` with a real Redis,
+  and it cost this epic one CRITICAL: the boundary had copied
+  `fiscal-submit:<id>`. The notification id is now hyphenated; [[TD-039]]
+  records that **the fiscal one was not fixed and is a production blocker**,
+  because its shape is pinned by a test that asserts it against a mocked
+  `Queue`.
 
 - **The dispatcher is in-process**, so a reaction only sees an event published
   by its own deployable: the appointment reactions belong in `api`, the

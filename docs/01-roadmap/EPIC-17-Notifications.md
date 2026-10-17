@@ -197,6 +197,17 @@ column was dropped as an abstraction with no consumer, and the worker consumer
 plus the delivery handler moved to [[NOTIF-002]] because a claim with nothing to
 send cannot be a unit.
 
+**The review found one CRITICAL, and it was the kind no local gate can reach.**
+`review-2ab7f3074e541ccd` (medium tier, one lens) rejected the queue contract's
+job identity, because BullMQ refuses a custom job id containing `:` and the id
+had copied the fiscal boundary's `fiscal-submit:<id>` shape. It was measured
+against `bullmq@5.81.3` with a real Redis, corrected, and the corrected
+candidate was validated. The same review exposed **[[TD-039]]**: the fiscal
+boundary still carries that id, so the fiscal producer's enqueue throws in
+production, and its unit test asserts the wrong literal against a mocked `Queue`
+— which is why `main`'s CI is green over a production blocker. **TD-039 is open,
+and it is the most valuable thing this session found.**
+
 ## Dependencies
 
 - [[EPIC-07]] — the appointment's confirmation and cancellation paths this epic

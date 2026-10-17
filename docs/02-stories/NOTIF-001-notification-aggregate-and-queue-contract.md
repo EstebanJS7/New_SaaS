@@ -279,10 +279,40 @@ Live PostgreSQL 16 (real, on a disposable cluster in this session):
                                         removed, so it is pre-existing and not
                                         this unit's (see Known Limitations)
   psql/pg_isready                        PostgreSQL 16.13
+
+Review (RDD, medium tier, one lens):
+  lineage                                review-2ab7f3074e541ccd
+  base tree                              ff562cbd (the WU-A commit)
+  reviewed candidate tree                69129354 -> corrected b15f7da0
+  consent                                relayed, granted by the maintainer
+  lens                                   review-reliability
+  R3-001                                 CRITICAL, inferential, introduced
+                                         -> corrected, then validated
+  advisories                             R3-002, R3-003 (WARNING, informational)
+  outcome                                approved, acknowledged, authority burned
 ```
 
-Not run, and why: no CI run yet (the branch is local and unpushed), and no Redis
-was needed because this unit enqueues nothing.
+Not run, and why: no CI run yet (the branch is local and unpushed).
+
+### The review's CRITICAL, and how it was verified
+
+**R3-001 (reliability, CRITICAL)** found that `notificationDeliveryJobId`
+returned `notification-deliver:<id>`, and that `queue.add` would throw before
+any delivery was enqueued.
+
+**Measured, not reasoned about.** Against `bullmq@5.81.3` with a real Redis:
+`Custom Id cannot contain :` for `notification-deliver:abc` and for
+`fiscal-submit:abc`; `a:b:c` is accepted only because it splits into exactly
+three segments (the repeatable-jobs carve-out); `notification-deliver-abc` is
+accepted. The rule lives in `bullmq/dist/cjs/classes/job.js`, which carries the
+comment _"TODO: replace this check in next breaking check with include(':')"_.
+
+The correction changed the separator to a hyphen, recorded why it must stay one,
+and replaced the literal assertion with a shape assertion across several inputs
+— because **a stubbed `Queue` cannot reach the rule**, which is exactly why the
+previous literal pinned the bug instead of failing. The corrected candidate was
+then validated by an independent read-only validator run:
+`original_criteria.passed: true`, `correction_regression.passed: true`.
 
 ## Tests Added
 
@@ -323,11 +353,38 @@ was needed because this unit enqueues nothing.
   `265 passed | 1 failed`, so it is not this unit's. CI on `main` is green for
   the same suite, so the difference is environmental and its cause is
   unidentified here.
+- **The review's two advisories are unaddressed and non-blocking** (WARNING,
+  `informational`), and their claim text was not captured — the published
+  closure lists ids and coordinates. Recorded by coordinate with an explicit
+  READING in the Technical Debt section below, so nobody mistakes a reading for
+  the finding.
 
 ## Technical Debt
 
-- None raised by this unit; anything the reviews surface is recorded here and
-  triaged at [[NOTIF-005]].
+- **[[TD-039]] — raised by this unit's review, and it is not this unit's.**
+  `fiscalSubmissionJobId` in `packages/fiscal/src/fiscal-submission.queue.ts`
+  returns `fiscal-submit:<id>`, the same two-segment shape BullMQ refuses, so
+  the fiscal producer's enqueue would throw in production. Its unit test asserts
+  that literal against a mocked `Queue`, which is why CI is green. Recorded,
+  measured and named rather than fixed inside this candidate, because the file
+  is outside this unit's reviewed scope.
+- **R3-002** — lens `reliability`, `migration.sql:247-256` (the transition
+  guard's edge list), WARNING, `informational`. Claim text not captured. **A
+  reading of that coordinate, marked as a reading**: `CANCELLED` is the only
+  status that releases the dedupe key and `FAILED` has no outgoing edge, so a
+  failed delivery keeps its key and its intent is unresolvable for that window
+  by anything but an operator — which is the re-drive this Story deliberately
+  did not build. If that is the finding, the decision to record is _which_ of
+  the two should release the key.
+- **R3-003** — lens `reliability`, `migration.sql:123-124`
+  (`notification_delivery_sent_reason_check`), WARNING, `informational`. Claim
+  text not captured. **A reading of that coordinate, marked as a reading**: the
+  CHECK forces `last_error_code` to be NULL on entry to `SENT` but says nothing
+  about `last_error_message`, so a `SENT` row can keep a stale message that then
+  reads as a current error. If that is the finding, the fix is to extend the
+  biconditional to the message column, in the one migration that owns this
+  table.
+- Triaged at [[NOTIF-005]] together with anything the later units raise.
 
 ## Decisions / ADRs
 
@@ -354,8 +411,19 @@ was needed because this unit enqueues nothing.
 
 ## Completion Notes
 
-Done on 2026-10-17 with the gates above green. Two acceptance criteria changed
-shape while the unit was built, both recorded rather than silently absorbed: the
-worker consumer moved to [[NOTIF-002]], and the "payload refs" column was
-dropped as an abstraction with no consumer. The review receipt is recorded in
-`odd/tasks/epic-17-notifications.md`.
+Done on 2026-10-17 with the gates above green, and with the review closed:
+`review-2ab7f3074e541ccd`, approved, acknowledged, authority burned.
+
+Two acceptance criteria changed shape while the unit was built, both recorded
+rather than silently absorbed: the worker consumer moved to [[NOTIF-002]], and
+the "payload refs" column was dropped as an abstraction with no consumer.
+
+The review earned its keep three times over on a unit that looked finished:
+**R3-001** was a real CRITICAL — a BullMQ-refused job id that no local gate
+could reach, and that the test suite had _pinned_ rather than caught; and the
+same review exposed **[[TD-039]]**, the identical defect on the fiscal producer,
+which is a production blocker in a closed epic. The two remaining advisories are
+recorded by coordinate, with their readings explicitly marked as readings.
+
+The commits are `9b321cf` (the unit) and `12cf12c` (the correction); the review
+receipts are in `odd/tasks/epic-17-notifications.md`.
