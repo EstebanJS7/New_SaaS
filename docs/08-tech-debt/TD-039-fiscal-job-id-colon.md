@@ -95,8 +95,9 @@ in BullMQ's `Job` constructor and only a real `Queue` reaches it.
 
 ## Resolution (2026-10-17)
 
-Fixed on branch `fix/td-039-fiscal-job-id-colon`, and **proven against a real
-Redis rather than against a mock**:
+Fixed on branch `fix/td-039-fiscal-job-id-colon` (commit `8561af0`, stacked on
+the EPIC-17 branch because this record was created there), and **proven against
+a real Redis rather than against a mock**:
 
 ```text
 fiscalSubmissionJobId => fiscal-submit-9a1f4c2d-0b7e-4a11-9d3c-5f2b8e6a71c4
@@ -125,6 +126,17 @@ What changed:
 Verdict: the fix is one separator and it is verified end to end. The suite grew
 by one case (fiscal 787 → 788). The determinism contract [[DEC-049]] relies on
 is untouched: the identity is still derived from `fiscalDocumentId` alone.
+
+**Review**: `review-757b99b67c3e5197` — medium tier, one lens
+(`review-reliability`), consent relayed and granted by the maintainer,
+**approved with no findings on the first pass**, acknowledged, authority burned.
+No correction and no advisories, which is what a one-separator fix whose rule is
+also asserted in a test should look like.
+
+**Gates on the final tree**: `format-check` clean, lint 21/21, typecheck 21/21,
+build 13/13, and the full suite green (fiscal 788, database 509, api 1214 passed
+| 266 skipped without `DATABASE_URL_TEST`, worker 164, web 1087). No CI run yet:
+the branch is local and unpushed.
 
 ## Related
 

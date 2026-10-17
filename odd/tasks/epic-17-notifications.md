@@ -138,6 +138,10 @@ asserted literals, a new id-shape case, and the doc correction in
 a real Redis through the producer's own options function; fiscal suite 787
 → 788.
 
+Commit `8561af0`; review `review-757b99b67c3e5197` — medium tier, one lens
+(`review-reliability`), consent relayed and granted, **approved with no findings
+on the first pass**, acknowledged, authority burned.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.
