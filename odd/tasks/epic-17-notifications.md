@@ -84,7 +84,10 @@ by any service.
   accepted (nodemailer `^10.1.2` over SMTP, proven clean by `pnpm audit`), and
   the port, the deterministic fake, both real adapters, the fail-closed
   selection and a boundary test for the ADR's guardrail 7 are in, with 36 new
-  cases. **WU-C2 (the delivery path) remains**: the recipient reader, the
+  cases. Commit `c283d92`; review `review-02c5036e0cf9a762` — medium tier, one
+  lens, **approved on the first pass with no blocking finding**, five
+  non-blocking advisories recorded as [[TD-040]], acknowledged, authority
+  burned. **WU-C2 (the delivery path) remains**: the recipient reader, the
   WhatsApp entitlement gate, the consumer and the handler, the composition roots
   and the env schemas.
 - [ ] **WU-D — the appointment reminder.** The schema-bound job, the typed
@@ -159,6 +162,20 @@ string in a transport option, file/URL access off, one validated recipient, the
 library imported by one file) are the decision, not a footnote. Measured after
 installing: `pnpm audit` reports **0 advisories contributed by nodemailer**, and
 the package's own types mean no `@types` dependency.
+
+## Branches — each unit on its own branch
+
+```text
+main                            2d51bb6   baseline
+feat/epic-17-notifications      eb7cfdc   WU-A + WU-B + their reviews
+fix/td-039-fiscal-job-id-colon  c6acccf   TD-039 (stacked)
+feat/notif-002-wu-c1            c283d92   WU-C1 (stacked; retarget its base
+                                           once TD-039 merges)
+```
+
+WU-C1 was committed onto the TD-039 branch by mistake, and the pointers were
+corrected **before** the review: `fix/td-039` was moved back to its own receipt
+commit and WU-C1 got its own branch, so no unit's PR carries another's work.
 
 ## Operational notes
 

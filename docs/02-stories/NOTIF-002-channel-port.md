@@ -307,9 +307,26 @@ schemas that consume the exported value lists.
 
 ```text
 Local gates (green):
-  pnpm --filter @newsaas/notifications lint         clean
-  pnpm --filter @newsaas/notifications typecheck    clean
-  pnpm --filter @newsaas/notifications test         7 files, 53 tests (36 new)
+  pnpm format-check                                 clean
+  pnpm lint                              21/21 tasks successful
+  pnpm typecheck                         21/21 tasks successful
+  pnpm build                             13/13 tasks successful
+  pnpm test                              all suites green:
+    @newsaas/notifications               7 files, 53 tests (36 new)
+    @newsaas/database 509, @newsaas/fiscal 788, worker 164, web 1087,
+    ui 36, shared 16, secret-store 50, api 1214 passed | 266 skipped
+
+Review (RDD, medium tier, one lens):
+  lineage                                review-02c5036e0cf9a762
+  base                                   c6acccf (the TD-039 receipt)
+  candidate tree                         70fd3e6b
+  consent                                relayed, granted by the maintainer
+  lens                                   review-reliability
+  result                                 APPROVED on the first pass, no
+                                         correction, no blocker
+  advisories                             R3-001..R3-005 (4 WARNING, 1 SUGGESTION)
+                                         -> recorded as [[TD-040]]
+  outcome                                acknowledged, authority burned
 
 Dependency facts measured, not assumed (2026-10-17):
   registry.npmjs.org/nodemailer/latest              10.1.2, MIT-0
@@ -368,8 +385,13 @@ is recorded pending at [[NOTIF-005]]. No CI run yet: the branch is local.
 
 ## Technical Debt
 
-- None raised yet; anything the review surfaces is recorded here and triaged at
-  [[NOTIF-005]].
+- **[[TD-040]] — this unit's five non-blocking review advisories**, four WARNING
+  and one SUGGESTION, recorded by coordinate with their readings explicitly
+  marked as readings (the closure publishes no claim text). Two of the readings
+  read as real defects to me and are cheap: an unguarded transport `close()`
+  that could turn a successful send into a failure, and a `Number.parseInt` that
+  accepts `587abc` as `587`. They are later work rather than a reopened review,
+  which is what the closure's own wording requires.
 
 ## Decisions / ADRs
 
@@ -403,5 +425,10 @@ is recorded pending at [[NOTIF-005]]. No CI run yet: the branch is local.
 Keeping the Story open rather than calling it done is the point — the boundary
 compiles, is tested and is selectable, and **nothing sends anything yet**, so
 `done` would claim a delivery path that does not exist. The [[ADR-011]] gate the
-Story declared was satisfied before the dependency landed, and the dependency's
-advisories were measured rather than taken on faith.
+Story declared was satisfied before the dependency landed, the dependency's
+advisories were measured rather than taken on faith, and the review approved the
+boundary on the first pass with five non-blocking advisories now tracked as
+[[TD-040]].
+
+Commits: `c283d92` (WU-C1) on `feat/notif-002-wu-c1`, stacked on the TD-039
+branch. The review receipts are in `odd/tasks/epic-17-notifications.md`.
