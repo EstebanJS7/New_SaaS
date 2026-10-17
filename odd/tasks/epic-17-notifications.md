@@ -1,0 +1,95 @@
+---
+feature: epic-17-notifications
+epic: EPIC-17
+status: in-progress
+created: 2026-10-17
+updated: 2026-10-17
+branch: feat/epic-17-notifications
+---
+
+# EPIC-17 Notifications — ODD task tracker
+
+## Goal
+
+Give the platform a notification capability: a tenant-scoped delivery record,
+two channels (`EMAIL`, `WHATSAPP`) behind one port, and the appointment reminder
+PRD §24 requires — idempotent by a per-window dedupe key, and removed when the
+appointment is cancelled.
+
+EPIC-17 is also the epic that gives the in-process post-commit dispatcher in
+`packages/shared/src/events/` its **first production producer**. The dispatcher
+exists, is tested, and today has no caller: no catalog event
+(`AppointmentConfirmed`, `AppointmentCancelled`, `FiscalApproved`, …) is emitted
+by any service.
+
+## TDD resolution
+
+- Mode: **off**. Authoritative source: `openspec/config.yaml` sets
+  `strict_tdd: false` and `rules.apply.tdd: false`.
+
+## The maintainer's four decisions (accepted 2026-10-16 — not re-asked)
+
+1. **Entitlements**: email is **ungated**; WhatsApp sits behind the existing
+   `whatsapp` feature code, already seeded in
+   `packages/database/src/reference-seed.ts` and mapped to the starter plan.
+   **No thirteenth code** — PRD §10 fixes the twelve. → [[DEC-058]]
+2. **Scope**: this epic publishes the three emitters that exist in **zero**
+   files today — `AppointmentConfirmed`, `AppointmentCancelled`,
+   `FiscalApproved`. That crosses EPIC-07's (scheduling) and EPIC-16's (fiscal)
+   surfaces, and is declared here as **boundary debt**, not hidden. →
+   [[DEC-059]]
+3. **Reminder**: 24 h before the appointment, configurable per tenant through a
+   typed `notifications` settings namespace with a 24 h default. A **BullMQ
+   delayed job**, idempotent by a dedupe key per (appointment, channel, window),
+   and **cancelling the appointment removes the pending job** — PRD §24's one
+   hard requirement. → [[DEC-060]]
+4. **Channels**: one port with a **deterministic fake** and the real adapters
+   behind it, fail-closed in production exactly like `FISCAL_PROVIDER`. The
+   email library's choice is architectural and needs an **ADR** (the [[ADR-006]]
+   precedent). With no operator credentials, the live run is recorded **PENDING
+   and by name**. → [[DEC-061]]
+
+## Work units
+
+- [x] **WU-A — the epic file, the stories and the four decisions.**
+      Documentation only, no source. Deliverables:
+      `docs/01-roadmap/EPIC-17-Notifications.md`,
+      `docs/02-stories/NOTIF-001..005`, `DEC-058..061`, and the ROADMAP row.
+- [ ] **WU-B — the aggregate and the queue contract.** The tenant-scoped table
+      (status, attempts, dedupe key, `scheduled_at`, sanitized payload refs),
+      its migration, the lifecycle guard, the queue name and the deterministic
+      job identity. Mirrors `apps/worker/src/fiscal-submission/`. →
+      [[NOTIF-001]]
+- [ ] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
+      deterministic fake, the real adapters, fail-closed production selection,
+      and the recipient's contact data classified **RESTRICTED**. The email
+      library's ADR is this unit's gate. → [[NOTIF-002]]
+- [ ] **WU-D — the appointment reminder.** The schema-bound job, the typed
+      `notifications` settings namespace, the idempotency key, and the
+      cancellation path that removes a pending reminder — which needs decision
+      2's emitters. → [[NOTIF-003]]
+- [ ] **WU-E — the transactional surface and the permissions family.** The
+      delivery record's status and history for the tenant, and the
+      `notifications.*` permission family. → [[NOTIF-004]]
+- [ ] **WU-F — the closure.** Module doc, CI evidence, changelog, roadmap,
+      advisory triage — the EPIC-16 pattern, recording the operator blockers as
+      **pending rather than absent**. → [[NOTIF-005]]
+
+## Blockers to keep visible
+
+- TD-004 (password reset) stays **blocked until WU-C lands**; it is this epic's
+  external acceptance case for email delivery.
+- The production adapters stay **unproven until an operator supplies
+  credentials** (an SMTP or provider key; a WhatsApp Business account).
+- The epic **cannot add a thirteenth feature code** without a PRD change.
+- The production of the three events crosses two closed epics' surfaces, and
+  that crossing is declared in the epic file as boundary debt.
+
+## Operational notes
+
+- The branch was created **before the first edit**.
+- `format-check` runs **after the last edit**, never before.
+- The review route is: inspect → START through the CLI with `--consent=relay`
+  (the facade answers `consent-binding-stale` without showing the envelope) →
+  the lens → `acknowledge-approved`.
+- New dependencies require the ADR that justifies them.
