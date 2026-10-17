@@ -55,6 +55,11 @@ by any service.
       Documentation only, no source. Deliverables:
       `docs/01-roadmap/EPIC-17-Notifications.md`,
       `docs/02-stories/NOTIF-001..005`, `DEC-058..061`, and the ROADMAP row.
+      Evidence: commit `3dd0212` (12 files, +2187/−24) on
+      `feat/epic-17-notifications`; review `review-1cc8cd36147161da`,
+      `risk_level: low`, `non_executable_only`, no lenses required, `approved`
+      and acknowledged, authority burned. `pnpm format-check` green **after**
+      the last edit.
 - [ ] **WU-B — the aggregate and the queue contract.** The tenant-scoped table
       (status, attempts, dedupe key, `scheduled_at`, sanitized payload refs),
       its migration, the lifecycle guard, the queue name and the deterministic
@@ -84,6 +89,24 @@ by any service.
 - The epic **cannot add a thirteenth feature code** without a PRD change.
 - The production of the three events crosses two closed epics' surfaces, and
   that crossing is declared in the epic file as boundary debt.
+
+## Found while reading the code (carried into the artifacts)
+
+- **The dispatcher is in-process**, so a reaction only sees an event published
+  by its own deployable: the appointment reactions belong in `api`, the
+  post-approval one in `worker`. Recorded in [[DEC-059]] and in the epic.
+- **`APPROVED` has two writers** — `FiscalSubmissionHandler.persistResult` and
+  `fiscal-recovery.service.ts` — so `FiscalApproved` must be published from both
+  or from one shared helper, or the sweep's approvals are silently lost.
+- **`docs/03-architecture/TENANT-SETTINGS.md` had drifted**: it says
+  `PUT /settings/:namespace` declares `sales.settings.manage`, while the
+  controller is authenticated-only at the route layer and the per-namespace key
+  is enforced inside `TenantSettingsService`. The new namespace's extension is
+  clean because of that. The correction is part of [[NOTIF-003]].
+- **`FISCAL_PROVIDER`'s production rule is about absence, not about the fake**:
+  an absent value is refused in production, an unknown value is refused by name,
+  and the fake stays selectable on purpose for the documented demo path.
+  [[DEC-061]] adopts that rule rather than a stricter paraphrase of it.
 
 ## Operational notes
 
