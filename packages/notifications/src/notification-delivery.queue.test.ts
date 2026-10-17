@@ -22,9 +22,21 @@ describe("notification delivery queue contract", () => {
   });
 
   it("derives a deterministic identity from the delivery, and one per delivery", () => {
-    expect(notificationDeliveryJobId("abc")).toBe("notification-deliver:abc");
+    expect(notificationDeliveryJobId("abc")).toBe("notification-deliver-abc");
     expect(notificationDeliveryJobId("abc")).toBe(notificationDeliveryJobId("abc"));
     expect(notificationDeliveryJobId("abc")).not.toBe(notificationDeliveryJobId("def"));
+  });
+
+  it("keeps the id free of the colon BullMQ refuses", () => {
+    // Measured against bullmq 5.81.3 with a real Redis, not reasoned about:
+    // `queue.add(name, data, { jobId: "notification-deliver:abc" })` throws
+    // `Error: Custom Id cannot contain :`, because BullMQ rejects any custom id
+    // whose colon-separated form is not exactly three segments. The hyphenated
+    // form is accepted. A stubbed Queue cannot catch this, so the shape is
+    // asserted here and the separator's reason is in the source.
+    for (const id of ["abc", "9a1f4c2d-0b7e-4a11-9d3c-5f2b8e6a71c4", "0f1e2d3c"]) {
+      expect(notificationDeliveryJobId(id)).not.toContain(":");
+    }
   });
 
   it("delays the job to the delivery's own instant", () => {
@@ -36,7 +48,7 @@ describe("notification delivery queue contract", () => {
     );
 
     expect(options.delay).toBe(86_400_000);
-    expect(options.jobId).toBe("notification-deliver:abc");
+    expect(options.jobId).toBe("notification-deliver-abc");
     expect(options.attempts).toBe(NOTIFICATION_DELIVERY_MAX_ATTEMPTS);
     expect(options.backoff).toEqual({ type: "exponential", delay: 1_000 });
   });

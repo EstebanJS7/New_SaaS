@@ -50,9 +50,17 @@ export interface NotificationDeliveryJob {
  * requires ("cancelled if the appointment is cancelled") has to ADDRESS the
  * pending job to remove it; an identity derived from the delivery id is exactly
  * the handle a cancelling command can compute from the row it just read.
+ *
+ * The separator is a HYPHEN, and that is a correctness requirement rather than a
+ * style choice: BullMQ refuses a custom job id containing `:` unless it splits
+ * into exactly three segments (its own repeatable-job format), and `queue.add`
+ * throws `Custom Id cannot contain :` BEFORE anything is enqueued. A colon here
+ * would break the enqueue for every delivery. The rule cannot be caught by a
+ * unit test with a stubbed queue, which is why the assertion below checks the
+ * shape directly.
  */
 export function notificationDeliveryJobId(notificationDeliveryId: string): string {
-  return `notification-deliver:${notificationDeliveryId}`;
+  return `notification-deliver-${notificationDeliveryId}`;
 }
 
 /**
