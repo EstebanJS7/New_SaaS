@@ -96,9 +96,11 @@ by any service.
   [[NOTIF-003]] **WU-D1 landed**: `reminder.policy.ts` (the pure policy: bounds,
   window, dedupe key, scheduled instant), the `notifications` settings namespace
   with no `requiresFeature`, the seeded `notifications.settings.manage` key, and
-  the `TENANT-SETTINGS.md` drift fixes. **WU-D2 (the three emitters, the
-  scheduler and the send-time gate) and WU-D3 (the real content builder)
-  remain.**
+  the `TENANT-SETTINGS.md` drift fixes. Review `review-1e2d96c3a65e27b4`
+  (medium, one lens): **approved on the first pass**, one SUGGESTION →
+  [[TD-043]] (the lead time's ceiling is not validated). **WU-D2 (the three
+  emitters, the scheduler and the send-time gate, which also closes TD-043) and
+  WU-D3 (the real content builder) remain.**
 - [ ] **WU-E — the transactional surface and the permissions family.** The
       delivery record's status and history for the tenant, and the
       `notifications.*` permission family. → [[NOTIF-004]]

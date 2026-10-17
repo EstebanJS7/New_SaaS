@@ -283,6 +283,16 @@ where the entitlement read already exists) and **again at the send path**, which
 [[DEC-058]] names as the authoritative one. A tenant can therefore _configure_ a
 channel it is not entitled to; nothing is scheduled for it, and nothing is sent.
 
+### The WU-D1 review
+
+`review-1e2d96c3a65e27b4` (medium tier, one lens) **approved WU-D1 on the first
+pass** with one SUGGESTION: `reminderScheduledAt` validates the lead time's
+floor and its integrality but not the ceiling the same module exports, so a
+caller passing a very large lead would get a silently wrong date. The settings
+schema refuses such a value, which is why nothing reachable mishandles it yet —
+the guard is missing from the boundary that should be self-contained. Recorded
+as [[TD-043]] and fixed in WU-D2, which consumes this policy from the scheduler.
+
 ### WU-D2 and WU-D3, still pending
 
 WU-D2: the three emitters (`AppointmentConfirmed` and `AppointmentCancelled` in
