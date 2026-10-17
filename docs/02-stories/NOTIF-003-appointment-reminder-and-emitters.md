@@ -3,7 +3,7 @@ id: NOTIF-003
 type: story
 title: The appointment reminder and the missing emitters
 epic: EPIC-17
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - NOTIF-001
@@ -242,7 +242,54 @@ existing row.
 
 ## Implementation Summary
 
-_Not implemented._
+**WU-D1 (the policy and the settings namespace) is implemented. WU-D2 (the
+emitters and the scheduler) and WU-D3 (the content builder) are not**, which is
+why this Story is `in-progress`.
+
+Landed:
+
+- **`packages/notifications/src/reminder.policy.ts`** — the policy as pure
+  functions: the lead time's bounds (`1..168` hours, default 24) and the default
+  channel set, `reminderWindowKey` (the start instant truncated to the minute),
+  `reminderDedupeKey` (`appointment:<id>:<channel>:<window>`),
+  `reminderScheduledAt` and `isReminderOverdue`. Pure so the setting, the
+  scheduler and the cancellation path derive the SAME key from the same inputs
+  rather than each building one, and so the arithmetic is testable without a
+  database, a queue or a clock.
+- **The `notifications` settings namespace** — a closed schema, `version: 1`, a
+  24 h default, the channel set defaulting to `EMAIL` alone, and **no
+  `requiresFeature`** because email is ungated ([[DEC-058]]). Its bounds and
+  default are imported from the package rather than repeated in the registry, so
+  a schema that accepted a lead time the scheduler would refuse cannot exist.
+  The channel list is deduplicated by the schema because the dedupe key includes
+  the channel.
+- **`notifications.settings.manage`** seeded and granted to OWNER and ADMIN,
+  like every other `*.settings.manage` key.
+- **`docs/03-architecture/TENANT-SETTINGS.md`** brought current: the
+  `notifications` section, and three drift fixes — the
+  `PUT /settings/:namespace` claim (it said the route declares
+  `sales.settings.manage`; the route is authenticated-only and the per-namespace
+  key is enforced in the service), the "v1 ships exactly one namespace" line
+  (four ship now), and the reminder-policy pointer.
+
+### Where the value-level WhatsApp gate lives
+
+The namespace validates SHAPE only, and that is a decision rather than an
+omission: a value-level entitlement check is not expressible through
+`requiresFeature`, and adding a hook to the shared settings service to express
+it would change a reviewed contract for one namespace's convenience. The gate is
+therefore enforced **per channel value at the scheduling boundary** (WU-D2,
+where the entitlement read already exists) and **again at the send path**, which
+[[DEC-058]] names as the authoritative one. A tenant can therefore _configure_ a
+channel it is not entitled to; nothing is scheduled for it, and nothing is sent.
+
+### WU-D2 and WU-D3, still pending
+
+WU-D2: the three emitters (`AppointmentConfirmed` and `AppointmentCancelled` in
+the API process, `FiscalApproved` from **both** worker write paths), the
+subscribers that create and cancel the delivery intent and enqueue/remove the
+delayed job, and the send-time appointment gate. WU-D3: the real content builder
+that replaces the seam which fails closed today.
 
 ## Verification
 

@@ -90,10 +90,15 @@ by any service.
       `provider_reference` column was found while building it and added by
       migration `20261017000002`. Story `done`; the live send run stays pending
       by name at [[NOTIF-005]].
-- [ ] **WU-D — the appointment reminder.** The schema-bound job, the typed
-      `notifications` settings namespace, the idempotency key, and the
-      cancellation path that removes a pending reminder — which needs decision
-      2's emitters. → [[NOTIF-003]]
+- [~] **WU-D — the appointment reminder.** The schema-bound job, the typed
+  `notifications` settings namespace, the idempotency key, and the cancellation
+  path that removes a pending reminder — which needs decision 2's emitters. →
+  [[NOTIF-003]] **WU-D1 landed**: `reminder.policy.ts` (the pure policy: bounds,
+  window, dedupe key, scheduled instant), the `notifications` settings namespace
+  with no `requiresFeature`, the seeded `notifications.settings.manage` key, and
+  the `TENANT-SETTINGS.md` drift fixes. **WU-D2 (the three emitters, the
+  scheduler and the send-time gate) and WU-D3 (the real content builder)
+  remain.**
 - [ ] **WU-E — the transactional surface and the permissions family.** The
       delivery record's status and history for the tenant, and the
       `notifications.*` permission family. → [[NOTIF-004]]

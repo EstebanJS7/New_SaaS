@@ -102,4 +102,16 @@ export type {
   NotificationRecipientReference,
 } from "./recipient.port.js";
 export { NOTIFICATION_DELIVERY_REASON } from "./delivery.reason.js";
+export {
+  isReminderOverdue,
+  NOTIFICATION_REMINDER_CHANNELS,
+  NOTIFICATION_REMINDER_CHANNELS_DEFAULT,
+  NOTIFICATION_REMINDER_LEAD_HOURS_DEFAULT,
+  NOTIFICATION_REMINDER_LEAD_HOURS_MAX,
+  NOTIFICATION_REMINDER_LEAD_HOURS_MIN,
+  reminderDedupeKey,
+  reminderScheduledAt,
+  reminderWindowKey,
+} from "./reminder.policy.js";
+export type { ReminderDedupeKeyArgs } from "./reminder.policy.js";
 export type { NotificationDeliveryReason } from "./delivery.reason.js";

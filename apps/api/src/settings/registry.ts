@@ -1,9 +1,16 @@
 import { z } from "zod";
 import { PERMISSION_SEEDS, FEATURE_CODE_SEEDS } from "@newsaas/database";
+import {
+  NOTIFICATION_REMINDER_CHANNELS,
+  NOTIFICATION_REMINDER_CHANNELS_DEFAULT,
+  NOTIFICATION_REMINDER_LEAD_HOURS_DEFAULT,
+  NOTIFICATION_REMINDER_LEAD_HOURS_MAX,
+  NOTIFICATION_REMINDER_LEAD_HOURS_MIN,
+} from "@newsaas/notifications";
 import { DomainError } from "@newsaas/shared";
 
 /** The settings namespaces currently supported by the API. */
-export type SettingsNamespace = "sales" | "scheduling" | "portal";
+export type SettingsNamespace = "sales" | "scheduling" | "portal" | "notifications";
 
 export interface SalesSettings extends Record<string, unknown> {
   readonly defaultCurrency: string;
@@ -31,6 +38,12 @@ export interface SchedulingSettings extends Record<string, unknown> {
   readonly conflictPolicy: "REJECT" | "ALLOW";
   readonly availability: SchedulingAvailabilityWindow[];
   readonly blocks: SchedulingBlock[];
+}
+
+/** Appointment-reminder policy for the Notifications capability (NOTIF-003). */
+export interface NotificationsSettings extends Record<string, unknown> {
+  readonly appointmentReminderLeadHours: number;
+  readonly appointmentReminderChannels: ("EMAIL" | "WHATSAPP")[];
 }
 
 /** Portal booking policy. PRD §14 defaults a request to staff approval. */
@@ -168,11 +181,52 @@ export const portalSettingsDefinition: SettingsDefinition<PortalSettings> = {
   requiredPermissionKey: "portal.settings.manage",
 };
 
+/**
+ * The `notifications` namespace consumed by the appointment-reminder policy.
+ *
+ * Its bounds and default come from the shared package
+ * (`@newsaas/notifications`) rather than being repeated here, so a schema that
+ * accepts a lead time the scheduler would refuse cannot exist. It declares
+ * **no `requiresFeature`**: email is ungated by [[DEC-058]], and a namespace gate
+ * would gate email with it. The WhatsApp channel is gated per VALUE at the
+ * scheduling and send boundaries, not by this namespace.
+ */
+export const notificationsSettingsSchema = z
+  .object({
+    appointmentReminderLeadHours: z
+      .number()
+      .int()
+      .min(NOTIFICATION_REMINDER_LEAD_HOURS_MIN)
+      .max(NOTIFICATION_REMINDER_LEAD_HOURS_MAX),
+    appointmentReminderChannels: z
+      .array(z.enum(NOTIFICATION_REMINDER_CHANNELS))
+      .min(1)
+      // Deduplicated: the reminder's dedupe key includes the channel, so a
+      // repeated value would schedule one intent twice under two identical keys
+      // and one of them would be silently refused by the unique index.
+      .refine((channels) => new Set(channels).size === channels.length, {
+        message: "appointmentReminderChannels must not repeat a channel.",
+      }),
+  })
+  .strict();
+
+export const notificationsSettingsDefinition: SettingsDefinition<NotificationsSettings> = {
+  namespace: "notifications",
+  version: 1,
+  schema: notificationsSettingsSchema,
+  defaults: {
+    appointmentReminderLeadHours: NOTIFICATION_REMINDER_LEAD_HOURS_DEFAULT,
+    appointmentReminderChannels: [...NOTIFICATION_REMINDER_CHANNELS_DEFAULT],
+  },
+  requiredPermissionKey: "notifications.settings.manage",
+};
+
 /** The v1 namespaces; future namespaces must be added explicitly here. */
 export const SETTINGS_REGISTRY: Record<SettingsNamespace, SettingsDefinition> = Object.freeze({
   sales: salesSettingsDefinition,
   scheduling: schedulingSettingsDefinition,
   portal: portalSettingsDefinition,
+  notifications: notificationsSettingsDefinition,
 });
 
 /** Alias named after the conceptual registry collection. */

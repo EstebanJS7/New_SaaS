@@ -55,7 +55,9 @@ interface SettingsDefinition<T> {
 Registry additions are validated at module load time against the seed-owned
 permission and feature-code catalogs.
 
-## Shipped v1 namespace
+## Shipped v1 namespaces
+
+Four namespaces ship: `sales`, `scheduling`, `portal` and `notifications`.
 
 ### sales
 
@@ -75,6 +77,44 @@ permission and feature-code catalogs.
   requiredPermissionKey: "sales.settings.manage",
 }
 ```
+
+### notifications
+
+```ts
+{
+  namespace: "notifications",
+  version: 1,
+  schema: z.object({
+    appointmentReminderLeadHours: z.number().int().min(1).max(168),
+    appointmentReminderChannels: z.array(z.enum(["EMAIL", "WHATSAPP"])).min(1),
+  }).strict(),
+  defaults: {
+    appointmentReminderLeadHours: 24,
+    appointmentReminderChannels: ["EMAIL"],
+  },
+  requiredPermissionKey: "notifications.settings.manage",
+}
+```
+
+**No `requiresFeature`, and that absence is the decision** ([[DEC-058]]): email
+is ungated, so a namespace gate would gate email along with WhatsApp. The
+`whatsapp` entitlement is enforced per channel VALUE, at the scheduling boundary
+(a channel the tenant is not entitled to is refused before anything is
+scheduled) and again at the send path, which is the authoritative gate.
+
+The bounds and the default are imported from `@newsaas/notifications` rather
+than repeated here, so a schema that accepted a lead time the reminder's
+scheduler would refuse cannot exist. The channel list is deduplicated by the
+schema because the reminder's dedupe key includes the channel.
+
+### Reminder policy
+
+`appointmentReminderLeadHours` is the lead time the appointment reminder fires
+before the appointment, and the policy that uses it (the window, the dedupe key
+and the scheduled instant) lives in
+`packages/notifications/src/reminder.policy.ts` as pure functions, so the
+setting, the scheduler and the cancellation path derive the same key from the
+same inputs ([[DEC-060]]).
 
 ## Service API
 
@@ -99,10 +139,11 @@ tenant.settings["whatever"];
 - `GET /settings/:namespace` — authenticated-only (`@RequirePermissions()`);
   tenant is resolved from the request context; there is no `tenantId` selector.
   Reads never evaluate entitlements.
-- `PUT /settings/:namespace` — declares `sales.settings.manage` and re-asserts
-  `definition.requiredPermissionKey` inside the service as defense-in-depth. The
-  namespace is scoped to the caller's tenant; there is no cross-tenant-
-  addressable settings resource.
+- `PUT /settings/:namespace` — authenticated-only at the route layer, and the
+  namespace's OWN `definition.requiredPermissionKey` is enforced inside
+  `TenantSettingsService`, because a static decorator cannot express a
+  per-namespace key. The namespace is scoped to the caller's tenant; there is no
+  cross-tenant-addressable settings resource.
 
 ## Authorization and Entitlement Gate
 
@@ -184,8 +225,8 @@ Shipped coverage:
 
 ## Known Limitations
 
-- v1 ships exactly one namespace (`sales`). Additional namespaces follow the
-  expansion convention above.
+- v1 ships four namespaces (`sales`, `scheduling`, `portal`, `notifications`).
+  Additional namespaces follow the expansion convention above.
 - Tenant-isolation suites for settings run over the in-memory Prisma boundary;
   live-PostgreSQL evidence is tracked by [[TD-006]].
 

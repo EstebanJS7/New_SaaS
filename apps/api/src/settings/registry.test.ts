@@ -3,6 +3,7 @@ import { DomainError } from "@newsaas/shared";
 import { FEATURE_CODE_SEEDS, PERMISSION_SEEDS } from "@newsaas/database";
 import {
   getSettingsDefinition,
+  notificationsSettingsDefinition,
   portalSettingsDefinition,
   salesSettingsDefinition,
   schedulingAvailabilityWindowSchema,
@@ -15,14 +16,21 @@ const MEMBERSHIP_ID = "11111111-1111-1111-1111-111111111111";
 const BRANCH_ID = "22222222-2222-2222-2222-222222222222";
 
 describe("Settings registry", () => {
-  it("registers exactly the v1 sales, scheduling and portal namespaces", () => {
-    expect(Object.keys(SETTINGS_REGISTRY)).toEqual(["sales", "scheduling", "portal"]);
+  it("registers exactly the v1 sales, scheduling, portal and notifications namespaces", () => {
+    expect(Object.keys(SETTINGS_REGISTRY)).toEqual([
+      "sales",
+      "scheduling",
+      "portal",
+      "notifications",
+    ]);
     expect(salesSettingsDefinition.namespace).toBe("sales");
     expect(salesSettingsDefinition.version).toBe(1);
     expect(schedulingSettingsDefinition.namespace).toBe("scheduling");
     expect(schedulingSettingsDefinition.version).toBe(1);
     expect(portalSettingsDefinition.namespace).toBe("portal");
     expect(portalSettingsDefinition.version).toBe(1);
+    expect(notificationsSettingsDefinition.namespace).toBe("notifications");
+    expect(notificationsSettingsDefinition.version).toBe(1);
   });
 
   it("requires every registered permission key to exist in PERMISSION_SEEDS", () => {
@@ -221,5 +229,74 @@ describe("Settings registry", () => {
       ],
     };
     expect(schedulingSettingsDefinition.schema.safeParse(invertedBlock).success).toBe(false);
+  });
+});
+
+/**
+ * The `notifications` namespace (NOTIF-003, DEC-060). Its bounds and default come
+ * from `@newsaas/notifications`, so these cases assert the WIRING as well as the
+ * values: a schema that accepted a lead time the scheduler refuses could not
+ * exist.
+ */
+describe("notifications namespace", () => {
+  it("defaults to a 24 hour lead time on the ungated channel alone", () => {
+    expect(notificationsSettingsDefinition.defaults).toEqual({
+      appointmentReminderLeadHours: 24,
+      appointmentReminderChannels: ["EMAIL"],
+    });
+  });
+
+  it("declares NO feature gate, because email is ungated (DEC-058)", () => {
+    // A namespace gate would gate email with WhatsApp, and DEC-058 decided email
+    // is available to every tenant. The absence is asserted so a later edit
+    // cannot quietly add one.
+    expect(notificationsSettingsDefinition.requiresFeature).toBeUndefined();
+    expect(notificationsSettingsDefinition.requiredPermissionKey).toBe(
+      "notifications.settings.manage"
+    );
+  });
+
+  // Every case parses a COMPLETE object: the service merges a patch with the
+  // current row before validating, so a partial object is not how this schema is
+  // ever asked, and a missing field is a refusal rather than an omission.
+  const complete = (patch: Record<string, unknown>) => ({
+    appointmentReminderLeadHours: 24,
+    appointmentReminderChannels: ["EMAIL"],
+    ...patch,
+  });
+  const schema = notificationsSettingsDefinition.schema;
+
+  it("shares the lead time's bounds with the package", () => {
+    for (const hours of [1, 24, 168]) {
+      expect(
+        schema.safeParse(complete({ appointmentReminderLeadHours: hours })).success,
+        String(hours)
+      ).toBe(true);
+    }
+    for (const hours of [0, 169, 1.5]) {
+      expect(
+        schema.safeParse(complete({ appointmentReminderLeadHours: hours })).success,
+        String(hours)
+      ).toBe(false);
+    }
+  });
+
+  it("accepts both channels and refuses an empty or repeated set", () => {
+    expect(
+      schema.safeParse(complete({ appointmentReminderChannels: ["EMAIL", "WHATSAPP"] })).success
+    ).toBe(true);
+    expect(schema.safeParse(complete({ appointmentReminderChannels: [] })).success).toBe(false);
+    // Deduplicated: the dedupe key includes the channel, so a repeat would
+    // schedule one intent twice under two identical keys.
+    expect(
+      schema.safeParse(complete({ appointmentReminderChannels: ["EMAIL", "EMAIL"] })).success
+    ).toBe(false);
+    expect(schema.safeParse(complete({ appointmentReminderChannels: ["SMS"] })).success).toBe(
+      false
+    );
+  });
+
+  it("is a closed schema: an unknown key is refused", () => {
+    expect(schema.safeParse(complete({ extra: 1 })).success).toBe(false);
   });
 });
