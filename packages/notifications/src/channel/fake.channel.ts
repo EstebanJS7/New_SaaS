@@ -16,6 +16,16 @@ export const FAKE_CHANNEL_OUTCOMES = Object.freeze([
 
 export type FakeChannelOutcome = (typeof FAKE_CHANNEL_OUTCOMES)[number];
 
+/**
+ * How many attempts the fake retains.
+ *
+ * Bounded because the fake is **selectable in production** for the documented
+ * demo path: unbounded, a long-lived process would hold a RESTRICTED datum for
+ * every delivery it ever sent (TD-040 R3-004). The provider reference keeps
+ * counting past this window, which is why the counter is separate from the log.
+ */
+export const FAKE_CHANNEL_RETAINED_ATTEMPTS = 100;
+
 export interface FakeNotificationChannelOptions {
   readonly channel: NotificationChannel;
   readonly outcomes?: readonly FakeChannelOutcome[];
@@ -53,7 +63,10 @@ export interface FakeChannelAttempt {
  */
 export class FakeNotificationChannel implements NotificationChannelPort {
   readonly providerId = "FAKE";
+  /** The last {@link FAKE_CHANNEL_RETAINED_ATTEMPTS} attempts. */
   private readonly attemptsLog: FakeChannelAttempt[] = [];
+  /** Monotonic, and deliberately NOT the log's length: the log is bounded. */
+  private calls = 0;
   private readonly outcomes: readonly FakeChannelOutcome[];
   private readonly providerReferencePrefix: string;
   private readonly clock: () => Date;
@@ -64,13 +77,14 @@ export class FakeNotificationChannel implements NotificationChannelPort {
     this.clock = options.clock ?? (() => new Date());
   }
 
-  /** Every attempt the fake was asked to make, in order. In-memory, never logged. */
+  /** The retained attempts, oldest first. In-memory only, and never logged. */
   get attempts(): readonly FakeChannelAttempt[] {
     return this.attemptsLog;
   }
 
   send(request: NotificationChannelRequest): Promise<NotificationChannelOutcome> {
-    const index = this.attemptsLog.length + 1;
+    this.calls += 1;
+    const index = this.calls;
     this.attemptsLog.push({
       tenantId: request.tenantId,
       deliveryId: request.deliveryId,
@@ -80,6 +94,9 @@ export class FakeNotificationChannel implements NotificationChannelPort {
       parameters: [...request.parameters],
       at: this.clock().toISOString(),
     });
+    if (this.attemptsLog.length > FAKE_CHANNEL_RETAINED_ATTEMPTS) {
+      this.attemptsLog.shift();
+    }
 
     const outcome = this.outcomes[Math.min(index - 1, this.outcomes.length - 1)];
     switch (outcome) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFakeNotificationChannel } from "./fake.channel.js";
+import { createFakeNotificationChannel, FAKE_CHANNEL_RETAINED_ATTEMPTS } from "./fake.channel.js";
 
 const request = {
   tenantId: "11111111-1111-1111-1111-111111111111",
@@ -80,6 +80,23 @@ describe("fake notification channel", () => {
         at: "2026-10-17T12:00:00.000Z",
       },
     ]);
+  });
+
+  it("retains a bounded number of attempts, and its reference keeps counting — TD-040 R3-004", async () => {
+    // The fake is selectable in production for the documented demo path, so an
+    // unbounded log would hold a RESTRICTED datum per delivery forever. The
+    // counter is separate from the log on purpose: a saturated log that drove the
+    // index would start repeating provider references.
+    const fake = createFakeNotificationChannel({ channel: "EMAIL", clock: fixedClock });
+    for (let i = 0; i < FAKE_CHANNEL_RETAINED_ATTEMPTS + 1; i += 1) {
+      await fake.send(request);
+    }
+
+    expect(fake.attempts).toHaveLength(FAKE_CHANNEL_RETAINED_ATTEMPTS);
+    await expect(fake.send(request)).resolves.toEqual({
+      outcome: "SENT",
+      providerReference: `fake-email-${FAKE_CHANNEL_RETAINED_ATTEMPTS + 2}`,
+    });
   });
 
   it("copies the parameters rather than holding the caller's array", async () => {

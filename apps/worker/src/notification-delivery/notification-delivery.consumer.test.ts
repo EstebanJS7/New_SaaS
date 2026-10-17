@@ -5,11 +5,13 @@ import {
   NOTIFICATION_DELIVERY_QUEUE,
   type NotificationDeliveryJob,
 } from "@newsaas/notifications";
+import { NotificationChannelsModule } from "@newsaas/notifications";
 import {
   createNotificationDeliveryProcessor,
   NotificationDeliveryConsumer,
 } from "./notification-delivery.consumer.js";
-import type { NotificationDeliveryHandler } from "./notification-delivery.handler.js";
+import { NotificationDeliveryHandler } from "./notification-delivery.handler.js";
+import { WorkerModule } from "../worker.module.js";
 
 const job: NotificationDeliveryJob = {
   notificationDeliveryId: "00000000-0000-4000-8000-000000000001",
@@ -48,9 +50,35 @@ describe("notification delivery consumer", () => {
     );
   });
 
-  it("is a Nest provider the worker module can register", () => {
-    // Wired through DI rather than constructed by hand, which is what lets the
-    // composition root substitute the handler's four seams.
-    expect(typeof NotificationDeliveryConsumer).toBe("function");
+  /**
+   * Wired through DI rather than constructed by hand, which is what lets the
+   * composition root substitute the handler's four seams.
+   *
+   * Asserted against the module's own metadata (the `fiscal.module.test.ts`
+   * pattern) rather than with `expect(typeof X).toBe("function")`, which every
+   * class satisfies and which therefore asserted nothing (TD-041 R3-003).
+   */
+  describe("the worker module's registration", () => {
+    it("registers the channel selection, the handler and the consumer", () => {
+      const imports: unknown = Reflect.getMetadata("imports", WorkerModule);
+      const providers: unknown = Reflect.getMetadata("providers", WorkerModule);
+
+      expect(Array.isArray(imports)).toBe(true);
+      expect(Array.isArray(providers)).toBe(true);
+      if (!Array.isArray(imports) || !Array.isArray(providers)) {
+        throw new Error("WorkerModule declares no imports or providers metadata.");
+      }
+
+      const importedModules = imports
+        .filter(
+          (entry): entry is { readonly module: unknown } =>
+            typeof entry === "object" && entry !== null && "module" in entry
+        )
+        .map((entry) => entry.module);
+      expect(importedModules).toContain(NotificationChannelsModule);
+
+      expect(providers).toContain(NotificationDeliveryHandler);
+      expect(providers).toContain(NotificationDeliveryConsumer);
+    });
   });
 });

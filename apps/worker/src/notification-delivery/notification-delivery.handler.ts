@@ -149,39 +149,91 @@ export class NotificationDeliveryHandler {
    * must run: a delivery the tenant is not entitled to, or whose recipient does
    * not exist, never reaches an adapter.
    *
-   * Each gate either returns `null` (proceed) or a settle reason. A gate that
-   * throws is deliberately NOT caught here: the caller treats a failed READ as
-   * retryable, because a database blip is not a missing phone number.
+   * **The claim is already committed when this runs**, and that is why every step
+   * is inside one `try` (TD-041 R3-001). An unexpected throw — a reader that
+   * cannot answer, a seam that throws — used to propagate with nothing written:
+   * the row would keep `SENDING`, a fresh lease and an incremented attempt count,
+   * so an operator would see an attempt in progress with no explanation and
+   * nothing able to touch it until the lease expired. Now the delivery retries
+   * AND the row says which gate failed. The step name is ours; no error text is
+   * stored, because a driver's message is the field most likely to carry a row's
+   * value.
+   *
+   * One exception settles rather than retrying: a recipient type with no reader
+   * is a programming error, and a retry reaches the same absent reader.
    */
   private async deliver(delivery: DeliveryRecord): Promise<void> {
-    const entitlement = await this.checkEntitlement(delivery);
-    if (entitlement !== null) return this.settleFailure(delivery, entitlement);
+    let step = "entitlement";
+    let prepared: {
+      readonly address: string;
+      readonly subject: string;
+      readonly body: string;
+      readonly parameters: readonly string[];
+    };
 
-    const content = await this.resolveContent(delivery);
-    if ("reasonCode" in content) return this.settleFailure(delivery, content);
+    try {
+      const entitlement = await this.checkEntitlement(delivery);
+      if (entitlement !== null) return this.settleFailure(delivery, entitlement);
 
-    const recipient = await this.recipients.resolve({
-      tenantId: delivery.tenantId,
-      recipientType: delivery.recipientType,
-      recipientId: delivery.recipientId,
-      channel: delivery.channel,
-    });
-    if (recipient === null) {
-      return this.settleFailure(delivery, {
-        reasonCode: NOTIFICATION_DELIVERY_REASON.RECIPIENT_UNRESOLVED,
-        reason: "The delivery's recipient reference names no active contact for this channel.",
+      step = "content";
+      const content = await this.resolveContent(delivery);
+      if ("reasonCode" in content) return this.settleFailure(delivery, content);
+
+      step = "recipient";
+      const recipient = await this.recipients.resolve({
+        tenantId: delivery.tenantId,
+        recipientType: delivery.recipientType,
+        recipientId: delivery.recipientId,
+        channel: delivery.channel,
+      });
+      if (recipient === null) {
+        return this.settleFailure(delivery, {
+          reasonCode: NOTIFICATION_DELIVERY_REASON.RECIPIENT_UNRESOLVED,
+          reason: "The delivery's recipient reference names no active contact for this channel.",
+        });
+      }
+
+      prepared = {
+        address: recipient.address,
+        subject: content.subject,
+        body: content.body,
+        parameters: content.parameters,
+      };
+    } catch (error) {
+      if (error instanceof UnsupportedRecipientTypeError) {
+        return this.settleFailure(delivery, {
+          reasonCode: NOTIFICATION_DELIVERY_REASON.RECIPIENT_TYPE_UNSUPPORTED,
+          reason: "The delivery's recipient type has no reader.",
+        });
+      }
+      return this.recordRetryableFailure(delivery, {
+        reasonCode: NOTIFICATION_DELIVERY_REASON.GATE_FAILED,
+        reason: `The ${step} gate failed before the message could be sent.`,
       });
     }
 
+    await this.send(delivery, prepared);
+  }
+
+  /** The provider call and its outcome. The adapters return outcomes; a throw is the boundary's. */
+  private async send(
+    delivery: DeliveryRecord,
+    prepared: {
+      readonly address: string;
+      readonly subject: string;
+      readonly body: string;
+      readonly parameters: readonly string[];
+    }
+  ): Promise<void> {
     let outcome;
     try {
       outcome = await this.channels.for(delivery.channel).send({
         tenantId: delivery.tenantId,
         deliveryId: delivery.id,
-        recipient: recipient.address,
-        subject: content.subject,
-        body: content.body,
-        parameters: content.parameters,
+        recipient: prepared.address,
+        subject: prepared.subject,
+        body: prepared.body,
+        parameters: prepared.parameters,
       });
     } catch {
       // The adapters classify their own failures, so reaching here means the

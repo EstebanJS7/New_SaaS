@@ -171,6 +171,33 @@ describe("buildNotificationChannels", () => {
     ).toThrow(/WHATSAPP_CLOUD_TOKEN is required when the whatsapp-cloud provider is selected/);
   });
 
+  it("refuses a port with trailing text, which parseInt used to accept — TD-040 R3-003", () => {
+    // `parseInt("587abc", 10)` is 587, so a typo in a deployment input silently
+    // became a different port.
+    expect(() =>
+      buildNotificationChannels({
+        nodeEnv: "production",
+        env: {
+          EMAIL_PROVIDER: "smtp",
+          WHATSAPP_PROVIDER: "fake",
+          ...SMTP_ENV,
+          SMTP_PORT: "587abc",
+        },
+      })
+    ).toThrow(/SMTP_PORT must be a port number/);
+  });
+
+  it("accepts the exact port and refuses the boundaries", () => {
+    const withPort = (SMTP_PORT: string) => ({
+      nodeEnv: "production",
+      env: { EMAIL_PROVIDER: "smtp", WHATSAPP_PROVIDER: "fake", ...SMTP_ENV, SMTP_PORT },
+    });
+    expect(() => buildNotificationChannels(withPort("587"))).not.toThrow();
+    for (const bad of ["0", "65536", "-1", "smtp", "5 8 7"]) {
+      expect(() => buildNotificationChannels(withPort(bad)), bad).toThrow(/must be a port number/);
+    }
+  });
+
   it("refuses a port that is not a port", () => {
     expect(() =>
       buildNotificationChannels({

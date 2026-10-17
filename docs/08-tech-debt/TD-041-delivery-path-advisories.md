@@ -2,7 +2,7 @@
 id: TD-041
 type: tech-debt
 title: The delivery path's review advisories, and the one that leaves no trace
-status: open
+status: resolved
 severity: medium
 owner: notifications
 related_epics:
@@ -23,7 +23,7 @@ WARNING and two SUGGESTION. The published closure lists ids and coordinates and
 no claim text, so each entry is the coordinate plus a READING, explicitly marked
 as a reading.
 
-## R3-001 — `apps/worker/src/notification-delivery/notification-delivery.handler.ts:107` (WARNING)
+## R3-001 — `apps/worker/src/notification-delivery/notification-delivery.handler.ts:107` (WARNING) — FIXED
 
 `await this.deliver(delivery)` — the last line of `handle`. **A reading, and I
 judge it real:** the pre-send gates are awaited outside any `try`, so an
@@ -40,7 +40,7 @@ fix is to wrap the gate phase so an unexpected error records a bounded reason
 before it rethrows — the row would then say what happened even when the reason
 is "the content builder threw".
 
-## R3-002 — `packages/notifications/src/entitlement.port.ts:19-21` (SUGGESTION)
+## R3-002 — `packages/notifications/src/entitlement.port.ts:19-21` (SUGGESTION) — FIXED
 
 The port's doc comment says _"A read that cannot answer must answer `false`"_,
 while the implementation (and the handler) do something better: the reader
@@ -50,7 +50,7 @@ wrong, or at least says something the code does not do. If that is the finding,
 the fix is a wording change — the contract that matters is "never answer `true`
 when unanswerable", not "answer `false`".
 
-## R3-003 — `apps/worker/src/notification-delivery/notification-delivery.consumer.test.ts:54` (SUGGESTION)
+## R3-003 — `apps/worker/src/notification-delivery/notification-delivery.consumer.test.ts:54` (SUGGESTION) — FIXED
 
 `expect(typeof NotificationDeliveryConsumer).toBe("function")` in a case named
 "is a Nest provider the worker module can register". **A reading:** every class
@@ -58,6 +58,34 @@ is a function, so the assertion cannot fail and the case's name promises a check
 it does not perform. The honest options are to delete the case or to assert the
 wiring where it actually lives (the module's provider list), which would need a
 module-level test.
+
+## Resolution (2026-10-17)
+
+All three fixed on `fix/notif-review-advisories`, each with a case.
+
+1. **R3-001 — the gates now leave a trace.** The gate phase runs inside one
+   `try`, and an unexpected throw **records a bounded reason and then retries**,
+   so the row no longer sits `SENDING` with a fresh lease, an incremented
+   attempt count and nothing to read. The new
+   `NOTIFICATION_DELIVERY_GATE_FAILED` code names the **step** that failed
+   (`entitlement`, `content`, `recipient`) and deliberately stores **no error
+   text**: a driver's message is the field most likely to carry a row's value.
+   One case settles instead of retrying — a recipient type with no reader is a
+   programming error, and a retry reaches the same absent reader — which also
+   turned a previously-prophesied path into a named one. Cases: a throwing
+   recipient read records `recipient` and retries; a throwing entitlement read
+   records `entitlement` and retries; an unsupported recipient type settles
+   `FAILED` without touching an adapter.
+2. **R3-002 — the port's doc says what its implementation does.** It now states
+   the contract that matters ("an unanswerable read must never answer `true`")
+   and that the wired implementation PROPAGATES so the handler retries, because
+   answering `false` would settle a delivery the tenant is entitled to receive.
+3. **R3-003 — the tautological case is gone.**
+   `expect(typeof X).toBe("function")` was replaced by the
+   `fiscal.module.test.ts` pattern: the module's own metadata is read, and the
+   cases assert that `WorkerModule` imports `NotificationChannelsModule` and
+   declares `NotificationDeliveryHandler` and `NotificationDeliveryConsumer` as
+   providers. That is the wiring the old case's name promised and never checked.
 
 ## Why this is one item
 

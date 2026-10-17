@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -80,7 +80,13 @@ describe("notification channel dependency boundary", () => {
   const files = walkSourceFiles(PACKAGE_SRC);
 
   it("walks this package's source files", () => {
-    // A walk that found nothing would make the assertions below pass vacuously.
+    // A walk that found nothing would make the assertions below pass vacuously,
+    // and a walk of the WRONG directory would too: deriving the root from this
+    // file's location is what makes a moved file silent, so the root is proven
+    // to be the source directory rather than assumed (TD-040 R3-005). The first
+    // version of this guard checked `package.json` and failed, which is how the
+    // assumption it was written to catch got caught.
+    expect(existsSync(join(PACKAGE_SRC, "index.ts"))).toBe(true);
     expect(files.length, "source walk must find notification package files").toBeGreaterThan(0);
     expect(files).toContain(EMAIL_ADAPTER);
   });

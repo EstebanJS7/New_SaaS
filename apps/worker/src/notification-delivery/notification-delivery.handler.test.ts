@@ -16,6 +16,7 @@ import {
 } from "./notification-content.js";
 import {
   NotificationDeliveryHandler,
+  UnsupportedRecipientTypeError,
   type NotificationDeliveryPrisma,
 } from "./notification-delivery.handler.js";
 
@@ -394,12 +395,53 @@ describe("the delivery handler's outcome", () => {
     expect(lastWrite(writes).data).not.toHaveProperty("status");
   });
 
-  it("lets a failed READ propagate, because a database blip is not a missing address", async () => {
-    const { handler } = setup({
+  it("records a trace when a gate throws, then retries — TD-041 R3-001", async () => {
+    // The claim is committed before the gates run, so an unexpected throw must
+    // leave the row saying what happened. It used to propagate with nothing
+    // written: SENDING, a fresh lease, an incremented attempt count and no
+    // reason, which an operator could only read as "in progress".
+    const { handler, writes } = setup({
       recipient: { resolve: () => Promise.reject(new Error("connection terminated")) },
     });
 
-    await expect(handler.handle(job)).rejects.toThrow(/connection terminated/);
+    await expect(handler.handle(job)).rejects.toThrow(/will be retried/);
+
+    const write = lastWrite(writes);
+    expect(write.data).not.toHaveProperty("status");
+    expect(write.data.lastErrorCode).toBe(NOTIFICATION_DELIVERY_REASON.GATE_FAILED);
+    // The step is named, and no driver text is stored: an error message is the
+    // field most likely to carry a row's value.
+    expect(String(write.data.lastErrorMessage)).toContain("recipient");
+    expect(String(write.data.lastErrorMessage)).not.toContain("connection terminated");
+  });
+
+  it("names the failing gate, not a generic reason", async () => {
+    // WhatsApp, because email is ungated and never asks this port at all.
+    const { handler, writes } = setup({
+      channel: "WHATSAPP",
+      entitlement: { has: () => Promise.reject(new Error("connection terminated")) },
+    });
+
+    await expect(handler.handle(job)).rejects.toThrow(/will be retried/);
+    expect(String(lastWrite(writes).data.lastErrorMessage)).toContain("entitlement");
+  });
+
+  it("settles an unsupported recipient type instead of retrying it", async () => {
+    // A missing reader is a programming error: a retry reaches the same absent
+    // reader, so the delivery settles with a name rather than burning attempts.
+    const { handler, writes, channelSend } = setup({
+      recipient: {
+        resolve: () => Promise.reject(new UnsupportedRecipientTypeError("TEAM_MEMBER")),
+      },
+    });
+
+    await handler.handle(job);
+
+    expect(channelSend("EMAIL")).not.toHaveBeenCalled();
+    expect(lastWrite(writes).data).toMatchObject({
+      status: "FAILED",
+      lastErrorCode: NOTIFICATION_DELIVERY_REASON.RECIPIENT_TYPE_UNSUPPORTED,
+    });
   });
 });
 

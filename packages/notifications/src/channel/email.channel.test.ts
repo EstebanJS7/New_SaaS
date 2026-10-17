@@ -58,6 +58,25 @@ describe("the SMTP email adapter's guardrails (ADR-011)", () => {
     expect(second.close).toHaveBeenCalledTimes(1);
   });
 
+  it("does not let a throwing teardown change the outcome — TD-040 R3-002", async () => {
+    // A close() that throws used to propagate out of the `finally` and turn a
+    // message that ALREADY LEFT into a recorded failure.
+    const sendMail = vi.fn(() => Promise.resolve({ messageId: "one" }));
+    const transport = {
+      sendMail,
+      close: () => {
+        throw new Error("teardown exploded");
+      },
+    };
+
+    const channel = createSmtpEmailChannel({ config, transportFactory: () => transport });
+
+    await expect(channel.send(request)).resolves.toEqual({
+      outcome: "SENT",
+      providerReference: "one",
+    });
+  });
+
   it("closes the transport even when the send fails", async () => {
     const failing = recordingTransport(Object.assign(new Error("boom"), { code: "ECONNECTION" }));
     const channel = createSmtpEmailChannel({

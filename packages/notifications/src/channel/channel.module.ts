@@ -204,7 +204,9 @@ function buildWhatsAppChannel(args: BuildNotificationChannelsArgs): Notification
 
 function readPort(env: EnvRecord, name: string): number {
   const raw = requireEnv(env, name, "smtp");
-  const port = Number.parseInt(raw, 10);
+  // `Number`, NOT `parseInt`: `parseInt("587abc", 10)` is 587, so a typo in a
+  // deployment input would silently become a different port (TD-040 R3-003).
+  const port = Number(raw);
   if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
     throw new Error(`${name} must be a port number, got "${raw}".`);
   }

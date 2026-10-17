@@ -16,9 +16,16 @@ export interface NotificationEntitlementPort {
   /**
    * Whether the tenant holds the grant.
    *
-   * A read that cannot answer must answer `false`. A gate that fails OPEN on a
-   * database blip would send a WhatsApp message a tenant did not pay for, which
-   * is a billing and policy failure rather than a delivery delay.
+   * **The contract is that an unanswerable read must never answer `true`** — a
+   * gate that fails OPEN on a database blip would send a WhatsApp message a
+   * tenant did not pay for, which is a billing and policy failure rather than a
+   * delivery delay.
+   *
+   * How it must fail closed is the implementation's choice, and the one wired
+   * today PROPAGATES rather than answering `false`: the handler then retries the
+   * delivery, because answering `false` would settle a delivery the tenant is
+   * entitled to receive. That is the better failure of the two, and this comment
+   * says so rather than describing the other one (TD-041 R3-002).
    */
   has(args: { readonly tenantId: string; readonly featureCode: string }): Promise<boolean>;
 }

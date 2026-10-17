@@ -209,7 +209,15 @@ export function createSmtpEmailChannel(options: SmtpEmailChannelOptions): Notifi
       } catch (error) {
         return { outcome: "FAILED", ...classifyEmailFailure(error) };
       } finally {
-        transport.close?.();
+        // TD-040 R3-002. Guarded on purpose: an unguarded `close()` that throws
+        // would turn a message that ALREADY LEFT into a recorded failure, and a
+        // rejected `close()` promise would become an unhandled rejection. The
+        // attempt's outcome is decided above; teardown cannot revise it.
+        try {
+          transport.close?.();
+        } catch {
+          // Deliberately swallowed for the reason above.
+        }
       }
     },
   };

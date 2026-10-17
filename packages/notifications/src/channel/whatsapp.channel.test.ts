@@ -83,6 +83,17 @@ describe("the WhatsApp Cloud adapter", () => {
     expect(calls[0]?.url).toBe("https://proxy.example.test/v1/123456/messages");
   });
 
+  it("refuses a malformed base URL at construction, not per send — TD-040 R3-001", () => {
+    // Caught per send, a bad URL would be retried to the end of the budget as if
+    // the provider were unreachable: a failure attributable to nobody.
+    expect(() =>
+      createWhatsAppCloudChannel({
+        config: { ...config, baseUrl: "not a url" },
+        fetchImpl: recordingFetch(200, "{}").fetchImpl,
+      })
+    ).toThrow(/WHATSAPP_CLOUD_API_BASE_URL must be an absolute URL/);
+  });
+
   it("accepts a 2xx answer with no message id as a send", async () => {
     const { fetchImpl } = recordingFetch(200, "not json at all");
     const channel = createWhatsAppCloudChannel({ config, fetchImpl });

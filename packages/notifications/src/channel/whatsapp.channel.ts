@@ -99,6 +99,19 @@ export function createWhatsAppCloudChannel(
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const baseUrl = options.config.baseUrl ?? WHATSAPP_CLOUD_DEFAULT_BASE_URL;
+  // TD-040 R3-001. A malformed base URL is a DEPLOYMENT error, and it is refused
+  // here, with the other deployment inputs, rather than per send: caught later it
+  // would land in the catch below and be retried to the end of the budget as if
+  // the provider were unreachable, which is a failure attributable to nobody.
+  // With the URL proven, every throw below is a transport failure in fact.
+  //
+  // The variable name is spelled out rather than imported from the module that
+  // declares it, because this file is what that module imports.
+  try {
+    new URL(baseUrl);
+  } catch {
+    throw new Error("WHATSAPP_CLOUD_API_BASE_URL must be an absolute URL.");
+  }
 
   return {
     providerId: "WHATSAPP_CLOUD",

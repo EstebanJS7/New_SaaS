@@ -24,6 +24,16 @@ export const NOTIFICATION_DELIVERY_REASON = Object.freeze({
   CONTENT_UNAVAILABLE: "NOTIFICATION_CONTENT_UNAVAILABLE",
   /** The channel named by the row has no provider in this process. */
   CHANNEL_UNAVAILABLE: "NOTIFICATION_CHANNEL_UNAVAILABLE",
+  /**
+   * A gate threw before the message could be sent (TD-041 R3-001).
+   *
+   * The claim is committed before the gates run, so an unexpected throw used to
+   * leave the row `SENDING` with a fresh lease, an incremented attempt count and
+   * NO reason — an operator would see an attempt in progress with no explanation
+   * and nothing able to touch it until the lease expired. This code is what the
+   * row says instead.
+   */
+  GATE_FAILED: "NOTIFICATION_DELIVERY_GATE_FAILED",
 } as const);
 
 export type NotificationDeliveryReason =

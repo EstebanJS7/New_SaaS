@@ -177,6 +177,14 @@ WU-C1 was committed onto the TD-039 branch by mistake, and the pointers were
 corrected **before** the review: `fix/td-039` was moved back to its own receipt
 commit and WU-C1 got its own branch, so no unit's PR carries another's work.
 
+## TD-040 and TD-041 — resolved (2026-10-17)
+
+`fix/notif-review-advisories`, one unit for both books of advisories because
+they cover the same Story. Eight findings addressed, each with a case that fails
+without the fix; the two real ones were an unguarded transport `close()` and the
+gate phase leaving no trace on the row. One case in TD-040 was caught by its own
+new guard: the walked root is `src/`, not the package root.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.
