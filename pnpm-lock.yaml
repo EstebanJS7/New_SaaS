@@ -479,6 +479,13 @@ importers:
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(tsx@4.23.12)
 
   packages/notifications:
+    dependencies:
+      '@nestjs/common':
+        specifier: ^11.0.16
+        version: 11.2.1(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      nodemailer:
+        specifier: ^10.1.2
+        version: 10.1.2
     devDependencies:
       '@newsaas/eslint-config':
         specifier: workspace:*
@@ -3329,6 +3336,10 @@ packages:
   node-releases@2.0.53:
     resolution: {integrity: sha512-D9UOmYG3UH1V+ENW56t5QXBwJw1YEY18ruVeus89Rw+SyIgjPkCO84bRzO3uNIYosJbNwiabWVn48o3uJLjxFQ==}
     engines: {node: '>=18'}
+
+  nodemailer@10.1.2:
+    resolution: {integrity: sha512-rnQn9Rzh8RAwcp42MVsIvxbsv6YZ2a2/av+uyJ/LPU1+2QSlrRgFsWWZTKenyRUqkIl8urOI0c4+CEcmFdsvQw==}
+    engines: {node: '>=20.0.0'}
 
   nopt@8.1.0:
     resolution: {integrity: sha512-ieGu42u/Qsa4TFktmaKEwM6MQH0pOWnaB3htzh0JRtx84+Mebc0cbZYN5bC+6WTZ4+77xrL9Pn5m7CV6VIkV7A==}
@@ -6919,6 +6930,8 @@ snapshots:
       - supports-color
 
   node-releases@2.0.53: {}
+
+  nodemailer@10.1.2: {}
 
   nopt@8.1.0:
     dependencies:

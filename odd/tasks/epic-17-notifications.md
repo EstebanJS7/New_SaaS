@@ -75,12 +75,18 @@ by any service.
       moved to [[NOTIF-002]]. The review also exposed **[[TD-039]]**, a
       production blocker in the closed fiscal epic, which is out of this unit's
       scope and recorded instead of fixed here.
-- [ ] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
-      deterministic fake, the real adapters, fail-closed production selection,
-      and the recipient's contact data classified **RESTRICTED**. The email
-      library's ADR is this unit's gate. **It also owns the worker consumer and
-      the delivery handler**, which moved from WU-B because a claim with nothing
-      to send cannot be a unit. → [[NOTIF-002]]
+- [~] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
+  deterministic fake, the real adapters, fail-closed production selection, and
+  the recipient's contact data classified **RESTRICTED**. The email library's
+  ADR is this unit's gate. **It also owns the worker consumer and the delivery
+  handler**, which moved from WU-B because a claim with nothing to send cannot
+  be a unit. → [[NOTIF-002]] **WU-C1 (the boundary) landed**: [[ADR-011]]
+  accepted (nodemailer `^10.1.2` over SMTP, proven clean by `pnpm audit`), and
+  the port, the deterministic fake, both real adapters, the fail-closed
+  selection and a boundary test for the ADR's guardrail 7 are in, with 36 new
+  cases. **WU-C2 (the delivery path) remains**: the recipient reader, the
+  WhatsApp entitlement gate, the consumer and the handler, the composition roots
+  and the env schemas.
 - [ ] **WU-D — the appointment reminder.** The schema-bound job, the typed
       `notifications` settings namespace, the idempotency key, and the
       cancellation path that removes a pending reminder — which needs decision
@@ -141,6 +147,18 @@ a real Redis through the producer's own options function; fiscal suite 787
 Commit `8561af0`; review `review-757b99b67c3e5197` — medium tier, one lens
 (`review-reliability`), consent relayed and granted, **approved with no findings
 on the first pass**, acknowledged, authority burned.
+
+## ADR-011 — accepted, and the dependency measured
+
+`nodemailer` `^10.1.2` over SMTP (MIT-0, **zero transitive dependencies**, pure
+JS), accepted by the maintainer on 2026-10-17. The advisory record decided the
+ADR's shape rather than blocking it: **25 advisories, 10 published since
+2026-09-01**, including a **cross-tenant SMTP credential disclosure** through a
+process-global transport — so the guardrails (per-send transport, no tenant
+string in a transport option, file/URL access off, one validated recipient, the
+library imported by one file) are the decision, not a footnote. Measured after
+installing: `pnpm audit` reports **0 advisories contributed by nodemailer**, and
+the package's own types mean no `@types` dependency.
 
 ## Operational notes
 

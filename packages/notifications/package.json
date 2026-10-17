@@ -19,6 +19,10 @@
     "lint": "eslint \"src/**/*.ts\"",
     "test": "vitest run --config ../../packages/vitest-config/vitest.node.ts"
   },
+  "dependencies": {
+    "@nestjs/common": "^11.0.16",
+    "nodemailer": "^10.1.2"
+  },
   "devDependencies": {
     "@newsaas/eslint-config": "workspace:*",
     "@newsaas/typescript-config": "workspace:*",

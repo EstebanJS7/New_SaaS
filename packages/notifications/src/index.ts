@@ -32,3 +32,62 @@ export {
   notificationDeliveryJobOptions,
 } from "./notification-delivery.queue.js";
 export type { NotificationDeliveryJob } from "./notification-delivery.queue.js";
+export {
+  NOTIFICATION_CHANNEL_PROVIDER_IDS,
+  NOTIFICATION_CHANNEL_VALUES,
+  NOTIFICATION_CHANNEL_REASON,
+  NOTIFICATION_CHANNELS,
+} from "./channel/channel.port.js";
+export type {
+  NotificationChannel,
+  NotificationChannelOutcome,
+  NotificationChannelPort,
+  NotificationChannelProviderId,
+  NotificationChannelRequest,
+  NotificationChannels,
+} from "./channel/channel.port.js";
+export { createFakeNotificationChannel, FAKE_CHANNEL_OUTCOMES } from "./channel/fake.channel.js";
+export type {
+  FakeChannelAttempt,
+  FakeChannelOutcome,
+  FakeNotificationChannel,
+  FakeNotificationChannelOptions,
+} from "./channel/fake.channel.js";
+export {
+  classifyEmailFailure,
+  createSmtpEmailChannel,
+  isDeliverableEmailAddress,
+} from "./channel/email.channel.js";
+export type {
+  EmailTransport,
+  EmailTransportFactory,
+  SmtpEmailChannelOptions,
+  SmtpEmailConfig,
+} from "./channel/email.channel.js";
+export {
+  classifyWhatsAppFailure,
+  createWhatsAppCloudChannel,
+  isDeliverablePhoneNumber,
+  WHATSAPP_CLOUD_DEFAULT_BASE_URL,
+} from "./channel/whatsapp.channel.js";
+export type {
+  WhatsAppCloudChannelOptions,
+  WhatsAppCloudConfig,
+  WhatsAppFetch,
+} from "./channel/whatsapp.channel.js";
+export {
+  buildNotificationChannels,
+  NOTIFICATION_EMAIL_ENV_VARS,
+  NOTIFICATION_EMAIL_PROVIDER_ENV_VALUES,
+  NOTIFICATION_PROVIDER_ENV_VARS,
+  NOTIFICATION_WHATSAPP_ENV_VARS,
+  NOTIFICATION_WHATSAPP_PROVIDER_ENV_VALUES,
+  NotificationChannelsModule,
+  resolveChannelProvider,
+} from "./channel/channel.module.js";
+export type {
+  BuildNotificationChannelsArgs,
+  NotificationChannelsModuleOptions,
+  NotificationEmailProviderEnvValue,
+  NotificationWhatsAppProviderEnvValue,
+} from "./channel/channel.module.js";
