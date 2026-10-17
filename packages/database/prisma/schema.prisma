@@ -3508,6 +3508,14 @@ model NotificationDelivery {
   cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(3)
   cancellationReason String?   @map("cancellation_reason")
 
+  /// The provider's handle for the message it accepted, written in the same
+  /// update that enters `SENT` (NOTIF-002). Nullable because a provider is not
+  /// required to issue one, and an absent value is not a failure: the message
+  /// was accepted. Nothing else has to keep it honest — `SENT` rows are frozen
+  /// by `notification_delivery_terminal_immutable`, so it can never be rewritten
+  /// or cleared, which is why the guard needs no never-clear clause for it.
+  providerReference String? @map("provider_reference")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 

@@ -211,6 +211,19 @@ was proven against a real Redis
 (`CONTROL (old, colon): Custom Id cannot contain :` /
 `FIXED (new, hyphen): ADDED`).
 
+**Landed: [[NOTIF-002]] (WU-C) is `done`.** The channel boundary ships complete
+— one port, a deterministic fake, the real `EMAIL` (SMTP, [[ADR-011]]) and
+`WHATSAPP` adapters, and a fail-closed selection — and so does the delivery
+path: the recipient reader over `CustomerContact` (RESTRICTED, read at send
+time), the WhatsApp entitlement gate, the handler with its claim
+compare-and-swap, and the worker wiring. [[ADR-011]] was accepted **before** the
+dependency landed, and its guardrails are code rather than advice: a transport
+per send, file and URL access disabled, one validated recipient, and the library
+imported by exactly one file. The content seam deliberately fails closed until
+[[NOTIF-003]] wires the reminder's builder, so a delivery that arrives first
+settles by name instead of sending an empty message. Nothing has been sent to a
+real provider: that run is an operator act and stays pending at [[NOTIF-005]].
+
 ## Dependencies
 
 - [[EPIC-07]] — the appointment's confirmation and cancellation paths this epic

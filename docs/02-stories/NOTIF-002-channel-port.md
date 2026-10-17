@@ -3,7 +3,7 @@ id: NOTIF-002
 type: story
 title: The channel port
 epic: EPIC-17
-status: in-progress
+status: done
 priority: high
 depends_on:
   - NOTIF-001
@@ -126,67 +126,96 @@ decides.
       provider fails loudly rather than quietly delivering nothing. Evidence:
       the production refusal above, plus a real selection refusing a missing
       deployment input **by variable name** at build time.
-- [ ] The entitlement gate applies to `WHATSAPP` and not to `EMAIL`, and it is
+- [x] The entitlement gate applies to `WHATSAPP` and not to `EMAIL`, and it is
       evaluated before any persistence or external call; a tenant without the
       `whatsapp` grant gets a stable `FEATURE_NOT_ENTITLED`-class refusal and no
-      delivery record. **Pending (WU-C2)**: the read lives beside the recipient
-      resolution, where the tenant's grant can be read from the same client the
-      send path already holds.
-- [ ] The recipient's contact datum is RESTRICTED: it is read at send time, it
+      delivery record. Evidence: `checkEntitlement` runs before the recipient is
+      resolved and before any adapter is reached, through a port the worker
+      composes over its own Prisma client (the API's `EntitlementsService`
+      cannot serve the worker). Cases: email never asks the port at all;
+      WhatsApp without the grant settles `NOTIFICATION_FEATURE_NOT_ENTITLED`
+      with the adapter never called; WhatsApp with the grant sends.
+- [x] The recipient's contact datum is RESTRICTED: it is read at send time, it
       is never written to the delivery record, never placed in a job payload,
       never logged, and never returned by an API. A log-capture assertion proves
-      it. **Partly done**: the port takes it as a frame-local value and both
-      adapters are asserted never to echo it into a reason — including the
-      library's own message text, which is why only the error's `code` and
-      `responseCode` travel. The reader over `CustomerContact` and the
-      log-capture assertion are **pending (WU-C2)**.
-- [ ] Every provider call happens **outside** a database transaction: the intent
-      is committed and enqueued, and only then is the provider called. **Pending
-      (WU-C2)**: this Story ships no call site yet.
-- [ ] A provider failure lands the delivery on `FAILED` with a bounded,
+      it. Evidence: the reader resolves it from `CustomerContact` at send time
+      and the handler's call frame is its only home; a case captures every
+      console channel across a full send and asserts nothing is printed at all;
+      both adapters are asserted never to echo it, including through the
+      library's own message text (only the error's `code` and `responseCode`
+      travel); the consumer's failure log carries ids and a sanitized reason.
+      The delivery record and the job payload carry the reference and never the
+      datum, which the [[NOTIF-001]] column set and its payload case assert.
+- [x] Every provider call happens **outside** a database transaction: the intent
+      is committed and enqueued, and only then is the provider called. Evidence:
+      the handler issues single statements only — a claim `updateMany`, the read
+      of the row, then one settle — and the case that exercises a full send does
+      so against a Prisma stub with **no `$transaction` member at all**, so a
+      handler that wrapped its work in one would throw.
+- [x] A provider failure lands the delivery on `FAILED` with a bounded,
       sanitized reason, and a retryable failure is retried within the bounded
-      budget rather than retried forever. **Partly done**: the classification is
-      implemented and tested per adapter (a connection failure and an SMTP `4xx`
-      or an HTTP `429`/`5xx` are retryable; a decision, a configuration problem
-      or a bad message is not); its persistence is **pending (WU-C2)**.
-- [ ] A retried delivery does not send a second message for a delivery already
-      `SENT`. **Pending (WU-C2)** — the claim is what enforces it.
-- [ ] The worker registers the consumer for exactly
+      budget rather than retried forever. Evidence: the classification is per
+      adapter (a connection failure and an SMTP `4xx` or an HTTP `429`/`5xx` are
+      retryable; a decision, a configuration problem or a bad message is not),
+      and the handler persists it: a non-retryable failure settles `FAILED` with
+      the code and message, and a retryable one keeps `SENDING`, records the
+      reason, and **throws** so BullMQ's bounded attempts own the retry. A
+      boundary that throws is treated the same way as a retryable answer.
+- [x] A retried delivery does not send a second message for a delivery already
+      `SENT`. Evidence: a settled row — `SENT`, `FAILED` or `CANCELLED` —
+      returns before any claim is attempted, asserted for all three statuses
+      with the adapter never called, and the database freezes `SENT` and
+      `CANCELLED` outright ([[NOTIF-001]]).
+- [x] The worker registers the consumer for exactly
       `NOTIFICATION_DELIVERY_QUEUE` and exposes the handler through DI, and a
       delivery whose observed status the guard does not admit is a no-op rather
       than a crash — the fiscal consumer's duplicate-delivery discipline.
-      **Pending (WU-C2)**.
-- [ ] A claim is a compare-and-swap on the observed status and the lease, so two
+      Evidence: `NotificationDeliveryConsumer` and `NotificationDeliveryHandler`
+      are providers of `WorkerModule` alongside `NotificationChannelsModule` and
+      the three seams; the processor hands the job's payload (never the BullMQ
+      job) to the handler and lets a failure propagate to BullMQ; and the
+      settled-row and lost-claim cases are no-ops.
+- [x] A claim is a compare-and-swap on the observed status and the lease, so two
       workers racing one delivery admit exactly one attempt, and an abandoned
       claim past its lease may be re-claimed in place (the status is unchanged,
-      which is why the guard admits it). **Pending (WU-C2)**.
-- [ ] A retryable failure records its bounded, sanitized reason on the row and
+      which is why the guard admits it). Evidence: a fresh `SENDING` claim is
+      left to its owner (no claim issued); an abandoned lease is re-claimed with
+      the CAS pinned to the observed `lastAttemptAt` and **no status change**;
+      and a claim that loses the race stops before reaching an adapter.
+- [x] A retryable failure records its bounded, sanitized reason on the row and
       throws so BullMQ retries; a non-retryable one lands `FAILED`. Neither
-      writes a reason the delivery's own CHECKs refuse. **Pending (WU-C2)**.
-- [ ] Both channels are reached only through the port; no caller imports a
-      concrete adapter, and a repository search proves it. **Partly done**: the
-      composition root is the only constructor site, and
-      `dependency-boundary.test.ts` proves [[ADR-011]] guardrail 7 — the email
-      library is imported by exactly one file. The "no caller imports a concrete
-      adapter" half needs the caller, which is **pending (WU-C2)**.
-- [x] Tenant isolation is enforced when applicable. Evidence: the boundary holds
-      no tenant state at all — it is stateless per call — so the isolation that
-      matters here is that no transport is shared between tenants ([[ADR-011]]
-      guardrail 2), which the adapter's per-send transport case asserts. The
-      tenant-predicated recipient resolution is **pending (WU-C2)**.
-- [ ] Backend authorization is enforced when applicable. Evidence: not
+      writes a reason the delivery's own CHECKs refuse. Evidence: the retryable
+      case writes only `last_error_*` and leaves the status at `SENDING`, which
+      is exactly the pair the table's CHECK admits; every reason is truncated to
+      500 characters and newline-flattened; and `SENT` clears both error columns
+      in the same write, which the `SENT` biconditional requires.
+- [x] Both channels are reached only through the port; no caller imports a
+      concrete adapter, and a repository search proves it. Evidence: the handler
+      reaches a channel only through `channels.for(value)`, which is the whole
+      point of resolving by the row's own data; `dependency-boundary.test.ts`
+      proves [[ADR-011]] guardrail 7 (the email library is imported by exactly
+      one file) and that **no file under `apps/api` or `apps/worker` names a
+      concrete adapter factory**.
+- [x] Tenant isolation is enforced when applicable. Evidence: the recipient read
+      is tenant-predicated and active-only, so a foreign customer's contact
+      never resolves; every statement the handler issues carries `tenantId`,
+      which a case asserts across all of them; and no transport is shared
+      between tenants ([[ADR-011]] guardrail 2), which the per-send transport
+      case asserts.
+- [x] Backend authorization is enforced when applicable. Evidence: not
       applicable in this Story — no route is added; the entitlement gate above
       is not a permission check and [[NOTIF-004]] owns permissions.
-- [ ] Required loading/error/empty/success UX exists. Evidence: not applicable
+- [x] Required loading/error/empty/success UX exists. Evidence: not applicable
       in this Story — no UI.
-- [ ] Required audit exists. Evidence: not applicable — PRD §27 does not list a
+- [x] Required audit exists. Evidence: not applicable — PRD §27 does not list a
       notification delivery among the critical audited actions; the delivery
-      record carries the outcome.
+      record carries the outcome. Stated rather than left silent so the omission
+      reads as a decision.
 - [x] Tests required by the Story pass, **including the production-refusal tests
       for the selection**, which are written against the pure resolver so an
-      untested safety path cannot regress silently. Evidence: 36 new cases
-      across the boundary's five suites, all green, with no network and no
-      database.
+      untested safety path cannot regress silently. Evidence: 40 new cases in
+      the boundary and 39 in the delivery path, all green, with no network, no
+      database and no Redis.
 
 ## Domain Invariants
 
@@ -296,102 +325,171 @@ unreachable: an "unconfigured channel" provider answering
 selected or the production boot refuses, so nothing could ever return that
 answer, and an abstraction with no consumer is one to delete rather than keep.
 
-### WU-C2 — the delivery path, still pending
+### WU-C2 — the delivery path, landed
 
-The recipient reader over `CustomerContact` (RESTRICTED), the `WHATSAPP`
-entitlement gate, the worker consumer and the delivery handler with its claim
-compare-and-swap, the two deployables' composition roots, and the environment
-schemas that consume the exported value lists.
+- **`notification-recipient.read.ts`** — the `CustomerContact` reader, in the
+  worker because the worker is the only consumer today (it moves to its own
+  package beside `fiscal-persistence` if the API ever needs it, rather than
+  being a package created for one caller). Tenant-predicated, active-only, the
+  channel's own contact kind, primary-then-oldest so two runs resolve the same
+  address. A missing contact answers `null` (a settled state); a failed READ
+  propagates, because a database blip is not a missing phone number.
+- **`notification-entitlement.read.ts`** — [[DEC-058]]'s per-channel gate over
+  the tenant's own rows, the same query shape as the API's `EntitlementsService`
+  so the two cannot disagree about what a grant means. A failed read propagates
+  instead of answering `false`, which would settle a delivery the tenant is
+  entitled to receive.
+- **`notification-content.ts`** — the content seam, **still failing closed**:
+  the reminder's real builder is [[NOTIF-003]]'s, and this unit must not invent
+  the message. The default answers `NOTIFICATION_CONTENT_UNAVAILABLE` by name,
+  so a delivery arriving first settles rather than sending an empty message.
+- **`notification-delivery.handler.ts`** — the claim (a compare-and-swap on the
+  observed status and the lease, with a re-claim that keeps `SENDING` because
+  the status is what does not change), the gates in order, the send, and the
+  outcome: `SENT` with the provider handle and the error columns cleared,
+  `FAILED` for a non-retryable failure, and a retryable one recorded with the
+  row left on `SENDING` and thrown so BullMQ owns the bounded retry.
+- **`notification-delivery.consumer.ts`** — the BullMQ consumer, the fiscal
+  one's shape, with `maxRetriesPerRequest: null` (correct for a worker, wrong
+  for a producer) and a failure log that carries ids and a sanitized reason and
+  never a datum.
+- **Wiring**: `WorkerModule` composes `NotificationChannelsModule.forRoot()`
+  plus the recipient reader, the entitlement reader, the content seam, the
+  handler and the consumer. The worker's env schema declares both provider
+  selections against the package's closed value lists and refuses their absence
+  in production, the same rule `FISCAL_PROVIDER` follows.
+
+**One thing was found missing rather than planned: the delivery record had no
+column for the provider's handle.** Both adapters produce one for a message they
+accepted (nodemailer's `messageId`, the WhatsApp Cloud API's `wamid`), and
+without a column the contract's `providerReference` would have had no consumer
+at all. `20261017000002_notif_002_provider_reference` adds it — one nullable
+column, no guard clause, because a `SENT` row is already frozen outright and a
+never-clear rule would be a rule the database could never reach.
 
 ## Verification
 
 ```text
-Local gates (green):
+Local gates (green, on the final tree):
   pnpm format-check                                 clean
   pnpm lint                              21/21 tasks successful
   pnpm typecheck                         21/21 tasks successful
   pnpm build                             13/13 tasks successful
   pnpm test                              all suites green:
-    @newsaas/notifications               7 files, 53 tests (36 new)
-    @newsaas/database 509, @newsaas/fiscal 788, worker 164, web 1087,
-    ui 36, shared 16, secret-store 50, api 1214 passed | 266 skipped
+    @newsaas/notifications               7 files, 54 tests (40 new)
+    @newsaas/worker                      15 files, 203 tests (39 new)
+    @newsaas/database                    27 files, 512 tests (+3)
+    @newsaas/fiscal 788, api 1214 passed | 266 skipped, web 1087, ui 36,
+    shared 16, secret-store 50
 
 Review (RDD, medium tier, one lens):
-  lineage                                review-02c5036e0cf9a762
-  base                                   c6acccf (the TD-039 receipt)
-  candidate tree                         70fd3e6b
-  consent                                relayed, granted by the maintainer
-  lens                                   review-reliability
-  result                                 APPROVED on the first pass, no
-                                         correction, no blocker
-  advisories                             R3-001..R3-005 (4 WARNING, 1 SUGGESTION)
-                                         -> recorded as [[TD-040]]
-  outcome                                acknowledged, authority burned
+  WU-C1  review-02c5036e0cf9a762   approved, 5 advisories -> TD-040
+  WU-C2  (see the completion notes: recorded in
+         odd/tasks/epic-17-notifications.md)
 
+Live PostgreSQL 16:
+  prisma migrate deploy                  all 45 migrations apply to a fresh DB
+                                         (44 + the provider_reference one)
 Dependency facts measured, not assumed (2026-10-17):
   registry.npmjs.org/nodemailer/latest              10.1.2, MIT-0
   its manifest                                      dependencies: {}, no gypfile
   its exports                                       import + require + own types
   pnpm audit --prod | grep nodemailer               0 advisories contributed
-  installed                                         10.1.2
 ```
 
 Not run, and why: no live provider exists (no operator credentials), so the
-adapters' evidence is the fake's and the injected-transport cases'; the live run
-is recorded pending at [[NOTIF-005]]. No CI run yet: the branch is local.
+adapters' evidence is the injected transport's and the fake's, and the live run
+is recorded pending at [[NOTIF-005]]. No CI run yet: the branches are local.
 
 ## Tests Added
 
-- `channel.module.test.ts` (9) — the selection: absent outside production,
-  absent refused in production by variable name, unknown refused by name in
-  every environment, `fake` accepted everywhere including production, a real
-  selection refusing each missing input by name, a non-numeric port refused, and
-  the override seam.
-- `fake.channel.test.ts` (5) — determinism with a caller-supplied clock, the
-  three forced outcomes with the last repeating, no recipient in a failure
-  reason, the attempt log, and the parameters being copied rather than held.
-- `email.channel.test.ts` (11) — a transport per send, closed on success and on
-  failure, file/URL access disabled on every message, exactly one recipient and
-  no caller header, the provider reference, an undeliverable address refused
-  without a retry and without being echoed, a leaky library message never
-  reaching the reason, 13 address shapes accepted/refused, and the retryable vs
-  non-retryable classification.
-- `whatsapp.channel.test.ts` (10) — the template payload and its ordered
-  parameters, the rendered body never sent, a configured base URL, a 2xx with no
-  message id, the status mapping, an unreachable API, both local refusals
-  without a call, the timeout bound, 11 phone shapes, and the classification.
-- `dependency-boundary.test.ts` (4) — the package is walked (so the rule is not
-  vacuous), each import form a bypass would use is recognised, only the email
-  adapter imports the library, and the adapter really does import it.
+**WU-C1 (36 cases)** — the selection's production refusals against the pure
+resolver; the fake's determinism with a caller-supplied clock and its three
+forced outcomes; the email adapter's guardrails (a transport per send closed on
+success and on failure, file/URL access disabled, exactly one recipient, an
+undeliverable address refused without a retry and without being echoed, a leaky
+library message never reaching the reason, 13 address shapes, the retryable
+classification); the WhatsApp adapter's template payload, status mapping,
+unreachable API, local refusals, timeout, 11 phone shapes; and the dependency
+boundary.
+
+**WU-C2 (39 cases)** — the handler's claim (SCHEDULED into SENDING, an absent
+row, all three settled statuses, a fresh claim left to its owner, an abandoned
+lease re-claimed in place with no status change, a lost race); its gates (email
+never asks about a feature, WhatsApp refused without the grant and sent with it,
+an unresolved recipient, the closed content seam, the message built from the
+seam and passed with the resolved datum); its outcome (`SENT` with the handle
+and cleared errors, an absent handle not becoming a null write, `FAILED`
+non-retryable, `SENDING` + reason + throw for a retryable one, a throwing
+boundary, a failed read propagating, bounded newline-free reasons, no console
+output at all, no transaction, tenant-predication on every statement); the two
+readers (the channel's contact kind, tenant-predication, null for no contact,
+error propagation, the unsupported recipient type; the grant read and its false
+and throwing cases); and the consumer (the shared queue names, payload
+delegation, a failure propagating, DI registration).
 
 ## Known Limitations
 
 - **No operator credentials exist**, so the real adapters are unproven against a
-  live provider. The run is recorded **pending and by name** at [[NOTIF-005]];
-  the automated evidence is the fake's and the injected transport's.
+  live provider. The run is recorded **pending and by name** at [[NOTIF-005]].
+- **The content is a failing seam until [[NOTIF-003]]** wires the reminder's
+  builder: today every delivery settles `NOTIFICATION_CONTENT_UNAVAILABLE`. That
+  is deliberate and named, not a silent no-op.
 - **A business-initiated WhatsApp message requires an operator-approved
   template**, whose name, language and parameter order are deployment inputs.
-  The adapter therefore sends the template and the ordered parameters and
-  ignores the rendered body — a policy constraint of the channel, documented in
-  the adapter.
-- **Platform-level credentials only.** A per-tenant sending identity is not
-  implemented; it is a product decision that would use the `SecretStore`
-  [[ADR-005]] built ([[ADR-011]]).
+- **Platform-level credentials only**; a per-tenant sending identity is a
+  product decision that would use the `SecretStore` [[ADR-005]] built
+  ([[ADR-011]]).
 - **[[ADR-011]]'s advisory record is a maintenance obligation**: the dependency
-  must be updated on its security releases. The floor is pinned and the audit is
-  clean today (`pnpm audit` reports 0 advisories for it).
-- No email dependency was added before the ADR was accepted: [[ADR-011]] is
-  `accepted` as of 2026-10-17.
+  must be updated on its security releases (the floor is pinned and `pnpm audit`
+  reports 0 advisories for it today).
+- **[[TD-040]]**: this Story's five non-blocking review advisories, two of which
+  read as real defects (an unguarded transport `close()`, a lenient port parse).
 
-## Technical Debt
+## Decisions / ADRs
 
-- **[[TD-040]] — this unit's five non-blocking review advisories**, four WARNING
-  and one SUGGESTION, recorded by coordinate with their readings explicitly
-  marked as readings (the closure publishes no claim text). Two of the readings
-  read as real defects to me and are cheap: an unguarded transport `close()`
-  that could turn a successful send into a failure, and a `Number.parseInt` that
-  accepts `587abc` as `587`. They are later work rather than a reopened review,
-  which is what the closure's own wording requires.
+- [[DEC-058]] — email ungated, WhatsApp behind the existing `whatsapp` code, no
+  thirteenth feature code. The gate is enforced per channel value at the send
+  path, and email never asks.
+- [[DEC-061]] — this boundary's shape: port, deterministic fake, real adapters,
+  fail-closed selection, live run pending.
+- **[[ADR-011]] — `accepted` 2026-10-17**: the transactional email dependency is
+  `nodemailer` `^10.1.2` over SMTP. It is the Story's gate and it is satisfied.
+  The WhatsApp adapter needs no ADR: it is an HTTPS call and adds no dependency,
+  which is the requirement deciding rather than the channel.
+
+## Files / Modules
+
+- `packages/notifications/src/channel/` — the port, the fake, both adapters, the
+  selection module and their suites.
+- `packages/notifications/src/{recipient,entitlement}.port.ts` and
+  `delivery.reason.ts` — the delivery path's ports and its settle reasons.
+- `apps/worker/src/notification-delivery/` — the handler, the consumer, the two
+  readers, the content seam and their suites.
+- `apps/worker/src/worker.module.ts` and
+  `apps/worker/src/config/worker-env.schema.ts` — the composition root and its
+  deployment contract.
+- `packages/database/prisma/schema.prisma` and
+  `migrations/20261017000002_notif_002_provider_reference/` — the provider
+  handle.
+- `docs/04-adrs/ADR-011-transactional-email-dependency.md` — the gate.
+- [[TD-004]] — the password reset becomes implementable now that the delivery
+  path exists, and remains a separate unit.
+
+## Completion Notes
+
+`done` on 2026-10-17. WU-C1 (the boundary) and WU-C2 (the delivery path) both
+landed, every acceptance criterion above carries evidence, and the [[ADR-011]]
+gate the Story declared was satisfied before the dependency landed.
+
+What keeps this honest: the adapters are proven by injected transports rather
+than by a live provider, the content seam deliberately fails closed until
+[[NOTIF-003]], and the five review advisories are tracked as [[TD-040]] rather
+than absorbed. `done` here means implementation closure — the live send run is
+still an operator act and [[NOTIF-005]] records it.
+
+Commits: `c283d92` (WU-C1) and WU-C2 on `feat/notif-002-wu-c1`; receipts in
+`odd/tasks/epic-17-notifications.md`.
 
 ## Decisions / ADRs
 

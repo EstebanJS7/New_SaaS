@@ -47,6 +47,35 @@ function isNodemailerImport(specifier: string): boolean {
   return specifier === "nodemailer" || specifier.startsWith("nodemailer/");
 }
 
+/** The concrete adapter factories a deployable must reach through the module. */
+const CONCRETE_ADAPTER_FACTORIES = [
+  "createFakeNotificationChannel",
+  "createSmtpEmailChannel",
+  "createWhatsAppCloudChannel",
+] as const;
+
+describe("the concrete adapters stay behind the module", () => {
+  it("are never constructed by a deployable, which reaches them through the port", () => {
+    // [[NOTIF-002]]: "no caller imports a concrete adapter, and a repository
+    // search proves it." A factory is only reachable here by name, so the search
+    // is for the names rather than for a path.
+    const appsRoot = join(PACKAGE_SRC, "..", "..", "..", "apps");
+    const files = walkSourceFiles(join(appsRoot, "api")).concat(
+      walkSourceFiles(join(appsRoot, "worker"))
+    );
+    expect(files.length, "the app walk must find files").toBeGreaterThan(0);
+
+    const violations: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      for (const factory of CONCRETE_ADAPTER_FACTORIES) {
+        if (source.includes(factory)) violations.push(`${file}: ${factory}`);
+      }
+    }
+    expect(violations, `scanned ${files.length} app files`).toEqual([]);
+  });
+});
+
 describe("notification channel dependency boundary", () => {
   const files = walkSourceFiles(PACKAGE_SRC);
 

@@ -247,6 +247,9 @@ importers:
       '@newsaas/fiscal-persistence':
         specifier: workspace:*
         version: link:../../packages/fiscal-persistence
+      '@newsaas/notifications':
+        specifier: workspace:*
+        version: link:../../packages/notifications
       '@newsaas/secret-store':
         specifier: workspace:*
         version: link:../../packages/secret-store

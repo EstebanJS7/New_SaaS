@@ -75,21 +75,21 @@ by any service.
       moved to [[NOTIF-002]]. The review also exposed **[[TD-039]]**, a
       production blocker in the closed fiscal epic, which is out of this unit's
       scope and recorded instead of fixed here.
-- [~] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
-  deterministic fake, the real adapters, fail-closed production selection, and
-  the recipient's contact data classified **RESTRICTED**. The email library's
-  ADR is this unit's gate. **It also owns the worker consumer and the delivery
-  handler**, which moved from WU-B because a claim with nothing to send cannot
-  be a unit. → [[NOTIF-002]] **WU-C1 (the boundary) landed**: [[ADR-011]]
-  accepted (nodemailer `^10.1.2` over SMTP, proven clean by `pnpm audit`), and
-  the port, the deterministic fake, both real adapters, the fail-closed
-  selection and a boundary test for the ADR's guardrail 7 are in, with 36 new
-  cases. Commit `c283d92`; review `review-02c5036e0cf9a762` — medium tier, one
-  lens, **approved on the first pass with no blocking finding**, five
-  non-blocking advisories recorded as [[TD-040]], acknowledged, authority
-  burned. **WU-C2 (the delivery path) remains**: the recipient reader, the
-  WhatsApp entitlement gate, the consumer and the handler, the composition roots
-  and the env schemas.
+- [x] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
+      deterministic fake, the real adapters, fail-closed production selection,
+      and the recipient's contact data classified **RESTRICTED**. →
+      [[NOTIF-002]] **WU-C1 landed** (`c283d92`): [[ADR-011]] accepted
+      (nodemailer `^10.1.2` over SMTP, proven clean by `pnpm audit`), plus the
+      port, the fake, both adapters, the selection and the ADR's guardrail 7 as
+      a test — 40 new cases. Review `review-02c5036e0cf9a762` (medium, one
+      lens): **approved on the first pass**, five non-blocking advisories →
+      [[TD-040]]. **WU-C2 landed**: the recipient reader over `CustomerContact`,
+      the WhatsApp entitlement gate, the content seam (still failing closed
+      until WU-D), the handler with its claim compare-and-swap, the consumer,
+      the worker wiring and the env contract — 39 new cases. A missing
+      `provider_reference` column was found while building it and added by
+      migration `20261017000002`. Story `done`; the live send run stays pending
+      by name at [[NOTIF-005]].
 - [ ] **WU-D — the appointment reminder.** The schema-bound job, the typed
       `notifications` settings namespace, the idempotency key, and the
       cancellation path that removes a pending reminder — which needs decision
