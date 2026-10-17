@@ -384,8 +384,8 @@ Local gates (green, on the final tree):
 
 Review (RDD, medium tier, one lens):
   WU-C1  review-02c5036e0cf9a762   approved, 5 advisories -> TD-040
-  WU-C2  (see the completion notes: recorded in
-         odd/tasks/epic-17-notifications.md)
+  WU-C2  review-8fe9d3d492192a6e   APPROVED on the first pass, no correction,
+         3 advisories (1 WARNING, 2 SUGGESTION) -> TD-041
 
 Live PostgreSQL 16:
   prisma migrate deploy                  all 45 migrations apply to a fresh DB
@@ -443,8 +443,11 @@ delegation, a failure propagating, DI registration).
 - **[[ADR-011]]'s advisory record is a maintenance obligation**: the dependency
   must be updated on its security releases (the floor is pinned and `pnpm audit`
   reports 0 advisories for it today).
-- **[[TD-040]]**: this Story's five non-blocking review advisories, two of which
-  read as real defects (an unguarded transport `close()`, a lenient port parse).
+- **[[TD-040]]**: WU-C1's five non-blocking review advisories, two of which read
+  as real defects (an unguarded transport `close()`, a lenient port parse).
+- **[[TD-041]]**: WU-C2's three, one of which I judge real — an unexpected throw
+  from a pre-send gate propagates while the row keeps a fresh lease and writes
+  no reason, so an operator sees an attempt in progress with no explanation.
 
 ## Decisions / ADRs
 
@@ -488,7 +491,8 @@ than by a live provider, the content seam deliberately fails closed until
 than absorbed. `done` here means implementation closure — the live send run is
 still an operator act and [[NOTIF-005]] records it.
 
-Commits: `c283d92` (WU-C1) and WU-C2 on `feat/notif-002-wu-c1`; receipts in
+Commits: `c283d92` (WU-C1) and `d7043d8` (WU-C2) on `feat/notif-002-wu-c1`, both
+reviewed and approved on their first pass; receipts in
 `odd/tasks/epic-17-notifications.md`.
 
 ## Decisions / ADRs
