@@ -163,21 +163,52 @@ export class NotificationDeliveryHandler {
    * is a programming error, and a retry reaches the same absent reader.
    */
   private async deliver(delivery: DeliveryRecord): Promise<void> {
-    let step = "entitlement";
-    let prepared: {
-      readonly address: string;
-      readonly subject: string;
-      readonly body: string;
-      readonly parameters: readonly string[];
-    };
+    const decision = await this.decide(delivery);
 
+    // Outside the try on purpose (TD-042 R3-4). A settle that runs INSIDE the
+    // try would have its own failure caught and reinterpreted as a retryable
+    // one, so a delivery that faithfully failed non-retryably — an unresolved
+    // recipient, a tenant without the grant — would be retried and its message
+    // attempted again because the WRITE that records the settle failed.
+    if ("failure" in decision) {
+      return this.settleFailure(delivery, decision.failure);
+    }
+    await this.send(delivery, decision.prepared);
+  }
+
+  /**
+   * The gates and the resolution, as a DECISION rather than an action.
+   *
+   * Returning a decision is what keeps every settle out of the `try` below, and
+   * the `try` is what makes an unexpected throw visible: the claim is already
+   * committed, so a gate that throws used to leave the row `SENDING` with a fresh
+   * lease, an incremented attempt count and no reason — an operator would read
+   * that as "in progress" and nothing could touch it until the lease expired
+   * (TD-041 R3-001). The step name is ours; no error text is stored, because a
+   * driver's message is the field most likely to carry a row's value.
+   *
+   * One exception becomes a settle rather than a retry: a recipient type with no
+   * reader is a programming error, and a retry reaches the same absent reader.
+   */
+  private async decide(delivery: DeliveryRecord): Promise<
+    | {
+        readonly prepared: {
+          readonly address: string;
+          readonly subject: string;
+          readonly body: string;
+          readonly parameters: readonly string[];
+        };
+      }
+    | { readonly failure: { readonly reasonCode: string; readonly reason: string } }
+  > {
+    let step = "entitlement";
     try {
       const entitlement = await this.checkEntitlement(delivery);
-      if (entitlement !== null) return this.settleFailure(delivery, entitlement);
+      if (entitlement !== null) return { failure: entitlement };
 
       step = "content";
       const content = await this.resolveContent(delivery);
-      if ("reasonCode" in content) return this.settleFailure(delivery, content);
+      if ("reasonCode" in content) return { failure: content };
 
       step = "recipient";
       const recipient = await this.recipients.resolve({
@@ -187,32 +218,36 @@ export class NotificationDeliveryHandler {
         channel: delivery.channel,
       });
       if (recipient === null) {
-        return this.settleFailure(delivery, {
-          reasonCode: NOTIFICATION_DELIVERY_REASON.RECIPIENT_UNRESOLVED,
-          reason: "The delivery's recipient reference names no active contact for this channel.",
-        });
+        return {
+          failure: {
+            reasonCode: NOTIFICATION_DELIVERY_REASON.RECIPIENT_UNRESOLVED,
+            reason: "The delivery's recipient reference names no active contact for this channel.",
+          },
+        };
       }
 
-      prepared = {
-        address: recipient.address,
-        subject: content.subject,
-        body: content.body,
-        parameters: content.parameters,
+      return {
+        prepared: {
+          address: recipient.address,
+          subject: content.subject,
+          body: content.body,
+          parameters: content.parameters,
+        },
       };
     } catch (error) {
       if (error instanceof UnsupportedRecipientTypeError) {
-        return this.settleFailure(delivery, {
-          reasonCode: NOTIFICATION_DELIVERY_REASON.RECIPIENT_TYPE_UNSUPPORTED,
-          reason: "The delivery's recipient type has no reader.",
-        });
+        return {
+          failure: {
+            reasonCode: NOTIFICATION_DELIVERY_REASON.RECIPIENT_TYPE_UNSUPPORTED,
+            reason: "The delivery's recipient type has no reader.",
+          },
+        };
       }
       return this.recordRetryableFailure(delivery, {
         reasonCode: NOTIFICATION_DELIVERY_REASON.GATE_FAILED,
         reason: `The ${step} gate failed before the message could be sent.`,
       });
     }
-
-    await this.send(delivery, prepared);
   }
 
   /** The provider call and its outcome. The adapters return outcomes; a throw is the boundary's. */

@@ -27,7 +27,12 @@ export interface SmtpEmailConfig {
 /** The slice of nodemailer's transport this adapter uses. */
 export interface EmailTransport {
   sendMail(options: Record<string, unknown>): Promise<{ messageId?: string }>;
-  close?(): void;
+  /**
+   * Sync OR async, and the adapter awaits it for that reason (TD-042 R3-1): a
+   * `try/catch` around a call that returns a rejected promise catches nothing,
+   * and the rejection becomes an unhandled one.
+   */
+  close?(): void | Promise<void>;
 }
 
 /**
@@ -209,12 +214,14 @@ export function createSmtpEmailChannel(options: SmtpEmailChannelOptions): Notifi
       } catch (error) {
         return { outcome: "FAILED", ...classifyEmailFailure(error) };
       } finally {
-        // TD-040 R3-002. Guarded on purpose: an unguarded `close()` that throws
-        // would turn a message that ALREADY LEFT into a recorded failure, and a
-        // rejected `close()` promise would become an unhandled rejection. The
-        // attempt's outcome is decided above; teardown cannot revise it.
+        // TD-040 R3-002, corrected by TD-042 R3-1. Guarded AND awaited: an
+        // unguarded `close()` that throws turns a message that ALREADY LEFT into
+        // a recorded failure, and a `try/catch` alone does nothing about a
+        // `close()` that returns a REJECTED PROMISE — the rejection escapes as an
+        // unhandled one. The attempt's outcome is decided above, and teardown
+        // cannot revise it either way.
         try {
-          transport.close?.();
+          await transport.close?.();
         } catch {
           // Deliberately swallowed for the reason above.
         }

@@ -193,7 +193,8 @@ describe("buildNotificationChannels", () => {
       env: { EMAIL_PROVIDER: "smtp", WHATSAPP_PROVIDER: "fake", ...SMTP_ENV, SMTP_PORT },
     });
     expect(() => buildNotificationChannels(withPort("587"))).not.toThrow();
-    for (const bad of ["0", "65536", "-1", "smtp", "5 8 7"]) {
+    // `1e3` and `0x10` are the ones `Number` alone still accepted (TD-042 R3-2).
+    for (const bad of ["0", "65536", "-1", "smtp", "5 8 7", "1e3", "0x10", "587.5"]) {
       expect(() => buildNotificationChannels(withPort(bad)), bad).toThrow(/must be a port number/);
     }
   });

@@ -204,10 +204,15 @@ function buildWhatsAppChannel(args: BuildNotificationChannelsArgs): Notification
 
 function readPort(env: EnvRecord, name: string): number {
   const raw = requireEnv(env, name, "smtp");
-  // `Number`, NOT `parseInt`: `parseInt("587abc", 10)` is 587, so a typo in a
-  // deployment input would silently become a different port (TD-040 R3-003).
+  // Digits only, and THEN convert. Two leniencies had to be refused, not one
+  // (TD-040 R3-003, corrected by TD-042 R3-2): `parseInt("587abc", 10)` is 587,
+  // and `Number("1e3")` is 1000 — so `Number` alone would still accept a
+  // scientific-notation port and `Number("0x10")` would be 16.
+  if (!/^[0-9]{1,5}$/.test(raw)) {
+    throw new Error(`${name} must be a port number, got "${raw}".`);
+  }
   const port = Number(raw);
-  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+  if (port <= 0 || port > 65_535) {
     throw new Error(`${name} must be a port number, got "${raw}".`);
   }
   return port;

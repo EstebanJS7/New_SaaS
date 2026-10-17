@@ -185,6 +185,18 @@ without the fix; the two real ones were an unguarded transport `close()` and the
 gate phase leaving no trace on the row. One case in TD-040 was caught by its own
 new guard: the walked root is `src/`, not the package root.
 
+## TD-042 — the advisories the advisory fix produced (2026-10-17)
+
+The fix unit for TD-040/TD-041 was itself reviewed (`review-15bb8c29f08b5a2f`)
+and approved, and raised four more advisories — two of which are **defects in
+the fix**: a `try/catch` around an async `close()` that caught nothing (while
+its own comment claimed otherwise), and a `settleFailure` called from inside the
+new gates' `try`, which would have RETRIED a delivery that faithfully failed
+non-retryably. Both fixed, with the other two leniencies (`Number("1e3")`, a
+non-http scheme). The lesson is recorded in [[TD-042]]: review the fix as its
+own candidate, and distrust a comment that asserts a guarantee the code does not
+provide.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

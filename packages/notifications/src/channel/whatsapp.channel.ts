@@ -107,10 +107,16 @@ export function createWhatsAppCloudChannel(
   //
   // The variable name is spelled out rather than imported from the module that
   // declares it, because this file is what that module imports.
+  // Absolute AND http(s): `new URL("file:///etc/passwd")` parses happily, and a
+  // scheme `fetch` cannot use would be classified as an unreachable provider and
+  // retried (TD-042 R3-3).
   try {
-    new URL(baseUrl);
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error("scheme");
+    }
   } catch {
-    throw new Error("WHATSAPP_CLOUD_API_BASE_URL must be an absolute URL.");
+    throw new Error("WHATSAPP_CLOUD_API_BASE_URL must be an absolute http(s) URL.");
   }
 
   return {

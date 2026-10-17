@@ -25,6 +25,10 @@ const request = {
   parameters: [],
 };
 
+function unpack(reason: unknown, into: unknown[]): void {
+  into.push(reason);
+}
+
 /** A transport that records what it was asked to send and how it was torn down. */
 function recordingTransport(result: { messageId?: string } | Error) {
   const sendMail = vi.fn((_options: Record<string, unknown>) =>
@@ -75,6 +79,32 @@ describe("the SMTP email adapter's guardrails (ADR-011)", () => {
       outcome: "SENT",
       providerReference: "one",
     });
+  });
+
+  it("survives an ASYNC teardown that rejects — TD-042 R3-1", async () => {
+    // The first version of the guard wrapped `close()` in a try/catch, which
+    // catches a synchronous throw and NOTHING about a returned rejected promise:
+    // the rejection escaped as an unhandled one. The adapter awaits it now.
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unpack(reason, rejections);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const transport = {
+        sendMail: vi.fn(() => Promise.resolve({ messageId: "one" })),
+        close: () => Promise.reject(new Error("async teardown exploded")),
+      };
+      const channel = createSmtpEmailChannel({ config, transportFactory: () => transport });
+
+      await expect(channel.send(request)).resolves.toEqual({
+        outcome: "SENT",
+        providerReference: "one",
+      });
+      // Give an unhandled rejection a chance to surface before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("closes the transport even when the send fails", async () => {

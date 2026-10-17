@@ -445,6 +445,61 @@ describe("the delivery handler's outcome", () => {
   });
 });
 
+describe("the settle path", () => {
+  it("does not reinterpret a failing SETTLE write as a retryable one — TD-042 R3-4", async () => {
+    // A settle inside the gates' try had its own failure caught and rewritten as
+    // a retryable failure, so a delivery that faithfully failed non-retryably
+    // would be retried — and its message attempted again — because the write that
+    // RECORDS the settle failed.
+    const writes: { where: Record<string, unknown>; data: Record<string, unknown> }[] = [];
+    let call = 0;
+    const handler = new NotificationDeliveryHandler(
+      {
+        notificationDelivery: {
+          findFirst: () =>
+            Promise.resolve({
+              id: job.notificationDeliveryId,
+              tenantId: job.tenantId,
+              channel: "EMAIL",
+              status: "SCHEDULED",
+              recipientType: "CUSTOMER",
+              recipientId: "x",
+              attemptCount: 0,
+              lastAttemptAt: null,
+            }),
+          updateMany: (write: {
+            where: Record<string, unknown>;
+            data: Record<string, unknown>;
+          }) => {
+            writes.push(write);
+            call += 1;
+            // 1: the claim. 2: the settle, which fails.
+            return call === 2
+              ? Promise.reject(new Error("the settle write failed"))
+              : Promise.resolve({ count: 1 });
+          },
+        } as unknown as NotificationDeliveryPrisma["notificationDelivery"],
+      },
+      {
+        for: () => ({
+          providerId: "FAKE",
+          send: () => Promise.resolve({ outcome: "SENT", providerReference: null }),
+        }),
+      },
+      createNullNotificationRecipientPort(),
+      createDenyAllNotificationEntitlementPort(),
+      {
+        build: () => Promise.resolve({ outcome: "READY", subject: "s", body: "b", parameters: [] }),
+      }
+    );
+
+    // The settle's failure propagates as itself: nothing rewrites it into a
+    // "will be retried" outcome, and no third write is issued.
+    await expect(handler.handle(job)).rejects.toThrow(/the settle write failed/);
+    expect(writes).toHaveLength(2);
+  });
+});
+
 describe("the handler's own reason strings", () => {
   it("are bounded and newline-free, so a reason stays a coordinate", async () => {
     const { handler, writes } = setup({

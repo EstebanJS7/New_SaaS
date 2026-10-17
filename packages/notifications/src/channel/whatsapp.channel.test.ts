@@ -91,7 +91,28 @@ describe("the WhatsApp Cloud adapter", () => {
         config: { ...config, baseUrl: "not a url" },
         fetchImpl: recordingFetch(200, "{}").fetchImpl,
       })
-    ).toThrow(/WHATSAPP_CLOUD_API_BASE_URL must be an absolute URL/);
+    ).toThrow(/WHATSAPP_CLOUD_API_BASE_URL must be an absolute http\(s\) URL/);
+  });
+
+  it("refuses a URL whose scheme it cannot call — TD-042 R3-3", () => {
+    // `new URL("file:///etc/passwd")` parses happily, and a scheme fetch cannot
+    // use would have been classified as an unreachable provider and retried.
+    for (const baseUrl of ["file:///etc/passwd", "ftp://example.test", "javascript:alert(1)"]) {
+      expect(
+        () =>
+          createWhatsAppCloudChannel({
+            config: { ...config, baseUrl },
+            fetchImpl: recordingFetch(200, "{}").fetchImpl,
+          }),
+        baseUrl
+      ).toThrow(/must be an absolute http\(s\) URL/);
+    }
+    expect(() =>
+      createWhatsAppCloudChannel({
+        config: { ...config, baseUrl: "http://proxy.example.test/v1" },
+        fetchImpl: recordingFetch(200, "{}").fetchImpl,
+      })
+    ).not.toThrow();
   });
 
   it("accepts a 2xx answer with no message id as a send", async () => {
