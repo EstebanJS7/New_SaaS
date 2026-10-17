@@ -116,16 +116,18 @@ to prove the Core abstraction.
 - **[[FISC-004]] Queued fiscal submission — `done`.** Closed via pull request
   #100, with the live-PostgreSQL gate executed both locally and in CI. Extracted
   `packages/fiscal` so the worker can consume the same boundary, added the queue
-  contract with the deterministic `jobId = fiscal-submit:<documentId>`, the API
-  producer with a 2 s deadline and fail-fast Redis options, the worker consumer
-  and handler with a five-minute claim lease, the status transition guard, and
-  the explicit `POST /fiscal-documents` command. Two CRITICAL findings the
-  refuter confirmed were fixed before merge: a Redis outage could hang every
-  issue request, and a worker dying between the `SENDING` claim and the provider
-  call could strand a document permanently. The targeted validation was refused
-  at admission and `inspect-authority` reported `sanctioned_exits: []`, so this
-  slice's review is **escalated, not closed** — the same terminal shape BILL-004
-  recorded in EPIC-14, and it is recorded rather than smoothed over.
+  contract with the deterministic `jobId = fiscal-submit-<documentId>` (a
+  hyphen: the value shipped as `fiscal-submit:<documentId>`, which BullMQ
+  refuses, and [[TD-039]] corrected it on 2026-10-17), the API producer with a 2
+  s deadline and fail-fast Redis options, the worker consumer and handler with a
+  five-minute claim lease, the status transition guard, and the explicit
+  `POST /fiscal-documents` command. Two CRITICAL findings the refuter confirmed
+  were fixed before merge: a Redis outage could hang every issue request, and a
+  worker dying between the `SENDING` claim and the provider call could strand a
+  document permanently. The targeted validation was refused at admission and
+  `inspect-authority` reported `sanctioned_exits: []`, so this slice's review is
+  **escalated, not closed** — the same terminal shape BILL-004 recorded in
+  EPIC-14, and it is recorded rather than smoothed over.
 
 - **[[TD-028]] Fiscal submission recovery sweep — `resolved`.** Closed via pull
   request #101. `recoverStaleFiscalSubmissions` selects `QUEUED`/`ERROR`

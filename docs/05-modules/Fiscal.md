@@ -267,10 +267,14 @@ directly. The job payload carries stable IDs only —
 `{ fiscalDocumentId, tenantId }` — never a document dump.
 
 - Queue `fiscal-submission`, job `submit`, deterministic `jobId`
-  `fiscal-submit:<documentId>`, 5 attempts, exponential backoff from 1 s,
+  `fiscal-submit-<documentId>`, 5 attempts, exponential backoff from 1 s,
   `removeOnComplete: true`, `removeOnFail: false`. The deterministic job ID
   makes queue dedupe and the partial unique index agree on what "the same
-  logical request" means.
+  logical request" means. The separator is a **hyphen and never a colon**:
+  BullMQ throws `Custom Id cannot contain :` inside its own `Job` constructor
+  for any custom id that is not exactly three colon-separated segments, which is
+  why this shipped as `fiscal-submit:<documentId>` and could not enqueue a
+  single document until [[TD-039]] was resolved.
 - The producer is bounded: fail-fast Redis options (`maxRetriesPerRequest: 2`,
   `enableOfflineQueue: false`, 2 s `connectTimeout`) plus a 2 s `queue.add`
   deadline, so a Redis outage cannot hang an HTTP request.

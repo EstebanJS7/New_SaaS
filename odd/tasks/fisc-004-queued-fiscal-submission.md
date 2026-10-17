@@ -117,7 +117,12 @@ export interface FiscalSubmissionJob {
 
 export function fiscalSubmissionJobOptions(fiscalDocumentId: string) {
   return {
-    jobId: `fiscal-submit:${fiscalDocumentId}`, // deterministic identity, DEC-049
+    jobId: `fiscal-submit-${fiscalDocumentId}`, // deterministic identity, DEC-049
+    // NOTE (2026-10-17, TD-039): this was `fiscal-submit:${fiscalDocumentId}`.
+    // BullMQ refuses a custom job id containing `:`, so the producer threw at
+    // `queue.add` and no document could be enqueued. EPIC-17's notification
+    // boundary copied this exact snippet and its review caught the defect on
+    // both sides. Keep the hyphen.
     attempts: FISCAL_SUBMISSION_MAX_ATTEMPTS,
     backoff: {
       type: "exponential" as const,

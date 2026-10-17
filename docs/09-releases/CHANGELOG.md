@@ -507,4 +507,27 @@ All notable product changes will be documented here.
 
 ### Fixed
 
+- **[[TD-039]] — the fiscal submission producer could not enqueue anything.**
+  `fiscalSubmissionJobId` built its job id as `fiscal-submit:<documentId>`, and
+  BullMQ refuses a custom job id containing `:` unless it splits into exactly
+  three segments (its own repeatable-job format), so `queue.add` threw
+  `Custom Id cannot contain :` before any document reached the queue: no fiscal
+  document could be enqueued in production. Fixed by separating with a hyphen,
+  `fiscal-submit-<documentId>`.
+
+  The defect survived every gate because a mocked `Queue` never runs BullMQ's
+  `Job` constructor, where the rule lives, so the unit test **asserted the wrong
+  literal** and the live-PostgreSQL suite replaces the producer with a fake. It
+  was found by the EPIC-17 notification boundary's review, which caught its own
+  copy of the same shape. The suite now also asserts the id carries no colon,
+  and the fix is verified against a real Redis:
+
+  ```text
+  CONTROL (old, colon): Custom Id cannot contain :
+  FIXED (new, hyphen): ADDED as jobId=fiscal-submit-9a1f4c2d-...
+  ```
+
+  The determinism contract [[DEC-049]] relies on is unchanged: the identity is
+  still derived from `fiscalDocumentId` alone.
+
 ### Security

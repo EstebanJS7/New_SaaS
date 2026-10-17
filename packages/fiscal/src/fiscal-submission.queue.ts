@@ -16,9 +16,27 @@ export interface FiscalSubmissionJob {
   readonly tenantId: string;
 }
 
-/** Returns the deterministic BullMQ identity for a fiscal document submission. */
+/**
+ * Returns the deterministic BullMQ identity for a fiscal document submission.
+ *
+ * The separator is a HYPHEN, and that is a correctness requirement rather than a
+ * style choice. BullMQ refuses a custom job id containing `:` unless it splits
+ * into exactly three segments (its own repeatable-job format), and `queue.add`
+ * throws `Custom Id cannot contain :` BEFORE anything is enqueued.
+ *
+ * This function returned `fiscal-submit:<documentId>` until TD-039, which meant
+ * no fiscal document could be enqueued at all in production: the throw happens
+ * inside BullMQ's `Job` constructor, which a mocked `Queue` never reaches, so
+ * the unit test asserted the literal and stayed green. Measured against
+ * `bullmq@5.81.3` with a real Redis — `fiscal-submit:abc` is refused, `a:b:c`
+ * is accepted only for its three segments, and `fiscal-submit-abc` is accepted.
+ *
+ * EPIC-17's notification boundary copied this shape and its review caught it as
+ * a CRITICAL; `packages/notifications/src/notification-delivery.queue.ts`
+ * carries the same hyphen for the same reason.
+ */
 export function fiscalSubmissionJobId(fiscalDocumentId: string): string {
-  return `fiscal-submit:${fiscalDocumentId}`;
+  return `fiscal-submit-${fiscalDocumentId}`;
 }
 
 /**

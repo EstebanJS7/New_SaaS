@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The fiscal submission producer's job id carries a colon, which BullMQ refuses,
   so no fiscal document can be enqueued in production
-status: open
+status: resolved
 severity: high
 owner: fiscal
 related_epics:
@@ -92,6 +92,39 @@ means.
 An id-shape assertion (`expect(fiscalSubmissionJobId(id)).not.toContain(":")`)
 and, ideally, one live `queue.add` against a Redis in CI, since the rule lives
 in BullMQ's `Job` constructor and only a real `Queue` reaches it.
+
+## Resolution (2026-10-17)
+
+Fixed on branch `fix/td-039-fiscal-job-id-colon`, and **proven against a real
+Redis rather than against a mock**:
+
+```text
+fiscalSubmissionJobId => fiscal-submit-9a1f4c2d-0b7e-4a11-9d3c-5f2b8e6a71c4
+CONTROL (old, colon): Custom Id cannot contain :
+FIXED (new, hyphen): ADDED as jobId=fiscal-submit-9a1f4c2d-0b7e-4a11-9d3c-5f2b8e6a71c4
+```
+
+The control is the separator that shipped, added through `queue.add` exactly as
+the producer does; the fixed line is the real `fiscalSubmissionJobOptions`
+passed to a real `Queue`.
+
+What changed:
+
+- `packages/fiscal/src/fiscal-submission.queue.ts` — the separator, plus the
+  rule and this defect's history in the function's own doc comment, because the
+  shape propagated once already: EPIC-17's notification boundary copied it.
+- `packages/fiscal/src/fiscal-submission.queue.test.ts` — the literal, plus a
+  shape assertion over several inputs (`not.toContain(":")`), which is the test
+  that would have caught this. A mocked `Queue` cannot: the throw lives in
+  BullMQ's `Job` constructor.
+- `apps/api/src/fiscal/fiscal-submission.producer.test.ts` — the asserted
+  literal and the mocked `add` result, with the reason recorded beside them.
+- `docs/05-modules/Fiscal.md` and `docs/09-releases/CHANGELOG.md` — the
+  implemented-behavior records, in the same change as the behaviour.
+
+Verdict: the fix is one separator and it is verified end to end. The suite grew
+by one case (fiscal 787 → 788). The determinism contract [[DEC-049]] relies on
+is untouched: the identity is still derived from `fiscalDocumentId` alone.
 
 ## Related
 

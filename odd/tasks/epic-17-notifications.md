@@ -107,10 +107,11 @@ by any service.
 - **BullMQ refuses a custom job id containing `:`** unless it splits into
   exactly three segments. Measured against `bullmq@5.81.3` with a real Redis,
   and it cost this epic one CRITICAL: the boundary had copied
-  `fiscal-submit:<id>`. The notification id is now hyphenated; [[TD-039]]
-  records that **the fiscal one was not fixed and is a production blocker**,
-  because its shape is pinned by a test that asserts it against a mocked
-  `Queue`.
+  `fiscal-submit:<id>`. The notification id is now hyphenated, and [[TD-039]] —
+  the same defect on the fiscal producer, where it was a production blocker
+  because a mocked `Queue` pinned the wrong literal — is **`resolved`** on
+  `fix/td-039-fiscal-job-id-colon`, proven against a real Redis
+  (`Custom Id cannot contain :` for the old separator, `ADDED` for the new one).
 
 - **The dispatcher is in-process**, so a reaction only sees an event published
   by its own deployable: the appointment reactions belong in `api`, the
@@ -127,6 +128,15 @@ by any service.
   an absent value is refused in production, an unknown value is refused by name,
   and the fake stays selectable on purpose for the documented demo path.
   [[DEC-061]] adopts that rule rather than a stricter paraphrase of it.
+
+## TD-039 — resolved, off this epic's branch
+
+`fix/td-039-fiscal-job-id-colon`, stacked on this epic's branch because the TD
+record was created here. One separator (`fiscal-submit-<documentId>`), the two
+asserted literals, a new id-shape case, and the doc correction in
+`docs/05-modules/Fiscal.md`, the changelog and the EPIC-15 record. Verified with
+a real Redis through the producer's own options function; fiscal suite 787
+→ 788.
 
 ## Operational notes
 

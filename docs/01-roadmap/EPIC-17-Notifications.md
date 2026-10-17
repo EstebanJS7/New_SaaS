@@ -203,10 +203,13 @@ job identity, because BullMQ refuses a custom job id containing `:` and the id
 had copied the fiscal boundary's `fiscal-submit:<id>` shape. It was measured
 against `bullmq@5.81.3` with a real Redis, corrected, and the corrected
 candidate was validated. The same review exposed **[[TD-039]]**: the fiscal
-boundary still carries that id, so the fiscal producer's enqueue throws in
-production, and its unit test asserts the wrong literal against a mocked `Queue`
-— which is why `main`'s CI is green over a production blocker. **TD-039 is open,
-and it is the most valuable thing this session found.**
+boundary still carried that id, so the fiscal producer's enqueue threw in
+production, and its unit test asserted the wrong literal against a mocked
+`Queue` — which is why `main`'s CI was green over a production blocker. **TD-039
+is resolved**: the separator is a hyphen, the id shape is asserted, and the fix
+was proven against a real Redis
+(`CONTROL (old, colon): Custom Id cannot contain :` /
+`FIXED (new, hyphen): ADDED`).
 
 ## Dependencies
 

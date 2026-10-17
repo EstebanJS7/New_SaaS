@@ -11,7 +11,7 @@ const document = { fiscalDocumentId: "document-1", tenantId: "tenant-1" };
 
 describe("BullMqFiscalSubmissionProducer", () => {
   it("enqueues the job name, stable-id payload, job id, and full options", async () => {
-    const add = vi.fn().mockResolvedValue({ id: "fiscal-submit:document-1" });
+    const add = vi.fn().mockResolvedValue({ id: "fiscal-submit-document-1" });
     const queue = { add } as unknown as Queue;
     const producer = new BullMqFiscalSubmissionProducer(queue);
 
@@ -22,7 +22,10 @@ describe("BullMqFiscalSubmissionProducer", () => {
       ...fiscalSubmissionJobOptions(document.fiscalDocumentId),
     });
     expect(add.mock.calls[0]?.[2]).toEqual({
-      jobId: "fiscal-submit:document-1",
+      // A hyphen, never a colon: BullMQ throws `Custom Id cannot contain :` inside
+      // its own `Job` constructor, which this mocked `Queue` does not run.
+      // TD-039.
+      jobId: "fiscal-submit-document-1",
       attempts: 5,
       backoff: { type: "exponential", delay: 1_000 },
       removeOnComplete: true,
