@@ -60,15 +60,21 @@ by any service.
       `risk_level: low`, `non_executable_only`, no lenses required, `approved`
       and acknowledged, authority burned. `pnpm format-check` green **after**
       the last edit.
-- [ ] **WU-B — the aggregate and the queue contract.** The tenant-scoped table
-      (status, attempts, dedupe key, `scheduled_at`, sanitized payload refs),
-      its migration, the lifecycle guard, the queue name and the deterministic
-      job identity. Mirrors `apps/worker/src/fiscal-submission/`. →
-      [[NOTIF-001]]
+- [x] **WU-B — the aggregate and the queue contract.** The tenant-scoped table
+      (status, attempts, dedupe key, `scheduled_at`), its migration, the
+      lifecycle guard, the queue name and the deterministic job identity.
+      Mirrors `apps/worker/src/fiscal-submission/`. → [[NOTIF-001]] Evidence:
+      `@newsaas/notifications` 13 cases, the database schema gate 18 cases, and
+      `pnpm db:live-verify`'s 28 live cases on PostgreSQL 16. The payload-refs
+      column was dropped (no consumer) and the worker consumer moved to
+      [[NOTIF-002]] — both recorded in the Story, not absorbed silently. Commit
+      and review receipts are appended below once they exist.
 - [ ] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
       deterministic fake, the real adapters, fail-closed production selection,
       and the recipient's contact data classified **RESTRICTED**. The email
-      library's ADR is this unit's gate. → [[NOTIF-002]]
+      library's ADR is this unit's gate. **It also owns the worker consumer and
+      the delivery handler**, which moved from WU-B because a claim with nothing
+      to send cannot be a unit. → [[NOTIF-002]]
 - [ ] **WU-D — the appointment reminder.** The schema-bound job, the typed
       `notifications` settings namespace, the idempotency key, and the
       cancellation path that removes a pending reminder — which needs decision

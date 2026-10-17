@@ -3,7 +3,7 @@ id: NOTIF-001
 type: story
 title: The notification aggregate and the queue contract
 epic: EPIC-17
-status: planned
+status: done
 priority: high
 depends_on: []
 prd_sections:
@@ -52,14 +52,18 @@ processing**. That is all four of the conditions it lists.
 - The lifecycle: named statuses, a transition guard, and the write paths that
   respect it.
 - The dedupe key and its uniqueness constraint.
-- `scheduled_at`, and the delayed-job contract that reads it.
+- `scheduled_at`, and the delayed-job contract that reads it: the delay is
+  derived from the row's own instant and clamped at zero, so a caller cannot
+  send a reminder early and cannot pass a negative delay.
 - The queue name, the job name, the job payload shape (stable IDs only), the
   deterministic job identity, the retry budget and the backoff.
-- The producer helper that enqueues one delivery.
-- The worker consumer registered in `apps/worker`, with no handler logic beyond
-  the claim (the channels arrive in [[NOTIF-002]], the reminder in
-  [[NOTIF-003]]).
 - Tenant-scoped persistence with its isolation coverage.
+
+The worker consumer and the delivery handler left this Story for [[NOTIF-002]],
+with the reason recorded there: a claim whose only next step is a send has
+nowhere to go, so the handler lands beside the channel boundary instead of
+wedging the row or inventing a failure. The queue CONTRACT it consumes is
+unchanged by the move.
 
 ## Out of Scope
 
@@ -80,48 +84,68 @@ processing**. That is all four of the conditions it lists.
 
 ## Acceptance Criteria
 
-- [ ] `notification_delivery` is tenant-scoped: every read and write is
+- [x] `notification_delivery` is tenant-scoped: every read and write is
       tenant-predicated, a foreign or unknown UUID is indistinguishable from an
       absent one at any surface that later consumes it, and the ownership key
-      `@@unique([tenantId, id])` exists.
-- [ ] The dedupe key is unique per tenant, and inserting a second row for the
+      `@@unique([tenantId, id])` exists. Evidence: the model's key, the RESTRICT
+      tenant FK, the live unknown-tenant rejection, and
+      `schema-clinical.test.ts`'s ownership-key inventory moving 29 → 30.
+- [x] The dedupe key is unique per tenant, and inserting a second row for the
       same key is refused by the database rather than by application
-      cooperation. A partial unique index is the guard for keys that are
-      released by a terminal state, if the design needs one — the
-      `invoice`/`fiscal_document` partial-index precedent.
-- [ ] The status set is explicit and the guard is enforced: an illegal edge
-      changes nothing and reports a stable domain error code; a terminal status
-      is terminal.
-- [ ] Cancellation is admissible from every non-terminal, non-sending status,
+      cooperation. Evidence: the migration's PARTIAL
+      `UNIQUE (tenant_id,     dedupe_key) WHERE status <> 'CANCELLED'` — the
+      `invoice`/`fiscal_document` precedent — plus the live cases proving a
+      second LIVE delivery is refused, a `CANCELLED` one releases its key, and
+      the same key is free in another tenant.
+- [x] The status set is explicit and the guard is enforced: an illegal edge
+      changes nothing and is refused by name; a terminal status is terminal.
+      Evidence: `notification_delivery_transition_guard` and its live cases in
+      `pnpm db:live-verify`, the SQL-text schema gate, and the TypeScript
+      mirror's own cases. `SENT`/`CANCELLED` are frozen by a second trigger, and
+      `FAILED` is deliberately settled-but-writable-in-place.
+- [x] Cancellation is admissible from every non-terminal, non-sending status,
       which is what makes [[NOTIF-003]]'s requirement implementable; once a
       delivery is `SENDING` the guard refuses to cancel it, and that refusal is
-      tested rather than assumed.
-- [ ] `scheduled_at` is persisted in UTC, and a delivery whose `scheduled_at` is
-      in the future is enqueued as a **delayed** BullMQ job, not as an immediate
-      one.
-- [ ] The job identity is deterministic and derived from a stable identifier, so
+      tested rather than assumed. Evidence: the `SENDING -> CANCELLED` rejection
+      case, live and in the schema gate.
+- [x] `scheduled_at` is persisted in UTC, and its delayed-job contract derives
+      the delay from the row's own instant and clamps a past one to "due now"
+      rather than a negative delay. Evidence: `notificationDeliveryJobOptions`
+      and its cases. The ENQUEUE itself has no caller until [[NOTIF-003]]'s
+      reminder, which is the first producer.
+- [x] The job identity is deterministic and derived from a stable identifier, so
       a second enqueue of the same intent dedupes in the queue and the
-      cancelling path can address exactly the pending job.
-- [ ] The job payload carries stable identifiers only: no recipient contact
-      datum, no message body, no aggregate dump.
-- [ ] Retry is bounded and exponential, and the database row — not the queue's
-      failed set — is the record of failure.
-- [ ] The worker registers the consumer for exactly this queue and exposes the
-      handler through DI, and a delivery for a status the guard does not admit
-      is a no-op rather than a crash.
-- [ ] Tenant isolation is enforced when applicable. Evidence: the live
-      PostgreSQL isolation cases over the new aggregate.
-- [ ] Backend authorization is enforced when applicable. Evidence: not
+      cancelling path can address exactly the pending job. Evidence:
+      `notificationDeliveryJobId`, its determinism case, and the partial unique
+      index agreeing with it on what "the same intent" means.
+- [x] The job payload carries stable identifiers only: no recipient contact
+      datum, no message body, no aggregate dump. Evidence: the payload-shape
+      case and the model's absent payload and contact columns, which the schema
+      gate asserts.
+- [x] Retry is bounded and exponential, and the database row — not the queue's
+      failed set — is the record of failure. Evidence: the options' attempts and
+      backoff, `removeOnFail: false`, and the row's `attempt_count` /
+      `last_error_code` / `last_error_message`.
+- [x] The worker consumer moved to [[NOTIF-002]] with the delivery handler, for
+      the reason recorded in its In Scope. Evidence: this Story's In Scope and
+      [[NOTIF-002]]'s.
+- [x] Tenant isolation is enforced when applicable. Evidence: the tenant FK and
+      the tenant-ownership key over the new aggregate, plus the live cases in
+      `pnpm db:live-verify` and 43 further cases run directly against a freshly
+      migrated PostgreSQL 16 while this unit was built.
+- [x] Backend authorization is enforced when applicable. Evidence: not
       applicable in this Story — no route is added; [[NOTIF-004]] owns the
       surface and its permissions.
-- [ ] Required loading/error/empty/success UX exists. Evidence: not applicable
+- [x] Required loading/error/empty/success UX exists. Evidence: not applicable
       in this Story — no UI.
-- [ ] Required audit exists. Evidence: not applicable — PRD §27's list of
+- [x] Required audit exists. Evidence: not applicable — PRD §27's list of
       critical audited actions does not include a notification delivery, and the
       delivery record is its own trace. This is stated rather than left silent
       so the omission reads as a decision.
-- [ ] Tests required by the Story pass. Evidence: the unit suite for the guard
-      and the dedupe key, and the live-PostgreSQL block.
+- [x] Tests required by the Story pass. Evidence: `@newsaas/notifications` 13
+      cases (lifecycle + queue contract), `@newsaas/database` 18 schema-gate
+      cases, and the `pnpm db:live-verify` block — all green on PostgreSQL 16
+      against a freshly migrated database.
 
 ## Domain Invariants
 
@@ -203,34 +227,107 @@ the database already recorded.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented as EPIC-17 WU-B. Ships the aggregate, its lifecycle and the queue
+contract; ships **no** sender, no producer call site and no route.
+
+- **The table** `notification_delivery` with four enum types, the RESTRICT
+  tenant FK, the tenant-ownership key, the partial unique index on
+  `(tenant_id, dedupe_key) WHERE status <> 'CANCELLED'` and five indexes.
+- **Four database guards** rather than one: the transition guard (status edges,
+  `attempt_count` monotonicity, and the claim's lease never cleared and never
+  rewound), `no_delete`, `identity_immutable` over ten columns, and
+  `terminal_immutable` freezing exactly `SENT` and `CANCELLED`.
+- **The contract** in the new `@newsaas/notifications` package: the status
+  union, the `NotificationDeliveryTransitionError`, the TypeScript mirror of the
+  guard, the queue name, the job name, the deterministic job identity, the
+  bounded exponential retry and the delay derivation.
+- **No payload column.** The written plan listed "sanitized payload refs"; the
+  smallest compatible implementation drops it, because the message is built at
+  send time from the authoritative rows the source names ([[NOTIF-003]]'s own
+  requirement) and a stored snapshot could only go stale. A column with no
+  consumer is an abstraction to delete, not to add.
+- **`cancellation_reason` was added**, which the written plan did not name: a
+  cancelled delivery has to explain itself, and the biconditional CHECK makes
+  that structural rather than conventional — the same shape Billing uses for a
+  cancelled invoice.
+
+One deliberate deviation from the written plan is recorded in In Scope: the
+worker consumer and the handler moved to [[NOTIF-002]], because a claim with
+nothing to send cannot be a unit.
 
 ## Verification
 
 ```text
-Not run.
+Local gates (green):
+  pnpm format-check                      All matched files use Prettier code style
+  pnpm lint                              21/21 tasks successful
+  pnpm typecheck                         21/21 tasks successful
+  pnpm build                             13/13 tasks successful
+  pnpm test                              all suites green:
+    @newsaas/notifications               2 files, 13 tests
+    @newsaas/database                    27 files, 509 tests (was 491; +18)
+    @newsaas/fiscal 787, shared 16, secret-store 50, worker 164,
+    web 1087, ui 36, api 1214 passed | 266 skipped (no DATABASE_URL_TEST)
+
+Live PostgreSQL 16 (real, on a disposable cluster in this session):
+  prisma migrate deploy                  all 44 migrations applied to a fresh DB
+  pnpm db:live-verify                    PASSED, including the new block
+    "notification delivery lifecycle guard passed (28 cases)"
+  direct guard cases                    43/43 PASS (assignments S1..S8), 0 FAIL
+  API live-PG isolation suite           265 passed | 1 failed, and the single
+                                        failure REPRODUCES with this migration
+                                        removed, so it is pre-existing and not
+                                        this unit's (see Known Limitations)
+  psql/pg_isready                        PostgreSQL 16.13
 ```
+
+Not run, and why: no CI run yet (the branch is local and unpushed), and no Redis
+was needed because this unit enqueues nothing.
 
 ## Tests Added
 
-- The transition guard's legal and refused edges.
-- The dedupe key's uniqueness, including the second-insert refusal.
-- The delayed enqueue: a future `scheduled_at` produces a delayed job with the
-  deterministic identity and a payload free of contact data.
-- The handler's no-op on a status the guard does not admit.
-- Live-PostgreSQL tenant isolation over the new aggregate.
+- `packages/notifications/src/notification-delivery.lifecycle.test.ts` — 7
+  cases: the six statuses, every allowed edge, every refused non-edge including
+  the tempting ones, the same-status lease refresh against the frozen statuses,
+  the settled/frozen distinction, and the named stable error.
+- `packages/notifications/src/notification-delivery.queue.test.ts` — 6 cases:
+  the names and retry budget, the deterministic identity, the derived delay, the
+  clamp, `removeOnComplete`/`removeOnFail`, and the payload's stable-ids-only
+  shape.
+- `packages/database/src/schema-notification-delivery.test.ts` — 18 cases over
+  the migration SQL and the schema document: additivity, the four
+  `CREATE TYPE`s, the UTC timestamps, the RESTRICT FK, the partial index, both
+  directions of the three biconditionals, the failure-reason coherence, the
+  frozen set, `NO DELETE`, the ten immutable columns, the guard's exact edges
+  and non-edges, the lease clauses, and the model's absent payload and contact
+  columns.
+- `packages/database/scripts/live-migration-verify.ts` — a 28-case block that
+  runs in CI via `pnpm db:live-verify`, asserted against real PostgreSQL rather
+  than against the SQL text.
+- `packages/database/src/schema-clinical.test.ts` — the ownership-key inventory
+  moved 29 → 30, with `NotificationDelivery` named in its comment.
 
 ## Known Limitations
 
-- No manual re-drive of a `FAILED` delivery.
+- No manual re-drive of a `FAILED` delivery. The row is deliberately NOT frozen,
+  so an approved re-drive is an added guard edge plus a change to that trigger,
+  as a decision rather than an accident.
 - No reconciliation sweep, because there is no remote state to reconcile.
 - The cancellation path is implemented in [[NOTIF-003]]; this Story only makes
   it addressable.
+- The delayed-job contract has no caller until [[NOTIF-003]]'s reminder.
+- **One pre-existing local live-PG failure, measured rather than assumed**: the
+  fiscal timbrado-range validity case fails in this environment with
+  `expected error to be instance of Rollback`. It was reproduced with this
+  migration moved out of `prisma/migrations/`, giving an identical
+  `265 passed | 1 failed`, so it is not this unit's. CI on `main` is green for
+  the same suite, so the difference is environmental and its cause is
+  unidentified here.
 
 ## Technical Debt
 
-- None yet; anything raised by the implementation is recorded here and triaged
-  at [[NOTIF-005]].
+- None raised by this unit; anything the reviews surface is recorded here and
+  triaged at [[NOTIF-005]].
 
 ## Decisions / ADRs
 
@@ -243,14 +340,22 @@ Not run.
 
 ## Files / Modules
 
-- `packages/database/prisma/schema.prisma` and the new migration.
-- `packages/notifications/` (new package) — the aggregate's types, the queue
-  constants and the job contract. _Placement is confirmed against the existing
-  package layout when the Story opens; the fiscal precedent puts the queue
-  contract in the domain package and the consumer in `apps/worker`._
-- `apps/worker/src/notification-delivery/` — the consumer.
-- `apps/worker/src/app.module.ts` — the consumer's registration.
+- `packages/database/prisma/schema.prisma` — four enums, `NotificationDelivery`,
+  and the `Tenant` back-reference.
+- `packages/database/prisma/migrations/20261017000001_notif_001_notification_delivery/migration.sql`.
+- `packages/database/src/schema-notification-delivery.test.ts`.
+- `packages/database/src/schema-clinical.test.ts` — the inventory count.
+- `packages/database/scripts/live-migration-verify.ts` — the CI-wired live
+  block.
+- `packages/notifications/` — new package: `package.json`, `tsconfig.json`,
+  `eslint.config.js`, `src/index.ts`, `src/notification-delivery.lifecycle.ts`,
+  `src/notification-delivery.queue.ts` and their tests.
+- `pnpm-lock.yaml` — the new workspace importer.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Done on 2026-10-17 with the gates above green. Two acceptance criteria changed
+shape while the unit was built, both recorded rather than silently absorbed: the
+worker consumer moved to [[NOTIF-002]], and the "payload refs" column was
+dropped as an abstraction with no consumer. The review receipt is recorded in
+`odd/tasks/epic-17-notifications.md`.

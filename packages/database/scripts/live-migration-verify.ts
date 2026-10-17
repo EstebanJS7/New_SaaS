@@ -593,6 +593,163 @@ async function main(): Promise<void> {
       throw new Error("reparent of a non-primary guardian broke the one-primary invariant");
     }
 
+    // ---------------------------------------------------------------------
+    // EPIC-17 NOTIF-001: the notification delivery lifecycle guard.
+    //
+    // The schema gate asserts this migration's SQL TEXT; these cases assert what
+    // PostgreSQL actually DOES with it. The fiscal epic paid twice for having a
+    // guard whose live semantics nobody exercised -- FISC-012's CRITICAL was a
+    // missing transition edge and TD-033's was an incomplete NULL->NULL lease
+    // check -- so the delivery guard's edges, its counter tables and its lease
+    // are exercised here rather than reasoned about.
+    // ---------------------------------------------------------------------
+    const notifSourceId = randomUUID();
+    const notifRecipientId = randomUUID();
+
+    const insertDelivery = (id: string, key: string, tenantId = tenantA.id): Promise<unknown> =>
+      prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO "notification_delivery"
+             ("id","tenant_id","channel","dedupe_key","source_type","source_id",
+              "recipient_type","recipient_id","scheduled_at","updated_at")
+           VALUES ($1::uuid,$2::uuid,'EMAIL',$3,'APPOINTMENT',$4::uuid,'CUSTOMER',$5::uuid, now(), now())`,
+          id,
+          tenantId,
+          key,
+          notifSourceId,
+          notifRecipientId
+        );
+      });
+
+    const moveDelivery = (id: string, sql: string): Promise<unknown> =>
+      prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `UPDATE "notification_delivery" SET ${sql} WHERE "id"=$1::uuid`,
+          id
+        );
+      });
+
+    const sentId = randomUUID();
+    await expectCommitted("notification delivery inserted as SCHEDULED", () =>
+      insertDelivery(sentId, `notif-key-sent-${sentId}`)
+    );
+    await expectCommitted("SCHEDULED -> QUEUED", () =>
+      moveDelivery(sentId, `"status"='QUEUED', "updated_at"=now()`)
+    );
+    await expectCommitted("QUEUED -> SENDING with its attempt and lease", () =>
+      moveDelivery(
+        sentId,
+        `"status"='SENDING', "attempt_count"=1, "last_attempt_at"=now(), "updated_at"=now()`
+      )
+    );
+    await expectCommitted("SENDING -> SENT with sent_at", () =>
+      moveDelivery(sentId, `"status"='SENT', "sent_at"=now(), "updated_at"=now()`)
+    );
+    await expectRejected("a SENT delivery is frozen", () =>
+      moveDelivery(sentId, `"last_error_message"='x', "updated_at"=now()`)
+    );
+
+    const freshId = randomUUID();
+    await expectCommitted("a second delivery inserted", () =>
+      insertDelivery(freshId, `notif-key-fresh-${freshId}`)
+    );
+    await expectRejected("SCHEDULED -> SENT is not an edge", () =>
+      moveDelivery(freshId, `"status"='SENT', "sent_at"=now(), "updated_at"=now()`)
+    );
+    await expectRejected("SCHEDULED -> FAILED is not an edge", () =>
+      moveDelivery(freshId, `"status"='FAILED', "last_error_code"='X', "updated_at"=now()`)
+    );
+    await expectRejected("a status cannot disagree with its timestamp", () =>
+      moveDelivery(freshId, `"sent_at"=now(), "updated_at"=now()`)
+    );
+    await expectRejected("an error code on a SCHEDULED delivery", () =>
+      moveDelivery(freshId, `"last_error_code"='NOPE', "updated_at"=now()`)
+    );
+    // The lost-QUEUED-write path: a job already in the queue must be claimable.
+    await expectCommitted("SCHEDULED -> SENDING (the lost QUEUED write)", () =>
+      moveDelivery(
+        freshId,
+        `"status"='SENDING', "attempt_count"=1, "last_attempt_at"=now(), "updated_at"=now()`
+      )
+    );
+    await expectCommitted("a retryable failure stays SENDING and records a code", () =>
+      moveDelivery(
+        freshId,
+        `"last_error_code"='TRANSIENT', "attempt_count"=2,
+         "last_attempt_at"=now() + interval '1 second', "updated_at"=now()`
+      )
+    );
+    await expectRejected("the claim's lease cannot be rewound", () =>
+      moveDelivery(freshId, `"last_attempt_at"=now() - interval '1 hour', "updated_at"=now()`)
+    );
+    await expectRejected("the claim's lease cannot be cleared", () =>
+      moveDelivery(freshId, `"last_attempt_at"=NULL, "updated_at"=now()`)
+    );
+    await expectRejected("attempt_count cannot decrease", () =>
+      moveDelivery(freshId, `"attempt_count"=0, "updated_at"=now()`)
+    );
+    await expectRejected("SENDING cannot be cancelled", () =>
+      moveDelivery(
+        freshId,
+        `"status"='CANCELLED', "cancelled_at"=now(), "cancellation_reason"='X', "updated_at"=now()`
+      )
+    );
+
+    // The intent key: unique among LIVE deliveries per tenant, released by
+    // CANCELLED, and never shared ACROSS tenants.
+    const cancellingId = randomUUID();
+    const releasedKey = `notif-key-released-${cancellingId}`;
+    await expectCommitted("a delivery inserted on its own key", () =>
+      insertDelivery(cancellingId, releasedKey)
+    );
+    await expectRejected("a second LIVE delivery for one key", () =>
+      insertDelivery(randomUUID(), releasedKey)
+    );
+    await expectCommitted("cancel from SCHEDULED with its own accounting", () =>
+      moveDelivery(
+        cancellingId,
+        `"status"='CANCELLED', "cancelled_at"=now(), "cancellation_reason"='APPOINTMENT_CANCELLED', "updated_at"=now()`
+      )
+    );
+    await expectCommitted("the CANCELLED key is released", () =>
+      insertDelivery(randomUUID(), releasedKey)
+    );
+    await expectCommitted("the same key is free in another tenant", () =>
+      insertDelivery(randomUUID(), releasedKey, tenantB.id)
+    );
+
+    // Identity, delete and the tenant FK.
+    const identityId = randomUUID();
+    await expectCommitted("a delivery for the identity cases", () =>
+      insertDelivery(identityId, `notif-key-identity-${identityId}`)
+    );
+    for (const [label, sql] of [
+      ["dedupe_key", `"dedupe_key"='renamed', "updated_at"=now()`],
+      ["channel", `"channel"='WHATSAPP', "updated_at"=now()`],
+      ["scheduled_at", `"scheduled_at"=now() + interval '1 day', "updated_at"=now()`],
+      ["source_id", `"source_id"='${randomUUID()}'::uuid, "updated_at"=now()`],
+      ["recipient_id", `"recipient_id"='${randomUUID()}'::uuid, "updated_at"=now()`],
+    ] as ReadonlyArray<readonly [string, string]>) {
+      await expectRejected(`the delivery's ${label} is immutable`, () =>
+        moveDelivery(identityId, sql)
+      );
+    }
+    await expectRejected("a delivery cannot be deleted", () =>
+      prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `DELETE FROM "notification_delivery" WHERE "id"=$1::uuid`,
+          identityId
+        );
+      })
+    );
+    const surviving = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+      `SELECT "id" FROM "notification_delivery" WHERE "id"=$1::uuid`,
+      identityId
+    );
+    if (surviving.length !== 1) {
+      throw new Error("the delivery did not survive the delete attempts");
+    }
+
     console.log("LIVE MIGRATION VERIFICATION PASSED");
     console.log(`  tenants created: ${tenantA.id}, ${tenantB.id}`);
     console.log(`  customer created: ${customerA.id}`);
@@ -601,6 +758,7 @@ async function main(): Promise<void> {
     console.log(`  both deferred constraint triggers present`);
     console.log(`  patient lifecycle invariant matrix passed (9 cases)`);
     console.log(`  guardian reparent regression passed (OLD+NEW validation, 3 cases)`);
+    console.log(`  notification delivery lifecycle guard passed (28 cases)`);
   } finally {
     await prisma.$disconnect();
   }

@@ -189,6 +189,14 @@ implementation ([[DEC-059]]):
 Story numbering uses the `NOTIF-` prefix, which is new and stable; EPIC-17 is
 its first user.
 
+**Landed**: [[NOTIF-001]] (WU-B) is `done` on 2026-10-17 — the aggregate, the
+migration with its four guards, and the queue contract. Its evidence, its local
+gates and its live PostgreSQL run are recorded in the Story. Two shape changes
+came out of building it rather than out of planning it: the "payload refs"
+column was dropped as an abstraction with no consumer, and the worker consumer
+plus the delivery handler moved to [[NOTIF-002]] because a claim with nothing to
+send cannot be a unit.
+
 ## Dependencies
 
 - [[EPIC-07]] — the appointment's confirmation and cancellation paths this epic

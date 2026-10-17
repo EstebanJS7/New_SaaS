@@ -84,6 +84,14 @@ decides.
 - Classification and sanitization: logs, errors and provider snapshots.
 - A delivery invocation on the [[NOTIF-001]] aggregate's claim: `SENDING` →
   `SENT` / `FAILED`, with bounded retry.
+- **The worker consumer and the delivery handler, moved here from
+  [[NOTIF-001]].** That Story owns the queue contract; this one owns the
+  consumer that registers for it and the handler that claims a delivery, sends
+  through the port, persists the outcome and splits a retryable failure
+  (recorded on the row, retried by BullMQ) from a non-retryable one (`FAILED`,
+  terminal). The move is recorded rather than silent, and its reason is in
+  [[NOTIF-001]]'s In Scope: a claim whose only next step is a send has nowhere
+  to go.
 
 ## Out of Scope
 
@@ -127,6 +135,17 @@ decides.
       budget rather than retried forever.
 - [ ] A retried delivery does not send a second message for a delivery already
       `SENT`.
+- [ ] The worker registers the consumer for exactly
+      `NOTIFICATION_DELIVERY_QUEUE` and exposes the handler through DI, and a
+      delivery whose observed status the guard does not admit is a no-op rather
+      than a crash — the fiscal consumer's duplicate-delivery discipline.
+- [ ] A claim is a compare-and-swap on the observed status and the lease, so two
+      workers racing one delivery admit exactly one attempt, and an abandoned
+      claim past its lease may be re-claimed in place (the status is unchanged,
+      which is why the guard admits it).
+- [ ] A retryable failure records its bounded, sanitized reason on the row and
+      throws so BullMQ retries; a non-retryable one lands `FAILED`. Neither
+      writes a reason the delivery's own CHECKs refuse.
 - [ ] Tenant isolation is enforced when applicable. Evidence: the recipient
       resolution is tenant-predicated and a foreign reference never resolves.
 - [ ] Backend authorization is enforced when applicable. Evidence: not
