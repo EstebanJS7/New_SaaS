@@ -197,6 +197,19 @@ non-http scheme). The lesson is recorded in [[TD-042]]: review the fix as its
 own candidate, and distrust a comment that asserts a guarantee the code does not
 provide.
 
+## The advisory fix, reviewed — one CRITICAL, refuted on behaviour and fixed on shape
+
+`review-6352b1dea9a6addf` closed `correction_required` on a CRITICAL
+(`R3-decide-retryable-branch`) alleging that the retryable gate branch could
+return a non-decision and settle a delivery twice. **Measured, not argued**: the
+callee is `Promise<never>` and always throws, so no value reaches the `in`
+check, and the existing case asserts the rejection. The SHAPE was worth fixing —
+a `return` of a never-returning action read as a value flowing back to two
+reviewers — so the call is now an awaited statement with an explicit unreachable
+throw, and the doubted path is pinned by a case (exactly two writes, neither
+setting `FAILED`). Correction `fe92bec`; approved and acknowledged; one
+advisory, `R3-gate-throw-unproved`, recorded in [[TD-042]].
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

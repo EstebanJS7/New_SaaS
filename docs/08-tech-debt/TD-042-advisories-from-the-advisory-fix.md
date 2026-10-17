@@ -72,6 +72,41 @@ DECISION rather than acting) and `deliver` (outside it, settling or sending).
 Case: a settle write that rejects propagates as itself, with no third write
 issued and no "will be retried" rewriting.
 
+## The review of this fix, and its one CRITICAL
+
+`review-6352b1dea9a6addf` reviewed this unit as its own candidate and closed
+with **one CRITICAL** — `R3-decide-retryable-branch`, `introduced` — plus one
+advisory.
+
+**The CRITICAL's behavioural premise was wrong, and that was settled by
+measurement rather than by argument.** It claimed that `decide`'s catch branch
+returns the value of `recordRetryableFailure`, so `decide` could resolve with
+something that is not a decision and `deliver`'s `"failure" in decision` would
+throw a `TypeError`; or, on its alternative reading, that `deliver` would settle
+a delivery twice. What the code does is declared and observable:
+`recordRetryableFailure` is typed `Promise<never>` and always throws, so the
+`return` never resolves, neither failure mode can occur, and the case named
+_"records a trace when a gate throws, then retries"_ passes precisely because it
+asserts that rejection.
+
+**What was true is the shape**, and it cost two reviewers their reading: a
+`return` of a never-returning action, from a function declared to return a union
+of decisions, reads as though a value flowed back. So the correction (`fe92bec`,
+22 diff lines) awaited the call as a statement with an explicit unreachable
+throw, and pinned the doubted behaviour with an assertion that the path issues
+exactly two writes — the claim and the retryable reason — and that neither sets
+`FAILED`. An independent targeted validator confirmed both criteria and stated
+the same thing about the original shape. The finding is therefore recorded as
+**a reviewability defect that was real about the code's readability and false
+about its behaviour**, which is the useful version of "the reviewer was wrong".
+
+**`R3-gate-throw-unproved` (advisory, coordinate not captured).** A reading: the
+explicit unreachable `throw` cannot be exercised by any case, so it is dead code
+whose claim of unprovability is itself unproven. The alternative is to delete it
+and let the awaited call stand alone — which is what the original shape did, and
+what made two reviewers misread it. Keeping a line whose only job is to be
+obvious is a reasonable trade; it is recorded here rather than argued.
+
 ## The lesson worth keeping
 
 A fix reviewed against the finding it closes can still be wrong, and two of
