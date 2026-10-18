@@ -45,9 +45,23 @@ and the token minted **at send time** so the plaintext never reaches a table.
 
 ## Work units
 
-- [ ] **WU-A — the token's data foundation.** `portal_password_reset_token` and
+- [x] **WU-A — the token's data foundation.** `portal_password_reset_token` and
       its guards, plus the two enum values the delivery needs (`PORTAL_ACCOUNT`,
-      `PORTAL_HOLDER`). Schema cases and a live PostgreSQL run.
+      `PORTAL_HOLDER`). _Done (commit `c199144`): the four guards the staff
+      token has — identity fixed at insert, single use with the rewrite and the
+      clear refused separately, and `expires_at > created_at` as a CHECK — plus
+      the unique digest and a cascade from the access. **No tenant column**,
+      deliberately: the access carries the tenant and the read asserts they
+      agree, rather than two homes for one fact. 9 schema cases (database 543).
+      Proven on a disposable PostgreSQL 16 — all 49 migrations in one pass, and
+      the guards refused an expiry before its creation, a duplicate digest, a
+      rewritten consumption instant, an un-consume, an extended expiry, a
+      repointed digest and a reassigned access, while a fresh token consumed
+      once, deleting the access cascaded, and both enum values were usable as
+      literals in a later transaction. The first attempt at that run passed
+      VACUOUSLY (a `customer` insert failed on a wrong column name, so every
+      negative matched no rows); the rerun asserts the access exists first._
+
 - [ ] **WU-B — the token service and the two routes.** Issue and consume, the
       uniform answer for the four cases, the rate limit, the reset's single
       transaction, and the route-contract test that currently says login is the
