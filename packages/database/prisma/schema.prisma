@@ -331,6 +331,8 @@ model CustomerPortalAccess {
 
   @@index([tenantId])
   @@index([customerId])
+  passwordResetTokens PortalPasswordResetToken[]
+
   @@map("customer_portal_access")
 }
 
@@ -3477,6 +3479,9 @@ enum NotificationDeliveryStatus {
 enum NotificationSourceType {
   APPOINTMENT
   FISCAL_DOCUMENT
+  /// PORTAL-002 — a portal password-recovery message. The source reference is the
+  /// `portal_password_reset_token` row, created AT SEND TIME like the staff one.
+  PORTAL_ACCOUNT
   /// DAT-007 — a staff password-recovery message. The source reference is the
   /// `password_reset_token` row, which is created AT SEND TIME (see the Story):
   /// the plaintext token cannot be rebuilt from a digest, so issuing it earlier
@@ -3492,6 +3497,10 @@ enum NotificationSourceType {
 /// never stored here (PRD §41, [[DEC-061]]).
 enum NotificationRecipientType {
   CUSTOMER
+  /// PORTAL-002 — a portal holder. Its contact datum is the access's OWN `contactEmail`, which is
+  /// the login id: the customer's primary contact may be a different address, and sending the link
+  /// there would let a holder of one address reset a session for another.
+  PORTAL_HOLDER
   /// DAT-007 — a staff profile. Its contact datum is the profile's own email,
   /// resolved at send time by the staff recipient reader, and it is personal data
   /// of an employee rather than of a customer: still RESTRICTED, still never
@@ -3524,6 +3533,39 @@ enum NotificationRecipientType {
 ///
 /// The row is APPEND-ONLY, which the migration enforces with a trigger refusing UPDATE
 /// and DELETE: an attempt happened once, and a log that can be edited is not a log.
+/// A portal password-recovery token ([[PORTAL-002]]).
+///
+/// The staff flow's sibling, and a table of its OWN rather than a widened one: the staff table's
+/// `user_profile_id` foreign key cannot hold a portal access id, so reuse would need a polymorphic
+/// owner that trades referential integrity for the appearance of it. [[DEC-008]]'s boundary applies
+/// one level down — a staff token must not be redeemable for a portal password, nor the reverse —
+/// and two tables, each with its subject, is that boundary in the schema.
+///
+/// The plaintext never persists: only its SHA-256, the same convention `StaffSession` and the staff
+/// token already use. There is deliberately NO tenant column: the access it belongs to carries the
+/// tenant, and the read asserts they agree, so the tenancy has one home rather than two that could
+/// disagree.
+model PortalPasswordResetToken {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  portalAccessId String @map("portal_access_id") @db.Uuid
+
+  tokenHash String @unique @map("token_hash")
+
+  /// Immutable after insert: extending an expiry is extending somebody's access.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  /// Set once, from NULL, and never moved: un-consuming is a second password change.
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  portalAccess CustomerPortalAccess @relation(fields: [portalAccessId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([portalAccessId])
+  @@map("portal_password_reset_token")
+}
+
 model NotificationDeliveryAttempt {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
