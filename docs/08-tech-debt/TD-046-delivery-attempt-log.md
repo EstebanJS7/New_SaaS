@@ -2,7 +2,7 @@
 id: TD-046
 type: tech-debt
 title: The attempt log a delivery does not keep
-status: open
+status: resolved
 severity: medium
 owner: notifications
 related_epics:
@@ -117,6 +117,49 @@ writer belongs in the delivery handler, on all three settle paths (`SENT`,
 records — and the attempt number is derivable without a second read, because the
 claim increments `attempt_count`: the number is the count that was read plus
 one.
+
+## WU-B and WU-C — the writer, the reader, and the closure (2026-10-18)
+
+**The writer** lives in the delivery handler, on all three settle paths, each in
+the SAME transaction as the settle it records: `SENT`, the terminal `FAILED`,
+and the **retryable** failure the delivery keeps on `SENDING`. That third one is
+where the log earns its keep — a retryable failure leaves the delivery's own
+reason held by the LAST attempt, so without these rows the earlier attempts'
+reasons are gone the moment the next one fails.
+
+Two properties are asserted rather than assumed:
+
+- **nothing is written when the settle lost its compare-and-set.** A lost settle
+  belongs to another worker, and an attempt row for it would put somebody else's
+  attempt in this log — the one way this table could lie.
+- **the number is derived, not read.** `claim` incremented `attempt_count` in
+  the same statement that took the lease, so this attempt is the count that was
+  read plus one. A second read would be a second thing to keep in step with the
+  claim.
+
+**The reader** is the delivery DETAIL: the history, bounded to the newest
+`NOTIFICATION_DELIVERY_ATTEMPT_HISTORY_LIMIT` (20) and reversed so the story
+reads top to bottom. Newest-window rather than oldest, because a bounded read
+that returned the oldest twenty would hide exactly the attempts an operator is
+looking at a failure for. The **list** carries none, and that is asserted:
+adding it there is the obvious way to build this feature and it is the N+1 this
+read surface does not have. The history is read only once the delivery is known
+to exist and to belong to the caller, so a foreign id never touches the second
+table, and it has its **own response type** so the list's contract is unchanged.
+
+**The surface** renders the sequence: a message that failed three times with
+three reasons now shows all three instead of the last one.
+
+**Three harnesses gained the delegate this needed** — the worker's stub, the
+API's in-memory database, and the web client's type — and **two test fixtures
+were corrected rather than the code**: a detail response without `attempts` is
+not a shape the API can produce, and a fixture that omitted it made the panel
+throw instead of render.
+
+**Closed.** The three options this record laid out were priced, the middle one
+was chosen (the bounded reason, never the provider's raw error), and the
+reasoning is preserved above rather than deleted — including the option that was
+rejected, because a reader asking "why not the raw error?" deserves the answer.
 
 ## Related
 

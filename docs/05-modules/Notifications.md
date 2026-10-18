@@ -292,6 +292,12 @@ patch, so the permission family is `notifications.delivery.read` plus
 permission guarding a command nobody can call is one no operator can be denied
 by.
 
+The **detail** carries the delivery's attempt HISTORY ([[TD-046]]): bounded to
+the newest twenty, chronological, and read only after the delivery is known to
+exist and to belong to the caller. The **list** deliberately carries none — a
+per-row history there is an N+1, and the assertion that the list stays one query
+per page lives in the suite rather than in a comment.
+
 The projection is an **allowlist** — named columns, an explicit mapper, and a
 recipient **reference** — so no Prisma model is serialized and a column added
 later cannot leak by appearing.
@@ -348,8 +354,16 @@ packages/database            512   the aggregate's guards, the partial index and
   here.** A reschedule leaves the previous window's pending job in place; the
   send-time content read bounds the damage to a duplicate, never a wrong time.
   Closing it needs a catalog decision.
-- **There is no attempt history to read** — [[TD-046]]: the aggregate keeps a
-  summary, because retrying is BullMQ's retry rather than a domain transition.
+- **The delivery row keeps a SUMMARY** — a count, the last instant and the last
+  reason — and the SEQUENCE lives in `notification_delivery_attempt`, readable
+  on the detail ([[TD-046]]). The summary is still what the list shows, and that
+  is deliberate: "did it work" is what a list is for.
+- **The attempt log stores the already-bounded reason, never the provider's raw
+  error.** The raw text is RESTRICTED material this epic keeps out of every
+  stored field, and it would need sanitizing anyway — a provider's error can
+  echo the destination or the body — at which point it is not raw and the
+  diagnostic value is gone.
+
 - **Nothing links to the recovery REQUEST yet**: the message's destination
   exists (`/reset-password`), but the app has no login page, so a user has no
   way to ASK for a recovery from the UI — [[TD-048]]. The API and the message
