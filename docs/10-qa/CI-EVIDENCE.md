@@ -1867,13 +1867,24 @@ closure.
 
 ## EPIC-17 Notifications — closure (2026-10-17)
 
-### There is no CI receipt, and that is the first fact
+### The branches are pushed, and STILL there is no CI receipt — the reason is the trigger
 
-**Every branch of this epic is local and unpushed**, by the repository's own
-rule (`AGENTS.md`: do not push without explicit instruction). So there is no run
-to link, and none is implied: the evidence below is **local**, produced on this
-machine, and it names the commands. When the epic is pushed, its receipt belongs
-here and this paragraph is what it replaces.
+**Every branch this work produced was pushed to `origin` on 2026-10-18**, so it
+no longer lives only on one machine: EPIC-17's four, plus
+`fix/td-039-fiscal-job-id-colon`, `fix/notif-review-advisories`,
+`fix/notif-tail-advisories`, `feat/dat-007-password-recovery` and
+`feat/shel-001-staff-sign-in`.
+
+**And `gh run list` is still empty, because this repository's CI does not run
+for them.** `.github/workflows/ci.yml` triggers on `push` to `main`/`master` and
+on `pull_request` TARGETING those branches — and nothing else. A feature
+branch's push therefore produces **no run at all**, which is why the evidence
+below is still the local gates rather than a receipt.
+
+**The receipt arrives with the first pull request.** That is not a formality: a
+pull request is the only event this repository's CI is configured to observe, so
+"why is there no receipt" has an answer about a workflow trigger rather than
+about a missing run.
 
 ```text
 branch                            tip        work unit

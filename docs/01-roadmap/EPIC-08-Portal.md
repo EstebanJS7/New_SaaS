@@ -2,7 +2,7 @@
 id: EPIC-08
 type: epic
 title: Portal
-status: done
+status: in-progress
 priority: high
 depends_on:
   - EPIC-04
@@ -115,6 +115,21 @@ email flows or Catalog scope.
       assertions.
 
 ## Stories
+
+**Reopened on 2026-10-18** for one Story, and it is the same hole [[SHELL-001]]
+closed on the staff side:
+
+```text
+PORTAL-001 The portal sign-in surface
+```
+
+The epic delivered the portal's identity, boundary, reads and UI — and no page
+anywhere that lets a customer sign in. Its BFF refuses `POST /portal/login`
+deliberately, because every route it serves RELAYS an established session while
+login is the hop that ESTABLISHES one; the Story adds that hop and keeps the
+refusal of `logout`. The epic uses the `PORTAL-` prefix because it has no Story
+files at all: it was delivered as a chained SDD change, and this is its first
+standalone Story.
 
 No standalone Story file: the epic was delivered as the chained SDD change
 `openspec/changes/archive/2026-09-21-epic-08/` (archived at `be2c07f`) — WU1
