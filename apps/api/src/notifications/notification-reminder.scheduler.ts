@@ -9,7 +9,7 @@ import { TenantSettingsService } from "../settings/tenant-settings.service.js";
 import {
   NOTIFICATION_DELIVERY_PRODUCER,
   type NotificationDeliveryProducer,
-} from "./notification-delivery.producer.js";
+} from "@newsaas/notifications";
 import { loadNotificationsSettings } from "./notification-settings.read.js";
 import {
   APPOINTMENT_RECIPIENT_PORT,

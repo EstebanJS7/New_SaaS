@@ -29,6 +29,7 @@ import {
   type RedriveJob,
   type RedriveQueue,
 } from "./fiscal-recovery.service.js";
+import type { FiscalApprovalEmitterPort } from "./fiscal-approval.emitter.js";
 
 const document: RecoverDocumentRow = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -159,6 +160,22 @@ function makeQuery(script: readonly FiscalQueryResult[]) {
   };
   return { query, calls };
 }
+
+/**
+ * Records every `FiscalApproved` this suite's sweeps published (DEC-059): the
+ * emitter is REQUIRED on the deps deliberately, so a caller that forgot it could
+ * not exist — an optional collaborator is exactly how one path stops publishing.
+ */
+const approvalsEmitted: { tenantId: string; fiscalDocumentId: string }[] = [];
+const approvals: FiscalApprovalEmitterPort = {
+  emit: (args) => {
+    approvalsEmitted.push({ tenantId: args.tenantId, fiscalDocumentId: args.fiscalDocumentId });
+  },
+};
+
+beforeEach(() => {
+  approvalsEmitted.length = 0;
+});
 
 describe("recoverStaleFiscalSubmissions", () => {
   it("re-drives stale QUEUED and ERROR documents and reports counts", async () => {
@@ -322,6 +339,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     const result = await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -352,6 +370,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -383,6 +402,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -396,7 +416,13 @@ describe("reconcileSubmittedFiscalDocuments", () => {
     const { query, calls } = makeQuery([queryResult()]);
     const { transaction } = makeTransaction();
 
-    await reconcileSubmittedFiscalDocuments({ fiscalDocument: delegate, query, transaction, now });
+    await reconcileSubmittedFiscalDocuments({
+      fiscalDocument: delegate,
+      approvals,
+      query,
+      transaction,
+      now,
+    });
 
     // ADR-007 §2: the reference is the fast path and the CDC survives a lost
     // hand-over answer, so the port carries both and the adapter chooses.
@@ -419,6 +445,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     const result = await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -466,6 +493,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     const result = await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -495,6 +523,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     const result = await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -513,6 +542,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     const result = await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -536,7 +566,13 @@ describe("reconcileSubmittedFiscalDocuments", () => {
     const { query } = makeQuery([queryResult({ outcome: "PROCESSING" })]);
     const { transaction } = makeTransaction(updates);
 
-    await reconcileSubmittedFiscalDocuments({ fiscalDocument: delegate, query, transaction, now });
+    await reconcileSubmittedFiscalDocuments({
+      fiscalDocument: delegate,
+      approvals,
+      query,
+      transaction,
+      now,
+    });
 
     expect(updates[0]?.data).toEqual({
       nextQueryAt: new Date(now.getTime() + SIFEN_BATCH_POLL_INTERVAL_MS),
@@ -563,6 +599,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     const result = await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -618,6 +655,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     const result = await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -640,6 +678,7 @@ describe("reconcileSubmittedFiscalDocuments", () => {
 
     const result = await reconcileSubmittedFiscalDocuments({
       fiscalDocument: delegate,
+      approvals,
       query,
       transaction,
       now,
@@ -669,17 +708,33 @@ describe("reconcileSubmittedFiscalDocuments", () => {
       answer: queryResult({ outcome: "CONFIGURATION_ERROR", reasonCode: "0421" }),
     },
     { label: "TRANSIENT_FAILURE", answer: queryResult({ outcome: "TRANSIENT_FAILURE" }) },
-  ])("never writes attempt_count for $label", async ({ answer }) => {
+  ])("never writes attempt_count for $label", async ({ label, answer }) => {
     const { delegate, updates } = makeQueryDelegate([submittedRow]);
     const { query } = makeQuery([answer]);
     const { transaction } = makeTransaction(updates);
 
-    await reconcileSubmittedFiscalDocuments({ fiscalDocument: delegate, query, transaction, now });
+    await reconcileSubmittedFiscalDocuments({
+      fiscalDocument: delegate,
+      approvals,
+      query,
+      transaction,
+      now,
+    });
 
     expect(updates.length).toBeGreaterThan(0);
     for (const update of updates) {
       expect(update.data).not.toHaveProperty("attemptCount");
       expect(update.data).not.toHaveProperty("attempt_count");
+    }
+
+    // DEC-059's warning, as an assertion: the sweep is ONE OF THE TWO paths into
+    // APPROVED, so publishing only from the submission handler would lose every
+    // approval this sweep resolves — and a table covering only the handler would
+    // never notice.
+    expect(approvalsEmitted).toHaveLength(label === "APPROVED" ? 1 : 0);
+    if (label === "APPROVED") {
+      expect(approvalsEmitted[0]?.tenantId).toBe(submittedRow.tenantId);
+      expect(approvalsEmitted[0]?.fiscalDocumentId).toBe(submittedRow.id);
     }
   });
 });

@@ -80,7 +80,11 @@ export function formatLocalInstant(instant: Date): string {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
+    // `hourCycle: "h23"` rather than `hour12: false`: the boolean resolves to h23 or
+    // h24 depending on the LOCALE's preferred hour cycle, so another ICU build can
+    // render midnight as `24:00` (TD-044 R3-001). Measured on Node 24 / es-PY, where
+    // both forms give 00:00 — the explicit cycle removes the dependency on that.
+    hourCycle: "h23",
   }).format(instant);
 }
 
@@ -97,9 +101,17 @@ export function createNotificationContentBuilder(args: {
       // here keeps a foreign id from being rendered as somebody else's message.
       if (delivery === null) return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
 
-      return delivery.sourceType === "APPOINTMENT"
-        ? buildAppointmentReminder(args.client, request, delivery.sourceId)
-        : buildFiscalNotice(args.client, request, delivery.sourceId);
+      // A switch with an explicit default, not a ternary (TD-044 R3-002): the
+      // ternary was fail-OPEN, so a third source type added by a migration before
+      // this file learned to build it would have been announced as an invoice.
+      switch (delivery.sourceType) {
+        case "APPOINTMENT":
+          return buildAppointmentReminder(args.client, request, delivery.sourceId);
+        case "FISCAL_DOCUMENT":
+          return buildFiscalNotice(args.client, request, delivery.sourceId);
+        default:
+          return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
+      }
     },
   };
 }

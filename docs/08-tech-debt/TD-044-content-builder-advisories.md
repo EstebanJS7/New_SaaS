@@ -3,7 +3,7 @@ id: TD-044
 type: tech-debt
 title:
   The content builder's review advisories, and the one that did not reproduce
-status: open
+status: resolved
 severity: low
 owner: notifications
 related_epics:
@@ -70,6 +70,21 @@ reason to re-run review on this candidate."_
 R3-001 and R3-002 are cheap — a line and a handful — and they belong in the same
 small pass as the rest of WU-D3's remaining half, the way [[TD-043]] was folded
 into WU-D2 rather than given a unit of its own.
+
+## Resolution (2026-10-17)
+
+R3-001 and R3-002 are fixed in WU-D3's second half, with a case each, and R3-003
+is left as a reading rather than a change: the conditional assertion is
+redundant but harmless, and rewriting a reviewed test's shape for style is not
+worth a unit.
+
+- **R3-001**: `hourCycle: "h23"` replaces `hour12: false`. The measurement above
+  stands — both forms render `00:00` on Node 24 with `es-PY` — so what the fix
+  removes is the dependency on the locale's preferred cycle, and a midnight case
+  pins the boundary that a reminder is most likely to get wrong.
+- **R3-002**: the ternary is a `switch` with an explicit default that returns
+  `SOURCE_UNAVAILABLE`, and a case dispatches a third source type to prove it
+  fails closed rather than announcing it as an invoice.
 
 ## Related
 

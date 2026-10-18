@@ -479,6 +479,45 @@ The fiscal notice's **emitters and subscriber** are the other half of WU-D3 and
 remain pending: publishing `FiscalApproved` from both worker write paths, and
 the subscriber that creates the intent for the invoice's customer.
 
+### WU-D3 (second half) — the fiscal notice, its emitters, and TD-044
+
+- **`FiscalApproved` is published from BOTH paths that enter `APPROVED`** — the
+  submission handler's `persistResult` and the reconciliation sweep's
+  conditional update — through **one shared emitter** both call. That is exactly
+  what [[DEC-059]] demanded of this emitter, and its own words are quoted in the
+  file: _"A single publisher at one site would silently lose every approval
+  resolved by the reconciliation sweep."_ The sweep's path is asserted **per
+  outcome** in the table that already covered its terminal states, so the
+  negative (a rejection publishes nothing) and the positive (an approval
+  publishes exactly once) are the same assertion.
+- **The worker's own dispatcher**, because the dispatcher is in-process: a
+  subscriber registered in the API would never see an event the worker
+  publishes.
+- **`notification-fiscal-notice.scheduler.ts`** — the subscriber: one intent for
+  the invoice's customer, on the fixed email channel, enqueued immediately (a
+  notice confirms something that already happened rather than being deferred
+  like the reminder), idempotent by `(document, channel)`, and gated on the
+  document's current status and a customer that exists.
+- **The notice's channel is FIXED to email**, and the reason is the absence of a
+  decision rather than a preference: the settings namespace has
+  `appointmentReminderChannels`, whose name says what the tenant chose it FOR,
+  and stretching it to cover fiscal notices would change what a stored setting
+  means without anybody deciding that. A general transactional channel set is
+  the honest answer once a second consumer justifies the namespace version bump;
+  until then the notice says so in `fiscal-notice.policy.ts`.
+- **The producer's transport moved into `@newsaas/notifications`** rather than
+  being copied into the worker. The worker produces now (the notice) as well as
+  consumes, and there is ONE queue produced by two deployables, so one
+  implementation of its transport is the honest shape — the fiscal precedent
+  differs because there the API produces and the worker consumes. `bullmq` and
+  `ioredis` become dependencies of the package; both were already in the
+  workspace.
+- **[[TD-044]] closed**: the hour cycle is explicit (`hourCycle: "h23"`,
+  measured on Node 24 where both forms agree, so the fix removes a locale
+  dependency rather than a live defect) and the source dispatch is a `switch`
+  with a fail-CLOSED default, so a third source type cannot be announced as an
+  invoice.
+
 ### WU-D3, still pending
 
 WU-D2: the three emitters (`AppointmentConfirmed` and `AppointmentCancelled` in

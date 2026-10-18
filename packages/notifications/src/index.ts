@@ -33,6 +33,14 @@ export {
 } from "./notification-delivery.queue.js";
 export type { NotificationDeliveryJob } from "./notification-delivery.queue.js";
 export {
+  BullMqNotificationDeliveryProducer,
+  createBullMqNotificationDeliveryProducer,
+  NOTIFICATION_DELIVERY_ENQUEUE_TIMEOUT_MS,
+  NOTIFICATION_DELIVERY_PRODUCER,
+  NOTIFICATION_DELIVERY_PRODUCER_REDIS_OPTIONS,
+} from "./notification-delivery.producer.js";
+export type { NotificationDeliveryProducer } from "./notification-delivery.producer.js";
+export {
   NOTIFICATION_CHANNEL_PROVIDER_IDS,
   NOTIFICATION_CHANNEL_VALUES,
   NOTIFICATION_CHANNEL_REASON,
@@ -102,6 +110,7 @@ export type {
   NotificationRecipientReference,
 } from "./recipient.port.js";
 export { NOTIFICATION_DELIVERY_REASON } from "./delivery.reason.js";
+export { FISCAL_NOTICE_CHANNEL, fiscalNoticeDedupeKey } from "./fiscal-notice.policy.js";
 export {
   isReminderOverdue,
   NOTIFICATION_REMINDER_CHANNELS,

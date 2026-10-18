@@ -277,6 +277,15 @@ ternary that would route a third source type into the fiscal branch, and a
 redundant conditional assertion. The first two are folded into the rest of
 WU-D3.
 
+## WU-D3 complete
+
+The content builder (first half) and the fiscal notice with its emitters (second
+half) both landed. `FiscalApproved` is published from BOTH paths into `APPROVED`
+through one shared emitter, which is what DEC-059 demanded; the notice's
+subscriber lives in the worker because that is where the event is published; the
+producer's transport moved into the package because ONE queue has two producers;
+and [[TD-044]] is closed.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

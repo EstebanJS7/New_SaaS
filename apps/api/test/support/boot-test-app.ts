@@ -30,14 +30,15 @@ import {
   type FiscalRangeVoidRequest,
 } from "@newsaas/fiscal";
 import type { FiscalSubmissionJob } from "@newsaas/fiscal";
-import type { NotificationDeliveryJob } from "@newsaas/notifications";
-// The PRODUCER PORT lives in the API, like the fiscal one: the package owns the
-// queue CONTRACT (names, identity, payload) and the deployable owns the port its
-// own composition root satisfies.
+// The port and its transport live in the PACKAGE: ONE queue, produced by two
+// deployables, so one implementation of its transport is the honest shape (the
+// fiscal precedent differs because there the API produces and the worker consumes,
+// while here the worker produces the fiscal notice into the same queue).
 import {
   NOTIFICATION_DELIVERY_PRODUCER,
+  type NotificationDeliveryJob,
   type NotificationDeliveryProducer,
-} from "../../src/notifications/notification-delivery.producer.js";
+} from "@newsaas/notifications";
 import { createIsolationDatabase, type IsolationDatabase } from "./in-memory-database.js";
 
 /** Test double that records enqueued intent ids instead of touching Redis. */

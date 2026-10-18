@@ -14,6 +14,7 @@ import type {
   FiscalDocumentBuildOutcome,
   FiscalDocumentBuildRequest,
 } from "./fiscal-document-builder.js";
+import type { FiscalApprovalEmitterPort } from "./fiscal-approval.emitter.js";
 import { FiscalSubmissionHandler, mapOutcomeToStatus } from "./fiscal-submission.handler.js";
 
 /**
@@ -131,6 +132,10 @@ interface SetupResult {
     (args: { key: string }) => Promise<{ body: Buffer; contentType: string }>
   >;
   readonly updates: { where: unknown; data: Record<string, unknown> }[];
+  /** What the handler published through the shared approval emitter. */
+  readonly approved: { tenantId: string; fiscalDocumentId: string }[];
+  /** The emitter itself, for a case that scripts a publication failure. */
+  readonly approvals: FiscalApprovalEmitterPort;
 }
 
 function setup(
@@ -251,9 +256,62 @@ function setup(
     invoice: { findFirst: invoiceFind },
     $transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
   };
-  const handler = new FiscalSubmissionHandler(prisma as never, provider, { build }, storage);
-  return { handler, issue, findFirst, invoiceFind, build, storagePut, storageGet, updates };
+  // The approval emitter records what the handler published (DEC-059): this is one
+  // of the TWO paths into APPROVED, and a suite that did not assert it could not
+  // notice the other one being the only one that publishes.
+  const approved: { tenantId: string; fiscalDocumentId: string }[] = [];
+  const approvals: FiscalApprovalEmitterPort = {
+    emit: (args) => {
+      approved.push({ tenantId: args.tenantId, fiscalDocumentId: args.fiscalDocumentId });
+    },
+  };
+  const handler = new FiscalSubmissionHandler(
+    prisma as never,
+    provider,
+    { build },
+    storage,
+    approvals
+  );
+  return {
+    handler,
+    issue,
+    findFirst,
+    invoiceFind,
+    build,
+    storagePut,
+    storageGet,
+    updates,
+    approved,
+    approvals,
+  };
 }
+
+describe("FiscalApproved publication (DEC-059)", () => {
+  it("publishes once for an approved document, after the transaction", async () => {
+    const { handler, approved } = setup("PENDING", "APPROVED");
+
+    await handler.handle(job);
+
+    expect(approved).toEqual([{ tenantId: job.tenantId, fiscalDocumentId: job.fiscalDocumentId }]);
+  });
+
+  it("publishes nothing for an outcome that is not APPROVED", async () => {
+    // A rejection, a functional rejection, a hand-over and a transient failure all
+    // resolve without an approval, and a notice published for one of them would
+    // announce a document SIFEN did not approve.
+    for (const outcome of [
+      "REJECTED",
+      "FUNCTIONAL_REJECTION",
+      "SUBMITTED",
+      "CONFIGURATION_ERROR",
+      "TRANSIENT_FAILURE",
+    ] as const) {
+      const { handler, approved } = setup("PENDING", outcome);
+      await handler.handle(job).catch(() => undefined);
+      expect(approved, outcome).toEqual([]);
+    }
+  });
+});
 
 describe("mapOutcomeToStatus", () => {
   it.each(outcomes)("maps $outcome exactly", ({ outcome, status, resolved }) => {

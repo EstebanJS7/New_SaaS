@@ -83,6 +83,29 @@ describe("the tenant's local instant", () => {
   });
 });
 
+describe("TD-044's two fixes", () => {
+  it("renders midnight as 00:00, with an explicit hour cycle", () => {
+    // `hour12: false` resolves to h23 or h24 depending on the locale's preferred
+    // cycle, so another ICU build can say 24:00. `hourCycle: "h23"` is unambiguous,
+    // and the boundary is what a reminder is most likely to get wrong.
+    const midnight = new Date("2026-10-18T03:00:00.000Z");
+    const rendered = formatLocalInstant(midnight);
+    expect(rendered).toContain("00:00");
+    expect(rendered).not.toContain("24:00");
+  });
+
+  it("fails CLOSED for a source type it does not build", async () => {
+    // The ternary was fail-open: a third source type would have been announced as
+    // an invoice. The switch's default refuses it by name.
+    const { builder } = setup({ delivery: { sourceType: "SOMETHING_NEW", sourceId: "x" } });
+
+    await expect(builder.build(request)).resolves.toMatchObject({
+      outcome: "UNAVAILABLE",
+      reasonCode: NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE,
+    });
+  });
+});
+
 describe("the appointment reminder", () => {
   it("builds from the appointment read at send time, naming the branch and the instant", async () => {
     const { builder, deliveryFind, appointmentFind, branchFind } = setup({});

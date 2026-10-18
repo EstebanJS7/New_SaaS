@@ -12,6 +12,8 @@ import {
   type FiscalCscPort,
 } from "@newsaas/fiscal-persistence";
 import {
+  createBullMqNotificationDeliveryProducer,
+  NOTIFICATION_DELIVERY_PRODUCER,
   NotificationChannelsModule,
   NOTIFICATION_ENTITLEMENT,
   NOTIFICATION_RECIPIENT,
@@ -27,8 +29,14 @@ import { NOTIFICATION_CONTENT_BUILDER } from "./notification-delivery/notificati
 import { createNotificationContentBuilder } from "./notification-delivery/notification-content.builder.js";
 import { NotificationDeliveryConsumer } from "./notification-delivery/notification-delivery.consumer.js";
 import { NotificationDeliveryHandler } from "./notification-delivery/notification-delivery.handler.js";
+import { NotificationFiscalNoticeScheduler } from "./notification-delivery/notification-fiscal-notice.scheduler.js";
+import {
+  FISCAL_APPROVAL_EMITTER,
+  FiscalApprovalEmitter,
+} from "./fiscal-submission/fiscal-approval.emitter.js";
 import { createNotificationEntitlementReader } from "./notification-delivery/notification-entitlement.read.js";
 import { createNotificationRecipientReader } from "./notification-delivery/notification-recipient.read.js";
+import { ApplicationEventsModule } from "./events/application-events.module.js";
 import { RedisHealthService } from "./redis/redis-health.service.js";
 import {
   createFiscalDocumentAssembly,
@@ -158,6 +166,32 @@ const entitlementReaderProvider: Provider = {
 };
 
 /**
+ * The queue producer, and the WORKER needs one now: it enqueues the fiscal notice
+ * whose event it publishes. The transport comes from `@newsaas/notifications`
+ * because there is ONE queue produced by two deployables, so one implementation of
+ * its transport is the honest shape (the fiscal precedent differs: there the API
+ * produces and the worker consumes).
+ */
+const notificationProducerProvider: Provider = {
+  provide: NOTIFICATION_DELIVERY_PRODUCER,
+  useFactory: () => {
+    const redisUrl = process.env.REDIS_URL;
+    if (!redisUrl) throw new Error("REDIS_URL is not set");
+    return createBullMqNotificationDeliveryProducer(redisUrl);
+  },
+};
+
+/**
+ * The shared approval emitter (DEC-059). ONE provider both APPROVED paths inject,
+ * so the submission handler and the reconciliation sweep cannot drift on whether
+ * they publish.
+ */
+const fiscalApprovalEmitterProvider: Provider = {
+  provide: FISCAL_APPROVAL_EMITTER,
+  useClass: FiscalApprovalEmitter,
+};
+
+/**
  * The REAL content builder (NOTIF-003 WU-D3): it reads the delivery's source and
  * renders the message at send time, and its read is also the SEND-TIME GATE —
  * a cancelled appointment or a non-approved document produces no message, whether
@@ -196,6 +230,7 @@ const contentBuilderProvider: Provider = {
 @Module({
   imports: [
     PrismaModule,
+    ApplicationEventsModule,
     SecretsModule.forRoot(),
     StorageModule.forRoot(),
     FiscalProviderModule.forRoot({ credentialPort }),
@@ -214,8 +249,11 @@ const contentBuilderProvider: Provider = {
     recipientReaderProvider,
     entitlementReaderProvider,
     contentBuilderProvider,
+    notificationProducerProvider,
+    fiscalApprovalEmitterProvider,
     NotificationDeliveryHandler,
     NotificationDeliveryConsumer,
+    NotificationFiscalNoticeScheduler,
   ],
 })
 export class WorkerModule {}

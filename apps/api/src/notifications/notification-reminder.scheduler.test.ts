@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ApplicationEvent, EventDispatcher } from "@newsaas/shared";
 import type { EntitlementsService } from "../entitlements/entitlements.service.js";
 import type { TenantSettingsService } from "../settings/tenant-settings.service.js";
-import type { NotificationDeliveryProducer } from "./notification-delivery.producer.js";
+import type { NotificationDeliveryProducer } from "@newsaas/notifications";
 import type { AppointmentRecipientPort } from "./appointment-recipient.port.js";
 import {
   APPOINTMENT_CANCELLED,

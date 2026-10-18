@@ -4,7 +4,7 @@ import { SettingsModule } from "../settings/settings.module.js";
 import {
   createBullMqNotificationDeliveryProducer,
   NOTIFICATION_DELIVERY_PRODUCER,
-} from "./notification-delivery.producer.js";
+} from "@newsaas/notifications";
 import { NotificationReminderScheduler } from "./notification-reminder.scheduler.js";
 import {
   APPOINTMENT_RECIPIENT_PORT,
