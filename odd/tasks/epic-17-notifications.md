@@ -299,7 +299,7 @@ with their coordinates honestly recorded as not captured. One process slip: a
 STATUS call after the burn, which the contract forbids — it failed safely and
 mutated nothing.
 
-## WU-E (NOTIF-004): the read surface is in, one AC is open by decision
+## WU-E (NOTIF-004): the read surface is in, and NOTIF-004 is done
 
 Implemented: the two read routes (`/notifications/deliveries`,
 `/notifications/:id`), the closed query (status, channel, sourceType, sourceId,
@@ -307,11 +307,12 @@ limit), the allowlisted DTO, `notifications.delivery.read` seeded for all six
 roles, the read-only BFF, the staff surface with its five states, and the route
 pin. No command route, and no `delivery.manage` key behind it.
 
-**One AC is NOT satisfied and it is the model's fault, not the work's**: this
-Story assumed the aggregate keeps an attempt LOG, and NOTIF-001 models a
-summary. Serving a history needs a new table, a migration, and a decision about
-whether an attempt row stores the provider's raw error (RESTRICTED). Proposed to
-the maintainer rather than implemented. NOTIF-004 therefore stays `in-progress`.
+**The attempt-history AC was AMENDED by the maintainer, not implemented**: the
+Story assumed the aggregate keeps an attempt LOG and NOTIF-001 models a summary.
+Serving a history needs a new table, a migration, and a decision about whether
+an attempt row stores the provider's raw error (RESTRICTED). The maintainer
+amended the criterion to the summary; the missing log is [[TD-046]]. **NOTIF-004
+is `done`** (commit `42c923e` + `9d2016f`).
 
 Also corrected: the Story declared "one additive migration" for the permission
 key; keys are seed-owned reference data here, so no migration is involved.
