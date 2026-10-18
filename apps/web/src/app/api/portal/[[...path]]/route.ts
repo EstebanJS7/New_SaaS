@@ -36,7 +36,16 @@ type PortalPathShape =
   | "profile"
   | "booking"
   | "cancellation"
-  | "availability";
+  | "availability"
+  /**
+   * [[PORTAL-001]]: the ONE shape where the session crosses OUTBOUND.
+   *
+   * Every other route here RELAYS a session the browser already holds; `login` is the hop
+   * that ESTABLISHES one, so it carries no cookie in and must relay the API's `Set-Cookie`
+   * out. `logout` is deliberately NOT added beside it: it revokes a session, and a proxy
+   * whose other routes are reads has no business reaching a revocation.
+   */
+  | "login";
 
 /**
  * Method-aware allowlist for the portal proxy (EPIC-08 WU4D, DEC-007 A2d).
@@ -91,7 +100,7 @@ const ALLOWED_PORTAL_ROUTES: Readonly<Record<PortalMethod, ReadonlySet<PortalPat
     "profile",
     "availability",
   ]),
-  POST: new Set<PortalPathShape>(["booking", "cancellation"]),
+  POST: new Set<PortalPathShape>(["booking", "cancellation", "login"]),
   PUT: new Set<PortalPathShape>(["profile", "appointmentResource"]),
 };
 
@@ -108,6 +117,9 @@ const AVAILABILITY_QUERY_KEYS = ["date", "durationMinutes", "stepMinutes"] as co
  */
 function portalPathShape(segments: readonly string[]): PortalPathShape | null {
   if (segments.length === 1) {
+    if (segments[0] === "login") {
+      return "login";
+    }
     if (PORTAL_COLLECTIONS.has(segments[0])) {
       return "collection";
     }
@@ -231,7 +243,10 @@ type StreamingRequestInit = RequestInit & { duplex?: "half" };
  * Browser headers are NOT copied: only the portal session cookie (read
  * server-side, never from the client) and `x-request-id` cross the boundary.
  * The staff cookie is never read here, so a staff session cannot reach the
- * portal API through this proxy. For `POST`/`PUT` the body is piped as the
+ * portal API through this proxy. [[PORTAL-001]] added the ONE exception to
+ * "inbound only" — `POST /portal/login` forwards no cookie and RELAYS the API's
+ * `Set-Cookie` out — and it does not weaken the isolation: the staff cookie is
+ * still never read, and `logout` stays refused. For `POST`/`PUT` the body is piped as the
  * caller's raw `ReadableStream` under the JSON media type instead of being
  * buffered, so the API's Zod validation sees the exact input. The upstream
  * status, error envelope, `content-type` and `x-request-id` are preserved and
@@ -271,8 +286,12 @@ async function proxyPortalRequest(
   }
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL;
+  // The establishing hop carries NO session: the browser is asking FOR one, and whatever
+  // cookie it happens to hold (a stale portal session, or a staff one) has no business
+  // travelling to the route that issues another.
+  const establishing = shape === "login";
   const cookieStore = await cookies();
-  const token = cookieStore.get(PORTAL_SESSION_COOKIE)?.value;
+  const token = establishing ? undefined : cookieStore.get(PORTAL_SESSION_COOKIE)?.value;
 
   const headers: Record<string, string> = {};
   if (token) {
@@ -306,6 +325,14 @@ async function proxyPortalRequest(
   const responseRequestId = response.headers.get("x-request-id");
   if (responseRequestId) {
     responseHeaders["x-request-id"] = responseRequestId;
+  }
+  if (establishing) {
+    // Relayed VERBATIM: the attributes (`HttpOnly`, `Path`, `SameSite`, `Secure`) are the
+    // API's hardening decisions, and a proxy that rebuilt the header could quietly drop one.
+    // Never read, never rewritten, never logged — and only on this shape, so no read route
+    // can ever hand a session back.
+    const setCookie = response.headers.get("set-cookie");
+    if (setCookie !== null) responseHeaders["set-cookie"] = setCookie;
   }
 
   return new NextResponse(response.body, {
