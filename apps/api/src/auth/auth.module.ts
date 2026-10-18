@@ -8,6 +8,7 @@ import { AuthGuard } from "./auth.guard.js";
 import { AuthService } from "./auth.service.js";
 import { CredentialService } from "./credential.service.js";
 import { LoginRateLimiterService } from "./login-rate-limiter.service.js";
+import { PasswordResetTokenService } from "./password-reset-token.service.js";
 import { SessionService } from "./session.service.js";
 
 /**
@@ -28,6 +29,7 @@ import { SessionService } from "./session.service.js";
     CredentialService,
     SessionService,
     LoginRateLimiterService,
+    PasswordResetTokenService,
     AuthService,
     AuthGuard,
     { provide: AUTH_CONFIG, useFactory: (): AuthConfig => readAuthConfig(process.env) },

@@ -22,12 +22,21 @@ directly through the channel port.
       profile cascaded, and the two new enum values were usable as literals in a
       later transaction with the delivery aggregate's identity guard still
       holding._
-- [ ] **WU-B — the token service.** Issue (generate, hash, store, return the
-      plaintext once) and consume (look up by hash, refuse an expired or
-      consumed one uniformly, mark consumed). The hashing convention follows
-      `session.service.ts`, whose records the same problem: a high-entropy token
-      needs a fast digest, not argon2 — argon2 is for a password a human chose.
-      Unit cases for every refusal path.
+- [x] **WU-B — the token service.** `password-reset-token.service.ts`: `issue`
+      (32 random bytes base64url, stores the **digest only**, returns the
+      plaintext once), `consume` (a **compare-and-set**, so two requests with
+      one link cannot both win) and `spendAllForProfile` (what makes "after a
+      reset no other link works" true). SHA-256 rather than argon2, with the
+      reason stated: argon2 exists to make a LOW-entropy human-chosen password
+      expensive to guess, and there is nothing to guess in 256 random bits. The
+      refusal is ONE code and ONE message for an unknown, a spent and an expired
+      token, and a non-string token is refused without querying at all. _Commit
+      pending. 11 cases: the digest is what is stored (asserted over the whole
+      serialized write, so any field would catch it), the TTL is computed from
+      the instant passed and not the wall clock, the CAS's `WHERE` carries the
+      conditions the read saw, a lost race refuses, the three causes refuse
+      IDENTICALLY, the expiry boundary is exact at the millisecond, and
+      `spendAllForProfile` leaves already-spent rows alone._
 - [ ] **WU-C — the two routes.** `POST /auth/forgot-password` (rate-limited,
       uniform response, creates the delivery **intent**, no external call) and
       `POST /auth/password-reset` (consume, replace the argon2id hash,
