@@ -10,6 +10,7 @@ import { findMigration, loadMigrations, loadPrismaSchema } from "./schema-files.
  * migrated database before this Story closed; this file is their regression net.
  */
 const SQL = findMigration(loadMigrations(), "_notif_001_notification_delivery").sql;
+const SQL_002 = findMigration(loadMigrations(), "_notif_002_provider_reference").sql;
 const SCHEMA = loadPrismaSchema();
 
 /**
@@ -194,6 +195,31 @@ describe("migration · notification delivery (NOTIF-001)", () => {
     expect(SQL).toMatch(
       /IF NEW\."attempt_count" < OLD\."attempt_count" THEN\s+RAISE EXCEPTION 'a notification delivery attempt_count cannot decrease'/
     );
+  });
+});
+
+describe("migration · the provider reference (NOTIF-002)", () => {
+  it("is additive: one nullable column, and nothing else", () => {
+    expect(SQL_002).not.toMatch(/\bDROP\b/i);
+    expect(SQL_002).not.toMatch(/\bINSERT\b/i);
+    expect(SQL_002).not.toMatch(/\bUPDATE\s+[^\s]+\s+SET\b/i);
+    expect(SQL_002).not.toMatch(/^\s*CREATE TABLE\b/im);
+    expect(SQL_002).toMatch(
+      /ALTER TABLE "notification_delivery" ADD COLUMN "provider_reference" TEXT;/
+    );
+  });
+
+  it("adds no guard clause, because the freeze already covers the column", () => {
+    // A `SENT` row is frozen outright by notification_delivery_terminal_immutable,
+    // so a never-clear clause for this column would be a rule the database could
+    // never reach. Asserting the absence records WHY it is absent, so a later
+    // reader does not read the omission as an oversight.
+    expect(SQL_002).not.toMatch(/CREATE (OR REPLACE )?FUNCTION/i);
+    expect(SQL_002).not.toMatch(/CREATE TRIGGER/i);
+  });
+
+  it("declares the column nullable in the schema, for a provider that issues none", () => {
+    expect(SCHEMA).toMatch(/providerReference String\? @map\("provider_reference"\)/);
   });
 });
 

@@ -17,6 +17,8 @@ const productionBase = {
   SECRET_STORE_MASTER_KEYS: `1:${MASTER_KEY}`,
   SIFEN_ENVIRONMENT: "TEST",
   FISCAL_PROVIDER: "fake",
+  EMAIL_PROVIDER: "fake",
+  WHATSAPP_PROVIDER: "fake",
 };
 
 describe("workerEnv production storage gate", () => {
@@ -306,5 +308,64 @@ describe("workerEnv DTE_XSD_DIR", () => {
     if (result.success) {
       expect(result.env.DTE_XSD_DIR).toBe("/opt/newsaas/dte-xsd");
     }
+  });
+});
+
+describe("workerEnv channel provider gate (NOTIF-002)", () => {
+  const baseWithoutChannels = {
+    ...BASE_ENV,
+    NODE_ENV: "production",
+    SECRET_STORE_MASTER_KEYS: `1:${MASTER_KEY}`,
+    SIFEN_ENVIRONMENT: "TEST",
+    FISCAL_PROVIDER: "fake",
+  };
+
+  it.each(["EMAIL_PROVIDER", "WHATSAPP_PROVIDER"] as const)(
+    "rejects a missing %s in production",
+    (name) => {
+      // Same rule as FISCAL_PROVIDER: absence in production would silently build
+      // the fake, and a deployment that names no provider must fail loudly.
+      const result = workerEnv(baseWithoutChannels);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain(name);
+      }
+    }
+  );
+
+  it.each(["EMAIL_PROVIDER", "WHATSAPP_PROVIDER"] as const)(
+    "leaves %s optional outside production",
+    (name) => {
+      const result = workerEnv({ ...BASE_ENV, NODE_ENV: "development" });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.env[name]).toBeUndefined();
+      }
+    }
+  );
+
+  it("accepts the package's closed channel values and refuses a typo at boot", () => {
+    const accepted = workerEnv({
+      ...productionBase,
+      EMAIL_PROVIDER: "smtp",
+      WHATSAPP_PROVIDER: "whatsapp-cloud",
+      SMTP_HOST: "smtp.example.test",
+      SMTP_PORT: "587",
+      SMTP_USER: "user",
+      SMTP_PASSWORD: "secret",
+      NOTIFICATION_EMAIL_FROM: "no-reply@example.test",
+      WHATSAPP_CLOUD_TOKEN: "token",
+      WHATSAPP_CLOUD_PHONE_NUMBER_ID: "1",
+      WHATSAPP_CLOUD_TEMPLATE_NAME: "reminder",
+      WHATSAPP_CLOUD_TEMPLATE_LANGUAGE: "es",
+    });
+    expect(accepted.success).toBe(true);
+
+    // The closed set is the package's, so a typo refuses here rather than deep
+    // inside the channel module.
+    const typo = workerEnv({ ...productionBase, EMAIL_PROVIDER: "ses" });
+    expect(typo.success).toBe(false);
   });
 });

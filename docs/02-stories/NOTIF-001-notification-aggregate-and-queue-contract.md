@@ -361,13 +361,17 @@ then validated by an independent read-only validator run:
 
 ## Technical Debt
 
-- **[[TD-039]] — raised by this unit's review, and it is not this unit's.**
+- **[[TD-039]] — raised by this unit's review, and resolved on its own branch.**
   `fiscalSubmissionJobId` in `packages/fiscal/src/fiscal-submission.queue.ts`
-  returns `fiscal-submit:<id>`, the same two-segment shape BullMQ refuses, so
-  the fiscal producer's enqueue would throw in production. Its unit test asserts
-  that literal against a mocked `Queue`, which is why CI is green. Recorded,
-  measured and named rather than fixed inside this candidate, because the file
-  is outside this unit's reviewed scope.
+  returned `fiscal-submit:<id>`, the same two-segment shape BullMQ refuses, so
+  the fiscal producer's enqueue threw in production while its unit test asserted
+  that literal against a mocked `Queue`. Recorded, measured and named rather
+  than fixed inside this candidate, because the file is outside this unit's
+  reviewed scope. **`resolved` on `fix/td-039-fiscal-job-id-colon`**: the
+  separator is now a hyphen, the id shape is asserted over several inputs, and
+  the fix was proven against a real Redis — `Custom Id cannot contain :` for the
+  old form, `ADDED` for the new one, through the producer's own options
+  function.
 - **R3-002** — lens `reliability`, `migration.sql:247-256` (the transition
   guard's edge list), WARNING, `informational`. Claim text not captured. **A
   reading of that coordinate, marked as a reading**: `CANCELLED` is the only
@@ -422,8 +426,9 @@ The review earned its keep three times over on a unit that looked finished:
 **R3-001** was a real CRITICAL — a BullMQ-refused job id that no local gate
 could reach, and that the test suite had _pinned_ rather than caught; and the
 same review exposed **[[TD-039]]**, the identical defect on the fiscal producer,
-which is a production blocker in a closed epic. The two remaining advisories are
-recorded by coordinate, with their readings explicitly marked as readings.
+which was a production blocker in a closed epic — now `resolved` on its own
+branch. The two remaining advisories are recorded by coordinate, with their
+readings explicitly marked as readings.
 
 The commits are `9b321cf` (the unit) and `12cf12c` (the correction); the review
 receipts are in `odd/tasks/epic-17-notifications.md`.

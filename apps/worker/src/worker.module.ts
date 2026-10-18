@@ -11,11 +11,26 @@ import {
   createFiscalCscReader,
   type FiscalCscPort,
 } from "@newsaas/fiscal-persistence";
+import {
+  NotificationChannelsModule,
+  NOTIFICATION_ENTITLEMENT,
+  NOTIFICATION_RECIPIENT,
+  type NotificationEntitlementPort,
+  type NotificationRecipientPort,
+} from "@newsaas/notifications";
 import { SECRET_STORE, type SecretStore } from "@newsaas/secret-store";
 import { StorageModule } from "@newsaas/storage";
 import { BrandingResetCleanupConsumer } from "./branding-reset-cleanup/cleanup.consumer.js";
 import { BrandingResetCleanupHandler } from "./branding-reset-cleanup/cleanup.handler.js";
 import { BrandingResetCleanupReconciliationService } from "./branding-reset-cleanup/reconciliation.service.js";
+import {
+  createUnavailableNotificationContentBuilder,
+  NOTIFICATION_CONTENT_BUILDER,
+} from "./notification-delivery/notification-content.js";
+import { NotificationDeliveryConsumer } from "./notification-delivery/notification-delivery.consumer.js";
+import { NotificationDeliveryHandler } from "./notification-delivery/notification-delivery.handler.js";
+import { createNotificationEntitlementReader } from "./notification-delivery/notification-entitlement.read.js";
+import { createNotificationRecipientReader } from "./notification-delivery/notification-recipient.read.js";
 import { RedisHealthService } from "./redis/redis-health.service.js";
 import {
   createFiscalDocumentAssembly,
@@ -117,12 +132,74 @@ const documentBuilderProvider: Provider = {
  * wired the real assembly here, over the same client, the credential port and
  * the CSC port.
  */
+/**
+ * The recipient reader (NOTIF-002): the delivery's stored reference resolved to
+ * a RESTRICTED contact datum at send time.
+ *
+ * The value never reaches a log, a job payload or the delivery record; this
+ * reader's only consumer is the handler's single call frame.
+ */
+const recipientReaderProvider: Provider = {
+  provide: NOTIFICATION_RECIPIENT,
+  useFactory: (prisma: PrismaService): NotificationRecipientPort =>
+    createNotificationRecipientReader({ client: prisma }),
+  inject: [PrismaService],
+};
+
+/**
+ * The entitlement reader (NOTIF-002): [[DEC-058]]'s per-channel gate.
+ *
+ * The API's `EntitlementsService` cannot serve the worker, and wiring none keeps
+ * the fail-closed deny-all default rather than opening the gate.
+ */
+const entitlementReaderProvider: Provider = {
+  provide: NOTIFICATION_ENTITLEMENT,
+  useFactory: (prisma: PrismaService): NotificationEntitlementPort =>
+    createNotificationEntitlementReader({ client: prisma }),
+  inject: [PrismaService],
+};
+
+/**
+ * The content seam, still failing closed.
+ *
+ * The reminder's real builder is [[NOTIF-003]]'s: it reads the appointment and
+ * renders the message, which is a domain concern this unit must not invent. A
+ * delivery that arrives before it lands settles with
+ * `NOTIFICATION_CONTENT_UNAVAILABLE` by name.
+ */
+const contentBuilderProvider: Provider = {
+  provide: NOTIFICATION_CONTENT_BUILDER,
+  useValue: createUnavailableNotificationContentBuilder(),
+};
+
+/**
+ * Worker deployable module.
+ *
+ * Composes the durable branding-reset cleanup pipeline (consumer + interval
+ * reconciliation) on top of the shared Prisma and object-storage boundaries.
+ * PrismaModule is `@Global`; StorageModule.forRoot() exports the abstract
+ * StoragePort the handler deletes through.
+ *
+ * FISC-012 WU-D1 wires the fiscal credential. `SecretsModule.forRoot()` is the
+ * worker's own composition root because `packages/secret-store` deliberately
+ * ships no Nest module (ADR-005/D1, DEC-053/D7) — the record client is the
+ * application's own Prisma client. `FiscalProviderModule.forRoot` receives the
+ * reader, so the fail-closed null port is no longer what runs. FISC-012 WU-D2
+ * added the stage's document seam, which failed closed until FISC-015 WU-D2
+ * wired the real assembly here, over the same client, the credential port and
+ * the CSC port.
+ *
+ * NOTIF-002 wires the notification delivery path: the channel selection, the
+ * recipient and entitlement readers over the same Prisma client, the content
+ * seam (still failing closed until NOTIF-003), the handler and its consumer.
+ */
 @Module({
   imports: [
     PrismaModule,
     SecretsModule.forRoot(),
     StorageModule.forRoot(),
     FiscalProviderModule.forRoot({ credentialPort }),
+    NotificationChannelsModule.forRoot(),
   ],
   providers: [
     RedisHealthService,
@@ -134,6 +211,11 @@ const documentBuilderProvider: Provider = {
     FiscalSubmissionHandler,
     FiscalSubmissionConsumer,
     FiscalSubmissionRecoveryService,
+    recipientReaderProvider,
+    entitlementReaderProvider,
+    contentBuilderProvider,
+    NotificationDeliveryHandler,
+    NotificationDeliveryConsumer,
   ],
 })
 export class WorkerModule {}

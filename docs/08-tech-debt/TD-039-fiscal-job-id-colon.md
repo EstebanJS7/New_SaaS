@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The fiscal submission producer's job id carries a colon, which BullMQ refuses,
   so no fiscal document can be enqueued in production
-status: open
+status: resolved
 severity: high
 owner: fiscal
 related_epics:
@@ -92,6 +92,51 @@ means.
 An id-shape assertion (`expect(fiscalSubmissionJobId(id)).not.toContain(":")`)
 and, ideally, one live `queue.add` against a Redis in CI, since the rule lives
 in BullMQ's `Job` constructor and only a real `Queue` reaches it.
+
+## Resolution (2026-10-17)
+
+Fixed on branch `fix/td-039-fiscal-job-id-colon` (commit `8561af0`, stacked on
+the EPIC-17 branch because this record was created there), and **proven against
+a real Redis rather than against a mock**:
+
+```text
+fiscalSubmissionJobId => fiscal-submit-9a1f4c2d-0b7e-4a11-9d3c-5f2b8e6a71c4
+CONTROL (old, colon): Custom Id cannot contain :
+FIXED (new, hyphen): ADDED as jobId=fiscal-submit-9a1f4c2d-0b7e-4a11-9d3c-5f2b8e6a71c4
+```
+
+The control is the separator that shipped, added through `queue.add` exactly as
+the producer does; the fixed line is the real `fiscalSubmissionJobOptions`
+passed to a real `Queue`.
+
+What changed:
+
+- `packages/fiscal/src/fiscal-submission.queue.ts` — the separator, plus the
+  rule and this defect's history in the function's own doc comment, because the
+  shape propagated once already: EPIC-17's notification boundary copied it.
+- `packages/fiscal/src/fiscal-submission.queue.test.ts` — the literal, plus a
+  shape assertion over several inputs (`not.toContain(":")`), which is the test
+  that would have caught this. A mocked `Queue` cannot: the throw lives in
+  BullMQ's `Job` constructor.
+- `apps/api/src/fiscal/fiscal-submission.producer.test.ts` — the asserted
+  literal and the mocked `add` result, with the reason recorded beside them.
+- `docs/05-modules/Fiscal.md` and `docs/09-releases/CHANGELOG.md` — the
+  implemented-behavior records, in the same change as the behaviour.
+
+Verdict: the fix is one separator and it is verified end to end. The suite grew
+by one case (fiscal 787 → 788). The determinism contract [[DEC-049]] relies on
+is untouched: the identity is still derived from `fiscalDocumentId` alone.
+
+**Review**: `review-757b99b67c3e5197` — medium tier, one lens
+(`review-reliability`), consent relayed and granted by the maintainer,
+**approved with no findings on the first pass**, acknowledged, authority burned.
+No correction and no advisories, which is what a one-separator fix whose rule is
+also asserted in a test should look like.
+
+**Gates on the final tree**: `format-check` clean, lint 21/21, typecheck 21/21,
+build 13/13, and the full suite green (fiscal 788, database 509, api 1214 passed
+| 266 skipped without `DATABASE_URL_TEST`, worker 164, web 1087). No CI run yet:
+the branch is local and unpushed.
 
 ## Related
 

@@ -8,10 +8,22 @@ import {
 
 describe("fiscal submission queue contract", () => {
   it("derives a stable job id from the fiscal document id", () => {
-    expect(fiscalSubmissionJobOptions("document-1").jobId).toBe("fiscal-submit:document-1");
+    expect(fiscalSubmissionJobOptions("document-1").jobId).toBe("fiscal-submit-document-1");
     expect(fiscalSubmissionJobOptions("document-1").jobId).toBe(
       fiscalSubmissionJobOptions("document-1").jobId
     );
+  });
+
+  it("keeps the id free of the colon BullMQ refuses", () => {
+    // TD-039. Measured against bullmq 5.81.3 with a real Redis, not reasoned
+    // about: `queue.add(name, data, { jobId: "fiscal-submit:abc" })` throws
+    // `Error: Custom Id cannot contain :`, and this id used that separator
+    // until the fix. A mocked Queue cannot reach the rule — it lives in BullMQ's
+    // `Job` constructor — so the literal above stayed green while production
+    // could not enqueue a single document. The shape is asserted here instead.
+    for (const id of ["document-1", "9a1f4c2d-0b7e-4a11-9d3c-5f2b8e6a71c4", "0f1e2d3c"]) {
+      expect(fiscalSubmissionJobOptions(id).jobId).not.toContain(":");
+    }
   });
 
   it("gives different documents different job ids", () => {

@@ -1,0 +1,14 @@
+-- NOTIF-002 (EPIC-17 WU-C2). The provider's handle for an accepted message.
+--
+-- Additive: one nullable column and nothing else. It was found missing while
+-- building the delivery path, not while planning it: both adapters produce a
+-- reference for a message they accepted (nodemailer's `messageId`, the WhatsApp
+-- Cloud API's `wamid`), and without a column to store it the adapter contract's
+-- `providerReference` would have had no consumer at all.
+--
+-- Nullable, because a provider is not required to issue one and an absent value
+-- is not a failure. No guard clause accompanies it: a `SENT` row is already
+-- frozen outright by `notification_delivery_terminal_immutable`, so the value
+-- can never be rewritten or cleared, and a never-clear clause here would be a
+-- rule the database could never reach.
+ALTER TABLE "notification_delivery" ADD COLUMN "provider_reference" TEXT;

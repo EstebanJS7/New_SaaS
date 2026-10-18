@@ -75,12 +75,21 @@ by any service.
       moved to [[NOTIF-002]]. The review also exposed **[[TD-039]]**, a
       production blocker in the closed fiscal epic, which is out of this unit's
       scope and recorded instead of fixed here.
-- [ ] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
+- [x] **WU-C — the channel port.** `EMAIL` and `WHATSAPP` behind one boundary, a
       deterministic fake, the real adapters, fail-closed production selection,
-      and the recipient's contact data classified **RESTRICTED**. The email
-      library's ADR is this unit's gate. **It also owns the worker consumer and
-      the delivery handler**, which moved from WU-B because a claim with nothing
-      to send cannot be a unit. → [[NOTIF-002]]
+      and the recipient's contact data classified **RESTRICTED**. →
+      [[NOTIF-002]] **WU-C1 landed** (`c283d92`): [[ADR-011]] accepted
+      (nodemailer `^10.1.2` over SMTP, proven clean by `pnpm audit`), plus the
+      port, the fake, both adapters, the selection and the ADR's guardrail 7 as
+      a test — 40 new cases. Review `review-02c5036e0cf9a762` (medium, one
+      lens): **approved on the first pass**, five non-blocking advisories →
+      [[TD-040]]. **WU-C2 landed**: the recipient reader over `CustomerContact`,
+      the WhatsApp entitlement gate, the content seam (still failing closed
+      until WU-D), the handler with its claim compare-and-swap, the consumer,
+      the worker wiring and the env contract — 39 new cases. A missing
+      `provider_reference` column was found while building it and added by
+      migration `20261017000002`. Story `done`; the live send run stays pending
+      by name at [[NOTIF-005]].
 - [ ] **WU-D — the appointment reminder.** The schema-bound job, the typed
       `notifications` settings namespace, the idempotency key, and the
       cancellation path that removes a pending reminder — which needs decision
@@ -107,10 +116,11 @@ by any service.
 - **BullMQ refuses a custom job id containing `:`** unless it splits into
   exactly three segments. Measured against `bullmq@5.81.3` with a real Redis,
   and it cost this epic one CRITICAL: the boundary had copied
-  `fiscal-submit:<id>`. The notification id is now hyphenated; [[TD-039]]
-  records that **the fiscal one was not fixed and is a production blocker**,
-  because its shape is pinned by a test that asserts it against a mocked
-  `Queue`.
+  `fiscal-submit:<id>`. The notification id is now hyphenated, and [[TD-039]] —
+  the same defect on the fiscal producer, where it was a production blocker
+  because a mocked `Queue` pinned the wrong literal — is **`resolved`** on
+  `fix/td-039-fiscal-job-id-colon`, proven against a real Redis
+  (`Custom Id cannot contain :` for the old separator, `ADDED` for the new one).
 
 - **The dispatcher is in-process**, so a reaction only sees an event published
   by its own deployable: the appointment reactions belong in `api`, the
@@ -127,6 +137,78 @@ by any service.
   an absent value is refused in production, an unknown value is refused by name,
   and the fake stays selectable on purpose for the documented demo path.
   [[DEC-061]] adopts that rule rather than a stricter paraphrase of it.
+
+## TD-039 — resolved, off this epic's branch
+
+`fix/td-039-fiscal-job-id-colon`, stacked on this epic's branch because the TD
+record was created here. One separator (`fiscal-submit-<documentId>`), the two
+asserted literals, a new id-shape case, and the doc correction in
+`docs/05-modules/Fiscal.md`, the changelog and the EPIC-15 record. Verified with
+a real Redis through the producer's own options function; fiscal suite 787
+→ 788.
+
+Commit `8561af0`; review `review-757b99b67c3e5197` — medium tier, one lens
+(`review-reliability`), consent relayed and granted, **approved with no findings
+on the first pass**, acknowledged, authority burned.
+
+## ADR-011 — accepted, and the dependency measured
+
+`nodemailer` `^10.1.2` over SMTP (MIT-0, **zero transitive dependencies**, pure
+JS), accepted by the maintainer on 2026-10-17. The advisory record decided the
+ADR's shape rather than blocking it: **25 advisories, 10 published since
+2026-09-01**, including a **cross-tenant SMTP credential disclosure** through a
+process-global transport — so the guardrails (per-send transport, no tenant
+string in a transport option, file/URL access off, one validated recipient, the
+library imported by one file) are the decision, not a footnote. Measured after
+installing: `pnpm audit` reports **0 advisories contributed by nodemailer**, and
+the package's own types mean no `@types` dependency.
+
+## Branches — each unit on its own branch
+
+```text
+main                            2d51bb6   baseline
+feat/epic-17-notifications      eb7cfdc   WU-A + WU-B + their reviews
+fix/td-039-fiscal-job-id-colon  c6acccf   TD-039 (stacked)
+feat/notif-002-wu-c1            c283d92   WU-C1 (stacked; retarget its base
+                                           once TD-039 merges)
+```
+
+WU-C1 was committed onto the TD-039 branch by mistake, and the pointers were
+corrected **before** the review: `fix/td-039` was moved back to its own receipt
+commit and WU-C1 got its own branch, so no unit's PR carries another's work.
+
+## TD-040 and TD-041 — resolved (2026-10-17)
+
+`fix/notif-review-advisories`, one unit for both books of advisories because
+they cover the same Story. Eight findings addressed, each with a case that fails
+without the fix; the two real ones were an unguarded transport `close()` and the
+gate phase leaving no trace on the row. One case in TD-040 was caught by its own
+new guard: the walked root is `src/`, not the package root.
+
+## TD-042 — the advisories the advisory fix produced (2026-10-17)
+
+The fix unit for TD-040/TD-041 was itself reviewed (`review-15bb8c29f08b5a2f`)
+and approved, and raised four more advisories — two of which are **defects in
+the fix**: a `try/catch` around an async `close()` that caught nothing (while
+its own comment claimed otherwise), and a `settleFailure` called from inside the
+new gates' `try`, which would have RETRIED a delivery that faithfully failed
+non-retryably. Both fixed, with the other two leniencies (`Number("1e3")`, a
+non-http scheme). The lesson is recorded in [[TD-042]]: review the fix as its
+own candidate, and distrust a comment that asserts a guarantee the code does not
+provide.
+
+## The advisory fix, reviewed — one CRITICAL, refuted on behaviour and fixed on shape
+
+`review-6352b1dea9a6addf` closed `correction_required` on a CRITICAL
+(`R3-decide-retryable-branch`) alleging that the retryable gate branch could
+return a non-decision and settle a delivery twice. **Measured, not argued**: the
+callee is `Promise<never>` and always throws, so no value reaches the `in`
+check, and the existing case asserts the rejection. The SHAPE was worth fixing —
+a `return` of a never-returning action read as a value flowing back to two
+reviewers — so the call is now an awaited statement with an explicit unreachable
+throw, and the doubted path is pinned by a case (exactly two writes, neither
+setting `FAILED`). Correction `fe92bec`; approved and acknowledged; one
+advisory, `R3-gate-throw-unproved`, recorded in [[TD-042]].
 
 ## Operational notes
 

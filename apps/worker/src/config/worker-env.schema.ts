@@ -1,4 +1,8 @@
 import { FISCAL_PROVIDER_ENV_VALUES } from "@newsaas/fiscal";
+import {
+  NOTIFICATION_EMAIL_PROVIDER_ENV_VALUES,
+  NOTIFICATION_WHATSAPP_PROVIDER_ENV_VALUES,
+} from "@newsaas/notifications";
 import { z } from "zod";
 
 /**
@@ -87,8 +91,53 @@ export const workerEnvSchema = z
      * validated deployment contract.
      */
     DTE_XSD_DIR: z.string().optional(),
+    /**
+     * The channel providers this deployment selects (NOTIF-002).
+     *
+     * Validated against the package's closed sets so a typo refuses at boot
+     * instead of deep inside `NotificationChannelsModule`, exactly like
+     * `FISCAL_PROVIDER`. Optional here and required in production by the gate
+     * below, because absence is what would silently select the fake.
+     */
+    EMAIL_PROVIDER: z.enum(NOTIFICATION_EMAIL_PROVIDER_ENV_VALUES).optional(),
+    WHATSAPP_PROVIDER: z.enum(NOTIFICATION_WHATSAPP_PROVIDER_ENV_VALUES).optional(),
+    /**
+     * The SMTP deployment inputs. Optional at boot: the channel module refuses
+     * BY NAME when `smtp` is selected and one of them is missing, so this entry
+     * is the validated contract rather than a second copy of that check. The
+     * password is a secret, is never logged, and has no development default.
+     */
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.string().optional(),
+    SMTP_SECURE: z.enum(["true", "false"]).optional(),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASSWORD: z.string().optional(),
+    NOTIFICATION_EMAIL_FROM: z.string().optional(),
+    /**
+     * The WhatsApp Cloud inputs. The template name, its language and the
+     * parameter order are deployment inputs because a business-initiated message
+     * must use an operator-approved template (NOTIF-002).
+     */
+    WHATSAPP_CLOUD_TOKEN: z.string().optional(),
+    WHATSAPP_CLOUD_PHONE_NUMBER_ID: z.string().optional(),
+    WHATSAPP_CLOUD_TEMPLATE_NAME: z.string().optional(),
+    WHATSAPP_CLOUD_TEMPLATE_LANGUAGE: z.string().optional(),
+    WHATSAPP_CLOUD_API_BASE_URL: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    // Same rule as FISCAL_PROVIDER, for the same reason: absence in production
+    // would silently build the fake, and a deployment that names no provider
+    // must fail loudly rather than quietly deliver nothing (DEC-061).
+    for (const name of ["EMAIL_PROVIDER", "WHATSAPP_PROVIDER"] as const) {
+      if (env.NODE_ENV === "production" && env[name] === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [name],
+          message: `${name} is required in production.`,
+        });
+      }
+    }
+
     if (env.NODE_ENV === "production" && env.FISCAL_PROVIDER === undefined) {
       // Match the API gate: an absent provider in production would silently
       // select the fake. Explicit `fake` stays legitimate (the dedicated demo

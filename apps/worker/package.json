@@ -2,7 +2,7 @@
   "name": "@newsaas/worker",
   "version": "0.0.0",
   "private": true,
-  "description": "NewSaaS Worker — NestJS standalone + BullMQ bootstrap",
+  "description": "NewSaaS Worker \u2014 NestJS standalone + BullMQ bootstrap",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
@@ -20,6 +20,7 @@
     "@newsaas/database": "workspace:*",
     "@newsaas/fiscal": "workspace:*",
     "@newsaas/fiscal-persistence": "workspace:*",
+    "@newsaas/notifications": "workspace:*",
     "@newsaas/secret-store": "workspace:*",
     "@newsaas/shared": "workspace:*",
     "@newsaas/storage": "workspace:*",
