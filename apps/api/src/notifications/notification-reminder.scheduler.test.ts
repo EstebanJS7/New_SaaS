@@ -55,6 +55,8 @@ function setup(args: {
   } | null)[];
   /** Makes the removal fail, so the report path can be asserted (R4). */
   readonly cancelThrows?: boolean;
+  /** Makes the ROW write fail, so the independent-removal path is assertable. */
+  readonly cancelWriteThrows?: boolean;
 }) {
   const handlers = new Map<string, (event: ApplicationEvent<string, unknown>) => unknown>();
   const dispatcher: EventDispatcher = {
@@ -114,6 +116,9 @@ function setup(args: {
         data: Record<string, unknown>;
       }) => {
         updates.push(updateArgs);
+        if (args.cancelWriteThrows === true) {
+          return Promise.reject(new Error("the row write failed"));
+        }
         return Promise.resolve({ count: args.cancelCount ?? 1 });
       },
     },
@@ -449,16 +454,47 @@ describe("cancelling a reminder", () => {
     expect(cancelled).toEqual(["delivery-1", "delivery-2"]);
   });
 
-  it("does not remove a job it did not cancel", async () => {
-    // A lost compare-and-swap means another writer cancelled it, and they remove
-    // the job. Removing it here would report a cancellation this caller did not
-    // perform.
+  it("removes the job even when the row was ALREADY cancelled — fix review R3-002", async () => {
+    // This case used to assert the OPPOSITE, and the review found that assertion
+    // encoded a defect: the removal is not the cancellation, so it must not depend
+    // on winning the compare-and-swap. In the compensation, a cancellation that
+    // landed between the pre-check and the enqueue has already cancelled the row,
+    // and skipping the removal there left the job this reaction just enqueued
+    // orphaned — exactly what the compensation exists to close. `queue.remove` is
+    // idempotent, so removing twice costs nothing.
     const { cancel, cancelled } = setup({
       pendingDeliveries: [{ id: "delivery-1" }],
       cancelCount: 0,
     });
+
     await cancel();
-    expect(cancelled).toEqual([]);
+
+    expect(cancelled).toEqual(["delivery-1"]);
+  });
+
+  it("still removes the job when the ROW WRITE fails — fix review R3-001", async () => {
+    // The write and the removal used to share one try, so a database failure
+    // logged and returned without touching the job.
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    try {
+      const { cancel, cancelled } = setup({
+        pendingDeliveries: [{ id: "delivery-1" }],
+        cancelWriteThrows: true,
+      });
+
+      await expect(cancel()).resolves.toBeUndefined();
+
+      expect(cancelled).toEqual(["delivery-1"]);
+      expect(JSON.stringify(errors)).toContain("delivery-1");
+      // The error's name, never its text.
+      expect(JSON.stringify(errors)).toContain("Error");
+      expect(JSON.stringify(errors)).not.toContain("the row write failed");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("queries only this tenant's pending reminders of that appointment", async () => {

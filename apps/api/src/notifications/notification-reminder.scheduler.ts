@@ -236,25 +236,34 @@ export class NotificationReminderScheduler implements OnModuleInit {
   }
 
   /**
-   * Cancels one pending delivery and removes its job. **Total: it never throws.**
+   * Cancels one delivery's row if it is still pending, and removes its job.
+   * **Total: it never throws.**
    *
-   * Total on purpose, for two reasons a targeted validator found in the first
-   * version of this correction:
+   * The two halves are independent on purpose, and that is what two findings on
+   * this file's first version established:
    *
-   * - a removal that rejected used to abort the caller's loop, so a failure on
-   *   one channel left the REMAINING deliveries pending — worse than the problem
-   *   it reported;
-   * - a failure report must carry ids and a SANITIZED reason. A driver's message
-   *   is where a Redis URL with a password lives, so what is reported is the
-   *   error's NAME, never its text.
+   * - **The removal is UNCONDITIONAL.** It used to run only when this caller won
+   *   the compare-and-swap, which broke the post-enqueue compensation exactly
+   *   where it was needed: a cancellation that landed between the check and the
+   *   enqueue had ALREADY cancelled the row, so the CAS lost and the job this
+   *   reaction had just enqueued was left orphaned. `queue.remove` is idempotent —
+   *   removing a job another caller already removed returns zero — so removing
+   *   twice costs nothing and skipping it costs a live job.
+   * - **A failed row write does not skip the removal.** The write used to sit in
+   *   the same try as the removal, so a database failure logged and returned
+   *   without touching the job. The row's status is what makes a reminder
+   *   undeliverable, but a job left behind is precisely what this exists to
+   *   prevent, so a write failure is reported and the removal still runs.
    *
-   * The row is cancelled first and the job second, and the removal runs only when
-   * this caller won the compare-and-swap — two racing cancellations must not both
-   * report a cancellation one of them did not perform.
+   * Both halves are reported rather than thrown: an aborting failure would stop
+   * the caller's loop and leave the REMAINING deliveries untouched, which a
+   * targeted validator found worse than the problem it reported. And every report
+   * carries ids and the error's NAME, never its text: a driver's message is where
+   * a connection URL with a password lives.
    */
   private async cancelDelivery(tenantId: string, deliveryId: string): Promise<void> {
     try {
-      const cancelled = await this.prisma.notificationDelivery.updateMany({
+      await this.prisma.notificationDelivery.updateMany({
         where: { id: deliveryId, tenantId, status: { in: ["SCHEDULED", "QUEUED"] } },
         data: {
           status: "CANCELLED",
@@ -263,16 +272,21 @@ export class NotificationReminderScheduler implements OnModuleInit {
           cancellationReason: REMINDER_CANCELLATION_REASON,
         },
       });
-      if (cancelled.count !== 1) return;
+    } catch (error) {
+      // A row that stays pending is a worse state than a cancelled one, so it is
+      // reported loudly; the removal below still runs either way.
+      console.error("Notification delivery could not be cancelled", {
+        notificationDeliveryId: deliveryId,
+        error: describeError(error),
+      });
+    }
 
+    try {
       await this.producer.cancel(deliveryId);
     } catch (error) {
-      // The row IS cancelled and the handler refuses a settled row, so the
-      // reminder cannot be delivered — the guarantee is the row's status, not this
-      // removal. What the failure costs is a job that lingers with nobody
-      // expecting it, which an operator has to be able to see; swallowing it made
-      // a Redis outage look like a completed cancellation.
-      console.error("Notification delivery could not be cancelled cleanly", {
+      // The reminder cannot be delivered — the handler refuses a settled row — but
+      // the job lingers, and an operator has to be able to see it.
+      console.error("Notification delivery job could not be removed", {
         notificationDeliveryId: deliveryId,
         error: describeError(error),
       });
