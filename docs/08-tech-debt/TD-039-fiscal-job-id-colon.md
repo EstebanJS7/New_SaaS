@@ -1,0 +1,101 @@
+---
+id: TD-039
+type: tech-debt
+title:
+  The fiscal submission producer's job id carries a colon, which BullMQ refuses,
+  so no fiscal document can be enqueued in production
+status: open
+severity: high
+owner: fiscal
+related_epics:
+  - EPIC-16
+  - EPIC-15
+related_stories:
+  - FISC-004
+created: 2026-10-17
+updated: 2026-10-17
+---
+
+# TD-039 — the fiscal job id BullMQ refuses
+
+## What is wrong
+
+`packages/fiscal/src/fiscal-submission.queue.ts` builds the queue identity as:
+
+```ts
+export function fiscalSubmissionJobId(fiscalDocumentId: string): string {
+  return `fiscal-submit:${fiscalDocumentId}`;
+}
+```
+
+and `fiscalSubmissionJobOptions` passes it to `queue.add` as `jobId`. **BullMQ
+rejects a custom job id containing `:`** unless it splits into exactly three
+segments (the compatibility carve-out for its own repeatable-job format), so
+`BullMqFiscalSubmissionProducer.enqueue` throws before anything is enqueued.
+
+## How it was found, and why CI is green
+
+Found by the EPIC-17 WU-B review (`review-2ab7f3074e541ccd`, lens
+`review-reliability`) as **R3-001**, a CRITICAL against the _notification_
+boundary's own job id, which had copied this shape. The notification boundary
+was fixed in that unit and the correction was validated. This item is the same
+defect on the fiscal side, which is out of that unit's scope.
+
+**It was measured, not inferred.** Against `bullmq@5.81.3` (the version this
+repository resolves) with a real Redis:
+
+```text
+id="notification-deliver:abc" -> Error: Custom Id cannot contain :
+id="fiscal-submit:abc"        -> Error: Custom Id cannot contain :
+id="a:b:c"                    -> ADDED        (three segments: the carve-out)
+id="notification-deliver-abc" -> ADDED
+id="42"                       -> Error: Custom Id cannot be integers
+```
+
+The source of the rule is `bullmq/dist/cjs/classes/job.js`, whose own comment
+says: _"TODO: replace this check in next breaking check with include(':'). By
+using split we are still keeping compatibility with old repeatable jobs."_
+
+**Why every gate passes anyway:**
+
+- `apps/api/src/fiscal/fiscal-submission.producer.test.ts` asserts the literal
+  `jobId: "fiscal-submit:document-1"` against a **mocked** `Queue`
+  (`{ add: vi.fn(), close }`), so nothing validates it. The test currently
+  **enshrines** the defect.
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` overrides
+  `FISCAL_SUBMISSION_PRODUCER` with a fake, so the live suite never calls
+  `queue.add` either.
+- `branding-reset-cleanup` is **not** affected: it uses `jobId: intentId`, a
+  bare UUID with no colon.
+
+## Impact
+
+Every fiscal enqueue fails at the producer. `POST`-path issue commands await the
+enqueue behind a two-second deadline, so a tenant's invoice
+confirmation-to-issue flow fails with an internal error rather than a fiscal
+document. Nothing in the test suite can observe it, and `main`'s CI is green.
+
+## Recommended fix
+
+Change the separator to a hyphen — `fiscal-submit-${fiscalDocumentId}` — exactly
+as the notification boundary now does, and update the three places that assert
+the old literal. Then add the assertion that the id carries no colon, since a
+mocked `Queue` cannot catch the rule and the literal alone is what locked it in.
+
+The determinism contract [[DEC-049]] relies on is unaffected: the identity is
+still derived from `fiscalDocumentId` alone, so the queue dedupe and the
+document's partial unique index still agree on what "the same logical request"
+means.
+
+## Test that would have caught it
+
+An id-shape assertion (`expect(fiscalSubmissionJobId(id)).not.toContain(":")`)
+and, ideally, one live `queue.add` against a Redis in CI, since the rule lives
+in BullMQ's `Job` constructor and only a real `Queue` reaches it.
+
+## Related
+
+- [[EPIC-17]] WU-B, which found it and fixed its own copy:
+  `packages/notifications/src/notification-delivery.queue.ts`.
+- [[DEC-049]] — the deterministic job identity this defect does not change.
+- [[FISC-004]] — the unit that introduced the producer.

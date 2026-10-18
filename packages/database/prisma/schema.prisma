@@ -173,6 +173,8 @@ model Tenant {
   invoiceFiscalAllocations    InvoiceFiscalAllocation[]
   /// EPIC-15 FiscalDocument records owned by this tenant.
   fiscalDocuments             FiscalDocument[]
+  /// EPIC-17 notification deliveries owned by this tenant (NOTIF-001).
+  notificationDeliveries      NotificationDelivery[]
   /// EPIC-16 FISC-007 sealed tenant secrets, and the signing materials that
   /// reference them (ADR-005).
   tenantSecrets               TenantSecret[]
@@ -3391,4 +3393,133 @@ model InvoiceFiscalAllocation {
   /// migration's guard proves the range belongs to the same tenant.
   @@unique([tenantId, invoiceId])
   @@map("invoice_fiscal_allocation")
+}
+
+// ---------------------------------------------------------------------------
+// EPIC-17 Notifications (NOTIF-001, WU-B)
+// ---------------------------------------------------------------------------
+
+/// PRD §24's two channels. A channel is a provider behind one boundary, never a
+/// second module, so this enum is the whole division ([[DEC-061]]).
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+
+  @@map("notification_channel")
+}
+
+/// The delivery's explicit lifecycle. The allowed edges are enforced by
+/// `notification_delivery_transition_guard` in the migration, not by convention:
+/// `SCHEDULED -> QUEUED | SENDING | CANCELLED`, `QUEUED -> SENDING | CANCELLED`
+/// and `SENDING -> SENT | FAILED`. `SENT`, `FAILED` and `CANCELLED` have no
+/// outgoing edge, and `SENT`/`CANCELLED` rows are frozen outright.
+///
+/// `SCHEDULED -> SENDING` is admitted on purpose: the producer writes `QUEUED`
+/// after the enqueue succeeds, and a lost `QUEUED` write must not wedge a job
+/// that is already in the queue.
+enum NotificationDeliveryStatus {
+  SCHEDULED
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+
+  @@map("notification_delivery_status")
+}
+
+/// What a delivery is about. The set is closed, so it is an enum rather than the
+/// free-text `target_type` `audit_log` uses for cross-domain targets.
+enum NotificationSourceType {
+  APPOINTMENT
+  FISCAL_DOCUMENT
+
+  @@map("notification_source_type")
+}
+
+/// Who the delivery is addressed to, by reference. The channel boundary resolves
+/// the reference into RESTRICTED contact data at send time; the datum itself is
+/// never stored here (PRD §41, [[DEC-061]]).
+enum NotificationRecipientType {
+  CUSTOMER
+
+  @@map("notification_recipient_type")
+}
+
+/// One intended notification, tenant-scoped: its channel, its recipient
+/// reference, its lifecycle, its dedupe key and its `scheduled_at`.
+///
+/// The record holds REFERENCES and never content. There is deliberately no
+/// payload column: the message is built at send time from the authoritative rows
+/// the source reference names, so a snapshot here could only go stale — and a
+/// reschedule before delivery must not produce a reminder carrying an old time
+/// ([[NOTIF-003]]).
+model NotificationDelivery {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  channel NotificationChannel
+  status  NotificationDeliveryStatus @default(SCHEDULED)
+
+  /// The logical identity of the intent: `(source, channel, window)`, built by
+  /// the domain and unique per tenant through the PARTIAL unique index the
+  /// migration declares on `(tenant_id, dedupe_key) WHERE status <> 'CANCELLED'`.
+  /// Prisma cannot express a partial index, so this model declares none and the
+  /// migration owns it (the `invoice` and `fiscal_document` precedents). Fixity
+  /// after insert is enforced by `notification_delivery_identity_immutable`,
+  /// which is what makes the index mean what it says.
+  dedupeKey String @map("dedupe_key")
+
+  /// Polymorphic source coordinates, the `audit_log` shape: domains are
+  /// referenced by a typed id pair instead of a foreign key, because the sources
+  /// span EPIC-07's appointments and EPIC-16's fiscal documents and a fourth
+  /// domain must not need this table's schema changed. The write path validates
+  /// that the source exists IN THE TENANT before inserting.
+  sourceType NotificationSourceType @map("source_type")
+  sourceId   String                 @map("source_id") @db.Uuid
+
+  /// The recipient, by reference only. RESTRICTED contact data is resolved at
+  /// send time and never persisted here.
+  recipientType NotificationRecipientType @map("recipient_type")
+  recipientId   String                    @map("recipient_id") @db.Uuid
+
+  /// When the delivery may run, in UTC. NOT NULL because a delivery always has an
+  /// instant: an immediate send is scheduled at creation time, and a reminder is
+  /// scheduled at `startsAt - lead`. Immutable after insert — a different window
+  /// is a different delivery, which is exactly what the dedupe key encodes.
+  scheduledAt DateTime @map("scheduled_at") @db.Timestamptz(3)
+
+  attemptCount     Int       @default(0) @map("attempt_count")
+  /// The claim's lease: the instant the current attempt started. A fresh value
+  /// means another worker owns the attempt and a duplicate delivery must not
+  /// touch it; a stale one past the lease may be re-claimed in place (the status
+  /// is unchanged, so the transition guard has nothing to refuse). The guard
+  /// refuses to clear it or rewind it, because a rewound lease is a stolen claim
+  /// and a stolen claim is a second message to a real recipient.
+  lastAttemptAt    DateTime? @map("last_attempt_at") @db.Timestamptz(3)
+  lastErrorCode    String?   @map("last_error_code")
+  lastErrorMessage String?   @map("last_error_message")
+
+  /// Present exactly when the row is `SENT`; `cancelled_at` and
+  /// `cancellation_reason` exactly when it is `CANCELLED`. The migration asserts
+  /// the biconditionals, so a status can never disagree with its own timestamps.
+  sentAt             DateTime? @map("sent_at") @db.Timestamptz(3)
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  cancellationReason String?   @map("cancellation_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Tenant-ownership key, so a future aggregate can composite-FK to a delivery
+  /// of the same tenant.
+  @@unique([tenantId, id])
+  @@index([tenantId, status])
+  /// The read surface filters by the source it belongs to ([[NOTIF-004]]).
+  @@index([tenantId, sourceType, sourceId])
+  /// The tenant's own view of what is scheduled, ordered by when.
+  @@index([tenantId, scheduledAt])
+  @@map("notification_delivery")
 }
