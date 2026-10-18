@@ -68,28 +68,33 @@ directly through the channel port.
       password is bounded by length alone (mirroring the login body). Inventing
       a complexity rule in an implementation would be a product decision taken
       by a work unit.
-- [~] **WU-D — the notification wiring.** Two halves: **D1 (the end-to-end gap)
-  is DONE**; D2 (the staff recipient reader and the message) follows. _D1,
-  commit pending: the in-memory Prisma harness gained the three pieces its
-  absence was hiding — `user_profile.findUnique` by email composing the
-  credential relation, `user_credential` (create/findUnique/update),
-  `password_reset_token` (create/findFirst/updateMany honouring the CAS's own
-  conditions) and `staff_session.deleteMany` **by profile**, not only by token.
-  Then seven end-to-end cases over the real app: a request becomes a delivery
-  under the PLATFORM tenant and is enqueued; an unknown address creates nothing
-  and answers the same; a repeat inside the window leaves ONE delivery and every
-  enqueue names the same job identity; the request is audited without the
-  address; an unusable token changes nothing; a real token changes the hash to a
-  genuine argon2id value with the configured parameters, ends BOTH sessions,
-  makes the profile's other link refuse, and audits once with no token and no
-  hash; and the spent token cannot be replayed._ **What this closes**: the
-  dispatcher is in-process, so "the subscriber is registered somewhere else"
-  would be a silent, total failure of the feature. This is where that is not
-  silent — and it is the gap the two previous units named rather than implied.
-  **D2, still pending**: the worker's staff recipient reader (the profile's
-  email, resolved at send time, RESTRICTED like every other contact datum) and
-  the message itself — which needs the token minted AT SEND TIME, the DAT-007
-  issuance decision that keeps a plaintext token out of every table.
+- [x] **WU-D — the notification wiring.** Both halves done. _D1 (`6d34778`)
+      closed the end-to-end gap; D2 is committed below._ **D2**: the worker's
+      recipient reader resolves a `STAFF` recipient **by profile id alone, with
+      no tenant predicate** — a staff profile belongs to no tenant (they merely
+      work in some) and the delivery's tenant is the platform one, which owns
+      the MESSAGE rather than the person — and the content builder gained the
+      `STAFF_ACCOUNT` branch: it gates on the profile's own credential, **mints
+      the token AT SEND TIME**, stores only its digest and puts the link in the
+      message. The token's lifetime therefore starts when the mail is sent, and
+      the plaintext exists inside one function and nowhere else. **The
+      primitives moved to the shared kernel** (`@newsaas/shared`): the API's
+      request path and the worker's send path must agree on entropy, digest and
+      lifetime, and two copies is how the two would drift. The API's token
+      service re-exports them, so every existing import site still reads them
+      from the auth boundary. **A new deployment input**: `STAFF_APP_BASE_URL`,
+      optional in development and **required in production** by the schema's
+      gate — absent, a production worker would build `http://localhost:3000`
+      links and mail every user a token pointing at a host that is not their
+      app. The gate has its own cases. Evidence: 2 reader cases (the id-only
+      `WHERE`, and a missing profile settling rather than retrying) and 5
+      builder cases (the digest-only write, the link built from the configured
+      origin with the plaintext absent from both the row and the digest, the two
+      refusals that mint nothing, and the id-only read), plus 3 gate cases.
+      worker 236, api 1313, notifications 84, database 525, shared 16. **A
+      limitation this unit names**: the link points at `/reset-password`, a page
+      the web app does not have yet. The message is right and the destination is
+      a later Story's; saying so is better than a dead link nobody mentioned.
 - [ ] **WU-E — the documentation.** `Identity-Sessions.md` and
       `Notifications.md`, the Story's evidence, [[TD-004]] closed, the epic's
       Stories and the ROADMAP.

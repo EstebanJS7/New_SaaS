@@ -35,6 +35,14 @@ export interface NotificationRecipientClient {
   customerContact: {
     findFirst(args: Prisma.CustomerContactFindFirstArgs): Promise<{ value: string } | null>;
   };
+  /**
+   * The staff read (DAT-007). The profile's own email is the address, and it is
+   * personal data of an employee: RESTRICTED, resolved here and never persisted,
+   * logged or returned.
+   */
+  userProfile: {
+    findFirst(args: Prisma.UserProfileFindFirstArgs): Promise<{ email: string } | null>;
+  };
 }
 
 export function createNotificationRecipientReader(args: {
@@ -42,11 +50,26 @@ export function createNotificationRecipientReader(args: {
 }): NotificationRecipientPort {
   return {
     async resolve(reference: NotificationRecipientReference) {
+      if (reference.recipientType === "STAFF") {
+        // NO tenant predicate, and the absence is deliberate: a staff profile is
+        // global to the identity (the credential's key is shared with it), and the
+        // delivery's tenant is the PLATFORM one, which owns the message rather than
+        // the person. Filtering by it would resolve nobody, because the person
+        // belongs to no tenant — they merely work in some.
+        const profile = await args.client.userProfile.findFirst({
+          where: { id: reference.recipientId },
+          select: { email: true },
+        });
+        // Null is settled, exactly as it is for a customer with no contact: a profile
+        // that no longer exists is not a failure a retry can change.
+        return profile === null ? null : { address: profile.email };
+      }
+
       if (reference.recipientType !== "CUSTOMER") {
-        // The enum has one member today, so this is unreachable from the
-        // database. It is a guard rather than dead code: the day a second
-        // recipient type is added, an unhandled one must fail closed here
-        // instead of resolving somebody else's contact.
+        // Both enum members are handled above, so this is unreachable from the
+        // database. It is a guard rather than dead code: the day a third recipient
+        // type is added, an unhandled one must fail closed here instead of
+        // resolving somebody else's contact.
         throw new UnsupportedRecipientTypeError(reference.recipientType);
       }
 

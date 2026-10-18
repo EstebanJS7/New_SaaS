@@ -13,10 +13,20 @@ import type { NotificationChannel } from "./channel/channel.port.js";
  * adapter's call frame is the only place the value lives ([[DEC-061]], PRD §41).
  */
 
+/**
+ * The delivery's `recipient_type`, mirroring the database enum.
+ *
+ * `CUSTOMER` is a tenant's customer and is resolved within that tenant; `STAFF` is a
+ * staff profile, which is an IDENTITY rather than a tenant's record — added by
+ * DAT-007 for password recovery, and the reason its reader deliberately applies no
+ * tenant predicate.
+ */
+export type NotificationRecipientType = "CUSTOMER" | "STAFF";
+
 export interface NotificationRecipientReference {
   readonly tenantId: string;
-  /** The delivery's `recipient_type`; today the enum has one member. */
-  readonly recipientType: "CUSTOMER";
+  /** The delivery's `recipient_type`. */
+  readonly recipientType: NotificationRecipientType;
   /** The delivery's `recipient_id`. */
   readonly recipientId: string;
   /**

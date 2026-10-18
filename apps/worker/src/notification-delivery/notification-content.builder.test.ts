@@ -19,13 +19,21 @@ const request = { tenantId, deliveryId, channel: "EMAIL" as const };
  */
 const START_AT = new Date("2026-10-18T11:00:00.000Z");
 
+/** The deployment origin the recovery link is built from (DAT-007). */
+const STAFF_APP_BASE_URL = "https://app.example.test";
+
+/** The staff profile a recovery delivery points at, passed explicitly below. */
+const staffProfileId = "66666666-6666-4666-8666-666666666666";
+const staffDelivery = { sourceType: "STAFF_ACCOUNT", sourceId: staffProfileId };
+
 function setup(args: {
-  readonly sourceType?: "APPOINTMENT" | "FISCAL_DOCUMENT";
+  readonly sourceType?: "APPOINTMENT" | "FISCAL_DOCUMENT" | "STAFF_ACCOUNT";
   readonly delivery?: { sourceType: string; sourceId: string } | null;
   readonly appointment?: { status: string; startAt: Date; branchId: string } | null;
   readonly branch?: { name: string } | null;
   readonly fiscalDocument?: { status: string; invoiceId: string; cdc: string | null } | null;
   readonly invoice?: { series: string; number: number | null } | null;
+  readonly profile?: { id: string; credential?: unknown } | null;
 }) {
   // Locals hold the mocks: an assertion against `client.x.findFirst` would detach
   // an object's method from its receiver, which the lint refuses.
@@ -56,6 +64,18 @@ function setup(args: {
   const invoiceFind = vi.fn(() =>
     Promise.resolve(args.invoice === undefined ? { series: "A", number: 42 } : args.invoice)
   );
+  // Typed with a parameter for the same reason as `tokenCreate`: a zero-argument mock
+  // produces a tuple type of length 0, so the call's arguments are unreadable.
+  const profileFind = vi.fn((_args: { where: unknown }) =>
+    Promise.resolve(
+      args.profile === undefined
+        ? { id: staffProfileId, credential: { userProfileId: staffProfileId } }
+        : args.profile
+    )
+  );
+  // Typed with a parameter so the call's ARGUMENTS are readable in an assertion:
+  // a zero-argument mock gives a tuple type of length 0.
+  const tokenCreate = vi.fn((_args: { data: unknown }) => Promise.resolve({ id: "token-1" }));
 
   const client = {
     notificationDelivery: { findFirst: deliveryFind },
@@ -63,14 +83,18 @@ function setup(args: {
     branch: { findFirst: branchFind },
     fiscalDocument: { findFirst: fiscalFind },
     invoice: { findFirst: invoiceFind },
+    userProfile: { findFirst: profileFind },
+    passwordResetToken: { create: tokenCreate },
   } as unknown as NotificationContentClient;
 
   return {
-    builder: createNotificationContentBuilder({ client }),
+    builder: createNotificationContentBuilder({ client, staffAppBaseUrl: STAFF_APP_BASE_URL }),
     deliveryFind,
     appointmentFind,
     branchFind,
     fiscalFind,
+    profileFind,
+    tokenCreate,
   };
 }
 
@@ -238,5 +262,74 @@ describe("the fiscal notice", () => {
       outcome: "UNAVAILABLE",
       reasonCode: NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE,
     });
+  });
+});
+
+describe("the staff password-recovery message (DAT-007)", () => {
+  it("mints the token AT SEND TIME and stores only its digest", async () => {
+    const { builder, tokenCreate } = setup({ delivery: staffDelivery });
+    const outcome = await builder.build(request);
+
+    expect(outcome.outcome).toBe("READY");
+    const created = tokenCreate.mock.calls[0]?.[0] as {
+      data: { userProfileId: string; tokenHash: string; expiresAt: Date };
+    };
+    // The gate is the profile's own credential, read NOW rather than trusted from the
+    // event that created the intent.
+    expect(created.data.userProfileId).toBe(staffProfileId);
+    expect(created.data.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    // The lifetime starts at the moment of SENDING, not of asking: an SMTP delay must
+    // not eat the user's window.
+    expect(created.data.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("carries a link built from the deployment's own origin, and never the digest", async () => {
+    const { builder, tokenCreate } = setup({ delivery: staffDelivery });
+    const outcome = await builder.build(request);
+    const created = tokenCreate.mock.calls[0]?.[0] as { data: { tokenHash: string } };
+
+    // Narrowed rather than cast: the outcome is a union, and a READY one is the only
+    // shape with a body to read.
+    if (outcome.outcome !== "READY") throw new Error(`expected READY, got ${outcome.outcome}`);
+    expect(outcome.body).toContain(`${STAFF_APP_BASE_URL}/reset-password?token=`);
+    // The plaintext is IN the message and nowhere else: the row the builder just wrote
+    // holds the digest, so a leaked table yields no usable link.
+    const plaintext = outcome.parameters[0]?.split("token=")[1] ?? "";
+    expect(plaintext).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(created.data.tokenHash).not.toContain(plaintext);
+    expect(outcome.body).not.toContain(created.data.tokenHash);
+  });
+
+  it("refuses a profile that cannot log in at all, and mints nothing", async () => {
+    const { builder, tokenCreate } = setup({
+      delivery: staffDelivery,
+      profile: { id: staffProfileId, credential: null },
+    });
+    // A link that changes the password of a profile with no credentials is a link to
+    // nowhere; failing closed here is what keeps it from being sent.
+    await expect(builder.build(request)).resolves.toMatchObject({
+      outcome: "UNAVAILABLE",
+      reasonCode: NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE,
+    });
+    expect(tokenCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a profile that no longer exists, and mints nothing", async () => {
+    const { builder, tokenCreate } = setup({ delivery: staffDelivery, profile: null });
+    await expect(builder.build(request)).resolves.toMatchObject({
+      outcome: "UNAVAILABLE",
+      reasonCode: NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE,
+    });
+    expect(tokenCreate).not.toHaveBeenCalled();
+  });
+
+  it("reads the profile by id ALONE, with no tenant predicate", async () => {
+    const { builder, profileFind } = setup({ delivery: staffDelivery });
+    await builder.build(request);
+    // A staff profile belongs to no tenant — they merely work in some — and the
+    // delivery's tenant is the platform one, which owns the message rather than the
+    // person. A tenant predicate here would find nobody.
+    expect(profileFind.mock.calls[0]?.[0].where).toEqual({ id: staffProfileId });
+    expect(JSON.stringify(profileFind.mock.calls[0]?.[0]?.where)).not.toContain(tenantId);
   });
 });

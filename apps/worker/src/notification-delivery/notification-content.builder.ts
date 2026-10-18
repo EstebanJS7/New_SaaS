@@ -1,6 +1,12 @@
 import type { Prisma } from "@newsaas/database";
 import { NOTIFICATION_DELIVERY_REASON } from "@newsaas/notifications";
-import { TENANT_TIME_ZONE } from "@newsaas/shared";
+import {
+  generatePasswordResetToken,
+  hashPasswordResetToken,
+  PASSWORD_RESET_TOKEN_TTL_MS,
+  staffRecoveryUrl,
+  TENANT_TIME_ZONE,
+} from "@newsaas/shared";
 import type {
   NotificationContentBuilder,
   NotificationContentOutcome,
@@ -60,6 +66,34 @@ export interface NotificationContentClient {
       args: Prisma.InvoiceFindFirstArgs
     ): Promise<{ series: string; number: number | null } | null>;
   };
+  /** The recovery branch's gate: a profile that cannot log in has no password to reset. */
+  /**
+   * The credential is `unknown` on purpose: the generated delegate's return type
+   * depends on the `select` it is given, so a narrower declaration here does not
+   * accept the real client. Nothing reads INTO it — the branch only asks whether it
+   * is present, and truthiness is exactly that question.
+   */
+  userProfile: {
+    // `id` is declared alongside the optional relation for a TypeScript reason worth
+    // naming: a type whose properties are ALL optional is a "weak type", and the
+    // generated delegate is not assignable to one. `id` is also genuinely selected.
+    findFirst(
+      args: Prisma.UserProfileFindFirstArgs
+    ): Promise<{ id: string; credential?: unknown } | null>;
+  };
+  /**
+   * The recovery branch MINTS the token it puts in the message.
+   *
+   * This is the one place the builder writes, and the reason is DAT-007's issuance
+   * model: content is built at send time, a plaintext token cannot be rebuilt from a
+   * digest, and the alternatives are all worse — persisting the plaintext, carrying it
+   * in the job payload, or sending inline from the request. Minting here is also what
+   * keeps the plaintext inside the one function that needs it: it is returned in the
+   * message and exists nowhere else.
+   */
+  passwordResetToken: {
+    create(args: Prisma.PasswordResetTokenCreateArgs): Promise<{ id: string }>;
+  };
 }
 
 /**
@@ -90,6 +124,12 @@ export function formatLocalInstant(instant: Date): string {
 
 export function createNotificationContentBuilder(args: {
   readonly client: NotificationContentClient;
+  /**
+   * The staff app's origin, used to build the link a recovery message carries. A
+   * deployment input rather than a constant: a link pointing at the wrong host hands a
+   * LIVE token to whoever owns that host.
+   */
+  readonly staffAppBaseUrl: string;
 }): NotificationContentBuilder {
   return {
     async build(request: NotificationContentRequest): Promise<NotificationContentOutcome> {
@@ -109,6 +149,8 @@ export function createNotificationContentBuilder(args: {
           return buildAppointmentReminder(args.client, request, delivery.sourceId);
         case "FISCAL_DOCUMENT":
           return buildFiscalNotice(args.client, request, delivery.sourceId);
+        case "STAFF_ACCOUNT":
+          return buildStaffRecovery(args.client, args.staffAppBaseUrl, delivery.sourceId);
         default:
           return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
       }
@@ -197,6 +239,63 @@ async function buildFiscalNotice(
     subject: `Documento fiscal ${documentNumber}`,
     body: `Su documento fiscal ${documentNumber} está disponible.`,
     parameters: [documentNumber],
+  };
+}
+
+/**
+ * The password-recovery message (DAT-007 WU-D2).
+ *
+ * The gate is the profile's own credential, read NOW rather than trusted from the
+ * event that created the intent: a profile whose credential was removed cannot log in,
+ * so a link that changes its password is a link to nowhere. A `status` check is absent
+ * for consistency with login, which ignores it — a recovery stricter than login would
+ * be a second, contradictory rule about who may enter.
+ *
+ * The token is minted here, so its lifetime starts at the moment of sending rather than
+ * at the moment of asking: an SMTP delay does not eat the user's window. A retried send
+ * mints a second token, which is bounded rather than harmful — the profile's outstanding
+ * tokens are all spent the moment the password changes, and the hour window caps how
+ * many messages can exist at all.
+ */
+async function buildStaffRecovery(
+  client: NotificationContentClient,
+  staffAppBaseUrl: string,
+  userProfileId: string
+): Promise<NotificationContentOutcome> {
+  const profile = await client.userProfile.findFirst({
+    // By id alone, like the recipient reader: a staff profile is an identity and the
+    // delivery's tenant is the platform one, which owns the message rather than the
+    // person.
+    where: { id: userProfileId },
+    select: { id: true, credential: { select: { userProfileId: true } } },
+  });
+  // Falsy rather than `=== null`: a client that does not model the relation answers
+  // `undefined`, and a strict null check would read "no credentials" as "has
+  // credentials" and mail a link for a password that does not exist.
+  if (!profile?.credential) return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
+
+  const token = generatePasswordResetToken();
+  const now = new Date();
+  await client.passwordResetToken.create({
+    data: {
+      userProfileId,
+      // Only the DIGEST is stored, following `StaffSession`. The plaintext leaves this
+      // function as part of the message and is never persisted.
+      tokenHash: hashPasswordResetToken(token),
+      expiresAt: new Date(now.getTime() + PASSWORD_RESET_TOKEN_TTL_MS),
+    },
+    select: { id: true },
+  });
+
+  const url = staffRecoveryUrl(staffAppBaseUrl, token);
+  return {
+    outcome: "READY",
+    subject: "Recuperación de contraseña",
+    // The link is the message. There is no greeting, no name and no tenant: the mail
+    // is about a credential, and the fewer facts it carries about who received it, the
+    // less it is worth to anybody who reads the inbox by accident.
+    body: `Podés elegir una contraseña nueva con este enlace: ${url}`,
+    parameters: [url],
   };
 }
 

@@ -105,6 +105,7 @@ export {
 } from "./entitlement.port.js";
 export type { NotificationEntitlementPort } from "./entitlement.port.js";
 export { createNullNotificationRecipientPort, NOTIFICATION_RECIPIENT } from "./recipient.port.js";
+export type { NotificationRecipientType } from "./recipient.port.js";
 export type {
   NotificationRecipientPort,
   NotificationRecipientReference,

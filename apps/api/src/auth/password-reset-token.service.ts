@@ -1,8 +1,20 @@
-import { createHash, randomBytes } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Prisma } from "@newsaas/database";
 import { PrismaService } from "@newsaas/database";
-import { DomainError } from "@newsaas/shared";
+import {
+  DomainError,
+  generatePasswordResetToken,
+  hashPasswordResetToken,
+  PASSWORD_RESET_TOKEN_TTL_MS,
+} from "@newsaas/shared";
+
+/**
+ * The primitives moved to the shared kernel in DAT-007 WU-D2, when the WORKER needed
+ * to mint what this service verifies: two deployables agreeing on entropy, digest and
+ * lifetime is a contract, and a second copy is how the two would drift. Re-exported
+ * here so every existing import site keeps reading them from the auth boundary.
+ */
+export { generatePasswordResetToken, hashPasswordResetToken, PASSWORD_RESET_TOKEN_TTL_MS };
 
 /**
  * The password-recovery token service (DAT-007, WU-B).
@@ -24,31 +36,9 @@ import { DomainError } from "@newsaas/shared";
  * one message for a wrong password and an unknown account.
  */
 
-/**
- * How long a delivered token stays usable.
- *
- * Thirty minutes is chosen against the two failure modes it sits between: long
- * enough that a person can find the mail, open it on another device and choose a
- * password without racing a clock, and short enough that a link left in a shared
- * inbox is worthless by the time anyone else reads it. Note that the clock starts
- * when the message is SENT, not when it was requested (the issuance model in
- * DAT-007's Story), so an SMTP delay does not eat the user's window.
- */
-export const PASSWORD_RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
-
 /** One refusal for every cause. Exported so a suite can assert the uniformity. */
 export const RESET_TOKEN_INVALID_MESSAGE =
   "This password reset link is not valid. Request a new one.";
-
-/** 32 random bytes, base64url — the `generateSessionToken` convention. */
-export function generatePasswordResetToken(): string {
-  return randomBytes(32).toString("base64url");
-}
-
-/** The digest the table stores. Lookup always happens by digest, never by token. */
-export function hashPasswordResetToken(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex");
-}
 
 /** Structural view of the row this service decides on (the `StaffSession` pattern). */
 export interface PasswordResetTokenRow {
