@@ -165,12 +165,6 @@ function rejectionResponse(status: 400 | 404): NextResponse {
 }
 
 /**
- * RequestInit with the `duplex` field required to stream a request body.
- * `duplex` is part of the fetch spec but is absent from the DOM lib types.
- */
-type StreamingRequestInit = RequestInit & { duplex?: "half" };
-
-/**
  * Proxies staff appointment API calls to the private NestJS scheduling surface.
  *
  * The web namespace mirrors the upstream scheduling surface:
@@ -182,12 +176,8 @@ type StreamingRequestInit = RequestInit & { duplex?: "half" };
  *
  * Browser headers cross through a strict allowlist: only the authenticated
  * session cookie (read server-side by name, never from the browser) and
- * `x-request-id`. For mutating verbs the body is piped to the API as the
- * caller's raw `ReadableStream` instead of being buffered, so the API Zod
- * validation sees the exact input; the proxy declares the JSON media type
- * itself because the scheduling surface is JSON-only. Upstream status, error
- * envelope, `content-type` and `x-request-id` are preserved and the upstream
- * body is streamed back.
+ * For mutating verbs the body is read as TEXT and forwarded as a string (TD-050), so the API's
+ * Zod validation parses the caller's exact JSON -- a string is not a re-serialization.
  */
 async function proxySchedulingRequest(
   request: NextRequest,
@@ -224,13 +214,24 @@ async function proxySchedulingRequest(
     headers["content-type"] = "application/json";
   }
 
-  const init: StreamingRequestInit = {
+  // THE BODY IS READ AS TEXT rather than piped as a stream (TD-050).
+  //
+  // The streamed form was this proxy's original choice and it was DELIBERATE -- clinical and
+  // scheduling even had a test rejecting `request.text()` as "the regression under test" -- but
+  // its rationale was never recorded, and the same pattern produced an unexplained 500 in the
+  // portal proxy (TD-049: `expected non-null body source`, for a body the upstream handler read).
+  // Every proxy written after EPIC-07 buffers, so the repo had already drifted this way; this
+  // makes it one decision instead of two.
+  //
+  // A string is the same JSON rather than a re-serialization -- no whitespace or key order is
+  // normalized -- so the API's Zod parses identical input.
+  const bodyText = hasBody ? await request.text() : undefined;
+
+  const init: RequestInit = {
     method,
     headers,
-    body: hasBody ? (request.body ?? undefined) : undefined,
+    body: bodyText,
     cache: "no-store",
-    // undici requires `duplex: "half"` whenever the body is a stream.
-    duplex: "half",
   };
 
   const response = await fetch(`${apiUrl}${resolution.path}`, init);

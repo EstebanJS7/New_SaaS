@@ -6,12 +6,6 @@ export const dynamic = "force-dynamic";
 const DEFAULT_API_URL = "http://localhost:3001";
 
 /**
- * RequestInit with the `duplex` field required to stream a request body.
- * `duplex` is part of the fetch spec but is absent from the DOM lib types.
- */
-type StreamingRequestInit = RequestInit & { duplex?: "half" };
-
-/**
  * Proxies staff patient API calls to the private NestJS patients surface.
  *
  * The optional catch-all handles both `/api/patients` (root) and nested routes
@@ -20,13 +14,11 @@ type StreamingRequestInit = RequestInit & { duplex?: "half" };
  *
  * Browser headers are forwarded through a strict allowlist: only the
  * authenticated session cookie (read server-side, never from the browser) and
- * `x-request-id` cross the boundary. For mutating verbs the request body is
- * piped to the API as the caller's raw `ReadableStream` instead of being
- * buffered, so the API's Zod validation sees the exact input; the proxy
- * declares the JSON media type itself because the patients surface is
- * JSON-only and content-type is not a forwarded header. The upstream response
- * status, error envelope, `content-type`, and `x-request-id` are preserved and
- * the upstream body is streamed back to the caller.
+ * `x-request-id` cross the boundary. For mutating verbs the body is read as TEXT and
+ * forwarded as a string (TD-050), so the API's Zod validation parses the caller's exact
+ * JSON -- a string is not a re-serialization. The upstream response status, error envelope,
+ * `content-type` and `x-request-id` are preserved and the upstream body is streamed back to
+ * the caller.
  */
 async function proxyPatientRequest(
   request: NextRequest,
@@ -52,13 +44,24 @@ async function proxyPatientRequest(
     headers["content-type"] = "application/json";
   }
 
-  const init: StreamingRequestInit = {
+  // THE BODY IS READ AS TEXT rather than piped as a stream (TD-050).
+  //
+  // The streamed form was this proxy's original choice and it was DELIBERATE -- clinical and
+  // scheduling even had a test rejecting `request.text()` as "the regression under test" -- but
+  // its rationale was never recorded, and the same pattern produced an unexplained 500 in the
+  // portal proxy (TD-049: `expected non-null body source`, for a body the upstream handler read).
+  // Every proxy written after EPIC-07 buffers, so the repo had already drifted this way; this
+  // makes it one decision instead of two.
+  //
+  // A string is the same JSON rather than a re-serialization -- no whitespace or key order is
+  // normalized -- so the API's Zod parses identical input.
+  const bodyText = hasBody ? await request.text() : undefined;
+
+  const init: RequestInit = {
     method,
     headers,
-    body: hasBody ? (request.body ?? undefined) : undefined,
+    body: bodyText,
     cache: "no-store",
-    // undici requires `duplex: "half"` whenever the body is a stream.
-    duplex: "half",
   };
 
   const response = await fetch(`${apiUrl}${upstreamPath}`, init);

@@ -30,9 +30,19 @@ interface MockNextRequest {
 }
 
 /** Encodes the given chunks as the byte stream a real request body would expose. */
+
+/**
+ * The text each stream was BUILT from (TD-050).
+ *
+ * The proxy consumes the caller's stream, so an assertion cannot read it afterwards — and the
+ * value is what matters here, because a fix that re-serialized the JSON would still forward a
+ * string. Remembering the bytes at construction is what lets the case compare against them.
+ */
+const streamText = new WeakMap<ReadableStream<Uint8Array>, string>();
+
 function byteStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  return new ReadableStream<Uint8Array>({
+  const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       for (const chunk of chunks) {
         controller.enqueue(encoder.encode(chunk));
@@ -40,6 +50,8 @@ function byteStream(chunks: string[]): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+  streamText.set(stream, chunks.join(""));
+  return stream;
 }
 
 function mockNextRequest(props: {
@@ -55,16 +67,27 @@ function mockNextRequest(props: {
       get: (name: string) => headers.get(name),
     },
     body: props.body ?? null,
-    // Buffering the request is the regression under test: any call is fatal.
-    text: () => Promise.reject(new Error("request.text() must not be called")),
+    // Read from the SAME body, the way the runtime does (TD-050): a mock that hands back only what
+    // the code happens to want cannot find a defect in how the body crosses the boundary. Until
+    // TD-050 this one REJECTED `text()` on purpose -- "buffering is the regression under test" --
+    // which encoded a decision whose rationale was never recorded.
+    text: async () => {
+      const stream = props.body ?? null;
+      if (stream === null) return "";
+      let text = "";
+      for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+        text += new TextDecoder().decode(chunk);
+      }
+      return text;
+    },
   };
 }
 
 interface FetchInit {
   method: string;
   headers: Record<string, string>;
-  body?: ReadableStream<Uint8Array>;
-  duplex?: "half";
+  body?: string | ReadableStream<Uint8Array>;
+  duplex?: string;
 }
 
 function fetchInit(callIndex = 0): FetchInit {
@@ -163,7 +186,7 @@ describe("/api/clinical proxy", () => {
     );
   });
 
-  it("forwards the PUT body as the caller's raw stream without buffering", async () => {
+  it("forwards the PUT body as text, so the API parses the caller's exact JSON", async () => {
     cookiesMock.mockResolvedValue({ toString: () => "session=token-123" });
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ id: ENCOUNTER_ID }), {
@@ -183,8 +206,14 @@ describe("/api/clinical proxy", () => {
 
     const init = fetchInit();
     expect(init.method).toBe("PUT");
-    expect(init.body).toBe(body);
-    expect(init.duplex).toBe("half");
+    // A STRING, and no `duplex` (TD-050): the body crosses as text, which is the same JSON the
+    // caller sent -- a fix that re-serialized it would still be a string and would change what the
+    // API's Zod sees, so the VALUE is asserted and not only its type.
+    // The text of the very stream the caller sent: a re-serializing fix would still be a
+    // string, which is why the VALUE is asserted and not only its type.
+    expect(init.body).toBe(streamText.get(body));
+    expect(typeof init.body).toBe("string");
+    expect(init.duplex).toBeUndefined();
     expect(init.headers).toEqual({
       cookie: "session=token-123",
       "content-type": "application/json",

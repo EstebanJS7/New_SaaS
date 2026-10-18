@@ -201,7 +201,9 @@ strict allowlist: only the staff session cookie (read server-side by name) and
 `x-request-id`, plus a JSON `content-type` on a mutating verb. No tenant, role
 or permission header is synthesized and the portal cookie is never forwarded, so
 a cross-tenant id stays the API's own byte-equivalent `404`. A mutating body is
-piped as the caller's raw stream, never buffered.
+read as text and forwarded as a string ([[TD-050]]) — the same JSON the caller
+sent, since a string is not a re-serialization, and one decision for every BFF
+instead of two.
 
 ### Pages
 
