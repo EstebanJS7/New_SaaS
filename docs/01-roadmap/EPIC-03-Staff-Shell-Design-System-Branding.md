@@ -2,7 +2,7 @@
 id: EPIC-03
 type: epic
 title: Staff Shell, Design System and Branding
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-01
@@ -135,7 +135,7 @@ BRAND-004 Branding asset upload
 BRAND-005 Branding settings + live preview
 BRAND-006 Public brand resolution / portal integration
 
-**Reopened on 2026-10-18** for one Story, and it is the shell's front door rather than its
+**Reopened on 2026-10-18 and closed again the same day** for one Story — the shell's front door rather than its
 branding:
 
 ```text
@@ -156,3 +156,9 @@ this Story, reachable only by hand-crafting a request.
 - [[Branding and Theming]]
 - [[ADR-002 Branding Theme Layering]]
 ```
+
+**SHELL-001 is `done`**, and the epic is closed again. Its finding is worth
+keeping in the epic's own record: the app had no login page anywhere, so every
+surface this epic builds was reachable only by hand-crafting a request. The
+shell, the design system and the branding were all consistent — and unusable
+without a front door.

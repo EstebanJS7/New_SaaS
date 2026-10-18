@@ -43,7 +43,7 @@ render in the product's identity.
       unit._ reserved first segments (an unreserved bare path is a portal tenant
       slug — the near-miss TD-048 hit), and a signed-out visitor to `/app/*` is
       redirected to `/login` rather than shown an empty shell.
-- [ ] **WU-D — the documentation and the closure.** `Identity-Sessions.md` gains
+- [x] **WU-D — the documentation and the closure.** `Identity-Sessions.md` gains
       the sign-in surface, `Branding.md` gains the public-brand consumer, and
       the Story's evidence is recorded.
 
@@ -66,3 +66,15 @@ session's value, and the assertion is that it never appears in a body or a log.
 **Does the portal need this in the same unit?** No: `PortalCredential` is a
 separate identity with its own cookie, and the repository requires that neither
 cookie authorize the other domain ([[DEC-008]]). Its login is its own Story.
+
+## Closure
+
+SHELL-001 is `done`. `Identity-Sessions.md` gained the sign-in surface and the
+gate's asymmetry; `Branding.md` gained the signed-out consumer and the reason
+`/branding/current` must STAY private (it now doubles as the session probe, so
+making it public would silently disable the gate).
+
+The one thing this unit could not prove is a live sign-in: the suites assert the
+hop's shape — the verbatim `Set-Cookie` relay, its absence from the body, the
+no-inbound-cookie rule — and a browser receiving that cookie from a running API
+is pending, named rather than implied.

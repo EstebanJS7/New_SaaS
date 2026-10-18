@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from "react";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { activeProductPreset, resolveBrand, type ResolvedBrand } from "@newsaas/ui/branding";
 import { NavSidebar } from "@/components/shell/nav-sidebar";
 import { Topbar } from "@/components/shell/topbar";
@@ -13,7 +14,22 @@ interface BrandingCurrentResponse {
   readonly brand: ResolvedBrand;
 }
 
-async function fetchResolvedBrand(): Promise<ResolvedBrand> {
+interface BrandResolution {
+  readonly brand: ResolvedBrand;
+  /**
+   * True only when the API answered `401`.
+   *
+   * The asymmetry is the design, not a detail: `/branding/current` is a PRIVATE route, so a
+   * 401 is the ONLY thing that proves this visitor has no session. Every other failure — a
+   * 500, a timeout, an unparseable body — is an OUTAGE, and treating it as "signed out"
+   * would send every signed-in staff member to the login page the moment branding has a bad
+   * minute ([[SHELL-001]]).
+   */
+  readonly unauthenticated: boolean;
+}
+
+async function fetchResolvedBrand(): Promise<BrandResolution> {
+  const fallback = resolveBrand(activeProductPreset);
   try {
     const cookieStore = await cookies();
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL;
@@ -22,14 +38,17 @@ async function fetchResolvedBrand(): Promise<ResolvedBrand> {
       cache: "no-store",
     });
 
+    if (response.status === 401) {
+      return { brand: fallback, unauthenticated: true };
+    }
     if (!response.ok) {
-      return resolveBrand(activeProductPreset);
+      return { brand: fallback, unauthenticated: false };
     }
 
     const data = (await response.json()) as BrandingCurrentResponse;
-    return data.brand ?? resolveBrand(activeProductPreset);
+    return { brand: data.brand ?? fallback, unauthenticated: false };
   } catch {
-    return resolveBrand(activeProductPreset);
+    return { brand: fallback, unauthenticated: false };
   }
 }
 
@@ -44,13 +63,25 @@ async function fetchResolvedBrand(): Promise<ResolvedBrand> {
  * Branding is resolved server-side from the private API (cookies forwarded)
  * and emitted as a parser-blocking bootstrap script plus a `<style>` bridge
  * under `:root:not(.dark)` (design D4/D5).
+ *
+ * **It is also the shell's gate** ([[SHELL-001]]). That one private read answers two
+ * questions with one request — what this tenant's brand is, and whether there is a session
+ * at all — and a `401` sends the visitor to `/login`. Without it, a signed-out visitor was
+ * shown an EMPTY SHELL: every surface inside renders from session-scoped data, so the shell
+ * was chrome around nothing, and the visitor had no way to learn that signing in was the
+ * missing step. The redirect is server-side, so the shell never renders first.
  */
 export default async function AppShellLayout({
   children,
 }: {
   children: ReactNode;
 }): Promise<JSX.Element> {
-  const brand = await fetchResolvedBrand();
+  const { brand, unauthenticated } = await fetchResolvedBrand();
+  // Called OUTSIDE the fetch's `try`: `redirect` works by throwing, and a catch around it
+  // would swallow the redirect and render the shell anyway.
+  if (unauthenticated) {
+    redirect("/login");
+  }
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">

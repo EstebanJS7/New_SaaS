@@ -29,6 +29,11 @@ revocable sessions, hardened session cookies and the login rate limiter.
   `202 {status:"accepted"}` for every address, known or not (DAT-007).
 - `POST /auth/password-reset` — consumes a recovery token, replaces the password
   and ends every session for the profile (DAT-007).
+- `GET /login` — the staff sign-in page, with `POST /api/auth/login` as the web
+  BFF that relays the session cookie ([[SHELL-001]]).
+- `GET /forgot-password` — the recovery **request** page: the entry point the
+  flow below was missing, since `/reset-password` is where a link LANDS
+  ([[SHELL-001]]).
 
 ## Main Entities
 
@@ -72,6 +77,35 @@ keyed by the address alone, one attacker could exhaust a victim's budget and
 deny that person their own recovery. The delivery's own window is the second
 limit: one recovery message per profile per hour, which is what keeps the
 endpoint from being an email amplifier.
+
+## The sign-in surface (SHELL-001)
+
+```text
+GET  /login              public, outside the (app) shell
+POST /api/auth/login     the web BFF: forwards the credentials and RELAYS the Set-Cookie
+```
+
+The API has issued sessions since [[DAT-003]], and the browser had **no page
+that asked for one** until [[SHELL-001]]: the session cookie is `HttpOnly`, so
+this hop is the only way it can reach a browser at all. Three things about it
+are load-bearing:
+
+- **The BFF relays the API's `Set-Cookie` verbatim.** The attributes are the
+  API's hardening decisions; a proxy that rebuilt the header could quietly drop
+  `HttpOnly`. It forwards no inbound cookie, because the browser is asking FOR a
+  session, and it never puts the session in a body or a log.
+- **The failure the user sees is the API's.** One message for an unknown address
+  and a wrong password, because that is what the API says - a form that guessed
+  which was which would be a louder existence oracle than the API it fronts.
+- **The shell's gate is a `401` from a private read, and nothing else.**
+  `(app)/layout.tsx` already fetches `/branding/current` with the session
+  cookie; a 401 sends the visitor to `/login`, and every other failure (a 500, a
+  timeout) falls back to the product preset and renders. That asymmetry is the
+  design: only a 401 proves there is no session, and treating an outage as
+  "signed out" would log every staff member out the moment branding hiccups.
+
+Ending a session is still `POST /auth/logout`; there is no sign-out affordance
+in the shell yet, which is recorded rather than implied.
 
 ## The recovery flow (DAT-007)
 

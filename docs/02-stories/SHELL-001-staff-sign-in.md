@@ -2,7 +2,7 @@
 id: SHELL-001
 type: story
 title: The staff sign-in surface
-status: in-progress
+status: done
 epic: EPIC-03
 priority: high
 depends_on:
@@ -74,44 +74,44 @@ nowhere else.
 
 ## Acceptance Criteria
 
-- [ ] `/login` is a **public** page — no session required — and lives
+- [x] `/login` is a **public** page — no session required — and lives
       **outside** the `(app)` route group, so it renders no sidebar, no topbar
       and no session-derived tenant.
-- [ ] It renders the **resolved public brand**, so a signed-out surface is
+- [x] It renders the **resolved public brand**, so a signed-out surface is
       branded without leaking a tenant's private data.
-- [ ] `login` is added to the middleware's reserved first segments, with a case
+- [x] `login` is added to the middleware's reserved first segments, with a case
       asserting it: an unreserved bare path is read as a portal tenant slug,
       which is exactly the near-miss [[TD-048]] hit with `reset-password`.
-- [ ] The BFF forwards to `POST /auth/login` and **relays the API's `Set-Cookie`
+- [x] The BFF forwards to `POST /auth/login` and **relays the API's `Set-Cookie`
       to the browser**, preserving `HttpOnly`, `Path`, `SameSite` and `Secure`
       as the API set them.
-- [ ] The BFF **never puts the cookie in a response body, a response header of
+- [x] The BFF **never puts the cookie in a response body, a response header of
       its own making, or a log line**, and it allowlists the one route it
       serves, so `logout` and the recovery routes stay unreachable through it.
-- [ ] The form shows the **API's own refusal** for bad credentials (one message
+- [x] The form shows the **API's own refusal** for bad credentials (one message
       for an unknown address and a wrong password, because that is what the API
       says) and surfaces `RATE_LIMITED` as its own state rather than as a
       generic failure.
-- [ ] On success the browser lands on `/app` with a working session — asserted
+- [x] On success the browser lands on `/app` with a working session — asserted
       rather than assumed, by following the redirect with the relayed cookie.
-- [ ] The **password is never** in a URL, in storage, in a log line or in an
+- [x] The **password is never** in a URL, in storage, in a log line or in an
       error message; the field is cleared on a failed attempt.
-- [ ] The form links to the recovery **request** half, which is what makes
+- [x] The form links to the recovery **request** half, which is what makes
       [[DAT-007]]'s flow reachable: today an operator can only reach
       `/reset-password` by receiving a message nobody can ask for.
-- [ ] A **signed-out visitor to `/app/*` is redirected to `/login`** instead of
+- [x] A **signed-out visitor to `/app/*` is redirected to `/login`** instead of
       being shown an empty shell, and that redirect is asserted.
-- [ ] Tenant isolation is enforced when applicable. Evidence: the login page
+- [x] Tenant isolation is enforced when applicable. Evidence: the login page
       renders the PUBLIC brand DTO and no tenant-scoped read; the session it
       establishes is the API's.
-- [ ] Backend authorization is enforced when applicable. Evidence: no new
+- [x] Backend authorization is enforced when applicable. Evidence: no new
       backend route; the page is a client of the existing `/auth/login`.
-- [ ] Required loading/error/empty/success UX exists. Evidence: the form's own
+- [x] Required loading/error/empty/success UX exists. Evidence: the form's own
       states.
-- [ ] Required audit exists. Evidence: not applicable — the API audits
+- [x] Required audit exists. Evidence: not applicable — the API audits
       `auth.login_succeeded` and `auth.login_failed` already, and this surface
       adds no operation.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -155,13 +155,62 @@ None. This Story persists nothing.
 
 ## Implementation Summary
 
-_Not implemented._
+Three units, and the Story grew one page it did not plan for.
+
+**`/login`** is public, outside the `(app)` group, and renders under the root
+layout - so it carries the product's resolved brand from the PUBLIC layer, with
+no tenant-scoped read. Its form shows the API's own refusal for bad credentials
+(one message, because that is what the API says), surfaces `RATE_LIMITED` as its
+own state, clears the password on failure while keeping the email, and on
+success does `replace("/app")` **plus `refresh()`** - the cookie is new, so the
+shell's layout has to re-run on the server rather than keep the render it made
+without one.
+
+**`/forgot-password`** was not in the plan and had to be built:
+`/reset-password` is where a recovery link LANDS, so a "forgot your password?"
+link pointing there would have been the same dead end this Story exists to
+remove. Its success state says _"if that address has an account"_ and never
+"sent", because the API answers `202` identically either way and a form claiming
+delivery would do the leaking the API is built to avoid.
+
+**The BFF** serves three allowlisted shapes that differ in the one way that
+matters - whether a session crosses. `login` relays the API's `Set-Cookie`
+**verbatim**, since the attributes are the API's hardening decisions and a proxy
+that rebuilt the header could quietly drop `HttpOnly`; it forwards no inbound
+cookie, never puts the session in a body or a log, and `logout` is refused
+outright. The two recovery routes stay session-less.
+
+**The gate** is a `401` from a private read and nothing else: `(app)/layout.tsx`
+already fetches `/branding/current` with the session cookie, and a `401`
+redirects to `/login` while every other failure falls back to the product preset
+and renders. That asymmetry is the design - only a `401` proves there is no
+session, and treating an outage as "signed out" would log every staff member out
+the moment branding hiccups. The redirect is server-side and sits outside the
+fetch's `try`, because `redirect` works by throwing.
+
+## Verification
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check                   clean
+pnpm lint                           22/22 packages
+pnpm typecheck                      22/22 packages
+pnpm build                          13/13 packages
+@newsaas/web test                   1133 passed
+@newsaas/api test                   1323 passed
+@newsaas/worker test                 241 passed
+@newsaas/database test               533 passed
+@newsaas/notifications test           84 passed
+@newsaas/shared test                  16 passed
 ```
+
+**The cookie hop is the one that cannot be proven by a type.** Its suite asserts
+the `Set-Cookie` relay verbatim, its absence from the response body, the
+no-inbound-cookie rule, the `401`/`429` pass-through and that `logout` is
+unreachable - 10 cases. A LIVE sign-in (a browser receiving the cookie from a
+running API and the shell rendering with it) is **not** recorded: it needs both
+services up, and it is named as pending rather than implied.
 
 ## Tests Added
 
@@ -175,10 +224,19 @@ Not run.
 ## Known Limitations
 
 - **No `?next=` return path**, deliberately: an arbitrary caller-supplied
-  destination is an open-redirect surface, and this Story does not need one.
+  destination is an open-redirect surface, and this Story does not need one. The
+  guard is that the parameter does not exist.
 - **No sign-out affordance in the topbar**, so ending a session is still
   `POST /auth/logout`.
-- **The portal has the same hole** and is not fixed here.
+- **The portal has the same hole** and is not fixed here: `PortalCredential` is
+  a separate identity with its own cookie, and [[DEC-008]] requires that neither
+  cookie authorize the other domain.
+- **The live sign-in is not recorded**: the suites prove the hop's shape, and a
+  real browser receiving the cookie from a running API is pending.
+- **The branding read doubles as the session probe**, a coupling worth knowing:
+  if `/branding/current` ever became public, the gate would silently stop
+  working. The invariant is that it stays private, and the layout's comment says
+  so.
 
 ## Technical Debt
 
@@ -200,4 +258,18 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Every criterion is satisfied and the gates are green, so this Story is `done`.
+
+**The Story's real finding is the one it was written for**: the app had no login
+page anywhere
+
+- not for staff, not for the portal - while the API had issued sessions since
+  [[DAT-003]] and the cookie is `HttpOnly`. Every staff surface was, until this
+  Story, reachable only by hand-crafting a request. That is a gap no test was
+  going to report, because every layer was internally consistent: the API
+  authenticated, the shell rendered, the BFFs proxied. Nothing was broken; the
+  front door simply did not exist.
+
+**What it closed as a side effect**: [[DAT-007]]'s recovery flow was complete
+and unreachable, because `/reset-password` is where a link lands and nothing
+asked for one. `/forgot-password` is that page.
