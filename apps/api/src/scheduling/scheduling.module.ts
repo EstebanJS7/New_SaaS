@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AuditModule } from "../audit/audit.module.js";
+import { ApplicationEventsModule } from "../events/application-events.module.js";
 import { ContextModule } from "../context/context.module.js";
 import { RbacModule } from "../rbac/rbac.module.js";
 import { SettingsModule } from "../settings/settings.module.js";
@@ -21,7 +22,7 @@ import { BookingRequestsController } from "./booking-requests.controller.js";
  * catalog only.
  */
 @Module({
-  imports: [ContextModule, RbacModule, AuditModule, SettingsModule],
+  imports: [ContextModule, RbacModule, AuditModule, SettingsModule, ApplicationEventsModule],
   controllers: [AppointmentsController, BookingRequestsController],
   providers: [AppointmentService, BookingRequestService],
   exports: [AppointmentService],

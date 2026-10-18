@@ -30,6 +30,14 @@ import {
   type FiscalRangeVoidRequest,
 } from "@newsaas/fiscal";
 import type { FiscalSubmissionJob } from "@newsaas/fiscal";
+import type { NotificationDeliveryJob } from "@newsaas/notifications";
+// The PRODUCER PORT lives in the API, like the fiscal one: the package owns the
+// queue CONTRACT (names, identity, payload) and the deployable owns the port its
+// own composition root satisfies.
+import {
+  NOTIFICATION_DELIVERY_PRODUCER,
+  type NotificationDeliveryProducer,
+} from "../../src/notifications/notification-delivery.producer.js";
 import { createIsolationDatabase, type IsolationDatabase } from "./in-memory-database.js";
 
 /** Test double that records enqueued intent ids instead of touching Redis. */
@@ -46,6 +54,19 @@ export interface RecordingCleanupProducer extends CleanupProducer {
  */
 export interface RecordingFiscalSubmissionProducer extends FiscalSubmissionProducer {
   readonly enqueued: FiscalSubmissionJob[];
+}
+
+/**
+ * The notification delivery producer this harness substitutes (EPIC-17).
+ *
+ * Overridden for the same reason as the fiscal producer above: the real one
+ * reads `REDIS_URL` at construction, and a suite that asserts HTTP behaviour must
+ * not require a queue. It records both operations so a test can assert that a
+ * cancellation REMOVED the pending job and not merely that a row changed.
+ */
+export interface RecordingNotificationDeliveryProducer extends NotificationDeliveryProducer {
+  readonly enqueued: { job: NotificationDeliveryJob; scheduledAt: Date }[];
+  readonly cancelled: string[];
 }
 
 export interface ScriptableFiscalProvider extends FiscalProviderPort {
@@ -74,6 +95,8 @@ export interface BootedTestApp {
   cleanupProducer: RecordingCleanupProducer;
   /** Records fiscal submission jobs so tests can assert one enqueue per issue. */
   fiscalSubmissionProducer: RecordingFiscalSubmissionProducer;
+  /** Records notification enqueues and removals (EPIC-17 NOTIF-003). */
+  notificationDeliveryProducer: RecordingNotificationDeliveryProducer;
   fiscalProvider: ScriptableFiscalProvider;
   /** Serialized pino lines captured during the test (leak scans, debugging). */
   logLines: () => string[];
@@ -117,6 +140,21 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     enqueued: [],
     enqueue: (document) => {
       fiscalSubmissionProducer.enqueued.push(document);
+      return Promise.resolve();
+    },
+  };
+
+  const notificationDeliveryProducer: RecordingNotificationDeliveryProducer = {
+    enqueued: [],
+    cancelled: [],
+    // The parameters are typed explicitly because the object references ITSELF
+    // below, and a self-referencing initializer drops the contextual type.
+    enqueue: (job: NotificationDeliveryJob, scheduledAt: Date) => {
+      notificationDeliveryProducer.enqueued.push({ job, scheduledAt });
+      return Promise.resolve();
+    },
+    cancel: (notificationDeliveryId: string) => {
+      notificationDeliveryProducer.cancelled.push(notificationDeliveryId);
       return Promise.resolve();
     },
   };
@@ -186,6 +224,8 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     .useValue(cleanupProducer)
     .overrideProvider(FISCAL_SUBMISSION_PRODUCER)
     .useValue(fiscalSubmissionProducer)
+    .overrideProvider(NOTIFICATION_DELIVERY_PRODUCER)
+    .useValue(notificationDeliveryProducer)
     .overrideProvider(FISCAL_PROVIDER)
     .useValue(fiscalProvider)
     .compile();
@@ -201,6 +241,7 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     db,
     cleanupProducer,
     fiscalSubmissionProducer,
+    notificationDeliveryProducer,
     fiscalProvider,
     logLines: (): string[] => captured,
     close: (): Promise<void> => app.close(),

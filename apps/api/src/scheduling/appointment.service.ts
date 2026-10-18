@@ -1,7 +1,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
-import { DomainError } from "@newsaas/shared";
+import { DomainError, type EventDispatcher } from "@newsaas/shared";
 import { AuditAppendTx, AuditWriter } from "../audit/audit-writer.service.js";
+import { APPLICATION_EVENT_DISPATCHER } from "../events/application-events.module.js";
+import {
+  APPOINTMENT_CANCELLED,
+  APPOINTMENT_CONFIRMED,
+} from "../notifications/notification-reminder.scheduler.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { TenantSettingsService } from "../settings/tenant-settings.service.js";
@@ -258,7 +263,13 @@ export class AppointmentService {
     private readonly requestContext: RequestContextService,
     private readonly permissionResolver: PermissionResolver,
     private readonly audit: AuditWriter,
-    private readonly settings: TenantSettingsService
+    private readonly settings: TenantSettingsService,
+    /**
+     * The in-process post-commit dispatcher ([[DEC-059]]). This service is the
+     * platform's first production publisher: it emits only the two catalog events
+     * a subscriber exists for, and only after the transaction above committed.
+     */
+    @Inject(APPLICATION_EVENT_DISPATCHER) private readonly events: EventDispatcher
   ) {}
 
   // -------------------------------------------------------------------------
@@ -296,6 +307,41 @@ export class AppointmentService {
       throw new DomainError("INTERNAL", "Appointment response could not be produced.");
     }
     return response;
+  }
+
+  /**
+   * Publishes the catalog event for a transition, AFTER the commit.
+   *
+   * Only `confirm` and `cancel` publish, because those are the two PRD §39 events
+   * a subscriber exists for: the appointment reminder is scheduled on the first
+   * and cancelled on the second (EPIC-17 NOTIF-003). Emitting an event with no
+   * consumer is what `docs/03-architecture/INTERNAL-EVENTS.md` forbids, so the
+   * other four transitions publish nothing — including `no-show`, whose own
+   * reminder window has already closed by the time it is reachable.
+   *
+   * The payload carries ids only, and the subscriber re-reads the row: a payload
+   * built from this snapshot would let a reschedule between the emit and the
+   * reaction schedule a reminder for an instant the appointment no longer has.
+   *
+   * A subscriber's failure is its own: the reaction is fire-and-forget, it must
+   * never roll back an appointment that is already committed (INTERNAL-EVENTS),
+   * and the dispatcher does not await handlers — so nothing here can turn a
+   * subscriber's error into this request's error.
+   */
+  private publishTransition(
+    command: AppointmentTransitionCommand,
+    tenantId: string,
+    appointmentId: string
+  ): void {
+    const type =
+      command === "confirm"
+        ? APPOINTMENT_CONFIRMED
+        : command === "cancel"
+          ? APPOINTMENT_CANCELLED
+          : null;
+    if (type === null) return;
+
+    this.events.publish(type, { tenantId, aggregateId: appointmentId, payload: {} });
   }
 
   async listAppointmentOptions(): Promise<AppointmentOptionsResponse> {
@@ -588,6 +634,7 @@ export class AppointmentService {
     if (!response) {
       throw new DomainError("INTERNAL", "Appointment response could not be produced.");
     }
+    this.publishTransition(command, tenantId, row.id);
     return response;
   }
 

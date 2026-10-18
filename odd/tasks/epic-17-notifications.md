@@ -101,6 +101,17 @@ by any service.
   [[TD-043]] (the lead time's ceiling is not validated). **WU-D2 (the three
   emitters, the scheduler and the send-time gate, which also closes TD-043) and
   WU-D3 (the real content builder) remain.**
+- [~] **WU-D (cont.) — WU-D2 landed**: `AppointmentConfirmed` and
+  `AppointmentCancelled` published post-commit by the Scheduling service (the
+  platform's first production publisher), the in-process dispatcher as an
+  `@Global` provider, the reminder scheduler (one intent per configured channel,
+  dedupe-keyed, delayed job, per-VALUE WhatsApp gate) and its cancellation (CAS
+  to CANCELLED then remove the pending job), the BullMQ producer with `cancel`,
+  and [[TD-043]] closed. **Still pending in WU-D**: the real content builder
+  with its send-time appointment gate (WU-D3) and `FiscalApproved`, which is
+  deliberately deferred to WU-D3 because INTERNAL-EVENTS forbids publishing an
+  event with no subscriber — the fiscal notice is that subscriber, and it lands
+  with it.
 - [ ] **WU-E — the transactional surface and the permissions family.** The
       delivery record's status and history for the tenant, and the
       `notifications.*` permission family. → [[NOTIF-004]]

@@ -1000,6 +1000,34 @@ export type AppointmentStatusRow =
 export type AppointmentSourceRow = "STAFF" | "PORTAL";
 
 /** Tenant-scoped Appointment row as the scheduling boundary reads it. */
+/** The delivery lifecycle's in-memory mirror (EPIC-17 NOTIF-003). */
+export type NotificationDeliveryStatusRow =
+  "SCHEDULED" | "QUEUED" | "SENDING" | "SENT" | "FAILED" | "CANCELLED";
+
+/** The notification delivery row the reminder scheduler writes and cancels. */
+export interface NotificationDeliveryRow {
+  id: string;
+  tenantId: string;
+  channel: "EMAIL" | "WHATSAPP";
+  status: NotificationDeliveryStatusRow;
+  dedupeKey: string;
+  sourceType: "APPOINTMENT" | "FISCAL_DOCUMENT";
+  sourceId: string;
+  recipientType: "CUSTOMER";
+  recipientId: string;
+  scheduledAt: Date;
+  attemptCount: number;
+  lastAttemptAt: Date | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  sentAt: Date | null;
+  cancelledAt: Date | null;
+  cancellationReason: string | null;
+  providerReference: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface AppointmentRow {
   id: string;
   tenantId: string;
@@ -1909,6 +1937,36 @@ export interface IsolationDatabase {
         count: number;
       };
     };
+    /**
+     * EPIC-17 NOTIF-003: the notification delivery aggregate the reminder
+     * scheduler writes and cancels. Its `(tenant_id, dedupe_key)` uniqueness is
+     * enforced here because it is a DATABASE property in the real system, and a
+     * harness that let a duplicate through would hide the idempotency the
+     * scheduler depends on.
+     */
+    notificationDelivery: {
+      create: (args: {
+        data: Pick<
+          NotificationDeliveryRow,
+          | "tenantId"
+          | "channel"
+          | "dedupeKey"
+          | "sourceType"
+          | "sourceId"
+          | "recipientType"
+          | "recipientId"
+          | "scheduledAt"
+        > & { status?: NotificationDeliveryStatusRow };
+      }) => NotificationDeliveryRow;
+      findFirst: (args: { where: NotificationDeliveryWhere }) => NotificationDeliveryRow | null;
+      findMany: (args: { where: NotificationDeliveryWhere }) => NotificationDeliveryRow[];
+      updateMany: (args: {
+        where: NotificationDeliveryWhere;
+        data: Omit<Partial<NotificationDeliveryRow>, "attemptCount"> & {
+          attemptCount?: number | { increment: number };
+        };
+      }) => { count: number };
+    };
     portalBookingRequest: {
       create: (args: {
         data: {
@@ -2182,6 +2240,34 @@ function matchesPortalAccess(
 }
 
 /** Faithful-enough Appointment matcher for the shipped read/overlap predicates. */
+/** The predicates the reminder scheduler and the delivery paths use. */
+interface NotificationDeliveryWhere {
+  id?: string;
+  tenantId?: string;
+  channel?: "EMAIL" | "WHATSAPP";
+  status?: NotificationDeliveryStatusRow | { in: NotificationDeliveryStatusRow[] };
+  dedupeKey?: string;
+  sourceType?: "APPOINTMENT" | "FISCAL_DOCUMENT";
+  sourceId?: string;
+}
+
+function matchesNotificationDelivery(
+  where: NotificationDeliveryWhere,
+  candidate: NotificationDeliveryRow
+): boolean {
+  if (where.id !== undefined && candidate.id !== where.id) return false;
+  if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) return false;
+  if (where.channel !== undefined && candidate.channel !== where.channel) return false;
+  if (where.dedupeKey !== undefined && candidate.dedupeKey !== where.dedupeKey) return false;
+  if (where.sourceType !== undefined && candidate.sourceType !== where.sourceType) return false;
+  if (where.sourceId !== undefined && candidate.sourceId !== where.sourceId) return false;
+  if (where.status !== undefined) {
+    const allowed = typeof where.status === "string" ? [where.status] : where.status.in;
+    if (!allowed.includes(candidate.status)) return false;
+  }
+  return true;
+}
+
 function matchesAppointment(where: AppointmentWhere, candidate: AppointmentRow): boolean {
   if (where.id !== undefined) {
     if (typeof where.id === "string") {
@@ -2630,6 +2716,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const branchTable = new Map<string, BranchRow>();
   const appointmentTable = new Map<string, AppointmentRow>();
   const portalBookingRequestTable = new Map<string, PortalBookingRequestRow>();
+  const notificationDeliveryTable = new Map<string, NotificationDeliveryRow>();
 
   /** Role-code predicate for membership options (EPIC-07 professional lookup). */
   const roleCodeMatches = (where: MembershipWhere, candidate: TenantMembershipRow): boolean =>
@@ -2686,6 +2773,7 @@ export function createIsolationDatabase(): IsolationDatabase {
     branches: branchTable,
     appointments: appointmentTable,
     portalBookingRequests: portalBookingRequestTable,
+    notificationDeliveries: notificationDeliveryTable,
   };
 
   function snapshotTables(): TableSnapshot {
@@ -4599,6 +4687,111 @@ export function createIsolationDatabase(): IsolationDatabase {
                 ? data.version
                 : candidate.version + data.version.increment;
           }
+          candidate.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
+    notificationDelivery: {
+      create: ({
+        data,
+      }: {
+        data: Pick<
+          NotificationDeliveryRow,
+          | "tenantId"
+          | "channel"
+          | "dedupeKey"
+          | "sourceType"
+          | "sourceId"
+          | "recipientType"
+          | "recipientId"
+          | "scheduledAt"
+        > & { status?: NotificationDeliveryStatusRow };
+      }) => {
+        // The (tenant_id, dedupe_key) uniqueness is a DATABASE property in the
+        // real system, so the harness refuses a repeated intent with the same
+        // P2002 shape — including its columns-only `meta.target`, which is the
+        // shape the scheduler's matcher has to recognize.
+        for (const existing of notificationDeliveryTable.values()) {
+          if (
+            existing.tenantId === data.tenantId &&
+            existing.dedupeKey === data.dedupeKey &&
+            existing.status !== "CANCELLED"
+          ) {
+            throw Object.assign(new Error("Unique constraint failed"), {
+              code: "P2002",
+              meta: { target: ["tenant_id", "dedupe_key"] },
+            });
+          }
+        }
+        const now = new Date();
+        const created: NotificationDeliveryRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          channel: data.channel,
+          status: data.status ?? "SCHEDULED",
+          dedupeKey: data.dedupeKey,
+          sourceType: data.sourceType,
+          sourceId: data.sourceId,
+          recipientType: data.recipientType,
+          recipientId: data.recipientId,
+          scheduledAt: data.scheduledAt,
+          attemptCount: 0,
+          lastAttemptAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          sentAt: null,
+          cancelledAt: null,
+          cancellationReason: null,
+          providerReference: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        notificationDeliveryTable.set(created.id, created);
+        return created;
+      },
+      findFirst: ({ where }: { where: NotificationDeliveryWhere }) =>
+        [...notificationDeliveryTable.values()].find((candidate) =>
+          matchesNotificationDelivery(where, candidate)
+        ) ?? null,
+      findMany: ({ where }: { where: NotificationDeliveryWhere }) =>
+        [...notificationDeliveryTable.values()].filter((candidate) =>
+          matchesNotificationDelivery(where, candidate)
+        ),
+      updateMany: ({
+        where,
+        data,
+      }: {
+        where: NotificationDeliveryWhere;
+        data: Omit<Partial<NotificationDeliveryRow>, "attemptCount"> & {
+          attemptCount?: number | { increment: number };
+        };
+      }) => {
+        let count = 0;
+        for (const candidate of notificationDeliveryTable.values()) {
+          if (!matchesNotificationDelivery(where, candidate)) continue;
+          if (data.status !== undefined) candidate.status = data.status;
+          if (data.scheduledAt !== undefined) candidate.scheduledAt = data.scheduledAt;
+          if (data.lastAttemptAt !== undefined && data.lastAttemptAt !== null) {
+            candidate.lastAttemptAt = data.lastAttemptAt;
+          }
+          if (data.attemptCount !== undefined) {
+            candidate.attemptCount =
+              typeof data.attemptCount === "number"
+                ? data.attemptCount
+                : candidate.attemptCount + data.attemptCount.increment;
+          }
+          if (data.lastErrorCode !== undefined) candidate.lastErrorCode = data.lastErrorCode;
+          if (data.lastErrorMessage !== undefined)
+            candidate.lastErrorMessage = data.lastErrorMessage;
+          if (data.sentAt !== undefined) candidate.sentAt = data.sentAt;
+          if (data.cancelledAt !== undefined) candidate.cancelledAt = data.cancelledAt;
+          if (data.cancellationReason !== undefined) {
+            candidate.cancellationReason = data.cancellationReason;
+          }
+          if (data.providerReference !== undefined)
+            candidate.providerReference = data.providerReference;
           candidate.updatedAt = new Date();
           count += 1;
         }

@@ -37,12 +37,16 @@ describe("reminderScheduledAt", () => {
     expect(reminderScheduledAt(startsAt, 168).toISOString()).toBe("2026-10-11T12:00:00.000Z");
   });
 
-  it("refuses a lead time it cannot honour", () => {
-    for (const lead of [0, -1, 1.5, Number.NaN]) {
+  it("refuses a lead time it cannot honour, ABOVE the ceiling too — TD-043", () => {
+    for (const lead of [0, -1, 1.5, Number.NaN, 169, 10_000]) {
       expect(() => reminderScheduledAt(startsAt, lead), String(lead)).toThrow(
         /whole number of hours/
       );
     }
+    // The ceiling is the module's own bound: without it a caller could ask for a
+    // date fourteen months early and get one, from a function whose module says a
+    // longer lead is a different feature.
+    expect(() => reminderScheduledAt(startsAt, NOTIFICATION_REMINDER_LEAD_HOURS_MAX)).not.toThrow();
   });
 
   it("reports an overdue reminder rather than refusing it", () => {

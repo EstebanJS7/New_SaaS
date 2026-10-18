@@ -83,9 +83,16 @@ export function reminderDedupeKey(args: ReminderDedupeKeyArgs): string {
  * that could not be tested without a database.
  */
 export function reminderScheduledAt(startsAt: Date, leadHours: number): Date {
-  if (!Number.isInteger(leadHours) || leadHours < NOTIFICATION_REMINDER_LEAD_HOURS_MIN) {
+  // BOTH bounds, which TD-043 closed: the ceiling the module exports was not
+  // enforced here, so a caller passing a very large lead would get a silently
+  // wrong date from the function whose arithmetic is supposed to be the policy.
+  if (
+    !Number.isInteger(leadHours) ||
+    leadHours < NOTIFICATION_REMINDER_LEAD_HOURS_MIN ||
+    leadHours > NOTIFICATION_REMINDER_LEAD_HOURS_MAX
+  ) {
     throw new Error(
-      `A reminder lead time must be a whole number of hours of at least ${NOTIFICATION_REMINDER_LEAD_HOURS_MIN}.`
+      `A reminder lead time must be a whole number of hours between ${NOTIFICATION_REMINDER_LEAD_HOURS_MIN} and ${NOTIFICATION_REMINDER_LEAD_HOURS_MAX}.`
     );
   }
   return new Date(startsAt.getTime() - leadHours * 60 * 60 * 1_000);

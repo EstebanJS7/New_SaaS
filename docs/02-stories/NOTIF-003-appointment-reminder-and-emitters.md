@@ -293,7 +293,79 @@ schema refuses such a value, which is why nothing reachable mishandles it yet �
 the guard is missing from the boundary that should be self-contained. Recorded
 as [[TD-043]] and fixed in WU-D2, which consumes this policy from the scheduler.
 
-### WU-D2 and WU-D3, still pending
+### WU-D2 — the emitters, the scheduling and the cancellation, landed
+
+- **`apps/api/src/events/application-events.module.ts`** — the in-process
+  dispatcher as an `@Global` provider. `packages/shared` ships the factory and
+  no Nest module, so each deployable composes its own, which is also the only
+  correct shape: the dispatcher is in-process, so a reaction only observes an
+  event published by its own deployable ([[DEC-059]]).
+- **The emitters, in `AppointmentService`** — `AppointmentConfirmed` and
+  `AppointmentCancelled`, published **after** the transition's transaction
+  commits. The payload carries ids only and the subscriber re-reads the row,
+  because a payload built from the emit-time snapshot would let a reschedule
+  schedule a reminder for an instant the appointment no longer has. Only the two
+  commands a subscriber exists for publish: `INTERNAL-EVENTS.md` forbids an
+  event with no consumer, and the other four transitions (including `no-show`,
+  whose reminder window has already closed) publish nothing.
+- **`notification-reminder.scheduler.ts`** — the first production subscriber.
+  Confirmation schedules one intent per configured channel, dedupe-keyed by
+  (appointment, channel, window), with the delayed job; cancellation CASes each
+  pending row to `CANCELLED` with its own accounting and then removes the job.
+  The order is the point in both directions: the row is written **before** the
+  enqueue (so a lost enqueue leaves a diagnosable `SCHEDULED` row rather than a
+  job pointing at nothing) and the job is removed **after** the row is cancelled
+  and only by the caller that won the compare-and-swap.
+- **The per-VALUE WhatsApp gate** ([[DEC-058]]): a channel the tenant is not
+  entitled to is refused **before** anything is scheduled, so an unentitled
+  tenant never has a pending WhatsApp reminder at all. Email never asks.
+- **`notification-delivery.producer.ts`** — the BullMQ producer, the fiscal
+  producer's shape (port, fail-fast Redis options, a two-second deadline) plus
+  the one capability a delayed reminder needs: `cancel`, which is idempotent by
+  contract because the row is the record of the cancellation.
+- **[[TD-043]] closed**: `reminderScheduledAt` now enforces the ceiling it
+  exports.
+- **`FiscalApproved` is deliberately NOT published yet**, and that is a recorded
+  deviation about ORDER, not substance: its subscriber is the fiscal notice,
+  which is WU-D3's, and publishing an event before its consumer exists is
+  exactly what `INTERNAL-EVENTS.md` forbids. [[DEC-059]] still decides that this
+  epic publishes it, and it does so with the notice.
+
+### The Core/Veterinary boundary this unit hit, and how it was resolved
+
+The reminder's recipient is the patient's responsible customer, and the link
+that makes a customer responsible for a patient is **Veterinary**-owned
+(EPIC-05). `notifications` is a **Core** capability (PRD §34), and the
+repository's boundary suite refuses to let any source file outside
+`apps/api/src/patients/**` name that aggregate — it caught this unit's first
+version, which read it directly.
+
+The rule is right, and the resolution is inversion rather than an exemption:
+
+- **Core declares the question**
+  (`notifications/appointment-recipient.port.ts`), with a fail-closed default
+  that resolves nobody: a reminder sent to the wrong customer would be worse
+  than one not sent.
+- **Veterinary answers it** (`patients/patient-guardian.recipient.ts`), because
+  that is the only place the aggregate may be named.
+- **The composition root binds them** (`app.module.ts`), which is the one place
+  allowed to know both, exactly as `FiscalProviderModule.forRoot` takes a
+  substitutable credential port.
+
+So Core never imports Veterinary, Veterinary orchestrates a Core capability, and
+the boundary suite keeps it that way. Two details are part of the fix rather
+than incidental: the port's own comment **describes** the aggregate instead of
+naming it, and the factory that implements it is named for what it returns
+(`createResponsibleCustomerRecipientPort`) so importing it does not carry the
+aggregate's identifier into a Core file.
+
+**The test harness had to learn the aggregate too.** `boot-test-app` boots the
+real `AppModule`, so the real subscriber runs: the in-memory Prisma now models
+`notification_delivery`, **including its `(tenant_id, dedupe_key)` uniqueness**,
+because a harness that let a duplicate through would hide the idempotency the
+scheduler depends on.
+
+### WU-D3, still pending
 
 WU-D2: the three emitters (`AppointmentConfirmed` and `AppointmentCancelled` in
 the API process, `FiscalApproved` from **both** worker write paths), the

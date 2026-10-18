@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The reminder policy validates its lead time's floor and ignores the ceiling
   its own module exports
-status: open
+status: resolved
 severity: low
 owner: notifications
 related_epics:
@@ -58,6 +58,19 @@ fails without it (`169` accepted today, refused after).
 **Where it lands.** [[NOTIF-003]] WU-D2 consumes this policy from the scheduler,
 so the fix belongs in that unit rather than in a unit of its own — the same way
 EPIC-16 folded two of TD-033's items into later work inside the same epic.
+
+## Resolution (2026-10-17)
+
+Fixed in WU-D2 (`feat/notif-003-wu-d`), the unit that consumes the policy from
+the scheduler, exactly as this record planned. `reminderScheduledAt` now
+compares against `NOTIFICATION_REMINDER_LEAD_HOURS_MAX` as well as the floor,
+names both bounds in its message, and the case that previously passed `169`
+unchanged asserts that it throws while the ceiling itself is still accepted.
+
+The reading this record carried was right about the cause: the guard was missing
+from the boundary that should be self-contained, not from a boundary that was
+wrong — nothing reachable passed an out-of-range value, because the settings
+schema refuses one.
 
 ## Related
 
