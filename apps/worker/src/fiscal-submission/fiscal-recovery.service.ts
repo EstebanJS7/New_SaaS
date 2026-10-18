@@ -17,6 +17,10 @@ import {
   type FiscalSubmissionJob,
 } from "@newsaas/fiscal";
 import {
+  FISCAL_APPROVAL_EMITTER,
+  type FiscalApprovalEmitterPort,
+} from "./fiscal-approval.emitter.js";
+import {
   DEFAULT_FISCAL_RECOVERY_MAX_ATTEMPTS,
   FISCAL_RECOVERY_BATCH_LIMIT,
   resolveFiscalRecoveryTiming,
@@ -262,6 +266,8 @@ export interface FiscalQueryDeps {
   readonly query: (request: FiscalQueryRequest) => Promise<FiscalQueryResult>;
   readonly transaction: <R>(work: (tx: FiscalRecoveryTransaction) => Promise<R>) => Promise<R>;
   readonly now: Date;
+  /** Publishes `FiscalApproved` for a resolution this sweep applied. */
+  readonly approvals: FiscalApprovalEmitterPort;
   readonly batchLimit?: number;
 }
 
@@ -385,6 +391,15 @@ export async function reconcileSubmittedFiscalDocuments(
         case "REJECTED":
         case "FUNCTIONAL_REJECTION": {
           const applied = await applyTerminalResolution(deps, document, result);
+          // The SECOND path into APPROVED, and the reason DEC-059 says the emitter
+          // must be shared: publishing only from the submission handler would lose
+          // every approval this sweep resolves.
+          if (applied === "applied" && result.outcome === "APPROVED") {
+            deps.approvals.emit({
+              tenantId: document.tenantId,
+              fiscalDocumentId: document.id,
+            });
+          }
           if (applied === "applied") resolved += 1;
           else if (applied === "unapplied") unapplied += 1;
           else unresolved += 1;
@@ -610,7 +625,8 @@ export class FiscalSubmissionRecoveryService implements OnModuleInit, OnModuleDe
 
   constructor(
     @Inject(PrismaService) private readonly prisma: FiscalRecoveryPrisma,
-    @Inject(FISCAL_PROVIDER) private readonly provider: FiscalProviderPort
+    @Inject(FISCAL_PROVIDER) private readonly provider: FiscalProviderPort,
+    @Inject(FISCAL_APPROVAL_EMITTER) private readonly approvals: FiscalApprovalEmitterPort
   ) {}
 
   onModuleInit(): void {
@@ -666,6 +682,7 @@ export class FiscalSubmissionRecoveryService implements OnModuleInit, OnModuleDe
         fiscalDocument: this.prisma.fiscalDocument,
         query: (request) => this.provider.query(request),
         transaction: (work) => this.prisma.$transaction(work),
+        approvals: this.approvals,
         now,
       });
       return { ...submissions, ...queries };

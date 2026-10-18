@@ -21,6 +21,10 @@ import { PurchasesModule } from "./purchases/purchases.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
 import { SalesModule } from "./sales/sales.module.js";
 import { SchedulingModule } from "./scheduling/scheduling.module.js";
+import { NotificationsModule } from "./notifications/notifications.module.js";
+import { PrismaService } from "@newsaas/database";
+import { APPOINTMENT_RECIPIENT_PORT } from "./notifications/appointment-recipient.port.js";
+import { createResponsibleCustomerRecipientPort } from "./patients/patient-guardian.recipient.js";
 import { SecretsModule } from "./secret-store/secrets.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
 import { SuppliersModule } from "./suppliers/suppliers.module.js";
@@ -55,6 +59,24 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     PatientsModule,
     ClinicalModule,
     SchedulingModule,
+    // EPIC-17 NOTIF-003: the notification delivery producer and the reminder
+    // scheduler, whose reactions subscribe to the dispatcher in the same process
+    // (DEC-059 — the dispatcher is in-process, so a reaction only sees an event
+    // published by its own deployable).
+    NotificationsModule.forRoot({
+      // The VETERINARY side of the recipient port: the patient→customer link is
+      // Veterinary-owned, so its implementation lives in the Patients module and
+      // this composition root is the only place that binds it to the Core port
+      // the notifications module declares. (The aggregate is not named here on
+      // purpose: the boundary suite treats its name outside `patients/` as a
+      // violation, comments included.)
+      recipientPort: {
+        provide: APPOINTMENT_RECIPIENT_PORT,
+        useFactory: (prisma: PrismaService) =>
+          createResponsibleCustomerRecipientPort({ client: prisma }),
+        inject: [PrismaService],
+      },
+    }),
     // EPIC-09 catalog: a leaf consumer of the platform; it adds no APP_GUARD,
     // so its position carries no guard-ordering contract.
     CatalogModule,

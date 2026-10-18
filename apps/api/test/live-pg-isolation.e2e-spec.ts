@@ -20,6 +20,7 @@ import { createFastifyAdapter } from "../src/common/http/fastify-adapter.factory
 import { RequestContextService } from "../src/context/request-context.service.js";
 import { PermissionResolver } from "../src/rbac/permission-resolver.service.js";
 import { stockSerializationLockKey } from "../src/inventory/inventory.repository.js";
+import { APPLICATION_EVENT_DISPATCHER } from "../src/events/application-events.module.js";
 import {
   AppointmentService,
   type AppointmentPrisma,
@@ -2725,7 +2726,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         scheduleContext,
         app.get(PermissionResolver),
         app.get(AuditWriter),
-        app.get(TenantSettingsService)
+        app.get(TenantSettingsService),
+        // The in-process dispatcher: the real one, because this suite exercises
+        // the application paths and the reminder scheduler subscribes to it.
+        app.get(APPLICATION_EVENT_DISPATCHER)
       );
     }, 60_000);
 

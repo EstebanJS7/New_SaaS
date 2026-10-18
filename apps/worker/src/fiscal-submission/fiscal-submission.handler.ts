@@ -23,6 +23,10 @@ import {
   type StoragePort,
 } from "@newsaas/storage";
 import { FISCAL_DOCUMENT_BUILDER, type FiscalDocumentBuilder } from "./fiscal-document-builder.js";
+import {
+  FISCAL_APPROVAL_EMITTER,
+  type FiscalApprovalEmitterPort,
+} from "./fiscal-approval.emitter.js";
 
 type FiscalStatus =
   | "PENDING"
@@ -171,7 +175,8 @@ export class FiscalSubmissionHandler {
     @Inject(PrismaService) private readonly prisma: FiscalHandlerPrisma,
     @Inject(FISCAL_PROVIDER) private readonly provider: FiscalProviderPort,
     @Inject(FISCAL_DOCUMENT_BUILDER) private readonly documentBuilder: FiscalDocumentBuilder,
-    @Inject(STORAGE_PORT) private readonly storage: StoragePort
+    @Inject(STORAGE_PORT) private readonly storage: StoragePort,
+    @Inject(FISCAL_APPROVAL_EMITTER) private readonly approvals: FiscalApprovalEmitterPort
   ) {}
 
   async handle(job: FiscalSubmissionJob): Promise<void> {
@@ -284,6 +289,13 @@ export class FiscalSubmissionHandler {
 
     const result = await this.provider.issue(request);
     await this.persistResult(document, result, attemptCount);
+
+    // AFTER the transaction above committed (DEC-059). This is one of the TWO
+    // paths that enter APPROVED, so it publishes through the shared emitter rather
+    // than emitting here and hoping the recovery path remembers to.
+    if (result.outcome === "APPROVED") {
+      this.approvals.emit({ tenantId: document.tenantId, fiscalDocumentId: document.id });
+    }
     if (isRetryableOutcome(result.outcome)) {
       throw new Error(this.errorMessage(result.reason, "Fiscal provider transient failure"));
     }

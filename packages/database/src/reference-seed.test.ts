@@ -337,6 +337,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "suppliers.read",
       "purchases.read",
       "sales.read",
+      "notifications.delivery.read",
       "cash.read",
       "billing.read",
       "fiscal.read",
@@ -749,8 +750,13 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // `fiscal.profile.manage` (58 -> 59), and FISC-016 WU-D adds
       // `fiscal.range.void` for the same two roles, moving 59 -> 60: retiring a
       // range locally and telling the tax administration its numbers will never
-      // be used are different acts with different blast radii.
-      permissions: 60,
+      // be used are different acts with different blast radii. NOTIF-003 WU-D1
+      // adds `notifications.settings.manage` for the same two roles, moving
+      // 60 -> 61: the reminder's policy is tenant configuration like every other
+      // namespace's, and DEC-058 keeps it off the feature catalog. NOTIF-004 adds
+      // `notifications.delivery.read` for ALL SIX roles -- the same reach every
+      // other `*.read` key has -- moving 61 -> 62.
+      permissions: 62,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

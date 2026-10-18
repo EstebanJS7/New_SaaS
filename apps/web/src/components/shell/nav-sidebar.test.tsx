@@ -10,10 +10,21 @@ describe("NavSidebar", () => {
     expect(within(sidebar).getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
 
     const entries = within(sidebar).getAllByTestId("nav-entry");
-    expect(entries).toHaveLength(13);
+    expect(entries).toHaveLength(14);
 
-    const [customers, patients, catalog, suppliers, purchases, pos, cash, billing, fiscal, agenda] =
-      entries;
+    const [
+      customers,
+      patients,
+      catalog,
+      suppliers,
+      purchases,
+      pos,
+      cash,
+      billing,
+      fiscal,
+      agenda,
+      notifications,
+    ] = entries;
     expect(customers.tagName).toBe("A");
     expect(customers.getAttribute("href")).toBe("/app/customers");
     expect(customers.textContent).toBe("Customers");
@@ -54,7 +65,11 @@ describe("NavSidebar", () => {
     expect(agenda.getAttribute("href")).toBe("/app/agenda");
     expect(agenda.textContent).toBe("Agenda");
 
-    for (const entry of entries.slice(10)) {
+    expect(notifications.tagName).toBe("A");
+    expect(notifications.getAttribute("href")).toBe("/app/notifications");
+    expect(notifications.textContent).toBe("Notifications");
+
+    for (const entry of entries.slice(11)) {
       expect(entry.tagName).toBe("BUTTON");
       expect((entry as HTMLButtonElement).type).toBe("button");
       expect(entry.textContent).toMatch(/^Section [a-z]+$/i);
@@ -65,7 +80,7 @@ describe("NavSidebar", () => {
     const { container } = render(<NavSidebar />);
 
     const links = [...container.querySelectorAll("a")];
-    expect(links).toHaveLength(10);
+    expect(links).toHaveLength(11);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/app/customers",
       "/app/patients",
@@ -77,6 +92,7 @@ describe("NavSidebar", () => {
       "/app/billing",
       "/app/fiscal",
       "/app/agenda",
+      "/app/notifications",
     ]);
     // Billing is a real destination now; the placeholders stay chrome-only and
     // no appointment, invoice or schedule surface exists behind this chrome.

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
+import type { EventDispatcher } from "@newsaas/shared";
 import type { AuditAppendInput, AuditWriter } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import type { PermissionResolver } from "../rbac/permission-resolver.service.js";
@@ -109,6 +110,8 @@ interface Harness {
   resolveMock: Mock<() => Promise<Set<string>>>;
   settingsMock: Mock<(namespace: string) => Promise<unknown>>;
   queryRawMock: Mock<(query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>>;
+  /** Every event this service published, in order (EPIC-17 WU-D2). */
+  published: { type: string; tenantId: string | null; aggregateId: string }[];
   lastTx: () => AppointmentTransaction;
   seed(overrides?: Partial<AppointmentRow>): AppointmentRow;
 }
@@ -264,12 +267,25 @@ function buildHarness(requestContext: RequestContextService): Harness {
     .fn<(namespace: string) => Promise<unknown>>()
     .mockResolvedValue({ conflictPolicy: "REJECT", availability: [], blocks: [] });
 
+  const published: { type: string; tenantId: string | null; aggregateId: string }[] = [];
+  const dispatcher = {
+    publish: (type: string, event: { tenantId: string | null; aggregateId: string }) => {
+      published.push({ type, tenantId: event.tenantId, aggregateId: event.aggregateId });
+      return { id: "event-1", type, occurredAt: new Date().toISOString(), ...event, payload: {} };
+    },
+    subscribe: () => () => undefined,
+  };
+
   const service = new AppointmentService(
     prisma,
     requestContext,
     { resolveForActiveRequest: resolveMock } as unknown as PermissionResolver,
     { append: appendMock } as unknown as AuditWriter,
-    { get: settingsMock } as unknown as TenantSettingsService
+    { get: settingsMock } as unknown as TenantSettingsService,
+    // The dispatcher the service publishes through (NOTIF-003). A fake that
+    // records is enough: this suite asserts the transition, and the SUBSCRIBER's
+    // behaviour belongs to the reminder scheduler's own suite.
+    dispatcher as unknown as EventDispatcher
   );
 
   const seed = (overrides: Partial<AppointmentRow> = {}): AppointmentRow => {
@@ -302,6 +318,7 @@ function buildHarness(requestContext: RequestContextService): Harness {
     resolveMock,
     settingsMock,
     queryRawMock,
+    published,
     lastTx: () => tx,
     seed,
   };
@@ -826,6 +843,55 @@ describe("AppointmentService (EPIC-07 WU2 domain service)", () => {
     const result = await withContext(() => harness.service.listAppointmentOptions());
     expect(result.professionals).toEqual([{ membershipId: VET_A }]);
     expect(result.branches).toEqual([{ id: BRANCH_A, name: `Branch ${BRANCH_A}` }]);
+  });
+
+  // -------------------------------------------------------------------------
+  // EPIC-17 NOTIF-003 WU-D2 — the two emitters
+  // -------------------------------------------------------------------------
+
+  it("publishes AppointmentConfirmed for confirm, carrying ids only", async () => {
+    const seeded = harness.seed({ status: "SCHEDULED" });
+
+    await withContext(() => harness.service.transitionAppointment(seeded.id, "confirm"));
+
+    expect(harness.published).toEqual([
+      { type: "AppointmentConfirmed", tenantId: TENANT_A, aggregateId: seeded.id },
+    ]);
+  });
+
+  it("publishes AppointmentCancelled for cancel", async () => {
+    const seeded = harness.seed({ status: "CONFIRMED" });
+
+    await withContext(() => harness.service.transitionAppointment(seeded.id, "cancel"));
+
+    expect(harness.published).toEqual([
+      { type: "AppointmentCancelled", tenantId: TENANT_A, aggregateId: seeded.id },
+    ]);
+  });
+
+  it("publishes nothing for the four transitions with no subscriber", async () => {
+    // INTERNAL-EVENTS forbids an event with no consumer, and a `no-show`'s
+    // reminder window has already closed by the time it is reachable.
+    for (const [status, command] of [
+      ["CONFIRMED", "arrive"],
+      ["ARRIVED", "start"],
+      ["IN_PROGRESS", "complete"],
+      ["CONFIRMED", "no-show"],
+    ] as const) {
+      const seeded = harness.seed({ status });
+      await withContext(() => harness.service.transitionAppointment(seeded.id, command));
+      expect(harness.published, command).toEqual([]);
+    }
+  });
+
+  it("publishes nothing when the transition is refused", async () => {
+    // A rejected command changes nothing, so there is nothing to react to.
+    const seeded = harness.seed({ status: "COMPLETED" });
+
+    await expect(
+      withContext(() => harness.service.transitionAppointment(seeded.id, "confirm"))
+    ).rejects.toThrow();
+    expect(harness.published).toEqual([]);
   });
 });
 

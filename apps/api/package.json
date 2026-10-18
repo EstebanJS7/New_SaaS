@@ -2,7 +2,7 @@
   "name": "@newsaas/api",
   "version": "0.0.0",
   "private": true,
-  "description": "NewSaaS API — NestJS on Fastify",
+  "description": "NewSaaS API \u2014 NestJS on Fastify",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
@@ -27,6 +27,7 @@
     "@newsaas/database": "workspace:*",
     "@newsaas/fiscal": "workspace:*",
     "@newsaas/fiscal-persistence": "workspace:*",
+    "@newsaas/notifications": "workspace:*",
     "@newsaas/secret-store": "workspace:*",
     "@newsaas/shared": "workspace:*",
     "@newsaas/storage": "workspace:*",

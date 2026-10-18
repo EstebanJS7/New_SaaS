@@ -2,7 +2,7 @@
   "name": "@newsaas/notifications",
   "version": "0.0.0",
   "private": true,
-  "description": "NewSaaS notification boundary — the delivery aggregate's contract, its lifecycle guard and the BullMQ queue contract",
+  "description": "NewSaaS notification boundary \u2014 the delivery aggregate's contract, its lifecycle guard and the BullMQ queue contract",
   "license": "UNLICENSED",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,6 +21,8 @@
   },
   "dependencies": {
     "@nestjs/common": "^11.0.16",
+    "bullmq": "^5.46.1",
+    "ioredis": "^5.6.0",
     "nodemailer": "^10.1.2"
   },
   "devDependencies": {

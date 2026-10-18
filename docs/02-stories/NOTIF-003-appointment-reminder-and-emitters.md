@@ -3,7 +3,7 @@ id: NOTIF-003
 type: story
 title: The appointment reminder and the missing emitters
 epic: EPIC-17
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - NOTIF-001
@@ -242,7 +242,316 @@ existing row.
 
 ## Implementation Summary
 
-_Not implemented._
+**WU-D1 (the policy and the settings namespace) is implemented. WU-D2 (the
+emitters and the scheduler) and WU-D3 (the content builder) are not**, which is
+why this Story is `in-progress`.
+
+Landed:
+
+- **`packages/notifications/src/reminder.policy.ts`** — the policy as pure
+  functions: the lead time's bounds (`1..168` hours, default 24) and the default
+  channel set, `reminderWindowKey` (the start instant truncated to the minute),
+  `reminderDedupeKey` (`appointment:<id>:<channel>:<window>`),
+  `reminderScheduledAt` and `isReminderOverdue`. Pure so the setting, the
+  scheduler and the cancellation path derive the SAME key from the same inputs
+  rather than each building one, and so the arithmetic is testable without a
+  database, a queue or a clock.
+- **The `notifications` settings namespace** — a closed schema, `version: 1`, a
+  24 h default, the channel set defaulting to `EMAIL` alone, and **no
+  `requiresFeature`** because email is ungated ([[DEC-058]]). Its bounds and
+  default are imported from the package rather than repeated in the registry, so
+  a schema that accepted a lead time the scheduler would refuse cannot exist.
+  The channel list is deduplicated by the schema because the dedupe key includes
+  the channel.
+- **`notifications.settings.manage`** seeded and granted to OWNER and ADMIN,
+  like every other `*.settings.manage` key.
+- **`docs/03-architecture/TENANT-SETTINGS.md`** brought current: the
+  `notifications` section, and three drift fixes — the
+  `PUT /settings/:namespace` claim (it said the route declares
+  `sales.settings.manage`; the route is authenticated-only and the per-namespace
+  key is enforced in the service), the "v1 ships exactly one namespace" line
+  (four ship now), and the reminder-policy pointer.
+
+### Where the value-level WhatsApp gate lives
+
+The namespace validates SHAPE only, and that is a decision rather than an
+omission: a value-level entitlement check is not expressible through
+`requiresFeature`, and adding a hook to the shared settings service to express
+it would change a reviewed contract for one namespace's convenience. The gate is
+therefore enforced **per channel value at the scheduling boundary** (WU-D2,
+where the entitlement read already exists) and **again at the send path**, which
+[[DEC-058]] names as the authoritative one. A tenant can therefore _configure_ a
+channel it is not entitled to; nothing is scheduled for it, and nothing is sent.
+
+### The WU-D1 review
+
+`review-1e2d96c3a65e27b4` (medium tier, one lens) **approved WU-D1 on the first
+pass** with one SUGGESTION: `reminderScheduledAt` validates the lead time's
+floor and its integrality but not the ceiling the same module exports, so a
+caller passing a very large lead would get a silently wrong date. The settings
+schema refuses such a value, which is why nothing reachable mishandles it yet —
+the guard is missing from the boundary that should be self-contained. Recorded
+as [[TD-043]] and fixed in WU-D2, which consumes this policy from the scheduler.
+
+### WU-D2 — the emitters, the scheduling and the cancellation, landed
+
+- **`apps/api/src/events/application-events.module.ts`** — the in-process
+  dispatcher as an `@Global` provider. `packages/shared` ships the factory and
+  no Nest module, so each deployable composes its own, which is also the only
+  correct shape: the dispatcher is in-process, so a reaction only observes an
+  event published by its own deployable ([[DEC-059]]).
+- **The emitters, in `AppointmentService`** — `AppointmentConfirmed` and
+  `AppointmentCancelled`, published **after** the transition's transaction
+  commits. The payload carries ids only and the subscriber re-reads the row,
+  because a payload built from the emit-time snapshot would let a reschedule
+  schedule a reminder for an instant the appointment no longer has. Only the two
+  commands a subscriber exists for publish: `INTERNAL-EVENTS.md` forbids an
+  event with no consumer, and the other four transitions (including `no-show`,
+  whose reminder window has already closed) publish nothing.
+- **`notification-reminder.scheduler.ts`** — the first production subscriber.
+  Confirmation schedules one intent per configured channel, dedupe-keyed by
+  (appointment, channel, window), with the delayed job; cancellation CASes each
+  pending row to `CANCELLED` with its own accounting and then removes the job.
+  The order is the point in both directions: the row is written **before** the
+  enqueue (so a lost enqueue leaves a diagnosable `SCHEDULED` row rather than a
+  job pointing at nothing) and the job is removed **after** the row is cancelled
+  and only by the caller that won the compare-and-swap.
+- **The per-VALUE WhatsApp gate** ([[DEC-058]]): a channel the tenant is not
+  entitled to is refused **before** anything is scheduled, so an unentitled
+  tenant never has a pending WhatsApp reminder at all. Email never asks.
+- **`notification-delivery.producer.ts`** — the BullMQ producer, the fiscal
+  producer's shape (port, fail-fast Redis options, a two-second deadline) plus
+  the one capability a delayed reminder needs: `cancel`, which is idempotent by
+  contract because the row is the record of the cancellation.
+- **[[TD-043]] closed**: `reminderScheduledAt` now enforces the ceiling it
+  exports.
+- **`FiscalApproved` is deliberately NOT published yet**, and that is a recorded
+  deviation about ORDER, not substance: its subscriber is the fiscal notice,
+  which is WU-D3's, and publishing an event before its consumer exists is
+  exactly what `INTERNAL-EVENTS.md` forbids. [[DEC-059]] still decides that this
+  epic publishes it, and it does so with the notice.
+
+### The WU-D2 review escalated, and what the validator caught
+
+`review-5898fbf624566375` was **high risk** (22 files, 1599 lines) and ran
+**four lenses**. It closed `correction_required` on two CRITICALs, both mine,
+both real in the shape they describe:
+
+- **R4-CANCEL-SWALLOW** (deterministic): `cancel()` attached an unconditional
+  `.catch()`, so this port's own deadline and a Redis failure were
+  indistinguishable from "the job was already gone". The consequence it claimed
+  — a deliverable reminder after a cancellation — is **wrong, and that is
+  measured rather than argued**: the handler returns early for a settled row and
+  its own case asserts it, so the row's status is the guarantee. What the
+  swallow cost was a lingering job nobody could see.
+- **R3-001** (inferential): the create and the enqueue are two steps, so a
+  cancellation can interleave between them.
+
+The first correction removed the swallow and added a compensation, and the
+**targeted validator then REJECTED it** with three findings, all legitimate:
+
+1. a removal failure **rejected the whole reaction**, so a failure on one
+   channel left the remaining channels unprocessed — a regression the correction
+   itself introduced;
+2. the failure report carried the driver's **message**, which is where a
+   connection URL with a password lives;
+3. the compensation closed one interleaving and **missed the wider one**: a
+   cancellation that ran _before_ the intent existed found nothing to cancel
+   while the reaction still held the appointment as `CONFIRMED` from its earlier
+   read.
+
+The lineage then **escalated and stopped** (`native_stop_required`): a
+lifecycle-level stop that only the maintainer can resolve. The three findings
+are fixed in a follow-up unit — one **total** cancellation helper shared by the
+reaction and the compensation (it never throws, and reports the error's NAME
+rather than its text), and an `isStillSchedulable` re-read of the
+**appointment** before and after the enqueue, which is the authority for whether
+a reminder may exist at all. The residual window between that read and the
+enqueue is closed by the send-time gate still pending in WU-D3.
+
+**The lesson is the one the previous round taught, one level up**: a correction
+validated against the finding it closes can still introduce a regression, and
+this one did — it is worth reviewing the fix, not only the defect.
+
+### The fix's own review, and what it caught on the fix
+
+`review-27c3b70cd8046dfd` (medium, one lens) reviewed **the fix** in a fresh
+transaction — the stopped lineage cannot host one — and closed
+`correction_required` on **two more CRITICALs, both deterministic and both
+correct**, both about the helper the previous correction had introduced:
+
+- **R3-002**: the removal depended on winning the compare-and-swap, which broke
+  the post-enqueue compensation exactly where it was needed. A cancellation that
+  landed between the pre-check and the enqueue has **already** cancelled the
+  row, so this caller's CAS lost and the job it had just enqueued was left
+  orphaned — the very lingering job the compensation exists to close. The
+  removal is not the cancellation, and `queue.remove` is idempotent.
+- **R3-001**: the row write and the removal shared one `try`, so a database
+  failure logged and returned without touching the job.
+
+Both fixed by making the two halves independent and total. A case that **used to
+assert the opposite** ("does not remove a job it did not cancel") now documents
+why that assertion encoded the defect. The correction passed the targeted
+validator on both criteria, and it left one follow-up — a comment on
+`onCancelled` that still described the old conditional removal — which is
+corrected here.
+
+**Two rounds, four CRITICALs, all four on this one cancellation path**: the
+first round found the defect, the second found the defect in the fix for it. The
+lesson is not that the reviews are noisy; it is that this path is where the
+concurrency lives, and that reviewing the fix caught a regression and a broken
+compensation that no test had been written to notice.
+
+### The Core/Veterinary boundary this unit hit, and how it was resolved
+
+The reminder's recipient is the patient's responsible customer, and the link
+that makes a customer responsible for a patient is **Veterinary**-owned
+(EPIC-05). `notifications` is a **Core** capability (PRD §34), and the
+repository's boundary suite refuses to let any source file outside
+`apps/api/src/patients/**` name that aggregate — it caught this unit's first
+version, which read it directly.
+
+The rule is right, and the resolution is inversion rather than an exemption:
+
+- **Core declares the question**
+  (`notifications/appointment-recipient.port.ts`), with a fail-closed default
+  that resolves nobody: a reminder sent to the wrong customer would be worse
+  than one not sent.
+- **Veterinary answers it** (`patients/patient-guardian.recipient.ts`), because
+  that is the only place the aggregate may be named.
+- **The composition root binds them** (`app.module.ts`), which is the one place
+  allowed to know both, exactly as `FiscalProviderModule.forRoot` takes a
+  substitutable credential port.
+
+So Core never imports Veterinary, Veterinary orchestrates a Core capability, and
+the boundary suite keeps it that way. Two details are part of the fix rather
+than incidental: the port's own comment **describes** the aggregate instead of
+naming it, and the factory that implements it is named for what it returns
+(`createResponsibleCustomerRecipientPort`) so importing it does not carry the
+aggregate's identifier into a Core file.
+
+**The test harness had to learn the aggregate too.** `boot-test-app` boots the
+real `AppModule`, so the real subscriber runs: the in-memory Prisma now models
+`notification_delivery`, **including its `(tenant_id, dedupe_key)` uniqueness**,
+because a harness that let a duplicate through would hide the idempotency the
+scheduler depends on.
+
+### WU-D3 (first half) — the real content builder and the send-time gate
+
+The seam that failed closed is now a real builder, and its read is also the gate
+[[DEC-060]] relies on:
+
+- **It reads the delivery, then the SOURCE, at send time.** For an appointment
+  it re-reads the appointment's current status and refuses anything that is not
+  `CONFIRMED` or `ARRIVED` — so a cancelled appointment produces no reminder
+  whether or not the cancellation event ever arrived. That read is the
+  invariant; the event is the optimisation, and it is also what closes the
+  residual interleaving window the fix's own review named. For a fiscal document
+  the same discipline: only `APPROVED` is notifiable, read now rather than
+  trusted from the event that scheduled the intent.
+- **The message is built here, never stored.** A delivery holds references only,
+  so a reschedule before the reminder fires cannot send a stale time.
+- **It renders in the tenant's timezone, in 24 hours.** The zone comes from the
+  shared kernel (`TENANT_TIME_ZONE`), which the API's scheduling module now
+  re-exports instead of owning a copy — the worker cannot import an API module,
+  and two literals would let the two deployables disagree about which local time
+  an appointment has. The clock is explicit because `es-PY`'s own default is
+  12-hour: a reminder whose time can be misread by twelve hours is worse than
+  one that reads slightly less naturally.
+- **It reads no Veterinary aggregate.** An appointment's patient is Veterinary,
+  so the message names the **branch** and the instant and not the patient: a
+  Core builder naming a patient would cross the boundary the recipient port
+  exists to respect. Recorded as a limitation, with the port option named,
+  rather than worked around.
+- **Both sources are built**: the appointment reminder, and the post-approval
+  fiscal notice PRD §36's journey ends a step with, naming the invoice's
+  allocated series and number (an unallocated document cannot be named, so it is
+  not announced).
+
+The review of this half (`review-0c34f0614742a5a3`, medium, one lens) **approved
+it on the first pass** with three non-blocking advisories, recorded as
+[[TD-044]]: the 24-hour option's locale-dependent resolution (measured, and it
+does not reproduce here), a fail-open ternary dispatch that a third source type
+would land in the fiscal branch, and a redundant conditional assertion. Its
+first two are cheap and are folded into the rest of WU-D3.
+
+The fiscal notice's **emitters and subscriber** are the other half of WU-D3 and
+remain pending: publishing `FiscalApproved` from both worker write paths, and
+the subscriber that creates the intent for the invoice's customer.
+
+### WU-D3 (second half) — the fiscal notice, its emitters, and TD-044
+
+- **`FiscalApproved` is published from BOTH paths that enter `APPROVED`** — the
+  submission handler's `persistResult` and the reconciliation sweep's
+  conditional update — through **one shared emitter** both call. That is exactly
+  what [[DEC-059]] demanded of this emitter, and its own words are quoted in the
+  file: _"A single publisher at one site would silently lose every approval
+  resolved by the reconciliation sweep."_ The sweep's path is asserted **per
+  outcome** in the table that already covered its terminal states, so the
+  negative (a rejection publishes nothing) and the positive (an approval
+  publishes exactly once) are the same assertion.
+- **The worker's own dispatcher**, because the dispatcher is in-process: a
+  subscriber registered in the API would never see an event the worker
+  publishes.
+- **`notification-fiscal-notice.scheduler.ts`** — the subscriber: one intent for
+  the invoice's customer, on the fixed email channel, enqueued immediately (a
+  notice confirms something that already happened rather than being deferred
+  like the reminder), idempotent by `(document, channel)`, and gated on the
+  document's current status and a customer that exists.
+- **The notice's channel is FIXED to email**, and the reason is the absence of a
+  decision rather than a preference: the settings namespace has
+  `appointmentReminderChannels`, whose name says what the tenant chose it FOR,
+  and stretching it to cover fiscal notices would change what a stored setting
+  means without anybody deciding that. A general transactional channel set is
+  the honest answer once a second consumer justifies the namespace version bump;
+  until then the notice says so in `fiscal-notice.policy.ts`.
+- **The producer's transport moved into `@newsaas/notifications`** rather than
+  being copied into the worker. The worker produces now (the notice) as well as
+  consumes, and there is ONE queue produced by two deployables, so one
+  implementation of its transport is the honest shape — the fiscal precedent
+  differs because there the API produces and the worker consumes. `bullmq` and
+  `ioredis` become dependencies of the package; both were already in the
+  workspace.
+- **[[TD-044]] closed**: the hour cycle is explicit (`hourCycle: "h23"`,
+  measured on Node 24 where both forms agree, so the fix removes a locale
+  dependency rather than a live defect) and the source dispatch is a `switch`
+  with a fail-CLOSED default, so a third source type cannot be announced as an
+  invoice.
+
+### The WU-D3 reviews
+
+Both halves were reviewed separately.
+
+**The first half** (the content builder) was **approved on the first pass** with
+three advisories → [[TD-044]].
+
+**The second half** closed `correction_required` on one **CRITICAL, and it was
+real**: the fiscal notice's scheduler created the row and then enqueued it, and
+on a dedupe-key conflict it _returned without enqueueing_. A first attempt whose
+enqueue failed therefore left a `SCHEDULED` row with no job, and every later
+`FiscalApproved` took the conflict branch and never enqueued it — a notice
+stranded **permanently** by a transient queue failure. The fix applies to
+**both** schedulers, because the reminder had the same hole: `ensureIntent`
+returns the id it created or the pending delivery that already holds the key,
+and the caller enqueues either way, which is safe because the job id is
+deterministic and a settled delivery is refused by the handler.
+
+**That fix also retired the "lost enqueue" limitation this epic had declared.**
+A transient queue failure is no longer a permanent stranding: any later
+confirmation or re-delivered event heals it.
+
+The correction passed the targeted validator on both criteria, and the review is
+**approved and acknowledged with authority burned**. Two advisories and the
+validator's observation are recorded as [[TD-045]], including the honest note
+that their coordinates were not captured.
+
+### WU-D3, still pending
+
+WU-D2: the three emitters (`AppointmentConfirmed` and `AppointmentCancelled` in
+the API process, `FiscalApproved` from **both** worker write paths), the
+subscribers that create and cancel the delivery intent and enqueue/remove the
+delayed job, and the send-time appointment gate. WU-D3: the real content builder
+that replaces the seam which fails closed today.
 
 ## Verification
 

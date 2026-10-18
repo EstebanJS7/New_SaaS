@@ -90,10 +90,32 @@ by any service.
       `provider_reference` column was found while building it and added by
       migration `20261017000002`. Story `done`; the live send run stays pending
       by name at [[NOTIF-005]].
-- [ ] **WU-D — the appointment reminder.** The schema-bound job, the typed
-      `notifications` settings namespace, the idempotency key, and the
-      cancellation path that removes a pending reminder — which needs decision
-      2's emitters. → [[NOTIF-003]]
+- [~] **WU-D — the appointment reminder.** The schema-bound job, the typed
+  `notifications` settings namespace, the idempotency key, and the cancellation
+  path that removes a pending reminder — which needs decision 2's emitters. →
+  [[NOTIF-003]] **WU-D1 landed**: `reminder.policy.ts` (the pure policy: bounds,
+  window, dedupe key, scheduled instant), the `notifications` settings namespace
+  with no `requiresFeature`, the seeded `notifications.settings.manage` key, and
+  the `TENANT-SETTINGS.md` drift fixes. Review `review-1e2d96c3a65e27b4`
+  (medium, one lens): **approved on the first pass**, one SUGGESTION →
+  [[TD-043]] (the lead time's ceiling is not validated). **WU-D2 (the three
+  emitters, the scheduler and the send-time gate, which also closes TD-043) and
+  WU-D3 (the real content builder) remain.**
+- [~] **WU-D (cont.) — WU-D2 landed**: `AppointmentConfirmed` and
+  `AppointmentCancelled` published post-commit by the Scheduling service (the
+  platform's first production publisher), the in-process dispatcher as an
+  `@Global` provider, the reminder scheduler (one intent per configured channel,
+  dedupe-keyed, delayed job, per-VALUE WhatsApp gate) and its cancellation (CAS
+  to CANCELLED then remove the pending job), the BullMQ producer with `cancel`,
+  and [[TD-043]] closed. The **Core/Veterinary boundary** was met head-on: the
+  recipient is a Veterinary fact, so Core declares the port, the Patients module
+  implements it and the composition root binds them — the boundary suite caught
+  the first version, which read the aggregate directly — and the in-memory
+  Prisma harness now models the aggregate, its uniqueness included. **Still
+  pending in WU-D**: the real content builder with its send-time appointment
+  gate (WU-D3) and `FiscalApproved`, which is deliberately deferred to WU-D3
+  because INTERNAL-EVENTS forbids publishing an event with no subscriber — the
+  fiscal notice is that subscriber, and it lands with it.
 - [ ] **WU-E — the transactional surface and the permissions family.** The
       delivery record's status and history for the tenant, and the
       `notifications.*` permission family. → [[NOTIF-004]]
@@ -209,6 +231,94 @@ reviewers — so the call is now an awaited statement with an explicit unreachab
 throw, and the doubted path is pinned by a case (exactly two writes, neither
 setting `FAILED`). Correction `fe92bec`; approved and acknowledged; one
 advisory, `R3-gate-throw-unproved`, recorded in [[TD-042]].
+
+## The WU-D2 review escalated (first time this session)
+
+`review-5898fbf624566375` (high risk, FOUR lenses: risk/resilience/readability/
+reliability) closed `correction_required` on two CRITICALs, both real in shape.
+The correction was written, **rejected by the targeted validator** with three
+legitimate findings — one of them a regression the correction itself introduced
+— and the lineage then **escalated and stopped** (`native_stop_required`), which
+is terminal and needs the maintainer. The three findings are fixed in a
+follow-up unit (a total cancellation helper that never throws and reports the
+error's NAME, plus an appointment re-read before and after the enqueue). The fix
+unit has no review of its own yet: the stopped lineage cannot host one.
+
+## The fix's review: approved, after two more CRITICALs
+
+`review-27c3b70cd8046dfd` (medium, one lens) reviewed the FIX in a fresh
+transaction and closed `correction_required` on two deterministic CRITICALs,
+both about the helper the first correction introduced: the removal depended on
+winning the CAS (breaking the compensation exactly where the row is already
+cancelled), and the row write and the removal shared one try. Both fixed — the
+halves are independent and total now — the correction passed the targeted
+validator on both criteria, and the review is **approved and acknowledged,
+authority burned**. One validator follow-up (a stale comment on `onCancelled`)
+is corrected in the record commit.
+
+## WU-D3, first half: the content builder and the send-time gate
+
+[[NOTIF-003]]'s failing seam is now a real builder that reads the delivery's
+SOURCE at send time and gates on it: `CONFIRMED`/`ARRIVED` for an appointment
+(DEC-060's invariant, and what closes the residual interleaving window),
+`APPROVED` for a fiscal document (PRD §36). It renders in the tenant's timezone
+in 24 hours, and it reads **no Veterinary aggregate** — the message names the
+branch and the instant, not the patient, and that limitation is recorded.
+**Pending in WU-D3**: `FiscalApproved` from both worker write paths and its
+subscriber.
+
+## WU-D3's first half: approved, three advisories to TD-044
+
+`review-0c34f0614742a5a3` (medium, one lens) **approved the content builder on
+the first pass**, no correction. Three non-blocking advisories → [[TD-044]]: the
+`hour12: false` resolution (MEASURED, does not reproduce on Node 24 / es-PY, but
+locale-dependent — `hourCycle: "h23"` is the unambiguous form), a fail-open
+ternary that would route a third source type into the fiscal branch, and a
+redundant conditional assertion. The first two are folded into the rest of
+WU-D3.
+
+## WU-D3 complete
+
+The content builder (first half) and the fiscal notice with its emitters (second
+half) both landed. `FiscalApproved` is published from BOTH paths into `APPROVED`
+through one shared emitter, which is what DEC-059 demanded; the notice's
+subscriber lives in the worker because that is where the event is published; the
+producer's transport moved into the package because ONE queue has two producers;
+and [[TD-044]] is closed.
+
+## WU-D3 reviewed: one CRITICAL, real, and it retired a declared limitation
+
+`review-a8f4b7d2bd6a83b4` closed correction_required on ONE CRITICAL: on a
+dedupe-key conflict both schedulers returned without enqueueing, so a first
+enqueue that failed stranded the delivery permanently. Fixed in both
+(`ensureIntent` returns the created id or the pending holder of the key, and the
+caller enqueues either way), validated, and **approved + acknowledged, authority
+burned**. The fix also retires the "lost enqueue" limitation this epic declared
+for the reminder. Two advisories plus the validator's observation → [[TD-045]],
+with their coordinates honestly recorded as not captured. One process slip: a
+STATUS call after the burn, which the contract forbids — it failed safely and
+mutated nothing.
+
+## WU-E (NOTIF-004): the read surface is in, and NOTIF-004 is done
+
+Implemented: the two read routes (`/notifications/deliveries`,
+`/notifications/:id`), the closed query (status, channel, sourceType, sourceId,
+limit), the allowlisted DTO, `notifications.delivery.read` seeded for all six
+roles, the read-only BFF, the staff surface with its five states, and the route
+pin. No command route, and no `delivery.manage` key behind it.
+
+**The attempt-history AC was AMENDED by the maintainer, not implemented**: the
+Story assumed the aggregate keeps an attempt LOG and NOTIF-001 models a summary.
+Serving a history needs a new table, a migration, and a decision about whether
+an attempt row stores the provider's raw error (RESTRICTED). The maintainer
+amended the criterion to the summary; the missing log is [[TD-046]]. **NOTIF-004
+is `done`** (commits `42c923e`, `9d2016f`, `ab9d7c9`). Review
+`review-a12969035780ff93` approved **on the first pass** (one lens, medium, no
+correction offered); the acknowledgement burned its authority. Its two
+advisories are [[TD-047]], with readings.
+
+Also corrected: the Story declared "one additive migration" for the permission
+key; keys are seed-owned reference data here, so no migration is involved.
 
 ## Operational notes
 
