@@ -185,7 +185,16 @@ originating transaction commits, all carrying **ids only** and no contact datum:
 AppointmentConfirmed   apps/api    AppointmentService.publishTransition
 AppointmentCancelled   apps/api    AppointmentService.publishTransition
 FiscalApproved         apps/worker FiscalApprovalEmitter
+PasswordResetRequested apps/api    PasswordRecoveryService (DAT-007)
 ```
+
+`PasswordResetRequested` is the one **platform-level** event (`tenantId: null`,
+which the envelope documents as the meaning of that value): a password reset
+belongs to an IDENTITY, the credential it authorises is global to the profile,
+and the request is anonymous - so there is no tenant to name. Its reaction
+creates the delivery under the **platform tenant** (see below), and it is
+published from the auth module, which consequently knows no queue, producer or
+delivery table.
 
 Rules this module follows and that a reader should hold it to:
 
@@ -204,16 +213,57 @@ Rules this module follows and that a reader should hold it to:
   nothing: it is reachable only from `CONFIRMED` or `ARRIVED`, both at or past
   the appointment instant, so its reminder window has already closed.
 
-| Event                  | Reaction                         | Effect                                                                                    |
-| ---------------------- | -------------------------------- | ----------------------------------------------------------------------------------------- |
-| `AppointmentConfirmed` | reminder scheduler (api)         | one intent per configured channel, dedupe-keyed, delayed job                              |
-| `AppointmentCancelled` | reminder scheduler (api)         | the intent reaches `CANCELLED` **and** its job is removed                                 |
-| `FiscalApproved`       | fiscal notice scheduler (worker) | one `FISCAL_DOCUMENT` intent for the invoice's customer, email only, enqueued immediately |
+| Event                    | Reaction                         | Effect                                                                                         |
+| ------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `AppointmentConfirmed`   | reminder scheduler (api)         | one intent per configured channel, dedupe-keyed, delayed job                                   |
+| `AppointmentCancelled`   | reminder scheduler (api)         | the intent reaches `CANCELLED` **and** its job is removed                                      |
+| `FiscalApproved`         | fiscal notice scheduler (worker) | one `FISCAL_DOCUMENT` intent for the invoice's customer, email only, enqueued immediately      |
+| `PasswordResetRequested` | recovery scheduler (api)         | one `STAFF_ACCOUNT` intent under the **platform tenant**, email only, one per profile per hour |
 
 The cancellation's two halves are **independent and total**: the job removal is
 unconditional, because `queue.remove` is idempotent and the compensation needs
 it when the row is already cancelled, and a failed row write does not skip the
 removal. Both report ids and an error's **name** only, never its message.
+
+## The platform tenant, and why identity-scoped messages have an owner
+
+`notification_delivery.tenant_id` is NOT NULL with a foreign key, and that is
+exactly what makes a cross-tenant read impossible without anybody having to
+remember to filter. A staff password-recovery email is not a tenant's message,
+though: the credential it authorises is global to the profile, and the request
+is anonymous - so there is no tenant in context and no fact that makes one of
+the profile's memberships the right one.
+
+The answer is a seeded **platform tenant** (slug `platform`), which keeps the
+invariant and gives the message an owner. It is **not a customer**: no
+memberships, no entitlements, no branding, and it must not be listed as a
+tenant. What it owns is a delivery - and that delivery being invisible to every
+tenant's operator is the **correct** property rather than a side effect: a staff
+member's recovery mail is not their tenant's business.
+
+The alternative considered and rejected was making the column nullable for
+platform sources: it would weaken the tenancy guarantee for **every** row in
+order to describe one.
+
+## The staff recovery message
+
+The `STAFF_ACCOUNT` source is built by its own branch, and two of its properties
+differ from every other message here:
+
+- **The recipient is resolved by profile id alone, with no tenant predicate.** A
+  staff profile belongs to no tenant - they merely work in some - and the
+  delivery's tenant is the platform one, which owns the message rather than the
+  person.
+- **The builder MINTS the token it puts in the message.** This is the one place
+  it writes, and it is DAT-007's issuance model made concrete: content is built
+  at send time, a plaintext token cannot be rebuilt from a digest, and the
+  alternatives are all worse. Minting there also keeps the plaintext inside the
+  one function that needs it, and makes the lifetime honest - it starts when the
+  mail is sent, not when it was asked for.
+
+Its link is built from `STAFF_APP_BASE_URL`, a deployment input the worker's
+schema **requires in production**: absent, a production worker would mail every
+user a token pointing at `localhost`.
 
 ## The content builder
 
@@ -279,7 +329,7 @@ audit row.
 ## Tests
 
 ```text
-packages/notifications        81   the policy, the queue contract, the lifecycle mirror,
+packages/notifications        84   the policy (reminder, fiscal notice and staff
                                    the channel boundary and the dependency fence
 apps/worker                  226   the delivery handler, the readers, the content
                                    builder, the fiscal notice and the emitter
@@ -300,6 +350,12 @@ packages/database            512   the aggregate's guards, the partial index and
   Closing it needs a catalog decision.
 - **There is no attempt history to read** — [[TD-046]]: the aggregate keeps a
   summary, because retrying is BullMQ's retry rather than a domain transition.
+- **The recovery link points at `/reset-password`, a page the web app does not
+  have yet** — [[TD-048]]. The message is right; the destination is a later
+  Story's.
+- **A recovery message is email-only.** `appointmentReminderChannels` is named
+  for the reminder, and stretching it to cover this message would change what a
+  stored setting means without anybody deciding it.
 - **A `FAILED` delivery cannot be re-driven.** [[TD-029]]'s shape, and this epic
   does not invent a primitive for it.
 - **A reminder names the branch and the instant, not the patient.** Naming the

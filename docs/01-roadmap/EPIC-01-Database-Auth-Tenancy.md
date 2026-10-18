@@ -2,7 +2,7 @@
 id: EPIC-01
 type: epic
 title: Database, Auth and Tenancy
-status: in-progress
+status: done
 priority: critical
 depends_on:
   - EPIC-00
@@ -103,7 +103,7 @@ isolation. Unblocks [[EPIC-02]] (RBAC/Entitlements) and EPIC-03 Phase B.
 - DAT-006 Audit + entitlements (Slice S6) — append-only `AuditLog` writer,
   `EntitlementsService.has()` boundary.
 
-**Reopened on 2026-10-17** to carry one Story:
+**Reopened on 2026-10-17 and closed again the same day** to carry one Story:
 
 - DAT-007 Staff password recovery — resolves [[TD-004]]. The epic shipped no
   recovery path on purpose: `auth.integration.test.ts` asserted that both routes
@@ -111,7 +111,11 @@ isolation. Unblocks [[EPIC-02]] (RBAC/Entitlements) and EPIC-03 Phase B.
   than none. [[EPIC-17]] closed on 2026-10-17 and delivered that mechanism, so
   the deferral's own trigger fired. The Story lives here rather than in a new
   epic because recovery is identity, and the fence, the credential service and
-  the session service are all in this epic.
+  the session service are all in this epic. **DAT-007 is `done`** and [[TD-004]]
+  is resolved by it, so the epic is closed again; the flow's two remaining open
+  ends are [[TD-048]]. The re-opening stays in this record rather than being
+  erased, because a reader comparing the roadmap to the closure date should be
+  able to see why they differ.
 
 ## Dependencies
 

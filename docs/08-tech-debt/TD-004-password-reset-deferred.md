@@ -2,7 +2,7 @@
 id: TD-004
 type: tech-debt
 title: Defer password reset until email delivery exists
-status: open
+status: resolved
 severity: medium
 related_epics:
   - EPIC-01
@@ -66,6 +66,46 @@ Resolution requires:
   reset requests;
 - removal (or inversion) of the "recovery endpoints absent" fence test so the
   suite proves the routes exist and behave, not that they are missing.
+
+## RESOLVED — 2026-10-17 by DAT-007
+
+**This record is resolved.** The recovery flow exists:
+`POST /auth/forgot-password` and `POST /auth/password-reset`, a single-use token
+hashed at rest with a real database guard around it, the reset changing the hash
+and ending **every** session for the profile in one transaction, a uniform
+answer for every address, a rate limit keyed by address and IP, and the fence in
+`auth.integration.test.ts` **inverted** so the suite proves the routes exist
+instead of proving they are absent.
+
+The evidence gate this record set, against what landed:
+
+```text
+The gate required                                    What DAT-007 delivered
+---------------------------------------------------- ------------------------------------
+forgot-password and reset flows backed by            both routes; single-use, expiring,
+single-use, expiring, hashed reset tokens            SHA-256-at-rest tokens with four
+issued through EPIC-17 email delivery                SQL guards, delivered through the
+                                                     notification aggregate
+request → token → reset → re-login                   the end-to-end suite, plus the reset
+old-password rejection after reset                   changing the stored hash
+session invalidation on reset                        EVERY session deleted in the same
+                                                     transaction
+rate limiting of reset requests                      address+IP budget, namespaced from
+                                                     login's
+the fence test inverted                              done: it asserts behavior now
+```
+
+**Two things this record's own draft got wrong**, corrected by the Story that
+resolved it: it proposed `/api/v1/auth/reset-password`, and this repository
+mounts no `/api/v1` and already probed `password-reset`; and it assumed the
+whole flow was one Story when the delivery's tenancy
+(`notification_delivery.tenant_id` is NOT NULL, and a reset belongs to an
+identity rather than a tenant) was a decision nobody had taken. Both are in
+[[DAT-007]]'s record.
+
+**What is still open, and it is not this record's**: the delivered link points
+at a page the web app does not have, and the repository still has no password
+policy. Both are [[TD-048]], named rather than left implicit.
 
 ## Status update — 2026-10-17 (EPIC-17 closed)
 

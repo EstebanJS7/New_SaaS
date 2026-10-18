@@ -6,6 +6,37 @@ All notable product changes will be documented here.
 
 ### Added
 
+- DAT-007 — **staff password recovery**, resolving the deferral [[TD-004]] had
+  carried since EPIC-01:
+  - `POST /auth/forgot-password` and `POST /auth/password-reset`, both public by
+    necessity and therefore the most carefully bounded surface in the system:
+    the request answers **byte-equivalently** for an address that exists, one
+    that does not, and a profile with no credentials, and it is rate-limited by
+    address **and** client IP so one attacker cannot deny a victim their own
+    recovery.
+  - A **single-use, expiring, hashed-at-rest** reset token with four guards the
+    database owns: its identity is fixed at insert, it can be spent once and
+    neither rewritten nor un-spent, and its expiry is checked as being after its
+    creation. There is deliberately no tenant column: the credential it
+    authorises is global to the profile.
+  - The reset changes the hash and ends **every session for the profile**,
+    spends the profile's other outstanding links and appends the audit — **in
+    one transaction**, with the argon2 hash computed before it opens so a
+    deliberate CPU cost never holds locks.
+  - The message is delivered through the **notification aggregate**: the request
+    publishes an event, a subscriber creates the delivery under a seeded
+    **platform tenant** (the delivery aggregate's tenant is NOT NULL, and a
+    reset belongs to an identity rather than to any of the person's tenants),
+    and the worker **mints the token at send time**, so no plaintext token is
+    ever stored and its lifetime starts when the mail is sent.
+  - The fence in `auth.integration.test.ts` is **inverted**: it used to assert
+    both routes return `NOT_FOUND`, which was the deferral's own contract, and
+    now asserts what they do.
+
+  **Not built, and named**: the recovery link points at a `/reset-password` page
+  the web app does not have yet, and the repository still has no password policy
+  — [[TD-048]].
+
 - EPIC-17 — Notifications, the first capability to actually tell somebody
   something (NOTIF-001 to NOTIF-005, closed 2026-10-17):
   - The **delivery aggregate**: one row is one intent to send one message over

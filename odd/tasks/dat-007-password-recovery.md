@@ -95,7 +95,22 @@ directly through the channel port.
       limitation this unit names**: the link points at `/reset-password`, a page
       the web app does not have yet. The message is right and the destination is
       a later Story's; saying so is better than a dead link nobody mentioned.
-- [ ] **WU-E — the documentation.** `Identity-Sessions.md` and
+- [x] **WU-E - the documentation.** `Identity-Sessions.md` gained the two
+      routes, the `PasswordResetToken` entity with its four guards, the recovery
+      budget, a "The recovery flow" section stating the three things a changer
+      must know (the request sends nothing, the token is minted at send time,
+      and a reset ends every session), and the invariants the fence used to
+      deny. `Notifications.md` gained the platform-level event, the **platform
+      tenant** with the alternative that was rejected, the staff message with
+      its two different properties, and the `STAFF_APP_BASE_URL` gate.
+      [[TD-004]] is **resolved** with the evidence gate mapped item by item
+      against what landed, and [[TD-048]] carries the two open ends the Story
+      named: the page the link points at, and the password policy nobody has.
+      EPIC-01 closed again with its re-opening kept in the record, the ROADMAP
+      row follows, and the CHANGELOG entry is written. The Story's ACs are all
+      checked and its verification carries the closure searches: the event has
+      one publisher and one subscriber in the SAME deployable, no contact datum
+      reaches a log or a job payload, and no token is logged.
       `Notifications.md`, the Story's evidence, [[TD-004]] closed, the epic's
       Stories and the ROADMAP.
 
