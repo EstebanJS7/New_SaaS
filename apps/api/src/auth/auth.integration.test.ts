@@ -66,6 +66,21 @@ function makeFakeDatabase() {
   let sequence = 0;
 
   const prisma = {
+    /**
+     * The reset path runs its whole change in one transaction (DAT-007 WU-C2). The
+     * fake's maps ARE the transaction boundary, so the callback simply receives the
+     * same client; what this suite asserts through it is the refusal path, and the
+     * transaction's CONTENTS are asserted in `password-reset.service.test.ts`, where
+     * a stub can see every statement.
+     */
+    $transaction: <T>(callback: (tx: unknown) => Promise<T>): Promise<T> => callback(prisma),
+    /**
+     * No token in this suite, so every token is refused. Only the shape the refusal
+     * needs is modelled: the digest lookup, answering null.
+     */
+    passwordResetToken: {
+      findFirst: () => null,
+    },
     userProfile: {
       // Sync bodies (eslint require-await): awaiting plain values keeps the
       // runtime contract identical to the real async delegates.
@@ -430,12 +445,35 @@ describe("Auth surface (real Fastify adapter)", () => {
     expect(known.status).toBe(unknownAddress.status);
   });
 
-  it("still returns NOT_FOUND for the reset route, which lands next", async () => {
+  /**
+   * The FENCE, fully inverted (DAT-007 WU-C2). It asserted that both recovery routes
+   * answer `NOT_FOUND`, which was the deferral's own contract; both now exist, so what
+   * is asserted is what they DO.
+   *
+   * A bad token is refused like a failed login — one code and one message — because
+   * distinguishing "unknown" from "spent" from "expired" would tell the holder of a
+   * stale link that it was once real.
+   */
+  it("exists, and refuses an unusable token with the login's own vocabulary", async () => {
     const reset = await supertest(app.getHttpServer())
       .post("/auth/password-reset")
-      .send({ token: "anything", password: "new" })
-      .expect(404);
-    expect((reset.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+      .send({ token: "a-token-that-was-never-issued", password: "new-password" })
+      .expect(401);
+    expect((reset.body as ErrorEnvelopeBody).error.code).toBe("UNAUTHENTICATED");
+    expect((reset.body as ErrorEnvelopeBody).error.message).toBe(
+      "This password reset link is not valid. Request a new one."
+    );
+  });
+
+  it("still validates the body before it looks a token up", async () => {
+    await supertest(app.getHttpServer())
+      .post("/auth/password-reset")
+      .send({ token: "", password: "new-password" })
+      .expect(400);
+    await supertest(app.getHttpServer())
+      .post("/auth/password-reset")
+      .send({ password: "new-password" })
+      .expect(400);
   });
 });
 

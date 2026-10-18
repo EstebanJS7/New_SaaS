@@ -67,6 +67,9 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // system: rate-limited by address AND IP, and byte-equivalent for a known and an
   // unknown address.
   "POST /auth/forgot-password",
+  // DAT-007 — the reset itself. The token IS the credential, so a bad one is
+  // refused exactly like a failed login: one code, one message.
+  "POST /auth/password-reset",
   "GET /health/live",
   "GET /health/ready",
   "GET /memberships",

@@ -37,35 +37,37 @@ directly through the channel port.
       conditions the read saw, a lost race refuses, the three causes refuse
       IDENTICALLY, the expiry boundary is exact at the millisecond, and
       `spendAllForProfile` leaves already-spent rows alone._
-- [~] **WU-C — the two routes.** Split in two, because the halves have different
-  risks. **C1 (the request half) is DONE**; C2 (the reset) follows. _C1, commit
-  pending: the `platform` tenant is seeded (a singleton that owns
-  identity-scoped messages, not a customer); `POST /auth/forgot-password`
-  answers `202 {status:"accepted"}` **byte-equivalently** for a known and an
-  unknown address and for a profile with no credentials; the rate limit is keyed
-  by address AND IP so one attacker cannot lock a victim out; and the request
-  **publishes `PasswordResetRequested`** — `tenantId: null`, which the envelope
-  documents as the meaning of that value — instead of talking to the delivery
-  aggregate. The notification module's `PasswordRecoveryScheduler` subscribes
-  (in the API deployable, because the dispatcher is in-process), resolves the
-  platform tenant, creates the intent with a per-hour window key and enqueues
-  it. **Two things the work uncovered.** (1) The first design had `AuthModule`
-  import `NotificationsModule`, which does not work: it is a DYNAMIC module, so
-  importing the class yields nothing, and calling `forRoot()` a second time
-  would instantiate the producer and the reminder scheduler TWICE. The event
-  dissolved the whole tangle, and the auth module now depends on no notification
-  anything. (2) The credential check was `=== null`, which a delegate that does
-  not model the relation would answer with `undefined` — reading "no
-  credentials" as "has credentials" and mailing a reset link for a password that
-  does not exist. It is falsy-safe now, and the in-memory harness not modelling
-  `user_credential` is what surfaced it. Evidence: 9 service cases + 7 scheduler
-  cases (including that the subscriber is REGISTERED, and that a failure logs
-  the error's NAME and never its message), 3 policy cases in the package, the
-  fence narrowed and the byte-equivalence asserted over real HTTP, and the new
-  route pinned in the route-contract inventory. **Not covered yet**: the
-  full-app end-to-end (route -> event -> delivery row + enqueue), because the
-  in-memory Prisma harness does not model `user_credential`; it is the first
-  thing C2 or WU-D must close._
+- [x] **WU-C — the two routes.** Both halves done. _C1 (`7d4d687`) is the
+      request; C2 is the reset, committed below._ **C2**:
+      `POST /auth/password-reset` consumes the token, replaces the hash, ends
+      **every** session for the profile, spends the profile's other links and
+      audits — **in one transaction** — and the hash is computed BEFORE it
+      opens, because argon2 at the OWASP floor costs tens of milliseconds of
+      deliberate CPU and holding a transaction across it would hold locks for
+      that whole time. The token is spent INSIDE, so a later failure rolls the
+      spending back instead of burning the link against a password that never
+      changed. The refusal reuses the login's own vocabulary (401
+      `UNAUTHENTICATED`, one message) because the old FENCE that asserted both
+      routes answer `NOT_FOUND` is now **fully inverted** into behavior. A
+      shared unit reading three tables is the price of that atomicity, and the
+      cheaper price: the alternative threads a transaction client through two
+      services and puts the boundary in three signatures instead of one comment.
+      Evidence: 8 reset cases that assert the STATEMENT ORDER (hash → begin →
+      find → CAS → credential → sessions → other links → audit), that the
+      transaction's delegates did the work and the ambient client was never
+      consulted, that the session `WHERE` is `{ userProfileId }` (all of them,
+      not the caller's), that an unusable token refuses with `UNAUTHENTICATED`
+      and touches nothing after the lookup, and that the audit record carries no
+      token and no hash. Plus the fence inverted over real HTTP, with the route
+      pinned in the route-contract inventory. **Still open**: the full-app
+      end-to-end (route → event → delivery row + enqueue) needs the in-memory
+      Prisma harness to model `user_profile.findUnique`, `user_credential` and
+      `staff_session.deleteMany({ userProfileId })`; it is named as WU-D's first
+      task rather than left implied. **A limitation this unit recorded rather
+      than decided**: this repository has NO password policy, so the new
+      password is bounded by length alone (mirroring the login body). Inventing
+      a complexity rule in an implementation would be a product decision taken
+      by a work unit.
 - [ ] **WU-D — the notification wiring.** Two enum values (`STAFF_ACCOUNT`,
       `STAFF`) in the same migration, a staff recipient reader, and the message.
       **The token is issued at send time**, so the plaintext never reaches a

@@ -116,13 +116,23 @@ export class PasswordResetTokenService {
    * spent it, or it expired, between the read and the write", which is the same
    * refusal.
    */
-  async consume(token: unknown, now: Date = new Date()): Promise<ConsumedPasswordResetToken> {
+  async consume(
+    token: unknown,
+    now: Date = new Date(),
+    /**
+     * The caller's transaction, when the spending must be atomic with what follows.
+     * The reset path passes its own: a token spent outside the transaction that then
+     * fails would burn the link against a password that never changed.
+     */
+    client?: PasswordResetTokenPrisma
+  ): Promise<ConsumedPasswordResetToken> {
     // A non-string never reaches a query. A caller passing `undefined` because a
     // body field was missing gets the same refusal as a wrong token rather than a
     // driver error, and no lookup happens at all.
     if (typeof token !== "string" || token.length === 0) return refuse();
 
-    const row = await this.prisma.passwordResetToken.findFirst({
+    const prisma = client ?? this.prisma;
+    const row = await prisma.passwordResetToken.findFirst({
       where: { tokenHash: hashPasswordResetToken(token) },
       select: {
         id: true,
@@ -136,7 +146,7 @@ export class PasswordResetTokenService {
     if (row.consumedAt !== null) return refuse();
     if (row.expiresAt.getTime() <= now.getTime()) return refuse();
 
-    const spent = await this.prisma.passwordResetToken.updateMany({
+    const spent = await prisma.passwordResetToken.updateMany({
       // The CAS: still unspent and still unexpired AS OF THIS STATEMENT.
       where: { id: row.id, consumedAt: null, expiresAt: { gt: now } },
       data: { consumedAt: now },
@@ -159,8 +169,12 @@ export class PasswordResetTokenService {
    * over: the guard refuses a rewrite of a consumption instant, and a token spent
    * earlier should keep the instant it was actually spent.
    */
-  async spendAllForProfile(userProfileId: string, now: Date = new Date()): Promise<number> {
-    const result = await this.prisma.passwordResetToken.updateMany({
+  async spendAllForProfile(
+    userProfileId: string,
+    now: Date = new Date(),
+    client?: PasswordResetTokenPrisma
+  ): Promise<number> {
+    const result = await (client ?? this.prisma).passwordResetToken.updateMany({
       where: { userProfileId, consumedAt: null },
       data: { consumedAt: now },
     });

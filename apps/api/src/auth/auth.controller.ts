@@ -5,6 +5,7 @@ import { RequestContextService } from "../context/request-context.service.js";
 import { AUTH_CONFIG, type AuthConfig } from "./auth.config.js";
 import { AuthService } from "./auth.service.js";
 import { PasswordRecoveryService } from "./password-recovery.service.js";
+import { MAX_PASSWORD_LENGTH, PasswordResetService } from "./password-reset.service.js";
 import { Public } from "./public.decorator.js";
 import { STAFF_SESSION_COOKIE, staffSessionCookieOptions } from "./session-cookie.js";
 
@@ -27,9 +28,25 @@ const forgotPasswordBodySchema = z.object({
   email: z.string().trim().min(3).max(254).email(),
 });
 
+/**
+ * The reset body contract. The token's bound mirrors the entropy it carries (43
+ * base64url characters) with room to spare; the password's mirrors login's, because
+ * this repository has no password policy yet and inventing one here would be a
+ * product decision taken by an implementation ([[DAT-007]]'s limitation).
+ */
+const resetPasswordBodySchema = z.object({
+  token: z.string().min(1).max(512),
+  password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
+});
+
 /** The uniform answer. Identical for a known and an unknown address. */
 interface ForgotPasswordResponse {
   readonly status: "accepted";
+}
+
+/** The reset's answer: the password changed and every session ended. */
+interface ResetPasswordResponse {
+  readonly status: "reset";
 }
 
 /** Minimal authenticated identity probe (spec: identity / Guard+Context). */
@@ -45,7 +62,8 @@ export class AuthController {
     private readonly requestContext: RequestContextService,
     // Symbol token (not class type) so tests can override cookie posture.
     @Inject(AUTH_CONFIG) private readonly config: AuthConfig,
-    private readonly recovery: PasswordRecoveryService
+    private readonly recovery: PasswordRecoveryService,
+    private readonly reset: PasswordResetService
   ) {}
 
   /** Issues a session and sets the hardened staff cookie (design D4). */
@@ -89,6 +107,26 @@ export class AuthController {
     }
     await this.recovery.requestReset(parsed.data.email, request.ip);
     return { status: "accepted" };
+  }
+
+  /**
+   * Consumes a reset link and changes the password (DAT-007 WU-C2).
+   *
+   * `@Public` for the same reason the request is: the caller cannot authenticate —
+   * that is the situation being recovered from. The token IS the credential, and a
+   * bad one is refused exactly like a failed login: one code, one message, no hint
+   * about whether the link was unknown, spent or expired.
+   */
+  @Public()
+  @HttpCode(200)
+  @Post("password-reset")
+  async resetPassword(@Body() body: unknown): Promise<ResetPasswordResponse> {
+    const parsed = resetPasswordBodySchema.safeParse(body);
+    if (!parsed.success) {
+      throw parsed.error; // Global filter => VALIDATION_FAILED envelope.
+    }
+    await this.reset.resetPassword(parsed.data.token, parsed.data.password);
+    return { status: "reset" };
   }
 
   /**
