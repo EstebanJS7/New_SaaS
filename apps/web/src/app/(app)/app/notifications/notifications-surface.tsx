@@ -81,6 +81,7 @@ export function NotificationsSurface(): JSX.Element {
         <NotificationDeliveryDetailPanel
           delivery={detailQuery.data ?? null}
           isLoading={selectedDeliveryId !== null && detailQuery.isLoading}
+          permissionDenied={forbiddenDetail}
           errorMessage={
             detailQuery.error === null || forbiddenDetail
               ? null

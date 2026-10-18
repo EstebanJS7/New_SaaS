@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The fiscal notice's two advisories, and the validator's observation about what
   the patch does not prove
-status: open
+status: resolved
 severity: low
 owner: notifications
 related_epics:
@@ -69,6 +69,32 @@ whose safety argument lives outside its own patch is a correction a reader has
 to take on trust. The next unit that touches these schedulers should either
 repeat those two references in a comment beside the re-enqueue or add a case
 that exercises the duplicate add through a real queue.
+
+## Resolution (2026-10-17)
+
+**The validator's observation is addressed at the site where the argument is
+made.** Both schedulers now name the two properties their re-enqueue depends on,
+with the exact file and case:
+
+- the deterministic job identity — `notification-delivery.queue.test.ts`,
+  _"derives a deterministic identity from the delivery, and one per delivery"_;
+- the settled-row refusal — `notification-delivery.handler.test.ts`, _"never
+  touches a settled row, because a settled row is not editable state"_, covering
+  `SENT`, `FAILED` and `CANCELLED`.
+
+A reader standing at the re-enqueue can now follow the safety argument instead
+of taking it on trust, which was the actionable half of the observation. The
+alternative it also offered — a case that exercises a duplicate add through a
+real queue — is not taken: the two referenced cases are the assertions, and
+adding a third that re-tests them through Redis would assert BullMQ's behavior
+rather than this module's.
+
+**`R3-002` and `R3-003` stay unresolved and unidentified.** Their text and
+coordinates were never captured (see above), so there is nothing to fix and
+nothing honest to claim about them. The closure that raised them called them
+non-blocking and approved the unit. The next unit that touches these schedulers
+should re-read them rather than guess, which is exactly what this TD's first
+section says.
 
 ## Related
 

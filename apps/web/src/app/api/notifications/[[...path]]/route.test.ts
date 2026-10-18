@@ -90,14 +90,23 @@ describe("notification delivery BFF — GET only", () => {
     );
   });
 
-  it("refuses an unlisted query key instead of forwarding it", async () => {
+  it("refuses an unlisted query key instead of forwarding it, and says it was invalid", async () => {
     const response = await GET(
       mockNextRequest({
         pathname: "/api/notifications/deliveries",
         search: "?tenantId=other",
       }) as never
     );
-    expect(response.status).toBe(404);
+    // 400, not 404 (TD-047 / R3-001): the refusal is the same and the key is still
+    // never forwarded, but a mistyped filter is a rejected parameter rather than a
+    // route that does not exist -- which is what the API behind this proxy answers.
+    expect(response.status).toBe(400);
+    const body = (await readBody(response)) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("VALIDATION_FAILED");
+    // The accepted keys are NOT named: that would document the contract to whoever
+    // shapes requests.
+    expect(body.error.message).not.toContain("status");
+    expect(body.error.message).not.toContain("channel");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

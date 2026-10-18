@@ -95,6 +95,13 @@ export class NotificationFiscalNoticeScheduler implements OnModuleInit {
     // failure. Re-adding is safe because the job id is deterministic (BullMQ
     // ignores a duplicate) and a delivery that already settled is refused by the
     // handler.
+    //
+    // Both are asserted, and not in this file (TD-045): the deterministic identity
+    // in `packages/notifications/src/notification-delivery.queue.test.ts`, "derives
+    // a deterministic identity from the delivery, and one per delivery"; the
+    // settled-row refusal in
+    // `apps/worker/src/notification-delivery/notification-delivery.handler.test.ts`,
+    // "never touches a settled row, because a settled row is not editable state".
     await this.producer.enqueue({ notificationDeliveryId: intent, tenantId }, now);
   }
 

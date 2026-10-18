@@ -180,6 +180,17 @@ export class NotificationReminderScheduler implements OnModuleInit {
       // and never enqueue it — a reminder stranded forever by a transient queue
       // failure. Re-adding is safe: the job id is deterministic, so BullMQ ignores
       // a duplicate, and a delivery that already settled is refused by the handler.
+      //
+      // The two properties that make re-adding safe are asserted, and NOT in this
+      // file (TD-045, the validator's observation on review-a8f4b7d2bd6a83b4): the
+      // deterministic identity in
+      // `packages/notifications/src/notification-delivery.queue.test.ts`, "derives a
+      // deterministic identity from the delivery, and one per delivery"; and the
+      // settled-row refusal in
+      // `apps/worker/src/notification-delivery/notification-delivery.handler.test.ts`,
+      // "never touches a settled row, because a settled row is not editable state",
+      // which covers SENT, FAILED and CANCELLED. Named here so the argument can be
+      // followed instead of trusted.
       await this.producer.enqueue({ notificationDeliveryId: deliveryId, tenantId }, scheduledAt);
 
       // The same window, one step later: the cancellation landed between the

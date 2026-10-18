@@ -113,6 +113,21 @@ describe("NotificationsSurface — the five states", () => {
     await waitFor(() => expect(calls).toContain(`${BASE}?status=FAILED&channel=WHATSAPP`));
   });
 
+  it("shows a denied detail as a denial, never as 'select a delivery'", async () => {
+    installFetch((url) =>
+      url === BASE
+        ? jsonResponse({ deliveries: [DELIVERY] })
+        : jsonResponse({ error: { code: "FORBIDDEN", message: "no" } }, 403)
+    );
+    renderSurface();
+    await screen.findByTestId("notification-list-item");
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByTestId("notification-detail-permission-denied")).toBeInTheDocument();
+    // The empty state would tell the reader to select a delivery they just selected.
+    expect(screen.queryByTestId("notification-detail-empty")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notification-detail-error")).not.toBeInTheDocument();
+  });
+
   it("renders a failure reason without inventing message content", async () => {
     installFetch(() =>
       jsonResponse({

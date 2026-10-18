@@ -34,6 +34,21 @@ function error(code: string, message: string, status: number): NextResponse {
 }
 const notFound = () => error("NOT_FOUND", "Notification route was not found.", 404);
 const invalidPath = () => error("VALIDATION_FAILED", "Invalid notification request path.", 400);
+/**
+ * A query key outside the allowlist ([[TD-047]], review R3-001).
+ *
+ * This used to answer `404`, matching the fiscal BFF's precedent, and the refusal
+ * itself is unchanged: the key is never forwarded. What changed is the vocabulary, so
+ * that the two layers of one request agree — the API behind this proxy answers `400
+ * VALIDATION_FAILED` for the same class of mistake, and a caller who mistypes a filter
+ * should not be told the route does not exist. The message deliberately does NOT name
+ * the accepted keys: that would document the contract to whoever shapes requests.
+ *
+ * The fiscal BFF still answers `404` here; that divergence is pre-existing and recorded
+ * in [[TD-047]] rather than fixed from this unit.
+ */
+const unsupportedQuery = () =>
+  error("VALIDATION_FAILED", "This notification query is not supported.", 400);
 
 function deliveryPathShape(segments: readonly string[]): NotificationPathShape | null {
   if (segments.length === 1 && segments[0] === "deliveries") return "deliveryList";
@@ -57,7 +72,7 @@ function resolveDeliveryPath(request: NextRequest): PathResolution {
 
   const params = request.nextUrl.searchParams;
   if ([...params.keys()].some((key) => !NOTIFICATION_QUERY_KEYS[shape].includes(key)))
-    return { ok: false, response: notFound() };
+    return { ok: false, response: unsupportedQuery() };
   const forwarded = new URLSearchParams();
   for (const key of NOTIFICATION_QUERY_KEYS[shape]) {
     const value = params.get(key);

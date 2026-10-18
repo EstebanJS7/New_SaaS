@@ -102,10 +102,13 @@ credentials and no WhatsApp Business account exist in this repository, so the
 adapters are proven against the deterministic fake and their own unit cases, and
 the live run is recorded **pending by name** in `docs/10-qa/CI-EVIDENCE.md`. No
 branch of this epic has been pushed, so it has no CI receipt either; the local
-gates and the fresh-PostgreSQL migration pass are the evidence. Its open
-advisories and gaps are [[TD-045]], [[TD-046]] and [[TD-047]], and [[TD-004]]
-(password reset) is **unblocked in principle** — email delivery now exists —
-while staying `open` until it is actually implemented.
+gates and the fresh-PostgreSQL migration pass are the evidence. Its remaining
+open item is [[TD-046]] — the attempt log the aggregate does not keep, a
+recorded **decision** rather than a pending fix; [[TD-045]] and [[TD-047]] were
+resolved post-closure in `fix/notif-tail-advisories`, and [[TD-004]] (password
+reset) is **unblocked in principle** — email delivery now exists — while staying
+`open` until it is actually implemented. `docs/05-modules/Notifications.md` is
+the module document and `docs/10-qa/CI-EVIDENCE.md` carries the evidence block.
 
 ## Architecture baseline
 

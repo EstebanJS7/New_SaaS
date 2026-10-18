@@ -165,6 +165,15 @@ export function NotificationDeliveryListPanel({
 interface DeliveryDetailPanelProps {
   readonly delivery: NotificationDelivery | null;
   readonly isLoading: boolean;
+  /**
+   * A denial is its own state, not a failure to retry ([[TD-047]], review R3-002).
+   *
+   * Until this existed the detail read fell through to its EMPTY state when it was
+   * refused, telling the reader "select a delivery to see its detail" about a delivery
+   * they had just selected. Benign while both reads carry the same permission, and a
+   * lie the moment they diverge.
+   */
+  readonly permissionDenied: boolean;
   readonly errorMessage: string | null;
 }
 
@@ -172,6 +181,7 @@ interface DeliveryDetailPanelProps {
 export function NotificationDeliveryDetailPanel({
   delivery,
   isLoading,
+  permissionDenied,
   errorMessage,
 }: DeliveryDetailPanelProps): JSX.Element {
   return (
@@ -184,6 +194,13 @@ export function NotificationDeliveryDetailPanel({
         {isLoading ? (
           <p data-testid="notification-detail-loading" className="text-sm text-muted-foreground">
             Loading delivery...
+          </p>
+        ) : permissionDenied ? (
+          <p
+            data-testid="notification-detail-permission-denied"
+            className="text-sm text-muted-foreground"
+          >
+            You do not have permission to read this delivery.
           </p>
         ) : errorMessage !== null ? (
           <p data-testid="notification-detail-error" className="text-sm text-destructive">
