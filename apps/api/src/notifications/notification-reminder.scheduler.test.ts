@@ -11,6 +11,7 @@ import {
   REMINDER_CANCELLATION_REASON,
   type NotificationReminderPrisma,
 } from "./notification-reminder.scheduler.js";
+import { NotificationIntentService } from "./notification-intent.service.js";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 const appointmentId = "22222222-2222-2222-2222-222222222222";
@@ -169,7 +170,10 @@ function setup(args: {
     settings,
     entitlements,
     recipients,
-    producer
+    producer,
+    // The intent creation moved to its own service in DAT-007 WU-C1, when a third
+    // caller needed the same idempotent shape. The stub prisma serves both.
+    new NotificationIntentService(prisma)
   );
   scheduler.onModuleInit();
 

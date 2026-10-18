@@ -9,6 +9,7 @@ import {
   createBullMqNotificationDeliveryProducer,
   NOTIFICATION_DELIVERY_PRODUCER,
 } from "@newsaas/notifications";
+import { NotificationIntentService } from "./notification-intent.service.js";
 import { NotificationReminderScheduler } from "./notification-reminder.scheduler.js";
 import {
   APPOINTMENT_RECIPIENT_PORT,
@@ -59,6 +60,7 @@ export class NotificationsModule {
             return createBullMqNotificationDeliveryProducer(redisUrl);
           },
         },
+        NotificationIntentService,
         NotificationReminderScheduler,
         NotificationDeliveryService,
       ],

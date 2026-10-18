@@ -52,6 +52,20 @@ directly through the channel port.
       `Notifications.md`, the Story's evidence, [[TD-004]] closed, the epic's
       Stories and the ROADMAP.
 
+## Decisions taken while working
+
+**The delivery's tenant (asked, not guessed).**
+`notification_delivery.tenant_id` is NOT NULL with an FK, and that is why a
+cross-tenant read is impossible without anyone having to remember to filter --
+but the reset mail is an IDENTITY's, and the request is anonymous, so there is
+no tenant to take from the context and no fact that makes one of a profile's
+memberships the right one. Three options were put to the maintainer (a platform
+tenant; an arbitrary membership tenant; making the column nullable), and the
+maintainer chose **a seeded platform tenant** (slug `platform`): the aggregate
+keeps its invariant, the message has an owner, and the delivery being invisible
+to every tenant's operators is the CORRECT property rather than a side effect --
+a staff member's recovery mail is not their tenant's business.
+
 ## The one design decision worth writing down before the code
 
 **The token is generated when the message is sent, not when it is requested.**

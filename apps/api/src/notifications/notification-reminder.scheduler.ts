@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import type { Prisma } from "@newsaas/database";
 import { PrismaService } from "@newsaas/database";
 import { reminderDedupeKey, reminderScheduledAt } from "@newsaas/notifications";
+import { NotificationIntentService } from "./notification-intent.service.js";
 import type { ApplicationEvent, EventDispatcher } from "@newsaas/shared";
 import { APPLICATION_EVENT_DISPATCHER } from "../events/application-events.module.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
@@ -47,11 +48,6 @@ export const REMINDER_CANCELLATION_REASON = "APPOINTMENT_CANCELLED";
  * `sales.service.ts`'s matcher is the precedent, and accepting a bare `P2002`
  * would swallow a tenant-ownership-key conflict as "already scheduled".
  */
-const DEDUPE_KEY_CONSTRAINT = "notification_delivery_tenant_id_dedupe_key_key";
-
-/** The unique key's columns, normalized once for shape-agnostic matching. */
-const DEDUPE_KEY_FIELDS: readonly string[] = ["tenantid", "dedupekey"];
-
 interface AppointmentRow {
   readonly id: string;
   readonly patientId: string;
@@ -88,7 +84,8 @@ export class NotificationReminderScheduler implements OnModuleInit {
     @Inject(APPOINTMENT_RECIPIENT_PORT)
     private readonly recipients: AppointmentRecipientPort,
     @Inject(NOTIFICATION_DELIVERY_PRODUCER)
-    private readonly producer: NotificationDeliveryProducer
+    private readonly producer: NotificationDeliveryProducer,
+    private readonly intents: NotificationIntentService
   ) {}
 
   onModuleInit(): void {
@@ -144,11 +141,13 @@ export class NotificationReminderScheduler implements OnModuleInit {
         channel,
         startsAt: appointment.startAt,
       });
-      const deliveryId = await this.ensureIntent({
+      const deliveryId = await this.intents.ensureIntent({
         tenantId,
         channel,
-        appointmentId: appointment.id,
-        customerId,
+        sourceType: "APPOINTMENT",
+        sourceId: appointment.id,
+        recipientType: "CUSTOMER",
+        recipientId: customerId,
         scheduledAt,
         dedupeKey,
       });
@@ -313,83 +312,6 @@ export class NotificationReminderScheduler implements OnModuleInit {
       });
     }
   }
-
-  /**
-   * The intent's id: the one it just created, or the PENDING one that already holds
-   * the key.
-   *
-   * The second half is what makes the caller's enqueue idempotent AND self-healing,
-   * and it is the same shape the fiscal notice's scheduler uses. `null` means the
-   * key is held by a delivery that is no longer pending, which is the cancellation
-   * path's business rather than this one's.
-   */
-  private async ensureIntent(args: {
-    readonly tenantId: string;
-    readonly channel: "EMAIL" | "WHATSAPP";
-    readonly appointmentId: string;
-    readonly customerId: string;
-    readonly scheduledAt: Date;
-    readonly dedupeKey: string;
-  }): Promise<string | null> {
-    try {
-      const created = await this.prisma.notificationDelivery.create({
-        data: {
-          tenantId: args.tenantId,
-          channel: args.channel,
-          status: "SCHEDULED",
-          dedupeKey: args.dedupeKey,
-          sourceType: "APPOINTMENT",
-          sourceId: args.appointmentId,
-          recipientType: "CUSTOMER",
-          recipientId: args.customerId,
-          scheduledAt: args.scheduledAt,
-        },
-        select: { id: true },
-      });
-      return created.id;
-    } catch (error) {
-      if (!isDedupeKeyConflict(error)) throw error;
-      const existing = await this.prisma.notificationDelivery.findFirst({
-        where: {
-          tenantId: args.tenantId,
-          dedupeKey: args.dedupeKey,
-          status: { in: ["SCHEDULED", "QUEUED"] },
-        },
-        select: { id: true },
-      });
-      return existing?.id ?? null;
-    }
-  }
-}
-
-/**
- * True only for a `P2002` raised by the `(tenant_id, dedupe_key)` unique — never
- * for an unrelated one such as the tenant-ownership key, which must propagate
- * untouched (`sales.service.ts`'s matcher, which documents both shapes Prisma
- * reports: the violated INDEX NAME, or the violated COLUMNS).
- */
-function isDedupeKeyConflict(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as { code?: unknown; meta?: { target?: unknown } };
-  if (candidate.code !== "P2002") return false;
-
-  const normalize = (token: string): string => token.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const target = candidate.meta?.target;
-  const expectedConstraint = normalize(DEDUPE_KEY_CONSTRAINT);
-  if (typeof target === "string") {
-    return normalize(target) === expectedConstraint;
-  }
-  if (!Array.isArray(target)) return false;
-
-  const tokens = target.filter((entry): entry is string => typeof entry === "string");
-  if (tokens.length === 0) return false;
-  if (tokens.length === 1 && normalize(tokens[0] ?? "") === expectedConstraint) return true;
-
-  const normalized = tokens.map(normalize);
-  return (
-    normalized.length === DEDUPE_KEY_FIELDS.length &&
-    DEDUPE_KEY_FIELDS.every((field) => normalized.includes(field))
-  );
 }
 
 /**
