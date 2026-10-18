@@ -107,11 +107,15 @@ by any service.
   `@Global` provider, the reminder scheduler (one intent per configured channel,
   dedupe-keyed, delayed job, per-VALUE WhatsApp gate) and its cancellation (CAS
   to CANCELLED then remove the pending job), the BullMQ producer with `cancel`,
-  and [[TD-043]] closed. **Still pending in WU-D**: the real content builder
-  with its send-time appointment gate (WU-D3) and `FiscalApproved`, which is
-  deliberately deferred to WU-D3 because INTERNAL-EVENTS forbids publishing an
-  event with no subscriber — the fiscal notice is that subscriber, and it lands
-  with it.
+  and [[TD-043]] closed. The **Core/Veterinary boundary** was met head-on: the
+  recipient is a Veterinary fact, so Core declares the port, the Patients module
+  implements it and the composition root binds them — the boundary suite caught
+  the first version, which read the aggregate directly — and the in-memory
+  Prisma harness now models the aggregate, its uniqueness included. **Still
+  pending in WU-D**: the real content builder with its send-time appointment
+  gate (WU-D3) and `FiscalApproved`, which is deliberately deferred to WU-D3
+  because INTERNAL-EVENTS forbids publishing an event with no subscriber — the
+  fiscal notice is that subscriber, and it lands with it.
 - [ ] **WU-E — the transactional surface and the permissions family.** The
       delivery record's status and history for the tenant, and the
       `notifications.*` permission family. → [[NOTIF-004]]
