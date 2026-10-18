@@ -1046,6 +1046,17 @@ export interface NotificationDeliveryRow {
   updatedAt: Date;
 }
 
+/** A recorded delivery attempt ([[TD-046]]). Append-only in the real schema. */
+export interface NotificationDeliveryAttemptRow {
+  id: string;
+  deliveryId: string;
+  attemptNumber: number;
+  outcome: "SENT" | "FAILED";
+  reasonCode: string | null;
+  reasonMessage: string | null;
+  occurredAt: Date;
+}
+
 export interface AppointmentRow {
   id: string;
   tenantId: string;
@@ -1962,6 +1973,19 @@ export interface IsolationDatabase {
      * harness that let a duplicate through would hide the idempotency the
      * scheduler depends on.
      */
+    notificationDeliveryAttempt: {
+      create: (args: {
+        data: Omit<NotificationDeliveryAttemptRow, "id" | "reasonCode" | "reasonMessage"> & {
+          reasonCode?: string;
+          reasonMessage?: string;
+        };
+      }) => NotificationDeliveryAttemptRow;
+      findMany: (args: {
+        where: { deliveryId: string };
+        orderBy?: { attemptNumber: "desc" | "asc" };
+        take?: number;
+      }) => NotificationDeliveryAttemptRow[];
+    };
     notificationDelivery: {
       create: (args: {
         data: Pick<
@@ -2776,6 +2800,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const appointmentTable = new Map<string, AppointmentRow>();
   const portalBookingRequestTable = new Map<string, PortalBookingRequestRow>();
   const notificationDeliveryTable = new Map<string, NotificationDeliveryRow>();
+  const notificationDeliveryAttemptTable = new Map<string, NotificationDeliveryAttemptRow>();
 
   /** Role-code predicate for membership options (EPIC-07 professional lookup). */
   const roleCodeMatches = (where: MembershipWhere, candidate: TenantMembershipRow): boolean =>
@@ -4750,6 +4775,32 @@ export function createIsolationDatabase(): IsolationDatabase {
           count += 1;
         }
         return { count };
+      },
+    },
+    notificationDeliveryAttempt: {
+      create: ({ data }) => {
+        const created: NotificationDeliveryAttemptRow = {
+          id: randomUUID(),
+          reasonCode: null,
+          reasonMessage: null,
+          ...data,
+        };
+        notificationDeliveryAttemptTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where, orderBy, take }) => {
+        const matched = [...notificationDeliveryAttemptTable.values()].filter(
+          (candidate) => candidate.deliveryId === where.deliveryId
+        );
+        // The ORDER and the BOUND are honoured rather than ignored: a harness that
+        // returned every row in insertion order would let a broken read pass -- and a
+        // bounded read is exactly what this one is.
+        matched.sort((left, right) =>
+          orderBy?.attemptNumber === "desc"
+            ? right.attemptNumber - left.attemptNumber
+            : left.attemptNumber - right.attemptNumber
+        );
+        return take === undefined ? matched : matched.slice(0, take);
       },
     },
     notificationDelivery: {

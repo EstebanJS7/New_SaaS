@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { NotificationDelivery } from "./notifications-api";
+import type { NotificationDelivery, NotificationDeliveryDetail } from "./notifications-api";
 import { NotificationsSurface } from "./notifications-surface";
 
 const DELIVERY: NotificationDelivery = {
@@ -26,6 +26,9 @@ const DELIVERY: NotificationDelivery = {
 };
 
 const BASE = "/api/notifications/deliveries";
+
+/** A detail response: the delivery PLUS the attempt list the DTO always sends. */
+const DETAIL: NotificationDeliveryDetail = { ...DELIVERY, attempts: [] };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -63,7 +66,7 @@ describe("NotificationsSurface — the five states", () => {
         new Promise<Response>((resolve) => {
           const url = resolveUrl(input);
           if (url === BASE) pending.resolveList = resolve;
-          else resolve(jsonResponse(DELIVERY));
+          else resolve(jsonResponse(DETAIL));
         })
     );
 
@@ -126,6 +129,49 @@ describe("NotificationsSurface — the five states", () => {
     // The empty state would tell the reader to select a delivery they just selected.
     expect(screen.queryByTestId("notification-detail-empty")).not.toBeInTheDocument();
     expect(screen.queryByTestId("notification-detail-error")).not.toBeInTheDocument();
+  });
+
+  it("shows the attempt SEQUENCE, which the delivery's own row cannot", async () => {
+    installFetch((url) =>
+      url === BASE
+        ? jsonResponse({ deliveries: [{ ...DELIVERY, status: "FAILED" }] })
+        : jsonResponse({
+            ...DETAIL,
+            status: "FAILED",
+            attempts: [
+              {
+                attemptNumber: 1,
+                outcome: "FAILED",
+                reasonCode: "TIMEOUT",
+                reasonMessage: "Attempt 1.",
+                occurredAt: "2026-10-17T10:01:00.000Z",
+              },
+              {
+                attemptNumber: 2,
+                outcome: "FAILED",
+                reasonCode: "TIMEOUT",
+                reasonMessage: "Attempt 2.",
+                occurredAt: "2026-10-17T10:02:00.000Z",
+              },
+              {
+                attemptNumber: 3,
+                outcome: "FAILED",
+                reasonCode: "PROVIDER_REJECTED",
+                reasonMessage: "Attempt 3.",
+                occurredAt: "2026-10-17T10:03:00.000Z",
+              },
+            ],
+          })
+    );
+    renderSurface();
+    await screen.findByTestId("notification-list-item");
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    const history = await screen.findByTestId("delivery-attempts");
+    // Three tries, three reasons — where the row remembers only the last one.
+    expect(history.textContent).toContain("#1");
+    expect(history.textContent).toContain("#3");
+    expect(history.textContent).toContain("Attempt 2.");
   });
 
   it("renders a failure reason without inventing message content", async () => {

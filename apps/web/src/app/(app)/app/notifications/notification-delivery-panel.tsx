@@ -13,6 +13,7 @@ import {
   NOTIFICATION_DELIVERY_STATUSES,
   type NotificationChannel,
   type NotificationDelivery,
+  type NotificationDeliveryDetail,
   type NotificationDeliveryStatus,
 } from "./notifications-api";
 import {
@@ -163,7 +164,7 @@ export function NotificationDeliveryListPanel({
 }
 
 interface DeliveryDetailPanelProps {
-  readonly delivery: NotificationDelivery | null;
+  readonly delivery: NotificationDeliveryDetail | null;
   readonly isLoading: boolean;
   /**
    * A denial is its own state, not a failure to retry ([[TD-047]], review R3-002).
@@ -261,6 +262,26 @@ export function NotificationDeliveryDetailPanel({
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Reason</dt>
                 <dd className="text-foreground">{deliveryFailureReason(delivery)}</dd>
+              </div>
+            )}
+            {/*
+              The sequence (TD-046). The delivery row keeps only the LAST reason, which is
+              the right shape for "did it work" and useless for "it failed three times and
+              they were not the same failure".
+            */}
+            {delivery.attempts.length === 0 ? null : (
+              <div
+                className="space-y-1 border-t border-border pt-2"
+                data-testid="delivery-attempts"
+              >
+                <p className="text-muted-foreground">Attempts</p>
+                <ul className="space-y-1">
+                  {delivery.attempts.map((attempt) => (
+                    <li key={attempt.attemptNumber} className="text-foreground">
+                      {`#${attempt.attemptNumber} · ${attempt.outcome === "SENT" ? "Sent" : "Failed"} · ${formatTimestamp(attempt.occurredAt)}${attempt.reasonMessage === null ? "" : ` · ${attempt.reasonMessage}`}`}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </dl>

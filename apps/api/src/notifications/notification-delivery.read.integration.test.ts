@@ -174,6 +174,47 @@ describe("Notification delivery read surface", () => {
     expect((response.body as { id: string }).id).toBe(mine.id);
   });
 
+  it("returns the attempt history on the detail, and never on the list", async () => {
+    const mine = seedDelivery(booted, permitted.tenant.id);
+    // A sequence the delivery row could not keep: three tries, three reasons, and the row
+    // remembers only the last one.
+    for (const [number, code] of [
+      [1, "TIMEOUT"],
+      [2, "PROVIDER_REJECTED"],
+      [3, "TIMEOUT"],
+    ] as const) {
+      booted.db.prisma.notificationDeliveryAttempt.create({
+        data: {
+          deliveryId: mine.id,
+          attemptNumber: number,
+          outcome: "FAILED",
+          reasonCode: code,
+          reasonMessage: `Attempt ${number}.`,
+          occurredAt: new Date(`2026-10-18T10:0${number}:00.000Z`),
+        },
+      });
+    }
+
+    // Named `detailResponse`: `detail` is this file's request helper, and a local of the
+    // same name would shadow it in its own initializer.
+    const detailResponse = await detail(booted, permitted.actor.cookie, mine.id).expect(200);
+    const body = detailResponse.body as {
+      attempts: { attemptNumber: number; reasonCode: string }[];
+    };
+    expect(body.attempts.map((attempt) => attempt.attemptNumber)).toEqual([1, 2, 3]);
+    expect(body.attempts.map((attempt) => attempt.reasonCode)).toEqual([
+      "TIMEOUT",
+      "PROVIDER_REJECTED",
+      "TIMEOUT",
+    ]);
+
+    // The LIST is unchanged: it carries no attempts, which is what keeps its read one query
+    // per page rather than one per row.
+    const listResponse = await list(booted, permitted.actor.cookie).expect(200);
+    const listed = (listResponse.body as { deliveries: Record<string, unknown>[] }).deliveries;
+    expect(Object.keys(listed[0] ?? {})).not.toContain("attempts");
+  });
+
   it("answers a foreign delivery exactly like one that does not exist", async () => {
     const theirs = seedDelivery(booted, foreign.tenant.id);
     await expectCrossTenant404({

@@ -61,6 +61,46 @@ export const notificationDeliveryListQuerySchema = z
 
 export type NotificationDeliveryListQuery = z.infer<typeof notificationDeliveryListQuerySchema>;
 
+/**
+ * How many attempts a delivery's detail carries at most.
+ *
+ * Bounded because the read is unbounded in principle: a delivery is retried a handful of
+ * times by design, but nothing in the schema caps it, and an endpoint that returned
+ * "however many there are" would be the unbounded list [[TD-026]] records as debt. Twenty
+ * is far beyond any real sequence, so the bound never truncates a case an operator cares
+ * about — and the NEWEST twenty, so a pathological delivery still shows the recent past.
+ */
+export const NOTIFICATION_DELIVERY_ATTEMPT_HISTORY_LIMIT = 20;
+
+/** One recorded attempt ([[TD-046]]). Allowlisted like everything else here. */
+export interface NotificationDeliveryAttemptResponse {
+  readonly attemptNumber: number;
+  readonly outcome: string;
+  readonly reasonCode: string | null;
+  readonly reasonMessage: string | null;
+  readonly occurredAt: string;
+}
+
+export interface NotificationDeliveryAttemptRow {
+  readonly attemptNumber: number;
+  readonly outcome: string;
+  readonly reasonCode: string | null;
+  readonly reasonMessage: string | null;
+  readonly occurredAt: Date;
+}
+
+export function toNotificationDeliveryAttemptResponse(
+  row: NotificationDeliveryAttemptRow
+): NotificationDeliveryAttemptResponse {
+  return {
+    attemptNumber: row.attemptNumber,
+    outcome: row.outcome,
+    reasonCode: row.reasonCode,
+    reasonMessage: row.reasonMessage,
+    occurredAt: row.occurredAt.toISOString(),
+  };
+}
+
 /** The allowlisted delivery projection. */
 export interface NotificationDeliveryResponse {
   readonly id: string;
@@ -104,6 +144,17 @@ export interface NotificationDeliveryRow {
   readonly cancellationReason: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+/**
+ * The DETAIL's projection: the delivery plus its attempt history.
+ *
+ * A separate type rather than a field on `NotificationDeliveryResponse`, so the LIST
+ * cannot accidentally carry a per-row query (the N+1 the reader would become) and its
+ * contract stays exactly what it was.
+ */
+export interface NotificationDeliveryDetailResponse extends NotificationDeliveryResponse {
+  readonly attempts: readonly NotificationDeliveryAttemptResponse[];
 }
 
 /** Maps one row to the allowlisted projection. Every exposed field is named here. */
