@@ -25,6 +25,17 @@ export const NOTIFICATION_DELIVERY_REASON = Object.freeze({
   /** The channel named by the row has no provider in this process. */
   CHANNEL_UNAVAILABLE: "NOTIFICATION_CHANNEL_UNAVAILABLE",
   /**
+   * The delivery's SOURCE row is gone, foreign or unnameable at send time.
+   *
+   * The send-time read is the guarantee, so a source that cannot be read is a
+   * settled state: retrying reads the same rows.
+   */
+  SOURCE_UNAVAILABLE: "NOTIFICATION_SOURCE_UNAVAILABLE",
+  /** The appointment is cancelled, missed or completed: no reminder (DEC-060). */
+  APPOINTMENT_NOT_SENDABLE: "NOTIFICATION_APPOINTMENT_NOT_SENDABLE",
+  /** The fiscal document is not APPROVED: no notice (PRD §36). */
+  FISCAL_DOCUMENT_NOT_APPROVED: "NOTIFICATION_FISCAL_DOCUMENT_NOT_APPROVED",
+  /**
    * A gate threw before the message could be sent (TD-041 R3-001).
    *
    * The claim is committed before the gates run, so an unexpected throw used to

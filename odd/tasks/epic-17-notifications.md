@@ -256,6 +256,17 @@ validator on both criteria, and the review is **approved and acknowledged,
 authority burned**. One validator follow-up (a stale comment on `onCancelled`)
 is corrected in the record commit.
 
+## WU-D3, first half: the content builder and the send-time gate
+
+[[NOTIF-003]]'s failing seam is now a real builder that reads the delivery's
+SOURCE at send time and gates on it: `CONFIRMED`/`ARRIVED` for an appointment
+(DEC-060's invariant, and what closes the residual interleaving window),
+`APPROVED` for a fiscal document (PRD §36). It renders in the tenant's timezone
+in 24 hours, and it reads **no Veterinary aggregate** — the message names the
+branch and the instant, not the patient, and that limitation is recorded.
+**Pending in WU-D3**: `FiscalApproved` from both worker write paths and its
+subscriber.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

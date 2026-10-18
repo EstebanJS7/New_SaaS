@@ -436,6 +436,42 @@ real `AppModule`, so the real subscriber runs: the in-memory Prisma now models
 because a harness that let a duplicate through would hide the idempotency the
 scheduler depends on.
 
+### WU-D3 (first half) — the real content builder and the send-time gate
+
+The seam that failed closed is now a real builder, and its read is also the gate
+[[DEC-060]] relies on:
+
+- **It reads the delivery, then the SOURCE, at send time.** For an appointment
+  it re-reads the appointment's current status and refuses anything that is not
+  `CONFIRMED` or `ARRIVED` — so a cancelled appointment produces no reminder
+  whether or not the cancellation event ever arrived. That read is the
+  invariant; the event is the optimisation, and it is also what closes the
+  residual interleaving window the fix's own review named. For a fiscal document
+  the same discipline: only `APPROVED` is notifiable, read now rather than
+  trusted from the event that scheduled the intent.
+- **The message is built here, never stored.** A delivery holds references only,
+  so a reschedule before the reminder fires cannot send a stale time.
+- **It renders in the tenant's timezone, in 24 hours.** The zone comes from the
+  shared kernel (`TENANT_TIME_ZONE`), which the API's scheduling module now
+  re-exports instead of owning a copy — the worker cannot import an API module,
+  and two literals would let the two deployables disagree about which local time
+  an appointment has. The clock is explicit because `es-PY`'s own default is
+  12-hour: a reminder whose time can be misread by twelve hours is worse than
+  one that reads slightly less naturally.
+- **It reads no Veterinary aggregate.** An appointment's patient is Veterinary,
+  so the message names the **branch** and the instant and not the patient: a
+  Core builder naming a patient would cross the boundary the recipient port
+  exists to respect. Recorded as a limitation, with the port option named,
+  rather than worked around.
+- **Both sources are built**: the appointment reminder, and the post-approval
+  fiscal notice PRD §36's journey ends a step with, naming the invoice's
+  allocated series and number (an unallocated document cannot be named, so it is
+  not announced).
+
+The fiscal notice's **emitters and subscriber** are the other half of WU-D3 and
+remain pending: publishing `FiscalApproved` from both worker write paths, and
+the subscriber that creates the intent for the invoice's customer.
+
 ### WU-D3, still pending
 
 WU-D2: the three emitters (`AppointmentConfirmed` and `AppointmentCancelled` in

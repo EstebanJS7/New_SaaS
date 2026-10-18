@@ -23,10 +23,8 @@ import { StorageModule } from "@newsaas/storage";
 import { BrandingResetCleanupConsumer } from "./branding-reset-cleanup/cleanup.consumer.js";
 import { BrandingResetCleanupHandler } from "./branding-reset-cleanup/cleanup.handler.js";
 import { BrandingResetCleanupReconciliationService } from "./branding-reset-cleanup/reconciliation.service.js";
-import {
-  createUnavailableNotificationContentBuilder,
-  NOTIFICATION_CONTENT_BUILDER,
-} from "./notification-delivery/notification-content.js";
+import { NOTIFICATION_CONTENT_BUILDER } from "./notification-delivery/notification-content.js";
+import { createNotificationContentBuilder } from "./notification-delivery/notification-content.builder.js";
 import { NotificationDeliveryConsumer } from "./notification-delivery/notification-delivery.consumer.js";
 import { NotificationDeliveryHandler } from "./notification-delivery/notification-delivery.handler.js";
 import { createNotificationEntitlementReader } from "./notification-delivery/notification-entitlement.read.js";
@@ -160,16 +158,18 @@ const entitlementReaderProvider: Provider = {
 };
 
 /**
- * The content seam, still failing closed.
+ * The REAL content builder (NOTIF-003 WU-D3): it reads the delivery's source and
+ * renders the message at send time, and its read is also the SEND-TIME GATE —
+ * a cancelled appointment or a non-approved document produces no message, whether
+ * or not the event that scheduled it ever arrived (DEC-060).
  *
- * The reminder's real builder is [[NOTIF-003]]'s: it reads the appointment and
- * renders the message, which is a domain concern this unit must not invent. A
- * delivery that arrives before it lands settles with
- * `NOTIFICATION_CONTENT_UNAVAILABLE` by name.
+ * The seam it replaces failed closed, and it stays importable: it is what a
+ * deployment that wires nothing, or a test that wants a refusal, still gets.
  */
 const contentBuilderProvider: Provider = {
   provide: NOTIFICATION_CONTENT_BUILDER,
-  useValue: createUnavailableNotificationContentBuilder(),
+  useFactory: (prisma: PrismaService) => createNotificationContentBuilder({ client: prisma }),
+  inject: [PrismaService],
 };
 
 /**

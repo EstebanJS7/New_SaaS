@@ -25,8 +25,18 @@ import type { AppointmentStatusDto } from "./appointment.dto.js";
  * copying the predicate, so staff and portal can never drift apart.
  */
 
-/** The single tenant timezone fixed by the PRD for v1. */
-export const TENANT_TIMEZONE = "America/Asuncion";
+/**
+ * The single tenant timezone fixed by the PRD for v1.
+ *
+ * Re-exported from the shared kernel rather than declared here: the reminder is
+ * rendered by the WORKER, which cannot import this module, and a second literal
+ * would let the two deployables disagree about which zone a local time is in.
+ * The NAME stays `TENANT_TIMEZONE` so every existing importer is untouched.
+ */
+import { TENANT_TIME_ZONE as TENANT_TIMEZONE } from "@newsaas/shared";
+// Re-exported, not merely imported: this module's own availability math uses the
+// binding below, and every existing importer keeps naming `TENANT_TIMEZONE`.
+export { TENANT_TIMEZONE };
 
 /** Non-terminal states that participate in overlap detection. */
 export const ACTIVE_APPOINTMENT_STATUSES: readonly AppointmentStatusDto[] = [
