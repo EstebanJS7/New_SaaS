@@ -331,6 +331,48 @@ as [[TD-043]] and fixed in WU-D2, which consumes this policy from the scheduler.
   exactly what `INTERNAL-EVENTS.md` forbids. [[DEC-059]] still decides that this
   epic publishes it, and it does so with the notice.
 
+### The WU-D2 review escalated, and what the validator caught
+
+`review-5898fbf624566375` was **high risk** (22 files, 1599 lines) and ran
+**four lenses**. It closed `correction_required` on two CRITICALs, both mine,
+both real in the shape they describe:
+
+- **R4-CANCEL-SWALLOW** (deterministic): `cancel()` attached an unconditional
+  `.catch()`, so this port's own deadline and a Redis failure were
+  indistinguishable from "the job was already gone". The consequence it claimed
+  — a deliverable reminder after a cancellation — is **wrong, and that is
+  measured rather than argued**: the handler returns early for a settled row and
+  its own case asserts it, so the row's status is the guarantee. What the
+  swallow cost was a lingering job nobody could see.
+- **R3-001** (inferential): the create and the enqueue are two steps, so a
+  cancellation can interleave between them.
+
+The first correction removed the swallow and added a compensation, and the
+**targeted validator then REJECTED it** with three findings, all legitimate:
+
+1. a removal failure **rejected the whole reaction**, so a failure on one
+   channel left the remaining channels unprocessed — a regression the correction
+   itself introduced;
+2. the failure report carried the driver's **message**, which is where a
+   connection URL with a password lives;
+3. the compensation closed one interleaving and **missed the wider one**: a
+   cancellation that ran _before_ the intent existed found nothing to cancel
+   while the reaction still held the appointment as `CONFIRMED` from its earlier
+   read.
+
+The lineage then **escalated and stopped** (`native_stop_required`): a
+lifecycle-level stop that only the maintainer can resolve. The three findings
+are fixed in a follow-up unit — one **total** cancellation helper shared by the
+reaction and the compensation (it never throws, and reports the error's NAME
+rather than its text), and an `isStillSchedulable` re-read of the
+**appointment** before and after the enqueue, which is the authority for whether
+a reminder may exist at all. The residual window between that read and the
+enqueue is closed by the send-time gate still pending in WU-D3.
+
+**The lesson is the one the previous round taught, one level up**: a correction
+validated against the finding it closes can still introduce a regression, and
+this one did — it is worth reviewing the fix, not only the defect.
+
 ### The Core/Veterinary boundary this unit hit, and how it was resolved
 
 The reminder's recipient is the patient's responsible customer, and the link

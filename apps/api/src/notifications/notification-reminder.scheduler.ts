@@ -152,28 +152,60 @@ export class NotificationReminderScheduler implements OnModuleInit {
       // first writer enqueued it.
       if (created === null) continue;
 
+      // Review R3-001, first window: a cancellation can run BETWEEN this intent's
+      // creation and its enqueue, CAS the row and find no job to remove because
+      // this one does not exist yet — and then this enqueue would produce a job
+      // for an already-cancelled delivery.
+      //
+      // Review R3-001, second window, found by the targeted validator: the
+      // cancellation can run BEFORE the intent existed at all, so its reaction
+      // found nothing to cancel while this one still had the appointment as
+      // CONFIRMED from its earlier read. Re-reading the APPOINTMENT — the
+      // authority for whether a reminder may exist — closes that one, and the
+      // send-time gate in NOTIF-003 WU-D3 closes the residual window between this
+      // read and the enqueue.
+      if (!(await this.isStillSchedulable(tenantId, appointment.id, created.id))) {
+        await this.cancelDelivery(tenantId, created.id);
+        continue;
+      }
+
       await this.producer.enqueue({ notificationDeliveryId: created.id, tenantId }, scheduledAt);
 
-      // Review R3-001. The create and the enqueue are two steps, and a
-      // cancellation can interleave between them: it CASes the row to CANCELLED,
-      // finds no job to remove because this one does not exist yet, and returns —
-      // leaving this enqueue to produce a job for a row that is already
-      // cancelled. The row's status is what makes the reminder UNDELIVERABLE (the
-      // handler refuses a settled row, and that is asserted), but the job would
-      // linger with nobody expecting it, so the interleaving is compensated here.
-      if (!(await this.isStillPending(tenantId, created.id))) {
-        await this.producer.cancel(created.id);
+      // The same window, one step later: the cancellation landed between the
+      // check above and the enqueue, and it already removed the job it could not
+      // find. The row's status is what makes the reminder UNDELIVERABLE — the
+      // handler refuses a settled row, which its own case asserts — but the job
+      // would linger with nobody expecting it.
+      if (!(await this.isStillSchedulable(tenantId, appointment.id, created.id))) {
+        await this.cancelDelivery(tenantId, created.id);
       }
     }
   }
 
-  /** Whether a delivery is still waiting to be sent, read fresh. */
-  private async isStillPending(tenantId: string, deliveryId: string): Promise<boolean> {
-    const row = await this.prisma.notificationDelivery.findFirst({
+  /**
+   * Whether a reminder may still be sent: the APPOINTMENT is CONFIRMED and the
+   * intent is still pending.
+   *
+   * Both halves are needed. The appointment is the authority — a cancelled
+   * appointment must have no reminder — and the intent's own status catches the
+   * case where the cancellation reaction already reached it.
+   */
+  private async isStillSchedulable(
+    tenantId: string,
+    appointmentId: string,
+    deliveryId: string
+  ): Promise<boolean> {
+    const appointment = await this.prisma.appointment.findFirst({
+      where: { id: appointmentId, tenantId },
+      select: { id: true, patientId: true, status: true, startAt: true },
+    });
+    if (appointment?.status !== "CONFIRMED") return false;
+
+    const delivery = await this.prisma.notificationDelivery.findFirst({
       where: { id: deliveryId, tenantId, status: { in: ["SCHEDULED", "QUEUED"] } },
       select: { id: true },
     });
-    return row !== null;
+    return delivery !== null;
   }
 
   /**
@@ -199,12 +231,31 @@ export class NotificationReminderScheduler implements OnModuleInit {
     });
 
     for (const delivery of pending) {
+      await this.cancelDelivery(tenantId, delivery.id);
+    }
+  }
+
+  /**
+   * Cancels one pending delivery and removes its job. **Total: it never throws.**
+   *
+   * Total on purpose, for two reasons a targeted validator found in the first
+   * version of this correction:
+   *
+   * - a removal that rejected used to abort the caller's loop, so a failure on
+   *   one channel left the REMAINING deliveries pending — worse than the problem
+   *   it reported;
+   * - a failure report must carry ids and a SANITIZED reason. A driver's message
+   *   is where a Redis URL with a password lives, so what is reported is the
+   *   error's NAME, never its text.
+   *
+   * The row is cancelled first and the job second, and the removal runs only when
+   * this caller won the compare-and-swap — two racing cancellations must not both
+   * report a cancellation one of them did not perform.
+   */
+  private async cancelDelivery(tenantId: string, deliveryId: string): Promise<void> {
+    try {
       const cancelled = await this.prisma.notificationDelivery.updateMany({
-        where: {
-          id: delivery.id,
-          tenantId,
-          status: { in: ["SCHEDULED", "QUEUED"] },
-        },
+        where: { id: deliveryId, tenantId, status: { in: ["SCHEDULED", "QUEUED"] } },
         data: {
           status: "CANCELLED",
           cancelledAt: new Date(),
@@ -212,23 +263,19 @@ export class NotificationReminderScheduler implements OnModuleInit {
           cancellationReason: REMINDER_CANCELLATION_REASON,
         },
       });
-      if (cancelled.count !== 1) continue;
+      if (cancelled.count !== 1) return;
 
-      try {
-        await this.producer.cancel(delivery.id);
-      } catch (error) {
-        // Review R4-CANCEL-SWALLOW. The row IS cancelled, and the handler refuses
-        // a settled row, so the reminder cannot be delivered — the guarantee is
-        // the row's status, not this removal. What the failure costs is a job
-        // that lingers with nobody expecting it, which an operator has to be able
-        // to see; swallowing it made a Redis outage look like a completed
-        // cancellation. Reported with ids only, never a contact datum, and it does
-        // NOT abort the remaining deliveries.
-        console.error("Notification delivery job could not be removed", {
-          notificationDeliveryId: delivery.id,
-          error: error instanceof Error ? error.message.slice(0, 200) : "unknown",
-        });
-      }
+      await this.producer.cancel(deliveryId);
+    } catch (error) {
+      // The row IS cancelled and the handler refuses a settled row, so the
+      // reminder cannot be delivered — the guarantee is the row's status, not this
+      // removal. What the failure costs is a job that lingers with nobody
+      // expecting it, which an operator has to be able to see; swallowing it made
+      // a Redis outage look like a completed cancellation.
+      console.error("Notification delivery could not be cancelled cleanly", {
+        notificationDeliveryId: deliveryId,
+        error: describeError(error),
+      });
     }
   }
 
@@ -295,4 +342,15 @@ function isDedupeKeyConflict(error: unknown): boolean {
     normalized.length === DEDUPE_KEY_FIELDS.length &&
     DEDUPE_KEY_FIELDS.every((field) => normalized.includes(field))
   );
+}
+
+/**
+ * A bounded, SANITIZED description of a failure: the error's constructor name and
+ * nothing else.
+ *
+ * Never `message`: a driver's text is where a connection URL with credentials
+ * lives, and a failure report travels to an operator's console.
+ */
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
 }

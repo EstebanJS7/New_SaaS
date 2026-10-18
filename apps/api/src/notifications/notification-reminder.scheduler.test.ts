@@ -18,6 +18,13 @@ const patientId = "33333333-3333-3333-3333-333333333333";
 const customerId = "44444444-4444-4444-4444-444444444444";
 const startsAt = new Date("2026-10-18T12:00:00.000Z");
 
+const CONFIRMED_APPOINTMENT = {
+  id: appointmentId,
+  patientId,
+  status: "CONFIRMED",
+  startAt: startsAt,
+};
+
 /**
  * The reactions are driven through the SUBSCRIBED handlers rather than by calling
  * the methods, so a suite that passes proves the subscription as well as the
@@ -35,6 +42,17 @@ function setup(args: {
   readonly cancelCount?: number;
   /** Whether the compensation read still finds the intent pending (R3-001). */
   readonly stillPending?: boolean;
+  /**
+   * The appointment each successive appointment read answers, the last repeating.
+   * A single entry is the ordinary case; two are what the "cancellation landed
+   * between the reads" window needs.
+   */
+  readonly appointmentSequence?: readonly ({
+    id: string;
+    patientId: string;
+    status: string;
+    startAt: Date;
+  } | null)[];
   /** Makes the removal fail, so the report path can be asserted (R4). */
   readonly cancelThrows?: boolean;
 }) {
@@ -49,16 +67,25 @@ function setup(args: {
     },
   };
 
+  let appointmentReads = 0;
   const creates: Prisma_CreateArgs[] = [];
   const updates: { where: Record<string, unknown>; data: Record<string, unknown> }[] = [];
   const prisma: NotificationReminderPrisma = {
     appointment: {
-      findFirst: () =>
-        Promise.resolve(
-          args.appointment === undefined
-            ? { id: appointmentId, patientId, status: "CONFIRMED", startAt: startsAt }
-            : args.appointment
-        ),
+      // Scripted, the last entry repeating: the second window (a cancellation
+      // landing BETWEEN the reaction's two appointment reads) needs the same
+      // question to answer differently the second time.
+      findFirst: () => {
+        // `!== undefined` rather than `??`: a case that scripts an explicit
+        // NULL (an absent or foreign appointment) must not fall back to the
+        // default CONFIRMED row.
+        const sequence = args.appointmentSequence ?? [
+          args.appointment !== undefined ? args.appointment : CONFIRMED_APPOINTMENT,
+        ];
+        const index = Math.min(appointmentReads, sequence.length - 1);
+        appointmentReads += 1;
+        return Promise.resolve(sequence[index] ?? null);
+      },
     },
     notificationDelivery: {
       create: (createArgs: Prisma_CreateArgs) => {
@@ -78,10 +105,9 @@ function setup(args: {
         }
         return Promise.resolve({ id: `delivery-${creates.length}` });
       },
-      findFirst: () =>
-        // The compensation read (R3-001): a row the fake still treats as pending
-        // unless a case says the cancellation won the race.
-        Promise.resolve(args.stillPending === false ? null : { id: "delivery-1" }),
+      // The compensation read (R3-001) also asks whether the INTENT is still
+      // pending, which is the half a cancellation reaction already reached.
+      findFirst: () => Promise.resolve(args.stillPending === false ? null : { id: "delivery-1" }),
       findMany: () => Promise.resolve(args.pendingDeliveries ?? []),
       updateMany: (updateArgs: {
         where: Record<string, unknown>;
@@ -325,14 +351,69 @@ describe("scheduling a reminder", () => {
 
     await confirmed();
 
-    expect(enqueued).toHaveLength(1);
-    expect(cancelled).toEqual(enqueued.map((entry) => entry.job.notificationDeliveryId));
+    // The intent is created and immediately abandoned, so nothing is enqueued and
+    // the job the reaction WOULD have created is never created.
+    expect(enqueued).toHaveLength(0);
+    expect(cancelled).toEqual(["delivery-1"]);
   });
 
   it("leaves a job alone when the delivery is still pending", async () => {
     const { confirmed, cancelled } = setup({ stillPending: true });
     await confirmed();
     expect(cancelled).toEqual([]);
+  });
+
+  it("compensates when the cancellation ran BEFORE the intent existed — R3-001, second window", async () => {
+    // The targeted validator's finding: the cancellation's findMany found nothing
+    // (no row yet) while this reaction still had the appointment CONFIRMED from
+    // its earlier read. Re-reading the APPOINTMENT is what closes it.
+    const { confirmed, enqueued, updates } = setup({
+      // CONFIRMED on the first read (so the reaction proceeds) and CANCELLED on
+      // the compensation's read: the cancellation landed in between.
+      appointmentSequence: [
+        CONFIRMED_APPOINTMENT,
+        { id: appointmentId, patientId, status: "CANCELLED", startAt: startsAt },
+      ],
+      stillPending: true,
+    });
+
+    await confirmed();
+
+    // Nothing is enqueued for a cancelled appointment, and the intent is
+    // cancelled rather than left pending.
+    expect(enqueued).toHaveLength(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.data.status).toBe("CANCELLED");
+  });
+
+  it("keeps processing the other channels when a compensation fails — validator regression", async () => {
+    // The first version awaited the compensation inside the loop without a catch,
+    // so a failing removal exited the reaction and left the REMAINING channels
+    // untouched: worse than the problem it reported.
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    try {
+      const { confirmed, cancelled } = setup({
+        entitled: true,
+        stillPending: false,
+        cancelThrows: true,
+        settings: {
+          appointmentReminderLeadHours: 24,
+          appointmentReminderChannels: ["EMAIL", "WHATSAPP"],
+        },
+      });
+
+      await expect(confirmed()).resolves.toBeUndefined();
+
+      // Both channels were attempted, so neither was skipped: the loop never
+      // aborts on one channel's failure.
+      expect(errors).toHaveLength(2);
+      expect(cancelled).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("ignores an event with no tenant", async () => {
@@ -407,8 +488,12 @@ describe("cancelling a reminder", () => {
       const reported = JSON.stringify(errors);
       expect(errors).toHaveLength(2);
       expect(reported).toContain("delivery-1");
-      expect(reported).toContain("redis is down");
-      // Never a contact datum: a failure report carries ids and a reason.
+      // The error's NAME, never its text: a driver's message is where a
+      // connection URL with a password lives, and "redis is down" is exactly the
+      // kind of text that must not reach an operator's console.
+      expect(reported).toContain("Error");
+      expect(reported).not.toContain("redis is down");
+      // Never a contact datum either.
       expect(reported).not.toContain("@");
     } finally {
       spy.mockRestore();

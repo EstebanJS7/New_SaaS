@@ -232,6 +232,18 @@ throw, and the doubted path is pinned by a case (exactly two writes, neither
 setting `FAILED`). Correction `fe92bec`; approved and acknowledged; one
 advisory, `R3-gate-throw-unproved`, recorded in [[TD-042]].
 
+## The WU-D2 review escalated (first time this session)
+
+`review-5898fbf624566375` (high risk, FOUR lenses: risk/resilience/readability/
+reliability) closed `correction_required` on two CRITICALs, both real in shape.
+The correction was written, **rejected by the targeted validator** with three
+legitimate findings — one of them a regression the correction itself introduced
+— and the lineage then **escalated and stopped** (`native_stop_required`), which
+is terminal and needs the maintainer. The three findings are fixed in a
+follow-up unit (a total cancellation helper that never throws and reports the
+error's NAME, plus an appointment re-read before and after the enqueue). The fix
+unit has no review of its own yet: the stopped lineage cannot host one.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.
