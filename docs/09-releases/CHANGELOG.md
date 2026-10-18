@@ -33,9 +33,21 @@ All notable product changes will be documented here.
     both routes return `NOT_FOUND`, which was the deferral's own contract, and
     now asserts what they do.
 
-  **Not built, and named**: the recovery link points at a `/reset-password` page
-  the web app does not have yet, and the repository still has no password policy
-  — [[TD-048]].
+  - The **public reset page** at `/reset-password` - the app's first
+    unauthenticated page, outside the `(app)` shell, with its own session-less
+    BFF: a locked-out caller has no session to forward, and sending one would
+    hand an unrelated session's authority to a route with no use for it. Its
+    refusals are the API's own (one message for an unknown, spent or expired
+    link), so the UI is not a louder oracle than the API it fronts.
+  - A **password policy**, decided rather than assumed: a minimum of 8
+    characters with no composition rules - the NIST SP 800-63B floor, whose
+    composition advice is exactly the "one digit and one symbol" rule that
+    pushes people toward `Password1!`. It is enforced at the credential
+    **boundary**, so every path that sets a password inherits it.
+
+  **Still not built, and named**: nothing links to the recovery REQUEST - the
+  app has no login page, so a user cannot ask for a recovery from the UI - and a
+  breached-password list is still not consulted ([[TD-048]]).
 
 - EPIC-17 — Notifications, the first capability to actually tell somebody
   something (NOTIF-001 to NOTIF-005, closed 2026-10-17):

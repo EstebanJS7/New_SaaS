@@ -1,13 +1,13 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type { AuditAppendTx, Prisma } from "@newsaas/database";
 import { PrismaService } from "@newsaas/database";
-import { DomainError } from "@newsaas/shared";
 import { AuditWriter } from "../audit/audit-writer.service.js";
 import { CredentialService } from "./credential.service.js";
 import {
   PasswordResetTokenService,
   type PasswordResetTokenPrisma,
 } from "./password-reset-token.service.js";
+import { assertPasswordAcceptable } from "./password.policy.js";
 
 /**
  * Staff password recovery, the reset half (DAT-007, WU-C2).
@@ -78,14 +78,10 @@ export class PasswordResetService {
     rawPassword: unknown,
     now: Date = new Date()
   ): Promise<PasswordResetOutcome> {
-    // The shape check is the controller's job; this is the boundary's own, so a
-    // service called directly cannot hash `undefined`.
-    if (typeof rawPassword !== "string" || rawPassword.length === 0) {
-      throw new DomainError("VALIDATION_FAILED", "A new password is required.");
-    }
-    if (rawPassword.length > MAX_PASSWORD_LENGTH) {
-      throw new DomainError("VALIDATION_FAILED", "The new password is too long.");
-    }
+    // The policy — minimum length and the ceiling — is the credential boundary's, and
+    // it is checked here too so a caller that bypassed the controller cannot reach
+    // argon2 with a password nobody would accept.
+    assertPasswordAcceptable(rawPassword);
 
     // Paid outside the transaction, deliberately: see the class comment.
     const passwordHash = await this.credentials.hash(rawPassword);
@@ -131,15 +127,3 @@ export class PasswordResetService {
     });
   }
 }
-
-/**
- * The bound mirrors the login body's, and it is the ONLY rule this Story applies.
- *
- * **There is no password policy anywhere in this repository yet** — accounts are
- * ops-provisioned — so inventing a complexity rule here would be a product decision
- * taken by an implementation. What that means in practice is recorded as a
- * limitation: a user-chosen password is bounded by length alone, and this path is
- * the first place a policy would matter, because it is the first place a human
- * chooses the password.
- */
-export const MAX_PASSWORD_LENGTH = 1024;

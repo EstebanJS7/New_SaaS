@@ -350,9 +350,11 @@ packages/database            512   the aggregate's guards, the partial index and
   Closing it needs a catalog decision.
 - **There is no attempt history to read** — [[TD-046]]: the aggregate keeps a
   summary, because retrying is BullMQ's retry rather than a domain transition.
-- **The recovery link points at `/reset-password`, a page the web app does not
-  have yet** — [[TD-048]]. The message is right; the destination is a later
-  Story's.
+- **Nothing links to the recovery REQUEST yet**: the message's destination
+  exists (`/reset-password`), but the app has no login page, so a user has no
+  way to ASK for a recovery from the UI — [[TD-048]]. The API and the message
+  are complete; the entry point is a later Story's.
+
 - **A recovery message is email-only.** `appointmentReminderChannels` is named
   for the reminder, and stretching it to cover this message would change what a
   stored setting means without anybody deciding it.

@@ -40,6 +40,9 @@ describe("middleware tenant-slug provenance", () => {
 
   it("never resolves a slug for staff, root, reserved, or dotted paths", () => {
     expect(resolveTrustedTenantSlug("/app")).toBe("");
+    // DAT-007 gave the app its first PUBLIC page, at a bare path -- which is the portal's
+    // namespace. Reserving it is what keeps the route from squatting on a tenant's slug.
+    expect(resolveTrustedTenantSlug("/reset-password")).toBe("");
     expect(resolveTrustedTenantSlug("/app/settings/branding")).toBe("");
     expect(resolveTrustedTenantSlug("/")).toBe("");
     expect(resolveTrustedTenantSlug("/branding")).toBe("");

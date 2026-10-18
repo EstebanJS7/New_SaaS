@@ -123,6 +123,12 @@ Three things about it are worth knowing before changing anything:
   else — not in a table, a log, a job payload or a response.
 - Recovery is public by necessity, and is therefore the most carefully bounded
   public surface in the system: rate-limited, uniform, and silent.
+- **The password policy is enforced at the credential boundary**: a minimum of 8
+  characters, no composition rules, and a ceiling of 1024 that mirrors the login
+  body's so a password that can be set can always be typed.
+  `CredentialService.hash` applies it, so every caller inherits it rather than
+  each endpoint remembering it. It refuses before argon2 runs, so a refused
+  password costs no CPU.
 
 ## Security / Tenant Rules
 

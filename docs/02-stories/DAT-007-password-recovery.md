@@ -287,12 +287,15 @@ The token's plaintext never reaches a table
 
 ## Known Limitations
 
-- **The link points at `/reset-password`, a page the web app does not have
-  yet**, so the flow ends in a 404 for the recipient until that Story lands -
-  [[TD-048]]. The message is right; the destination is not built.
-- **There is no password policy**, so a user-chosen password is bounded by
-  length alone. Left undecided rather than invented, because inventing one is a
-  product decision - and named in [[TD-048]] with the candidates.
+- **The link's destination exists**, at `/reset-password` ([[TD-048]],
+  resolved), but **nothing links to the recovery REQUEST**: the app has no login
+  page, so a user cannot ask for a recovery from the UI. The API and the message
+  are complete; the entry point is a later Story's.
+
+- **The password policy is a minimum of 8 characters with no composition rules**
+  (the NIST floor), enforced at the credential boundary. A breached-password
+  list is still not consulted and `aaaaaaaa` passes - [[TD-048]].
+
 - **A reset ends sessions for the WHOLE profile**, which is broader than the
   tenant the user had in mind. That is deliberate: sessions are per profile, the
   password is per profile, and a surviving session is the attacker's.

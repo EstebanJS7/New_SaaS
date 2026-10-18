@@ -5,7 +5,8 @@ import { RequestContextService } from "../context/request-context.service.js";
 import { AUTH_CONFIG, type AuthConfig } from "./auth.config.js";
 import { AuthService } from "./auth.service.js";
 import { PasswordRecoveryService } from "./password-recovery.service.js";
-import { MAX_PASSWORD_LENGTH, PasswordResetService } from "./password-reset.service.js";
+import { PasswordResetService } from "./password-reset.service.js";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./password.policy.js";
 import { Public } from "./public.decorator.js";
 import { STAFF_SESSION_COOKIE, staffSessionCookieOptions } from "./session-cookie.js";
 
@@ -36,7 +37,10 @@ const forgotPasswordBodySchema = z.object({
  */
 const resetPasswordBodySchema = z.object({
   token: z.string().min(1).max(512),
-  password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
+  // The bounds come from the policy module rather than being written twice: a schema
+  // that accepted a password the credential boundary refuses would be a 500 where a
+  // 400 belongs.
+  password: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
 });
 
 /** The uniform answer. Identical for a known and an unknown address. */

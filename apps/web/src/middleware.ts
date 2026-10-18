@@ -17,7 +17,17 @@ import { NextResponse, type NextRequest } from "next/server";
  * it is never treated as an authorization or tenant-authority signal. Staff
  * routes under `/app` resolve the tenant from the session cookie instead.
  */
-const RESERVED_FIRST_SEGMENTS = new Set(["app", "api", "branding", "_next"]);
+/**
+ * First segments that are the APP's rather than a tenant's.
+ *
+ * `reset-password` joined this list with DAT-007: the public recovery page is served at
+ * that path, and without the reservation the middleware would read it as a portal slug,
+ * tag the document with a tenant named "reset-password" and send the root layout looking
+ * for that tenant's branding. The page would still render — the lookup fails closed to
+ * the product preset — but the route would be quietly squatting on a namespace that
+ * belongs to tenants.
+ */
+const RESERVED_FIRST_SEGMENTS = new Set(["app", "api", "branding", "reset-password", "_next"]);
 
 /**
  * Returns the only tenant slug a request may carry.

@@ -143,6 +143,18 @@ Its dedupe key is per `(profile, window)` — the reminder's shape — so a seco
 request inside the window produces one message rather than a second one, which
 is also what keeps the endpoint from being an email amplifier.
 
+## Post-closure: TD-048 resolved
+
+`/reset-password` exists, so the message's link is no longer a 404, and the
+password policy is decided (minimum 8, no composition, enforced at the
+credential boundary). Three things building it uncovered, all recorded in
+TD-048: the page needed **reserving in the middleware** (any unreserved first
+segment is a portal tenant slug, so it was squatting on that namespace), it
+needed the app's **first public BFF** (no session, one allowlisted shape, so
+login and logout stay unreachable), and it lives outside the `(app)` shell. What
+remains open is a DIFFERENT dead end: **nothing links to the recovery request**,
+because the app has no login page.
+
 ## Open questions
 
 - **None that block WU-A.** The route names are settled by the existing fence

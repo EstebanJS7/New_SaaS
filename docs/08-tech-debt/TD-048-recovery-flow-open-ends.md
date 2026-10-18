@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The recovery flow's two open ends — the page the link points at, and the
   password policy nobody has
-status: open
+status: resolved
 severity: medium
 owner: identity
 related_epics:
@@ -67,6 +67,62 @@ it:
 
 Whatever is chosen belongs in the credential boundary, **not** in the reset
 endpoint: a rule enforced by one caller is a rule the other callers do not have.
+
+## RESOLVED — 2026-10-17
+
+**The page exists** at `/reset-password`, and the flow no longer ends in a 404.
+
+## 1. The page, and what building it uncovered
+
+It is the app's **first public page**, and three things came out of that which
+are worth knowing:
+
+- **It had to be reserved in the middleware.** Any first segment that is not
+  reserved is read as a portal tenant slug (the portal surface is `/[slug]`), so
+  `/reset-password` would have been treated as a tenant called "reset-password"
+  — the page would still have rendered, because the branding lookup fails closed
+  to the product preset, but the route would have been quietly squatting on a
+  namespace that belongs to tenants.
+- **It needed the app's first PUBLIC BFF.** Every other proxy attaches the staff
+  session cookie; this one must not, because the caller is locked out and has no
+  session — and sending one would hand an unrelated session's authority to a
+  route with no use for it. It is a proxy of **one** shape, allowlisted, so
+  `login` (which sets a cookie) and `logout` (which revokes a session) do not
+  become reachable through it.
+- **It lives outside the `(app)` route group**, which renders the staff shell
+  from a session a locked-out user does not have.
+
+The form's refusals are the API's own: **one message for an unknown, a spent and
+an expired link**, because the API deliberately does not distinguish them and a
+UI that invented a distinction would be a louder oracle than the API it fronts.
+Its minimum length mirrors the policy below as a convenience, not as the rule.
+
+**Still missing, and it is a different dead end**: there is no **login page** in
+this app, so nothing links to "forgot my password" — the request has no entry
+point in the UI. It is the next Story, not this one.
+
+## 2. The password policy
+
+**Decided: a minimum of 8 characters, with no composition rules.** Eight is the
+floor NIST SP 800-63B sets for a password used alone; composition rules are
+explicitly discouraged by the same source, because they push people toward
+`Password1!` and punish the long passphrase that is actually strong.
+
+**It lives in the credential boundary**, not in the reset endpoint:
+`CredentialService.hash` applies it, so every path that sets a password inherits
+it — a rule enforced by one caller is a rule the other callers do not have. Two
+details of the implementation are decisions rather than incidentals:
+
+- **`hash` is `async` now**, because it was the one method that could throw
+  SYNCHRONOUSLY while returning a promise — and a promise-returning method that
+  throws instead of rejecting is one whose callers' `.catch()` never runs.
+- **It runs before argon2**, so a refused password costs no CPU. One existing
+  test had to change: it hashed `"pw"`, which the boundary now refuses.
+
+**Still not covered, and named**: `aaaaaaaa` passes, and there is no
+breached-password list. The second needs a dependency (so an ADR) and a decision
+about what leaves the process. Both are recorded here for whoever wants them;
+neither blocks the flow.
 
 ## Related
 
