@@ -7,13 +7,21 @@ directly through the channel port.
 
 ## Work units
 
-- [ ] **WU-A — the token's data foundation.** `PasswordResetToken` model: the
+- [x] **WU-A — the token's data foundation.** `PasswordResetToken` model: the
       profile, the token **hash**, `expires_at`, `consumed_at`, `created_at`.
-      Four SQL guards (single use, expiry, immutability of the hash and the
-      expiry, and no un-consume). One additive migration. Schema cases against
-      the live guards in `packages/database`. **No tenant column, and the reason
-      is an invariant**: the credentials it authorises are global to the
-      profile, not to a membership.
+      Four guard families (identity immutability, single use with the rewrite
+      and the clear refused separately, and a CHECK that the expiry is after the
+      creation). One additive migration that also appends the two delivery enum
+      values. 13 schema cases in `packages/database` (525). **No tenant column,
+      and the reason is an invariant**: the credentials it authorises are global
+      to the profile, not to a membership. _Commit `06e0791`. Proven live on a
+      disposable PostgreSQL 16: all 46 migrations in one pass, and the guards
+      refused an expiry before its creation, a duplicate digest, a second
+      consumption instant, an un-consume, an extended expiry, a repointed digest
+      and a reassigned profile — while a fresh token consumed once, deleting a
+      profile cascaded, and the two new enum values were usable as literals in a
+      later transaction with the delivery aggregate's identity guard still
+      holding._
 - [ ] **WU-B — the token service.** Issue (generate, hash, store, return the
       plaintext once) and consume (look up by hash, refuse an expired or
       consumed one uniformly, mark consumed). The hashing convention follows
