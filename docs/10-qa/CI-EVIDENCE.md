@@ -1867,24 +1867,46 @@ closure.
 
 ## EPIC-17 Notifications — closure (2026-10-17)
 
-### The branches are pushed, and STILL there is no CI receipt — the reason is the trigger
+### The CI receipt — and the defect it found on its first run
 
-**Every branch this work produced was pushed to `origin` on 2026-10-18**, so it
-no longer lives only on one machine: EPIC-17's four, plus
-`fix/td-039-fiscal-job-id-colon`, `fix/notif-review-advisories`,
-`fix/notif-tail-advisories`, `feat/dat-007-password-recovery` and
-`feat/shel-001-staff-sign-in`.
+**The chain of pull requests was opened on 2026-10-18** (#126–#136, each
+targeting its parent, so each shows one reviewable slice), plus **#137**, an
+integration gate whose only purpose is to make CI observe the whole tree —
+because this repository's workflow triggers on `pull_request` TARGETING `main`,
+and only #126 and #137 do.
 
-**And `gh run list` is still empty, because this repository's CI does not run
-for them.** `.github/workflows/ci.yml` triggers on `push` to `main`/`master` and
-on `pull_request` TARGETING those branches — and nothing else. A feature
-branch's push therefore produces **no run at all**, which is why the evidence
-below is still the local gates rather than a receipt.
+```text
+PR #126  feat/epic-17-notifications -> main
+  run 39152439629 — all three checks PASS
+  DTE XSD validation 37s · Database migrations 1m10s · Lint, Typecheck, Test, Build 6m2s
 
-**The receipt arrives with the first pull request.** That is not a formality: a
-pull request is the only event this repository's CI is configured to observe, so
-"why is there no receipt" has an answer about a workflow trigger rather than
-about a missing run.
+PR #137  feat/portal-001-portal-sign-in -> main   (59 commits, the whole stack)
+  run 39155599732 — all three checks PASS
+  DTE XSD validation 38s · Database migrations 1m34s · Lint, Typecheck, Test, Build 6m6s
+```
+
+**The first run of #137 FAILED, and that is the most useful thing in this
+file.** It failed in the `Live PostgreSQL application-path isolation evidence`
+job with `Error: REDIS_URL is not set`, thrown by `NotificationsModule`'s
+producer factory while `Test.createTestingModule({imports: [AppModule]})`
+compiled. That suite already stubs the two other producers that read `REDIS_URL`
+at construction — the branding cleanup one and the fiscal submission one — and
+the notification delivery producer, added by EPIC-17, is the third. **The suite
+had never seen it, because EPIC-17 had never been pushed**: a job that boots
+`AppModule` against a live PostgreSQL had never booted with that module present.
+
+The fix is that third recording fake, committed as `861a6e5`, in the same shape
+as the other two. **Nothing local could have found it**: the API's own test
+harness stubs that producer as well, so every local gate was green. That is what
+a CI receipt is for, and this one earned its place by failing before it passed.
+
+**One local failure was an environment artifact, and it is recorded so the next
+reader does not chase it**: the FISC-011 range case inserts
+`'2018-04-30'::timestamptz` into a `date` column whose
+`validity_start_is_a_date` CHECK requires midnight **in UTC**. On a session
+whose timezone is `America/Asuncion` the literal lands at 04:00 UTC and the
+wrong check fires first; CI's PostgreSQL runs in UTC, where the case expects the
+floor check and gets it. Verified by the CI run passing that same case.
 
 ```text
 branch                            tip        work unit
