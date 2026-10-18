@@ -351,6 +351,23 @@ divergence, not an accident); the detail read has a denial state of its own; and
 both schedulers name the two tests their re-enqueue depends on. TD-046 stays
 `open` as a recorded decision.
 
+## Post-closure: TD-045's re-read found a real defect, and TD-046's foundation
+
+**TD-045**: the re-read the record itself asked for, and it found worse than the
+two lost advisories. `onConfirmed`/`onCancelled` had **no error guard**, the
+dispatcher is fire-and-forget, and no deployable installs a process-level
+rejection handler — so one failed settings read during one confirmation would
+have produced an unhandled rejection and **terminated the process**. Fixed, with
+the failure REPORTED (name + code) rather than swallowed. `R3-002`/`R3-003`
+remain identified only by id, and the record says so instead of inventing a
+reading.
+
+**TD-046 WU-A**: `notification_delivery_attempt`, append-only at the database,
+storing the bounded reason and never the provider's raw error. The live run
+corrected the migration's own claim: a delivery cannot be deleted at all, so the
+cascade is a fence rather than a workflow. **Still open**: nothing writes an
+attempt yet.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

@@ -74,6 +74,50 @@ opens:
    the failure path. Only failures would leave a delivery with attempts and no
    rows, which is a worse diagnostic than today's summary.
 
+## WU-A — the log's data foundation (2026-10-18)
+
+**The option chosen is the middle one**: a `notification_delivery_attempt` table
+that stores the **already-bounded reason** and the provider's raw error nowhere
+— the raw text is RESTRICTED material this epic keeps out of every stored field,
+and it would need sanitizing anyway (a provider's error can echo the destination
+or the body), at which point it is not raw and the diagnostic value is gone.
+
+```text
+notification_delivery_attempt
+  delivery_id · attempt_number · outcome (SENT | FAILED) · reason_code · reason_message
+  occurred_at · created_at
+  UNIQUE (delivery_id, attempt_number)     one row per attempt, ever
+  CHECK   outcome and its reason agree      a failure explains itself; a success carries none
+  CHECK   attempt_number >= 1               a number is a position in a sequence
+  TRIGGER append-only: UPDATE and DELETE refused outright
+```
+
+The row is **append-only at the database**, and the trigger refuses the edit and
+the removal with different messages because they are different mistakes. A log
+that can be edited is not a log, and this table's whole value is being the
+sequence that occurred.
+
+**What the live run established, and it is not what the migration first
+claimed**: a `notification_delivery` **cannot be deleted at all** — the
+aggregate carries its own `no_delete` guard (a delivery is cancelled, never
+removed). So the FK's `ON DELETE CASCADE` is a **fence, not a workflow**: it can
+never fire today, and the attempt log is in practice as permanent as its
+delivery. That is the correct property for a log, and both the migration and the
+schema now say so rather than implying a cascade that no path can trigger.
+
+Proven on a disposable PostgreSQL 16: all 47 migrations applied in one pass, a
+`SENT` attempt with no reason and a `FAILED` attempt with one were accepted, and
+the database refused a `SENT` carrying a reason, a `FAILED` with none, a
+duplicate attempt number, an attempt number of zero, an edit and a deletion —
+with the log still holding its rows after the refusals.
+
+**Still open, and the next unit's work**: nothing WRITES an attempt yet. The
+writer belongs in the delivery handler, on all three settle paths (`SENT`,
+`FAILED`, and the retryable failure), in the same transaction as the settle it
+records — and the attempt number is derivable without a second read, because the
+claim increments `attempt_count`: the number is the count that was read plus
+one.
+
 ## Related
 
 - `docs/02-stories/NOTIF-004-transactional-surface-and-permissions.md` — the
