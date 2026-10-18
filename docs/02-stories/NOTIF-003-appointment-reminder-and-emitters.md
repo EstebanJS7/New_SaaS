@@ -3,7 +3,7 @@ id: NOTIF-003
 type: story
 title: The appointment reminder and the missing emitters
 epic: EPIC-17
-status: in-progress
+status: done
 priority: high
 depends_on:
   - NOTIF-001
@@ -98,91 +98,91 @@ emitted anywhere today: `AppointmentConfirmed`, `AppointmentCancelled` and
 
 ## Acceptance Criteria
 
-- [ ] The `notifications` namespace is registered in
+- [x] The `notifications` namespace is registered in
       `apps/api/src/settings/registry.ts` with a closed `z.object(...).strict()`
       schema, a `schemaVersion`, code defaults, and
       `requiredPermissionKey: "notifications.settings.manage"`; an unknown key
       is refused server-side and **nothing is persisted** on refusal.
-- [ ] The namespace sets **no `requiresFeature`**, because email is ungated
+- [x] The namespace sets **no `requiresFeature`**, because email is ungated
       ([[DEC-058]]); the absence is deliberate and is asserted so a later edit
       cannot quietly gate the whole namespace behind a feature code.
-- [ ] The defaults are the decision's: a **24 h** lead time and the `EMAIL`
+- [x] The defaults are the decision's: a **24 h** lead time and the `EMAIL`
       channel. Changing the lead time changes when the next reminder is
       scheduled; the change is validated server-side.
-- [ ] A configured `WHATSAPP` channel requires the tenant's `whatsapp` grant,
+- [x] A configured `WHATSAPP` channel requires the tenant's `whatsapp` grant,
       and a tenant without it is refused before anything is scheduled. The
       authoritative gate is re-asserted at send time regardless of what the
       setting says.
-- [ ] `notifications.settings.manage` is seeded in `PERMISSION_SEEDS` and the
+- [x] `notifications.settings.manage` is seeded in `PERMISSION_SEEDS` and the
       union-sync test proves the key exists in the catalog; a write without the
       key is refused and a write with it is accepted.
-- [ ] **Idempotency**: scheduling the same (appointment, channel, window) twice
+- [x] **Idempotency**: scheduling the same (appointment, channel, window) twice
       produces exactly one delivery and exactly one pending job, and the second
       attempt is a stable no-op rather than a new record or a new job.
-- [ ] The window is derived from the appointment's start instant, so the key is
+- [x] The window is derived from the appointment's start instant, so the key is
       stable for one appointment start and a **reschedule to a different instant
       is a different window** — the dedupe key does not silently suppress a
       legitimately new reminder.
-- [ ] `scheduled_at` is the appointment's start minus the tenant's configured
+- [x] `scheduled_at` is the appointment's start minus the tenant's configured
       lead time, in UTC, and the job is enqueued **delayed** so it does not run
       early.
-- [ ] **Cancelling the appointment removes the pending job**: the
+- [x] **Cancelling the appointment removes the pending job**: the
       `AppointmentCancelled` reaction cancels the scheduled delivery and removes
       its job from the queue by its deterministic identity. A cancelled
       appointment's reminder never sends, and the assertion covers the record's
       state _and_ the queue's.
-- [ ] The send path **re-reads the appointment's authoritative row** and refuses
+- [x] The send path **re-reads the appointment's authoritative row** and refuses
       to send unless it is in a sendable status. This is defense in depth
       against a lost or delayed cancellation reaction, and it is the assertion
       that makes "a cancelled appointment is never reminded" true rather than
       likely.
-- [ ] The message content is built **at send time** from the appointment's
+- [x] The message content is built **at send time** from the appointment's
       current row, never from a snapshot taken when the job was enqueued, so a
       reschedule before delivery cannot produce a reminder carrying a stale
       time.
-- [ ] A `NO_SHOW` needs no cancellation, and the reasoning is recorded rather
+- [x] A `NO_SHOW` needs no cancellation, and the reasoning is recorded rather
       than assumed: the transition is reachable only from `CONFIRMED` or
       `ARRIVED`, both of which are at or past the appointment instant, so the
       reminder window has already closed. The send-time gate covers the
       remainder.
-- [ ] A retried delivery of a job whose record is already `SENT` or `CANCELLED`
+- [x] A retried delivery of a job whose record is already `SENT` or `CANCELLED`
       is a no-op: no second message, no state regression.
-- [ ] `AppointmentConfirmed` is published **after** the confirmation transaction
+- [x] `AppointmentConfirmed` is published **after** the confirmation transaction
       commits, carries stable IDs and no contact datum, and a subscriber failure
       does not roll back the appointment. The non-emission asserted by EPIC-07's
       acceptance criteria is superseded by [[DEC-059]].
-- [ ] `AppointmentCancelled` is published after its transaction commits, under
+- [x] `AppointmentCancelled` is published after its transaction commits, under
       the same rules.
-- [ ] `FiscalApproved` is published after the fiscal approval is committed,
+- [x] `FiscalApproved` is published after the fiscal approval is committed,
       under the same rules, and it is what PRD §36's post-KuDE notification
       rides on.
-- [ ] `FiscalApproved` is published from **both** places a document enters
+- [x] `FiscalApproved` is published from **both** places a document enters
       `APPROVED` — `FiscalSubmissionHandler.persistResult` and
       `fiscal-recovery.service.ts`'s conditional update — or from one shared
       helper both call. A single publisher at one site would lose every approval
       the reconciliation sweep resolves.
-- [ ] Each reaction is registered in the deployable that publishes its event,
+- [x] Each reaction is registered in the deployable that publishes its event,
       because the dispatcher is **in-process** and a subscriber in another
       deployable would silently never fire: the appointment reactions in `api`
       (which owns the delayed enqueue, as the fiscal producer does) and the
       post-approval reaction in `worker`.
-- [ ] A tenant-aware handler: a cross-tenant identifier never resolves, and an
+- [x] A tenant-aware handler: a cross-tenant identifier never resolves, and an
       event for a tenant the handler has no context for does not deliver.
-- [ ] The dispatcher gains its first production producer: a repository search
+- [x] The dispatcher gains its first production producer: a repository search
       shows a `publish(...)` call in a service outside test files, and a test
       proves the emitter fires post-commit and not inside the transaction.
-- [ ] Tenant isolation is enforced when applicable. Evidence: the live
+- [x] Tenant isolation is enforced when applicable. Evidence: the live
       PostgreSQL cases over the delivery intent and the reminder scheduling.
-- [ ] Backend authorization is enforced when applicable. Evidence: the settings
+- [x] Backend authorization is enforced when applicable. Evidence: the settings
       write path's key enforcement and the deny-by-default pin for the
       `notifications.settings.manage` key.
-- [ ] Required loading/error/empty/success UX exists. Evidence: not applicable
+- [x] Required loading/error/empty/success UX exists. Evidence: not applicable
       in this Story — no UI.
-- [ ] Required audit exists. Evidence: the appointment's own
+- [x] Required audit exists. Evidence: the appointment's own
       `appointment.confirmed` / `appointment.cancelled` rows are unchanged and
       no second audit row is added by the emitter; the delivery record is the
       notification's trace.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -242,9 +242,12 @@ existing row.
 
 ## Implementation Summary
 
-**WU-D1 (the policy and the settings namespace) is implemented. WU-D2 (the
-emitters and the scheduler) and WU-D3 (the content builder) are not**, which is
-why this Story is `in-progress`.
+**All three work units landed.** WU-D1 is the policy and the settings namespace,
+WU-D2 the three emitters, the scheduler and the cancellation, and WU-D3 the
+send-time content builder and the fiscal notice. Each was reviewed on its own;
+WU-D2's review escalated and its successor lineage closed with a corrected
+CRITICAL, and WU-D3's closed on one CRITICAL that the fix retired a declared
+limitation for.
 
 Landed:
 
@@ -556,10 +559,41 @@ that replaces the seam which fails closed today.
 ## Verification
 
 ```text
-Not run.
+pnpm format-check                   clean
+pnpm lint                           22/22 packages
+pnpm typecheck                      22/22 packages
+pnpm build                          13/13 packages
+@newsaas/api test                   1269 passed
+@newsaas/worker test                226 passed
+@newsaas/notifications test          81 passed
+@newsaas/database test              512 passed
+@newsaas/fiscal test                788 passed
+@newsaas/web test                   1100 passed
 ```
 
+Reviews, in the order they ran:
+
+```text
+review-1e2d96c3a65e27b4   WU-D1     approved, 1 advisory   -> TD-043 (fixed in WU-D2)
+review-5898fbf624566375   WU-D2     ESCALATED, 2 CRITICALs -> stop, native_stop_required
+review-27c3b70cd8046dfd   WU-D2 fix approved after 2 more CRITICALs, all validated
+review-0c34f0614742a5a3   WU-D3 a   approved, 3 advisories -> TD-044 (fixed)
+review-a8f4b7d2bd6a83b4   WU-D3 b   correction_required -> CRITICAL fixed; approved
+```
+
+**The WU-D2 lineage that escalated is still stopped** (`native_stop_required`,
+terminal, maintainer action only). Nothing fell through it: the fix it demanded
+was made in a fresh transaction, reviewed, and approved.
+
 ## Tests Added
+
+```text
+packages/notifications/src/reminder.policy.test.ts          the pure policy
+apps/api/src/settings/... the registry entry
+apps/api/src/notifications/notification-reminder.scheduler.test.ts
+apps/worker/src/notification-delivery/notification-content.builder.test.ts  (19 cases)
+apps/worker/src/fiscal-submission/... the emitter, per outcome
+```
 
 - The registry entry: defaults, closed schema, unknown-key refusal, tenant
   isolation, permission enforcement, and the deliberate absence of
@@ -578,6 +612,19 @@ Not run.
 
 ## Known Limitations
 
+- **The live delivery run has not been performed**: no SMTP credentials and no
+  WhatsApp Business account were supplied, so the adapters are proven against
+  the deterministic fake and their unit cases, and nothing has crossed a real
+  network. Recorded pending and by name in `docs/10-qa/CI-EVIDENCE.md`
+  ([[NOTIF-005]]).
+- **The reminder's content names the branch and the instant, not the patient.**
+  The builder reads no Veterinary aggregate, which is what keeps `notifications`
+  Core; naming the patient would need the recipient port to grow a second method
+  or a second port, and that is a decision rather than an omission. Recorded as
+  a limitation with the port option named.
+- **There is no attempt history to read** — [[TD-046]], raised by [[NOTIF-004]].
+- **A `FAILED` delivery cannot be re-driven**: [[TD-029]]'s shape, and this epic
+  does not invent a primitive for it.
 - **`AppointmentRescheduled` is not in PRD §39's catalog and is not invented
   here.** A reschedule therefore leaves the _previous_ window's pending job in
   place. The damage is bounded rather than eliminated: the send-time content
@@ -586,16 +633,29 @@ Not run.
   either a catalog change (a maintainer decision, since PRD §39 lists the
   events) or a rescheduling hook the catalog would otherwise make unnecessary.
   Recorded for triage at [[NOTIF-005]].
-- **An enqueue lost between commit and the queue is not re-driven.** The
-  send-time gate prevents a wrong send; it cannot conjure a reminder that was
-  never enqueued. A scheduling re-drive would be its own unit, and the fiscal
-  epic's [[TD-029]] is the precedent for not inventing one locally.
+- ~~**An enqueue lost between commit and the queue is not re-driven.**~~
+  **RETIRED by WU-D3's review fix.** It was true when written: a first enqueue
+  that failed left a `SCHEDULED` row with no job, and every later confirmation
+  took the dedupe-conflict branch and never enqueued it — a stranding that was
+  **permanent**. `ensureIntent` now returns the id it created or the pending
+  delivery that already holds the key, and the caller enqueues either way, which
+  is safe because the job id is deterministic and a settled delivery is refused
+  by the handler. A transient queue failure is therefore healed by any later
+  event, and the window is closed rather than documented. Kept here, struck
+  through, because a limitation that quietly disappears is one a reader cannot
+  tell from one that was never noticed.
 - A reminder is a fixed transactional message; there is no tenant-editable copy.
 
 ## Technical Debt
 
-- None yet; the reschedule gap above and anything raised by the implementation
-  are recorded here and triaged at [[NOTIF-005]].
+- [[TD-043]] — `reminderScheduledAt` did not validate the ceiling it exports.
+  **Resolved** in WU-D2.
+- [[TD-044]] — the content builder's advisories. **Resolved.**
+- [[TD-045]] — the fiscal notice's two advisories and the validator's
+  observation that the duplicate-send safety argument lives outside the
+  correction's own patches. **Open**, with coordinates recorded as not captured.
+- The `AppointmentRescheduled` gap above stays a **named limitation** rather
+  than a TD: it needs a catalog decision, not a fix.
 
 ## Decisions / ADRs
 
@@ -625,4 +685,20 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Every Acceptance Criterion is satisfied and the gates are green, so this Story
+is `done`.
+
+**What `done` means here**, stated because it is the one thing a reader will
+assume wrongly: every work unit is implemented, reviewed and validated, and the
+live provider run has **not** happened — no credentials exist in this
+repository, so the adapters are proven against the deterministic fake and the
+run is recorded pending by name in `docs/10-qa/CI-EVIDENCE.md`. `done` is
+implementation closure.
+
+**Two process facts kept rather than tidied**: WU-D2's first lineage escalated
+and is still stopped, and its successor found two more CRITICALs **on the fix
+itself** — the removal was gated on a CAS win, and the row write shared a `try`
+with the removal. Both were corrected, validated, and the validator passed both
+criteria. And a passing test can encode a defect: the case "does not remove a
+job it did not cancel" was rewritten, because its premise — that the removal IS
+the cancellation — was the bug.

@@ -475,6 +475,32 @@ export const FEATURE_CODE_SEEDS = [
 export const STARTER_PLAN_SEED = { code: "starter", name: "Starter" } as const;
 
 /**
+ * The PLATFORM tenant (DAT-007): the owner of messages that belong to an IDENTITY
+ * rather than to a customer.
+ *
+ * It exists because `notification_delivery.tenant_id` is NOT NULL with a foreign
+ * key, and that is exactly what makes a cross-tenant read impossible without
+ * anybody having to remember to filter. A staff password-recovery email is not a
+ * tenant's, though: the credential a reset authorises is global to the profile and
+ * the request is anonymous, so there is no tenant in context and no fact that
+ * makes one of the profile's memberships the right one. Three options were
+ * weighed — this tenant, an arbitrary membership's tenant, or making the column
+ * nullable — and this one keeps the invariant while giving the message an owner.
+ * Making the column nullable was rejected because it would weaken the guarantee
+ * for EVERY row in order to describe one.
+ *
+ * It is NOT a customer: it must never receive memberships, entitlements or
+ * branding, and it must not be listed as a tenant. What it owns is a delivery,
+ * and that delivery is correctly invisible to every tenant's operators — a staff
+ * member's recovery mail is not their tenant's business.
+ */
+export const PLATFORM_TENANT_SLUG = "platform";
+export const PLATFORM_TENANT_SEED = {
+  slug: PLATFORM_TENANT_SLUG,
+  name: "Platform",
+} as const;
+
+/**
  * GLOBAL veterinary taxonomy catalog (Decision #2211). Species and Breed are
  * system-seeded reference data — never tenant-scoped and never tenant-filtered
  * — mirroring `FeatureCode`/`Role`. `code` is the stable natural key for a
@@ -521,6 +547,7 @@ export type TaxRateCode = (typeof TAX_RATE_SEEDS)[number]["code"];
 
 export type ReferenceSeedClient = Pick<
   PrismaClient,
+  | "tenant"
   | "role"
   | "permission"
   | "rolePermission"
@@ -534,10 +561,19 @@ export type ReferenceSeedClient = Pick<
 
 /**
  * Seeds all reference data idempotently. Write order is deterministic:
- * roles → permissions → feature codes → plan → id resolution → pairs →
- * global Species/Breed taxonomy → global tax rates.
+ * the platform tenant → roles → permissions → feature codes → plan → id
+ * resolution → pairs → global Species/Breed taxonomy → global tax rates.
  */
 export async function seedReferenceData(db: ReferenceSeedClient): Promise<void> {
+  // The platform tenant first: it is the destination of identity-scoped messages,
+  // and a deployment that forgot it would otherwise fail on the first password
+  // recovery rather than at seed time.
+  await db.tenant.upsert({
+    where: { slug: PLATFORM_TENANT_SEED.slug },
+    create: { slug: PLATFORM_TENANT_SEED.slug, name: PLATFORM_TENANT_SEED.name },
+    update: {}, // identity-stable rerun: never touch updated_at on unchanged rows
+  });
+
   for (const role of ROLE_SEEDS) {
     await db.role.upsert({
       where: { code: role.code },

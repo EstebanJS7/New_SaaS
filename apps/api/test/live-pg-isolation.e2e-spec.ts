@@ -34,6 +34,11 @@ import {
   FISCAL_SUBMISSION_PRODUCER,
   type FiscalSubmissionProducer,
 } from "../src/fiscal/fiscal-submission.producer.js";
+import {
+  NOTIFICATION_DELIVERY_PRODUCER,
+  type NotificationDeliveryJob,
+  type NotificationDeliveryProducer,
+} from "@newsaas/notifications";
 import { allocateDocumentNumber, type FiscalSubmissionJob } from "@newsaas/fiscal";
 import {
   createCustomerFiscalReader,
@@ -778,6 +783,19 @@ interface RecordingFiscalSubmissionProducer extends FiscalSubmissionProducer {
   readonly enqueued: FiscalSubmissionJob[];
 }
 
+/**
+ * Records notification deliveries instead of touching Redis, for exactly the same reason as the
+ * two producers above: `NotificationsModule`'s factory reads `REDIS_URL` at construction and
+ * throws without it, so `AppModule` would fail to compile in this suite. Adding the THIRD
+ * producer to this list is what CI's live-PostgreSQL job caught the first time EPIC-17 was
+ * pushed — the suite had never booted with that module present, because the work had never left
+ * the machine that wrote it.
+ */
+interface RecordingNotificationDeliveryProducer extends NotificationDeliveryProducer {
+  readonly enqueued: { readonly job: NotificationDeliveryJob; readonly scheduledAt: Date }[];
+  readonly cancelled: string[];
+}
+
 function adminDatabaseUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
   url.pathname = "/postgres";
@@ -1285,6 +1303,19 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     },
   };
 
+  const notificationDeliveryProducer: RecordingNotificationDeliveryProducer = {
+    enqueued: [],
+    cancelled: [],
+    enqueue: (job, scheduledAt) => {
+      notificationDeliveryProducer.enqueued.push({ job, scheduledAt });
+      return Promise.resolve();
+    },
+    cancel: (notificationDeliveryId) => {
+      notificationDeliveryProducer.cancelled.push(notificationDeliveryId);
+      return Promise.resolve();
+    },
+  };
+
   beforeAll(async () => {
     previousDatabaseUrl = process.env.DATABASE_URL;
     baseDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL ?? "";
@@ -1319,6 +1350,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       .useValue(cleanupProducer)
       .overrideProvider(FISCAL_SUBMISSION_PRODUCER)
       .useValue(fiscalSubmissionProducer)
+      .overrideProvider(NOTIFICATION_DELIVERY_PRODUCER)
+      .useValue(notificationDeliveryProducer)
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(

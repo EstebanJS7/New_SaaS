@@ -116,6 +116,21 @@ email flows or Catalog scope.
 
 ## Stories
 
+**Reopened on 2026-10-18 and closed again the same day** for one Story — the
+same hole [[SHELL-001]] closed on the staff side:
+
+```text
+PORTAL-001 The portal sign-in surface
+```
+
+The epic delivered the portal's identity, boundary, reads and UI — and no page
+anywhere that lets a customer sign in. Its BFF refuses `POST /portal/login`
+deliberately, because every route it serves RELAYS an established session while
+login is the hop that ESTABLISHES one; the Story adds that hop and keeps the
+refusal of `logout`. The epic uses the `PORTAL-` prefix because it has no Story
+files at all: it was delivered as a chained SDD change, and this is its first
+standalone Story.
+
 No standalone Story file: the epic was delivered as the chained SDD change
 `openspec/changes/archive/2026-09-21-epic-08/` (archived at `be2c07f`) — WU1
 data/settings → WU2 identity/boundary → WU3 read/proxy → WU4 booking/profile/UI
@@ -203,3 +218,8 @@ acceptance-criteria map above.
   recently updated active address, the form's convenience-only `maxLength` (the
   server remains authoritative), and the registered but unused
   `bookingRequiresApproval` setting.
+
+**PORTAL-001 is `done`** and the epic is closed again. What it leaves open,
+named rather than implied: a customer who forgets their password still has no
+way back, and the portal's sign-in has not been exercised live against a running
+API.

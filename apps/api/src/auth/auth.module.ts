@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { AuditModule } from "../audit/audit.module.js";
+import { ApplicationEventsModule } from "../events/application-events.module.js";
 import { ContextModule } from "../context/context.module.js";
 import { AUTH_CONFIG, readAuthConfig, type AuthConfig } from "./auth.config.js";
 import { AuthController } from "./auth.controller.js";
@@ -8,6 +9,9 @@ import { AuthGuard } from "./auth.guard.js";
 import { AuthService } from "./auth.service.js";
 import { CredentialService } from "./credential.service.js";
 import { LoginRateLimiterService } from "./login-rate-limiter.service.js";
+import { PasswordRecoveryService } from "./password-recovery.service.js";
+import { PasswordResetService } from "./password-reset.service.js";
+import { PasswordResetTokenService } from "./password-reset-token.service.js";
 import { SessionService } from "./session.service.js";
 
 /**
@@ -22,12 +26,23 @@ import { SessionService } from "./session.service.js";
 @Module({
   // AuditModule supplies the append-only writer AuthService emits login
   // events through (design D9); ContextModule carries the request context.
-  imports: [ContextModule, AuditModule],
+  // Deliberately NOT NotificationsModule: a recovery request publishes an event and
+  // the notification module's subscriber creates the delivery (DAT-007's decision).
+  // Identity therefore knows no queue, no producer and no delivery table.
+  //
+  // ApplicationEventsModule IS imported explicitly even though it is `@Global`: a
+  // global module is only global inside the graph that composes it, and this module
+  // is resolved on its own by harnesses that boot AuthModule without AppModule. It is
+  // static, so Nest reuses one instance across every importer.
+  imports: [ContextModule, AuditModule, ApplicationEventsModule],
   controllers: [AuthController],
   providers: [
     CredentialService,
     SessionService,
     LoginRateLimiterService,
+    PasswordResetTokenService,
+    PasswordRecoveryService,
+    PasswordResetService,
     AuthService,
     AuthGuard,
     { provide: AUTH_CONFIG, useFactory: (): AuthConfig => readAuthConfig(process.env) },

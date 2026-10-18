@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The read surface's two advisories — a 404 for a bad filter, and an invisible
   denial on the detail read
-status: open
+status: resolved
 severity: low
 owner: notifications
 related_epics:
@@ -73,6 +73,46 @@ outlives the permission.
 A future unit should either give the detail its own denial state or drop the
 `forbiddenDetail` branch and let the generic failure message stand, since "it
 could not be loaded" is true either way.
+
+## Resolution (2026-10-17)
+
+**R3-001 — fixed, and the refusal is unchanged.** The BFF's guard now answers
+**`400 VALIDATION_FAILED`** with the message _"This notification query is not
+supported."_ The key is still never forwarded and the accepted keys are still
+not named — only the vocabulary changed, so the two layers of one request stop
+disagreeing about what kind of failure it was. The case that asserted the `404`
+now asserts the `400` and the code, and additionally that the message does not
+name the accepted keys.
+
+**A divergence this fix makes visible rather than creates**: the **fiscal BFF
+still answers `404`** for an unlisted query key
+(`apps/web/src/app/api/fiscal/[[...path]]/route.ts`, `resolveFiscalQuery`
+returning `null`). That is pre-existing behavior in a closed epic, and this unit
+does not change it. It is named here so the difference is a known one:
+
+```text
+BFF                        unlisted query key     unlisted path
+-------------------------- ---------------------- -----------------
+notifications (after fix)  400 VALIDATION_FAILED  404 NOT_FOUND
+fiscal (pre-existing)      404 NOT_FOUND          404 NOT_FOUND
+```
+
+The next unit that touches either BFF should decide which column is right rather
+than letting the table grow by accident.
+
+**R3-002 — fixed by giving the detail read a state of its own.** The detail
+panel now has `permissionDenied` and renders
+`notification-detail-permission-denied`; the surface passes the denial through
+instead of swallowing it into `null`. The old behavior told a reader to "select
+a delivery to see its detail" about a delivery they had just selected, which is
+a lie rather than a gap — benign only while both reads carry the same
+permission. Its own case asserts the denial renders and that neither the empty
+nor the error state is shown.
+
+**Reviewed by `review-75fc1f73824e8c54`** — medium tier, one lens
+(`review-reliability`), 11 paths, 187 changed lines — which **approved with no
+findings at all**, so there are no new advisories to record and nothing to
+interpret. Authority burned by the exact acknowledgement.
 
 ## Related
 

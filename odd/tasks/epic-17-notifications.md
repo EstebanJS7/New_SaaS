@@ -320,6 +320,54 @@ advisories are [[TD-047]], with readings.
 Also corrected: the Story declared "one additive migration" for the permission
 key; keys are seed-owned reference data here, so no migration is involved.
 
+## WU-F (NOTIF-005): EPIC-17 closed
+
+Documentation only, and no behavior changed. `docs/05-modules/Notifications.md`
+(the module doc, from implemented behavior), the index row, the epic's
+CI-evidence block (**no CI receipt exists — no branch was pushed**, and the live
+delivery run is **pending by name** with the four missing operator inputs), the
+changelog entry, the roadmap row to `done`, the epic file's AC-to-receipt
+mapping plus the closure searches, and the debt triage.
+
+**All five Stories are `done`; the epic is `done`.** Open debt carries
+decisions, not deferrals: TD-046 (a summary is the right shape), TD-047
+(non-blocking by the review's own statement), TD-045 (coordinates lost to a
+process slip, so re-read the schedulers rather than guess). TD-004 moves from
+blocked to **unblocked in principle** and stays `open`, with the two things its
+Story must build named so nobody finds them late.
+
+Review: `review-cb330294ce206b4d` closed **`approved` with zero lenses**
+(`non_executable_only`, low tier, 10 paths, 977 lines, all documentation) and
+its acknowledgement burned the authority. The same closure WU-A's docs-only unit
+received.
+
+### Post-closure tails resolved
+
+`fix/notif-tail-advisories` (commit `5440ce7`): **TD-045** and **TD-047**
+resolved, reviewed by `review-75fc1f73824e8c54` (medium, one lens) which
+**approved with no findings**. The BFF now answers `400` for an unlisted query
+key so the two layers of one request agree (the fiscal BFF's `404` is a named
+divergence, not an accident); the detail read has a denial state of its own; and
+both schedulers name the two tests their re-enqueue depends on. TD-046 stays
+`open` as a recorded decision.
+
+## Post-closure: TD-045's re-read found a real defect, and TD-046's foundation
+
+**TD-045**: the re-read the record itself asked for, and it found worse than the
+two lost advisories. `onConfirmed`/`onCancelled` had **no error guard**, the
+dispatcher is fire-and-forget, and no deployable installs a process-level
+rejection handler — so one failed settings read during one confirmation would
+have produced an unhandled rejection and **terminated the process**. Fixed, with
+the failure REPORTED (name + code) rather than swallowed. `R3-002`/`R3-003`
+remain identified only by id, and the record says so instead of inventing a
+reading.
+
+**TD-046 WU-A**: `notification_delivery_attempt`, append-only at the database,
+storing the bounded reason and never the provider's raw error. The live run
+corrected the migration's own claim: a delivery cannot be deleted at all, so the
+cascade is a fence rather than a workflow. **Still open**: nothing writes an
+attempt yet.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

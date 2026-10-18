@@ -79,6 +79,16 @@ function portalCookieStore(value: string | undefined): { get: (name: string) => 
   };
 }
 
+/** A JSON body as the byte stream a real request exposes. */
+function bodyStream(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+}
+
 async function callGet(request: MockNextRequest): Promise<Response> {
   return GET(request as unknown as Parameters<typeof GET>[0]);
 }
@@ -307,7 +317,6 @@ describe("/api/portal proxy", () => {
     "/api/portal",
     "/api/portal/",
     "/api/portal/invoices",
-    "/api/portal/login",
     "/api/portal/pets/not-a-uuid",
     `/api/portal/pets/${PET_ID}/clinical`,
     "/api/portal/pets/%2e%2e/admin",
@@ -315,6 +324,55 @@ describe("/api/portal proxy", () => {
     const response = await callGet(mockNextRequest({ pathname }));
 
     expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * [[PORTAL-001]]: the ONE shape where the session crosses OUTBOUND.
+   *
+   * It used to be listed among the refused paths, and the refusal was about the proxy's
+   * session model rather than about the route: every other route RELAYS a session the
+   * browser already holds, and login is the hop that ESTABLISHES one.
+   */
+  it("forwards a portal login with NO cookie and relays the Set-Cookie back", async () => {
+    // A stale portal cookie is present, and it must NOT travel: the browser is asking FOR a
+    // session, and the route that issues one has no use for the one it happens to hold.
+    cookiesMock.mockResolvedValue(portalCookieStore("stale-portal-token"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ portal: { portalAccessId: "pa-1" } }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "set-cookie": `${PORTAL_SESSION_COOKIE}=fresh; Path=/; HttpOnly; SameSite=Lax`,
+        },
+      })
+    );
+
+    const response = await callPost(
+      mockNextRequest({ pathname: "/api/portal/login", body: bodyStream('{"tenantSlug":"acme"}') })
+    );
+
+    expect(fetchUrl()).toBe("http://localhost:3001/portal/login");
+    expect(fetchInit().headers).toEqual({ "content-type": "application/json" });
+    expect(String(fetchInit().headers.cookie ?? "")).not.toContain("stale-portal-token");
+    // VERBATIM, attributes included: a proxy that rebuilt the header could drop HttpOnly.
+    expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(response.headers.get("set-cookie")).toContain(`${PORTAL_SESSION_COOKIE}=fresh`);
+  });
+
+  it("still refuses logout, which revokes a session this proxy has no business ending", async () => {
+    const response = await callPost(
+      mockNextRequest({ pathname: "/api/portal/logout", body: bodyStream("{}") })
+    );
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses GET on the login shape, since it is a method it does not support", async () => {
+    const response = await callGet(mockNextRequest({ pathname: "/api/portal/login" }));
+    // `405`, the proxy's own answer for a known path reached with the wrong method — and the
+    // distinction is real: the path exists, the method does not.
+    expect(response.status).toBe(405);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import argon2 from "argon2";
 import { AUTH_CONFIG, type AuthConfig } from "./auth.config.js";
+import { assertPasswordAcceptable } from "./password.policy.js";
 
 /**
  * Password hashing boundary (design D4, spec: identity / Argon2id storage).
@@ -27,7 +28,20 @@ export class CredentialService {
   }
 
   /** Derives an argon2id hash (random salt embedded in the PHC string). */
-  hash(password: string): Promise<string> {
+  /**
+   * Hashes a password, refusing one the policy rejects ([[TD-048]]).
+   *
+   * The policy check lives HERE rather than at the endpoint that called this, because
+   * every path that sets a password goes through this boundary: a rule applied by one
+   * caller is a rule the other callers do not have. It runs before argon2, so a refused
+   * password costs nothing.
+   */
+  async hash(password: string): Promise<string> {
+    // `async` on purpose, and not only for style: this is the one place that can throw
+    // SYNCHRONOUSLY, and a promise-returning method that throws instead of rejecting is
+    // a method whose callers' `.catch()` never runs. Validation failures are part of
+    // this contract, so they reject.
+    assertPasswordAcceptable(password);
     return argon2.hash(password, this.options);
   }
 

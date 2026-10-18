@@ -56,8 +56,39 @@ interface DeliveryDelegate {
   }): Promise<{ count: number }>;
 }
 
+interface AttemptDelegate {
+  create(args: {
+    readonly data: {
+      readonly deliveryId: string;
+      readonly attemptNumber: number;
+      readonly outcome: "SENT" | "FAILED";
+      readonly reasonCode?: string;
+      readonly reasonMessage?: string;
+      readonly occurredAt: Date;
+    };
+  }): Promise<{ id: string }>;
+}
+
+/**
+ * What a settle and its attempt row share: the two delegates the transaction writes.
+ *
+ * The transaction is the point. An attempt row records what an attempt DID, and a settle
+ * records what that did to the delivery — a commit that wrote one without the other would
+ * be a log that disagrees with the record it belongs to ([[TD-046]]).
+ */
+export interface NotificationDeliveryTx {
+  notificationDelivery: Pick<DeliveryDelegate, "updateMany">;
+  notificationDeliveryAttempt: AttemptDelegate;
+}
+
 export interface NotificationDeliveryPrisma {
   notificationDelivery: DeliveryDelegate;
+  /**
+   * The attempt log's writer ([[TD-046]]). It has no read here: the worker records what it
+   * did, and the sequence is read by the staff surface, not by the sender.
+   */
+  notificationDeliveryAttempt: AttemptDelegate;
+  $transaction<T>(run: (tx: NotificationDeliveryTx) => Promise<T>): Promise<T>;
 }
 
 /** The statuses this handler must never touch: the row is resolved or frozen. */
@@ -354,17 +385,23 @@ export class NotificationDeliveryHandler {
     delivery: DeliveryRecord,
     providerReference: string | null
   ): Promise<void> {
-    await this.prisma.notificationDelivery.updateMany({
-      where: { id: delivery.id, tenantId: delivery.tenantId, status: "SENDING" },
-      data: {
-        status: "SENT",
-        sentAt: new Date(),
-        lastErrorCode: null,
-        lastErrorMessage: null,
-        // The provider's own handle, written only on entry to SENT: the row is
-        // frozen from here, so it can never be rewritten or cleared.
-        ...(providerReference === null ? {} : { providerReference }),
-      },
+    await this.prisma.$transaction(async (tx) => {
+      const settled = await tx.notificationDelivery.updateMany({
+        where: { id: delivery.id, tenantId: delivery.tenantId, status: "SENDING" },
+        data: {
+          status: "SENT",
+          sentAt: new Date(),
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          // The provider's own handle, written only on entry to SENT: the row is
+          // frozen from here, so it can never be rewritten or cleared.
+          ...(providerReference === null ? {} : { providerReference }),
+        },
+      });
+      // ONLY when this call applied the settle. A lost CAS belongs to another worker, and
+      // recording an attempt for it would put somebody else's attempt in this log.
+      if (settled.count !== 1) return;
+      await this.recordAttempt(tx, delivery, { outcome: "SENT" });
     });
   }
 
@@ -375,12 +412,20 @@ export class NotificationDeliveryHandler {
   ): Promise<void> {
     const code = truncate(failure.reasonCode);
     const message = truncate(failure.reason);
-    await this.prisma.notificationDelivery.updateMany({
-      // Exactly the claim state. If the claim was stolen, this writes nothing
-      // and the owner decides — a settle that matched a wider set could clobber
-      // an attempt somebody else is running.
-      where: { id: delivery.id, tenantId: delivery.tenantId, status: "SENDING" },
-      data: { status: "FAILED", lastErrorCode: code, lastErrorMessage: message },
+    await this.prisma.$transaction(async (tx) => {
+      const settled = await tx.notificationDelivery.updateMany({
+        // Exactly the claim state. If the claim was stolen, this writes nothing
+        // and the owner decides — a settle that matched a wider set could clobber
+        // an attempt somebody else is running.
+        where: { id: delivery.id, tenantId: delivery.tenantId, status: "SENDING" },
+        data: { status: "FAILED", lastErrorCode: code, lastErrorMessage: message },
+      });
+      if (settled.count !== 1) return;
+      await this.recordAttempt(tx, delivery, {
+        outcome: "FAILED",
+        reasonCode: code,
+        reasonMessage: message,
+      });
     });
   }
 
@@ -398,14 +443,53 @@ export class NotificationDeliveryHandler {
     delivery: DeliveryRecord,
     failure: { readonly reasonCode: string; readonly reason: string }
   ): Promise<never> {
-    await this.prisma.notificationDelivery.updateMany({
-      where: { id: delivery.id, tenantId: delivery.tenantId, status: "SENDING" },
-      data: {
-        lastErrorCode: truncate(failure.reasonCode),
-        lastErrorMessage: truncate(failure.reason),
-      },
+    const code = truncate(failure.reasonCode);
+    const message = truncate(failure.reason);
+    await this.prisma.$transaction(async (tx) => {
+      const recorded = await tx.notificationDelivery.updateMany({
+        where: { id: delivery.id, tenantId: delivery.tenantId, status: "SENDING" },
+        data: { lastErrorCode: code, lastErrorMessage: message },
+      });
+      if (recorded.count !== 1) return;
+      // A retryable failure IS an attempt, and the sequence is exactly what an operator
+      // would want here: three tries, three reasons. The delivery stays `SENDING` and its
+      // own reason field holds the LAST one, which is why the previous two would otherwise
+      // be lost.
+      await this.recordAttempt(tx, delivery, {
+        outcome: "FAILED",
+        reasonCode: code,
+        reasonMessage: message,
+      });
     });
     throw new Error(`Notification delivery ${delivery.id} failed and will be retried.`);
+  }
+
+  /**
+   * Writes the attempt the settle just recorded ([[TD-046]]).
+   *
+   * The number is DERIVED rather than read: `claim` incremented `attempt_count` in the
+   * same statement that took the lease, so this attempt is the count that was read plus
+   * one. A second read would be a second thing to keep in step with the claim.
+   *
+   * `occurredAt` is now, which is the instant the attempt finished — the claim's own
+   * `lastAttemptAt` is when it started, and the pair is what lets an operator see how long
+   * a provider took.
+   */
+  private async recordAttempt(
+    tx: NotificationDeliveryTx,
+    delivery: DeliveryRecord,
+    outcome:
+      | { readonly outcome: "SENT" }
+      | { readonly outcome: "FAILED"; readonly reasonCode: string; readonly reasonMessage: string }
+  ): Promise<void> {
+    await tx.notificationDeliveryAttempt.create({
+      data: {
+        deliveryId: delivery.id,
+        attemptNumber: delivery.attemptCount + 1,
+        occurredAt: new Date(),
+        ...outcome,
+      },
+    });
   }
 
   private isLeaseAbandoned(delivery: DeliveryRecord): boolean {

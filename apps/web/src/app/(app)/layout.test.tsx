@@ -12,6 +12,14 @@ vi.mock("next/headers", () => ({
   }),
 }));
 
+const redirect = vi.fn((path: string) => {
+  // `next/navigation`'s redirect works by THROWING a sentinel the framework catches, so a
+  // mock that merely records would let the layout render and the test would assert the
+  // wrong thing.
+  throw new Error(`NEXT_REDIRECT:${path}`);
+});
+vi.mock("next/navigation", () => ({ redirect: (path: string) => redirect(path) }));
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import AppHomePage from "./app/page";
@@ -29,6 +37,34 @@ function getContentRegion(): HTMLElement {
 }
 
 describe("AppShellLayout", () => {
+  /**
+   * The gate ([[SHELL-001]]): a signed-out visitor is sent to `/login` rather than shown an
+   * empty shell, and the asymmetry with an outage is the point — only a `401` proves there is
+   * no session.
+   */
+  it("sends a visitor to /login when the private read says 401", async () => {
+    redirect.mockClear();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(AppShellLayout({ children: null })).rejects.toThrow("NEXT_REDIRECT:/login");
+    expect(redirect).toHaveBeenCalledWith("/login");
+  });
+
+  it("does NOT send a signed-in visitor anywhere when branding is merely broken", async () => {
+    redirect.mockClear();
+    // A 500, a timeout or an unparseable body is an OUTAGE. Treating it as "signed out" would
+    // log every staff member out the moment branding has a bad minute.
+    global.fetch = vi.fn().mockRejectedValue(new Error("connection refused"));
+
+    // Resolves rather than throwing: the shell renders with the product preset.
+    await expect(AppShellLayout({ children: null })).resolves.toBeDefined();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
     window.localStorage.clear();

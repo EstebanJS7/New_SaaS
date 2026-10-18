@@ -13,6 +13,7 @@ import {
   NOTIFICATION_DELIVERY_STATUSES,
   type NotificationChannel,
   type NotificationDelivery,
+  type NotificationDeliveryDetail,
   type NotificationDeliveryStatus,
 } from "./notifications-api";
 import {
@@ -163,8 +164,17 @@ export function NotificationDeliveryListPanel({
 }
 
 interface DeliveryDetailPanelProps {
-  readonly delivery: NotificationDelivery | null;
+  readonly delivery: NotificationDeliveryDetail | null;
   readonly isLoading: boolean;
+  /**
+   * A denial is its own state, not a failure to retry ([[TD-047]], review R3-002).
+   *
+   * Until this existed the detail read fell through to its EMPTY state when it was
+   * refused, telling the reader "select a delivery to see its detail" about a delivery
+   * they had just selected. Benign while both reads carry the same permission, and a
+   * lie the moment they diverge.
+   */
+  readonly permissionDenied: boolean;
   readonly errorMessage: string | null;
 }
 
@@ -172,6 +182,7 @@ interface DeliveryDetailPanelProps {
 export function NotificationDeliveryDetailPanel({
   delivery,
   isLoading,
+  permissionDenied,
   errorMessage,
 }: DeliveryDetailPanelProps): JSX.Element {
   return (
@@ -184,6 +195,13 @@ export function NotificationDeliveryDetailPanel({
         {isLoading ? (
           <p data-testid="notification-detail-loading" className="text-sm text-muted-foreground">
             Loading delivery...
+          </p>
+        ) : permissionDenied ? (
+          <p
+            data-testid="notification-detail-permission-denied"
+            className="text-sm text-muted-foreground"
+          >
+            You do not have permission to read this delivery.
           </p>
         ) : errorMessage !== null ? (
           <p data-testid="notification-detail-error" className="text-sm text-destructive">
@@ -244,6 +262,26 @@ export function NotificationDeliveryDetailPanel({
               <div className="flex justify-between gap-4">
                 <dt className="text-muted-foreground">Reason</dt>
                 <dd className="text-foreground">{deliveryFailureReason(delivery)}</dd>
+              </div>
+            )}
+            {/*
+              The sequence (TD-046). The delivery row keeps only the LAST reason, which is
+              the right shape for "did it work" and useless for "it failed three times and
+              they were not the same failure".
+            */}
+            {delivery.attempts.length === 0 ? null : (
+              <div
+                className="space-y-1 border-t border-border pt-2"
+                data-testid="delivery-attempts"
+              >
+                <p className="text-muted-foreground">Attempts</p>
+                <ul className="space-y-1">
+                  {delivery.attempts.map((attempt) => (
+                    <li key={attempt.attemptNumber} className="text-foreground">
+                      {`#${attempt.attemptNumber} · ${attempt.outcome === "SENT" ? "Sent" : "Failed"} · ${formatTimestamp(attempt.occurredAt)}${attempt.reasonMessage === null ? "" : ` · ${attempt.reasonMessage}`}`}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </dl>

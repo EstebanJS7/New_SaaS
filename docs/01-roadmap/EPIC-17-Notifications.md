@@ -2,7 +2,7 @@
 id: EPIC-17
 type: epic
 title: Notifications
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-07
@@ -132,48 +132,48 @@ implementation ([[DEC-059]]):
 
 ## Acceptance Criteria
 
-- [ ] A tenant-scoped notification aggregate exists with an explicit lifecycle,
+- [x] A tenant-scoped notification aggregate exists with an explicit lifecycle,
       and no generic status-update route: transitions move through named
       commands, and an illegal or terminal edge returns `409 CONFLICT` with
       state unchanged.
-- [ ] The reminder is **idempotent**: a second scheduling attempt for the same
+- [x] The reminder is **idempotent**: a second scheduling attempt for the same
       (appointment, channel, window) does not produce a second delivery.
-- [ ] **Cancelling the appointment removes the pending reminder** — the pending
+- [x] **Cancelling the appointment removes the pending reminder** — the pending
       job is removed, and the record reaches a terminal, non-sendable state.
       This is PRD §24's hard requirement and the epic's primary exit gate.
-- [ ] `EMAIL` and `WHATSAPP` are reached only through the channel port, and the
+- [x] `EMAIL` and `WHATSAPP` are reached only through the channel port, and the
       selection is fail-closed in production exactly as `FISCAL_PROVIDER` is: a
       closed set of accepted values, an unknown value refused **by name**, an
       absent value refused in production, and **no silent fallback to the
       fake**. The fake stays selectable when an operator types it on purpose,
       which is the documented demo path — the refusal is about absence, not
       about the fake.
-- [ ] The recipient's contact data is classified **RESTRICTED**, is never
+- [x] The recipient's contact data is classified **RESTRICTED**, is never
       logged, and never appears in an API response body or a job payload.
-- [ ] `AppointmentConfirmed`, `AppointmentCancelled` and `FiscalApproved` are
+- [x] `AppointmentConfirmed`, `AppointmentCancelled` and `FiscalApproved` are
       published **after** their originating transaction commits, and a handler
       failure does not roll back the appointment, the invoice or the fiscal
       document.
-- [ ] Each reaction is registered in the deployable that publishes its event,
+- [x] Each reaction is registered in the deployable that publishes its event,
       because the dispatcher is in-process; and `FiscalApproved` is published
       from **both** paths that enter `APPROVED` — the submission handler and the
       recovery service — so the sweep's approvals are not lost.
-- [ ] Every notification handler is tenant-aware and idempotent under a retried
+- [x] Every notification handler is tenant-aware and idempotent under a retried
       delivery.
-- [ ] The `notifications` tenant-settings namespace is registered, typed and
+- [x] The `notifications` tenant-settings namespace is registered, typed and
       versioned, rejects unknown keys server-side, defaults the reminder lead
       time to 24 h, and is writable only behind its permission key.
-- [ ] Every route enforces a `notifications.*` permission and the service
+- [x] Every route enforces a `notifications.*` permission and the service
       re-asserts it as defense in depth.
-- [ ] Tenant isolation is enforced on every new aggregate and every new read;
+- [x] Tenant isolation is enforced on every new aggregate and every new read;
       cross-tenant UUID access returns `404`.
-- [ ] DTOs are allowlisted, and `notifications` is treated as a **Core**
+- [x] DTOs are allowlisted, and `notifications` is treated as a **Core**
       capability: no Veterinary import reaches into it and it imports no
       Veterinary detail.
-- [ ] The production adapters are proven against a real provider, **or the live
+- [x] The production adapters are proven against a real provider, **or the live
       run is recorded as pending and named**, with the deterministic fake
       carrying the test evidence — the FISC-013 precedent.
-- [ ] EPIC-17 exits with required checks green or explicit non-green evidence
+- [x] EPIC-17 exits with required checks green or explicit non-green evidence
       recorded.
 
 ## Stories
@@ -276,8 +276,90 @@ real provider: that run is an operator act and stays pending at [[NOTIF-005]].
 
 ## Technical Debt
 
-- [[TD-004]] — `open`, blocked: the password reset is deferred until email
-  delivery exists. It is this epic's real external caller and a good acceptance
-  case, and it stays blocked until [[NOTIF-002]] lands.
-- No new Tech Debt item is raised by WU-A; nothing is implemented yet. Debt
-  raised by the stories is triaged at [[NOTIF-005]].
+All eight items raised during the epic are triaged here, each with a status and
+an owner decision. None is left untriaged.
+
+| Item       | What it is                                                                                                       | Status                      | Owner decision                                                                                                                                                                                                                                                                                                                                |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [[TD-004]] | The password reset deferred until email delivery exists                                                          | `open`                      | **Unblocked in principle** — delivery now exists — and deliberately still `open`: it is a feature, not a closure chore, and it needs its own Story.                                                                                                                                                                                           |
+| [[TD-039]] | The fiscal job id's colon, which BullMQ refuses                                                                  | `resolved`                  | Fixed on its own branch and proven against real Redis.                                                                                                                                                                                                                                                                                        |
+| [[TD-040]] | The channel boundary's five advisories                                                                           | `resolved`                  | Fixed with regression cases.                                                                                                                                                                                                                                                                                                                  |
+| [[TD-041]] | The delivery path's three advisories                                                                             | `resolved`                  | Fixed with regression cases.                                                                                                                                                                                                                                                                                                                  |
+| [[TD-042]] | Advisories raised by the advisory fix itself (an unawaited `close()`, a `settleFailure` inside the gates' `try`) | `resolved`                  | Fixed with regression cases.                                                                                                                                                                                                                                                                                                                  |
+| [[TD-043]] | `reminderScheduledAt` did not validate the ceiling it exports                                                    | `resolved`                  | Fixed in WU-D2, which consumes the policy.                                                                                                                                                                                                                                                                                                    |
+| [[TD-044]] | The content builder's three advisories                                                                           | `resolved`                  | Fixed alongside the WU-D3 unit.                                                                                                                                                                                                                                                                                                               |
+| [[TD-045]] | The fiscal notice's two advisories, and the validator's observation                                              | **`resolved` post-closure** | The validator's observation is addressed where the argument is made: both schedulers name the two tests their re-enqueue depends on. The two advisories stay **unidentified** — their coordinates were lost by a process slip — so there is nothing to fix and nothing honest to claim, and the next unit re-reads them rather than guessing. |
+| [[TD-046]] | The attempt log a delivery does not keep                                                                         | `open`                      | **A product decision, taken**: the aggregate keeps a summary, retrying is BullMQ's retry, and a second home for the same truth could disagree with the first. The three options and their costs are recorded for whoever wants the sequence.                                                                                                  |
+| [[TD-047]] | The read surface's two advisories                                                                                | **`resolved` post-closure** | Both fixed in `fix/notif-tail-advisories`: the BFF answers `400` for an unlisted query key so the two layers of one request agree about what happened, and the detail read has a denial state of its own. The **fiscal BFF's `404`** for the same condition is pre-existing and is now a **named divergence** rather than an accident.        |
+
+Two of the three items still open at closure — `TD-045` and `TD-047` — were
+resolved **after** it, in `fix/notif-tail-advisories`. The closure record above
+is unchanged: it says what was true on 2026-10-17, and this section says what is
+true now. `TD-046` stays `open` as a recorded decision rather than a pending
+fix.
+
+**Two process facts the epic keeps rather than tidies**: the WU-D2 lineage
+`review-5898fbf624566375` **escalated and is still stopped**
+(`native_stop_required`, terminal, maintainer action only) — nothing fell
+through it, because the fix it demanded was made in a fresh transaction,
+reviewed and approved; and WU-D3's review found a CRITICAL whose fix **retired a
+limitation this epic had declared**, which is why the "lost enqueue" window is
+struck through in [[NOTIF-003]] rather than deleted.
+
+## Closure record (2026-10-17)
+
+Every acceptance criterion above is checked against a specific receipt, and this
+section is that mapping. Nothing is silently dropped.
+
+| Acceptance criterion                                                         | Receipt                                                                                                                                         |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| The tenant-scoped aggregate, its lifecycle, and no generic status route      | `notification_delivery` and its four SQL guards; the route inventory has no status route, and [[NOTIF-004]]'s suite asserts the absence         |
+| Idempotent reminder                                                          | The partial unique index plus `ensureIntent`; the scheduler's dedupe cases                                                                      |
+| Cancelling removes the pending reminder                                      | The cancellation CAS _and_ the job removal in `notification-reminder.scheduler`, asserted on the record **and** the queue                       |
+| The channel port and fail-closed selection                                   | [[DEC-061]], [[ADR-011]], the selection's own cases (absent value refused in production, unknown refused by name, no fallback to the fake)      |
+| RESTRICTED contact data never logged, returned or queued                     | The class table in `docs/05-modules/Notifications.md`; a repository search finds the words only in comments; the job payload is the delivery id |
+| The three emitters, post-commit                                              | The appointment publisher and `FiscalApprovalEmitter`; per-outcome assertions                                                                   |
+| Each reaction in its publishing deployable; `FiscalApproved` from both paths | The API's `ApplicationEventsModule`, the worker's, and the shared emitter both the handler and the sweep call                                   |
+| Handlers tenant-aware and idempotent                                         | The handler's settled-row gate; the readers' tenant predicates                                                                                  |
+| The `notifications` settings namespace                                       | The registry entry's cases: closed schema, defaults, version, permission, unknown-key refusal with nothing persisted                            |
+| Every route behind a `notifications.*` key, re-asserted in the service       | The route-contract probe's inventory; the service's own `FORBIDDEN` cases                                                                       |
+| Tenant isolation, `404` cross-tenant                                         | The byte-equivalent probes over the delivery read; the fresh-PostgreSQL schema cases                                                            |
+| Allowlisted DTOs, Core with no Veterinary import                             | The dependency-boundary test; the mapper's exact key set                                                                                        |
+| The adapters proven, or the live run pending and named                       | `docs/10-qa/CI-EVIDENCE.md` — **pending**, with the four missing operator inputs named                                                          |
+| Required checks green, or non-green recorded                                 | The local gates in `docs/10-qa/CI-EVIDENCE.md`; **no CI run exists** because no branch was pushed                                               |
+
+### The closure searches
+
+Run at closure, because an epic's own claims deserve a grep rather than a
+memory:
+
+```text
+The three emitters have exactly the publishers DEC-059 names
+  AppointmentConfirmed  apps/api/src/scheduling/appointment.service.ts  publishTransition
+  AppointmentCancelled  apps/api/src/scheduling/appointment.service.ts  publishTransition
+  FiscalApproved        apps/worker/src/fiscal-submission/fiscal-approval.emitter.ts
+  -> and no other non-test publish() call exists in either deployable
+
+No notification handler holds a database transaction across a provider call
+  the delivery handler's send() is outside every $transaction; the gates run
+  before it, and the settles run after it
+
+No contact datum reaches a log, a job payload or a response
+  the only occurrences of "phone"/"contactValue" in the notification paths are
+  COMMENTS; the job payload is the delivery id; the DTO has no datum field
+
+The feature-code catalog still has exactly twelve codes
+  FEATURE_CODE_SEEDS has twelve entries, "all twelve codes" by its own comment;
+  no thirteenth was added ([[DEC-058]])
+
+Every new dependency has an accepted ADR
+  the epic added one dependency, nodemailer, under [[ADR-011]] (accepted, MIT-0,
+  zero transitive dependencies, `pnpm audit` clean)
+```
+
+### EPIC-07 and EPIC-16 were not reopened
+
+The boundary debt stayed **emitter-only**, exactly as [[DEC-059]] declared: the
+epic added a publish call after the appointment's existing commit and after the
+fiscal document's, and it changed no appointment or fiscal behavior, no status,
+and no transaction. Their closed decisions stand.

@@ -44,6 +44,24 @@ export interface UserProfileRow {
   status: string;
 }
 
+/**
+ * RESTRICTED password material (DAT-007). The key is SHARED with the profile, so a
+ * lookup is by `userProfileId` and never by a generated id.
+ */
+export interface UserCredentialRow {
+  userProfileId: string;
+  passwordHash: string;
+}
+
+/** A password-reset token row (DAT-007). Only the DIGEST is stored, never the token. */
+export interface PasswordResetTokenRow {
+  id: string;
+  userProfileId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  consumedAt: Date | null;
+}
+
 /** Mirrors the temporal shape SessionService reads and refreshes (design D4). */
 export interface StaffSessionRow {
   id: string;
@@ -1028,6 +1046,17 @@ export interface NotificationDeliveryRow {
   updatedAt: Date;
 }
 
+/** A recorded delivery attempt ([[TD-046]]). Append-only in the real schema. */
+export interface NotificationDeliveryAttemptRow {
+  id: string;
+  deliveryId: string;
+  attemptNumber: number;
+  outcome: "SENT" | "FAILED";
+  reasonCode: string | null;
+  reasonMessage: string | null;
+  occurredAt: Date;
+}
+
 export interface AppointmentRow {
   id: string;
   tenantId: string;
@@ -1944,6 +1973,19 @@ export interface IsolationDatabase {
      * harness that let a duplicate through would hide the idempotency the
      * scheduler depends on.
      */
+    notificationDeliveryAttempt: {
+      create: (args: {
+        data: Omit<NotificationDeliveryAttemptRow, "id" | "reasonCode" | "reasonMessage"> & {
+          reasonCode?: string;
+          reasonMessage?: string;
+        };
+      }) => NotificationDeliveryAttemptRow;
+      findMany: (args: {
+        where: { deliveryId: string };
+        orderBy?: { attemptNumber: "desc" | "asc" };
+        take?: number;
+      }) => NotificationDeliveryAttemptRow[];
+    };
     notificationDelivery: {
       create: (args: {
         data: Pick<
@@ -2058,12 +2100,51 @@ export interface IsolationDatabase {
       create: (args: {
         data: { email: string; displayName: string; status: string };
       }) => UserProfileRow;
+      /**
+       * By EMAIL, composing the credential relation (DAT-007): the recovery path asks
+       * whether a profile exists AND whether it can log in at all, which are two
+       * different silences.
+       */
+      findUnique: (args: {
+        where: { email: string };
+      }) => (UserProfileRow & { credential: UserCredentialRow | null }) | null;
+    };
+    userCredential: {
+      create: (args: { data: UserCredentialRow }) => UserCredentialRow;
+      findUnique: (args: { where: { userProfileId: string } }) => UserCredentialRow | null;
+      update: (args: {
+        where: { userProfileId: string };
+        data: { passwordHash: string };
+      }) => UserCredentialRow;
+    };
+    /**
+     * The reset token (DAT-007). The `updateMany` WHERE shapes the real callers use:
+     * the compare-and-set by `id`, the "spend the others" by `userProfileId`, and the
+     * expiry guard the CAS carries.
+     */
+    passwordResetToken: {
+      create: (args: {
+        data: { userProfileId: string; tokenHash: string; expiresAt: Date };
+      }) => PasswordResetTokenRow;
+      findFirst: (args: { where: { tokenHash: string } }) => PasswordResetTokenRow | null;
+      updateMany: (args: {
+        where: {
+          id?: string;
+          userProfileId?: string;
+          consumedAt?: null;
+          expiresAt?: { gt: Date };
+        };
+        data: { consumedAt: Date };
+      }) => { count: number };
     };
     staffSession: {
       create: (args: { data: Omit<StaffSessionRow, "id" | "revokedAt"> }) => StaffSessionRow;
       findUnique: (args: { where: { tokenHash: string } }) => StaffSessionRow | null;
       update: (args: { where: { id: string }; data: Partial<StaffSessionRow> }) => StaffSessionRow;
-      deleteMany: (args: { where: { tokenHash: string } }) => { count: number };
+      /** By token (logout) or by PROFILE (a reset ends every session). */
+      deleteMany: (args: { where: { tokenHash?: string; userProfileId?: string } }) => {
+        count: number;
+      };
     };
     tenantMembership: {
       create: (args: {
@@ -2647,6 +2728,8 @@ export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
   const roles = new Map<string, RoleRow>();
   const profiles = new Map<string, UserProfileRow>();
+  const credentials = new Map<string, UserCredentialRow>();
+  const resetTokens = new Map<string, PasswordResetTokenRow>();
   const sessions = new Map<string, StaffSessionRow>();
   const memberships = new Map<string, TenantMembershipRow>();
   const audits = new Map<string, AuditLogRow>();
@@ -2717,6 +2800,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const appointmentTable = new Map<string, AppointmentRow>();
   const portalBookingRequestTable = new Map<string, PortalBookingRequestRow>();
   const notificationDeliveryTable = new Map<string, NotificationDeliveryRow>();
+  const notificationDeliveryAttemptTable = new Map<string, NotificationDeliveryAttemptRow>();
 
   /** Role-code predicate for membership options (EPIC-07 professional lookup). */
   const roleCodeMatches = (where: MembershipWhere, candidate: TenantMembershipRow): boolean =>
@@ -4693,6 +4777,32 @@ export function createIsolationDatabase(): IsolationDatabase {
         return { count };
       },
     },
+    notificationDeliveryAttempt: {
+      create: ({ data }) => {
+        const created: NotificationDeliveryAttemptRow = {
+          id: randomUUID(),
+          reasonCode: null,
+          reasonMessage: null,
+          ...data,
+        };
+        notificationDeliveryAttemptTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where, orderBy, take }) => {
+        const matched = [...notificationDeliveryAttemptTable.values()].filter(
+          (candidate) => candidate.deliveryId === where.deliveryId
+        );
+        // The ORDER and the BOUND are honoured rather than ignored: a harness that
+        // returned every row in insertion order would let a broken read pass -- and a
+        // bounded read is exactly what this one is.
+        matched.sort((left, right) =>
+          orderBy?.attemptNumber === "desc"
+            ? right.attemptNumber - left.attemptNumber
+            : left.attemptNumber - right.attemptNumber
+        );
+        return take === undefined ? matched : matched.slice(0, take);
+      },
+    },
     notificationDelivery: {
       create: ({
         data,
@@ -5023,6 +5133,67 @@ export function createIsolationDatabase(): IsolationDatabase {
         profiles.set(created.id, created);
         return created;
       },
+      findUnique: ({ where }) => {
+        const profile = [...profiles.values()].find((entry) => entry.email === where.email);
+        if (!profile) return null;
+        // The relation is composed here rather than stored, mirroring the real read:
+        // the credential's key IS the profile's id.
+        return { ...profile, credential: credentials.get(profile.id) ?? null };
+      },
+    },
+    userCredential: {
+      create: ({ data }) => {
+        const created: UserCredentialRow = {
+          userProfileId: data.userProfileId,
+          passwordHash: data.passwordHash,
+        };
+        credentials.set(created.userProfileId, created);
+        return created;
+      },
+      findUnique: ({ where }) => credentials.get(where.userProfileId) ?? null,
+      update: ({ where, data }) => {
+        const existing = credentials.get(where.userProfileId);
+        if (!existing) {
+          // The real delegate rejects P2025 for a missing row; a silent no-op here
+          // would let a broken reset look like a working one.
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        Object.assign(existing, data);
+        return existing;
+      },
+    },
+    passwordResetToken: {
+      create: ({ data }) => {
+        const created: PasswordResetTokenRow = {
+          id: randomUUID(),
+          userProfileId: data.userProfileId,
+          tokenHash: data.tokenHash,
+          expiresAt: data.expiresAt,
+          consumedAt: null,
+        };
+        resetTokens.set(created.id, created);
+        return created;
+      },
+      findFirst: ({ where }) =>
+        [...resetTokens.values()].find((entry) => entry.tokenHash === where.tokenHash) ?? null,
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const row of resetTokens.values()) {
+          if (where.id !== undefined && row.id !== where.id) continue;
+          if (where.userProfileId !== undefined && row.userProfileId !== where.userProfileId)
+            continue;
+          // The CAS's own conditions, honoured: a spent or expired row must not count.
+          if (where.consumedAt === null && row.consumedAt !== null) continue;
+          if (
+            where.expiresAt !== undefined &&
+            row.expiresAt.getTime() <= where.expiresAt.gt.getTime()
+          )
+            continue;
+          row.consumedAt = data.consumedAt;
+          count += 1;
+        }
+        return { count };
+      },
     },
     staffSession: {
       create: ({ data }) => {
@@ -5041,7 +5212,22 @@ export function createIsolationDatabase(): IsolationDatabase {
         Object.assign(existing, data);
         return existing;
       },
-      deleteMany: ({ where }) => ({ count: sessions.delete(where.tokenHash) ? 1 : 0 }),
+      deleteMany: ({ where }) => {
+        if (where.userProfileId !== undefined) {
+          // A reset ends EVERY session of the profile; the `WHERE` is what makes that
+          // different from logging one out.
+          let count = 0;
+          for (const [hash, row] of sessions) {
+            if (row.userProfileId === where.userProfileId) {
+              sessions.delete(hash);
+              count += 1;
+            }
+          }
+          return { count };
+        }
+        if (where.tokenHash === undefined) return { count: 0 };
+        return { count: sessions.delete(where.tokenHash) ? 1 : 0 };
+      },
     },
     tenantMembership: {
       create: ({ data }) => {

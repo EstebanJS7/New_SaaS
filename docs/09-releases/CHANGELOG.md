@@ -6,6 +6,97 @@ All notable product changes will be documented here.
 
 ### Added
 
+- DAT-007 — **staff password recovery**, resolving the deferral [[TD-004]] had
+  carried since EPIC-01:
+  - `POST /auth/forgot-password` and `POST /auth/password-reset`, both public by
+    necessity and therefore the most carefully bounded surface in the system:
+    the request answers **byte-equivalently** for an address that exists, one
+    that does not, and a profile with no credentials, and it is rate-limited by
+    address **and** client IP so one attacker cannot deny a victim their own
+    recovery.
+  - A **single-use, expiring, hashed-at-rest** reset token with four guards the
+    database owns: its identity is fixed at insert, it can be spent once and
+    neither rewritten nor un-spent, and its expiry is checked as being after its
+    creation. There is deliberately no tenant column: the credential it
+    authorises is global to the profile.
+  - The reset changes the hash and ends **every session for the profile**,
+    spends the profile's other outstanding links and appends the audit — **in
+    one transaction**, with the argon2 hash computed before it opens so a
+    deliberate CPU cost never holds locks.
+  - The message is delivered through the **notification aggregate**: the request
+    publishes an event, a subscriber creates the delivery under a seeded
+    **platform tenant** (the delivery aggregate's tenant is NOT NULL, and a
+    reset belongs to an identity rather than to any of the person's tenants),
+    and the worker **mints the token at send time**, so no plaintext token is
+    ever stored and its lifetime starts when the mail is sent.
+  - The fence in `auth.integration.test.ts` is **inverted**: it used to assert
+    both routes return `NOT_FOUND`, which was the deferral's own contract, and
+    now asserts what they do.
+
+  - The **public reset page** at `/reset-password` - the app's first
+    unauthenticated page, outside the `(app)` shell, with its own session-less
+    BFF: a locked-out caller has no session to forward, and sending one would
+    hand an unrelated session's authority to a route with no use for it. Its
+    refusals are the API's own (one message for an unknown, spent or expired
+    link), so the UI is not a louder oracle than the API it fronts.
+  - A **password policy**, decided rather than assumed: a minimum of 8
+    characters with no composition rules - the NIST SP 800-63B floor, whose
+    composition advice is exactly the "one digit and one symbol" rule that
+    pushes people toward `Password1!`. It is enforced at the credential
+    **boundary**, so every path that sets a password inherits it.
+
+  **Still not built, and named**: nothing links to the recovery REQUEST - the
+  app has no login page, so a user cannot ask for a recovery from the UI - and a
+  breached-password list is still not consulted ([[TD-048]]).
+
+- EPIC-17 — Notifications, the first capability to actually tell somebody
+  something (NOTIF-001 to NOTIF-005, closed 2026-10-17):
+  - The **delivery aggregate**: one row is one intent to send one message over
+    one channel, with an explicit lifecycle (`SCHEDULED` to `SENT`, `FAILED` or
+    `CANCELLED`), a claim with a lease that recovers a worker which died
+    mid-send, and four SQL guards the migration owns — identity immutability,
+    the legal transitions, frozen terminal rows, and the biconditionals that
+    keep a status unable to disagree with its own timestamps. There is no
+    generic status route anywhere.
+  - **Dedupe semantics as a database property**: a per-tenant partial unique
+    index on the delivery's logical identity, excluding `CANCELLED`, so a
+    cancelled delivery does not occupy its key forever.
+  - The **channel boundary**: one port, a deterministic fake, and real SMTP and
+    WhatsApp Cloud adapters, selected **fail-closed exactly as `FISCAL_PROVIDER`
+    is** — no silent fallback to the fake. The email dependency is
+    [[ADR-011]]'s, and its guardrails (a transport per send, no pooling, no file
+    or URL access, one validated recipient, one importing file) are the
+    decision.
+  - The **appointment reminder**: configurable per tenant (1 to 168 hours,
+    default 24) through a typed, versioned settings namespace, scheduled as a
+    delayed job and idempotent by `(appointment, channel, window)`. **Cancelling
+    the appointment removes the pending job**, and the send path re-reads the
+    appointment's own row and refuses to send unless it is sendable — defense in
+    depth against a lost reaction.
+  - **Content built at send time**, never stored: a reschedule before delivery
+    cannot produce a reminder carrying a stale time, and a fiscal notice names
+    the document's real number.
+  - The **three emitters this epic owed** — `AppointmentConfirmed`,
+    `AppointmentCancelled` and `FiscalApproved` — published **after** their
+    transaction commits, carrying ids only, each reaction registered in the
+    deployable that publishes it, and `FiscalApproved` published from **both**
+    paths that enter `APPROVED` so the reconciliation sweep's approvals are not
+    lost. Boundary crossings into EPIC-07 and EPIC-16 stayed emitter-only
+    ([[DEC-059]]).
+  - The **fiscal notice**: an approval queues one notice for the invoice's
+    customer, email only, idempotent by `(document, channel)`.
+  - The **read surface**: the tenant's deliveries, bounded and filterable, with
+    an allowlisted projection that carries a recipient **reference** rather than
+    a datum, behind `notifications.delivery.read`. Message content cannot leak
+    because it is never stored.
+  - **No thirteenth feature code**: email is ungated, WhatsApp rides the
+    existing `whatsapp` entitlement, and the choice is re-asserted at send time
+    ([[DEC-058]]).
+
+  **Not proven**: no message has crossed a real provider. The adapters are
+  proven against the deterministic fake and their unit cases, and the live run
+  is recorded pending by name in `docs/10-qa/CI-EVIDENCE.md`.
+
 - EPIC-16 — SIFEN Direct, the DNIT's own e-invoicing integration behind the
   Fiscal boundary (FISC-006 to FISC-016, closed 2026-10-15):
   - The **DNIT protocol baseline** revalidated as the epic's precondition, with

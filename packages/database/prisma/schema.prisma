@@ -37,6 +37,7 @@ model UserProfile {
 
   credential      UserCredential?
   sessions        StaffSession[]
+  passwordResetTokens PasswordResetToken[]
   memberships     TenantMembership[]
   auditLogs       AuditLog[]
   tenantBrandings TenantBranding[]
@@ -91,6 +92,49 @@ model StaffSession {
 
   @@index([userProfileId])
   @@map("staff_session")
+}
+
+/// A staff password-recovery token (DAT-007).
+///
+/// The plaintext token NEVER persists: only its SHA-256, the convention
+/// `StaffSession` already uses. A high-entropy random token needs a fast digest,
+/// not argon2 — argon2 exists to make a low-entropy human-chosen password
+/// expensive to guess, and applying it to 256 bits of entropy would only make the
+/// send path slow.
+///
+/// There is deliberately NO tenant column, and the absence is an invariant rather
+/// than an oversight; see the migration.
+///
+/// The row holds no personal data at all: a profile reference, a digest, two
+/// instants. That is what makes it safe to keep expired rows around (the read
+/// surface never exposes the digest, and a digest of a dead token is not a
+/// secret).
+model PasswordResetToken {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  userProfileId String @map("user_profile_id") @db.Uuid
+
+  /// SHA-256 of the opaque token, hex. Unique so a lookup by digest is one row by
+  /// construction rather than by ordering.
+  tokenHash String @unique @map("token_hash")
+
+  /// When the token stops working. Immutable after insert: extending an expiry is
+  /// extending somebody's access, and the guard refuses it.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  /// When the token was spent — set once, from NULL, and never moved. The guard
+  /// refuses both a rewrite and a clear, because an un-consumed token is a second
+  /// password change.
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  /// Tokens die with their profile (the `StaffSession` precedent): a deleted
+  /// profile's reset tokens are not leftovers worth keeping.
+  userProfile UserProfile @relation(fields: [userProfileId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userProfileId])
+  @@map("password_reset_token")
 }
 
 // ---------------------------------------------------------------------------
@@ -3433,6 +3477,12 @@ enum NotificationDeliveryStatus {
 enum NotificationSourceType {
   APPOINTMENT
   FISCAL_DOCUMENT
+  /// DAT-007 — a staff password-recovery message. The source reference is the
+  /// `password_reset_token` row, which is created AT SEND TIME (see the Story):
+  /// the plaintext token cannot be rebuilt from a digest, so issuing it earlier
+  /// would force persisting the plaintext, carrying it in a job payload, or
+  /// sending inline from the request.
+  STAFF_ACCOUNT
 
   @@map("notification_source_type")
 }
@@ -3442,6 +3492,11 @@ enum NotificationSourceType {
 /// never stored here (PRD §41, [[DEC-061]]).
 enum NotificationRecipientType {
   CUSTOMER
+  /// DAT-007 — a staff profile. Its contact datum is the profile's own email,
+  /// resolved at send time by the staff recipient reader, and it is personal data
+  /// of an employee rather than of a customer: still RESTRICTED, still never
+  /// persisted here, and never in a response.
+  STAFF
 
   @@map("notification_recipient_type")
 }
@@ -3454,6 +3509,61 @@ enum NotificationRecipientType {
 /// the source reference names, so a snapshot here could only go stale — and a
 /// reschedule before delivery must not produce a reminder carrying an old time
 /// ([[NOTIF-003]]).
+/// One recorded attempt to deliver a message ([[TD-046]]).
+///
+/// The delivery row keeps a SUMMARY — how many attempts, when the last one ran and its
+/// bounded reason — because retrying is BullMQ's retry rather than a domain transition.
+/// That summary answers "did it work", and this table answers the question it cannot:
+/// what the SEQUENCE was, for an operator looking at a message that failed three times
+/// with three different reasons.
+///
+/// **It stores the already-bounded reason and never the provider's raw error.** That is
+/// the decision TD-046 recorded: the raw text is RESTRICTED material this epic has kept
+/// out of every stored field, and it would need a sanitizer anyway (a provider's error can
+/// echo the destination or the body), at which point it is not raw.
+///
+/// The row is APPEND-ONLY, which the migration enforces with a trigger refusing UPDATE
+/// and DELETE: an attempt happened once, and a log that can be edited is not a log.
+model NotificationDeliveryAttempt {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  deliveryId String @map("delivery_id") @db.Uuid
+
+  /// 1-based, matching the delivery's `attempt_count` after the claim that started this
+  /// attempt. Unique per delivery, so an attempt cannot be recorded twice.
+  attemptNumber Int @map("attempt_number")
+
+  outcome NotificationAttemptOutcome
+
+  /// Present exactly when the outcome is `FAILED`, and never otherwise — the same
+  /// biconditional discipline the delivery row uses for its own reason.
+  reasonCode    String? @map("reason_code")
+  reasonMessage String? @map("reason_message")
+
+  /// When the attempt finished, which is also when this row was written.
+  occurredAt DateTime  @map("occurred_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  /// A fence rather than a workflow: `notification_delivery` refuses to be deleted at all
+  /// (its own guard), so this cascade cannot fire today. It is declared so that a future
+  /// migration which makes a delivery removable cannot silently orphan a log — and the
+  /// consequence is that this log is, in practice, as permanent as its delivery, which is
+  /// what a log should be.
+  delivery NotificationDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([deliveryId, attemptNumber])
+  @@map("notification_delivery_attempt")
+}
+
+/// How an attempt ended. Two values, because an attempt either delivered the message or
+/// did not: a "retried" attempt IS the next attempt's row.
+enum NotificationAttemptOutcome {
+  SENT
+  FAILED
+
+  @@map("notification_attempt_outcome")
+}
+
 model NotificationDelivery {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
@@ -3520,6 +3630,10 @@ model NotificationDelivery {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// The attempt log ([[TD-046]]). Ordered by `attempt_number` on read, which is what
+  /// makes "what happened, in order" answerable.
+  attempts NotificationDeliveryAttempt[]
 
   /// Tenant-ownership key, so a future aggregate can composite-FK to a delivery
   /// of the same tenant.

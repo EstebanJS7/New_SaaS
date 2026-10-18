@@ -21,6 +21,21 @@ function recipientClient(result: { value: string } | null) {
   const findFirst = vi.fn((_args: RecipientFindArgs) => Promise.resolve(result));
   const client: NotificationRecipientClient = {
     customerContact: { findFirst },
+    // Not exercised by these cases: the STAFF branch has its own below.
+    userProfile: { findFirst: () => Promise.resolve(null) },
+  };
+  return { client, findFirst };
+}
+
+/** A client that serves the STAFF branch and records what it was asked for. */
+function staffClient(result: { email: string } | null) {
+  const findFirst = vi.fn(
+    (_args: Parameters<NotificationRecipientClient["userProfile"]["findFirst"]>[0]) =>
+      Promise.resolve(result)
+  );
+  const client: NotificationRecipientClient = {
+    customerContact: { findFirst: () => Promise.resolve(null) },
+    userProfile: { findFirst },
   };
   return { client, findFirst };
 }
@@ -77,12 +92,48 @@ describe("the recipient reader", () => {
     ).resolves.toBeNull();
   });
 
+  it("resolves a STAFF recipient by PROFILE ID, with no tenant predicate", async () => {
+    const { client, findFirst } = staffClient({ email: "employee@clinic.test" });
+    const reader = createNotificationRecipientReader({ client });
+
+    await expect(
+      reader.resolve({
+        tenantId: "99999999-9999-4999-8999-999999999999",
+        recipientType: "STAFF",
+        recipientId: "11111111-1111-4111-8111-111111111111",
+        channel: "EMAIL",
+      })
+    ).resolves.toEqual({ address: "employee@clinic.test" });
+
+    // The `WHERE` is the id ALONE, and that absence is the design: a staff profile
+    // belongs to no tenant — they merely work in some — and the delivery's tenant is
+    // the platform one, which owns the MESSAGE rather than the person. Filtering by
+    // it would resolve nobody.
+    expect(findFirst.mock.calls[0]?.[0].where).toEqual({
+      id: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
+  it("settles a STAFF profile that no longer exists, rather than retrying forever", async () => {
+    const { client } = staffClient(null);
+    const reader = createNotificationRecipientReader({ client });
+    await expect(
+      reader.resolve({
+        tenantId: "99999999-9999-4999-8999-999999999999",
+        recipientType: "STAFF",
+        recipientId: "11111111-1111-4111-8111-111111111111",
+        channel: "EMAIL",
+      })
+    ).resolves.toBeNull();
+  });
+
   it("propagates a read failure, so the handler can retry it", async () => {
     // Different from an absent contact on purpose: a database blip is transient.
     const client: NotificationRecipientClient = {
       customerContact: {
         findFirst: () => Promise.reject(new Error("connection terminated")),
       },
+      userProfile: { findFirst: () => Promise.resolve(null) },
     };
     const reader = createNotificationRecipientReader({ client });
 

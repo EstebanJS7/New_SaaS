@@ -11,6 +11,7 @@ import {
   STARTER_PLAN_SEED,
   TAX_RATE_SEEDS,
   seedReferenceData,
+  PLATFORM_TENANT_SEED,
   type ReferenceSeedClient,
 } from "./reference-seed.js";
 
@@ -57,6 +58,11 @@ function createRecordingClient() {
   interface PairRow {
     id: string;
   }
+  interface TenantRow {
+    id: string;
+    slug: string;
+    name: string;
+  }
 
   const roles = new Map<string, CodeNameRow>();
   const permissions = new Map<string, KeyNameRow>();
@@ -67,8 +73,21 @@ function createRecordingClient() {
   const species = new Map<string, CodeNameRow>();
   const breeds = new Map<string, CodeRow & { speciesId: string }>();
   const taxRates = new Map<string, TaxRateRow>();
+  const tenants = new Map<string, TenantRow>();
 
   const client = {
+    tenant: {
+      upsert: (args: { where: { slug: string }; create: { slug: string; name: string } }) => {
+        calls.push(`tenant.upsert:${args.where.slug}`);
+        const existing = tenants.get(args.where.slug);
+        if (existing) {
+          existing.name = args.create.name;
+        } else {
+          tenants.set(args.where.slug, { id: nextId(), ...args.create });
+        }
+      },
+      findUnique: (args: { where: { slug: string } }) => tenants.get(args.where.slug) ?? null,
+    },
     role: {
       upsert: (args: { where: { code: string }; create: { code: string; name: string } }) => {
         calls.push(`role.upsert:${args.where.code}`);
@@ -186,6 +205,7 @@ function createRecordingClient() {
   };
 
   const counts = () => ({
+    tenants: tenants.size,
     roles: roles.size,
     permissions: permissions.size,
     featureCodes: featureCodes.size,
@@ -756,6 +776,10 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // namespace's, and DEC-058 keeps it off the feature catalog. NOTIF-004 adds
       // `notifications.delivery.read` for ALL SIX roles -- the same reach every
       // other `*.read` key has -- moving 61 -> 62.
+      // DAT-007: the platform tenant owns identity-scoped messages (a staff
+      // password-recovery email), because the delivery aggregate's tenant_id is
+      // NOT NULL and the reset belongs to an IDENTITY rather than to a customer.
+      tenants: 1,
       permissions: 62,
       featureCodes: 12,
       plans: 1,
@@ -855,7 +879,11 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
     const first = await seededOnce();
     const second = await seededOnce();
     expect(first.calls).toEqual(second.calls);
-    expect(first.calls.slice(0, ROLE_SEEDS.length)).toEqual(
+    // DAT-007 put the platform tenant FIRST: it is the destination of
+    // identity-scoped messages, so a deployment that forgot it should fail at seed
+    // time rather than on the first password recovery.
+    expect(first.calls[0]).toBe(`tenant.upsert:${PLATFORM_TENANT_SEED.slug}`);
+    expect(first.calls.slice(1, ROLE_SEEDS.length + 1)).toEqual(
       ROLE_SEEDS.map((role) => `role.upsert:${role.code}`)
     );
   });

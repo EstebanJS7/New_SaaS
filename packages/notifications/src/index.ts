@@ -105,6 +105,7 @@ export {
 } from "./entitlement.port.js";
 export type { NotificationEntitlementPort } from "./entitlement.port.js";
 export { createNullNotificationRecipientPort, NOTIFICATION_RECIPIENT } from "./recipient.port.js";
+export type { NotificationRecipientType } from "./recipient.port.js";
 export type {
   NotificationRecipientPort,
   NotificationRecipientReference,
@@ -124,3 +125,8 @@ export {
 } from "./reminder.policy.js";
 export type { ReminderDedupeKeyArgs } from "./reminder.policy.js";
 export type { NotificationDeliveryReason } from "./delivery.reason.js";
+export {
+  STAFF_RECOVERY_CHANNEL,
+  staffRecoveryDedupeKey,
+  staffRecoveryWindow,
+} from "./staff-recovery.policy.js";

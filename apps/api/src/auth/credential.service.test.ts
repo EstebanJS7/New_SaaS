@@ -59,7 +59,10 @@ describe("CredentialService", () => {
       argonParallelism: 2,
     });
 
-    const hash = await tuned.hash("pw");
+    // A password the policy accepts: the boundary refuses anything shorter than eight
+    // characters (TD-048), and this case is about the argon2 parameters rather than
+    // about the policy.
+    const hash = await tuned.hash("a-tuned-password");
 
     expect(hash.startsWith("$argon2id$")).toBe(true);
     expect(hash).toContain("m=8192");

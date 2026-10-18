@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import type { Prisma } from "@newsaas/database";
 import { PrismaService } from "@newsaas/database";
 import { reminderDedupeKey, reminderScheduledAt } from "@newsaas/notifications";
+import { NotificationIntentService } from "./notification-intent.service.js";
 import type { ApplicationEvent, EventDispatcher } from "@newsaas/shared";
 import { APPLICATION_EVENT_DISPATCHER } from "../events/application-events.module.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
@@ -47,11 +48,6 @@ export const REMINDER_CANCELLATION_REASON = "APPOINTMENT_CANCELLED";
  * `sales.service.ts`'s matcher is the precedent, and accepting a bare `P2002`
  * would swallow a tenant-ownership-key conflict as "already scheduled".
  */
-const DEDUPE_KEY_CONSTRAINT = "notification_delivery_tenant_id_dedupe_key_key";
-
-/** The unique key's columns, normalized once for shape-agnostic matching. */
-const DEDUPE_KEY_FIELDS: readonly string[] = ["tenantid", "dedupekey"];
-
 interface AppointmentRow {
   readonly id: string;
   readonly patientId: string;
@@ -88,7 +84,8 @@ export class NotificationReminderScheduler implements OnModuleInit {
     @Inject(APPOINTMENT_RECIPIENT_PORT)
     private readonly recipients: AppointmentRecipientPort,
     @Inject(NOTIFICATION_DELIVERY_PRODUCER)
-    private readonly producer: NotificationDeliveryProducer
+    private readonly producer: NotificationDeliveryProducer,
+    private readonly intents: NotificationIntentService
   ) {}
 
   onModuleInit(): void {
@@ -105,6 +102,27 @@ export class NotificationReminderScheduler implements OnModuleInit {
    * while the reverse order would leave a job pointing at nothing.
    */
   async onConfirmed(event: ApplicationEvent<string, unknown>): Promise<void> {
+    // Everything below can fail on a TRANSIENT cause: a settings read, an entitlement
+    // read, the intent insert, or the enqueue. None of them may escape this method, and
+    // the reason is mechanical rather than stylistic: the dispatcher invokes handlers as
+    // `void (async () => handler(event))()`, so a rejection here has no consumer, and
+    // Node terminates the process on an unhandled rejection. One failed settings read
+    // during one confirmation would take down every request the API serves.
+    //
+    // So the failure is LOGGED and the reaction ends. The reminder is not scheduled,
+    // which is the epic's declared, diagnosable gap; a later confirmation heals it,
+    // because `ensureIntent` re-enqueues an intent that already exists.
+    try {
+      await this.scheduleFor(event);
+    } catch (error) {
+      console.error("Reminder could not be scheduled", {
+        appointmentId: event.aggregateId,
+        ...describeFailure(error),
+      });
+    }
+  }
+
+  private async scheduleFor(event: ApplicationEvent<string, unknown>): Promise<void> {
     const tenantId = event.tenantId;
     if (tenantId === null) return;
 
@@ -144,11 +162,13 @@ export class NotificationReminderScheduler implements OnModuleInit {
         channel,
         startsAt: appointment.startAt,
       });
-      const deliveryId = await this.ensureIntent({
+      const deliveryId = await this.intents.ensureIntent({
         tenantId,
         channel,
-        appointmentId: appointment.id,
-        customerId,
+        sourceType: "APPOINTMENT",
+        sourceId: appointment.id,
+        recipientType: "CUSTOMER",
+        recipientId: customerId,
         scheduledAt,
         dedupeKey,
       });
@@ -180,6 +200,17 @@ export class NotificationReminderScheduler implements OnModuleInit {
       // and never enqueue it — a reminder stranded forever by a transient queue
       // failure. Re-adding is safe: the job id is deterministic, so BullMQ ignores
       // a duplicate, and a delivery that already settled is refused by the handler.
+      //
+      // The two properties that make re-adding safe are asserted, and NOT in this
+      // file (TD-045, the validator's observation on review-a8f4b7d2bd6a83b4): the
+      // deterministic identity in
+      // `packages/notifications/src/notification-delivery.queue.test.ts`, "derives a
+      // deterministic identity from the delivery, and one per delivery"; and the
+      // settled-row refusal in
+      // `apps/worker/src/notification-delivery/notification-delivery.handler.test.ts`,
+      // "never touches a settled row, because a settled row is not editable state",
+      // which covers SENT, FAILED and CANCELLED. Named here so the argument can be
+      // followed instead of trusted.
       await this.producer.enqueue({ notificationDeliveryId: deliveryId, tenantId }, scheduledAt);
 
       // The same window, one step later: the cancellation landed between the
@@ -227,6 +258,19 @@ export class NotificationReminderScheduler implements OnModuleInit {
    * so one delivery's failure never stops the others.
    */
   async onCancelled(event: ApplicationEvent<string, unknown>): Promise<void> {
+    // The same guard, for the same reason: this reaction reads the appointment's current
+    // rows and then CASes a delivery, and any of those can fail transiently.
+    try {
+      await this.cancelFor(event);
+    } catch (error) {
+      console.error("Reminder cancellation could not be scheduled", {
+        appointmentId: event.aggregateId,
+        ...describeFailure(error),
+      });
+    }
+  }
+
+  private async cancelFor(event: ApplicationEvent<string, unknown>): Promise<void> {
     const tenantId = event.tenantId;
     if (tenantId === null) return;
 
@@ -287,7 +331,7 @@ export class NotificationReminderScheduler implements OnModuleInit {
       // reported loudly; the removal below still runs either way.
       console.error("Notification delivery could not be cancelled", {
         notificationDeliveryId: deliveryId,
-        error: describeError(error),
+        ...describeFailure(error),
       });
     }
 
@@ -298,87 +342,10 @@ export class NotificationReminderScheduler implements OnModuleInit {
       // the job lingers, and an operator has to be able to see it.
       console.error("Notification delivery job could not be removed", {
         notificationDeliveryId: deliveryId,
-        error: describeError(error),
+        ...describeFailure(error),
       });
     }
   }
-
-  /**
-   * The intent's id: the one it just created, or the PENDING one that already holds
-   * the key.
-   *
-   * The second half is what makes the caller's enqueue idempotent AND self-healing,
-   * and it is the same shape the fiscal notice's scheduler uses. `null` means the
-   * key is held by a delivery that is no longer pending, which is the cancellation
-   * path's business rather than this one's.
-   */
-  private async ensureIntent(args: {
-    readonly tenantId: string;
-    readonly channel: "EMAIL" | "WHATSAPP";
-    readonly appointmentId: string;
-    readonly customerId: string;
-    readonly scheduledAt: Date;
-    readonly dedupeKey: string;
-  }): Promise<string | null> {
-    try {
-      const created = await this.prisma.notificationDelivery.create({
-        data: {
-          tenantId: args.tenantId,
-          channel: args.channel,
-          status: "SCHEDULED",
-          dedupeKey: args.dedupeKey,
-          sourceType: "APPOINTMENT",
-          sourceId: args.appointmentId,
-          recipientType: "CUSTOMER",
-          recipientId: args.customerId,
-          scheduledAt: args.scheduledAt,
-        },
-        select: { id: true },
-      });
-      return created.id;
-    } catch (error) {
-      if (!isDedupeKeyConflict(error)) throw error;
-      const existing = await this.prisma.notificationDelivery.findFirst({
-        where: {
-          tenantId: args.tenantId,
-          dedupeKey: args.dedupeKey,
-          status: { in: ["SCHEDULED", "QUEUED"] },
-        },
-        select: { id: true },
-      });
-      return existing?.id ?? null;
-    }
-  }
-}
-
-/**
- * True only for a `P2002` raised by the `(tenant_id, dedupe_key)` unique — never
- * for an unrelated one such as the tenant-ownership key, which must propagate
- * untouched (`sales.service.ts`'s matcher, which documents both shapes Prisma
- * reports: the violated INDEX NAME, or the violated COLUMNS).
- */
-function isDedupeKeyConflict(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as { code?: unknown; meta?: { target?: unknown } };
-  if (candidate.code !== "P2002") return false;
-
-  const normalize = (token: string): string => token.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const target = candidate.meta?.target;
-  const expectedConstraint = normalize(DEDUPE_KEY_CONSTRAINT);
-  if (typeof target === "string") {
-    return normalize(target) === expectedConstraint;
-  }
-  if (!Array.isArray(target)) return false;
-
-  const tokens = target.filter((entry): entry is string => typeof entry === "string");
-  if (tokens.length === 0) return false;
-  if (tokens.length === 1 && normalize(tokens[0] ?? "") === expectedConstraint) return true;
-
-  const normalized = tokens.map(normalize);
-  return (
-    normalized.length === DEDUPE_KEY_FIELDS.length &&
-    DEDUPE_KEY_FIELDS.every((field) => normalized.includes(field))
-  );
 }
 
 /**
@@ -390,4 +357,27 @@ function isDedupeKeyConflict(error: unknown): boolean {
  */
 function describeError(error: unknown): string {
   return error instanceof Error ? error.name : "UnknownError";
+}
+
+/**
+ * The bounded, sanitized shape a failure is reported with: the error's NAME and, when the
+ * driver supplies one, its CODE.
+ *
+ * The code is what lets an operator tell a transient failure from a BUG. The caller logs
+ * both cases and refuses to let either escape — an escaping rejection is an unhandled one
+ * (the dispatcher is fire-and-forget) and Node terminates the process on those — so the
+ * distinction has to be visible in the report instead. `P2002` on the wrong index is a
+ * programming error; `ECONNREFUSED` is the database being down; a `TypeError` is ours.
+ *
+ * Never the message: a driver's text is where a connection string with credentials lives.
+ */
+function describeFailure(error: unknown): { error: string; errorCode: string | null } {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+  return {
+    error: describeError(error),
+    errorCode: typeof code === "string" ? code : null,
+  };
 }

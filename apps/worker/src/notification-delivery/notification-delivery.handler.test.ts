@@ -18,6 +18,7 @@ import {
   NotificationDeliveryHandler,
   UnsupportedRecipientTypeError,
   type NotificationDeliveryPrisma,
+  type NotificationDeliveryTx,
 } from "./notification-delivery.handler.js";
 
 type Status = "SCHEDULED" | "QUEUED" | "SENDING" | "SENT" | "FAILED" | "CANCELLED";
@@ -46,6 +47,10 @@ interface Write {
 interface Setup {
   readonly handler: NotificationDeliveryHandler;
   readonly writes: Write[];
+  /** The rows the attempt log was asked to write ([[TD-046]]). */
+  readonly attemptRows: Record<string, unknown>[];
+  /** Counts the transactions the handler opened, which is how "one settle, one commit" is asserted. */
+  readonly prismaCalls: { transactions: number };
   readonly claimCalls: () => number;
   readonly channelSend: (channel: NotificationChannel) => ReturnType<typeof vi.fn>;
 }
@@ -59,6 +64,8 @@ function setup(args: {
   readonly recipient?: NotificationRecipientPort;
   readonly entitlement?: NotificationEntitlementPort;
   readonly claimSucceeds?: boolean;
+  /** How many attempts already ran, which is what the log's numbering derives from. */
+  readonly attemptCount?: number;
   readonly rowPresent?: boolean;
   readonly channelThrows?: boolean;
 }): Setup {
@@ -70,7 +77,7 @@ function setup(args: {
     status: args.status ?? "SCHEDULED",
     recipientType: "CUSTOMER",
     recipientId: "00000000-0000-4000-8000-000000000003",
-    attemptCount: 0,
+    attemptCount: args.attemptCount ?? 0,
     lastAttemptAt: attempts,
   };
 
@@ -79,10 +86,27 @@ function setup(args: {
     writes.push(write);
     return Promise.resolve({ count: args.claimSucceeds === false ? 0 : 1 });
   });
+  // Named `attemptRows`: `attempts` is already the delivery's LEASE instant in this
+  // harness, and shadowing it silently broke both.
+  const attemptRows: Record<string, unknown>[] = [];
+  const prismaCalls = { transactions: 0 };
   const prisma: NotificationDeliveryPrisma = {
     notificationDelivery: {
       findFirst: () => Promise.resolve(args.rowPresent === false ? null : delivery),
       updateMany,
+    },
+    notificationDeliveryAttempt: {
+      create: (createArgs) => {
+        attemptRows.push(createArgs.data);
+        return Promise.resolve({ id: `attempt-${attemptRows.length}` });
+      },
+    },
+    // The real transaction runs the callback against the same client; the stub's maps ARE
+    // the transaction boundary, so what the assertion can see is that the settle and its
+    // attempt row went through ONE callback rather than two independent writes.
+    $transaction: (run) => {
+      prismaCalls.transactions += 1;
+      return run(prisma);
     },
   };
 
@@ -120,6 +144,8 @@ function setup(args: {
 
   return {
     handler,
+    attemptRows,
+    prismaCalls,
     writes,
     claimCalls: () => updateMany.mock.calls.length,
     channelSend: (channel) => sends[channel],
@@ -335,6 +361,19 @@ describe("the delivery handler's outcome", () => {
     const writes: Write[] = [];
     const handler = new NotificationDeliveryHandler(
       {
+        notificationDeliveryAttempt: { create: () => Promise.resolve({ id: "attempt" }) },
+        // The transaction hands over the SAME delegates, because that is what the real one
+        // does: a callback given an empty object would make every assertion here vacuous.
+        $transaction: <T>(run: (tx: NotificationDeliveryTx) => Promise<T>): Promise<T> =>
+          run({
+            notificationDelivery: {
+              updateMany: (write: Write) => {
+                writes.push(write);
+                return Promise.resolve({ count: 1 });
+              },
+            },
+            notificationDeliveryAttempt: { create: () => Promise.resolve({ id: "attempt" }) },
+          }),
         notificationDelivery: {
           findFirst: () =>
             Promise.resolve({
@@ -462,6 +501,26 @@ describe("the settle path", () => {
     let call = 0;
     const handler = new NotificationDeliveryHandler(
       {
+        notificationDeliveryAttempt: { create: () => Promise.resolve({ id: "attempt" }) },
+        // The SAME delegate inside the transaction, so the failure this case is about
+        // happens where the handler's settle runs rather than in an empty object.
+        $transaction: <T>(run: (tx: NotificationDeliveryTx) => Promise<T>): Promise<T> =>
+          run({
+            notificationDelivery: {
+              updateMany: (write: {
+                where: Record<string, unknown>;
+                data: Record<string, unknown>;
+              }) => {
+                writes.push(write);
+                call += 1;
+                // 1: the claim. 2: the settle, which fails.
+                return call === 2
+                  ? Promise.reject(new Error("the settle write failed"))
+                  : Promise.resolve({ count: 1 });
+              },
+            },
+            notificationDeliveryAttempt: { create: () => Promise.resolve({ id: "attempt" }) },
+          }),
         notificationDelivery: {
           findFirst: () =>
             Promise.resolve({
@@ -480,7 +539,6 @@ describe("the settle path", () => {
           }) => {
             writes.push(write);
             call += 1;
-            // 1: the claim. 2: the settle, which fails.
             return call === 2
               ? Promise.reject(new Error("the settle write failed"))
               : Promise.resolve({ count: 1 });
@@ -565,5 +623,66 @@ describe("the delivery path's trace", () => {
     for (const write of writes) {
       expect(write.where.tenantId).toBe(job.tenantId);
     }
+  });
+});
+
+/**
+ * The attempt log's writer ([[TD-046]]).
+ *
+ * The delivery row keeps a SUMMARY — a count, the last instant and the last reason — which
+ * is the right shape for "did it work". These cases are about the other question: what the
+ * SEQUENCE was, which is what an operator needs when a message failed three times with
+ * three different reasons and the row only remembers the third.
+ */
+describe("the attempt log", () => {
+  it("records a SENT attempt, with no reason and the next attempt number", async () => {
+    // attemptCount 2 means two attempts already ran, so this one is the third.
+    const { handler, attemptRows } = setup({ attemptCount: 2 });
+    await handler.handle(job);
+
+    expect(attemptRows).toHaveLength(1);
+    expect(attemptRows[0]).toMatchObject({ attemptNumber: 3, outcome: "SENT" });
+    // The biconditional the database also enforces: a success carries no reason.
+    expect(attemptRows[0]).not.toHaveProperty("reasonCode");
+    expect(attemptRows[0]).not.toHaveProperty("reasonMessage");
+  });
+
+  it("records a FAILED attempt with the bounded reason the settle stored", async () => {
+    const { handler, attemptRows } = setup({ channelOutcome: "PERMANENT_FAILURE" });
+    await handler.handle(job);
+
+    expect(attemptRows).toHaveLength(1);
+    expect(attemptRows[0]).toMatchObject({ attemptNumber: 1, outcome: "FAILED" });
+    expect(String(attemptRows[0]?.reasonCode)).toBeTruthy();
+    expect(String(attemptRows[0]?.reasonMessage)).toBeTruthy();
+  });
+
+  it("records a RETRYABLE failure too, which is where the sequence earns its keep", async () => {
+    // The delivery stays SENDING and its `lastErrorMessage` holds the LAST reason. Without
+    // this row, the previous attempt's reason would be gone the moment the next one fails.
+    const { handler, attemptRows } = setup({ channelOutcome: "RETRYABLE_FAILURE" });
+    await expect(handler.handle(job)).rejects.toThrow(/will be retried/);
+
+    expect(attemptRows).toHaveLength(1);
+    expect(attemptRows[0]).toMatchObject({ attemptNumber: 1, outcome: "FAILED" });
+  });
+
+  it("records NOTHING when the settle lost its compare-and-set", async () => {
+    // A lost settle belongs to another worker, and an attempt row written for it would put
+    // somebody else's attempt in this log — the one way this table could lie.
+    const { handler, attemptRows } = setup({ claimSucceeds: false });
+    await handler.handle(job);
+    expect(attemptRows).toHaveLength(0);
+  });
+
+  it("writes the settle and its attempt in ONE transaction", async () => {
+    // Asserted at the seam rather than assumed: a settle committed without its attempt
+    // row would be a log that disagrees with the record it belongs to, and the failure
+    // mode is silent.
+    const { handler, prismaCalls } = setup({});
+    await handler.handle(job);
+    expect(prismaCalls.transactions).toBeGreaterThan(0);
+    // One settle, one transaction: the claim is its own CAS and is not wrapped.
+    expect(prismaCalls.transactions).toBe(1);
   });
 });

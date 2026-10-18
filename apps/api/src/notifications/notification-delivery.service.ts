@@ -6,8 +6,12 @@ import { RequestContextService } from "../context/request-context.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { NOTIFICATIONS_PERMISSIONS } from "./notifications.permissions.js";
 import {
+  NOTIFICATION_DELIVERY_ATTEMPT_HISTORY_LIMIT,
   NOTIFICATION_DELIVERY_LIST_LIMIT_DEFAULT,
+  toNotificationDeliveryAttemptResponse,
   toNotificationDeliveryResponse,
+  type NotificationDeliveryAttemptRow,
+  type NotificationDeliveryDetailResponse,
   type NotificationDeliveryListQuery,
   type NotificationDeliveryResponse,
   type NotificationDeliveryRow,
@@ -30,6 +34,15 @@ export interface NotificationDeliveryReadPrisma {
     findFirst(
       args: Prisma.NotificationDeliveryFindFirstArgs
     ): Promise<NotificationDeliveryRow | null>;
+  };
+  /**
+   * The attempt log ([[TD-046]]). Read ONLY by the detail: the list would turn it into a
+   * query per row, which is the N+1 this read surface does not have today.
+   */
+  notificationDeliveryAttempt: {
+    findMany(
+      args: Prisma.NotificationDeliveryAttemptFindManyArgs
+    ): Promise<NotificationDeliveryAttemptRow[]>;
   };
 }
 
@@ -89,8 +102,15 @@ export class NotificationDeliveryService {
     return rows.map(toNotificationDeliveryResponse);
   }
 
-  /** One delivery, or a `404` indistinguishable from a foreign tenant's. */
-  async get(id: string): Promise<NotificationDeliveryResponse> {
+  /**
+   * One delivery and its attempt history, or a `404` indistinguishable from a foreign
+   * tenant's.
+   *
+   * The attempts are read AFTER the delivery is known to exist and to be the caller's,
+   * which is what keeps a foreign id from touching a second table — and the read is
+   * bounded, ordered chronologically.
+   */
+  async get(id: string): Promise<NotificationDeliveryDetailResponse> {
     const tenantId = this.requestContext.requireTenantId();
     await this.requireReadPermission();
 
@@ -103,7 +123,25 @@ export class NotificationDeliveryService {
     if (row === null) {
       throw new DomainError("NOT_FOUND", "Notification delivery was not found.");
     }
-    return toNotificationDeliveryResponse(row);
+    // The NEWEST window, then reversed: a bounded read that returned the OLDEST twenty
+    // would hide exactly the attempts an operator is looking at a failure for.
+    const attempts = await this.prisma.notificationDeliveryAttempt.findMany({
+      where: { deliveryId: row.id },
+      orderBy: { attemptNumber: "desc" },
+      take: NOTIFICATION_DELIVERY_ATTEMPT_HISTORY_LIMIT,
+      select: {
+        attemptNumber: true,
+        outcome: true,
+        reasonCode: true,
+        reasonMessage: true,
+        occurredAt: true,
+      },
+    });
+
+    return {
+      ...toNotificationDeliveryResponse(row),
+      attempts: attempts.reverse().map(toNotificationDeliveryAttemptResponse),
+    };
   }
 
   private async requireReadPermission(): Promise<void> {

@@ -66,12 +66,6 @@ Suppliers.md
 Purchases.md
 ```
 
-Recommended files:
-
-```text
-Notifications.md
-```
-
 Module docs describe current implemented behavior, not speculative backlog.
 
 Use `../_templates/MODULE.md`. Style reference: [[Branding]],
@@ -94,6 +88,12 @@ Implemented (EPIC-15):
 
 ```text
 Fiscal.md
+```
+
+Implemented (EPIC-17):
+
+```text
+Notifications.md
 ```
 
 `Fiscal.md` is a single module document: [[EPIC-16]] extended it with the tenant

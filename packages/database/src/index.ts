@@ -42,6 +42,8 @@ export {
   STARTER_PLAN_SEED,
   TAX_RATE_SEEDS,
   seedReferenceData,
+  PLATFORM_TENANT_SEED,
+  PLATFORM_TENANT_SLUG,
   type PermissionKey,
   type RoleCode,
   type SpeciesCode,

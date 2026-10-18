@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Prisma } from "@newsaas/database";
 import {
+  NOTIFICATION_DELIVERY_ATTEMPT_HISTORY_LIMIT,
   NOTIFICATION_DELIVERY_LIST_LIMIT_DEFAULT,
   notificationDeliveryListQuerySchema,
   toNotificationDeliveryResponse,
+  type NotificationDeliveryAttemptRow,
   type NotificationDeliveryRow,
 } from "./notification-delivery.dto.js";
 import {
@@ -47,6 +49,7 @@ interface Harness {
   /** The arguments the service passed to Prisma, typed rather than via `mock.calls`. */
   manyCalls: Prisma.NotificationDeliveryFindManyArgs[];
   firstCalls: Prisma.NotificationDeliveryFindFirstArgs[];
+  attemptCalls: Prisma.NotificationDeliveryAttemptFindManyArgs[];
 }
 
 /**
@@ -58,11 +61,13 @@ interface Harness {
 function harness(
   options: {
     rows?: NotificationDeliveryRow[];
+    attempts?: NotificationDeliveryAttemptRow[];
     permissions?: readonly string[];
   } = {}
 ): Harness {
   const manyCalls: Prisma.NotificationDeliveryFindManyArgs[] = [];
   const firstCalls: Prisma.NotificationDeliveryFindFirstArgs[] = [];
+  const attemptCalls: Prisma.NotificationDeliveryAttemptFindManyArgs[] = [];
   const prisma: NotificationDeliveryReadPrisma = {
     notificationDelivery: {
       findMany: (args) => {
@@ -72,6 +77,12 @@ function harness(
       findFirst: (args) => {
         firstCalls.push(args);
         return Promise.resolve((options.rows ?? [])[0] ?? null);
+      },
+    },
+    notificationDeliveryAttempt: {
+      findMany: (args) => {
+        attemptCalls.push(args);
+        return Promise.resolve(options.attempts ?? []);
       },
     },
   };
@@ -84,6 +95,7 @@ function harness(
     service: new NotificationDeliveryService(prisma, requestContext, permissionResolver),
     manyCalls,
     firstCalls,
+    attemptCalls,
   };
 }
 
@@ -182,6 +194,58 @@ describe("NotificationDeliveryService — the read contract", () => {
       expect(select).not.toHaveProperty("contactValue");
       expect(select).not.toHaveProperty("messageBody");
     }
+  });
+
+  it("reads the attempt history for the DETAIL, bounded and newest-windowed", async () => {
+    const attempts: NotificationDeliveryAttemptRow[] = [
+      {
+        attemptNumber: 3,
+        outcome: "FAILED",
+        reasonCode: "PROVIDER_REJECTED",
+        reasonMessage: "Provider refused the address.",
+        occurredAt: new Date("2026-10-18T10:02:00.000Z"),
+      },
+      {
+        attemptNumber: 2,
+        outcome: "FAILED",
+        reasonCode: "TIMEOUT",
+        reasonMessage: null,
+        occurredAt: new Date("2026-10-18T10:01:00.000Z"),
+      },
+    ];
+    const { service, attemptCalls } = harness({ rows: [row()], attempts });
+    const detail = await service.get(row().id);
+
+    // The read is bounded, and it takes the NEWEST window before reversing: a bounded read
+    // that returned the oldest twenty would hide exactly the attempts an operator is
+    // looking at a failure for.
+    expect(attemptCalls[0]?.take).toBe(NOTIFICATION_DELIVERY_ATTEMPT_HISTORY_LIMIT);
+    expect(attemptCalls[0]?.orderBy).toEqual({ attemptNumber: "desc" });
+    expect(attemptCalls[0]?.where).toEqual({ deliveryId: row().id });
+    // Chronological once mapped, so the story reads top to bottom.
+    expect(detail.attempts.map((attempt) => attempt.attemptNumber)).toEqual([2, 3]);
+    expect(detail.attempts[0]).toEqual({
+      attemptNumber: 2,
+      outcome: "FAILED",
+      reasonCode: "TIMEOUT",
+      reasonMessage: null,
+      occurredAt: "2026-10-18T10:01:00.000Z",
+    });
+  });
+
+  it("reads NO attempt history for the LIST, so the read surface stays one query per page", async () => {
+    const { service, attemptCalls } = harness({ rows: [row()] });
+    await service.list({});
+    // The list carrying a per-row attempt query is the N+1 this surface does not have, and
+    // the assertion is here because the obvious way to add this feature gets it wrong.
+    expect(attemptCalls).toHaveLength(0);
+  });
+
+  it("does not read attempts for a delivery the caller cannot see", async () => {
+    const { service, attemptCalls } = harness({ rows: [] });
+    await expect(service.get(row().id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    // The 404 comes first, so a foreign id never touches the second table.
+    expect(attemptCalls).toHaveLength(0);
   });
 
   it("answers an unknown delivery with NOT_FOUND", async () => {

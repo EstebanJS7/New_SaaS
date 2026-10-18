@@ -273,6 +273,18 @@ present in EPIC-00.
 - **Scope fence**: no suspension command, authorization, audit or DTO change;
   active-slug resolution and the allowlisted public DTO are unchanged.
 
+## The signed-out consumer (SHELL-001)
+
+The public brand resolution has a second consumer now, and it is worth naming
+because it is the reason a signed-in-only product could still render before
+anybody signs in: **`/login` and `/forgot-password` render under the root
+layout**, which resolves the brand from the public layer.
+`GET /branding/current` — the private one — is what the staff shell reads, and
+since [[SHELL-001]] it is ALSO the shell's gate: a `401` from it sends the
+visitor to `/login`, while every other failure falls back to the product preset
+and renders. Only a `401` proves there is no session; an outage is not an
+absence.
+
 ## Not yet implemented
 
 Preset-driven dark-mode recoloring remains outstanding. Playwright E2E coverage

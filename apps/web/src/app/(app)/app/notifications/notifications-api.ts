@@ -49,6 +49,19 @@ export interface NotificationDelivery {
 
 export type NotificationSourceType = "APPOINTMENT" | "FISCAL_DOCUMENT";
 
+/** One recorded attempt ([[TD-046]]). The DETAIL carries these; the list does not. */
+export interface NotificationDeliveryAttempt {
+  readonly attemptNumber: number;
+  readonly outcome: string;
+  readonly reasonCode: string | null;
+  readonly reasonMessage: string | null;
+  readonly occurredAt: string;
+}
+
+export interface NotificationDeliveryDetail extends NotificationDelivery {
+  readonly attempts: readonly NotificationDeliveryAttempt[];
+}
+
 export interface NotificationDeliveryListFilters {
   readonly status?: NotificationDeliveryStatus;
   readonly channel?: NotificationChannel;
@@ -102,7 +115,7 @@ export async function listNotificationDeliveries(
   return body.deliveries;
 }
 
-export function getNotificationDelivery(id: string): Promise<NotificationDelivery> {
+export function getNotificationDelivery(id: string): Promise<NotificationDeliveryDetail> {
   return getJson(`/deliveries/${id}`);
 }
 

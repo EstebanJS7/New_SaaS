@@ -8,6 +8,7 @@ import {
   isNotificationPermissionDenied,
   listNotificationDeliveries,
   type NotificationDelivery,
+  type NotificationDeliveryDetail,
 } from "./notifications-api";
 import {
   NotificationDeliveryDetailPanel,
@@ -40,7 +41,7 @@ export function NotificationsSurface(): JSX.Element {
     queryKey: ["notifications", "delivery", selectedDeliveryId ?? "none"],
     queryFn: () =>
       selectedDeliveryId === null
-        ? Promise.resolve<NotificationDelivery | null>(null)
+        ? Promise.resolve<NotificationDeliveryDetail | null>(null)
         : getNotificationDelivery(selectedDeliveryId),
     retry: false,
     enabled: selectedDeliveryId !== null,
@@ -81,6 +82,7 @@ export function NotificationsSurface(): JSX.Element {
         <NotificationDeliveryDetailPanel
           delivery={detailQuery.data ?? null}
           isLoading={selectedDeliveryId !== null && detailQuery.isLoading}
+          permissionDenied={forbiddenDetail}
           errorMessage={
             detailQuery.error === null || forbiddenDetail
               ? null

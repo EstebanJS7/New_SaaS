@@ -127,16 +127,38 @@ green" criterion reflects the verified 2026-09-11 candidate.
 
 ## Suggested Stories
 
-```text
+````text
 BRAND-001 Semantic design tokens
 BRAND-002 Product brand preset
 BRAND-003 Tenant branding persistence/API
 BRAND-004 Branding asset upload
 BRAND-005 Branding settings + live preview
 BRAND-006 Public brand resolution / portal integration
+
+**Reopened on 2026-10-18 and closed again the same day** for one Story — the shell's front door rather than its
+branding:
+
+```text
+SHELL-001 The staff sign-in surface
+````
+
+It uses a different prefix because it is not a branding Story: the epic's title
+covers the staff shell, and naming a login `BRAND-007` would file it under the
+wrong word. What it found is that **the app has no login page at all** — not for
+staff, not for the portal — while the API has had `POST /auth/login` since
+[[DAT-003]] and the session cookie is `HttpOnly`. Every staff surface was, until
+this Story, reachable only by hand-crafting a request.
+
 ```
 
 ## Related
 
 - [[Branding and Theming]]
 - [[ADR-002 Branding Theme Layering]]
+```
+
+**SHELL-001 is `done`**, and the epic is closed again. Its finding is worth
+keeping in the epic's own record: the app had no login page anywhere, so every
+surface this epic builds was reachable only by hand-crafting a request. The
+shell, the design system and the branding were all consistent — and unusable
+without a front door.

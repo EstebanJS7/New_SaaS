@@ -11,6 +11,7 @@ import {
   REMINDER_CANCELLATION_REASON,
   type NotificationReminderPrisma,
 } from "./notification-reminder.scheduler.js";
+import { NotificationIntentService } from "./notification-intent.service.js";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 const appointmentId = "22222222-2222-2222-2222-222222222222";
@@ -38,6 +39,13 @@ function setup(args: {
   readonly existingDedupeKeys?: readonly string[];
   /** A Prisma-shaped rejection; the Error base keeps the lint's rejection rule satisfied. */
   readonly conflictingCreate?: Error;
+  /**
+   * Makes the FIRST read fail, which is the transient case the handler's guard exists
+   * for: a database blip before anything was written.
+   */
+  readonly appointmentReadFails?: Error;
+  /** Makes the cancellation path's own first read fail. */
+  readonly pendingReadFails?: Error;
   readonly pendingDeliveries?: readonly { id: string }[];
   readonly cancelCount?: number;
   /** Whether the compensation read still finds the intent pending (R3-001). */
@@ -81,6 +89,9 @@ function setup(args: {
         // `!== undefined` rather than `??`: a case that scripts an explicit
         // NULL (an absent or foreign appointment) must not fall back to the
         // default CONFIRMED row.
+        if (args.appointmentReadFails !== undefined) {
+          return Promise.reject(args.appointmentReadFails);
+        }
         const sequence = args.appointmentSequence ?? [
           args.appointment !== undefined ? args.appointment : CONFIRMED_APPOINTMENT,
         ];
@@ -112,7 +123,10 @@ function setup(args: {
       // delivery holds the key so a failed enqueue can be retried (R3-001 of the
       // fiscal notice's review, the same hole).
       findFirst: () => Promise.resolve(args.stillPending === false ? null : { id: "delivery-1" }),
-      findMany: () => Promise.resolve(args.pendingDeliveries ?? []),
+      findMany: () => {
+        if (args.pendingReadFails !== undefined) return Promise.reject(args.pendingReadFails);
+        return Promise.resolve(args.pendingDeliveries ?? []);
+      },
       updateMany: (updateArgs: {
         where: Record<string, unknown>;
         data: Record<string, unknown>;
@@ -169,7 +183,10 @@ function setup(args: {
     settings,
     entitlements,
     recipients,
-    producer
+    producer,
+    // The intent creation moved to its own service in DAT-007 WU-C1, when a third
+    // caller needed the same idempotent shape. The stub prisma serves both.
+    new NotificationIntentService(prisma)
   );
   scheduler.onModuleInit();
 
@@ -321,9 +338,24 @@ describe("scheduling a reminder", () => {
     expect(enqueued).toHaveLength(0);
   });
 
-  it("propagates a P2002 that is NOT the dedupe key", async () => {
+  /**
+   * The handler NEVER rejects, and these three cases are that property plus the reason it
+   * does not contradict "do not swallow bugs".
+   *
+   * The dispatcher invokes handlers as `void (async () => handler(event))()`, so a
+   * rejection here has no consumer — and Node terminates the process on an unhandled
+   * rejection. One failed settings read during one confirmation would take down every
+   * request the API serves. TD-045's re-read found exactly that, in this file.
+   *
+   * The bug is therefore not SWALLOWED, it is REPORTED: the log carries the error's name
+   * and its code, which is what lets an operator tell "we hit the wrong unique index"
+   * from "the database was unreachable" from "that is our own TypeError".
+   */
+  it("does not escape a P2002 that is NOT the dedupe key; it reports it", async () => {
     // Accepting a bare P2002 would swallow a tenant-ownership-key conflict as
-    // "already scheduled", which is how a bug becomes a silent no-op.
+    // "already scheduled", which is how a bug becomes a silent no-op. The distinction is
+    // made and LOGGED rather than propagated.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { confirmed } = setup({
       conflictingCreate: Object.assign(new Error("unique constraint"), {
         code: "P2002",
@@ -331,12 +363,48 @@ describe("scheduling a reminder", () => {
       }),
     });
 
-    await expect(confirmed()).rejects.toMatchObject({ code: "P2002" });
+    await expect(confirmed()).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining("could not be scheduled"),
+      expect.objectContaining({ error: "Error", errorCode: "P2002" })
+    );
+    // And the message never reaches the log: a driver's text is where credentials live.
+    expect(JSON.stringify(spy.mock.calls)).not.toContain("unique constraint");
+    spy.mockRestore();
   });
 
-  it("propagates a non-P2002 failure", async () => {
-    const { confirmed } = setup({ conflictingCreate: new Error("connection terminated") });
-    await expect(confirmed()).rejects.toThrow(/connection terminated/);
+  it("does not escape a transient failure either, and names it as one", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { confirmed } = setup({
+      appointmentReadFails: Object.assign(new Error("connection terminated"), {
+        code: "ECONNREFUSED",
+      }),
+    });
+
+    // The case the guard exists for: a database blip on the FIRST read, before anything
+    // was written. The reminder is not scheduled — the epic's declared, diagnosable gap —
+    // and it is healed by a later confirmation, because `ensureIntent` re-enqueues.
+    await expect(confirmed()).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining("could not be scheduled"),
+      expect.objectContaining({ errorCode: "ECONNREFUSED" })
+    );
+    spy.mockRestore();
+  });
+
+  it("does not escape a failure inside the cancellation reaction", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // `cancel` drives the handler; `cancelled` is the array of removed job ids. The
+    // cancellation path's OWN first read is the pending-deliveries lookup, not the
+    // appointment's, so that is the one made to fail here.
+    const { cancel } = setup({ pendingReadFails: new Error("connection terminated") });
+
+    await expect(cancel()).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining("cancellation could not be scheduled"),
+      expect.objectContaining({ error: "Error" })
+    );
+    spy.mockRestore();
   });
 
   it("schedules nothing for an appointment that is no longer CONFIRMED", async () => {

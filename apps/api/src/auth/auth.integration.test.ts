@@ -66,6 +66,21 @@ function makeFakeDatabase() {
   let sequence = 0;
 
   const prisma = {
+    /**
+     * The reset path runs its whole change in one transaction (DAT-007 WU-C2). The
+     * fake's maps ARE the transaction boundary, so the callback simply receives the
+     * same client; what this suite asserts through it is the refusal path, and the
+     * transaction's CONTENTS are asserted in `password-reset.service.test.ts`, where
+     * a stub can see every statement.
+     */
+    $transaction: <T>(callback: (tx: unknown) => Promise<T>): Promise<T> => callback(prisma),
+    /**
+     * No token in this suite, so every token is refused. Only the shape the refusal
+     * needs is modelled: the digest lookup, answering null.
+     */
+    passwordResetToken: {
+      findFirst: () => null,
+    },
     userProfile: {
       // Sync bodies (eslint require-await): awaiting plain values keeps the
       // runtime contract identical to the real async delegates.
@@ -401,18 +416,64 @@ describe("Auth surface (real Fastify adapter)", () => {
     }
   });
 
-  it("returns NOT_FOUND envelopes for absent recovery routes (deferred feature)", async () => {
-    const forgot = await supertest(app.getHttpServer())
+  /**
+   * The FENCE, inverted for the request half (DAT-007 WU-C1).
+   *
+   * It used to assert that both recovery routes answer `NOT_FOUND`, which was the
+   * deferral's own contract ([[TD-004]]). The request route now exists, so what is
+   * asserted instead is the property that matters about it: the answer is the SAME
+   * for an address that could exist and one that cannot, because a difference here
+   * is an account-existence oracle.
+   *
+   * The reset route is still absent; it lands in this Story's next unit, which
+   * replaces the remaining assertion with its behavior.
+   */
+  it("answers forgot-password identically for a known and an unknown address", async () => {
+    const known = await supertest(app.getHttpServer())
       .post("/auth/forgot-password")
       .send({ email: "owner@clinic.test" })
-      .expect(404);
-    expect((forgot.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+      .expect(202);
+    const unknownAddress = await supertest(app.getHttpServer())
+      .post("/auth/forgot-password")
+      .send({ email: "nobody-anywhere@clinic.test" })
+      .expect(202);
 
+    expect(known.body).toEqual({ status: "accepted" });
+    // Byte-equivalent, not merely "both 202": serializing both and comparing is what
+    // makes "the same answer" an assertion rather than an intention.
+    expect(JSON.stringify(known.body)).toBe(JSON.stringify(unknownAddress.body));
+    expect(known.status).toBe(unknownAddress.status);
+  });
+
+  /**
+   * The FENCE, fully inverted (DAT-007 WU-C2). It asserted that both recovery routes
+   * answer `NOT_FOUND`, which was the deferral's own contract; both now exist, so what
+   * is asserted is what they DO.
+   *
+   * A bad token is refused like a failed login — one code and one message — because
+   * distinguishing "unknown" from "spent" from "expired" would tell the holder of a
+   * stale link that it was once real.
+   */
+  it("exists, and refuses an unusable token with the login's own vocabulary", async () => {
     const reset = await supertest(app.getHttpServer())
       .post("/auth/password-reset")
-      .send({ token: "anything", password: "new" })
-      .expect(404);
-    expect((reset.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+      .send({ token: "a-token-that-was-never-issued", password: "new-password" })
+      .expect(401);
+    expect((reset.body as ErrorEnvelopeBody).error.code).toBe("UNAUTHENTICATED");
+    expect((reset.body as ErrorEnvelopeBody).error.message).toBe(
+      "This password reset link is not valid. Request a new one."
+    );
+  });
+
+  it("still validates the body before it looks a token up", async () => {
+    await supertest(app.getHttpServer())
+      .post("/auth/password-reset")
+      .send({ token: "", password: "new-password" })
+      .expect(400);
+    await supertest(app.getHttpServer())
+      .post("/auth/password-reset")
+      .send({ password: "new-password" })
+      .expect(400);
   });
 });
 

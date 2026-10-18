@@ -19,7 +19,36 @@ const productionBase = {
   FISCAL_PROVIDER: "fake",
   EMAIL_PROVIDER: "fake",
   WHATSAPP_PROVIDER: "fake",
+  // DAT-007: a recovery message's link is built from this origin, and a production
+  // worker that cannot name it would mail every user a link to `localhost`.
+  STAFF_APP_BASE_URL: "https://app.example.test",
 };
+
+describe("workerEnv production recovery-link gate", () => {
+  it("REFUSES a production env with no staff app origin", () => {
+    const { STAFF_APP_BASE_URL: _omitted, ...withoutOrigin } = productionBase;
+    const result = workerEnv(withoutOrigin);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("STAFF_APP_BASE_URL");
+    }
+  });
+
+  it("accepts it when provided, and keeps it optional outside production", () => {
+    expect(workerEnv(productionBase).success).toBe(true);
+    // Development and tests fall back to the local web app; the gate is about a
+    // deployment that would send a real message.
+    const development = { ...BASE_ENV, NODE_ENV: "development" as const };
+    expect(workerEnv(development).success).toBe(true);
+  });
+
+  it("refuses a value that is not a URL", () => {
+    expect(workerEnv({ ...productionBase, STAFF_APP_BASE_URL: "app.example.test" }).success).toBe(
+      false
+    );
+  });
+});
 
 describe("workerEnv production storage gate", () => {
   it("rejects a missing STORAGE_S3_BUCKET when production branding assets are enabled", () => {

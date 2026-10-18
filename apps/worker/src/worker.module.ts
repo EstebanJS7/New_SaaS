@@ -27,6 +27,7 @@ import { BrandingResetCleanupHandler } from "./branding-reset-cleanup/cleanup.ha
 import { BrandingResetCleanupReconciliationService } from "./branding-reset-cleanup/reconciliation.service.js";
 import { NOTIFICATION_CONTENT_BUILDER } from "./notification-delivery/notification-content.js";
 import { createNotificationContentBuilder } from "./notification-delivery/notification-content.builder.js";
+import { DEFAULT_STAFF_APP_BASE_URL } from "./config/worker-env.schema.js";
 import { NotificationDeliveryConsumer } from "./notification-delivery/notification-delivery.consumer.js";
 import { NotificationDeliveryHandler } from "./notification-delivery/notification-delivery.handler.js";
 import { NotificationFiscalNoticeScheduler } from "./notification-delivery/notification-fiscal-notice.scheduler.js";
@@ -202,7 +203,15 @@ const fiscalApprovalEmitterProvider: Provider = {
  */
 const contentBuilderProvider: Provider = {
   provide: NOTIFICATION_CONTENT_BUILDER,
-  useFactory: (prisma: PrismaService) => createNotificationContentBuilder({ client: prisma }),
+  useFactory: (prisma: PrismaService) =>
+    createNotificationContentBuilder({
+      client: prisma,
+      // A deployment input (DAT-007): the link a recovery message carries must point at
+      // THIS deployment's app, or a live token is handed to whoever owns the host it
+      // does point at. The schema REFUSES to boot in production without it, so this
+      // fallback exists for development and tests only.
+      staffAppBaseUrl: process.env.STAFF_APP_BASE_URL ?? DEFAULT_STAFF_APP_BASE_URL,
+    }),
   inject: [PrismaService],
 };
 
