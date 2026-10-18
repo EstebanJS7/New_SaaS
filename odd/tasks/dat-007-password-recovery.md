@@ -37,11 +37,35 @@ directly through the channel port.
       conditions the read saw, a lost race refuses, the three causes refuse
       IDENTICALLY, the expiry boundary is exact at the millisecond, and
       `spendAllForProfile` leaves already-spent rows alone._
-- [ ] **WU-C — the two routes.** `POST /auth/forgot-password` (rate-limited,
-      uniform response, creates the delivery **intent**, no external call) and
-      `POST /auth/password-reset` (consume, replace the argon2id hash,
-      invalidate **every** session for the profile, audit both). The fence in
-      `auth.integration.test.ts` is **inverted**.
+- [~] **WU-C — the two routes.** Split in two, because the halves have different
+  risks. **C1 (the request half) is DONE**; C2 (the reset) follows. _C1, commit
+  pending: the `platform` tenant is seeded (a singleton that owns
+  identity-scoped messages, not a customer); `POST /auth/forgot-password`
+  answers `202 {status:"accepted"}` **byte-equivalently** for a known and an
+  unknown address and for a profile with no credentials; the rate limit is keyed
+  by address AND IP so one attacker cannot lock a victim out; and the request
+  **publishes `PasswordResetRequested`** — `tenantId: null`, which the envelope
+  documents as the meaning of that value — instead of talking to the delivery
+  aggregate. The notification module's `PasswordRecoveryScheduler` subscribes
+  (in the API deployable, because the dispatcher is in-process), resolves the
+  platform tenant, creates the intent with a per-hour window key and enqueues
+  it. **Two things the work uncovered.** (1) The first design had `AuthModule`
+  import `NotificationsModule`, which does not work: it is a DYNAMIC module, so
+  importing the class yields nothing, and calling `forRoot()` a second time
+  would instantiate the producer and the reminder scheduler TWICE. The event
+  dissolved the whole tangle, and the auth module now depends on no notification
+  anything. (2) The credential check was `=== null`, which a delegate that does
+  not model the relation would answer with `undefined` — reading "no
+  credentials" as "has credentials" and mailing a reset link for a password that
+  does not exist. It is falsy-safe now, and the in-memory harness not modelling
+  `user_credential` is what surfaced it. Evidence: 9 service cases + 7 scheduler
+  cases (including that the subscriber is REGISTERED, and that a failure logs
+  the error's NAME and never its message), 3 policy cases in the package, the
+  fence narrowed and the byte-equivalence asserted over real HTTP, and the new
+  route pinned in the route-contract inventory. **Not covered yet**: the
+  full-app end-to-end (route -> event -> delivery row + enqueue), because the
+  in-memory Prisma harness does not model `user_credential`; it is the first
+  thing C2 or WU-D must close._
 - [ ] **WU-D — the notification wiring.** Two enum values (`STAFF_ACCOUNT`,
       `STAFF`) in the same migration, a staff recipient reader, and the message.
       **The token is issued at send time**, so the plaintext never reaches a

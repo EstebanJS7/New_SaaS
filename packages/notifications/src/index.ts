@@ -124,3 +124,8 @@ export {
 } from "./reminder.policy.js";
 export type { ReminderDedupeKeyArgs } from "./reminder.policy.js";
 export type { NotificationDeliveryReason } from "./delivery.reason.js";
+export {
+  STAFF_RECOVERY_CHANNEL,
+  staffRecoveryDedupeKey,
+  staffRecoveryWindow,
+} from "./staff-recovery.policy.js";

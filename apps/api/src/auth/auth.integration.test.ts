@@ -401,13 +401,36 @@ describe("Auth surface (real Fastify adapter)", () => {
     }
   });
 
-  it("returns NOT_FOUND envelopes for absent recovery routes (deferred feature)", async () => {
-    const forgot = await supertest(app.getHttpServer())
+  /**
+   * The FENCE, inverted for the request half (DAT-007 WU-C1).
+   *
+   * It used to assert that both recovery routes answer `NOT_FOUND`, which was the
+   * deferral's own contract ([[TD-004]]). The request route now exists, so what is
+   * asserted instead is the property that matters about it: the answer is the SAME
+   * for an address that could exist and one that cannot, because a difference here
+   * is an account-existence oracle.
+   *
+   * The reset route is still absent; it lands in this Story's next unit, which
+   * replaces the remaining assertion with its behavior.
+   */
+  it("answers forgot-password identically for a known and an unknown address", async () => {
+    const known = await supertest(app.getHttpServer())
       .post("/auth/forgot-password")
       .send({ email: "owner@clinic.test" })
-      .expect(404);
-    expect((forgot.body as ErrorEnvelopeBody).error.code).toBe("NOT_FOUND");
+      .expect(202);
+    const unknownAddress = await supertest(app.getHttpServer())
+      .post("/auth/forgot-password")
+      .send({ email: "nobody-anywhere@clinic.test" })
+      .expect(202);
 
+    expect(known.body).toEqual({ status: "accepted" });
+    // Byte-equivalent, not merely "both 202": serializing both and comparing is what
+    // makes "the same answer" an assertion rather than an intention.
+    expect(JSON.stringify(known.body)).toBe(JSON.stringify(unknownAddress.body));
+    expect(known.status).toBe(unknownAddress.status);
+  });
+
+  it("still returns NOT_FOUND for the reset route, which lands next", async () => {
     const reset = await supertest(app.getHttpServer())
       .post("/auth/password-reset")
       .send({ token: "anything", password: "new" })

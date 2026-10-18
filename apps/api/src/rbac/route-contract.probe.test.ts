@@ -62,6 +62,11 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /auth/login",
   "POST /auth/logout",
   "GET /auth/me",
+  // DAT-007 — the recovery request. `@Public` because a locked-out user cannot
+  // authenticate, which is why it is the most carefully bounded public route in the
+  // system: rate-limited by address AND IP, and byte-equivalent for a known and an
+  // unknown address.
+  "POST /auth/forgot-password",
   "GET /health/live",
   "GET /health/ready",
   "GET /memberships",
