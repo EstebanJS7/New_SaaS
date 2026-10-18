@@ -2,6 +2,7 @@
 
 import type { JSX } from "react";
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@newsaas/ui/components/ui/button";
 import {
@@ -98,11 +99,17 @@ export function PortalLoginForm({ tenantSlug }: { readonly tenantSlug: string })
           {submitting ? "Signing in..." : "Sign in"}
         </Button>
         {/*
-          Deliberately NO recovery link: the API's recovery authorises a `UserCredential`
-          change and a portal identity holds a `PortalCredential`, so there is nothing to
-          link to. A link to the staff flow would send a customer into a page that cannot
-          help them, which is worse than the absence ([[PORTAL-001]]'s largest named gap).
+          The recovery entry point, which PORTAL-001 deliberately omitted because there was no portal
+          flow to link to. [[PORTAL-002]] built one: the API's recovery now authorises a
+          `PortalCredential` change, and this is the only way a locked-out customer can ask for it.
         */}
+        <Link
+          href={`/${tenantSlug}/forgot-password`}
+          data-testid="portal-login-forgot-password"
+          className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+        >
+          Forgot your password?
+        </Link>
       </CardContent>
     </Card>
   );

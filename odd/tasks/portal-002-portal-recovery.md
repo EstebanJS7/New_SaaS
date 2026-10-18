@@ -933,9 +933,344 @@ a
 
 w o r d .
 
-- [ ] **WU-D — the two pages.** `/[slug]/forgot-password` and
-      `/[slug]/reset-password`, and the link on the login form whose comment
-      currently explains its absence.
+-
+
+[ x ]
+
+-
+-
+
+W U
+-
+
+D
+
+—
+
+t h e
+
+t w o
+
+p a g e s . * *
+
+` / [ s l u g ] / f o r g o t
+-
+
+p a s s w o r d `
+
+a n d
+
+` / [ s l u g ] / r e s e t
+-
+
+p a s s w o r d ` ,
+
+a n d
+
+t h e
+
+l i n k
+
+o n
+
+t h e
+
+l o g i n
+
+f o r m
+
+w h o s e
+
+c o m m e n t
+
+c u r r e n t l y
+
+e x p l a i n s
+
+i t s
+
+a b s e n c e .
+
+-
+
+D o n e :
+
+b o t h
+
+p a g e s
+
+i n s i d e
+
+t h e
+
+A N O N Y M O U S
+
+p o r t a l
+
+l a y o u t
+
+( n o
+
+r e d i r e c t
+
+l o o p ) ,
+
+t h e
+
+t e n a n t
+
+f r o m
+
+t h e
+
+P A T H
+
+o n
+
+t h e
+
+r e q u e s t
+
+p a g e
+
+a n d
+
+t h e
+
+t o k e n
+
+r e a d
+
+S E R V E R
+-
+
+s i d e
+
+o n
+
+t h e
+
+r e s e t
+
+p a g e ,
+
+t h e
+
+B F F ' s
+
+t w o
+
+n e w
+
+a l l o w l i s t e d
+
+s h a p e s ,
+
+a n d
+
+t h e
+
+l o g i n
+
+f o r m ' s
+
+l i n k
+
+—
+
+w h o s e
+
+c a s e
+
+a s s e r t e d
+
+t h e
+
+A B S E N C E
+
+a n d
+
+w a s
+
+r e w r i t t e n
+
+t o
+
+a s s e r t
+
+t h e
+
+h r e f ,
+
+b e c a u s e
+
+a
+
+t e s t
+
+t h a t
+
+e n c o d e s
+
+a
+
+g a p
+
+h a s
+
+t o
+
+c h a n g e
+
+w h e n
+
+t h e
+
+g a p
+
+c l o s e s .
+
+1 4
+
+n e w
+
+c a s e s
+
+( 4
+
+r e q u e s t ,
+
+5
+
+r e s e t ,
+
+1
+
+r e w r i t t e n
+
+l o g i n ,
+
+p l u s
+
+t h e
+
+B F F ' s
+
+s h a p e s ) .
+
+w e b
+
+1 1 5 6 . *
+
+-
+-
+
+T h e
+
+A P I ' s
+
+r e f u s a l
+
+i s
+
+w h a t
+
+b o t h
+
+f o r m s
+
+s h o w * * ,
+
+a n d
+
+n e i t h e r
+
+c l a i m s
+
+m o r e
+
+t h a n
+
+i t
+
+k n o w s :
+
+t h e
+
+r e q u e s t
+
+p a g e
+
+s a y s
+
+" i f
+
+t h a t
+
+a d d r e s s
+
+h a s
+
+a n
+
+a c c o u n t "
+
+b e c a u s e
+
+t h e
+
+A P I
+
+a n s w e r s
+
+2 0 2
+
+i d e n t i c a l l y
+
+f o r
+
+f o u r
+
+d i f f e r e n t
+
+s i t u a t i o n s ,
+
+a n d
+
+t h e
+
+r e s e t
+
+p a g e
+
+s h o w s
+
+o n e
+
+m e s s a g e
+
+f o r
+
+a n
+
+u n k n o w n ,
+
+s p e n t
+
+o r
+
+e x p i r e d
+
+l i n k
+
+r a t h e r
+
+t h a n
+
+g u e s s i n g
+
+w h i c h .
+
 - [ ] **WU-E — the documentation and the closure.** `Portal.md`,
       `Notifications.md`, `Identity-Sessions.md`, and the Story's evidence.
 

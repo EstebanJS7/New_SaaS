@@ -45,7 +45,14 @@ type PortalPathShape =
    * out. `logout` is deliberately NOT added beside it: it revokes a session, and a proxy
    * whose other routes are reads has no business reaching a revocation.
    */
-  | "login";
+  | "login"
+  /**
+   * [[PORTAL-002]]: the two halves of recovery. Session-less in both directions, like the staff
+   * proxy's — the caller is locked out — and allowlisted so a recovery request cannot become a
+   * general tunnel to the portal API.
+   */
+  | "forgot-password"
+  | "password-reset";
 
 /**
  * Method-aware allowlist for the portal proxy (EPIC-08 WU4D, DEC-007 A2d).
@@ -100,7 +107,13 @@ const ALLOWED_PORTAL_ROUTES: Readonly<Record<PortalMethod, ReadonlySet<PortalPat
     "profile",
     "availability",
   ]),
-  POST: new Set<PortalPathShape>(["booking", "cancellation", "login"]),
+  POST: new Set<PortalPathShape>([
+    "booking",
+    "cancellation",
+    "login",
+    "forgot-password",
+    "password-reset",
+  ]),
   PUT: new Set<PortalPathShape>(["profile", "appointmentResource"]),
 };
 
@@ -119,6 +132,12 @@ function portalPathShape(segments: readonly string[]): PortalPathShape | null {
   if (segments.length === 1) {
     if (segments[0] === "login") {
       return "login";
+    }
+    if (segments[0] === "forgot-password") {
+      return "forgot-password";
+    }
+    if (segments[0] === "password-reset") {
+      return "password-reset";
     }
     if (PORTAL_COLLECTIONS.has(segments[0])) {
       return "collection";
@@ -283,6 +302,8 @@ async function proxyPortalRequest(
   // The establishing hop carries NO session: the browser is asking FOR one, and whatever
   // cookie it happens to hold (a stale portal session, or a staff one) has no business
   // travelling to the route that issues another.
+  // Only the SIGN-IN hop establishes a session; the two recovery shapes are session-less in both
+  // directions, and none of the three relays a cookie back except the first.
   const establishing = shape === "login";
   const cookieStore = await cookies();
   const token = establishing ? undefined : cookieStore.get(PORTAL_SESSION_COOKIE)?.value;
