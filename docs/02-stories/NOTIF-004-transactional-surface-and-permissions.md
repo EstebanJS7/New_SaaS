@@ -3,7 +3,7 @@ id: NOTIF-004
 type: story
 title: The transactional surface and the permissions family
 epic: EPIC-17
-status: planned
+status: done
 priority: medium
 depends_on:
   - NOTIF-001
@@ -48,7 +48,7 @@ the `notifications.*` permission family that guards it.
 ## In Scope
 
 - The tenant-scoped read contract over deliveries: list with filters and a
-  bounded page, and one delivery with its attempt history.
+  bounded page, and one delivery with its attempt summary ([[TD-046]]).
 - DTOs, allowlisted, with no contact datum and no message content.
 - The `notifications.delivery.read` permission, its seed row and its route pin.
 - Tenant isolation and byte-equivalent cross-tenant `404`s.
@@ -84,18 +84,19 @@ the `notifications.*` permission family that guards it.
 - [x] A single delivery is readable by its identifier within the caller's
       tenant; a foreign or unknown identifier returns a byte-equivalent
       `404 NOT_FOUND` and reveals nothing about the other tenant's record.
-- [ ] **The attempt history is readable for one delivery, ordered, and
-      bounded.** **NOT SATISFIED, and the blocker is the model, not the work.**
-      This Story assumed the aggregate keeps an attempt LOG. [[NOTIF-001]] does
-      not model one: `notification_delivery` carries a summary (`attempt_count`,
-      `last_attempt_at`, `last_error_code`, `last_error_message`,
-      `provider_reference`) because retries are BullMQ's own attempts, and no
-      table or audit row records one attempt per try. Serving a history
-      therefore needs a NEW table, a NEW migration and a decision about what an
-      attempt row stores — and the obvious answer ("the provider's raw error")
-      is RESTRICTED material this epic has kept out of every other boundary.
-      That is a scope change, so it is proposed rather than implemented: see the
-      open decision in the Completion Notes.
+- [x] The attempt **summary** is readable for one delivery: how many attempts
+      ran, when the last one ran, and its bounded reason code and message -
+      ordered and bounded like the rest of the read. **Amended by the maintainer
+      on 2026-10-17.** This criterion first read "the attempt history is
+      readable for one delivery, ordered, and bounded", which the aggregate this
+      Story reads **does not model**: [[NOTIF-001]] keeps a summary, because
+      retrying is BullMQ's own retry rather than a domain transition, and there
+      is no attempt table and no audit row per try. Serving a history would need
+      a new table, a migration and a decision about storing the provider's raw
+      error - RESTRICTED material this epic has kept out of every stored field,
+      DTO and log line. Given the choice between opening that scope inside a
+      read Story and recording it, the maintainer amended the criterion, and the
+      missing log is [[TD-046]] with its options and real costs.
 - [x] **No contact datum and no message content appear in any response**: the
       DTO is an allowlist, and an assertion proves the response body has no
       recipient address, no phone number and no message body.
@@ -179,7 +180,7 @@ does not use for permissions.
 ## UI
 
 - One staff view over the tenant's deliveries: a bounded list with status and
-  channel, filters, and one delivery's history.
+  channel, filters, the source reference, and one delivery's attempt summary.
 - Semantic tokens only; no Veterinary brand literal and no tenant-specific CSS
   in a reusable component.
 - Loading, empty, error, success and permission-denied states are required, not
@@ -315,21 +316,16 @@ proven over real HTTP.
 **Status stays `in-progress` for exactly one reason**: the attempt-history AC is
 open, and it is open because answering it changes scope.
 
-**The open decision.** Serving an ordered, bounded attempt history needs a new
-table (`notification_delivery_attempt`, or an audit row per try), a migration,
-and a decision about what an attempt record holds. The candidate contents are
-not equivalent:
+**The decision, taken.** The attempt-history criterion is **amended** rather
+than implemented, and the missing log is [[TD-046]], where the options, their
+real costs and the classification consequence are recorded. The maintainer's
+reasoning, in short: the aggregate a previous Story already reviewed chose a
+summary; retrying is BullMQ's retry rather than a domain transition; and an
+attempt table would be a second home for the same truth, where the count and the
+last outcome could disagree. Opening a RESTRICTED storage question inside a read
+Story would have been scope taken rather than granted.
 
-- the attempt's instant and outcome, plus the already-bounded reason — cheap,
-  and consistent with every other boundary in this epic;
-- or the provider's raw error, which is the diagnostic an operator would want
-  and also RESTRICTED material that this epic has deliberately kept out of every
-  stored field, every DTO and every log line.
-
-That choice is a product decision with a data-classification consequence, so it
-is put to the maintainer rather than taken here. Everything else in this Story
-is implemented, reviewed against its own tests and verified by the gates listed
-above.
+Every criterion in this Story is therefore satisfied, and this Story is `done`.
 
 **A correction made while implementing**: this Story declared "one additive
 migration" for the permission key. Permission keys are seed-owned reference data
