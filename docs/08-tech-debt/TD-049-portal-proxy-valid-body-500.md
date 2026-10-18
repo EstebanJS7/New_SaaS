@@ -91,17 +91,26 @@ body INVÁLIDO (21 bytes)   DBG: hasBody true, locked false   -> the fetch SUCCE
 body VÁLIDO   (68 bytes)   DBG: hasBody true, locked false   -> fetch FAILS: "expected non-null body source"
 ```
 
-Identical request shape, different outcome. The variable is not the body's
-content: it is **whether the upstream API READS it**. Node's internal undici
-refuses the `ReadableStream` that Next 15 hands a route handler as a body
-source, and it only discovers that when it has to WRITE the body — which happens
-only when the server is reading. On the fast path (a 401 from the guard, a 400
-from the pipe) the API answers without consuming the body, undici never writes
-it, and the proxy looks fine. On the path where the API reads it, the proxy
-answers **500 where the API answered 401**.
+Identical request shape, different outcome — and **the explanation first written
+here was wrong**.
 
-That is why it looked like "valid bodies fail": a valid body is what makes the
-API read it.
+It said the distinguishing factor was whether the upstream API READS the body,
+on the reasoning that undici only writes a streamed body when the server is
+reading. That is disproven by the same investigation: the 400 path carries the
+API's OWN validation message (`password: Required`, with the API's request id),
+so the API read the body there too — and the proxy relayed it fine. And
+`scheduling`'s create handler reads a body and answers `201` through the
+streaming proxy.
+
+**What is established**: a body that reaches the portal login's HANDLER fails
+the streamed forward, while a body the pipe rejects does not; the text form
+works for both. **What is not established**: the trigger. The instrumentation
+pinned the symptom, the fix and the ruled-out causes — not the reason undici
+refuses Next's stream in one case and accepts it in another.
+
+A fix does not need the last piece, and this one is verified live. But an
+unexplained trigger is why [[TD-050]] exists rather than a tidy "same pattern,
+same bug" note.
 
 **The fix**: forward the body as **text** (`await request.text()`), which is
 what four other proxies in this app already do. A string is the same JSON rather
@@ -125,12 +134,16 @@ deriving the text from the same stream, and the cases assert the forwarded shape
 is a string with no `duplex`, so a future edit cannot quietly reintroduce the
 crash.
 
-## The same defect in two other proxies
+## What this does NOT establish
 
-`clinical` and `scheduling` pipe the incoming stream with `duplex: "half"`
-exactly as this proxy did, so they carry the identical latent defect: their
-POSTs work while the API refuses them early and fail the moment it reads the
-body. Recorded as [[TD-050]].
+That other proxies carry the same defect. The first version of this section said
+`clinical` and `scheduling` did, on a same-code-shape inference — and **that was
+refuted**: a signed-in POST whose handler reads the body answers `201` through
+the streaming `scheduling` proxy, whose streaming is moreover a deliberate,
+test-enforced contract ("buffering the request is the regression under test").
+
+[[TD-050]] records the real finding: twelve BFFs, two body-forwarding patterns,
+and an open question about which one should survive.
 
 ## Related
 
