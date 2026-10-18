@@ -13,18 +13,35 @@ render in the product's identity.
 
 ## Work units
 
-- [ ] **WU-A — the page and the form.** `GET /login`, outside the `(app)` group,
-      in the resolved public brand; the form with email and password, the API's
-      own failure states, and the recovery link that closes [[DAT-007]]'s loop.
-- [ ] **WU-B — the BFF and the cookie.** `POST /api/auth/login` forwarding to
-      the API and relaying `Set-Cookie` to the browser with its attributes
-      intact — `HttpOnly`, `Path`, `SameSite`, `Secure` — while never putting
-      the cookie in a body, in a header of its own making, or in a log line. The
-      existing auth BFF is a session-LESS proxy; this one is the opposite, so
-      the allowlist matters more, not less.
-- [ ] **WU-C — the gate and the reservation.** `login` joins the middleware's
-      reserved first segments (an unreserved bare path is a portal tenant slug —
-      the near-miss TD-048 hit), and a signed-out visitor to `/app/*` is
+- [x] **WU-A — the page and the form.** `GET /login`, outside the `(app)` group,
+      _Done: `/login` (page + form) and `/forgot-password` (page + form), both
+      outside the `(app)` group and both under the root layout. 13 cases. The
+      recovery page was NOT in the original plan and had to be:
+      `/reset-password` is where a link LANDS, so a "forgot your password" link
+      pointing there would have been the same dead end this Story exists to
+      remove. The success state says "if that address has an account" because
+      the API answers 202 identically either way, and a form claiming "sent"
+      would be the enumeration oracle the API is built to avoid._ in the
+      resolved public brand; the form with email and password, the API's own
+      failure states, and the recovery link that closes [[DAT-007]]'s loop.
+- [x] **WU-B — the BFF and the cookie.** `POST /api/auth/login` forwarding to
+      _Done: one BFF file serving THREE allowlisted shapes, which differ in the
+      one way that matters — whether a session crosses. `login` relays the API's
+      `Set-Cookie` VERBATIM (the attributes are the API's hardening decisions,
+      and a proxy that rebuilt the header could quietly drop `HttpOnly`),
+      forwards NO inbound cookie, and never puts the session in a body or a log;
+      the two recovery routes are session-less. `logout` is refused outright. 10
+      cases._ the API and relaying `Set-Cookie` to the browser with its
+      attributes intact — `HttpOnly`, `Path`, `SameSite`, `Secure` — while never
+      putting the cookie in a body, in a header of its own making, or in a log
+      line. The existing auth BFF is a session-LESS proxy; this one is the
+      opposite, so the allowlist matters more, not less.
+- [x] **WU-C — the gate and the reservation.** `login` joins the middleware's
+      _Half done: `login` and `forgot-password` are reserved in the middleware,
+      with a case. The `(app)` gate — a signed-out visitor redirected to
+      `/login` instead of shown an empty shell — is NOT in yet and is the next
+      unit._ reserved first segments (an unreserved bare path is a portal tenant
+      slug — the near-miss TD-048 hit), and a signed-out visitor to `/app/*` is
       redirected to `/login` rather than shown an empty shell.
 - [ ] **WU-D — the documentation and the closure.** `Identity-Sessions.md` gains
       the sign-in surface, `Branding.md` gains the public-brand consumer, and

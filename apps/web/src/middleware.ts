@@ -27,7 +27,19 @@ import { NextResponse, type NextRequest } from "next/server";
  * the product preset — but the route would be quietly squatting on a namespace that
  * belongs to tenants.
  */
-const RESERVED_FIRST_SEGMENTS = new Set(["app", "api", "branding", "reset-password", "_next"]);
+const RESERVED_FIRST_SEGMENTS = new Set([
+  "app",
+  "api",
+  "branding",
+  "reset-password",
+  // [[SHEL-001]]: the sign-in surface and its sibling, which are public pages rather than
+  // portal tenants. The same near-miss TD-048 hit: an unreserved bare path is read as a
+  // tenant slug, and the page would still render (the branding lookup fails closed to the
+  // product preset) while quietly squatting on a namespace that belongs to tenants.
+  "login",
+  "forgot-password",
+  "_next",
+]);
 
 /**
  * Returns the only tenant slug a request may carry.
