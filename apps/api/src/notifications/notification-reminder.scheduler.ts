@@ -209,12 +209,11 @@ export class NotificationReminderScheduler implements OnModuleInit {
   }
 
   /**
-   * Cancels every pending reminder of an appointment and removes its job.
+   * Cancels every pending reminder of an appointment and removes its job, one
+   * delivery at a time through {@link cancelDelivery}.
    *
-   * The ROW is cancelled first and the job second, and the job is removed only
-   * when THIS caller won the compare-and-swap: two racing cancellations would
-   * otherwise both try to remove one job, and — more importantly — the loser must
-   * not report a cancellation it did not perform.
+   * That helper does the two halves independently and reports rather than throws,
+   * so one delivery's failure never stops the others.
    */
   async onCancelled(event: ApplicationEvent<string, unknown>): Promise<void> {
     const tenantId = event.tenantId;

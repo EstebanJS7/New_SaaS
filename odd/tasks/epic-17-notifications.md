@@ -244,6 +244,18 @@ follow-up unit (a total cancellation helper that never throws and reports the
 error's NAME, plus an appointment re-read before and after the enqueue). The fix
 unit has no review of its own yet: the stopped lineage cannot host one.
 
+## The fix's review: approved, after two more CRITICALs
+
+`review-27c3b70cd8046dfd` (medium, one lens) reviewed the FIX in a fresh
+transaction and closed `correction_required` on two deterministic CRITICALs,
+both about the helper the first correction introduced: the removal depended on
+winning the CAS (breaking the compensation exactly where the row is already
+cancelled), and the row write and the removal shared one try. Both fixed — the
+halves are independent and total now — the correction passed the targeted
+validator on both criteria, and the review is **approved and acknowledged,
+authority burned**. One validator follow-up (a stale comment on `onCancelled`)
+is corrected in the record commit.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

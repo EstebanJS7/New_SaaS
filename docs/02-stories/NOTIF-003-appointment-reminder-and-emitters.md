@@ -373,6 +373,35 @@ enqueue is closed by the send-time gate still pending in WU-D3.
 validated against the finding it closes can still introduce a regression, and
 this one did — it is worth reviewing the fix, not only the defect.
 
+### The fix's own review, and what it caught on the fix
+
+`review-27c3b70cd8046dfd` (medium, one lens) reviewed **the fix** in a fresh
+transaction — the stopped lineage cannot host one — and closed
+`correction_required` on **two more CRITICALs, both deterministic and both
+correct**, both about the helper the previous correction had introduced:
+
+- **R3-002**: the removal depended on winning the compare-and-swap, which broke
+  the post-enqueue compensation exactly where it was needed. A cancellation that
+  landed between the pre-check and the enqueue has **already** cancelled the
+  row, so this caller's CAS lost and the job it had just enqueued was left
+  orphaned — the very lingering job the compensation exists to close. The
+  removal is not the cancellation, and `queue.remove` is idempotent.
+- **R3-001**: the row write and the removal shared one `try`, so a database
+  failure logged and returned without touching the job.
+
+Both fixed by making the two halves independent and total. A case that **used to
+assert the opposite** ("does not remove a job it did not cancel") now documents
+why that assertion encoded the defect. The correction passed the targeted
+validator on both criteria, and it left one follow-up — a comment on
+`onCancelled` that still described the old conditional removal — which is
+corrected here.
+
+**Two rounds, four CRITICALs, all four on this one cancellation path**: the
+first round found the defect, the second found the defect in the fix for it. The
+lesson is not that the reviews are noisy; it is that this path is where the
+concurrency lives, and that reviewing the fix caught a regression and a broken
+compensation that no test had been written to notice.
+
 ### The Core/Veterinary boundary this unit hit, and how it was resolved
 
 The reminder's recipient is the patient's responsible customer, and the link
