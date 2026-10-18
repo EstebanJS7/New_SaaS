@@ -43,6 +43,15 @@ export interface NotificationRecipientClient {
   userProfile: {
     findFirst(args: Prisma.UserProfileFindFirstArgs): Promise<{ email: string } | null>;
   };
+  /**
+   * The portal holder's read ([[PORTAL-002]]). Its address is the access's `contactEmail`, which is
+   * the login id rather than the customer's primary contact.
+   */
+  customerPortalAccess: {
+    findFirst(
+      args: Prisma.CustomerPortalAccessFindFirstArgs
+    ): Promise<{ contactEmail: string } | null>;
+  };
 }
 
 export function createNotificationRecipientReader(args: {
@@ -50,6 +59,19 @@ export function createNotificationRecipientReader(args: {
 }): NotificationRecipientPort {
   return {
     async resolve(reference: NotificationRecipientReference) {
+      if (reference.recipientType === "PORTAL_HOLDER") {
+        // The address is the ACCESS's own `contactEmail` — the login id — and not the customer's
+        // primary contact, which may be a different address. Sending the link to an address whose
+        // holder is not proven to be the account's owner would let a holder of one address reset a
+        // session for another ([[PORTAL-002]]).
+        const access = await args.client.customerPortalAccess.findFirst({
+          // Tenant-predicated, unlike the STAFF branch: a portal access belongs to a tenant.
+          where: { id: reference.recipientId, tenantId: reference.tenantId },
+          select: { contactEmail: true },
+        });
+        return access === null ? null : { address: access.contactEmail };
+      }
+
       if (reference.recipientType === "STAFF") {
         // NO tenant predicate, and the absence is deliberate: a staff profile is
         // global to the identity (the credential's key is shared with it), and the

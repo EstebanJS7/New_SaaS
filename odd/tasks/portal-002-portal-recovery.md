@@ -488,9 +488,451 @@ t h e
 
 g a p .
 
-- [ ] **WU-C — the delivery.** The portal-holder recipient reader, a
-      `PORTAL_ACCOUNT` branch in the content builder that mints the token and
-      builds the link with the tenant's slug, and the scheduler reaction.
+-
+
+[ x ]
+
+-
+-
+
+W U
+-
+
+C
+
+—
+
+t h e
+
+d e l i v e r y . * *
+
+T h e
+
+p o r t a l
+-
+
+h o l d e r
+
+r e c i p i e n t
+
+r e a d e r ,
+
+a
+
+`P O R T A L _ A C C O U N T`
+
+b r a n c h
+
+i n
+
+t h e
+
+c o n t e n t
+
+b u i l d e r
+
+t h a t
+
+m i n t s
+
+t h e
+
+t o k e n
+
+a n d
+
+b u i l d s
+
+t h e
+
+l i n k
+
+w i t h
+
+t h e
+
+t e n a n t ' s
+
+s l u g ,
+
+a n d
+
+t h e
+
+s c h e d u l e r
+
+r e a c t i o n .
+
+-
+
+D o n e :
+
+` p o r t a l
+-
+
+r e c o v e r y . p o l i c y . t s `
+
+( t h e
+
+c h a n n e l ,
+
+t h e
+
+h o u r
+
+w i n d o w ,
+
+t h e
+
+k e y
+
+p e r
+
+A C C E S S
+
+a n d
+
+`p o r t a l R e c o v e r y U r l`
+
+w i t h
+
+t h e
+
+s l u g
+
+i n
+
+t h e
+
+P A T H ) ,
+
+t h e
+
+r e a d e r ' s
+
+`P O R T A L _ H O L D E R`
+
+b r a n c h
+
+r e s o l v i n g
+
+t h e
+
+a c c e s s ' s
+
+O W N
+
+`c o n t a c t E m a i l`
+
+t e n a n t
+-
+
+p r e d i c a t e d ,
+
+t h e
+
+b u i l d e r ' s
+
+`P O R T A L _ A C C O U N T`
+
+b r a n c h
+
+g a t i n g
+
+o n
+
+A C T I V E
+
+-
+
+a
+
+c r e d e n t i a l ,
+
+m i n t i n g
+
+t h e
+
+t o k e n
+
+a t
+
+s e n d
+
+t i m e
+
+a n d
+
+r e a d i n g
+
+t h e
+
+t e n a n t ' s
+
+s l u g
+
+f o r
+
+t h e
+
+l i n k ,
+
+a n d
+
+`P o r t a l P a s s w o r d R e c o v e r y S c h e d u l e r`
+
+—
+
+w h i c h
+
+n e e d s
+
+N O
+
+r e a d
+
+o f
+
+i t s
+
+o w n ,
+
+b e c a u s e
+
+t h e
+
+s o u r c e
+
+a n d
+
+t h e
+
+r e c i p i e n t
+
+a r e
+
+t h e
+
+a c c e s s
+
+i d
+
+t h e
+
+e v e n t
+
+c a r r i e s
+
+a n d
+
+t h e
+
+W O R K E R
+
+g a t e s
+
+a t
+
+s e n d
+
+t i m e .
+
+-
+-
+
+T h e
+
+t w o
+
+g u a r d s
+
+m i r r o r
+
+e a c h
+
+o t h e r
+
+a n d
+
+b o t h
+
+a r e
+
+r i g h t * * :
+
+t h e
+
+s t a f f
+
+s c h e d u l e r
+
+r e f u s e s
+
+a
+
+T E N A N T
+-
+
+s c o p e d
+
+e v e n t
+
+b e c a u s e
+
+i t s
+
+m e s s a g e
+
+i s
+
+p l a t f o r m
+-
+
+o w n e d ,
+
+a n d
+
+t h i s
+
+o n e
+
+r e f u s e s
+
+a n
+
+e v e n t
+
+w i t h
+
+N O
+
+t e n a n t
+
+b e c a u s e
+
+a
+
+p o r t a l
+
+m e s s a g e
+
+m u s t
+
+b e l o n g
+
+t o
+
+a
+
+c l i n i c .
+
+1 2
+
+n e w
+
+c a s e s
+
+( 2
+
+r e a d e r ,
+
+2
+
+b u i l d e r ,
+
+5
+
+s c h e d u l e r )
+
+p l u s
+
+t h e
+
+p o l i c y ' s
+
+o w n .
+
+a p i
+
+1 3 4 9 ,
+
+w o r k e r
+
+2 4 5 .
+
+-
+-
+
+A n d
+
+a
+
+n a m i n g
+
+d e b t
+
+r e c o r d e d
+
+r a t h e r
+
+t h a n
+
+r e n a m e d * * :
+
+t h e
+
+b u i l d e r
+
+r e u s e s
+
+`S T A F F _ A P P _ B A S E _ U R L`
+
+f o r
+
+t h e
+
+p o r t a l ' s
+
+l i n k ,
+
+b e c a u s e
+
+o n e
+
+w e b
+
+a p p
+
+s e r v e s
+
+b o t h
+
+s u r f a c e s .
+
+R e n a m i n g
+
+t h e
+
+d e p l o y m e n t
+
+i n p u t
+
+w o u l d
+
+b r e a k
+
+e v e r y
+
+e x i s t i n g
+
+d e p l o y m e n t
+
+f o r
+
+a
+
+w o r d .
+
 - [ ] **WU-D — the two pages.** `/[slug]/forgot-password` and
       `/[slug]/reset-password`, and the link on the login form whose comment
       currently explains its absence.

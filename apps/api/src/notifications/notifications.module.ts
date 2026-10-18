@@ -11,6 +11,7 @@ import {
 } from "@newsaas/notifications";
 import { NotificationIntentService } from "./notification-intent.service.js";
 import { PasswordRecoveryScheduler } from "./password-recovery.scheduler.js";
+import { PortalPasswordRecoveryScheduler } from "./portal-password-recovery.scheduler.js";
 import { NotificationReminderScheduler } from "./notification-reminder.scheduler.js";
 import {
   APPOINTMENT_RECIPIENT_PORT,
@@ -64,6 +65,7 @@ export class NotificationsModule {
         NotificationIntentService,
         NotificationReminderScheduler,
         PasswordRecoveryScheduler,
+        PortalPasswordRecoveryScheduler,
         NotificationDeliveryService,
       ],
       controllers: [NotificationsController],
