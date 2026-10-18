@@ -219,7 +219,12 @@ acceptance-criteria map above.
   server remains authoritative), and the registered but unused
   `bookingRequiresApproval` setting.
 
-**PORTAL-001 is `done`** and the epic is closed again. What it leaves open,
+**Reopened again on 2026-10-18** for `PORTAL-002 Portal password recovery` — the
+gap PORTAL-001 named as its largest: the API's recovery authorises a
+`UserCredential` and a portal identity holds a `PortalCredential`, so a customer
+who forgot their password had no way back.
+
+**PORTAL-001 is `done`** and the epic was closed again. What it leaves open,
 named rather than implied: a customer who forgets their password still has no
 way back, and the portal's sign-in has not been exercised live against a running
 API.
