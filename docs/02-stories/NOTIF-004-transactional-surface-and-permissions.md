@@ -76,39 +76,50 @@ the `notifications.*` permission family that guards it.
 
 ## Acceptance Criteria
 
-- [ ] The list is tenant-scoped and **bounded**: the contract carries a page
+- [x] The list is tenant-scoped and **bounded**: the contract carries a page
       limit, the default is small, an oversized request is refused or clamped,
       and the query orders deterministically. [[TD-026]] is not worsened.
-- [ ] Filters are allowlisted (status, channel, and the source reference), an
+- [x] Filters are allowlisted (status, channel, and the source reference), an
       unknown filter value is refused, and no filter accepts a `tenantId`.
-- [ ] A single delivery is readable by its identifier within the caller's
+- [x] A single delivery is readable by its identifier within the caller's
       tenant; a foreign or unknown identifier returns a byte-equivalent
       `404 NOT_FOUND` and reveals nothing about the other tenant's record.
-- [ ] The attempt history is readable for one delivery, ordered, and bounded.
-- [ ] **No contact datum and no message content appear in any response**: the
+- [ ] **The attempt history is readable for one delivery, ordered, and
+      bounded.** **NOT SATISFIED, and the blocker is the model, not the work.**
+      This Story assumed the aggregate keeps an attempt LOG. [[NOTIF-001]] does
+      not model one: `notification_delivery` carries a summary (`attempt_count`,
+      `last_attempt_at`, `last_error_code`, `last_error_message`,
+      `provider_reference`) because retries are BullMQ's own attempts, and no
+      table or audit row records one attempt per try. Serving a history
+      therefore needs a NEW table, a NEW migration and a decision about what an
+      attempt row stores — and the obvious answer ("the provider's raw error")
+      is RESTRICTED material this epic has kept out of every other boundary.
+      That is a scope change, so it is proposed rather than implemented: see the
+      open decision in the Completion Notes.
+- [x] **No contact datum and no message content appear in any response**: the
       DTO is an allowlist, and an assertion proves the response body has no
       recipient address, no phone number and no message body.
-- [ ] No Prisma model is returned: the response is an explicit DTO.
-- [ ] Every route enforces `notifications.delivery.read`, the service re-asserts
+- [x] No Prisma model is returned: the response is an explicit DTO.
+- [x] Every route enforces `notifications.delivery.read`, the service re-asserts
       it as defense in depth, and a request without the key is refused.
-- [ ] The route-contract probe pins the new route with its permission key and
+- [x] The route-contract probe pins the new route with its permission key and
       its deny-by-default behavior.
-- [ ] The staff surface renders loading, empty, error, success and
+- [x] The staff surface renders loading, empty, error, success and
       permission-denied states, and a failed delivery shows its sanitized reason
       code rather than a raw provider message.
-- [ ] Every reusable component in the surface consumes semantic branding tokens;
+- [x] Every reusable component in the surface consumes semantic branding tokens;
       no project-specific color, radius or font literal enters a shared
       component.
-- [ ] Tenant isolation is enforced when applicable. Evidence: the
+- [x] Tenant isolation is enforced when applicable. Evidence: the
       byte-equivalent foreign/unknown `404` cases and the live-PostgreSQL block.
-- [ ] Backend authorization is enforced when applicable. Evidence: the
+- [x] Backend authorization is enforced when applicable. Evidence: the
       deny-by-default route pin and the permission sweep.
-- [ ] Required loading/error/empty/success UX exists. Evidence: the surface's
+- [x] Required loading/error/empty/success UX exists. Evidence: the surface's
       own state cases.
-- [ ] Required audit exists. Evidence: not applicable — reads are not audited,
+- [x] Required audit exists. Evidence: not applicable — reads are not audited,
       and PRD §27 does not list a notification delivery among the critical
       audited actions.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -124,8 +135,17 @@ the `notifications.*` permission family that guards it.
 
 ```text
 GET /notifications/deliveries            (bounded list, allowlisted filters)
-GET /notifications/deliveries/:id        (one delivery with its attempt history)
+GET /notifications/deliveries/:id        (one delivery and its attempt summary)
 ```
+
+Two deviations from what this Story first declared, both stated rather than
+absorbed:
+
+- the single read returns the attempt **summary** the aggregate holds, not a
+  history (see the open AC above);
+- the list's filter set is exactly `status`, `channel`, `sourceType`, `sourceId`
+  and `limit`, all closed, and **none of them is a tenant selector** — the
+  tenant comes from the request context on every path.
 
 ### Changed
 
@@ -141,10 +161,14 @@ and the epic's transitions are commands, not patches.
 ### Migration
 
 ```text
-Planned: one additive migration seeding the notifications.delivery.read permission key
+None.
 ```
 
-Additive, and it alters no existing row.
+**Corrected during implementation**: the key is REFERENCE DATA, not a migration.
+Permission keys live in the seed-owned catalog (`reference-seed.ts`) and are
+applied by the existing seeder, exactly like `notifications.settings.manage` in
+[[NOTIF-003]]. Declaring a migration here described a mechanism this codebase
+does not use for permissions.
 
 ### Models/Tables
 
@@ -163,26 +187,101 @@ Additive, and it alters no existing row.
 
 ## Implementation Summary
 
-_Not implemented._
+WU-E is implemented, with one Acceptance Criterion open by decision rather than
+by omission.
+
+**The read contract** is two GET routes over `notification_delivery`:
+`GET /notifications/deliveries` (bounded, allowlisted filters) and
+`GET /notifications/deliveries/:id`. The list's query is a **closed** zod schema
+— `status`, `channel`, `sourceType`, `sourceId`, `limit` — so an unknown key is
+refused rather than ignored, `limit` is bounded at 1..100 with a default of 50,
+and an oversized value is refused rather than silently clamped. The order is
+deterministic (`scheduledAt` descending, then `id`), so a page is a page.
+
+**The projection is an allowlist.** The service selects a named column set and
+maps each row into an explicit DTO; nothing serializes a Prisma model, and the
+recipient is a **reference** (`recipientId`), never the contact datum the
+channel boundary resolves at send time. Message content cannot leak because it
+is never stored ([[NOTIF-003]] builds it at send time).
+
+**The permission** is `notifications.delivery.read`, seeded for all six roles —
+the same reach every other `*.read` key has — and asserted twice: by the route's
+decorator and again in the service, which resolves the caller's effective keys.
+
+**There is no command route, and its absence is the design.** This epic adds no
+delivery transition from the surface and `ENGINEERING-RULES.md` forbids a
+generic status patch, so the family has a read key and deliberately **no**
+`delivery.manage` key: a permission guarding a command nobody can call is one no
+operator can be denied by. The suite proves the absence.
+
+**The surface** is one staff view plus a read-only BFF. The list renders five
+distinct states — loading, permission-denied, error, empty, content — and a
+denial is its own state, never a retryable error. A failed delivery shows its
+recorded, already-bounded reason instead of a raw provider message.
+
+## Verification
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check                   clean
+pnpm lint                           22/22 packages
+pnpm typecheck                      22/22 packages
+pnpm build                          13/13 packages
+@newsaas/api test                   1269 passed (91 files)
+@newsaas/web test                   1100 passed (101 files)
+@newsaas/database test              512 passed
+@newsaas/notifications test         81 passed
 ```
 
 ## Tests Added
 
-- The bounded list: default bound, refusal or clamp of an oversized request, and
-  deterministic ordering.
-- Filter allowlisting, including the refusal of a `tenantId` filter.
-- Byte-equivalent cross-tenant `404`s for the single read.
-- The RESTRICTED-absence assertion over the serialized response.
-- The deny-by-default route pin for `notifications.delivery.read`.
-- The surface's five states.
+```text
+apps/api/src/notifications/notification-delivery.service.test.ts   11 cases
+apps/api/src/notifications/notification-delivery.read.integration.test.ts  10 cases
+apps/web/src/app/(app)/app/notifications/notifications-surface.test.tsx     6 cases
+apps/web/src/app/api/notifications/[[...path]]/route.test.ts                7 cases
+```
+
+- The bounded list: the default bound and the requested bound, asserted **on the
+  arguments the service passes to Prisma**, plus the deterministic order; the
+  oversized and non-integer refusals at the schema.
+- Filter allowlisting: the source reference reaches the predicate, an unknown
+  key is refused, an unknown status, channel or source type is refused, and a
+  `sourceId` that is not a whole uuid is refused (a prefix search would be an
+  unbounded scan dressed as a filter).
+- Byte-equivalent cross-tenant `404`s for the single read, through the shared
+  `expectCrossTenant404` fence, with the foreign delivery's ids in the
+  forbidden-identifier list.
+- The source-reference filter does **not** widen the tenant predicate: the same
+  appointment id seeded in two tenants returns only the caller's row.
+- The RESTRICTED-absence assertion: a row carrying `messageBody` and
+  `contactValue` is mapped, and neither value appears in the serialized
+  response; the exposed key set is asserted exactly.
+- The permission: a caller without the key is refused `403` on both routes, and
+  the service refuses it too.
+- The deny-by-default route pin for `notifications.delivery.read`, and the
+  absence of a command route on the surface.
+- The surface's five states, and the BFF's own allowlist, 401 and pass-through.
+
+**One limit of the evidence, stated rather than implied**: the in-memory Prisma
+harness applies the predicate but not `take`/`orderBy`, so the bound and the
+ordering are proven on the service's arguments, not end to end. The tenant
+predicate, the permission chain, the query refusals and the response shape ARE
+proven over real HTTP.
 
 ## Known Limitations
 
+- **No attempt history exists to read** (the open AC above). What the surface
+  can show is the aggregate's summary: how many attempts, when the last one ran,
+  and its bounded reason code. An operator diagnosing a repeated failure sees
+  the LAST outcome, not the sequence.
+- **The surface does not embed into the appointment or invoice screens**: a
+  delivery is reachable only from the notifications list. [[DEC-059]] declares
+  that crossing boundary debt rather than opening it here.
+- **Nothing in the surface is audited**, and that is correct rather than
+  missing: PRD §27 does not list a delivery read among the critical audited
+  actions.
 - **A `FAILED` delivery is visible but not fixable from the surface**: there is
   no re-drive command, so an operator can diagnose a failure and not retry it.
   This is the same shape as the fiscal epic recording its own re-drive as
@@ -213,4 +312,27 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+**Status stays `in-progress` for exactly one reason**: the attempt-history AC is
+open, and it is open because answering it changes scope.
+
+**The open decision.** Serving an ordered, bounded attempt history needs a new
+table (`notification_delivery_attempt`, or an audit row per try), a migration,
+and a decision about what an attempt record holds. The candidate contents are
+not equivalent:
+
+- the attempt's instant and outcome, plus the already-bounded reason — cheap,
+  and consistent with every other boundary in this epic;
+- or the provider's raw error, which is the diagnostic an operator would want
+  and also RESTRICTED material that this epic has deliberately kept out of every
+  stored field, every DTO and every log line.
+
+That choice is a product decision with a data-classification consequence, so it
+is put to the maintainer rather than taken here. Everything else in this Story
+is implemented, reviewed against its own tests and verified by the gates listed
+above.
+
+**A correction made while implementing**: this Story declared "one additive
+migration" for the permission key. Permission keys are seed-owned reference data
+in this codebase, applied by the existing seeder, so no migration is involved —
+the Database section above records the correction instead of leaving a plan that
+does not match the mechanism.

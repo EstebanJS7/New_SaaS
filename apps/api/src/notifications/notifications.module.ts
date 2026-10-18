@@ -1,6 +1,10 @@
 import { Module, type DynamicModule, type Provider } from "@nestjs/common";
 import { EntitlementsModule } from "../entitlements/entitlements.module.js";
+import { ContextModule } from "../context/context.module.js";
+import { RbacModule } from "../rbac/rbac.module.js";
 import { SettingsModule } from "../settings/settings.module.js";
+import { NotificationDeliveryService } from "./notification-delivery.service.js";
+import { NotificationsController } from "./notifications.controller.js";
 import {
   createBullMqNotificationDeliveryProducer,
   NOTIFICATION_DELIVERY_PRODUCER,
@@ -41,7 +45,7 @@ export class NotificationsModule {
   static forRoot(options: NotificationsModuleOptions = {}): DynamicModule {
     return {
       module: NotificationsModule,
-      imports: [SettingsModule, EntitlementsModule],
+      imports: [SettingsModule, EntitlementsModule, ContextModule, RbacModule],
       providers: [
         options.recipientPort ?? {
           provide: APPOINTMENT_RECIPIENT_PORT,
@@ -56,7 +60,9 @@ export class NotificationsModule {
           },
         },
         NotificationReminderScheduler,
+        NotificationDeliveryService,
       ],
+      controllers: [NotificationsController],
       exports: [NOTIFICATION_DELIVERY_PRODUCER, APPOINTMENT_RECIPIENT_PORT],
     };
   }

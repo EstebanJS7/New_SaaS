@@ -206,6 +206,11 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /invoices/:id/confirm",
   "POST /invoices/:id/cancel",
   // EPIC-16 FISC-007 — tenant signing-material management.
+  // EPIC-17 NOTIF-004 — the tenant's notification deliveries. READ ONLY: there is
+  // deliberately no command route, because this epic adds no delivery transition
+  // from the surface and a generic status patch is forbidden.
+  "GET /notifications/deliveries",
+  "GET /notifications/deliveries/:id",
   "POST /fiscal/signing-material",
   "GET /fiscal/signing-material",
   "POST /fiscal/signing-material/:id/retire",
