@@ -518,6 +518,33 @@ the subscriber that creates the intent for the invoice's customer.
   with a fail-CLOSED default, so a third source type cannot be announced as an
   invoice.
 
+### The WU-D3 reviews
+
+Both halves were reviewed separately.
+
+**The first half** (the content builder) was **approved on the first pass** with
+three advisories → [[TD-044]].
+
+**The second half** closed `correction_required` on one **CRITICAL, and it was
+real**: the fiscal notice's scheduler created the row and then enqueued it, and
+on a dedupe-key conflict it _returned without enqueueing_. A first attempt whose
+enqueue failed therefore left a `SCHEDULED` row with no job, and every later
+`FiscalApproved` took the conflict branch and never enqueued it — a notice
+stranded **permanently** by a transient queue failure. The fix applies to
+**both** schedulers, because the reminder had the same hole: `ensureIntent`
+returns the id it created or the pending delivery that already holds the key,
+and the caller enqueues either way, which is safe because the job id is
+deterministic and a settled delivery is refused by the handler.
+
+**That fix also retired the "lost enqueue" limitation this epic had declared.**
+A transient queue failure is no longer a permanent stranding: any later
+confirmation or re-delivered event heals it.
+
+The correction passed the targeted validator on both criteria, and the review is
+**approved and acknowledged with authority burned**. Two advisories and the
+validator's observation are recorded as [[TD-045]], including the honest note
+that their coordinates were not captured.
+
 ### WU-D3, still pending
 
 WU-D2: the three emitters (`AppointmentConfirmed` and `AppointmentCancelled` in

@@ -286,6 +286,19 @@ subscriber lives in the worker because that is where the event is published; the
 producer's transport moved into the package because ONE queue has two producers;
 and [[TD-044]] is closed.
 
+## WU-D3 reviewed: one CRITICAL, real, and it retired a declared limitation
+
+`review-a8f4b7d2bd6a83b4` closed correction_required on ONE CRITICAL: on a
+dedupe-key conflict both schedulers returned without enqueueing, so a first
+enqueue that failed stranded the delivery permanently. Fixed in both
+(`ensureIntent` returns the created id or the pending holder of the key, and the
+caller enqueues either way), validated, and **approved + acknowledged, authority
+burned**. The fix also retires the "lost enqueue" limitation this epic declared
+for the reminder. Two advisories plus the validator's observation → [[TD-045]],
+with their coordinates honestly recorded as not captured. One process slip: a
+STATUS call after the burn, which the contract forbids — it failed safely and
+mutated nothing.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.
