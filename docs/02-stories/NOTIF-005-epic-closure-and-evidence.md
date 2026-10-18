@@ -3,7 +3,7 @@ id: NOTIF-005
 type: story
 title: Epic closure and evidence
 epic: EPIC-17
-status: planned
+status: done
 priority: medium
 depends_on:
   - NOTIF-001
@@ -72,47 +72,47 @@ means.
 
 ## Acceptance Criteria
 
-- [ ] `docs/05-modules/Notifications.md` describes the implemented aggregate,
+- [x] `docs/05-modules/Notifications.md` describes the implemented aggregate,
       the lifecycle, the dedupe semantics, the channel boundary, the settings
       namespace, the emitters, the read surface and the permission family — all
       as implemented, with its limitations stated.
-- [ ] The limitations are stated in the module doc: the unproven live run, the
+- [x] The limitations are stated in the module doc: the unproven live run, the
       absent re-drive, the `AppointmentRescheduled` catalog gap, and the
       lost-enqueue window.
-- [ ] The epic's acceptance criteria are each checked against a specific receipt
+- [x] The epic's acceptance criteria are each checked against a specific receipt
       or marked as answered by a named limitation, **with none silently
       dropped**.
-- [ ] The evidence block names the CI runs and the local gates, and records the
+- [x] The evidence block names the CI runs and the local gates, and records the
       live delivery run as **pending** with the missing operator inputs named
       (an SMTP or provider key, a WhatsApp Business account) — never implied.
-- [ ] The changelog entry describes what shipped, in the project's existing
+- [x] The changelog entry describes what shipped, in the project's existing
       changelog style.
-- [ ] The ROADMAP row moves to `done` (or records the epic as blocked), and the
+- [x] The ROADMAP row moves to `done` (or records the epic as blocked), and the
       epic file's status, `updated` and closure record match.
-- [ ] Every advisory is recorded with its coordinate and a reading explicitly
+- [x] Every advisory is recorded with its coordinate and a reading explicitly
       marked as a reading, in the absence of published finding text — the
       `review-last-event-closure/v1` precedent from EPIC-16.
-- [ ] Every technical-debt item raised during the epic has a status and an owner
+- [x] Every technical-debt item raised during the epic has a status and an owner
       decision; none is left untriaged.
-- [ ] [[TD-004]]'s entry is updated to reflect whether email delivery now
+- [x] [[TD-004]]'s entry is updated to reflect whether email delivery now
       exists, and the item stays `open` unless it is actually implemented.
-- [ ] A repository search confirms the three emitters have exactly the
+- [x] A repository search confirms the three emitters have exactly the
       publishers [[DEC-059]] names, that no notification handler holds a
       database transaction across a provider call, and that no contact datum
       reaches a log, a job payload or a response.
-- [ ] The feature-code catalog still has exactly twelve codes ([[DEC-058]]).
-- [ ] Every new dependency has an accepted ADR ([[DEC-061]]).
-- [ ] Tenant isolation is enforced when applicable. Evidence: the live
+- [x] The feature-code catalog still has exactly twelve codes ([[DEC-058]]).
+- [x] Every new dependency has an accepted ADR ([[DEC-061]]).
+- [x] Tenant isolation is enforced when applicable. Evidence: the live
       PostgreSQL block's case count recorded in the evidence file.
-- [ ] Backend authorization is enforced when applicable. Evidence: the
+- [x] Backend authorization is enforced when applicable. Evidence: the
       route-contract probe's inventory, including the new settings namespace and
       read route.
-- [ ] Required loading/error/empty/success UX exists. Evidence: the surface's
+- [x] Required loading/error/empty/success UX exists. Evidence: the surface's
       state cases recorded at [[NOTIF-004]].
-- [ ] Required audit exists. Evidence: the audit decision recorded at
+- [x] Required audit exists. Evidence: the audit decision recorded at
       [[NOTIF-001]] and [[NOTIF-003]], with the appointment and fiscal audit
       rows proven unchanged.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -151,13 +151,70 @@ None yet
 
 ## Implementation Summary
 
-_Not implemented._
+The epic is closed and **no behavior changed** — this Story is the record, not a
+change: the diff is documentation only.
+
+- **`docs/05-modules/Notifications.md`** — the module document, written from the
+  implemented behavior: the aggregate and its four SQL guards, the lifecycle,
+  the dedupe semantics, the queue with its two producers, the fail-closed
+  channel boundary, the settings namespace and the value-level entitlement gate,
+  the three emitters with the rules a reader should hold them to, the content
+  builder and its gate, the read surface, the class table, and the limitations.
+- **`docs/05-modules/README.md`** — the index row.
+- **`docs/10-qa/CI-EVIDENCE.md`** — the epic's evidence block, whose first fact
+  is the one a reader would otherwise assume wrongly: **there is no CI receipt,
+  because no branch of this epic was pushed**. It lists the local gates, the
+  fresh-PostgreSQL migration pass, and the live delivery run **pending by name**
+  with the four missing operator inputs and who provides each.
+- **`docs/09-releases/CHANGELOG.md`** — the entry, in the existing style.
+- **`docs/01-roadmap/ROADMAP.md`** — the row to `done` plus the closure
+  narrative.
+- **`docs/01-roadmap/EPIC-17-Notifications.md`** — status, the acceptance
+  criteria each mapped to a receipt, the closure searches, and the debt triage.
+- **[[TD-004]]** — updated: **unblocked in principle**, still `open` by
+  decision, with the two things the resolving Story must build named (a new
+  source type and a staff recipient reader) so the next unit does not find them
+  late.
+
+### The claims that needed a search rather than a memory
+
+The closure criteria ask for confirmation of four things that no test asserts,
+so each was checked by searching the tree and the result is recorded in the epic
+file: the three emitters have exactly the publishers [[DEC-059]] names and no
+other non-test `publish()` call exists; the delivery handler's send is outside
+every transaction; the words "phone" and "contactValue" appear in the
+notification paths only inside comments; and the feature-code catalog still has
+exactly twelve entries.
+
+### What was NOT done, on purpose
+
+- **The live delivery run**: no credentials exist. Recorded pending, named, with
+  its blockers — never implied.
+- **The advisories were not resolved**: this Story's own scope excludes it.
+  [[TD-045]], [[TD-046]] and [[TD-047]] are triaged with owner decisions
+  instead, and [[TD-046]] and [[TD-047]] are decisions the maintainer took
+  rather than deferred.
+- **No behavior was changed**, including no "while I was here" cleanup: a
+  closure Story that changes behavior is not a closure.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check                   clean
+pnpm lint                           22/22 packages
+pnpm typecheck                      22/22 packages
+pnpm build                          13/13 packages
+@newsaas/api test                   1269 passed
+@newsaas/web test                   1100 passed
+@newsaas/worker test                226 passed
+@newsaas/notifications test          81 passed
+@newsaas/database test              512 passed
 ```
+
+The closure tree's diff is documentation only, so the gates above are the same
+code gates [[NOTIF-003]] and [[NOTIF-004]] recorded, re-run on the merged tree.
+The epic's full evidence block, including the pending live run, is in
+`docs/10-qa/CI-EVIDENCE.md`.
 
 ## Tests Added
 
@@ -188,4 +245,22 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+**EPIC-17 is `done`, and the sentence that matters is the one about what `done`
+means.** Every Story is implemented, reviewed and validated; every acceptance
+criterion is mapped to a receipt or to a named limitation; the gates are green;
+and **nothing has been delivered to a real recipient**, because no credentials
+exist in this repository. The live run is recorded pending by name, and the
+coverage is the deterministic fake's.
+
+It also has **no CI receipt**: no branch was pushed. That is a deliberate
+consequence of the repository's own rule, and it is recorded rather than papered
+over, because an evidence file that implies a green pipeline it never had is
+worse than one that says it has none.
+
+**The epic's most useful artifact may be its debt table.** Eight items were
+raised, six resolved, and the two that stayed open carry a decision: [[TD-046]]
+is a scope decision the maintainer took (a summary is the right shape, and a
+second home for the same truth could disagree with the first), and [[TD-047]] is
+non-blocking by the review's own statement. [[TD-004]] moves from blocked to
+unblocked-in-principle and stays open, because it is a feature rather than a
+chore.

@@ -6,6 +6,54 @@ All notable product changes will be documented here.
 
 ### Added
 
+- EPIC-17 — Notifications, the first capability to actually tell somebody
+  something (NOTIF-001 to NOTIF-005, closed 2026-10-17):
+  - The **delivery aggregate**: one row is one intent to send one message over
+    one channel, with an explicit lifecycle (`SCHEDULED` to `SENT`, `FAILED` or
+    `CANCELLED`), a claim with a lease that recovers a worker which died
+    mid-send, and four SQL guards the migration owns — identity immutability,
+    the legal transitions, frozen terminal rows, and the biconditionals that
+    keep a status unable to disagree with its own timestamps. There is no
+    generic status route anywhere.
+  - **Dedupe semantics as a database property**: a per-tenant partial unique
+    index on the delivery's logical identity, excluding `CANCELLED`, so a
+    cancelled delivery does not occupy its key forever.
+  - The **channel boundary**: one port, a deterministic fake, and real SMTP and
+    WhatsApp Cloud adapters, selected **fail-closed exactly as `FISCAL_PROVIDER`
+    is** — no silent fallback to the fake. The email dependency is
+    [[ADR-011]]'s, and its guardrails (a transport per send, no pooling, no file
+    or URL access, one validated recipient, one importing file) are the
+    decision.
+  - The **appointment reminder**: configurable per tenant (1 to 168 hours,
+    default 24) through a typed, versioned settings namespace, scheduled as a
+    delayed job and idempotent by `(appointment, channel, window)`. **Cancelling
+    the appointment removes the pending job**, and the send path re-reads the
+    appointment's own row and refuses to send unless it is sendable — defense in
+    depth against a lost reaction.
+  - **Content built at send time**, never stored: a reschedule before delivery
+    cannot produce a reminder carrying a stale time, and a fiscal notice names
+    the document's real number.
+  - The **three emitters this epic owed** — `AppointmentConfirmed`,
+    `AppointmentCancelled` and `FiscalApproved` — published **after** their
+    transaction commits, carrying ids only, each reaction registered in the
+    deployable that publishes it, and `FiscalApproved` published from **both**
+    paths that enter `APPROVED` so the reconciliation sweep's approvals are not
+    lost. Boundary crossings into EPIC-07 and EPIC-16 stayed emitter-only
+    ([[DEC-059]]).
+  - The **fiscal notice**: an approval queues one notice for the invoice's
+    customer, email only, idempotent by `(document, channel)`.
+  - The **read surface**: the tenant's deliveries, bounded and filterable, with
+    an allowlisted projection that carries a recipient **reference** rather than
+    a datum, behind `notifications.delivery.read`. Message content cannot leak
+    because it is never stored.
+  - **No thirteenth feature code**: email is ungated, WhatsApp rides the
+    existing `whatsapp` entitlement, and the choice is re-asserted at send time
+    ([[DEC-058]]).
+
+  **Not proven**: no message has crossed a real provider. The adapters are
+  proven against the deterministic fake and their unit cases, and the live run
+  is recorded pending by name in `docs/10-qa/CI-EVIDENCE.md`.
+
 - EPIC-16 — SIFEN Direct, the DNIT's own e-invoicing integration behind the
   Fiscal boundary (FISC-006 to FISC-016, closed 2026-10-15):
   - The **DNIT protocol baseline** revalidated as the epic's precondition, with

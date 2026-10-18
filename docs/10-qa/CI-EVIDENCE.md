@@ -1864,3 +1864,108 @@ of what the repository does and what blocks each row:
 **Nothing in this epic has been tested against the DNIT**, and no claim anywhere
 in its documentation should be read as if it had. `done` means implementation
 closure.
+
+## EPIC-17 Notifications — closure (2026-10-17)
+
+### There is no CI receipt, and that is the first fact
+
+**Every branch of this epic is local and unpushed**, by the repository's own
+rule (`AGENTS.md`: do not push without explicit instruction). So there is no run
+to link, and none is implied: the evidence below is **local**, produced on this
+machine, and it names the commands. When the epic is pushed, its receipt belongs
+here and this paragraph is what it replaces.
+
+```text
+branch                            tip        work unit
+--------------------------------- ---------- --------------------------------------
+feat/epic-17-notifications        eb7cfdc    WU-A (epic, Stories, DEC-058..061) + WU-B
+fix/td-039-fiscal-job-id-colon    c6acccf    TD-039, proven against real Redis
+feat/notif-002-wu-c1              98add65    WU-C1 + WU-C2 (NOTIF-002)
+fix/notif-review-advisories       e490dbe    TD-040/041/042
+feat/notif-003-wu-d               86931cb    WU-D1 + WU-D2 + fix + WU-D3 (NOTIF-003)
+feat/notif-004-wu-e               0659038    WU-E (NOTIF-004)
+```
+
+### The local gates on the closure tree
+
+```text
+pnpm format-check                   clean (all matched files)
+pnpm lint                           22/22 packages, no error, no warning
+pnpm typecheck                      22/22 packages
+pnpm build                          13/13 packages
+@newsaas/api test                   1269 passed, 266 skipped (91 files)
+@newsaas/web test                   1100 passed (101 files)
+@newsaas/worker test                226 passed (17 files)
+@newsaas/notifications test          81 passed (10 files)
+@newsaas/database test              512 passed (27 files)
+@newsaas/fiscal test                788 passed (36 files)
+@newsaas/secret-store test           50 passed (5 files)
+@newsaas/ui test                     36 passed (6 files)
+```
+
+The skips are the repository's pre-existing opt-in blocks (live-PostgreSQL and
+credential-gated suites); they are not this epic's, and none of them was
+disabled to make a run green.
+
+### The live PostgreSQL block
+
+The epic's migrations were applied to a **fresh, disposable PostgreSQL 16
+cluster** created for the purpose (`initdb` in a temporary directory), and the
+notification aggregate's own suites ran against it, including the partial unique
+index's behavior: the same `(tenant_id, dedupe_key)` is refused while the row is
+live, and **accepted once the row is `CANCELLED`** — the exclusion that keeps a
+cancelled delivery from occupying its key forever. All **45 migrations** applied
+cleanly in one pass, and the four SQL guards (`identity_immutable`, `guard`,
+`terminal_immutable`, `biconditionals`) were exercised by the schema suite
+(`packages/database`, 512 cases).
+
+The engine was `postgresql-16` with no extension beyond `pgcrypto`/`uuid-ossp`,
+which is what the migrations expect.
+
+**What this does not prove**: the structural suites prove the guards as written,
+not a concurrent interleaving of two workers racing one claim. The claim's lease
+is asserted structurally ([[TD-006]] is the repository's standing record of that
+boundary), and the CI job that would exercise real concurrency is the
+pre-existing skip.
+
+### The live delivery run: PENDING, and that is the headline
+
+**No message has been sent through a real provider by this epic.** Every adapter
+case runs against the deterministic fake; the SMTP and WhatsApp adapters have
+their own unit cases with a stubbed transport, and nothing in this epic has
+crossed a network.
+
+The epic's acceptance criterion admits exactly this ("proven against a real
+provider, **or the live run is recorded as pending and named**"), so this
+section is the evidence that criterion asks for: the run is recorded as pending,
+by name, with what blocks it.
+
+```text
+The run needs                          Who provides it
+-------------------------------------- ------------------------------------------
+SMTP credentials (host, port, user,    the operator's mail provider
+  password) or a provider API key
+a verified sender address / domain     the operator, with the provider
+a WhatsApp Business account, a phone   Meta, after the operator's business
+  number id and an access token          verification
+a recipient that may lawfully be       the operator, with the customer's
+  messaged during a test                 consent
+```
+
+What the repository side already is:
+
+- **The selection is fail-closed**, so a production deployment without
+  `NOTIFICATION_CHANNEL` refuses to start rather than silently using the fake.
+- **The fake is deterministic and selectable**, which is the documented demo
+  path.
+- **The adapters are complete**: SMTP with [[ADR-011]]'s guardrails (a transport
+  per send, `pool: false`, file and URL access disabled, one validated
+  recipient), and WhatsApp Cloud over HTTPS with the template shape and a
+  bounded error mapping.
+- **The recipient is resolved and classified** at send time, RESTRICTED, never
+  persisted, never logged, never in a job payload or a response — so a live run
+  would not change what is stored.
+
+**Nothing in this epic should be read as if a real message had been delivered.**
+`done` on its Stories means implementation closure, and the coverage is the
+fake's.

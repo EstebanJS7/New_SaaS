@@ -320,6 +320,22 @@ advisories are [[TD-047]], with readings.
 Also corrected: the Story declared "one additive migration" for the permission
 key; keys are seed-owned reference data here, so no migration is involved.
 
+## WU-F (NOTIF-005): EPIC-17 closed
+
+Documentation only, and no behavior changed. `docs/05-modules/Notifications.md`
+(the module doc, from implemented behavior), the index row, the epic's
+CI-evidence block (**no CI receipt exists — no branch was pushed**, and the live
+delivery run is **pending by name** with the four missing operator inputs), the
+changelog entry, the roadmap row to `done`, the epic file's AC-to-receipt
+mapping plus the closure searches, and the debt triage.
+
+**All five Stories are `done`; the epic is `done`.** Open debt carries
+decisions, not deferrals: TD-046 (a summary is the right shape), TD-047
+(non-blocking by the review's own statement), TD-045 (coordinates lost to a
+process slip, so re-read the schedulers rather than guess). TD-004 moves from
+blocked to **unblocked in principle** and stays `open`, with the two things its
+Story must build named so nobody finds them late.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

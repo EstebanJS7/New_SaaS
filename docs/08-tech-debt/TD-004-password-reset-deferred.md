@@ -67,9 +67,38 @@ Resolution requires:
 - removal (or inversion) of the "recovery endpoints absent" fence test so the
   suite proves the routes exist and behave, not that they are missing.
 
+## Status update — 2026-10-17 (EPIC-17 closed)
+
+**Step 1 of the resolution has landed, and the item stays `open`.**
+Transactional email delivery now exists: the channel boundary with a real SMTP
+adapter ([[ADR-011]]), a fail-closed selection that refuses to start production
+without a configured channel, and a delivery aggregate whose lifecycle, dedupe
+and read surface are implemented and tested ([[NOTIF-002]], [[NOTIF-004]],
+`docs/05-modules/Notifications.md`).
+
+**What that changes**: this record's blocker is gone. It is no longer "waiting
+on a capability that does not exist"; it is waiting on its own Story. The
+remaining steps 2 through 5 are a feature — reset-token issuance, two routes
+with uniform no-enumeration responses, session invalidation, audit and the fence
+test's inversion — and none of them is a closure chore for another epic to
+absorb.
+
+**What it does not change**: the item is `open`, the ops workaround stands, and
+the "recovery endpoints absent" fence still passes, which is still the correct
+state while no reset flow exists. The owner decision (recorded in [[EPIC-17]]'s
+triage) is to carry it forward as the next candidate Story rather than to fold
+it into the closure.
+
+**One thing this epic does NOT unblock**: sending a reset email through the
+delivery aggregate needs a **new source type** —
+`notification_delivery.source_type` admits `APPOINTMENT` and `FISCAL_DOCUMENT` —
+and a recipient reader for a staff profile. That is part of the Story, not a
+prerequisite, and it is named here so the next unit does not discover it late.
+
 ## Proposed Resolution
 
-1. Land EPIC-17 transactional email delivery and its provider boundary.
+1. ~~Land EPIC-17 transactional email delivery and its provider boundary.~~
+   **Done.**
 2. Add reset-token issuance/consumption to the identity core (hashed at rest,
    single-use, short TTL), reusing the session-service hashing conventions.
 3. Expose `POST /api/v1/auth/forgot-password` and
