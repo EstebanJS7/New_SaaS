@@ -109,6 +109,11 @@ a lie rather than a gap — benign only while both reads carry the same
 permission. Its own case asserts the denial renders and that neither the empty
 nor the error state is shown.
 
+**Reviewed by `review-75fc1f73824e8c54`** — medium tier, one lens
+(`review-reliability`), 11 paths, 187 changed lines — which **approved with no
+findings at all**, so there are no new advisories to record and nothing to
+interpret. Authority burned by the exact acknowledgement.
+
 ## Related
 
 - `docs/02-stories/NOTIF-004-transactional-surface-and-permissions.md` — the

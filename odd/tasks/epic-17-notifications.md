@@ -341,6 +341,16 @@ Review: `review-cb330294ce206b4d` closed **`approved` with zero lenses**
 its acknowledgement burned the authority. The same closure WU-A's docs-only unit
 received.
 
+### Post-closure tails resolved
+
+`fix/notif-tail-advisories` (commit `5440ce7`): **TD-045** and **TD-047**
+resolved, reviewed by `review-75fc1f73824e8c54` (medium, one lens) which
+**approved with no findings**. The BFF now answers `400` for an unlisted query
+key so the two layers of one request agree (the fiscal BFF's `404` is a named
+divergence, not an accident); the detail read has a denial state of its own; and
+both schedulers name the two tests their re-enqueue depends on. TD-046 stays
+`open` as a recorded decision.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

@@ -96,6 +96,11 @@ non-blocking and approved the unit. The next unit that touches these schedulers
 should re-read them rather than guess, which is exactly what this TD's first
 section says.
 
+**Reviewed by `review-75fc1f73824e8c54`** — medium tier, one lens
+(`review-reliability`), 11 paths, 187 changed lines — which **approved with no
+findings at all**, so there are no new advisories to record and nothing to
+interpret. Authority burned by the exact acknowledgement.
+
 ## Related
 
 - `docs/02-stories/NOTIF-003-appointment-reminder-and-emitters.md` — the Story.
