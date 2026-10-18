@@ -139,18 +139,23 @@ export class NotificationReminderScheduler implements OnModuleInit {
         continue;
       }
 
-      const created = await this.createIntent({
+      const dedupeKey = reminderDedupeKey({
+        appointmentId: appointment.id,
+        channel,
+        startsAt: appointment.startAt,
+      });
+      const deliveryId = await this.ensureIntent({
         tenantId,
         channel,
         appointmentId: appointment.id,
         customerId,
-        startsAt: appointment.startAt,
         scheduledAt,
+        dedupeKey,
       });
-      // `null` means the intent already existed: another confirmation, a retried
-      // command, or a re-delivered event. Nothing to enqueue either, because the
-      // first writer enqueued it.
-      if (created === null) continue;
+      // `null` means the key is held by a delivery that is no longer pending — a
+      // cancelled one, whose key the partial index releases — so the cancellation
+      // path owns it and there is nothing to schedule here.
+      if (deliveryId === null) continue;
 
       // Review R3-001, first window: a cancellation can run BETWEEN this intent's
       // creation and its enqueue, CAS the row and find no job to remove because
@@ -164,20 +169,26 @@ export class NotificationReminderScheduler implements OnModuleInit {
       // authority for whether a reminder may exist — closes that one, and the
       // send-time gate in NOTIF-003 WU-D3 closes the residual window between this
       // read and the enqueue.
-      if (!(await this.isStillSchedulable(tenantId, appointment.id, created.id))) {
-        await this.cancelDelivery(tenantId, created.id);
+      if (!(await this.isStillSchedulable(tenantId, appointment.id, deliveryId))) {
+        await this.cancelDelivery(tenantId, deliveryId);
         continue;
       }
 
-      await this.producer.enqueue({ notificationDeliveryId: created.id, tenantId }, scheduledAt);
+      // This runs for an intent that ALREADY existed too, and that is the point:
+      // when the first attempt's enqueue failed, the row stayed `SCHEDULED` with no
+      // job, and every later confirmation would otherwise take the conflict branch
+      // and never enqueue it — a reminder stranded forever by a transient queue
+      // failure. Re-adding is safe: the job id is deterministic, so BullMQ ignores
+      // a duplicate, and a delivery that already settled is refused by the handler.
+      await this.producer.enqueue({ notificationDeliveryId: deliveryId, tenantId }, scheduledAt);
 
       // The same window, one step later: the cancellation landed between the
       // check above and the enqueue, and it already removed the job it could not
       // find. The row's status is what makes the reminder UNDELIVERABLE — the
       // handler refuses a settled row, which its own case asserts — but the job
       // would linger with nobody expecting it.
-      if (!(await this.isStillSchedulable(tenantId, appointment.id, created.id))) {
-        await this.cancelDelivery(tenantId, created.id);
+      if (!(await this.isStillSchedulable(tenantId, appointment.id, deliveryId))) {
+        await this.cancelDelivery(tenantId, deliveryId);
       }
     }
   }
@@ -292,26 +303,30 @@ export class NotificationReminderScheduler implements OnModuleInit {
     }
   }
 
-  /** Inserts the intent, or reports that it already existed. */
-  private async createIntent(args: {
+  /**
+   * The intent's id: the one it just created, or the PENDING one that already holds
+   * the key.
+   *
+   * The second half is what makes the caller's enqueue idempotent AND self-healing,
+   * and it is the same shape the fiscal notice's scheduler uses. `null` means the
+   * key is held by a delivery that is no longer pending, which is the cancellation
+   * path's business rather than this one's.
+   */
+  private async ensureIntent(args: {
     readonly tenantId: string;
     readonly channel: "EMAIL" | "WHATSAPP";
     readonly appointmentId: string;
     readonly customerId: string;
-    readonly startsAt: Date;
     readonly scheduledAt: Date;
-  }): Promise<{ id: string } | null> {
+    readonly dedupeKey: string;
+  }): Promise<string | null> {
     try {
-      return await this.prisma.notificationDelivery.create({
+      const created = await this.prisma.notificationDelivery.create({
         data: {
           tenantId: args.tenantId,
           channel: args.channel,
           status: "SCHEDULED",
-          dedupeKey: reminderDedupeKey({
-            appointmentId: args.appointmentId,
-            channel: args.channel,
-            startsAt: args.startsAt,
-          }),
+          dedupeKey: args.dedupeKey,
           sourceType: "APPOINTMENT",
           sourceId: args.appointmentId,
           recipientType: "CUSTOMER",
@@ -320,9 +335,18 @@ export class NotificationReminderScheduler implements OnModuleInit {
         },
         select: { id: true },
       });
+      return created.id;
     } catch (error) {
-      if (isDedupeKeyConflict(error)) return null;
-      throw error;
+      if (!isDedupeKeyConflict(error)) throw error;
+      const existing = await this.prisma.notificationDelivery.findFirst({
+        where: {
+          tenantId: args.tenantId,
+          dedupeKey: args.dedupeKey,
+          status: { in: ["SCHEDULED", "QUEUED"] },
+        },
+        select: { id: true },
+      });
+      return existing?.id ?? null;
     }
   }
 }

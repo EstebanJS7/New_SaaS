@@ -107,8 +107,10 @@ function setup(args: {
         }
         return Promise.resolve({ id: `delivery-${creates.length}` });
       },
-      // The compensation read (R3-001) also asks whether the INTENT is still
-      // pending, which is the half a cancellation reaction already reached.
+      // ONE read serves two questions the reaction asks: whether the INTENT is still
+      // pending (the compensation, R3-001) and, on a dedupe conflict, which PENDING
+      // delivery holds the key so a failed enqueue can be retried (R3-001 of the
+      // fiscal notice's review, the same hole).
       findFirst: () => Promise.resolve(args.stillPending === false ? null : { id: "delivery-1" }),
       findMany: () => Promise.resolve(args.pendingDeliveries ?? []),
       updateMany: (updateArgs: {
@@ -292,15 +294,30 @@ describe("scheduling a reminder", () => {
     expect(has).not.toHaveBeenCalled();
   });
 
-  it("is idempotent: a repeated confirmation creates nothing and enqueues nothing", async () => {
+  it("re-enqueues the EXISTING intent on a repeated confirmation — the stranded-reminder fix", async () => {
+    // Review R3-001 of the fiscal notice, and the SAME hole was here: returning on
+    // the conflict stranded a delivery whose first enqueue failed, because every
+    // later confirmation took this branch and nothing ever enqueued it. The job id
+    // is deterministic, so re-adding is a no-op when the job exists, and the handler
+    // refuses a delivery that already settled.
     const dedupeKey = `appointment:${appointmentId}:EMAIL:2026-10-18T12:00:00.000Z`;
     const { confirmed, creates, enqueued } = setup({ existingDedupeKeys: [dedupeKey] });
 
     await confirmed();
 
-    // The row that already exists was enqueued by its own writer, so a second
-    // enqueue would be a second message to a real recipient.
     expect(creates).toHaveLength(1);
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]?.job.notificationDeliveryId).toBe("delivery-1");
+  });
+
+  it("does nothing when the key is held by a delivery that is no longer pending", async () => {
+    const dedupeKey = `appointment:${appointmentId}:EMAIL:2026-10-18T12:00:00.000Z`;
+    const { confirmed, enqueued } = setup({
+      existingDedupeKeys: [dedupeKey],
+      stillPending: false,
+    });
+
+    await confirmed();
     expect(enqueued).toHaveLength(0);
   });
 

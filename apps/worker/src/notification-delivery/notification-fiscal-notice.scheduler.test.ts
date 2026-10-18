@@ -19,6 +19,8 @@ function setup(args: {
   readonly document?: { status: string; invoiceId: string } | null;
   readonly invoice?: { customerId: string | null } | null;
   readonly conflict?: boolean;
+  /** Whether the conflict path finds a PENDING delivery to enqueue. */
+  readonly existingPending?: boolean;
 }) {
   const handlers = new Map<string, (event: ApplicationEvent<string, unknown>) => unknown>();
   const dispatcher: EventDispatcher = {
@@ -55,6 +57,14 @@ function setup(args: {
         }
         return Promise.resolve({ id: `delivery-${creates.length}` });
       },
+      // The conflict path re-reads the pending intent so a failed enqueue can be
+      // retried: `existingPending` scripts whether such a row is there.
+      findFirst: () =>
+        Promise.resolve(
+          args.conflict === true && args.existingPending !== false
+            ? { id: "delivery-existing" }
+            : null
+        ),
     },
   };
 
@@ -148,14 +158,26 @@ describe("creating the fiscal notice", () => {
     expect(creates).toHaveLength(0);
   });
 
-  it("is idempotent: a repeated approval creates nothing and enqueues nothing", async () => {
+  it("re-enqueues the EXISTING intent on a repeated approval — the stranded-notice fix", async () => {
+    // Review R3-001. Returning on the conflict stranded a delivery forever when the
+    // first attempt's enqueue failed: the row stayed SCHEDULED, every later event
+    // took this branch, and nothing ever enqueued it. Re-adding is safe because the
+    // job id is deterministic (BullMQ ignores a duplicate) and the handler refuses
+    // a delivery that already settled, so the enqueue is idempotent AND heals.
     const { notify, creates, enqueued } = setup({ conflict: true });
 
     await notify();
 
-    // The row that already exists was enqueued by its own writer, so a second
-    // enqueue would be a second notice to a real customer.
     expect(creates).toHaveLength(1);
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]?.job.notificationDeliveryId).toBe("delivery-existing");
+  });
+
+  it("does nothing when the key is held by a delivery that is no longer pending", async () => {
+    // `null` is the case the cancellation path owns: the key exists but no pending
+    // delivery holds it, so there is nothing to enqueue.
+    const { notify, enqueued } = setup({ conflict: true, existingPending: false });
+    await notify();
     expect(enqueued).toHaveLength(0);
   });
 

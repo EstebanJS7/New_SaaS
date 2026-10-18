@@ -37,6 +37,7 @@ export interface FiscalNoticePrisma {
   };
   notificationDelivery: {
     create(args: Prisma.NotificationDeliveryCreateArgs): Promise<{ id: string }>;
+    findFirst(args: Prisma.NotificationDeliveryFindFirstArgs): Promise<{ id: string } | null>;
   };
 }
 
@@ -76,29 +77,42 @@ export class NotificationFiscalNoticeScheduler implements OnModuleInit {
     });
     if (invoice?.customerId === null || invoice === null) return;
 
-    const created = await this.createIntent({
+    const intent = await this.ensureIntent({
       tenantId,
       fiscalDocumentId: event.aggregateId,
       customerId: invoice.customerId,
     });
-    // `null` means the intent already existed: a re-delivered event, or a document
-    // the sweep and the handler both resolved.
-    if (created === null) return;
+    if (intent === null) return;
 
     const now = new Date();
     // Enqueued with the delivery's own instant, which is NOW: a confirmation of an
     // approval that already happened is not scheduled for later.
-    await this.producer.enqueue({ notificationDeliveryId: created.id, tenantId }, now);
+    //
+    // This runs for an EXISTING intent too (see `ensureIntent`), and that is the
+    // point: a first attempt whose enqueue failed would otherwise leave a
+    // `SCHEDULED` row with no job, and every later event would take the conflict
+    // branch and never enqueue it — a notice stranded forever by a transient queue
+    // failure. Re-adding is safe because the job id is deterministic (BullMQ
+    // ignores a duplicate) and a delivery that already settled is refused by the
+    // handler.
+    await this.producer.enqueue({ notificationDeliveryId: intent, tenantId }, now);
   }
 
-  /** Inserts the intent, or reports that it already existed. */
-  private async createIntent(args: {
+  /**
+   * The intent's id: the one it just created, or the PENDING one that already holds
+   * the key.
+   *
+   * The second half is what makes the enqueue above idempotent AND self-healing. A
+   * `null` means the key is held by a delivery that is no longer pending, which the
+   * cancellation path owns.
+   */
+  private async ensureIntent(args: {
     readonly tenantId: string;
     readonly fiscalDocumentId: string;
     readonly customerId: string;
-  }): Promise<{ id: string } | null> {
+  }): Promise<string | null> {
     try {
-      return await this.prisma.notificationDelivery.create({
+      const created = await this.prisma.notificationDelivery.create({
         data: {
           tenantId: args.tenantId,
           channel: FISCAL_NOTICE_CHANNEL,
@@ -115,9 +129,21 @@ export class NotificationFiscalNoticeScheduler implements OnModuleInit {
         },
         select: { id: true },
       });
+      return created.id;
     } catch (error) {
-      if (isDedupeKeyConflict(error)) return null;
-      throw error;
+      if (!isDedupeKeyConflict(error)) throw error;
+      const existing = await this.prisma.notificationDelivery.findFirst({
+        where: {
+          tenantId: args.tenantId,
+          dedupeKey: fiscalNoticeDedupeKey({
+            fiscalDocumentId: args.fiscalDocumentId,
+            channel: FISCAL_NOTICE_CHANNEL,
+          }),
+          status: { in: ["SCHEDULED", "QUEUED"] },
+        },
+        select: { id: true },
+      });
+      return existing?.id ?? null;
     }
   }
 }
