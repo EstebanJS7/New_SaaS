@@ -285,6 +285,61 @@ the login page the moment the API has a bad minute.
 The redirect target is `/[slug]/login` - the page of the clinic in the PATH, not
 a shared one.
 
+## The customer's password recovery (PORTAL-002)
+
+```text
+POST /portal/forgot-password   @Public, { tenantSlug, email }, uniform 202
+POST /portal/password-reset    @Public, { token, password }, 200 or the login's own 401
+GET  /[slug]/forgot-password   the request page
+GET  /[slug]/reset-password    where the link lands
+```
+
+The API has issued portal sessions since [[EPIC-08]] and the staff recovery
+([[DAT-007]]) authorises a `UserCredential` change — a portal identity holds a
+`PortalCredential`, so the two are different subjects and the flow had to be its
+own. [[PORTAL-001]] named this as its largest gap.
+
+**A token table of its own**, not a widened staff one: the staff table's
+`user_profile_id` foreign key cannot hold a portal access id, so reuse would
+need a polymorphic owner. [[DEC-008]]'s boundary applies one level down — a
+staff token must not be redeemable for a portal password, nor the reverse — and
+two tables, each with its subject, is that boundary in the schema.
+
+**The message goes to the access's own `contactEmail`**, which is the LOGIN id.
+The customer's primary contact may be a different address, and sending the link
+there would let a holder of one address reset a session for another. Hence a
+`PORTAL_HOLDER` recipient whose reader resolves the access rather than reusing
+`CUSTOMER`.
+
+**The delivery belongs to the CLINIC's tenant**, unlike the staff recovery's
+platform-owned one: the holder is that clinic's customer, so its operators can
+see the message and that is correct.
+
+**The token is minted at send time**, so no plaintext is ever persisted and the
+TTL starts when the mail does; the link carries the tenant's slug in the path
+because the page must know which clinic the holder is at before any session
+exists.
+
+### The live run
+
+Performed against PostgreSQL 16, Redis, the built API, the built worker with the
+**real SMTP adapter** pointing at a local sink, and `next start` — the whole
+loop, with a real SMTP conversation:
+
+```text
+POST /api/portal/forgot-password (holder)     202, and an unknown address is byte-identical
+the delivery                                  PORTAL_ACCOUNT | PORTAL_HOLDER | SENT, under the clinic's tenant
+the token row                                 minted at send time, a 64-character digest
+the email (read from the sink)                to the ACCESS's contactEmail, subject in Spanish,
+                                              a link with a 43-character token
+POST /api/portal/password-reset (that token)  200
+  every portal session for the access         1 -> 0
+  the password                                the OLD one now answers 401, the NEW one 200
+  the audit                                   portal.password_reset_requested + _completed
+  the same token again                        401, the uniform refusal
+a second request inside the hour              202, and NO second email: the window deduped
+```
+
 ## Known Limitations / Residual Risks
 
 - **Contact details are removable from the portal.** A holder can clear the

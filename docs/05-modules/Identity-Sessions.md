@@ -127,10 +127,18 @@ staff session does not satisfy the portal's - the isolation [[DEC-008]]
 requires, now asserted on BOTH sign-in hops, which is exactly where a change
 could break it.
 
-**A customer who forgets their password has no way back.** The API's recovery
-authorises a `UserCredential` change and this identity holds a
-`PortalCredential`; the portal's recovery is its own Story with its own token
-model, and [[PORTAL-001]] names that as the largest gap it leaves.
+**A customer who forgets their password now has a way back** ([[PORTAL-002]]),
+and it is the staff flow's sibling rather than a widened one: a
+`portal_password_reset_token` keyed to the ACCESS — the staff table's foreign
+key could not even hold one — two more `@Public` routes, the same 30-minute
+single-use hashed token, and the same single-transaction reset that ends every
+session and audits.
+
+The two identities' tokens never cross, and that is [[DEC-008]]'s boundary one
+level below the sessions: a staff token cannot be redeemed for a portal
+password, nor the reverse. The route-contract test that asserted "login is the
+ONLY public portal route" now names the three, with the invariant worth keeping
+stated beside them — no OTHER portal route is public.
 
 ## The recovery flow (DAT-007)
 

@@ -2,7 +2,7 @@
 id: PORTAL-002
 type: story
 title: Portal password recovery
-status: in-progress
+status: done
 epic: EPIC-08
 priority: high
 depends_on:
@@ -77,53 +77,53 @@ appearance of reuse.
 
 ## Acceptance Criteria
 
-- [ ] The token table stores **only what a reset needs** — the portal access, a
+- [x] The token table stores **only what a reset needs** — the portal access, a
       **hash**, an expiry and a consumption instant — and no plaintext token, no
       email address and no requester address.
-- [ ] It is **single-use** and **short-lived**: a second consumption and an
+- [x] It is **single-use** and **short-lived**: a second consumption and an
       expired one are refused, the consumption instant can neither be rewritten
       nor cleared, and the expiry is after creation.
-- [ ] The token is keyed to the **portal access**, never to a `user_profile`: a
+- [x] The token is keyed to the **portal access**, never to a `user_profile`: a
       staff token cannot be redeemed here and a portal token cannot be redeemed
       there, asserted in both directions.
-- [ ] `POST /portal/forgot-password` answers **byte-equivalently** for a holder
+- [x] `POST /portal/forgot-password` answers **byte-equivalently** for a holder
       that exists, one that does not, an ambiguous login identity and a holder
       with no credential.
-- [ ] It is rate-limited per address and client IP, and namespaced away from
+- [x] It is rate-limited per address and client IP, and namespaced away from
       both the staff recovery and the portal login budgets.
-- [ ] It creates a delivery intent through the Notifications aggregate; it sends
+- [x] It creates a delivery intent through the Notifications aggregate; it sends
       nothing inline.
-- [ ] The token is minted **at send time**, so no plaintext token is ever
+- [x] The token is minted **at send time**, so no plaintext token is ever
       persisted.
-- [ ] The recipient is resolved as the **access's own `contactEmail`**, which is
+- [x] The recipient is resolved as the **access's own `contactEmail`**, which is
       the login id — not the customer's primary contact, which may be a
       different address and would let a holder of one address reset a session
       for another.
-- [ ] `POST /portal/password-reset` consumes the token, replaces the hash with
+- [x] `POST /portal/password-reset` consumes the token, replaces the hash with
       the **same argon2id parameters** as the login path, ends **every**
       outstanding portal session for that access, and audits — in one
       transaction, with the hash computed before it opens.
-- [ ] Both operations are audited with the access as the subject and **no token
+- [x] Both operations are audited with the access as the subject and **no token
       value** in the record.
-- [ ] No token, hash or plaintext password appears in a log, an event payload, a
+- [x] No token, hash or plaintext password appears in a log, an event payload, a
       job payload or a response.
-- [ ] The route-contract probe's **"login is the only public portal route"**
+- [x] The route-contract probe's **"login is the only public portal route"**
       test is updated to the three routes, and the pin states why each is
       public.
-- [ ] `/[slug]/forgot-password` and `/[slug]/reset-password` are public, inside
+- [x] `/[slug]/forgot-password` and `/[slug]/reset-password` are public, inside
       the anonymous layout, and the login form links to the first.
-- [ ] The reset page's refusals are the API's own: one message for an unknown,
+- [x] The reset page's refusals are the API's own: one message for an unknown,
       spent or expired token, so the UI is not a louder oracle than the API it
       fronts.
-- [ ] Tenant isolation is enforced when applicable. Evidence: every read is
+- [x] Tenant isolation is enforced when applicable. Evidence: every read is
       predicated on the tenant resolved from the slug, and a token from another
       tenant is refused.
-- [ ] Backend authorization is enforced when applicable. Evidence: both routes
+- [x] Backend authorization is enforced when applicable. Evidence: both routes
       are `@Public` by necessity, rate-limited and enumeration-resistant by
       construction.
-- [ ] Required audit exists. Evidence: the two audit cases, with the access as
+- [x] Required audit exists. Evidence: the two audit cases, with the access as
       subject.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -179,13 +179,78 @@ One additive migration:
 
 ## Implementation Summary
 
-_Not implemented._
+Five units, each committed and gated on its own, and the flow was then
+**verified live end to end**.
+
+**WU-A — the token's data foundation.** `portal_password_reset_token` with the
+staff token's four guards, keyed to a portal ACCESS and never to a user profile
+— the schema case asserts the absence of `user_profile_id`, because that column
+is how [[DEC-008]]'s boundary would be lost. No tenant column, deliberately: the
+access carries the tenant and the read asserts they agree. Proven on a
+disposable PostgreSQL 16, where the guards refused an expiry before its
+creation, a duplicate digest, a rewritten consumption instant, an un-consume, an
+extended expiry, a repointed digest and a reassigned access.
+
+**WU-B — the token service and the two routes.** The CAS, the uniform refusal,
+the request publishing an event, the reset in ONE transaction with the hash
+computed before it opens. And the **fence inverted**: a test asserted login was
+the ONLY public portal route, which was the deferral's contract rather than a
+property; it now names the three and states the invariant worth keeping.
+
+**WU-C — the delivery.** The policy (the hour window, a key per ACCESS so two
+accesses cannot suppress each other, and the URL with the tenant's slug), the
+reader's `PORTAL_HOLDER` branch, the builder's `PORTAL_ACCOUNT` branch that
+mints the token at send time, and a scheduler that needs no read of its own.
+
+**WU-D — the two pages.** Both inside the anonymous portal layout, the token
+read server-side, and the login form's link restored — its case had asserted the
+link's ABSENCE, because there was no flow to point at.
+
+**WU-E — this record.**
+
+## Verification
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check                   clean
+pnpm lint                           22/22 packages
+pnpm typecheck                      22/22 packages
+pnpm build                          13/13 packages
+@newsaas/api test                   1349 passed
+@newsaas/worker test                 245 passed
+@newsaas/web test                   1156 passed
+@newsaas/database test               543 passed
+@newsaas/notifications test           84 passed
 ```
+
+### The live run: the whole loop, with a real SMTP conversation
+
+Against PostgreSQL 16, Redis, the built API, the built **worker with the real
+SMTP adapter** pointing at a local sink, and `next start`:
+
+```text
+POST /api/portal/forgot-password (holder)     202, and an unknown address byte-identical
+the delivery                                  PORTAL_ACCOUNT | PORTAL_HOLDER | SENT, under the CLINIC's tenant
+the token row                                 minted at send time, a 64-character digest
+the email, read from the sink                 to the ACCESS's contactEmail, Spanish subject,
+                                              a link with a 43-character token
+POST /api/portal/password-reset (that token)  200
+  every portal session for the access         1 -> 0
+  the password                                the OLD one answers 401, the NEW one 200
+  the audit                                   portal.password_reset_requested + _completed
+  the same token again                        401, the uniform refusal
+a second request inside the hour              202, and NO second email: the window deduped
+```
+
+**The message was read out of a real SMTP conversation** rather than a fake's
+memory: the sink received the quoted-printable body, and decoding it is what
+produced the token the reset then consumed. Nothing in that list is inferred
+from a stub.
+
+**Not verified**: the WhatsApp channel, which no recovery message uses (the
+channel is fixed to EMAIL), and a browser driving the two pages (the suites
+cover their states).
 
 ## Tests Added
 
@@ -200,11 +265,21 @@ Not run.
 
 ## Known Limitations
 
-- **The portal's recovery is email-only**, like the staff one, and for the same
-  reason.
+- **The recovery message is email-only**, like the staff one: the channel is
+  fixed because a link is inherently an email-shaped thing and a WhatsApp
+  variant would need a template and a decision nobody has taken.
+- **The two token services duplicate the compare-and-set and the uniform
+  refusal.** The primitives they share — entropy, digest, lifetime — live in
+  `@newsaas/shared`, so those cannot drift; the CAS is duplicated because the
+  two are bound to different tables and the repository prefers explicit code to
+  a generic base. Named rather than hidden: a future fix to the CAS has to land
+  in both.
+- **`STAFF_APP_BASE_URL` is reused for the portal's link**, because one web app
+  serves both surfaces. The deployment input's name is a misnomer, and renaming
+  it would break every existing deployment for a word.
 - **No `?next=` return path**, deliberately.
-- **The live run will be pending** unless credentials and a seeded holder exist
-  at closure.
+- **A browser driving the two pages is not recorded**; the suites cover their
+  states, and the live run drove the API through the BFF.
 
 ## Technical Debt
 
@@ -228,4 +303,21 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Every criterion is satisfied, the gates are green, and **the flow was verified
+live end to end** — including the one thing no suite could have proven: that the
+email a real SMTP server received carried the token that a reset then consumed,
+and that the old password stopped working while the new one started.
+
+**Two things this Story's work surfaced, both worth more than the code.** The
+audit boundary REFUSED `actorType: "PORTAL"` for an anonymous request — _"PORTAL
+attribution requires a portal access id"_ — and it was right: the requester is
+nobody authenticated, so the record attributes to the ACCESS as the subject,
+exactly as the staff flow attributes its request to the profile. And the
+in-memory harness needed three delegates it did not have; it is the fifth time
+this session that the harness was the gap, which is worth planning for whenever
+a table is added.
+
+**The epic's third test that encoded a gap** was found here too: the login
+form's case asserted the recovery link's ABSENCE. A test that says something
+does not exist has to be found and rewritten the day it exists, or someone will
+delete the assertion instead of understanding it.

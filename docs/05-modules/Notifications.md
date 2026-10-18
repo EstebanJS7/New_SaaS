@@ -245,6 +245,28 @@ The alternative considered and rejected was making the column nullable for
 platform sources: it would weaken the tenancy guarantee for **every** row in
 order to describe one.
 
+## The portal recovery message (PORTAL-002)
+
+The `PORTAL_ACCOUNT` source is the staff recovery's sibling with two
+differences, both the identity's:
+
+- **The recipient is a `PORTAL_HOLDER`**, resolved as the access's own
+  `contactEmail` — the LOGIN id — tenant-predicated. The customer's primary
+  contact may be a different address whose holder is not proven to be the
+  account's owner, and sending the link there would let a holder of one address
+  reset a session for another.
+- **The delivery belongs to the CLINIC's tenant**, not to the platform one. The
+  two tenancy answers are opposite and both correct: a staff member belongs to
+  no tenant (their credential is global to the profile), so their message is
+  platform-owned and invisible to every clinic; a portal holder IS a clinic's
+  customer, so their message belongs to that clinic and its operators can see
+  it.
+
+The two schedulers' guards mirror each other for the same reason: the staff one
+refuses an event with a TENANT (its message is platform-owned) and the portal
+one refuses an event with NO tenant (a portal message must belong to a clinic —
+a tenant-less one would file a customer's recovery mail under nobody).
+
 ## The staff recovery message
 
 The `STAFF_ACCOUNT` source is built by its own branch, and two of its properties

@@ -219,12 +219,20 @@ acceptance-criteria map above.
   server remains authoritative), and the registered but unused
   `bookingRequiresApproval` setting.
 
-**Reopened again on 2026-10-18** for `PORTAL-002 Portal password recovery` — the
-gap PORTAL-001 named as its largest: the API's recovery authorises a
-`UserCredential` and a portal identity holds a `PortalCredential`, so a customer
-who forgot their password had no way back.
+**Reopened on 2026-10-18 and closed the same day** for
+`PORTAL-002 Portal password recovery` — the gap PORTAL-001 named as its largest:
+the API's recovery authorises a `UserCredential` and a portal identity holds a
+`PortalCredential`, so a customer who forgot their password had no way back.
 
 **PORTAL-001 is `done`** and the epic was closed again. What it leaves open,
 named rather than implied: a customer who forgets their password still has no
 way back, and the portal's sign-in has not been exercised live against a running
 API.
+
+**PORTAL-002 is `done`** and the epic is closed again. A customer who forgets
+their password now has a way back, and the whole loop was verified live: a real
+SMTP conversation delivered a token that a reset then consumed, ending every
+portal session and changing the password. What it leaves open, named rather than
+implied: the two token services duplicate the CAS (the shared primitives live in
+the kernel), and `STAFF_APP_BASE_URL` is a misnomer now that it also builds the
+portal's link.

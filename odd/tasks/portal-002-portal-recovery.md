@@ -1271,7 +1271,20 @@ g u e s s i n g
 
 w h i c h .
 
-- [ ] **WU-E — the documentation and the closure.** `Portal.md`,
+- [x] **WU-E — the documentation and the closure.** `Portal.md`,
+      `Notifications.md`, `Identity-Sessions.md`, and the Story's evidence.
+      _Done: `Portal.md` gained the flow and the live run, `Notifications.md`
+      the `PORTAL_ACCOUNT` / `PORTAL_HOLDER` pair and the two OPPOSITE tenancy
+      answers side by side (a staff member belongs to no tenant so their message
+      is platform-owned; a portal holder IS a clinic's customer so theirs
+      belongs to that clinic), and `Identity-Sessions.md` the portal's recovery
+      beside the staff one. **The live run closed the loop with a real SMTP
+      conversation** — the email read out of a local sink, decoded from
+      quoted-printable, its token consumed by the reset, every session ended,
+      the old password refused and the new one accepted, the single-use refusal,
+      and the hour window deduping a second request against the sink. EPIC-08
+      closed again with its re-openings kept in the record._
+
       `Notifications.md`, `Identity-Sessions.md`, and the Story's evidence.
 
 ## The one thing this Story must not do
