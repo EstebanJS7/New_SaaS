@@ -336,6 +336,11 @@ process slip, so re-read the schedulers rather than guess). TD-004 moves from
 blocked to **unblocked in principle** and stays `open`, with the two things its
 Story must build named so nobody finds them late.
 
+Review: `review-cb330294ce206b4d` closed **`approved` with zero lenses**
+(`non_executable_only`, low tier, 10 paths, 977 lines, all documentation) and
+its acknowledgement burned the authority. The same closure WU-A's docs-only unit
+received.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

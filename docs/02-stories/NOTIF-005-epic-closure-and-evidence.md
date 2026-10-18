@@ -245,6 +245,14 @@ The epic's full evidence block, including the pending live run, is in
 
 ## Completion Notes
 
+**Reviewed, and the provider itself decided this needed no reviewers.**
+`review-cb330294ce206b4d` STARTed and closed `approved` on the spot with
+`risk_tier: low`, **zero selected lenses**, `lenses_required: false` and the
+reason code `non_executable_only` — 10 paths, 977 changed lines, every one of
+them documentation — and its acknowledgement burned the authority. The same
+closure WU-A's docs-only unit received, and the correct outcome for a diff that
+is entirely inert text. No findings, so no advisories and no readings to mark.
+
 **EPIC-17 is `done`, and the sentence that matters is the one about what `done`
 means.** Every Story is implemented, reviewed and validated; every acceptance
 criterion is mapped to a receipt or to a named limitation; the gates are green;
