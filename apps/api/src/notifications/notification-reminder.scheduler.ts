@@ -102,6 +102,27 @@ export class NotificationReminderScheduler implements OnModuleInit {
    * while the reverse order would leave a job pointing at nothing.
    */
   async onConfirmed(event: ApplicationEvent<string, unknown>): Promise<void> {
+    // Everything below can fail on a TRANSIENT cause: a settings read, an entitlement
+    // read, the intent insert, or the enqueue. None of them may escape this method, and
+    // the reason is mechanical rather than stylistic: the dispatcher invokes handlers as
+    // `void (async () => handler(event))()`, so a rejection here has no consumer, and
+    // Node terminates the process on an unhandled rejection. One failed settings read
+    // during one confirmation would take down every request the API serves.
+    //
+    // So the failure is LOGGED and the reaction ends. The reminder is not scheduled,
+    // which is the epic's declared, diagnosable gap; a later confirmation heals it,
+    // because `ensureIntent` re-enqueues an intent that already exists.
+    try {
+      await this.scheduleFor(event);
+    } catch (error) {
+      console.error("Reminder could not be scheduled", {
+        appointmentId: event.aggregateId,
+        ...describeFailure(error),
+      });
+    }
+  }
+
+  private async scheduleFor(event: ApplicationEvent<string, unknown>): Promise<void> {
     const tenantId = event.tenantId;
     if (tenantId === null) return;
 
@@ -237,6 +258,19 @@ export class NotificationReminderScheduler implements OnModuleInit {
    * so one delivery's failure never stops the others.
    */
   async onCancelled(event: ApplicationEvent<string, unknown>): Promise<void> {
+    // The same guard, for the same reason: this reaction reads the appointment's current
+    // rows and then CASes a delivery, and any of those can fail transiently.
+    try {
+      await this.cancelFor(event);
+    } catch (error) {
+      console.error("Reminder cancellation could not be scheduled", {
+        appointmentId: event.aggregateId,
+        ...describeFailure(error),
+      });
+    }
+  }
+
+  private async cancelFor(event: ApplicationEvent<string, unknown>): Promise<void> {
     const tenantId = event.tenantId;
     if (tenantId === null) return;
 
@@ -297,7 +331,7 @@ export class NotificationReminderScheduler implements OnModuleInit {
       // reported loudly; the removal below still runs either way.
       console.error("Notification delivery could not be cancelled", {
         notificationDeliveryId: deliveryId,
-        error: describeError(error),
+        ...describeFailure(error),
       });
     }
 
@@ -308,7 +342,7 @@ export class NotificationReminderScheduler implements OnModuleInit {
       // the job lingers, and an operator has to be able to see it.
       console.error("Notification delivery job could not be removed", {
         notificationDeliveryId: deliveryId,
-        error: describeError(error),
+        ...describeFailure(error),
       });
     }
   }
@@ -323,4 +357,27 @@ export class NotificationReminderScheduler implements OnModuleInit {
  */
 function describeError(error: unknown): string {
   return error instanceof Error ? error.name : "UnknownError";
+}
+
+/**
+ * The bounded, sanitized shape a failure is reported with: the error's NAME and, when the
+ * driver supplies one, its CODE.
+ *
+ * The code is what lets an operator tell a transient failure from a BUG. The caller logs
+ * both cases and refuses to let either escape — an escaping rejection is an unhandled one
+ * (the dispatcher is fire-and-forget) and Node terminates the process on those — so the
+ * distinction has to be visible in the report instead. `P2002` on the wrong index is a
+ * programming error; `ECONNREFUSED` is the database being down; a `TypeError` is ours.
+ *
+ * Never the message: a driver's text is where a connection string with credentials lives.
+ */
+function describeFailure(error: unknown): { error: string; errorCode: string | null } {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+  return {
+    error: describeError(error),
+    errorCode: typeof code === "string" ? code : null,
+  };
 }

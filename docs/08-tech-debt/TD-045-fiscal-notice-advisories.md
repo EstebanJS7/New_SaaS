@@ -101,6 +101,48 @@ section says.
 findings at all**, so there are no new advisories to record and nothing to
 interpret. Authority burned by the exact acknowledgement.
 
+## The re-read — 2026-10-17, and it found a real defect
+
+[[TD-045]]'s own instruction was that _"the next unit that touches these
+schedulers should re-read them rather than guess"_, so this section is that
+re-read performed rather than the two advisories invented.
+
+**What it found, in `notification-reminder.scheduler.ts`, is worse than either
+of them:** `onConfirmed` and `onCancelled` had **no error guard at all**. Five
+awaited calls inside them can fail transiently — the appointment read, the
+recipient port, the settings read, the entitlement read, the intent insert and
+the enqueue — and the **dispatcher invokes handlers as
+`void (async () => handler(event))()`**. So any of those failures produced an
+**unhandled rejection**, and nothing in either deployable installs a
+`process.on("unhandledRejection")` handler (verified by search). Node terminates
+the process on an unhandled rejection by default: **one failed settings read
+during one confirmation would take down every request the API serves.**
+
+It was invisible because the two suites that covered those paths drove the
+scheduler's methods directly, where a rejection is just a test failure — the
+property that mattered (what the DISPATCHER does with a rejection) was asserted
+nowhere.
+
+**The fix**: both handlers now delegate to a private method inside a `try`, log,
+and end. The failure is not swallowed, it is **reported**: the log carries the
+error's **name** and its **code**, which is what lets an operator tell "we hit
+the wrong unique index" (`P2002`) from "the database was unreachable"
+(`ECONNREFUSED`) from "that is our own `TypeError`". The message never appears,
+because a driver's text is where a connection string with credentials lives.
+
+**Three cases assert it**, replacing two that asserted the opposite: a
+non-dedupe `P2002` (which must not be accepted as "already scheduled" — the old
+test's intent, kept), a transient failure on the first read, and a failure
+inside the cancellation reaction. All three assert the handler RESOLVES and that
+the report names the failure. The old tests were not wrong about what they
+wanted; they were asserting it at the layer where propagation is the correct
+behavior, which is `NotificationIntentService.ensureIntent` — and that still
+propagates.
+
+**`R3-002` and `R3-003` are still identified only by id.** The re-read surfaced
+one real defect, not those two, and inventing a reading for them would be worse
+than leaving them named as unknown.
+
 ## Related
 
 - `docs/02-stories/NOTIF-003-appointment-reminder-and-emitters.md` — the Story.
