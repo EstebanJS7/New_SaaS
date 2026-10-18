@@ -66,12 +66,6 @@ Suppliers.md
 Purchases.md
 ```
 
-Recommended files:
-
-```text
-Notifications.md
-```
-
 Module docs describe current implemented behavior, not speculative backlog.
 
 Use `../_templates/MODULE.md`. Style reference: [[Branding]],
