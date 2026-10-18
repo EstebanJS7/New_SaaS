@@ -2,7 +2,7 @@
 id: EPIC-08
 type: epic
 title: Portal
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-04
@@ -116,8 +116,8 @@ email flows or Catalog scope.
 
 ## Stories
 
-**Reopened on 2026-10-18** for one Story, and it is the same hole [[SHELL-001]]
-closed on the staff side:
+**Reopened on 2026-10-18 and closed again the same day** for one Story — the
+same hole [[SHELL-001]] closed on the staff side:
 
 ```text
 PORTAL-001 The portal sign-in surface
@@ -218,3 +218,8 @@ acceptance-criteria map above.
   recently updated active address, the form's convenience-only `maxLength` (the
   server remains authoritative), and the registered but unused
   `bookingRequiresApproval` setting.
+
+**PORTAL-001 is `done`** and the epic is closed again. What it leaves open,
+named rather than implied: a customer who forgets their password still has no
+way back, and the portal's sign-in has not been exercised live against a running
+API.

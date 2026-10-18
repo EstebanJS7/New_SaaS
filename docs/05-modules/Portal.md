@@ -244,6 +244,47 @@ It does **not** hold everywhere on this surface:
 - The login `email` recorded in audit metadata is **INTERNAL** identifier data,
   never a credential.
 
+## The customer's sign-in surface (PORTAL-001)
+
+```text
+GET  /[slug]/login        public, inside the ANONYMOUS portal layout
+POST /api/portal/login    the BFF's one ESTABLISHING hop: no cookie in, `Set-Cookie` out
+```
+
+The API has issued portal sessions since [[EPIC-08]], and until [[PORTAL-001]]
+there was no page that asked for one - the same hole [[SHELL-001]] closed on the
+staff side, on the identity a customer actually uses.
+
+Two properties are worth knowing before changing anything here:
+
+- **The BFF has exactly one shape where the session crosses OUTBOUND.** Every
+  other portal route relays a session the browser already holds; `login`
+  establishes one, so it forwards no cookie and relays the API's `Set-Cookie`
+  verbatim. `logout` stays **refused**: it revokes a session, and a proxy whose
+  other routes are reads has no business reaching a revocation. The staff cookie
+  is still never read, so a staff session cannot reach the portal through this
+  proxy.
+- **The tenant comes from the PATH and travels in the BODY**, because that is
+  the API's contract (`{ tenantSlug, email, password }`). The form never asks
+  which clinic, so "wrong tenant" cannot be a typo the visitor made.
+
+## The customer's gate
+
+Everything whose data belongs to ONE customer lives in the `(protected)` route
+group under `[slug]`, and a server layout there checks the session **once**. A
+route group does not change a URL: `/[slug]/pets` is still `/[slug]/pets`, and
+what changed is that it now has a parent that can refuse to render.
+
+**It verifies the session rather than looking for a cookie**, because a cookie
+that exists is not a session that is live - it may have been revoked, expired or
+never real. The check is `GET /portal/me`, and only a **`401` redirects**: a 500
+or an unreachable API renders the children and lets their own reads fail
+visibly, because treating an outage as "signed out" would send every customer to
+the login page the moment the API has a bad minute.
+
+The redirect target is `/[slug]/login` - the page of the clinic in the PATH, not
+a shared one.
+
 ## Known Limitations / Residual Risks
 
 - **Contact details are removable from the portal.** A holder can clear the

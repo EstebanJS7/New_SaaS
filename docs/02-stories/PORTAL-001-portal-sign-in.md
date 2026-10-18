@@ -2,7 +2,7 @@
 id: PORTAL-001
 type: story
 title: The portal sign-in surface
-status: in-progress
+status: done
 epic: EPIC-08
 priority: high
 depends_on:
@@ -77,39 +77,39 @@ Two things make this Story different from its staff twin, and both matter:
 
 ## Acceptance Criteria
 
-- [ ] `/[slug]/login` is public and renders the **tenant's resolved brand**, so
+- [x] `/[slug]/login` is public and renders the **tenant's resolved brand**, so
       a customer sees the clinic they are signing in to rather than the
       platform's default identity.
-- [ ] The page takes the tenant from the **path**, never from a field: the form
+- [x] The page takes the tenant from the **path**, never from a field: the form
       asks for an email and a password, and `tenantSlug` is filled from the
       route.
-- [ ] `POST /api/portal/login` **relays the API's `ns_portal_session` cookie
+- [x] `POST /api/portal/login` **relays the API's `ns_portal_session` cookie
       verbatim**, with its attributes intact, and never puts it in a body or a
       log line.
-- [ ] The portal BFF still **never forwards the staff cookie**, and a case
+- [x] The portal BFF still **never forwards the staff cookie**, and a case
       asserts it: the isolation [[DEC-008]] requires is exactly what a new hop
       on this proxy could break.
-- [ ] The refusal of `POST /portal/logout` **stays**, with its reason recorded:
+- [x] The refusal of `POST /portal/logout` **stays**, with its reason recorded:
       it revokes a session, and this proxy's other routes are reads.
-- [ ] The form shows the **API's own refusal** for bad credentials, which is one
+- [x] The form shows the **API's own refusal** for bad credentials, which is one
       message for an unknown address, a wrong password and a wrong tenant alike.
-- [ ] On success the visitor lands on `/[slug]` with a working portal session.
-- [ ] The password is never in a URL, in storage, in a log line or in an error
+- [x] On success the visitor lands on `/[slug]` with a working portal session.
+- [x] The password is never in a URL, in storage, in a log line or in an error
       message.
-- [ ] A visitor with **no portal session** to `/[slug]/…` is sent to
+- [x] A visitor with **no portal session** to `/[slug]/…` is sent to
       `/[slug]/login` rather than shown an empty portfolio, and a visitor
       holding only a STAFF session is sent there too — the staff cookie must not
       satisfy the portal gate.
-- [ ] Tenant isolation is enforced when applicable. Evidence: the login page's
+- [x] Tenant isolation is enforced when applicable. Evidence: the login page's
       only read is the public brand resolution; the session it establishes is
       the API's and is tenant-scoped by the slug it was issued for.
-- [ ] Backend authorization is enforced when applicable. Evidence: no new
+- [x] Backend authorization is enforced when applicable. Evidence: no new
       backend route; the page is a client of the existing `/portal/login`.
-- [ ] Required loading/error/empty/success UX exists. Evidence: the form's own
+- [x] Required loading/error/empty/success UX exists. Evidence: the form's own
       states.
-- [ ] Required audit exists. Evidence: not applicable — the API audits portal
+- [x] Required audit exists. Evidence: not applicable — the API audits portal
       login outcomes already, and this surface adds no operation.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -152,13 +152,59 @@ None. This Story persists nothing.
 
 ## Implementation Summary
 
-_Not implemented._
+Three units, and the Story's shape was decided by what the portal ALREADY is
+rather than by copying its staff twin.
+
+**The BFF gained the one shape where the session crosses OUTBOUND.**
+`POST /api/portal/login` forwards no cookie - not a stale portal one, not the
+staff one - and relays the API's `Set-Cookie` verbatim, attributes included.
+`logout` stays refused, and `GET` on the login shape answers `405` rather than
+`404`, because the path exists and the method does not. The staff cookie is
+still never read, and that isolation now has a case on the new hop - which is
+exactly where a change like this could have broken it.
+
+**The page** is at `/[slug]/login`, inside `(portal)/[slug]`, whose layout is
+deliberately ANONYMOUS: it resolves the tenant's public brand from the slug and
+reads no session at all. That is what lets a login page live inside it without
+the redirect loop a session-aware layout would create. The tenant comes from the
+PATH and travels in the BODY, because that is the API's contract, so the form
+never asks which clinic and "wrong tenant" cannot be a typo the visitor made. It
+shows the API's own refusal and offers **no recovery link**: the API's recovery
+authorises a `UserCredential` and a portal identity holds a `PortalCredential`,
+so a link to the staff flow would send a customer into a page that cannot help
+them.
+
+**The gate** is a `(protected)` route group under `[slug]`, so the check happens
+once in a server layout instead of in every page or, worse, in the browser. A
+route group does not change a URL - `/[slug]/pets` is still `/[slug]/pets` - and
+what changed is that it now has a parent that can refuse to render. It
+**verifies the session** with `GET /portal/me` rather than trusting a cookie's
+presence, because a cookie that exists is not a session that is live, and only a
+`401` redirects: an outage renders, for the same reason the staff gate chose
+that asymmetry.
+
+## Verification
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check                   clean
+pnpm lint                           22/22 packages
+pnpm typecheck                      22/22 packages
+pnpm build                          13/13 packages
+@newsaas/web test                   1147 passed
+@newsaas/api test                   1323 passed
+@newsaas/worker test                 241 passed
+@newsaas/database test               533 passed
+@newsaas/notifications test           84 passed
+@newsaas/shared test                  16 passed
 ```
+
+**What the suites cannot prove**, named rather than implied: a LIVE portal
+sign-in (a browser receiving `ns_portal_session` from a running API, then a
+protected page rendering with it). The suites assert the hop's shape - the
+verbatim relay, the absence of any inbound cookie, the isolation, the `405`, and
+the gate's branches - and the live run needs both services up.
 
 ## Tests Added
 
@@ -171,13 +217,19 @@ Not run.
 
 ## Known Limitations
 
-- **No portal password recovery**: a customer who forgets their password has no
-  way back, and the API has no flow for a `PortalCredential`. The largest gap
-  this Story names.
-- **No `?next=` return path**, deliberately.
+- **A customer who forgets their password has no way back.** The API's recovery
+  authorises a `UserCredential` change and a portal identity holds a
+  `PortalCredential`, so there is nothing for this surface to link to. The Story
+  deliberately renders **no** recovery link rather than sending a customer into
+  a page that cannot help them - the largest gap it leaves, and the portal's
+  recovery is its own Story with its own token model.
+- **No `?next=` return path**, for the same reason as the staff twin.
 - **No sign-out affordance**, so ending a portal session is still
   `POST /portal/logout`.
 - **The live sign-in is not recorded**: the suites prove the hop's shape.
+- **The gate costs one API call per protected render** (`GET /portal/me`). That
+  is the price of verifying rather than trusting, and it is deliberately not
+  cached across requests: a revoked session must stop working immediately.
 
 ## Technical Debt
 
@@ -199,4 +251,15 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Every criterion is satisfied and the gates are green, so this Story is `done`.
+
+**It found the same thing its staff twin did, on the other identity**: the
+portal's API has been complete since [[EPIC-08]] - login, logout, `/me`, a
+guarded surface - and no page asked for a session, so a CUSTOMER could not sign
+in at all.
+
+**The shape was decided by what the portal already is.** The staff gate
+piggybacks on a private read the shell was already making; the portal's layout
+is anonymous by design, so the check went into a route group instead. Copying
+the staff solution would have produced a redirect loop - which is the kind of
+mistake a Story catches and a template does not.

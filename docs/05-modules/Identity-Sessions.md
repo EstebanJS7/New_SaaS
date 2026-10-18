@@ -107,6 +107,31 @@ are load-bearing:
 Ending a session is still `POST /auth/logout`; there is no sign-out affordance
 in the shell yet, which is recorded rather than implied.
 
+## The portal's sign-in surface (PORTAL-001)
+
+The portal's identity is a **separate one** - a `PortalCredential` behind
+`ns_portal_session`, with its own guard chain - and its sign-in surface mirrors
+the staff one without sharing anything with it:
+
+```text
+GET  /[slug]/login        public; the tenant comes from the PATH
+POST /api/portal/login    the portal BFF's one ESTABLISHING hop
+```
+
+The two cookies never cross, in either direction: the portal's layout is
+anonymous by design (it resolves the tenant's PUBLIC brand and reads no session,
+which is what lets a login page live inside it), the portal BFF forwards only
+the portal cookie, and the staff BFF forwards none on its own login hop. A
+customer's session satisfies neither the staff gate nor the staff API, and a
+staff session does not satisfy the portal's - the isolation [[DEC-008]]
+requires, now asserted on BOTH sign-in hops, which is exactly where a change
+could break it.
+
+**A customer who forgets their password has no way back.** The API's recovery
+authorises a `UserCredential` change and this identity holds a
+`PortalCredential`; the portal's recovery is its own Story with its own token
+model, and [[PORTAL-001]] names that as the largest gap it leaves.
+
 ## The recovery flow (DAT-007)
 
 ```text

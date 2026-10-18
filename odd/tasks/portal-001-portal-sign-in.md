@@ -31,10 +31,23 @@ ONLY the portal cookie, never the staff one, which is what [[DEC-008]] requires
       recovery link, because the API has nothing a portal identity could recover
       with. 5 cases._ the PATH, the form asks only for an email and a password,
       the refusal is the API's own, and success lands on `/[slug]`.
-- [ ] **WU-C — the portal shell's gate.** No portal session sends the visitor to
+- [x] **WU-C — the portal shell's gate.** No portal session sends the visitor to
+      _Done: a `(protected)` route group under `[slug]` whose server layout
+      checks the session ONCE. A route group does not change a URL, so
+      `/[slug]/pets` is still `/[slug]/pets` and what changed is that it has a
+      parent that can refuse to render. It VERIFIES with `GET /portal/me`
+      instead of trusting a cookie's presence, and only a 401 redirects. The
+      staff gate could piggyback on a read the shell already made; this one
+      could not, because the portal's layout is anonymous by design — copying
+      the staff solution would have produced a redirect loop. 5 cases._
       `/[slug]/login`, and a STAFF-only session does too: the staff cookie must
       not satisfy the portal gate.
-- [ ] **WU-D — the documentation and the closure.** `Portal.md` and
+- [x] **WU-D — the documentation and the closure.** `Portal.md` and _Done:
+      `Portal.md` gained the sign-in surface and the gate,
+      `Identity-Sessions.md` gained the portal's half of the two-cookie
+      isolation, and the Story records the largest gap it leaves — a customer
+      who forgets their password has no way back, deliberately with NO recovery
+      link rather than a link into a flow that cannot help them._
       `Identity-Sessions.md`, and the Story's evidence.
 
 ## Decisions taken before the first write
