@@ -267,6 +267,16 @@ branch and the instant, not the patient, and that limitation is recorded.
 **Pending in WU-D3**: `FiscalApproved` from both worker write paths and its
 subscriber.
 
+## WU-D3's first half: approved, three advisories to TD-044
+
+`review-0c34f0614742a5a3` (medium, one lens) **approved the content builder on
+the first pass**, no correction. Three non-blocking advisories → [[TD-044]]: the
+`hour12: false` resolution (MEASURED, does not reproduce on Node 24 / es-PY, but
+locale-dependent — `hourCycle: "h23"` is the unambiguous form), a fail-open
+ternary that would route a third source type into the fiscal branch, and a
+redundant conditional assertion. The first two are folded into the rest of
+WU-D3.
+
 ## Operational notes
 
 - The branch was created **before the first edit**.

@@ -468,6 +468,13 @@ The seam that failed closed is now a real builder, and its read is also the gate
   allocated series and number (an unallocated document cannot be named, so it is
   not announced).
 
+The review of this half (`review-0c34f0614742a5a3`, medium, one lens) **approved
+it on the first pass** with three non-blocking advisories, recorded as
+[[TD-044]]: the 24-hour option's locale-dependent resolution (measured, and it
+does not reproduce here), a fail-open ternary dispatch that a third source type
+would land in the fiscal branch, and a redundant conditional assertion. Its
+first two are cheap and are folded into the rest of WU-D3.
+
 The fiscal notice's **emitters and subscriber** are the other half of WU-D3 and
 remain pending: publishing `FiscalApproved` from both worker write paths, and
 the subscriber that creates the intent for the invoice's customer.
