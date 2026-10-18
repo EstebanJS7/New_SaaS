@@ -68,12 +68,28 @@ directly through the channel port.
       password is bounded by length alone (mirroring the login body). Inventing
       a complexity rule in an implementation would be a product decision taken
       by a work unit.
-- [ ] **WU-D — the notification wiring.** Two enum values (`STAFF_ACCOUNT`,
-      `STAFF`) in the same migration, a staff recipient reader, and the message.
-      **The token is issued at send time**, so the plaintext never reaches a
-      table and its TTL starts when it is delivered — the same shape as the
-      reminder's send-time content, and the reason a hashed-at-rest token can
-      still be put in a URL.
+- [~] **WU-D — the notification wiring.** Two halves: **D1 (the end-to-end gap)
+  is DONE**; D2 (the staff recipient reader and the message) follows. _D1,
+  commit pending: the in-memory Prisma harness gained the three pieces its
+  absence was hiding — `user_profile.findUnique` by email composing the
+  credential relation, `user_credential` (create/findUnique/update),
+  `password_reset_token` (create/findFirst/updateMany honouring the CAS's own
+  conditions) and `staff_session.deleteMany` **by profile**, not only by token.
+  Then seven end-to-end cases over the real app: a request becomes a delivery
+  under the PLATFORM tenant and is enqueued; an unknown address creates nothing
+  and answers the same; a repeat inside the window leaves ONE delivery and every
+  enqueue names the same job identity; the request is audited without the
+  address; an unusable token changes nothing; a real token changes the hash to a
+  genuine argon2id value with the configured parameters, ends BOTH sessions,
+  makes the profile's other link refuse, and audits once with no token and no
+  hash; and the spent token cannot be replayed._ **What this closes**: the
+  dispatcher is in-process, so "the subscriber is registered somewhere else"
+  would be a silent, total failure of the feature. This is where that is not
+  silent — and it is the gap the two previous units named rather than implied.
+  **D2, still pending**: the worker's staff recipient reader (the profile's
+  email, resolved at send time, RESTRICTED like every other contact datum) and
+  the message itself — which needs the token minted AT SEND TIME, the DAT-007
+  issuance decision that keeps a plaintext token out of every table.
 - [ ] **WU-E — the documentation.** `Identity-Sessions.md` and
       `Notifications.md`, the Story's evidence, [[TD-004]] closed, the epic's
       Stories and the ROADMAP.
