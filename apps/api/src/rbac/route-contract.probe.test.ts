@@ -249,6 +249,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /booking-requests/:id/reject",
   // EPIC-08 — isolated portal identity surface + staff portal-access commands
   "POST /portal/login",
+  // PORTAL-002 — public by necessity: the caller is locked out. Rate-limited, uniform, and
+  // silent about whether a holder exists.
+  "POST /portal/forgot-password",
+  "POST /portal/password-reset",
   "POST /portal/logout",
   "GET /portal/me",
   // EPIC-08 WU3 — holder-owned portal READ surface
@@ -889,8 +893,10 @@ describe("portal surface fence (EPIC-08 task 2.3)", () => {
       "GET /portal/profile",
       "POST /portal/appointments/:id/cancel",
       "POST /portal/bookings/:id/cancel",
+      "POST /portal/forgot-password",
       "POST /portal/login",
       "POST /portal/logout",
+      "POST /portal/password-reset",
       "POST /portal/pets/:id/bookings",
       "PUT /portal/appointments/:id",
       "PUT /portal/profile",
@@ -909,12 +915,25 @@ describe("portal surface fence (EPIC-08 task 2.3)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("keeps login the ONLY @Public portal route", () => {
+  /**
+   * The portal's public surface, which is exactly the routes a locked-out holder needs.
+   *
+   * This asserted `["POST /portal/login"]` until PORTAL-002, and the assertion was the deferral's own
+   * contract rather than a property: there was no recovery flow, so there was no reason for a second
+   * public route. The three now are the sign-in and the two halves of recovery — and the invariant
+   * that survived is the one worth keeping: **no other portal route is public**, so nothing that
+   * reads or writes a holder's data can be reached without a portal session.
+   */
+  it("keeps the public portal surface to login and the two recovery routes", () => {
     const publicPortal = inventory
       .filter((entry) => isPortalSurfacePath(entry.path) && entry.isPublic)
       .map((entry) => `${entry.method} ${entry.path}`)
       .sort();
-    expect(publicPortal).toEqual(["POST /portal/login"]);
+    expect(publicPortal).toEqual([
+      "POST /portal/forgot-password",
+      "POST /portal/login",
+      "POST /portal/password-reset",
+    ]);
   });
 
   it("keeps the staff booking-request routes DECLARED and OFF the portal surface", () => {

@@ -62,10 +62,432 @@ and the token minted **at send time** so the plaintext never reaches a table.
       VACUOUSLY (a `customer` insert failed on a wrong column name, so every
       negative matched no rows); the rerun asserts the access exists first._
 
-- [ ] **WU-B — the token service and the two routes.** Issue and consume, the
-      uniform answer for the four cases, the rate limit, the reset's single
-      transaction, and the route-contract test that currently says login is the
-      only public portal route.
+-
+
+[ x ]
+
+-
+-
+
+W U
+-
+
+B
+
+—
+
+t h e
+
+t o k e n
+
+s e r v i c e
+
+a n d
+
+t h e
+
+t w o
+
+r o u t e s . * *
+
+I s s u e
+
+a n d
+
+c o n s u m e ,
+
+t h e
+
+u n i f o r m
+
+a n s w e r
+
+f o r
+
+t h e
+
+f o u r
+
+c a s e s ,
+
+t h e
+
+r a t e
+
+l i m i t ,
+
+t h e
+
+r e s e t ' s
+
+s i n g l e
+
+t r a n s a c t i o n ,
+
+a n d
+
+t h e
+
+r o u t e
+-
+
+c o n t r a c t
+
+t e s t
+
+t h a t
+
+c u r r e n t l y
+
+s a y s
+
+l o g i n
+
+i s
+
+t h e
+
+o n l y
+
+p u b l i c
+
+p o r t a l
+
+r o u t e .
+
+-
+
+D o n e :
+
+`P o r t a l P a s s w o r d R e s e t T o k e n S e r v i c e`
+
+( i s s u e / c o n s u m e
+
+w i t h
+
+t h e
+
+C A S / s p e n d A l l F o r A c c e s s )
+
+a n d
+
+`P o r t a l P a s s w o r d R e c o v e r y S e r v i c e`
+
+( t h e
+
+r e q u e s t
+
+p u b l i s h i n g
+
+a n
+
+e v e n t ,
+
+t h e
+
+r e s e t
+
+i n
+
+O N E
+
+t r a n s a c t i o n
+
+w i t h
+
+t h e
+
+h a s h
+
+c o m p u t e d
+
+b e f o r e
+
+i t
+
+o p e n s ) ,
+
+t h e
+
+t w o
+
+`@ P u b l i c`
+
+r o u t e s ,
+
+a n d
+
+t h e
+
+f e n c e
+
+i n v e r t e d
+
+—
+
+` e x p e c t ( p u b l i c P o r t a l ) . t o E q u a l ( [ " P O S T
+
+/ p o r t a l / l o g i n " ] ) `
+
+b e c a m e
+
+t h e
+
+t h r e e
+
+p u b l i c
+
+r o u t e s ,
+
+w i t h
+
+t h e
+
+i n v a r i a n t
+
+w o r t h
+
+k e e p i n g
+
+s t a t e d :
+
+n o
+
+O T H E R
+
+p o r t a l
+
+r o u t e
+
+i s
+
+p u b l i c .
+
+1 7
+
+n e w
+
+c a s e s
+
+( 8
+
+t o k e n ,
+
+9
+
+r e c o v e r y )
+
+p l u s
+
+4
+
+o v e r
+
+r e a l
+
+H T T P ,
+
+i n c l u d i n g
+
+t h e
+
+b y t e
+-
+
+i d e n t i c a l
+
+a n s w e r
+
+f o r
+
+a
+
+h o l d e r ,
+
+a
+
+s t r a n g e r
+
+a n d
+
+a n
+
+u n k n o w n
+
+t e n a n t .
+
+a p i
+
+1 3 4 4 . *
+
+-
+-
+
+T w o
+
+t h i n g s
+
+t h e
+
+w o r k
+
+s u r f a c e d . * *
+
+( 1 )
+
+T h e
+
+a u d i t
+
+b o u n d a r y
+
+R E F U S E D
+
+` a c t o r T y p e :
+
+" P O R T A L " `
+
+f o r
+
+a n
+
+a n o n y m o u s
+
+r e q u e s t
+
+—
+
+" P O R T A L
+
+a t t r i b u t i o n
+
+r e q u i r e s
+
+a
+
+p o r t a l
+
+a c c e s s
+
+i d "
+
+—
+
+a n d
+
+i t
+
+i s
+
+r i g h t :
+
+t h e
+
+r e q u e s t e r
+
+i s
+
+n o b o d y
+
+a u t h e n t i c a t e d ,
+
+s o
+
+t h e
+
+r e c o r d
+
+a t t r i b u t e s
+
+t o
+
+t h e
+
+A C C E S S
+
+a s
+
+t h e
+
+s u b j e c t ,
+
+e x a c t l y
+
+a s
+
+t h e
+
+s t a f f
+
+f l o w
+
+a t t r i b u t e s
+
+i t s
+
+r e q u e s t
+
+t o
+
+t h e
+
+p r o f i l e .
+
+( 2 )
+
+T h e
+
+i n
+-
+
+m e m o r y
+
+h a r n e s s
+
+n e e d e d
+
+t h e
+
+t o k e n
+
+d e l e g a t e ,
+
+`p o r t a l C r e d e n t i a l . u p d a t e`
+
+a n d
+
+`p o r t a l S e s s i o n . d e l e t e M a n y`
+
+b y
+
+a c c e s s ;
+
+i t
+
+i s
+
+t h e
+
+f i f t h
+
+t i m e
+
+t h i s
+
+s e s s i o n
+
+t h a t
+
+t h e
+
+h a r n e s s
+
+w a s
+
+t h e
+
+g a p .
+
 - [ ] **WU-C — the delivery.** The portal-holder recipient reader, a
       `PORTAL_ACCOUNT` branch in the content builder that mints the token and
       builds the link with the tenant's slug, and the scheduler reaction.
