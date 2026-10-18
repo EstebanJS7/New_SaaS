@@ -73,11 +73,21 @@ Performed against real services (PostgreSQL 16, Redis, the built API,
 `next start`). Verified: `/portal/me` with a **staff** cookie answers 401 —
 DEC-008's isolation, live.
 
-**NOT verified, and the cause is outside this Story**: a schema-VALID body
-through `POST /api/portal/login` answers **500** while the API answers 401.
-Recorded as TD-049 with its reproduction and what the experiments ruled out —
-the API receives it, relaying an error body works on the staff BFF, and it is
-neither the size nor the values but the fact that the body VALIDATES. The
-suspect is the streamed request body this proxy pipes (the staff BFF reads
-`text()`), which is pre-existing and reachable from the booking and cancellation
-POSTs too — hence its being `high`.
+**Found and fixed (TD-049), and then verified**: the cause was outside this
+Story —: a schema-VALID body through `POST /api/portal/login` answers **500**
+while the API answers 401. Recorded as TD-049 with its reproduction and what the
+experiments ruled out — the API receives it, relaying an error body works on the
+staff BFF, and it is neither the size nor the values but the fact that the body
+VALIDATES. The suspect is the streamed request body this proxy pipes (the staff
+BFF reads `text()`), which is pre-existing and reachable from the booking and
+cancellation POSTs too — hence its being `high`.
+
+## Closed
+
+`/portal/login` → 200 with the cookie relayed verbatim; `/demo/pets` → 200 with
+it and 307 to `/demo/login` without it; and a staff cookie answers 401 on
+`/portal/me`. The Story's own hop, its gate and DEC-008's isolation, all
+observed.
+
+The defect it surfaced while proving that (TD-049) is fixed, and the same latent
+defect in two other proxies is TD-050.

@@ -4,7 +4,7 @@ type: tech-debt
 title:
   A schema-valid portal login body through the proxy answers 500, while the API
   answers 401
-status: open
+status: resolved
 severity: high
 owner: portal
 related_epics:
@@ -81,6 +81,56 @@ may be getting a 500 where the UI expects the proxy to relay the API's answer.
    to forward a stream from an App Router route handler.
 3. And check the other POST shapes on this proxy for the same symptom, since
    they share the path.
+
+## RESOLVED — the mechanism, the fix, and the gap that let it through
+
+**The mechanism, found by instrumenting the proxy against a real `next start`:**
+
+```text
+body INVÁLIDO (21 bytes)   DBG: hasBody true, locked false   -> the fetch SUCCEEDS (the API's 400)
+body VÁLIDO   (68 bytes)   DBG: hasBody true, locked false   -> fetch FAILS: "expected non-null body source"
+```
+
+Identical request shape, different outcome. The variable is not the body's
+content: it is **whether the upstream API READS it**. Node's internal undici
+refuses the `ReadableStream` that Next 15 hands a route handler as a body
+source, and it only discovers that when it has to WRITE the body — which happens
+only when the server is reading. On the fast path (a 401 from the guard, a 400
+from the pipe) the API answers without consuming the body, undici never writes
+it, and the proxy looks fine. On the path where the API reads it, the proxy
+answers **500 where the API answered 401**.
+
+That is why it looked like "valid bodies fail": a valid body is what makes the
+API read it.
+
+**The fix**: forward the body as **text** (`await request.text()`), which is
+what four other proxies in this app already do. A string is the same JSON rather
+than a re-serialization, so the API's Zod parses identical input.
+
+**Verified live**, against PostgreSQL 16, Redis, the built API and `next start`:
+
+```text
+POST /api/portal/login (valid body)   401, the API's own envelope relayed   (was 500)
+POST /api/portal/login (invalid body) 400                                   (unchanged)
+POST /api/portal/login (real holder)  200 + `set-cookie: ns_portal_session=…; Path=/;
+                                      HttpOnly; SameSite=Lax`
+GET  /demo/pets with that cookie      200
+GET  /demo/pets without it            307 -> /demo/login
+```
+
+**The gap that let it through, and the part worth keeping**: the suite built a
+`MockNextRequest` with a `body` stream and no `text()` — it modelled what the
+OLD code consumed, not what the runtime exposes. The mock now carries **both**,
+deriving the text from the same stream, and the cases assert the forwarded shape
+is a string with no `duplex`, so a future edit cannot quietly reintroduce the
+crash.
+
+## The same defect in two other proxies
+
+`clinical` and `scheduling` pipe the incoming stream with `duplex: "half"`
+exactly as this proxy did, so they carry the identical latent defect: their
+POSTs work while the API refuses them early and fail the moment it reads the
+body. Recorded as [[TD-050]].
 
 ## Related
 

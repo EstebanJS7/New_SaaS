@@ -200,19 +200,23 @@ pnpm build                          13/13 packages
 @newsaas/shared test                  16 passed
 ```
 
-**The live run was performed**, against a real PostgreSQL 16, a real Redis, the
-built API and `next start`. What it verified:
+**The live run is complete**, against a real PostgreSQL 16, a real Redis, the
+built API and `next start`:
 
 ```text
-POST /api/portal/login (a schema-VALID body)   FAILS with a 500, while the API answers 401
-                                               -> TD-049, and NOT caused by this Story
-GET  /portal/me with a STAFF cookie            401   DEC-008's isolation, verified live
+POST /api/portal/login (a real holder)   200 + `set-cookie: ns_portal_session=…; Path=/;
+                                         HttpOnly; SameSite=Lax` relayed VERBATIM
+GET  /demo/pets with that cookie         200
+GET  /demo/pets without it               307 -> /demo/login
+GET  /portal/me with a STAFF cookie      401   DEC-008's isolation, verified live
 ```
 
-**So this Story's live sign-in is NOT verified, and the reason is a defect
-outside it** (TD-049): a schema-valid body through the portal proxy answers 500
-where the API answers 401. This Story's own hop is proven at the unit level, and
-by the staff twin's live run, which shares the relay's shape.
+Getting there required fixing a defect this Story did NOT cause and could not
+have found any other way: a schema-valid body through the portal proxy answered
+**500** where the API answered 401. The mechanism is recorded in TD-049 — Next
+15 hands a route handler a `ReadableStream` that Node's undici refuses as a body
+source, and it only matters when the upstream **reads** the body — and the fix
+is to forward text, which the suite now pins.
 
 ## Tests Added
 

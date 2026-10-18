@@ -232,12 +232,6 @@ function resolveAvailabilityQuery(search: string): string | null {
 }
 
 /**
- * RequestInit with the `duplex` field required to stream a request body.
- * `duplex` is part of the fetch spec but is absent from the DOM lib types.
- */
-type StreamingRequestInit = RequestInit & { duplex?: "half" };
-
-/**
  * Forwards an allowlisted portal request to the private NestJS `/portal/*` API.
  *
  * Browser headers are NOT copied: only the portal session cookie (read
@@ -302,19 +296,30 @@ async function proxyPortalRequest(
     headers["x-request-id"] = requestId;
   }
 
+  // THE BODY IS READ AS TEXT, and that is a fix rather than a preference (TD-049).
+  //
+  // This proxy used to pipe the incoming stream (`body: request.body`, with `duplex: "half"`) so
+  // the API's Zod would see the caller's exact bytes. That shape CRASHED against the real
+  // runtime: Next 15 hands a route handler a `ReadableStream` that Node's internal undici refuses
+  // as a body source, and undici only discovers it when it has to WRITE the body — which happens
+  // when the upstream API READS it. So the proxy worked for every request whose body the API
+  // rejected early (401 from the guard, 400 from the pipe) and failed with `expected non-null
+  // body source` for every request the API actually read, surfacing as a 500 where the API had
+  // answered correctly.
+  //
+  // A string is the same JSON, not a re-serialization: the API's Zod parses the identical text.
+  // Four other proxies in this app already forward a string for exactly this reason.
   const hasBody = method === "POST" || method === "PUT";
   if (hasBody) {
     headers["content-type"] = "application/json";
   }
+  const bodyText = hasBody ? await request.text() : undefined;
 
-  const init: StreamingRequestInit = {
+  const init: RequestInit = {
     method,
     headers,
-    body: hasBody ? (request.body ?? undefined) : undefined,
+    body: bodyText,
     cache: "no-store",
-    // undici requires `duplex: "half"` whenever the body is a stream, so a GET
-    // keeps the exact initialization it had before this boundary widened.
-    ...(hasBody ? { duplex: "half" as const } : {}),
   };
 
   const response = await fetch(`${apiUrl}${API_PORTAL_PREFIX}/${segments.join("/")}${query}`, init);

@@ -27,19 +27,41 @@ interface MockNextRequest {
   nextUrl: { pathname: string; search: string };
   headers: { get: (name: string) => string | null };
   body: ReadableStream<Uint8Array> | null;
+  /**
+   * The runtime's `Request` has BOTH a stream and `text()`, and this mock modelled ONLY the
+   * stream — which is how the defect in TD-049 got through: the proxy piped `request.body` and
+   * the suite was happy, while against a real server the stream undici receives cannot be used
+   * as a body source. A mock that offers what the code happens to consume is a mock that cannot
+   * find the bug.
+   */
+  text: () => Promise<string>;
 }
 
+/** A request whose body can be read either way, exactly as the runtime exposes it. */
 function mockNextRequest(props: {
   pathname: string;
   search?: string;
   headers?: Headers;
   body?: ReadableStream<Uint8Array> | null;
+  bodyText?: string;
 }): MockNextRequest {
   const headers = props.headers ?? new Headers();
   return {
     nextUrl: { pathname: props.pathname, search: props.search ?? "" },
     headers: { get: (name: string) => headers.get(name) },
     body: props.body ?? null,
+    // Read from the SAME body, the way the runtime does: the mock derives the text instead of
+    // being handed it, so a case cannot accidentally model a request whose stream and text
+    // disagree.
+    text: async () => {
+      const stream = props.body ?? null;
+      if (stream === null) return props.bodyText ?? "";
+      let text = "";
+      for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+        text += new TextDecoder().decode(chunk);
+      }
+      return text;
+    },
   };
 }
 
@@ -56,7 +78,7 @@ function jsonBody(value: unknown): ReadableStream<Uint8Array> {
 interface FetchInit {
   method: string;
   headers: Record<string, string>;
-  body?: ReadableStream<Uint8Array> | undefined;
+  body?: string | ReadableStream<Uint8Array> | undefined;
   cache?: string;
   duplex?: string;
 }
@@ -235,14 +257,14 @@ describe("/api/portal proxy", () => {
       })
     );
 
-    const body = jsonBody({
+    const payload = {
       startAt: "2026-09-20T10:00:00.000Z",
       endAt: "2026-09-20T10:30:00.000Z",
-    });
+    };
     const request = mockNextRequest({
       pathname: `/api/portal/pets/${PET_ID}/bookings`,
       headers: new Headers({ "x-request-id": "req-booking" }),
-      body,
+      body: jsonBody(payload),
     });
 
     const response = await callPost(request);
@@ -257,8 +279,16 @@ describe("/api/portal proxy", () => {
       "x-request-id": "req-booking",
       "content-type": "application/json",
     });
-    expect(init.body).toBe(body);
-    expect(init.duplex).toBe("half");
+    // A STRING, not the caller's stream, and the reason is TD-049: Next 15 hands a route handler
+    // a `ReadableStream` that Node's internal undici refuses as a body source, and undici only
+    // discovers it when it has to WRITE the body — which is when the upstream API READS it. The
+    // value is asserted, not just its type: a fix that normalized the JSON would still pass a
+    // type check and would change what the API's Zod sees.
+    expect(init.body).toBe(JSON.stringify(payload));
+    expect(typeof init.body).toBe("string");
+    // No `duplex`: there is no stream to mark half-closed, and asserting its absence is what
+    // keeps a future edit from quietly reintroducing the crash.
+    expect(init.duplex).toBeUndefined();
     expect(init.cache).toBe("no-store");
   });
 
@@ -284,8 +314,9 @@ describe("/api/portal proxy", () => {
       cookie: `${PORTAL_SESSION_COOKIE}=portal-token`,
       "content-type": "application/json",
     });
-    expect(init.body).toBe(body);
-    expect(init.duplex).toBe("half");
+    // The same shape on PUT: a string, and no `duplex` (TD-049).
+    expect(typeof init.body).toBe("string");
+    expect(init.duplex).toBeUndefined();
   });
 
   it("forwards only the portal cookie on a write — a staff cookie never crosses", async () => {
@@ -624,8 +655,9 @@ describe("/api/portal proxy", () => {
       "x-request-id": "req-reschedule",
       "content-type": "application/json",
     });
-    expect(init.body).toBe(body);
-    expect(init.duplex).toBe("half");
+    // A string, and no `duplex` (TD-049): the same shape the booking and profile cases pin.
+    expect(typeof init.body).toBe("string");
+    expect(init.duplex).toBeUndefined();
   });
 
   it("refuses a query on each new write shape", async () => {
