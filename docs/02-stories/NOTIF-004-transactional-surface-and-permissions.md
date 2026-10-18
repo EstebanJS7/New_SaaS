@@ -292,8 +292,13 @@ proven over real HTTP.
 
 ## Technical Debt
 
-- None yet; anything raised by the implementation is recorded here and triaged
-  at [[NOTIF-005]].
+- [[TD-046]] — **the attempt log this Story cannot serve**: a real gap in the
+  read surface, raised by implementing it and recorded with its options and
+  costs.
+- [[TD-047]] — **the two advisories `review-a12969035780ff93` left**, with
+  readings: the BFF answers `404` for an unlisted query key where the API
+  answers `400`, and the detail read has no denial state of its own. Both
+  non-blocking; the review approved this candidate on the first pass.
 
 ## Decisions / ADRs
 
@@ -326,6 +331,11 @@ last outcome could disagree. Opening a RESTRICTED storage question inside a read
 Story would have been scope taken rather than granted.
 
 Every criterion in this Story is therefore satisfied, and this Story is `done`.
+
+**Reviewed.** `review-a12969035780ff93` closed **approved on the first pass** —
+one lens (`review-reliability`), medium tier, 23 files, 1993 changed lines, no
+correction transition offered — and the acknowledgement burned its authority.
+Its two advisories are [[TD-047]].
 
 **A correction made while implementing**: this Story declared "one additive
 migration" for the permission key. Permission keys are seed-owned reference data

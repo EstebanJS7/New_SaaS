@@ -312,7 +312,10 @@ Story assumed the aggregate keeps an attempt LOG and NOTIF-001 models a summary.
 Serving a history needs a new table, a migration, and a decision about whether
 an attempt row stores the provider's raw error (RESTRICTED). The maintainer
 amended the criterion to the summary; the missing log is [[TD-046]]. **NOTIF-004
-is `done`** (commit `42c923e` + `9d2016f`).
+is `done`** (commits `42c923e`, `9d2016f`, `ab9d7c9`). Review
+`review-a12969035780ff93` approved **on the first pass** (one lens, medium, no
+correction offered); the acknowledgement burned its authority. Its two
+advisories are [[TD-047]], with readings.
 
 Also corrected: the Story declared "one additive migration" for the permission
 key; keys are seed-owned reference data here, so no migration is involved.
