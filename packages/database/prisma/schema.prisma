@@ -37,6 +37,7 @@ model UserProfile {
 
   credential      UserCredential?
   sessions        StaffSession[]
+  passwordResetTokens PasswordResetToken[]
   memberships     TenantMembership[]
   auditLogs       AuditLog[]
   tenantBrandings TenantBranding[]
@@ -91,6 +92,49 @@ model StaffSession {
 
   @@index([userProfileId])
   @@map("staff_session")
+}
+
+/// A staff password-recovery token (DAT-007).
+///
+/// The plaintext token NEVER persists: only its SHA-256, the convention
+/// `StaffSession` already uses. A high-entropy random token needs a fast digest,
+/// not argon2 — argon2 exists to make a low-entropy human-chosen password
+/// expensive to guess, and applying it to 256 bits of entropy would only make the
+/// send path slow.
+///
+/// There is deliberately NO tenant column, and the absence is an invariant rather
+/// than an oversight; see the migration.
+///
+/// The row holds no personal data at all: a profile reference, a digest, two
+/// instants. That is what makes it safe to keep expired rows around (the read
+/// surface never exposes the digest, and a digest of a dead token is not a
+/// secret).
+model PasswordResetToken {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  userProfileId String @map("user_profile_id") @db.Uuid
+
+  /// SHA-256 of the opaque token, hex. Unique so a lookup by digest is one row by
+  /// construction rather than by ordering.
+  tokenHash String @unique @map("token_hash")
+
+  /// When the token stops working. Immutable after insert: extending an expiry is
+  /// extending somebody's access, and the guard refuses it.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  /// When the token was spent — set once, from NULL, and never moved. The guard
+  /// refuses both a rewrite and a clear, because an un-consumed token is a second
+  /// password change.
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  /// Tokens die with their profile (the `StaffSession` precedent): a deleted
+  /// profile's reset tokens are not leftovers worth keeping.
+  userProfile UserProfile @relation(fields: [userProfileId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userProfileId])
+  @@map("password_reset_token")
 }
 
 // ---------------------------------------------------------------------------
@@ -3433,6 +3477,12 @@ enum NotificationDeliveryStatus {
 enum NotificationSourceType {
   APPOINTMENT
   FISCAL_DOCUMENT
+  /// DAT-007 — a staff password-recovery message. The source reference is the
+  /// `password_reset_token` row, which is created AT SEND TIME (see the Story):
+  /// the plaintext token cannot be rebuilt from a digest, so issuing it earlier
+  /// would force persisting the plaintext, carrying it in a job payload, or
+  /// sending inline from the request.
+  STAFF_ACCOUNT
 
   @@map("notification_source_type")
 }
@@ -3442,6 +3492,11 @@ enum NotificationSourceType {
 /// never stored here (PRD §41, [[DEC-061]]).
 enum NotificationRecipientType {
   CUSTOMER
+  /// DAT-007 — a staff profile. Its contact datum is the profile's own email,
+  /// resolved at send time by the staff recipient reader, and it is personal data
+  /// of an employee rather than of a customer: still RESTRICTED, still never
+  /// persisted here, and never in a response.
+  STAFF
 
   @@map("notification_recipient_type")
 }
