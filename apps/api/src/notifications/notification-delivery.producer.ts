@@ -58,10 +58,17 @@ export interface NotificationDeliveryProducer {
   /**
    * Removes a pending delivery's job.
    *
-   * Idempotent by contract: removing a job that is gone (already ran, already
-   * removed, or never enqueued) is success, not an error. The authoritative
-   * record of "cancelled" is the row's status, so a failure here must not make a
-   * cancellation look failed.
+   * Idempotent by contract **for the case it can actually detect**: a job that is
+   * already gone (it ran, was removed, or was never enqueued) is success, and
+   * `queue.remove` expresses that by RESOLVING with a count of zero.
+   *
+   * What must NOT be idempotent is an infrastructure failure. An unconditional
+   * catch here would make a Redis outage or this port's own deadline
+   * indistinguishable from "the job was already gone", which is how a cancelled
+   * delivery keeps a live job nobody knows about (review R4-CANCEL-SWALLOW). So a
+   * rejection propagates and the CALLER decides; the row's status is what makes
+   * the reminder undeliverable either way, because the handler refuses a settled
+   * row.
    */
   cancel(notificationDeliveryId: string): Promise<void>;
 }
@@ -110,13 +117,13 @@ export class BullMqNotificationDeliveryProducer
   }
 
   async cancel(notificationDeliveryId: string): Promise<void> {
+    // No catch: `remove` already answers "the job is gone" by resolving with
+    // zero, so every rejection here is a real failure (a Redis error, or this
+    // deadline) and the caller reports it (review R4-CANCEL-SWALLOW).
     await withDeadline(
       this.queue.remove(notificationDeliveryJobId(notificationDeliveryId)),
       NOTIFICATION_DELIVERY_ENQUEUE_TIMEOUT_MS
-    ).catch(() => {
-      // Never surfaced: the row is the record of the cancellation, and a job
-      // that is already gone is exactly what a cancellation wants to find.
-    });
+    );
   }
 
   async onModuleDestroy(): Promise<void> {

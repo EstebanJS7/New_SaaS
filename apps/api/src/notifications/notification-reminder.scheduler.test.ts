@@ -33,6 +33,10 @@ function setup(args: {
   readonly conflictingCreate?: Error;
   readonly pendingDeliveries?: readonly { id: string }[];
   readonly cancelCount?: number;
+  /** Whether the compensation read still finds the intent pending (R3-001). */
+  readonly stillPending?: boolean;
+  /** Makes the removal fail, so the report path can be asserted (R4). */
+  readonly cancelThrows?: boolean;
 }) {
   const handlers = new Map<string, (event: ApplicationEvent<string, unknown>) => unknown>();
   const dispatcher: EventDispatcher = {
@@ -74,6 +78,10 @@ function setup(args: {
         }
         return Promise.resolve({ id: `delivery-${creates.length}` });
       },
+      findFirst: () =>
+        // The compensation read (R3-001): a row the fake still treats as pending
+        // unless a case says the cancellation won the race.
+        Promise.resolve(args.stillPending === false ? null : { id: "delivery-1" }),
       findMany: () => Promise.resolve(args.pendingDeliveries ?? []),
       updateMany: (updateArgs: {
         where: Record<string, unknown>;
@@ -109,6 +117,7 @@ function setup(args: {
       return Promise.resolve();
     },
     cancel: (id) => {
+      if (args.cancelThrows === true) return Promise.reject(new Error("redis is down"));
       cancelled.push(id);
       return Promise.resolve();
     },
@@ -308,6 +317,24 @@ describe("scheduling a reminder", () => {
     expect(creates).toHaveLength(0);
   });
 
+  it("compensates when a cancellation won the race against the enqueue — R3-001", async () => {
+    // The create and the enqueue are two steps. A cancellation can interleave,
+    // CAS the row and find no job to remove; the compensation then removes the
+    // job this reaction just enqueued for a row that is already cancelled.
+    const { confirmed, enqueued, cancelled } = setup({ stillPending: false });
+
+    await confirmed();
+
+    expect(enqueued).toHaveLength(1);
+    expect(cancelled).toEqual(enqueued.map((entry) => entry.job.notificationDeliveryId));
+  });
+
+  it("leaves a job alone when the delivery is still pending", async () => {
+    const { confirmed, cancelled } = setup({ stillPending: true });
+    await confirmed();
+    expect(cancelled).toEqual([]);
+  });
+
   it("ignores an event with no tenant", async () => {
     const { handlers, creates } = setup({});
     await handlers.get(APPOINTMENT_CONFIRMED)?.({
@@ -357,5 +384,34 @@ describe("cancelling a reminder", () => {
     const { cancel, updates } = setup({ pendingDeliveries: [] });
     await cancel();
     expect(updates).toHaveLength(0);
+  });
+
+  it("reports a removal failure, keeps going, and never makes the cancellation look failed — R4", async () => {
+    // The row IS cancelled and the handler refuses a settled row, so the reminder
+    // cannot be delivered; what the failure costs is a lingering job an operator
+    // has to see, and the other deliveries must still be cancelled.
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    try {
+      const { cancel } = setup({
+        pendingDeliveries: [{ id: "delivery-1" }, { id: "delivery-2" }],
+        cancelThrows: true,
+      });
+
+      // It resolves: an unhandled rejection would be the alternative, and the
+      // row's status is the guarantee.
+      await expect(cancel()).resolves.toBeUndefined();
+
+      const reported = JSON.stringify(errors);
+      expect(errors).toHaveLength(2);
+      expect(reported).toContain("delivery-1");
+      expect(reported).toContain("redis is down");
+      // Never a contact datum: a failure report carries ids and a reason.
+      expect(reported).not.toContain("@");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

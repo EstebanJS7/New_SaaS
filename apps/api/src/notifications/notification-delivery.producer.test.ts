@@ -59,10 +59,22 @@ describe("the notification delivery producer", () => {
     );
   });
 
-  it("treats a removal failure as success, because the row is the record", async () => {
-    // A job that is already gone is exactly what a cancellation wants to find,
-    // and a queue hiccup must not make a completed cancellation look failed.
-    const remove = vi.fn(() => Promise.reject(new Error("job not found")));
+  it("propagates a removal FAILURE instead of reporting a false success — R4-CANCEL-SWALLOW", async () => {
+    // `remove` already answers "the job is gone" by RESOLVING with a count of
+    // zero, so every rejection is a real failure (a Redis error, or this port's
+    // deadline). Swallowing it made a Redis outage indistinguishable from a
+    // completed cancellation, and the caller could not report the lingering job.
+    const remove = vi.fn(() => Promise.reject(new Error("redis is down")));
+    const producer = new BullMqNotificationDeliveryProducer({
+      add: vi.fn(),
+      remove,
+    } as unknown as Queue);
+
+    await expect(producer.cancel(job.notificationDeliveryId)).rejects.toThrow(/redis is down/);
+  });
+
+  it("treats a queue that resolves with zero as success, which is the real 'already gone'", async () => {
+    const remove = vi.fn(() => Promise.resolve(0));
     const producer = new BullMqNotificationDeliveryProducer({
       add: vi.fn(),
       remove,
