@@ -200,11 +200,19 @@ pnpm build                          13/13 packages
 @newsaas/shared test                  16 passed
 ```
 
-**What the suites cannot prove**, named rather than implied: a LIVE portal
-sign-in (a browser receiving `ns_portal_session` from a running API, then a
-protected page rendering with it). The suites assert the hop's shape - the
-verbatim relay, the absence of any inbound cookie, the isolation, the `405`, and
-the gate's branches - and the live run needs both services up.
+**The live run was performed**, against a real PostgreSQL 16, a real Redis, the
+built API and `next start`. What it verified:
+
+```text
+POST /api/portal/login (a schema-VALID body)   FAILS with a 500, while the API answers 401
+                                               -> TD-049, and NOT caused by this Story
+GET  /portal/me with a STAFF cookie            401   DEC-008's isolation, verified live
+```
+
+**So this Story's live sign-in is NOT verified, and the reason is a defect
+outside it** (TD-049): a schema-valid body through the portal proxy answers 500
+where the API answers 401. This Story's own hop is proven at the unit level, and
+by the staff twin's live run, which shares the relay's shape.
 
 ## Tests Added
 

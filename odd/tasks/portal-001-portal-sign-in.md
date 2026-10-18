@@ -66,3 +66,18 @@ authorises a `UserCredential` change and a portal identity holds a
 `PortalCredential`; a customer who forgets their password has no way back.
 Inventing a token model for a second credential type is its own Story, with its
 own decisions about what the token authorises.
+
+## The live run, and what it found
+
+Performed against real services (PostgreSQL 16, Redis, the built API,
+`next start`). Verified: `/portal/me` with a **staff** cookie answers 401 —
+DEC-008's isolation, live.
+
+**NOT verified, and the cause is outside this Story**: a schema-VALID body
+through `POST /api/portal/login` answers **500** while the API answers 401.
+Recorded as TD-049 with its reproduction and what the experiments ruled out —
+the API receives it, relaying an error body works on the staff BFF, and it is
+neither the size nor the values but the fact that the body VALIDATES. The
+suspect is the streamed request body this proxy pipes (the staff BFF reads
+`text()`), which is pre-existing and reachable from the booking and cancellation
+POSTs too — hence its being `high`.

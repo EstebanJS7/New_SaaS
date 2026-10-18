@@ -231,8 +231,13 @@ services up, and it is named as pending rather than implied.
 - **The portal has the same hole** and is not fixed here: `PortalCredential` is
   a separate identity with its own cookie, and [[DEC-008]] requires that neither
   cookie authorize the other domain.
-- **The live sign-in is not recorded**: the suites prove the hop's shape, and a
-  real browser receiving the cookie from a running API is pending.
+- **The live sign-in WAS verified** on 2026-10-18, against a real PostgreSQL 16,
+  a real Redis, the built API and `next start`: the BFF relayed
+  `ns_staff_session` VERBATIM with the cookie absent from the body, `/auth/me`
+  answered 200 with the identity, `/app` rendered the shell with that cookie,
+  and `/app` WITHOUT it redirected 307 to `/login`. The hop, the relay and the
+  gate — the three things this Story argued from suites — are now observed.
+
 - **The branding read doubles as the session probe**, a coupling worth knowing:
   if `/branding/current` ever became public, the gate would silently stop
   working. The invariant is that it stays private, and the layout's comment says
