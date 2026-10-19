@@ -82,7 +82,11 @@ async function main(): Promise<void> {
     const patients = await seedDemoPatients(db, result.tenantId);
     const clinical = await seedDemoClinical(db, result.tenantId);
     const scheduling = await seedDemoScheduling(db, result.tenantId);
-    const portal = await seedDemoPortal(db, result.tenantId, portalPasswordHash);
+    const portal = await seedDemoPortal(db, result.tenantId, portalPasswordHash, {
+      // A lane passes a fresh address so the portal recovery flow gets a fresh dedupe window. Absent,
+      // the demo tenant keeps exactly one holder and stays reproducible.
+      holderEmail: process.env.DEMO_PORTAL_HOLDER_EMAIL,
+    });
     console.info(
       `Demo seed enabled — created/verified tenant ${result.tenantId} with owner ` +
         `${result.ownerProfileId} (${result.grantedFeatureCodes} explicit grants), ` +

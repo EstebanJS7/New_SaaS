@@ -39,12 +39,25 @@ test:
 5. **The demo tenant's portal was unsignable** — the seed created the holder's
    access row and no credential.
 
+**The portal holder fixture landed anyway**, because it is useful on its own and
+is proven: the demo seed can mint a run-scoped portal holder on request, at a
+fresh address. It needs a customer OF ITS OWN, and that is a partial index
+rather than a preference — `customer_portal_access_active_customer_key` permits
+one ACTIVE holder per customer, and the demo customer already has one. The same
+predicate is why a revoked holder may be re-granted, which is the product's path
+for a real person and not something a seed should imitate.
+
 **What the lane does NOT cover, named rather than implied:**
 
-- **The portal's recovery flow.** Its fixture is a portal holder, and the same
-  hourly dedupe ceiling applies to it; regenerating a holder per run costs a
-  fresh customer link, which is a bigger fixture than a staff profile. Recorded,
-  not hidden.
+- **The portal's recovery flow — attempted, not landed.** The fixture is built
+  and tested (below), and the flow passes when it runs alone. It does not hold
+  when BOTH recovery flows run in one lane: they share one queue consumer,
+  Playwright gives each spec FILE its own worker process, and the send that
+  lands and the send that is claimed but never delivered swap places depending
+  on which worker boots first. Merging the two flows into one file fixed that
+  ordering and exposed the next layer — the minimal SMTP sink delivers the first
+  message and not the second — which is where this stopped rather than shipping
+  a flaky spec. Named precisely, because the next attempt starts here.
 - **A handful of flows, not the product.** What is not in a spec is not checked.
 - **It is not the gate.** A browser test is slower and flakier than a unit test;
   the fast suites stay the primary evidence and the lane is deliberately outside

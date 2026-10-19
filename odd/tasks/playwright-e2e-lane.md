@@ -74,14 +74,24 @@ which is exactly where this session's bugs lived.
 - [ ] **WU-2 — the portal flow.** Sign in at `/[slug]/login` → open a pet → and
       the gate: a protected page without a session redirects to the login.
 - [x] **WU-3 — the recovery flow, end to end.** Request a reset → be the SMTP
-- [ ] **NOT in this lane: the portal's recovery flow.** Same shape, same hourly
-      dedupe ceiling, but its fixture is a portal holder — a fresh one per run
-      costs a fresh customer link, which is a bigger fixture than a staff
-      profile. Named rather than half-built. server → decode the message →
-      follow the link → set a new password → sign in with it. Needs Redis, the
-      worker and the sink. This is the flow the session ran by hand and the one
-      worth automating most: it is the only one that proves the link that leaves
-      by mail works.
+- [ ] **The portal's recovery flow — attempted, NOT landed.** The fixture is
+      built and tested: the demo seed mints a run-scoped portal holder at a
+      fresh address, on a customer of its own (the partial index
+      `customer_portal_access_active_customer_key` allows one ACTIVE holder per
+      customer). The flow passes when it runs alone. In one lane with the staff
+      flow it does not hold: one queue consumer, one worker PROCESS PER SPEC
+      FILE, and the landing send swaps with the claimed-and-never-delivered one
+      depending on boot order. Merging both flows into one file fixed the
+      ordering and exposed the next layer — the minimal SMTP sink delivers the
+      FIRST message and not the second — which is where this stopped rather than
+      shipping a flaky spec. The next attempt starts at the sink. dedupe
+      ceiling, but its fixture is a portal holder — a fresh one per run costs a
+      fresh customer link, which is a bigger fixture than a staff profile. Named
+      rather than half-built. server → decode the message → follow the link →
+      set a new password → sign in with it. Needs Redis, the worker and the
+      sink. This is the flow the session ran by hand and the one worth
+      automating most: it is the only one that proves the link that leaves by
+      mail works.
 - [x] **WU-4 — the records.** The lane's README, the QA record, and CI evidence.
 
 ### WU-3 — the recovery flow, end to end

@@ -110,56 +110,63 @@ export function PortalResetPasswordForm({
         <CardDescription>Choose a new password for your account.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <label htmlFor="portal-reset-password" className="text-sm font-medium">
-            New password
-          </label>
-          <input
-            id="portal-reset-password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          {tooShort ? (
-            <p data-testid="portal-reset-too-short" className="text-sm text-destructive">
-              {`Use at least ${MIN_PASSWORD_LENGTH} characters.`}
-            </p>
-          ) : null}
-        </div>
-        <div className="space-y-2">
-          <label htmlFor="portal-reset-confirmation" className="text-sm font-medium">
-            Repeat it
-          </label>
-          <input
-            id="portal-reset-confirmation"
-            type="password"
-            autoComplete="new-password"
-            value={confirmation}
-            onChange={(event) => setConfirmation(event.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          {mismatch ? (
-            <p data-testid="portal-reset-mismatch" className="text-sm text-destructive">
-              The two passwords do not match.
-            </p>
-          ) : null}
-        </div>
-        {problem === null ? null : (
-          <p data-testid="portal-reset-problem" className="text-sm text-destructive">
-            {problem}
-          </p>
-        )}
-        <Button
-          type="button"
-          disabled={!canSubmit || status === "submitting"}
-          onClick={() => {
+        {/*
+          A real `<form>`, for the reason every other sign-in and recovery form in this app needed one:
+          with the fields in a plain container and the button as `type="button"`, pressing Enter did
+          nothing. The browser lane asserts the keyboard path here too.
+        */}
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
             void submit();
           }}
         >
-          {status === "submitting" ? "Changing..." : "Change password"}
-        </Button>
+          <div className="space-y-2">
+            <label htmlFor="portal-reset-password" className="text-sm font-medium">
+              New password
+            </label>
+            <input
+              id="portal-reset-password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {tooShort ? (
+              <p data-testid="portal-reset-too-short" className="text-sm text-destructive">
+                {`Use at least ${MIN_PASSWORD_LENGTH} characters.`}
+              </p>
+            ) : null}
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="portal-reset-confirmation" className="text-sm font-medium">
+              Repeat it
+            </label>
+            <input
+              id="portal-reset-confirmation"
+              type="password"
+              autoComplete="new-password"
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {mismatch ? (
+              <p data-testid="portal-reset-mismatch" className="text-sm text-destructive">
+                The two passwords do not match.
+              </p>
+            ) : null}
+          </div>
+          {problem === null ? null : (
+            <p data-testid="portal-reset-problem" className="text-sm text-destructive">
+              {problem}
+            </p>
+          )}
+          <Button type="submit" disabled={!canSubmit || status === "submitting"}>
+            {status === "submitting" ? "Changing..." : "Change password"}
+          </Button>
+        </form>
       </CardContent>
     </Card>
   );

@@ -7,7 +7,7 @@ All notable product changes will be documented here.
 ### Fixed
 
 - **Pressing Enter now submits every sign-in and recovery form.** None of the
-  four was a `<form>`: the fields sat in a plain container and the button was
+  six was a `<form>`: the fields sat in a plain container and the button was
   `type="button"`, so Enter did nothing at all — the most ordinary gesture of
   anyone signing in, and of every password manager. Found by the new browser
   lane, which asserts the keyboard path on each surface so it cannot regress.
