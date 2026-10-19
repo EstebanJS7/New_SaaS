@@ -1,0 +1,5 @@
+# Playwright's own artefacts: a trace is evidence, a report is a rendering of it, and neither belongs
+# in a commit.
+test-results/
+playwright-report/
+blob-report/

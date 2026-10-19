@@ -63,59 +63,67 @@ export function LoginForm(): JSX.Element {
         <CardDescription>Use your staff account.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <label htmlFor="login-email" className="text-sm font-medium">
-            Email
-          </label>
-          <input
-            id="login-email"
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </div>
-        <div className="space-y-2">
-          <label htmlFor="login-password" className="text-sm font-medium">
-            Password
-          </label>
-          <input
-            id="login-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </div>
-        {problem === null ? null : (
-          <p data-testid="login-problem" className="text-sm text-destructive">
-            {problem}
-          </p>
-        )}
-        <div className="flex items-center justify-between gap-4">
-          <Button
-            type="button"
-            disabled={!canSubmit}
-            onClick={() => {
-              void submit();
-            }}
-          >
-            {submitting ? "Signing in..." : "Sign in"}
-          </Button>
-          {/*
+        {/*
+          A real `<form>`, and the reason is a defect this lane found: with the inputs in a plain
+          container and the button as `type="button"`, pressing Enter did NOTHING. Every user's muscle
+          memory — and every password manager — submits a sign-in by keyboard, and the page looked and
+          behaved correctly right up to that moment.
+        */}
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          <div className="space-y-2">
+            <label htmlFor="login-email" className="text-sm font-medium">
+              Email
+            </label>
+            <input
+              id="login-email"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="login-password" className="text-sm font-medium">
+              Password
+            </label>
+            <input
+              id="login-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          {problem === null ? null : (
+            <p data-testid="login-problem" className="text-sm text-destructive">
+              {problem}
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-4">
+            <Button type="submit" disabled={!canSubmit}>
+              {submitting ? "Signing in..." : "Sign in"}
+            </Button>
+            {/*
             The recovery entry point ([[DAT-007]]). Until this link existed, a user could
             only reach the reset page by receiving a message nobody could ask for.
           */}
-          <Link
-            href="/forgot-password"
-            data-testid="login-forgot-password"
-            className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-          >
-            Forgot your password?
-          </Link>
-        </div>
+            <Link
+              href="/forgot-password"
+              data-testid="login-forgot-password"
+              className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+            >
+              Forgot your password?
+            </Link>
+          </div>
+        </form>
       </CardContent>
     </Card>
   );

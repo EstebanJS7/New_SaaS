@@ -1,0 +1,10 @@
+{
+  "extends": "@newsaas/typescript-config/base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["specs/**/*", "*.ts", "scripts/**/*"],
+  "exclude": ["node_modules", "test-results", "playwright-report"]
+}

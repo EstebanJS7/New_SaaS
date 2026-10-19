@@ -1,0 +1,22 @@
+{
+  "name": "@newsaas/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NewSaaS browser end-to-end lane — a runnable test target, not a deployable service",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "e2e": "playwright test",
+    "e2e:report": "playwright show-report",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"specs/**/*.ts\" \"*.ts\""
+  },
+  "devDependencies": {
+    "@newsaas/eslint-config": "workspace:*",
+    "@newsaas/typescript-config": "workspace:*",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^22.14.1",
+    "eslint": "^9.24.0",
+    "typescript": "^5.8.3"
+  }
+}
