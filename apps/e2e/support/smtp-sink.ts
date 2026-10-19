@@ -12,6 +12,14 @@ import { createServer, type Server, type Socket } from "node:net";
  * (no AUTH, no STARTTLS), and captures the message body. It also exercises the REAL `nodemailer`
  * adapter, which the channel fake cannot.
  */
+/**
+ * The port the lane's one worker sends to, and the port the recovery sink listens on.
+ *
+ * One worker serves both recovery flows, so they share one port: the single spec file opens the sink
+ * once, and a send only ever happens in response to a request it made.
+ */
+export const SMTP_SINK_PORT = 2526;
+
 export interface CapturedMessage {
   readonly from: string;
   readonly recipients: readonly string[];
@@ -30,7 +38,10 @@ const CRLF = "\r\n";
 
 export async function startSmtpSink(port: number): Promise<SmtpSink> {
   const received: CapturedMessage[] = [];
-  const waiting: { resolve: (message: CapturedMessage) => void }[] = [];
+  const waiting: {
+    resolve: (message: CapturedMessage) => void;
+    reject: (error: Error) => void;
+  }[] = [];
 
   function deliver(message: CapturedMessage): void {
     const next = waiting.shift();
@@ -41,7 +52,11 @@ export async function startSmtpSink(port: number): Promise<SmtpSink> {
     next.resolve(message);
   }
 
+  const sockets = new Set<Socket>();
+
   const server: Server = createServer((socket: Socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
     let buffer = "";
     let inData = false;
     let body = "";
@@ -125,7 +140,23 @@ export async function startSmtpSink(port: number): Promise<SmtpSink> {
       if (queued !== undefined) return Promise.resolve(queued);
 
       return new Promise<CapturedMessage>((resolve, reject) => {
+        const waiter = {
+          resolve: (message: CapturedMessage) => {
+            clearTimeout(timer);
+            resolve(message);
+          },
+          reject: (error: Error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        };
         const timer = setTimeout(() => {
+          // THE BUG THAT MADE THE PORTAL'S SPEC FAIL: the timeout rejected the caller but LEFT ITS
+          // WAITER IN THE QUEUE, so the next message was handed to a promise nobody could observe. The
+          // caller that was actually waiting then timed out as well, and the message was gone — "the
+          // first recovery flow passes and the second one hangs", which is exactly what happened.
+          const index = waiting.indexOf(waiter);
+          if (index !== -1) waiting.splice(index, 1);
           reject(
             new Error(
               `No message arrived at the SMTP sink within ${timeoutMs}ms. The worker did not send one: ` +
@@ -133,16 +164,17 @@ export async function startSmtpSink(port: number): Promise<SmtpSink> {
             )
           );
         }, timeoutMs);
-        waiting.push({
-          resolve: (message) => {
-            clearTimeout(timer);
-            resolve(message);
-          },
-        });
+        waiting.push(waiter);
       });
     },
     close() {
       return new Promise<void>((resolve) => {
+        // A closed sink will never deliver, and a caller left hanging is worse than a caller told so.
+        for (const waiter of waiting.splice(0)) {
+          waiter.reject(new Error("The SMTP sink was closed before a message arrived."));
+        }
+        // An idle connection would keep `server.close` waiting for the rest of the run.
+        for (const socket of sockets) socket.destroy();
         server.close(() => resolve());
       });
     },
