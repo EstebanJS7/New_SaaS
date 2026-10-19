@@ -28,7 +28,7 @@ import { z } from "zod";
  * Where the link points when no origin is configured: the local web app. Only ever
  * used outside production, because the schema's gate requires the real value there.
  */
-export const DEFAULT_STAFF_APP_BASE_URL = "http://localhost:3000";
+export const DEFAULT_WEB_APP_BASE_URL = "http://localhost:3000";
 
 export const workerEnvSchema = z
   .object({
@@ -130,12 +130,22 @@ export const workerEnvSchema = z
     WHATSAPP_CLOUD_TEMPLATE_LANGUAGE: z.string().optional(),
     WHATSAPP_CLOUD_API_BASE_URL: z.string().optional(),
     /**
-     * The staff app's origin, used to build the link a password-recovery message
-     * carries (DAT-007). Optional in development and tests, where the default below
-     * points at the local web app; REQUIRED in production by the gate below, because
-     * a link built from a wrong origin hands a LIVE token to whoever owns it.
+     * The WEB APP's public origin — one deployable serves both the staff shell and
+     * the tenant portal, so one origin builds both links: the staff recovery link
+     * (DAT-007) at `/reset-password` and the portal's ([[PORTAL-002]]) at
+     * `/{slug}/reset-password`.
+     *
+     * It was called `STAFF_APP_BASE_URL` while only staff recovery used it, and the
+     * name stopped being true the day the portal did. Renaming it is free because
+     * nothing has been deployed; the note that it "would break every existing
+     * deployment" was written from habit and refuted by the repository, which has
+     * no deploy workflow at all.
+     *
+     * Optional in development and tests, where the default below points at the
+     * local web app; REQUIRED in production by the gate below, because a link built
+     * from a wrong origin hands a LIVE token to whoever owns it.
      */
-    STAFF_APP_BASE_URL: z.string().url().optional(),
+    WEB_APP_BASE_URL: z.string().url().optional(),
   })
   .superRefine((env, ctx) => {
     // Same rule as FISCAL_PROVIDER, for the same reason: absence in production
@@ -154,11 +164,11 @@ export const workerEnvSchema = z
     // A recovery message is only ever sent by a deployment that can build a link to
     // ITSELF. Absent in production, the builder would fall back to localhost and mail
     // every user a token pointing at a host that is not serving their app.
-    if (env.NODE_ENV === "production" && env.STAFF_APP_BASE_URL === undefined) {
+    if (env.NODE_ENV === "production" && env.WEB_APP_BASE_URL === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["STAFF_APP_BASE_URL"],
-        message: "STAFF_APP_BASE_URL is required in production.",
+        path: ["WEB_APP_BASE_URL"],
+        message: "WEB_APP_BASE_URL is required in production.",
       });
     }
 

@@ -21,17 +21,17 @@ const productionBase = {
   WHATSAPP_PROVIDER: "fake",
   // DAT-007: a recovery message's link is built from this origin, and a production
   // worker that cannot name it would mail every user a link to `localhost`.
-  STAFF_APP_BASE_URL: "https://app.example.test",
+  WEB_APP_BASE_URL: "https://app.example.test",
 };
 
 describe("workerEnv production recovery-link gate", () => {
   it("REFUSES a production env with no staff app origin", () => {
-    const { STAFF_APP_BASE_URL: _omitted, ...withoutOrigin } = productionBase;
+    const { WEB_APP_BASE_URL: _omitted, ...withoutOrigin } = productionBase;
     const result = workerEnv(withoutOrigin);
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("STAFF_APP_BASE_URL");
+      expect(result.error).toContain("WEB_APP_BASE_URL");
     }
   });
 
@@ -44,7 +44,7 @@ describe("workerEnv production recovery-link gate", () => {
   });
 
   it("refuses a value that is not a URL", () => {
-    expect(workerEnv({ ...productionBase, STAFF_APP_BASE_URL: "app.example.test" }).success).toBe(
+    expect(workerEnv({ ...productionBase, WEB_APP_BASE_URL: "app.example.test" }).success).toBe(
       false
     );
   });
