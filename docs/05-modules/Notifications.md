@@ -283,7 +283,7 @@ differ from every other message here:
   one function that needs it, and makes the lifetime honest - it starts when the
   mail is sent, not when it was asked for.
 
-Its link is built from `STAFF_APP_BASE_URL`, a deployment input the worker's
+Its link is built from `WEB_APP_BASE_URL`, a deployment input the worker's
 schema **requires in production**: absent, a production worker would mail every
 user a token pointing at `localhost`.
 

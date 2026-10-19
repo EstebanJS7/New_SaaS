@@ -4,6 +4,16 @@ All notable product changes will be documented here.
 
 ## Unreleased
 
+### Changed
+
+- **A deployment input was renamed: `STAFF_APP_BASE_URL` is now
+  `WEB_APP_BASE_URL`.** One web app serves both the staff shell and the tenant
+  portal, so one origin builds both recovery links (`/reset-password` and
+  `/{slug}/reset-password`). The old name stopped being true the day the portal
+  used it. Nothing has been deployed, so nothing breaks — the note that renaming
+  "would break every existing deployment" was written from habit rather than
+  from the repository, which has no deploy workflow at all.
+
 ### Fixed
 
 - **The branding settings page is reachable.** It existed — upload, colours,

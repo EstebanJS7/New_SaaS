@@ -21,7 +21,7 @@ Raised by [[DAT-007]], which built the contract and deliberately not these two.
 
 ## 1. The link points at a page that does not exist
 
-A recovery message carries `<STAFF_APP_BASE_URL>/reset-password?token=<token>`,
+A recovery message carries `<WEB_APP_BASE_URL>/reset-password?token=<token>`,
 and the web app has no `/reset-password` route. So the flow is complete on the
 API side and **ends in a 404 for the recipient** — the one thing the message
 must never do.

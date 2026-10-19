@@ -20,7 +20,7 @@ const request = { tenantId, deliveryId, channel: "EMAIL" as const };
 const START_AT = new Date("2026-10-18T11:00:00.000Z");
 
 /** The deployment origin the recovery link is built from (DAT-007). */
-const STAFF_APP_BASE_URL = "https://app.example.test";
+const WEB_APP_BASE_URL = "https://app.example.test";
 
 /** The staff profile a recovery delivery points at, passed explicitly below. */
 const staffProfileId = "66666666-6666-4666-8666-666666666666";
@@ -107,7 +107,7 @@ function setup(args: {
   } as unknown as NotificationContentClient;
 
   return {
-    builder: createNotificationContentBuilder({ client, staffAppBaseUrl: STAFF_APP_BASE_URL }),
+    builder: createNotificationContentBuilder({ client, webAppBaseUrl: WEB_APP_BASE_URL }),
     deliveryFind,
     appointmentFind,
     branchFind,
@@ -312,7 +312,7 @@ describe("the staff password-recovery message (DAT-007)", () => {
     // Narrowed rather than cast: the outcome is a union, and a READY one is the only
     // shape with a body to read.
     if (outcome.outcome !== "READY") throw new Error(`expected READY, got ${outcome.outcome}`);
-    expect(outcome.body).toContain(`${STAFF_APP_BASE_URL}/reset-password?token=`);
+    expect(outcome.body).toContain(`${WEB_APP_BASE_URL}/reset-password?token=`);
     // The plaintext is IN the message and nowhere else: the row the builder just wrote
     // holds the digest, so a leaked table yields no usable link.
     const plaintext = outcome.parameters[0]?.split("token=")[1] ?? "";
@@ -358,7 +358,7 @@ describe("the staff password-recovery message (DAT-007)", () => {
 describe("the portal password-recovery message (PORTAL-002)", () => {
   it("mints the token AT SEND TIME, keyed to the access, and builds the link with the tenant SLUG", async () => {
     const { builder, portalTokenCreate, portalAccessFind } = setup({ delivery: portalDelivery });
-    const url = `${STAFF_APP_BASE_URL}/demo/reset-password?token=`;
+    const url = `${WEB_APP_BASE_URL}/demo/reset-password?token=`;
     const outcome = await builder.build({ ...request, tenantId: "t-1" });
 
     if (outcome.outcome !== "READY") throw new Error(`expected READY, got ${outcome.outcome}`);

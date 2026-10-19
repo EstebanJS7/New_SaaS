@@ -145,7 +145,7 @@ export function createNotificationContentBuilder(args: {
    * deployment input rather than a constant: a link pointing at the wrong host hands a
    * LIVE token to whoever owns that host.
    */
-  readonly staffAppBaseUrl: string;
+  readonly webAppBaseUrl: string;
 }): NotificationContentBuilder {
   return {
     async build(request: NotificationContentRequest): Promise<NotificationContentOutcome> {
@@ -166,11 +166,11 @@ export function createNotificationContentBuilder(args: {
         case "FISCAL_DOCUMENT":
           return buildFiscalNotice(args.client, request, delivery.sourceId);
         case "STAFF_ACCOUNT":
-          return buildStaffRecovery(args.client, args.staffAppBaseUrl, delivery.sourceId);
+          return buildStaffRecovery(args.client, args.webAppBaseUrl, delivery.sourceId);
         case "PORTAL_ACCOUNT":
           return buildPortalRecovery(
             args.client,
-            args.staffAppBaseUrl,
+            args.webAppBaseUrl,
             delivery.sourceId,
             request.tenantId
           );
@@ -282,7 +282,7 @@ async function buildFiscalNotice(
  */
 async function buildStaffRecovery(
   client: NotificationContentClient,
-  staffAppBaseUrl: string,
+  webAppBaseUrl: string,
   userProfileId: string
 ): Promise<NotificationContentOutcome> {
   const profile = await client.userProfile.findFirst({
@@ -310,7 +310,7 @@ async function buildStaffRecovery(
     select: { id: true },
   });
 
-  const url = staffRecoveryUrl(staffAppBaseUrl, token);
+  const url = staffRecoveryUrl(webAppBaseUrl, token);
   return {
     outcome: "READY",
     subject: "Recuperación de contraseña",
@@ -334,7 +334,7 @@ async function buildStaffRecovery(
  * for the reason the staff branch records: content is built at send time, a plaintext token cannot be
  * rebuilt from a digest, and minting at send time keeps the plaintext inside this one function.
  *
- * `staffAppBaseUrl` is reused deliberately: one web app serves both surfaces, and the deployment
+ * `webAppBaseUrl` is reused deliberately: one web app serves both surfaces, and the deployment
  * input's name is a misnomer this Story records rather than renames — changing it would break every
  * existing deployment for a word.
  */
