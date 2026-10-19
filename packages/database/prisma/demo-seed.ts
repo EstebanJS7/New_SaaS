@@ -8,6 +8,7 @@ import {
   seedDemoPatients,
   seedDemoPortal,
   seedDemoScheduling,
+  DEMO_PORTAL_HOLDER_PASSWORD,
 } from "../src/demo-seed.js";
 
 /**
@@ -55,6 +56,12 @@ async function main(): Promise<void> {
     parallelism: ARGON_PARALLELISM,
   });
 
+  const portalPasswordHash = await hash(DEMO_PORTAL_HOLDER_PASSWORD, {
+    memoryCost: ARGON_MEMORY_KIB,
+    timeCost: ARGON_TIME_COST,
+    parallelism: ARGON_PARALLELISM,
+  });
+
   const db = new PrismaClient();
   try {
     const result = await seedDemoData(db, { passwordHash });
@@ -62,7 +69,7 @@ async function main(): Promise<void> {
     const patients = await seedDemoPatients(db, result.tenantId);
     const clinical = await seedDemoClinical(db, result.tenantId);
     const scheduling = await seedDemoScheduling(db, result.tenantId);
-    const portal = await seedDemoPortal(db, result.tenantId);
+    const portal = await seedDemoPortal(db, result.tenantId, portalPasswordHash);
     console.info(
       `Demo seed enabled — created/verified tenant ${result.tenantId} with owner ` +
         `${result.ownerProfileId} (${result.grantedFeatureCodes} explicit grants), ` +

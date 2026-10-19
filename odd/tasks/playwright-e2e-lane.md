@@ -146,7 +146,40 @@ The worker's `start` was checked in the same pass and is correct
   `getByText` matched the row's link and its subtitle, which is a strict-mode
   violation. The row's **link** is what a user clicks.
 
-**Recorded as still open:** the same missing-`<form>` pattern exists in the
-portal's sign-in form and in the recovery forms. Each is fixed in the work unit
-that drives it (WU-2, WU-3), so the fix lands with its own spec rather than as a
-sweep nobody tested.
+**Recorded as still open at this point:** the same missing-`<form>` pattern
+existed in the portal's sign-in form and in the recovery forms. Each is fixed in
+the work unit that drives it, so the fix lands with its own spec rather than as
+a sweep nobody tested.
+
+### WU-2 — the portal flow
+
+```text
+7 passed (18.6s)   — the portal's four plus the staff's three
+  ✓ signs in, lands on the tenant home, and the pet list has the holder's pets
+  ✓ submits with the Enter key, like the staff form it was modelled on
+  ✓ sends a visitor with no session to the sign-in page, keeping the tenant
+  ✓ keeps staff and portal sessions apart: a staff cookie is not a portal session
+```
+
+**The lane found the same missing-`<form>` defect in the portal's sign-in
+form**, which was modelled on the staff one and inherited it exactly. Fixed the
+same way, and the spec asserts the keyboard path here too.
+
+**The demo seed could not sign into its own portal.** It created the holder's
+access row and NO credential, so the portal half of the demo tenant was unusable
+— by a human as much as by the lane. The seed now writes one (an upsert, with
+the owner credential's "refresh keeps it usable if the parameters evolve"
+rationale), and `DEMO_PORTAL_HOLDER_PASSWORD` is a published constant. Its unit
+suite asserts the row is written with the hash it was GIVEN, so the seed still
+never sees a plaintext password.
+
+**Two assertions worth more than they cost**: the gate (no session → the
+tenant's sign-in page, tenant preserved) and the identity boundary (a browser
+holding a STAFF session is still sent to the portal's sign-in page — the two
+identities share a browser and nothing else, [[DEC-008]] one level down).
+
+**Both first failures of the new specs were the SPEC's fault, not the
+product's**: `getByText` and `getByRole("link")` each matched two elements. A
+strict-mode violation is a selector that is too broad, and narrowing it — to the
+row's link, to the portal's own nav — is the fix. Worth recording because "the
+test failed" and "the product is wrong" are different claims.

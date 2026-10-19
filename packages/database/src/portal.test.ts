@@ -13,6 +13,8 @@ import {
   seedDemoPortal,
   type DemoPortalSeedClient,
   type DemoPortalSeedTxClient,
+  DEMO_PORTAL_HOLDER_PASSWORD,
+  DEMO_PORTAL_HOLDER_EMAIL,
 } from "./demo-seed.js";
 
 /**
@@ -353,6 +355,7 @@ function makeFakePortalDb(): {
     string,
     { id: string; tenantId: string; customerId: string; contactEmail: string; status: string }
   >();
+  const credentials = new Map<string, { portalAccessId: string; passwordHash: string }>();
   const bookingRequests = new Map<
     string,
     {
@@ -368,6 +371,7 @@ function makeFakePortalDb(): {
   const tables = {
     customers,
     access,
+    credentials,
     bookingRequests,
     transactionCount: 0,
     writesOutsideTransaction: 0,
@@ -380,6 +384,17 @@ function makeFakePortalDb(): {
         if (!inTransaction) tables.writesOutsideTransaction += 1;
         for (const row of data) access.set(row.id, row);
         return Promise.resolve({ count: data.length });
+      },
+    },
+    portalCredential: {
+      upsert: ({ where, create, update }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        // The real upsert's semantics: create when absent, refresh when present.
+        credentials.set(where.portalAccessId, {
+          ...(credentials.get(where.portalAccessId) ?? create),
+          ...update,
+        });
+        return Promise.resolve({});
       },
     },
     portalBookingRequest: {
@@ -417,7 +432,7 @@ describe("seedDemoPortal (EPIC-08 WU1)", () => {
   it("seeds an ACTIVE holder and a PENDING request anchored to the demo fixtures", async () => {
     const { db, tables } = makeFakePortalDb();
 
-    const result = await seedDemoPortal(db, "tenant-demo");
+    const result = await seedDemoPortal(db, "tenant-demo", "argon2-hash");
 
     expect(result.access).toBe(1);
     expect(result.bookingRequests).toBe(1);
@@ -435,10 +450,22 @@ describe("seedDemoPortal (EPIC-08 WU1)", () => {
     expect(request.endAt.getTime()).toBeGreaterThan(request.startAt.getTime());
   });
 
+  it("writes a credential, so the demo portal is one a human can sign into", async () => {
+    const { db, tables } = makeFakePortalDb();
+
+    await seedDemoPortal(db, "tenant-demo", "argon2-hash");
+
+    const credential = tables.credentials.get(DEMO_PORTAL_ACCESS_ID);
+    expect(credential?.portalAccessId).toBe(DEMO_PORTAL_ACCESS_ID);
+    // The hash it was GIVEN, not the password: the seed never sees the plaintext.
+    expect(credential?.passwordHash).toBe("argon2-hash");
+    expect(DEMO_PORTAL_HOLDER_PASSWORD).not.toBe(DEMO_PORTAL_HOLDER_EMAIL);
+  });
+
   it("writes the holder and request inside one transaction", async () => {
     const { db, tables } = makeFakePortalDb();
 
-    await seedDemoPortal(db, "tenant-demo");
+    await seedDemoPortal(db, "tenant-demo", "argon2-hash");
 
     expect(tables.transactionCount).toBe(1);
     expect(tables.writesOutsideTransaction).toBe(0);
@@ -447,8 +474,8 @@ describe("seedDemoPortal (EPIC-08 WU1)", () => {
   it("converges on rerun: fixed ids keep the collections stable", async () => {
     const { db, tables } = makeFakePortalDb();
 
-    await seedDemoPortal(db, "tenant-demo");
-    await seedDemoPortal(db, "tenant-demo");
+    await seedDemoPortal(db, "tenant-demo", "argon2-hash");
+    await seedDemoPortal(db, "tenant-demo", "argon2-hash");
 
     expect(tables.access.size).toBe(1);
     expect(tables.bookingRequests.size).toBe(1);
@@ -463,7 +490,9 @@ describe("seedDemoPortal (EPIC-08 WU1)", () => {
     const { db, tables } = makeFakePortalDb();
     tables.customers.clear();
 
-    await expect(seedDemoPortal(db, "tenant-demo")).rejects.toThrow(/demo customer missing/);
+    await expect(seedDemoPortal(db, "tenant-demo", "argon2-hash")).rejects.toThrow(
+      /demo customer missing/
+    );
     expect(tables.access.size).toBe(0);
     expect(tables.bookingRequests.size).toBe(0);
   });

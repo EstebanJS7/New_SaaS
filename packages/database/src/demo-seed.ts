@@ -707,6 +707,13 @@ export interface DemoPortalSeedTxClient {
       skipDuplicates?: boolean;
     }) => Promise<{ count: number }>;
   };
+  portalCredential: {
+    upsert: (args: {
+      where: { portalAccessId: string };
+      create: { portalAccessId: string; passwordHash: string };
+      update: { passwordHash: string };
+    }) => Promise<unknown>;
+  };
   portalBookingRequest: {
     createMany: (args: {
       data: {
@@ -752,6 +759,13 @@ export const DEMO_PORTAL_CUSTOMER_ID = "11111111-1111-1111-1111-111111111111";
 export const DEMO_PORTAL_ACCESS_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 /** Synthetic, clearly non-PII holder email (mirrors the demo Customer contact). */
 export const DEMO_PORTAL_HOLDER_EMAIL = "ana.garcia@demo.newsaas.test";
+
+/**
+ * The demo portal holder's password, so the demo tenant is one a human can actually sign into on BOTH
+ * surfaces. The holder was seeded with an access row and NO credential, which left the portal half of
+ * the demo unusable by anyone — a gap the browser lane surfaced the moment it tried to sign in there.
+ */
+export const DEMO_PORTAL_HOLDER_PASSWORD = "demo-portal-password";
 /** Lifecycle string used by the schema scaffold for a usable holder. */
 export const DEMO_PORTAL_ACTIVE_STATUS = "ACTIVE";
 /** Fixed synthetic pending booking-request id keeps the demo path idempotent. */
@@ -762,15 +776,21 @@ export const DEMO_PORTAL_BOOKING_START_AT = new Date("2026-01-20T14:00:00.000Z")
 export const DEMO_PORTAL_BOOKING_END_AT = new Date("2026-01-20T14:30:00.000Z");
 
 /**
- * Seeds one synthetic ACTIVE portal holder linked to the fixed demo Customer
- * and one PENDING booking request for the demo Patient. Content is clearly
+ * Seeds one synthetic ACTIVE portal holder — WITH a credential, so the portal
+ * is signable — linked to the fixed demo Customer, and one PENDING booking
+ * request for the demo Patient. Content is clearly
  * synthetic and carries no real PII; fixed UUIDs plus `skipDuplicates` keep the
  * path idempotent, and both writes share one `$transaction` so a holder cannot
  * commit without its pending request.
  */
 export async function seedDemoPortal(
   db: DemoPortalSeedClient,
-  tenantId: string
+  tenantId: string,
+  /**
+   * The argon2id hash of {@link DEMO_PORTAL_HOLDER_PASSWORD}, computed by the caller exactly as the
+   * owner's is: hashing is expensive and the seed's contract is to write what it is given.
+   */
+  portalPasswordHash: string
 ): Promise<DemoPortalSeedResult> {
   const customer = await db.customer.findFirst({
     where: { id: DEMO_PORTAL_CUSTOMER_ID, tenantId },
@@ -795,6 +815,14 @@ export async function seedDemoPortal(
       ],
       skipDuplicates: true,
     });
+    await tx.portalCredential.upsert({
+      where: { portalAccessId: DEMO_PORTAL_ACCESS_ID },
+      create: { portalAccessId: DEMO_PORTAL_ACCESS_ID, passwordHash: portalPasswordHash },
+      // Refresh keeps the demo credential usable if the hashing parameters evolve (the owner
+      // credential's rationale, and the same reason it is an upsert rather than a create).
+      update: { passwordHash: portalPasswordHash },
+    });
+
     const bookingRequests = await tx.portalBookingRequest.createMany({
       data: [
         {

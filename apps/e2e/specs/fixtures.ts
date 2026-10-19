@@ -12,6 +12,14 @@ export const DEMO = {
   staffPassword: "demo-owner-password",
   /** A customer the seed creates, used to prove a list rendered rows rather than an empty state. */
   customerName: "Ana García",
+  /**
+   * The demo tenant's portal holder. The seed created the access row and NO credential until the lane
+   * tried to sign in there — the portal half of the demo was unusable by anyone, including a human.
+   */
+  portalEmail: "ana.garcia@demo.newsaas.test",
+  portalPassword: "demo-portal-password",
+  /** The holder's pet, as the seed names it. */
+  portalPetName: "Bobby",
 } as const;
 
 /** Where the app is served. The lane drives the built app, the same way a deployment serves it. */
