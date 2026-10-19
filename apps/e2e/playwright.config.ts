@@ -7,6 +7,18 @@ import { WEB_BASE_URL } from "./specs/fixtures.js";
 loadRepoEnv();
 
 /**
+ * A FRESH address for the recovery fixture on every run, because the product is right and the lane has
+ * to live with it.
+ *
+ * A staff recovery delivery is deduped per `staff-recovery:<profileId>:<hour>`, the delivery table
+ * refuses a DELETE by design ("cancel it instead"), and a profile can never be erased once it has acted
+ * — the audit trail's foreign key is RESTRICT. So a fixed identity receives ONE recovery message an
+ * hour: a lane that ran twice inside one would fail on the second run for a reason that has nothing to
+ * do with the product. A fresh address is a fresh profile id, which is a fresh dedupe key.
+ */
+process.env.DEMO_RECOVERABLE_EMAIL ??= `recoverable+e2e-${Date.now()}@demo.newsaas.test`;
+
+/**
  * The browser lane's configuration.
  *
  * It runs the BUILT apps (`next start`, the API's `start`), not the dev servers: the BFF defects this
@@ -21,6 +33,14 @@ loadRepoEnv();
 export default defineConfig({
   testDir: "./specs",
   globalSetup: "./global-setup.ts",
+  /**
+   * A minute per test, rather than the 30s default.
+   *
+   * The recovery flow starts a worker (about ten seconds to boot), waits for a real SMTP delivery and
+   * then drives four pages. At 30s the test's own timeout fired BEFORE the sink's wait could report
+   * why nothing had arrived, which is the diagnostic the sink exists to produce.
+   */
+  timeout: 60_000,
   /**
    * Serial, and on one worker.
    *

@@ -73,12 +73,73 @@ which is exactly where this session's bugs lived.
       flows depend on it.
 - [ ] **WU-2 — the portal flow.** Sign in at `/[slug]/login` → open a pet → and
       the gate: a protected page without a session redirects to the login.
-- [ ] **WU-3 — the recovery flow, end to end.** Request a reset → be the SMTP
+- [x] **WU-3 — the recovery flow, end to end.** Request a reset → be the SMTP
       server → decode the message → follow the link → set a new password → sign
       in with it. Needs Redis, the worker and the sink. This is the flow the
       session ran by hand and the one worth automating most: it is the only one
       that proves the link that leaves by mail works.
 - [ ] **WU-4 — the records.** The lane's README, the QA record, and CI evidence.
+
+### WU-3 — the recovery flow, end to end
+
+```text
+9 passed (19.1s)
+  ✓ the link that leaves by mail resets the password, once
+  ✓ asks for a link with the Enter key
+  ✓ (the portal's four and the staff sign-in's three, still green)
+```
+
+The spec asks for a reset, **is the SMTP server**, decodes the quoted-printable
+message, follows the link, sets a new password, signs in with it, checks the OLD
+one is refused, and follows the link a second time to see it refused as invalid.
+That is the flow the session ran by hand, and the only one that proves the link
+that leaves by mail works.
+
+**Why a real SMTP sink and not the channel fake.** The fake retains attempts in
+memory and deliberately never logs a recipient; the delivery row does not hold
+the message, because content is built at send time; and a plaintext token is
+never stored anywhere, by design. The only place the link exists between the
+worker and the user is on the wire. The sink also exercises the real
+`nodemailer` adapter.
+
+**Four defects and obstacles, in the order they appeared:**
+
+1. **The worker refused to boot, three times, naming one variable each time**:
+   `SMTP_USER`, `SMTP_PASSWORD`, then `NOTIFICATION_EMAIL_FROM`. The channel
+   module's fail-closed rule is right, and the lane had to learn the complete
+   list (`NOTIFICATION_EMAIL_ENV_VARS`). The spec now surfaces the worker's own
+   output when no message arrives, because a lane that swallows a process's
+   error makes the reader re-run it to find out why.
+2. **The test's 30s timeout fired before the sink's 30s wait**, hiding the
+   diagnostic the sink exists to produce. The config now allows 60s per test.
+3. **The recovery dedupe made the flow unrepeatable within an hour** — and this
+   is the finding worth keeping. A staff recovery delivery is deduped per
+   `staff-recovery:<profileId>:<hour>`; the delivery table **refuses a DELETE by
+   design** ("cancel it instead"); and a profile can never be erased once it has
+   acted, because `audit_log_actor_user_profile_id_fkey` is RESTRICT. So a fixed
+   identity receives ONE recovery message an hour, and a lane that ran twice
+   inside one failed on the second run for a reason that had nothing to do with
+   the product. The fixture is therefore a **fresh address per run**
+   (`DEMO_RECOVERABLE_EMAIL`, set by the config), which is a fresh profile id,
+   which is a fresh dedupe key. Nothing is deleted: the identities previous runs
+   used stay as history, which is what an audit trail is for. The seed takes the
+   address as an input, and a test asserts that two addresses yield two
+   identities.
+4. **The recovery forms had the same missing-`<form>`** as the two sign-in
+   surfaces. Fixed, with the keyboard path asserted.
+
+**Two process notes, both expensive:**
+
+- The first attempt at the fixture was "delete and recreate the recoverable
+  user", and the database refused it: an identity that has acted is never
+  erased. The refusal is a property worth having, and the attempt is recorded
+  because it is the kind of fixture shortcut that would have silently weakened
+  the lane.
+- Rewriting a fake by matching its source text cost two attempts (prettier
+  reflows, and three `deleteMany` blocks belonged to three different tables).
+  `git checkout` plus a clean edit was faster and safer than repairing, and the
+  fake turned out to need **no changes at all**: its `upsert` already generates
+  a fresh id per new email.
 
 ## Constraints and risks
 

@@ -29,6 +29,20 @@ export const DEMO_TENANT_SLUG = "demo";
 /** Demo owner natural key (user_profile.email UNIQUE, app-lowercased). */
 export const DEMO_OWNER_EMAIL = "owner@demo.newsaas.test";
 
+/**
+ * A SECOND staff user, whose password a test is allowed to DESTROY.
+ *
+ * Password recovery consumes a token and rewrites a credential. A browser lane that reset the owner's
+ * password would break every other flow in the same run, and one that restored it afterwards would
+ * depend on the very path it is testing. This user exists to be reset, and nothing else signs in as it.
+ * It carries the OWNER role so the post-reset sign-in has a membership to succeed against; the recovery
+ * itself needs no membership at all, because a staff recovery delivery is identity-scoped and belongs
+ * to the platform tenant.
+ */
+export const DEMO_RECOVERABLE_EMAIL = "recoverable@demo.newsaas.test";
+export const DEMO_RECOVERABLE_DISPLAY_NAME = "Demo Recoverable";
+export const DEMO_RECOVERABLE_PASSWORD = "demo-recoverable-password";
+
 export const DEMO_OWNER_DISPLAY_NAME = "Demo Owner";
 export const DEMO_TENANT_NAME = "Demo Veterinary Clinic";
 
@@ -922,6 +936,14 @@ export interface DemoSeedClient {
 export interface DemoSeedInput {
   /** Pre-computed argon2id hash for the demo owner password (RESTRICTED). */
   readonly passwordHash: string;
+  /** Pre-computed argon2id hash for {@link DEMO_RECOVERABLE_EMAIL} (RESTRICTED). */
+  readonly recoverablePasswordHash: string;
+  /**
+   * The recoverable user's address. Defaults to {@link DEMO_RECOVERABLE_EMAIL}; a caller passes a
+   * different one when it needs a FRESH identity, which is what the browser lane does — see the note
+   * on the user itself.
+   */
+  readonly recoverableEmail?: string;
 }
 
 export interface DemoSeedResult {
@@ -929,6 +951,8 @@ export interface DemoSeedResult {
   ownerProfileId: string;
   membershipId: string;
   grantedFeatureCodes: number;
+  /** The profile a recovery test may spend, and the reason it is separate from the owner's. */
+  recoverableProfileId: string;
 }
 
 /**
@@ -983,6 +1007,47 @@ export async function seedDemoData(
     update: {},
   });
 
+  // The recoverable staff user: same shape as the owner, minus everything it does not need.
+  //
+  // A caller may ask for a DIFFERENT address, and the browser lane does, because of the product's own
+  // anti-amplifier rule rather than anything about tests: a staff recovery delivery is deduped per
+  // `staff-recovery:<profileId>:<hour>`, the delivery table refuses a delete by design ("cancel it
+  // instead"), and a profile can never be erased once it has acted — the audit trail's foreign key is
+  // RESTRICT. So a fixed identity receives ONE recovery message an hour, and a lane that runs twice in
+  // an hour would fail on the second run for a reason that has nothing to do with the product.
+  //
+  // A fresh address is a fresh profile id, which is a fresh dedupe key. Nothing is deleted: the
+  // identities a previous run used stay as history, which is what an audit trail is for.
+  const recoverableEmail = input.recoverableEmail ?? DEMO_RECOVERABLE_EMAIL;
+  const recoverable = await db.userProfile.upsert({
+    where: { email: recoverableEmail },
+    create: {
+      email: recoverableEmail,
+      displayName: DEMO_RECOVERABLE_DISPLAY_NAME,
+      status: "active",
+    },
+    update: {},
+  });
+
+  await db.userCredential.upsert({
+    where: { userProfileId: recoverable.id },
+    create: { userProfileId: recoverable.id, passwordHash: input.recoverablePasswordHash },
+    update: { passwordHash: input.recoverablePasswordHash },
+  });
+
+  await db.tenantMembership.upsert({
+    where: {
+      tenantId_userProfileId: { tenantId: tenant.id, userProfileId: recoverable.id },
+    },
+    create: {
+      tenantId: tenant.id,
+      userProfileId: recoverable.id,
+      roleId: ownerRole.id,
+      status: "ACTIVE",
+    },
+    update: {},
+  });
+
   let granted = 0;
   for (const code of DEMO_FEATURE_GRANTS) {
     const featureCode = await db.featureCode.findUnique({ where: { code }, select: { id: true } });
@@ -1006,5 +1071,6 @@ export async function seedDemoData(
     ownerProfileId: owner.id,
     membershipId: membership.id,
     grantedFeatureCodes: granted,
+    recoverableProfileId: recoverable.id,
   };
 }

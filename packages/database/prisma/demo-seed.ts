@@ -9,6 +9,7 @@ import {
   seedDemoPortal,
   seedDemoScheduling,
   DEMO_PORTAL_HOLDER_PASSWORD,
+  DEMO_RECOVERABLE_PASSWORD,
 } from "../src/demo-seed.js";
 
 /**
@@ -56,6 +57,12 @@ async function main(): Promise<void> {
     parallelism: ARGON_PARALLELISM,
   });
 
+  const recoverablePasswordHash = await hash(DEMO_RECOVERABLE_PASSWORD, {
+    memoryCost: ARGON_MEMORY_KIB,
+    timeCost: ARGON_TIME_COST,
+    parallelism: ARGON_PARALLELISM,
+  });
+
   const portalPasswordHash = await hash(DEMO_PORTAL_HOLDER_PASSWORD, {
     memoryCost: ARGON_MEMORY_KIB,
     timeCost: ARGON_TIME_COST,
@@ -64,7 +71,13 @@ async function main(): Promise<void> {
 
   const db = new PrismaClient();
   try {
-    const result = await seedDemoData(db, { passwordHash });
+    const result = await seedDemoData(db, {
+      passwordHash,
+      recoverablePasswordHash,
+      // A lane passes a fresh address so it gets a fresh identity (and therefore a fresh recovery
+      // dedupe window). Absent, the constant is used and the demo tenant stays reproducible.
+      recoverableEmail: process.env.DEMO_RECOVERABLE_EMAIL,
+    });
     const customers = await seedDemoCustomers(db, result.tenantId);
     const patients = await seedDemoPatients(db, result.tenantId);
     const clinical = await seedDemoClinical(db, result.tenantId);

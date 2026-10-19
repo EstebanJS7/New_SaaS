@@ -20,7 +20,31 @@ export const DEMO = {
   portalPassword: "demo-portal-password",
   /** The holder's pet, as the seed names it. */
   portalPetName: "Bobby",
+  /**
+   * The staff user whose password this lane is ALLOWED to destroy. The config normally overrides the
+   * address with a fresh one per run (`DEMO_RECOVERABLE_EMAIL`) — see the note there: a fixed identity
+   * can receive only one recovery message an hour.
+   */
+  recoverableEmailFallback: "recoverable@demo.newsaas.test",
+  /**
+   * What the SEED gives that user. The spec asserts it stops working, which is the half that proves the
+   * reset changed the credential rather than merely accepting the new password.
+   */
+  recoverablePassword: "demo-recoverable-password",
+  /**
+   * A staff user whose password this lane is ALLOWED to destroy. Recovery consumes a token and
+   * rewrites a credential, so resetting the owner's password would break every other flow in the same
+   * run, and restoring it afterwards would depend on the very path under test.
+   */
+
+  /** What recovery sets it to. Deliberately not the seeded value: a reset that changed nothing would
+   * pass a test that only checked "signing in works". */
+  recoveredPassword: "recovered-by-the-lane-password",
 } as const;
 
 /** Where the app is served. The lane drives the built app, the same way a deployment serves it. */
 export const WEB_BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
+
+/** The identity the recovery spec spends. Set by the config; the fallback keeps a bare run usable. */
+export const RECOVERABLE_EMAIL =
+  process.env.DEMO_RECOVERABLE_EMAIL ?? DEMO.recoverableEmailFallback;
