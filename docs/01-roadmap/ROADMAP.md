@@ -6,29 +6,29 @@ updated: 2026-10-17
 
 # ROADMAP
 
-| Epic    | Name                               |  Status | Depends on                |
-| ------- | ---------------------------------- | ------: | ------------------------- |
-| EPIC-00 | Foundation                         |    done | —                         |
-| EPIC-01 | Database/Auth/Tenancy              |    done | EPIC-00                   |
-| EPIC-02 | RBAC/Entitlements/Tenant Settings  |    done | EPIC-01                   |
-| EPIC-03 | Staff Shell/Design System/Branding |    done | EPIC-01                   |
-| EPIC-04 | Customers                          |    done | EPIC-02, EPIC-03          |
-| EPIC-05 | Veterinary Patients                |    done | EPIC-04                   |
-| EPIC-06 | Clinical                           |    done | EPIC-05                   |
-| EPIC-07 | Scheduling                         |    done | EPIC-04, EPIC-05          |
-| EPIC-08 | Portal                             |    done | EPIC-04, EPIC-05, EPIC-07 |
-| EPIC-09 | Catalog/Taxes                      |    done | EPIC-02                   |
-| EPIC-10 | Inventory                          |    done | EPIC-09                   |
-| EPIC-11 | Suppliers/Purchases                |    done | EPIC-10                   |
-| EPIC-12 | POS/Payments                       |    done | EPIC-09, EPIC-10          |
-| EPIC-13 | Cash                               |    done | EPIC-12                   |
-| EPIC-14 | Billing                            |    done | EPIC-12                   |
-| EPIC-15 | Fiscal Abstraction                 |    done | EPIC-14                   |
-| EPIC-16 | SIFEN Direct                       |    done | EPIC-15                   |
-| EPIC-17 | Notifications                      |    done | EPIC-07                   |
-| EPIC-18 | Dashboards/Reports                 | planned | prior domains             |
-| EPIC-19 | Imports                            | planned | EPIC-04, EPIC-05          |
-| EPIC-20 | Production Hardening               | planned | MVP feature epics         |
+| Epic    | Name                               |      Status | Depends on                |
+| ------- | ---------------------------------- | ----------: | ------------------------- |
+| EPIC-00 | Foundation                         |        done | —                         |
+| EPIC-01 | Database/Auth/Tenancy              |        done | EPIC-00                   |
+| EPIC-02 | RBAC/Entitlements/Tenant Settings  |        done | EPIC-01                   |
+| EPIC-03 | Staff Shell/Design System/Branding |        done | EPIC-01                   |
+| EPIC-04 | Customers                          |        done | EPIC-02, EPIC-03          |
+| EPIC-05 | Veterinary Patients                |        done | EPIC-04                   |
+| EPIC-06 | Clinical                           |        done | EPIC-05                   |
+| EPIC-07 | Scheduling                         |        done | EPIC-04, EPIC-05          |
+| EPIC-08 | Portal                             |        done | EPIC-04, EPIC-05, EPIC-07 |
+| EPIC-09 | Catalog/Taxes                      |        done | EPIC-02                   |
+| EPIC-10 | Inventory                          |        done | EPIC-09                   |
+| EPIC-11 | Suppliers/Purchases                |        done | EPIC-10                   |
+| EPIC-12 | POS/Payments                       |        done | EPIC-09, EPIC-10          |
+| EPIC-13 | Cash                               |        done | EPIC-12                   |
+| EPIC-14 | Billing                            |        done | EPIC-12                   |
+| EPIC-15 | Fiscal Abstraction                 |        done | EPIC-14                   |
+| EPIC-16 | SIFEN Direct                       |        done | EPIC-15                   |
+| EPIC-17 | Notifications                      |        done | EPIC-07                   |
+| EPIC-18 | Dashboards/Reports                 | in-progress | prior domains             |
+| EPIC-19 | Imports                            |     planned | EPIC-04, EPIC-05          |
+| EPIC-20 | Production Hardening               |     planned | MVP feature epics         |
 
 Update this table when Epic status changes.
 
@@ -207,3 +207,26 @@ implementation closure only: it is **not** a production-readiness statement. The
 open debt ([[TD-016]], [[TD-017]], [[TD-018]], [[TD-019]], [[TD-020]],
 [[TD-021]]) and [[EPIC-20]] Production Hardening remain, and a completed sale
 still cannot be reversed or refunded until the slice [[TD-018]] tracks lands.
+
+[[EPIC-18]] Dashboards/Reports moved to `in-progress` on 2026-10-19. The epic
+existed only as a row in the table above: no epic file, no Stories, and no
+reporting code, permission, route or CSV path anywhere in the repository. The
+kickoff is the epic file, nine Stories and five accepted Decisions — [[DEC-062]]
+(no feature-code gate, a `reports.read`/`reports.export` family, and one
+aggregation path shared by the dashboard and the reports), [[DEC-063]] (periods
+resolved in `TENANT_TIME_ZONE` with five presets and a 366-day bounded range),
+[[DEC-064]] (`sale.completed_at`, `purchase.received_at` and
+`cash_session.closed_at` become the reporting truth), [[DEC-065]] (a per-item
+`catalog_item.low_stock_threshold` and a staff-entered clinical `next_due_at`)
+and [[DEC-066]] (CSV is synchronous and bounded, not queued).
+
+Exploring the schema rather than the PRD is what shaped the kickoff: PRD §31
+asks for eleven reports and **three of them had no data source**. `sale`,
+`purchase` and `cash_session` carried a terminal status and no instant, so
+"sales by period" could not distinguish a draft from revenue; no table anywhere
+held a low-stock threshold; and `clinical_vaccination` and `clinical_deworming`
+stored only `administered_at`, making "upcoming" and "overdue" incomputable.
+[[REP-001]] is therefore the epic's first Story, and it touches five
+already-`done` epics' write paths — [[DEC-064]] and [[DEC-065]] declare those
+crossings instead of smuggling them in as report plumbing. This is a kickoff
+record, **never** a readiness claim.
