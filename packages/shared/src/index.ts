@@ -14,6 +14,9 @@ export {
   PASSWORD_RESET_TOKEN_TTL_MS,
   staffRecoveryUrl,
 } from "./staff-recovery.js";
+
+export { RESET_LINK_REFUSAL_MESSAGE, spendResetToken, unspentTokenWhere } from "./reset-token.js";
+export type { ResetTokenRow, ResetTokenSpend } from "./reset-token.js";
 export { DomainError } from "./errors/domain-error.js";
 export type { DomainErrorOptions } from "./errors/domain-error.js";
 export { ERROR_CODES, getStatusForCode } from "./errors/registry.js";

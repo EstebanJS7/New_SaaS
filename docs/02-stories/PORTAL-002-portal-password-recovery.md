@@ -268,15 +268,21 @@ cover their states).
 - **The recovery message is email-only**, like the staff one: the channel is
   fixed because a link is inherently an email-shaped thing and a WhatsApp
   variant would need a template and a decision nobody has taken.
-- **The two token services duplicate the compare-and-set and the uniform
-  refusal.** The primitives they share — entropy, digest, lifetime — live in
-  `@newsaas/shared`, so those cannot drift; the CAS is duplicated because the
-  two are bound to different tables and the repository prefers explicit code to
-  a generic base. Named rather than hidden: a future fix to the CAS has to land
-  in both.
-- **`STAFF_APP_BASE_URL` is reused for the portal's link**, because one web app
-  serves both surfaces. The deployment input's name is a misnomer, and renaming
-  it would break every existing deployment for a word.
+- **The two token services duplicated the compare-and-set and the uniform
+  refusal — PAID DOWN after the fact.** The primitives they shared — entropy,
+  digest, lifetime — were already in `@newsaas/shared`; the spend was not, and
+  the two copies were line for line identical apart from the table, the owner
+  column and the returned field. The algorithm (`spendResetToken`), the CAS
+  predicate (`unspentTokenWhere`) and the refusal's wording
+  (`RESET_LINK_REFUSAL_MESSAGE`) now live in the kernel, and each service keeps
+  only its table binding — which is the part that was genuinely different. The
+  bulk revoke is still per service: it is one `updateMany` with no race in it.
+- **`STAFF_APP_BASE_URL` was reused for the portal's link — RENAMED to
+  `WEB_APP_BASE_URL`.** One web app serves both surfaces, so one origin builds
+  both links. The old name stopped being true the day the portal used it, and
+  the claim that renaming "would break every existing deployment" was written
+  from habit: this repository has no deploy workflow and nothing has ever been
+  deployed, so the rename cost nothing but the edit.
 - **No `?next=` return path**, deliberately.
 - **A browser driving the two pages is not recorded**; the suites cover their
   states, and the live run drove the API through the BFF.

@@ -6,6 +6,9 @@ import {
   generatePasswordResetToken,
   hashPasswordResetToken,
   PASSWORD_RESET_TOKEN_TTL_MS,
+  RESET_LINK_REFUSAL_MESSAGE,
+  spendResetToken,
+  unspentTokenWhere,
 } from "@newsaas/shared";
 
 /**
@@ -36,9 +39,12 @@ export { generatePasswordResetToken, hashPasswordResetToken, PASSWORD_RESET_TOKE
  * one message for a wrong password and an unknown account.
  */
 
-/** One refusal for every cause. Exported so a suite can assert the uniformity. */
-export const RESET_TOKEN_INVALID_MESSAGE =
-  "This password reset link is not valid. Request a new one.";
+/**
+ * One refusal for every cause, and it is the KERNEL's: the portal says the same
+ * thing, and a surface that needed its own wording would be a product decision
+ * rather than an edit here.
+ */
+export const RESET_TOKEN_INVALID_MESSAGE = RESET_LINK_REFUSAL_MESSAGE;
 
 /** Structural view of the row this service decides on (the `StaffSession` pattern). */
 export interface PasswordResetTokenRow {
@@ -99,49 +105,45 @@ export class PasswordResetTokenService {
   /**
    * Spends a token, or refuses it — indistinguishably.
    *
-   * The marking is a **compare-and-set** rather than a read-then-write: two
-   * requests arriving with the same link must not both change a password, and the
-   * only place that can be decided is one statement whose `WHERE` carries the
-   * conditions the read already saw. A `count` of 0 therefore means "somebody else
-   * spent it, or it expired, between the read and the write", which is the same
-   * refusal.
+   * The algorithm and the CAS predicate live in `@newsaas/shared`, because the portal's service had
+   * the same eight lines with a different table name. What stays HERE is the part that is genuinely
+   * this service's: which table, and what a row means.
+   *
+   * The caller's transaction is passed through: a token spent outside the transaction that then fails
+   * would burn the link against a password that never changed.
    */
   async consume(
     token: unknown,
     now: Date = new Date(),
-    /**
-     * The caller's transaction, when the spending must be atomic with what follows.
-     * The reset path passes its own: a token spent outside the transaction that then
-     * fails would burn the link against a password that never changed.
-     */
     client?: PasswordResetTokenPrisma
   ): Promise<ConsumedPasswordResetToken> {
-    // A non-string never reaches a query. A caller passing `undefined` because a
-    // body field was missing gets the same refusal as a wrong token rather than a
-    // driver error, and no lookup happens at all.
-    if (typeof token !== "string" || token.length === 0) return refuse();
-
     const prisma = client ?? this.prisma;
-    const row = await prisma.passwordResetToken.findFirst({
-      where: { tokenHash: hashPasswordResetToken(token) },
-      select: {
-        id: true,
-        userProfileId: true,
-        tokenHash: true,
-        expiresAt: true,
-        consumedAt: true,
+    const row = await spendResetToken(
+      {
+        findByHash: (tokenHash) =>
+          prisma.passwordResetToken.findFirst({
+            where: { tokenHash },
+            select: {
+              id: true,
+              userProfileId: true,
+              tokenHash: true,
+              expiresAt: true,
+              consumedAt: true,
+            },
+          }),
+        // The CAS: still unspent and still unexpired AS OF THIS STATEMENT.
+        spendIfUnspent: async (id, at) =>
+          (
+            await prisma.passwordResetToken.updateMany({
+              where: unspentTokenWhere(id, at),
+              data: { consumedAt: at },
+            })
+          ).count,
       },
-    });
+      token,
+      now
+    );
     if (row === null) return refuse();
-    if (row.consumedAt !== null) return refuse();
-    if (row.expiresAt.getTime() <= now.getTime()) return refuse();
-
-    const spent = await prisma.passwordResetToken.updateMany({
-      // The CAS: still unspent and still unexpired AS OF THIS STATEMENT.
-      where: { id: row.id, consumedAt: null, expiresAt: { gt: now } },
-      data: { consumedAt: now },
-    });
-    if (spent.count !== 1) return refuse();
 
     return { tokenId: row.id, userProfileId: row.userProfileId };
   }

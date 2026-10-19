@@ -6,6 +6,9 @@ import {
   generatePasswordResetToken,
   hashPasswordResetToken,
   PASSWORD_RESET_TOKEN_TTL_MS,
+  RESET_LINK_REFUSAL_MESSAGE,
+  spendResetToken,
+  unspentTokenWhere,
 } from "@newsaas/shared";
 
 /**
@@ -13,19 +16,22 @@ import {
  *
  * The staff service's sibling ([[DAT-007]]), deliberately a SECOND explicit service rather than a
  * shared generic one: the two are bound to different tables with different subjects, and the
- * repository prefers explicit code to a generic base. The primitives they DO share — the entropy,
- * the digest and the lifetime — live in `@newsaas/shared`, so those cannot drift; what is duplicated
- * is the compare-and-set and the uniform refusal, and that duplication is named in the Story's
- * technical debt rather than hidden.
+ * repository prefers explicit code to a generic base. What they share — the entropy, the digest, the
+ * lifetime, the compare-and-set, the CAS predicate and the refusal's wording — lives in
+ * `@newsaas/shared`. The duplication this service shipped with was paid down once the two spends had
+ * proven to be the same eight lines: what is left here is the table binding, which is the part that is
+ * genuinely different.
  *
  * **A portal token is not a staff token.** It is keyed to a `customer_portal_access` row, and the
  * staff table's foreign key could not even hold one. That is [[DEC-008]]'s identity boundary, one
  * level down from the sessions: neither token may be redeemed for the other's password.
  */
 
-/** One refusal for every cause. Exported so a suite can assert the uniformity. */
-export const PORTAL_RESET_TOKEN_INVALID_MESSAGE =
-  "This password reset link is not valid. Request a new one.";
+/**
+ * One refusal for every cause, and it is the KERNEL's: a portal holder and a staff member are told the
+ * same thing, and neither is told which cause it was.
+ */
+export const PORTAL_RESET_TOKEN_INVALID_MESSAGE = RESET_LINK_REFUSAL_MESSAGE;
 
 /** Structural view of the row this service decides on (the `StaffSession` pattern). */
 export interface PortalResetTokenRow {
@@ -86,35 +92,45 @@ export class PortalPasswordResetTokenService {
    * same link must not both change a password, and the only place that can be decided is one
    * statement whose `WHERE` carries the conditions the read already saw.
    */
+  /**
+   * Spends a token, or refuses it — indistinguishably.
+   *
+   * The algorithm and the CAS predicate are the kernel's (`spendResetToken`), shared with the staff
+   * service: two copies of a spend is two chances to get a race wrong. What stays HERE is the table and
+   * what a row means for a portal holder.
+   */
   async consume(
     token: unknown,
     now: Date = new Date(),
     client?: PortalResetTokenPrisma
   ): Promise<ConsumedPortalResetToken> {
-    // A non-string never reaches a query, so a missing body field is the same refusal as a wrong
-    // token rather than a driver error.
-    if (typeof token !== "string" || token.length === 0) return refuse();
-
     const prisma = client ?? this.prisma;
-    const row = await prisma.portalPasswordResetToken.findFirst({
-      where: { tokenHash: hashPasswordResetToken(token) },
-      select: {
-        id: true,
-        portalAccessId: true,
-        tokenHash: true,
-        expiresAt: true,
-        consumedAt: true,
+    const row = await spendResetToken(
+      {
+        findByHash: (tokenHash) =>
+          prisma.portalPasswordResetToken.findFirst({
+            where: { tokenHash },
+            select: {
+              id: true,
+              portalAccessId: true,
+              tokenHash: true,
+              expiresAt: true,
+              consumedAt: true,
+            },
+          }),
+        // The CAS: still unspent and still unexpired AS OF THIS STATEMENT.
+        spendIfUnspent: async (id, at) =>
+          (
+            await prisma.portalPasswordResetToken.updateMany({
+              where: unspentTokenWhere(id, at),
+              data: { consumedAt: at },
+            })
+          ).count,
       },
-    });
+      token,
+      now
+    );
     if (row === null) return refuse();
-    if (row.consumedAt !== null) return refuse();
-    if (row.expiresAt.getTime() <= now.getTime()) return refuse();
-
-    const spent = await prisma.portalPasswordResetToken.updateMany({
-      where: { id: row.id, consumedAt: null, expiresAt: { gt: now } },
-      data: { consumedAt: now },
-    });
-    if (spent.count !== 1) return refuse();
 
     return { tokenId: row.id, portalAccessId: row.portalAccessId };
   }
