@@ -38,6 +38,11 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/fiscal", label: "Fiscal", requiredFeature: "fiscal" },
   { href: "/app/agenda", label: "Agenda" },
   { href: "/app/notifications", label: "Notifications" },
+  // The branding settings page had NO way in until the surface-integrity fence looked for orphans:
+  // the page, its upload and its live preview all existed, and nothing linked to them. It is not
+  // gated by `requiredFeature` because branding is a Platform capability every tenant has a
+  // resolved brand for, not a product entitlement.
+  { href: "/app/settings/branding", label: "Branding" },
 ];
 
 /**

@@ -23,7 +23,6 @@ vi.mock("next/navigation", () => ({ redirect: (path: string) => redirect(path) }
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import AppHomePage from "./app/page";
-import AppPlaceholderPage from "./app/placeholder/page";
 import AppShellLayout from "./layout";
 import { activeProductPreset, resolveBrand } from "@newsaas/ui/branding";
 
@@ -97,16 +96,22 @@ describe("AppShellLayout", () => {
     expect(within(region).getByText("Staff workspace")).toBeInTheDocument();
   });
 
-  it("keeps the shell around content of a deep-linked sub-route", async () => {
-    const element = await AppShellLayout({ children: <AppPlaceholderPage /> });
+  it("keeps the shell around the content of a deep-linked sub-route", async () => {
+    // The child is a SYNTHETIC element rather than a page, and it used to be a real route
+    // (`/app/placeholder`) that existed only for this case: a test-only route ships to production and
+    // is reachable by URL, and the surface-integrity fence reported it as the orphan it was. The
+    // property under test is the layout's — it surrounds ANY child — so a local element proves it
+    // without shipping a page nobody can reach.
+    const element = await AppShellLayout({
+      children: <div data-testid="sub-route-content">Sub-route content</div>,
+    });
     render(element);
 
-    // Same chrome as the direct visit: the group layout surrounds any child.
     expect(screen.getByTestId("nav-sidebar")).toBeInTheDocument();
     expect(screen.getByTestId("topbar")).toBeInTheDocument();
     const region = getContentRegion();
     expect(region.tagName).toBe("MAIN");
-    expect(within(region).getByTestId("placeholder-content")).toBeInTheDocument();
+    expect(within(region).getByTestId("sub-route-content")).toBeInTheDocument();
   });
 
   it("hosts the sample card in the bounded region consuming tokens only", async () => {
