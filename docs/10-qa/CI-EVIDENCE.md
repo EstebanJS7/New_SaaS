@@ -1867,13 +1867,64 @@ closure.
 
 ## EPIC-17 Notifications — closure (2026-10-17)
 
-### The CI receipt — and the defect it found on its first run
+### The CI receipts
 
 **The chain of pull requests was opened on 2026-10-18** (#126–#136, each
 targeting its parent, so each shows one reviewable slice), plus **#137**, an
-integration gate whose only purpose is to make CI observe the whole tree —
+integration gate whose only purpose was to make CI observe the whole tree —
 because this repository's workflow triggers on `pull_request` TARGETING `main`,
 and only #126 and #137 do.
+
+```text
+PR #126   feat/epic-17-notifications -> main
+  run 39152439629   DTE XSD 37s · Database migrations 1m10s · Lint/Typecheck/Test/Build 6m2s   PASS
+
+PR #137   feat/portal-001-portal-sign-in -> main   (the whole stack, 59 commits)
+  run 39155599732   DTE XSD 38s · Database migrations 1m34s · Lint/Typecheck/Test/Build 6m6s   PASS
+  run 39156282564   the final tip, after the docs commit                                    PASS
+
+PR #138   feat/portal-002-portal-recovery -> main  (portal password recovery)
+  run 39191719324   DTE XSD 40s · Database migrations 1m24s · Lint/Typecheck/Test/Build 6m17s  PASS
+```
+
+**And the runs on `main` itself**, each triggered by the merge that landed it:
+
+```text
+39157033545  #137 merged      7m5s   PASS
+39160040755  TD-049's fix     6m     PASS
+39161381175  TD-050 corrected 4m59s  PASS
+39162930460  TD-050 unified   5m50s  PASS
+39192397037  #138 merged      (the newest; see the note below)
+```
+
+**The first run of #137 FAILED, and that is the most useful thing in this
+file.** It failed in the `Live PostgreSQL application-path isolation evidence`
+job with `Error: REDIS_URL is not set`, thrown by `NotificationsModule`'s
+producer factory while `Test.createTestingModule({imports: [AppModule]})`
+compiled. That suite already stubs the two other producers that read `REDIS_URL`
+at construction — the branding cleanup one and the fiscal submission one — and
+the notification delivery producer, added by EPIC-17, is the third. **The suite
+had never seen it, because EPIC-17 had never been pushed**: a job that boots
+`AppModule` against a live PostgreSQL had never booted with that module present.
+
+The fix is that third recording fake, committed as `861a6e5`, in the same shape
+as the other two. **Nothing local could have found it**: the API's own test
+harness stubs that producer as well, so every local gate was green. That is what
+a CI receipt is for, and this one earned its place by failing before it passed.
+
+**One local failure was an environment artifact, and it is recorded so the next
+reader does not chase it**: the FISC-011 range case inserts
+`'2018-04-30'::timestamptz` into a `date` column whose
+`validity_start_is_a_date` CHECK requires midnight **in UTC**. On a session
+whose timezone is `America/Asuncion` the literal lands at 04:00 UTC and the
+wrong check fires first; CI's PostgreSQL runs in UTC, where the case expects the
+floor check and gets it. Verified by the CI run passing that same case.
+
+**The one lag this file has, stated rather than chased**: the run for the merge
+that carried _this_ documentation update is newer than the list above. Every
+entry here was read from `gh run list` at the time it was written, and the
+newest line names what it is rather than pretending to a conclusion it does not
+have yet.
 
 ```text
 PR #126  feat/epic-17-notifications -> main
