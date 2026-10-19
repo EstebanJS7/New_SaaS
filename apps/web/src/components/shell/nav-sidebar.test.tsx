@@ -10,7 +10,7 @@ describe("NavSidebar", () => {
     expect(within(sidebar).getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
 
     const entries = within(sidebar).getAllByTestId("nav-entry");
-    expect(entries).toHaveLength(14);
+    expect(entries).toHaveLength(15);
 
     const [
       customers,
@@ -24,6 +24,7 @@ describe("NavSidebar", () => {
       fiscal,
       agenda,
       notifications,
+      branding,
     ] = entries;
     expect(customers.tagName).toBe("A");
     expect(customers.getAttribute("href")).toBe("/app/customers");
@@ -69,7 +70,13 @@ describe("NavSidebar", () => {
     expect(notifications.getAttribute("href")).toBe("/app/notifications");
     expect(notifications.textContent).toBe("Notifications");
 
-    for (const entry of entries.slice(11)) {
+    // The surface-integrity fence found this page unreachable: a whole settings surface with no way
+    // in. This assertion is what keeps it reachable.
+    expect(branding.tagName).toBe("A");
+    expect(branding.getAttribute("href")).toBe("/app/settings/branding");
+    expect(branding.textContent).toBe("Branding");
+
+    for (const entry of entries.slice(12)) {
       expect(entry.tagName).toBe("BUTTON");
       expect((entry as HTMLButtonElement).type).toBe("button");
       expect(entry.textContent).toMatch(/^Section [a-z]+$/i);
@@ -80,7 +87,7 @@ describe("NavSidebar", () => {
     const { container } = render(<NavSidebar />);
 
     const links = [...container.querySelectorAll("a")];
-    expect(links).toHaveLength(11);
+    expect(links).toHaveLength(12);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/app/customers",
       "/app/patients",
@@ -93,6 +100,7 @@ describe("NavSidebar", () => {
       "/app/fiscal",
       "/app/agenda",
       "/app/notifications",
+      "/app/settings/branding",
     ]);
     // Billing is a real destination now; the placeholders stay chrome-only and
     // no appointment, invoice or schedule surface exists behind this chrome.

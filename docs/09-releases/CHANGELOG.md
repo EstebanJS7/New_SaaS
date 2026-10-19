@@ -4,6 +4,16 @@ All notable product changes will be documented here.
 
 ## Unreleased
 
+### Fixed
+
+- **The branding settings page is reachable.** It existed — upload, colours,
+  live preview, reset to product defaults — and **nothing linked to it**, so no
+  staff member could get there. Found by a new surface-integrity fence that
+  asserts every page is reachable from a link and every link resolves to a page;
+  it reported this page and a test-only route (`/app/placeholder`) as the app's
+  only two orphans, and both are fixed. The fence runs in CI and reads source,
+  so it needs no infrastructure.
+
 ### Added
 
 - DAT-007 — **staff password recovery**, resolving the deferral [[TD-004]] had
