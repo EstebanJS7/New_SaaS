@@ -9,7 +9,7 @@
     "e2e": "playwright test",
     "e2e:report": "playwright show-report",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint \"specs/**/*.ts\" \"*.ts\""
+    "lint": "eslint \"specs/**/*.ts\" \"support/**/*.ts\" \"*.ts\""
   },
   "devDependencies": {
     "@newsaas/eslint-config": "workspace:*",

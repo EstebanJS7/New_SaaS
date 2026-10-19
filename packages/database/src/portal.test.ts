@@ -332,6 +332,7 @@ function makeFakePortalDb(): {
       string,
       { id: string; tenantId: string; customerId: string; contactEmail: string; status: string }
     >;
+    credentials: Map<string, { portalAccessId: string; passwordHash: string }>;
     bookingRequests: Map<
       string,
       {

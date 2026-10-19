@@ -289,7 +289,10 @@ describe("seedDemoData", () => {
     const { db, tables } = makeFakeDb();
     await seedDemoData(db, input);
 
-    const rotated = { passwordHash: "$argon2id$v=19$m=65536,t=3,p=4$rotated$hash" };
+    const rotated = {
+      passwordHash: "$argon2id$v=19$m=65536,t=3,p=4$rotated$hash",
+      recoverablePasswordHash: input.recoverablePasswordHash,
+    };
     await seedDemoData(db, rotated);
 
     expect([...tables.credentials.values()][0].passwordHash).toBe(rotated.passwordHash);

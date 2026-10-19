@@ -74,11 +74,15 @@ which is exactly where this session's bugs lived.
 - [ ] **WU-2 — the portal flow.** Sign in at `/[slug]/login` → open a pet → and
       the gate: a protected page without a session redirects to the login.
 - [x] **WU-3 — the recovery flow, end to end.** Request a reset → be the SMTP
-      server → decode the message → follow the link → set a new password → sign
-      in with it. Needs Redis, the worker and the sink. This is the flow the
-      session ran by hand and the one worth automating most: it is the only one
-      that proves the link that leaves by mail works.
-- [ ] **WU-4 — the records.** The lane's README, the QA record, and CI evidence.
+- [ ] **NOT in this lane: the portal's recovery flow.** Same shape, same hourly
+      dedupe ceiling, but its fixture is a portal holder — a fresh one per run
+      costs a fresh customer link, which is a bigger fixture than a staff
+      profile. Named rather than half-built. server → decode the message →
+      follow the link → set a new password → sign in with it. Needs Redis, the
+      worker and the sink. This is the flow the session ran by hand and the one
+      worth automating most: it is the only one that proves the link that leaves
+      by mail works.
+- [x] **WU-4 — the records.** The lane's README, the QA record, and CI evidence.
 
 ### WU-3 — the recovery flow, end to end
 

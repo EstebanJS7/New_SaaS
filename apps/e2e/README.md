@@ -28,6 +28,32 @@ them running locally.
 
 A failing run writes a trace; `pnpm --filter @newsaas/e2e e2e:report` opens it.
 
+## What each spec needs
+
+| spec                              | needs                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| `staff-sign-in`, `portal-sign-in` | PostgreSQL, Redis, the built API and web                                             |
+| `staff-recovery`                  | the same, plus the **worker** (it mints the token at send time) and an **SMTP sink** |
+
+The recovery spec starts the worker itself and listens on port 2526 as a minimal
+SMTP server, because there is no other place the link exists: the channel fake
+never logs a recipient, the delivery row does not hold the message, and a
+plaintext token is never stored. It also runs the real `nodemailer` adapter.
+
+**Every run uses a fresh recoverable identity.** A staff recovery delivery is
+deduped per `(profileId, hour)`, the delivery table refuses a DELETE by design,
+and a profile can never be erased once it has acted. The config therefore sets
+`DEMO_RECOVERABLE_EMAIL` to a new address per run, which is a new profile id,
+which is a new dedupe key — and nothing is deleted, because the identities
+earlier runs used are history.
+
+The worker's environment is the complete set a real adapter needs
+(`NOTIFICATION_EMAIL_ENV_VARS`): `EMAIL_PROVIDER=smtp`, `SMTP_HOST`,
+`SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` and
+`NOTIFICATION_EMAIL_FROM`. The channel module refuses a boot when any of them is
+missing, which is the right rule and which the lane had to learn one variable at
+a time.
+
 ## What it does NOT prove
 
 - **It is not the gate.** A browser test is slower and flakier than a unit test.
