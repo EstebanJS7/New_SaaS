@@ -6,6 +6,50 @@ updated: 2026-08-13
 
 # Release Checklist
 
+## The browser lane (2026-10-19)
+
+The smoke pass above closed what reading could close and named what it could
+not: **no suite drove a browser**, so a page that renders and whose form does
+not submit passed every check in this repository.
+
+`apps/e2e` is that lane. It runs Chromium against the BUILT apps (PostgreSQL,
+Redis, the API's own `start` command, `next start`) and covers nine flows:
+
+```text
+staff        sign in, land on the shell, a list with rows from the API
+             Enter submits; a wrong password is refused
+portal       sign in, land on the tenant home, the pet list with the holder's pets
+             Enter submits; no session -> the tenant's sign-in page; a staff cookie is not a portal one
+recovery     ask for a link, BE the SMTP server, follow the link, set a new password,
+             sign in with it, the OLD one refused, the link single-use
+```
+
+**It found five defects before it was green**, and every one of them was found
+by a human looking, or by a hand-run `curl`, in this same session — none by a
+test:
+
+1. `/app/settings/branding` was unreachable (found by the surface-integrity
+   fence, fixed in the same session).
+2. A test-only route shipped to production (`/app/placeholder`, same fence, same
+   fix).
+3. **None of the four sign-in and recovery forms was a `<form>`**: Enter did
+   nothing.
+4. **`pnpm --filter @newsaas/api start` did not work** — the production start
+   command of a deployable pointed at a file the build does not emit.
+5. **The demo tenant's portal was unsignable** — the seed created the holder's
+   access row and no credential.
+
+**What the lane does NOT cover, named rather than implied:**
+
+- **The portal's recovery flow.** Its fixture is a portal holder, and the same
+  hourly dedupe ceiling applies to it; regenerating a holder per run costs a
+  fresh customer link, which is a bigger fixture than a staff profile. Recorded,
+  not hidden.
+- **A handful of flows, not the product.** What is not in a spec is not checked.
+- **It is not the gate.** A browser test is slower and flakier than a unit test;
+  the fast suites stay the primary evidence and the lane is deliberately outside
+  `pnpm test`.
+
 ## The surface smoke pass (2026-10-19)
 
 Run after [[SHELL-001]] and [[PORTAL-002]] made both identities signable,

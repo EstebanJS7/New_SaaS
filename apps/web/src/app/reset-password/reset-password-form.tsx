@@ -104,56 +104,63 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
         <CardDescription>Choose a new password for your account.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <label htmlFor="reset-password" className="text-sm font-medium">
-            New password
-          </label>
-          <input
-            id="reset-password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          {tooShort ? (
-            <p data-testid="reset-too-short" className="text-sm text-destructive">
-              {`Use at least ${MIN_PASSWORD_LENGTH} characters.`}
-            </p>
-          ) : null}
-        </div>
-        <div className="space-y-2">
-          <label htmlFor="reset-confirmation" className="text-sm font-medium">
-            Repeat it
-          </label>
-          <input
-            id="reset-confirmation"
-            type="password"
-            autoComplete="new-password"
-            value={confirmation}
-            onChange={(event) => setConfirmation(event.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          {mismatch ? (
-            <p data-testid="reset-mismatch" className="text-sm text-destructive">
-              The two passwords do not match.
-            </p>
-          ) : null}
-        </div>
-        {problem === null ? null : (
-          <p data-testid="reset-problem" className="text-sm text-destructive">
-            {problem}
-          </p>
-        )}
-        <Button
-          type="button"
-          disabled={!canSubmit || status === "submitting"}
-          onClick={() => {
+        {/*
+          A real `<form>`: the same defect the lane found on the two sign-in surfaces, and the same
+          fix. With the fields in a plain container and the button as `type="submit"`, Enter did
+          nothing — and a recovery form is exactly where a password manager fills and submits.
+        */}
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
             void submit();
           }}
         >
-          {status === "submitting" ? "Changing..." : "Change password"}
-        </Button>
+          <div className="space-y-2">
+            <label htmlFor="reset-password" className="text-sm font-medium">
+              New password
+            </label>
+            <input
+              id="reset-password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {tooShort ? (
+              <p data-testid="reset-too-short" className="text-sm text-destructive">
+                {`Use at least ${MIN_PASSWORD_LENGTH} characters.`}
+              </p>
+            ) : null}
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="reset-confirmation" className="text-sm font-medium">
+              Repeat it
+            </label>
+            <input
+              id="reset-confirmation"
+              type="password"
+              autoComplete="new-password"
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {mismatch ? (
+              <p data-testid="reset-mismatch" className="text-sm text-destructive">
+                The two passwords do not match.
+              </p>
+            ) : null}
+          </div>
+          {problem === null ? null : (
+            <p data-testid="reset-problem" className="text-sm text-destructive">
+              {problem}
+            </p>
+          )}
+          <Button type="submit" disabled={!canSubmit || status === "submitting"}>
+            {status === "submitting" ? "Changing..." : "Change password"}
+          </Button>
+        </form>
       </CardContent>
     </Card>
   );

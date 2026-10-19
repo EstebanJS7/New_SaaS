@@ -11,3 +11,8 @@ coverage/
 
 # Generated Prisma Client output (rebuilt from schema by `prisma generate`).
 packages/database/src/generated/
+
+# Playwright's artefacts. `.gitignore` keeps them out of a commit; Prettier does not read that file, so
+# a run's trace and report would otherwise be reported as a formatting failure.
+apps/e2e/test-results
+apps/e2e/playwright-report

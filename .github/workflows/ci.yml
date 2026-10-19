@@ -130,6 +130,85 @@ jobs:
       - name: Build
         run: pnpm build
 
+  e2e:
+    # The browser lane (apps/e2e). It is the only job that drives the BUILT apps through a real
+    # browser, which is the only way to catch the class of defect this repository kept finding by hand:
+    # a page that does not exist, a proxy that answers 500, a form that renders and does not submit.
+    # Three such defects were found by looking or by a hand-run curl, and none by a test.
+    #
+    # It is a separate job on purpose: a browser test is slower and flakier than a unit test, and the
+    # fast `quality` job must not wait on it or fail because of it.
+    name: Browser end-to-end
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: newsaas_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d newsaas_migrations"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the browser
+        # `--with-deps` installs the system libraries Chromium needs. It is the reason this job cannot
+        # simply run the lane's npm script: the browser is a deployment-time concern of the runner.
+        run: pnpm --filter @newsaas/e2e exec playwright install --with-deps chromium
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run the lane
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
+          REDIS_URL: redis://localhost:6379
+        run: pnpm --filter @newsaas/e2e e2e
+
+      - name: Upload the report and traces
+        # A trace on failure is the whole reason a browser test is worth having: it is the recording of
+        # what the browser actually saw. Keeping it only on failure keeps the artefacts meaningful.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            apps/e2e/playwright-report
+            apps/e2e/test-results
+          retention-days: 7
+
   xsd-validation:
     # FISC-008 WU-B. The acceptance criterion is "a DTE XML validates against the
     # official XSD before any submission". The schemas are copyrighted and are

@@ -17,6 +17,7 @@ import {
   type DemoPatientsSeedClient,
   type DemoPatientsSeedTxClient,
   type DemoSeedClient,
+  DEMO_RECOVERABLE_EMAIL,
 } from "./demo-seed.js";
 
 /**
@@ -202,7 +203,10 @@ function makeFakeDb() {
 }
 
 describe("seedDemoData", () => {
-  const input = { passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$demo$hash" };
+  const input = {
+    passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$demo$hash",
+    recoverablePasswordHash: "$argon2id$v=19$m=19456,t=2,p=1$demo$recoverable-hash",
+  };
 
   it("creates the demo tenant, owner profile+credential, membership and explicit grants", async () => {
     const { db, tables } = makeFakeDb();
@@ -210,11 +214,16 @@ describe("seedDemoData", () => {
     const result = await seedDemoData(db, input);
 
     expect(tables.tenants.size).toBe(1);
-    expect(tables.profiles.size).toBe(1);
-    expect([...tables.profiles.values()][0].email).toBe(DEMO_OWNER_EMAIL);
-    // Credential is keyed by the owner profile id and holds ONLY a hash.
+    // TWO staff profiles: the owner, and the one a recovery test is allowed to spend.
+    expect(tables.profiles.size).toBe(2);
+    const emails = [...tables.profiles.values()].map((row) => row.email).sort();
+    expect(emails).toEqual([DEMO_RECOVERABLE_EMAIL, DEMO_OWNER_EMAIL].sort());
+    // Credentials are keyed by profile id and hold ONLY a hash — for both users.
     expect(tables.credentials.has(result.ownerProfileId)).toBe(true);
-    expect(tables.memberships.size).toBe(1);
+    expect(tables.credentials.get(result.recoverableProfileId)?.passwordHash).toBe(
+      input.recoverablePasswordHash
+    );
+    expect(tables.memberships.size).toBe(2);
     expect(result.grantedFeatureCodes).toBe(DEMO_FEATURE_GRANTS.length);
     expect(tables.entitlements.size).toBe(DEMO_FEATURE_GRANTS.length);
 
@@ -226,16 +235,51 @@ describe("seedDemoData", () => {
     expect(tables.featureCodes.size).toBe(DEMO_FEATURE_GRANTS.length);
   });
 
+  it("seeds a recoverable staff user, at the address the caller asked for", async () => {
+    const { db, tables } = makeFakeDb();
+
+    const result = await seedDemoData(db, input);
+
+    // Recovery consumes a token and REWRITES a credential, so a lane that reset the owner's password
+    // would break every other flow in the same run. This user exists to be reset.
+    expect(result.recoverableProfileId).not.toBe(result.ownerProfileId);
+    expect(tables.profiles.get(result.recoverableProfileId)?.email).toBe(DEMO_RECOVERABLE_EMAIL);
+    const memberships = [...tables.memberships.values()].filter(
+      (row) => row.userProfileId === result.recoverableProfileId
+    );
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]?.status).toBe("ACTIVE");
+  });
+
+  it("seeds a DIFFERENT recoverable identity when asked for another address", async () => {
+    const { db } = makeFakeDb();
+
+    const first = await seedDemoData(db, input);
+    const second = await seedDemoData(db, {
+      ...input,
+      recoverableEmail: "recoverable+run2@demo.newsaas.test",
+    });
+
+    // A staff recovery delivery is deduped per (profileId, hour), the delivery table refuses a delete
+    // by design, and a profile can never be erased once it has acted (the audit trail's foreign key is
+    // RESTRICT). So a FIXED identity receives one recovery message an hour, and a fresh ADDRESS is the
+    // only way a lane can run the flow twice within one. Nothing is deleted: the older identities stay
+    // as history, which is what an audit trail is for.
+    expect(second.recoverableProfileId).not.toBe(first.recoverableProfileId);
+  });
+
   it("converges on rerun: no duplicate tenants, profiles or grants", async () => {
     const { db, tables } = makeFakeDb();
 
     await seedDemoData(db, input);
     const second = await seedDemoData(db, input);
 
+    // Both staff users converge: two profiles, two credentials, two memberships, and no duplicates
+    // however many times the seed runs.
     expect(tables.tenants.size).toBe(1);
-    expect(tables.profiles.size).toBe(1);
-    expect(tables.credentials.size).toBe(1);
-    expect(tables.memberships.size).toBe(1);
+    expect(tables.profiles.size).toBe(2);
+    expect(tables.credentials.size).toBe(2);
+    expect(tables.memberships.size).toBe(2);
     expect(tables.entitlements.size).toBe(DEMO_FEATURE_GRANTS.length);
     expect(second.grantedFeatureCodes).toBe(DEMO_FEATURE_GRANTS.length);
     expect(second.ownerProfileId).toBe((await seedDemoData(db, input)).ownerProfileId);
@@ -245,7 +289,10 @@ describe("seedDemoData", () => {
     const { db, tables } = makeFakeDb();
     await seedDemoData(db, input);
 
-    const rotated = { passwordHash: "$argon2id$v=19$m=65536,t=3,p=4$rotated$hash" };
+    const rotated = {
+      passwordHash: "$argon2id$v=19$m=65536,t=3,p=4$rotated$hash",
+      recoverablePasswordHash: input.recoverablePasswordHash,
+    };
     await seedDemoData(db, rotated);
 
     expect([...tables.credentials.values()][0].passwordHash).toBe(rotated.passwordHash);
