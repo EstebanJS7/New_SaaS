@@ -19,6 +19,8 @@ import { PortalProfileController } from "./portal-profile.controller.js";
 import { PortalProfileService } from "./portal-profile.service.js";
 import { PortalReadController } from "./portal-read.controller.js";
 import { PortalReadService } from "./portal-read.service.js";
+import { PortalPasswordRecoveryService } from "./portal-password-recovery.service.js";
+import { PortalPasswordResetTokenService } from "./portal-password-reset-token.service.js";
 import { PortalSessionService } from "./portal-session.service.js";
 
 /**
@@ -47,6 +49,8 @@ import { PortalSessionService } from "./portal-session.service.js";
   ],
   providers: [
     PortalSessionService,
+    PortalPasswordResetTokenService,
+    PortalPasswordRecoveryService,
     PortalAuthService,
     PortalAccessService,
     PortalReadService,

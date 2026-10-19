@@ -7,6 +7,7 @@ import {
   staffRecoveryUrl,
   TENANT_TIME_ZONE,
 } from "@newsaas/shared";
+import { portalRecoveryUrl } from "@newsaas/notifications";
 import type {
   NotificationContentBuilder,
   NotificationContentOutcome,
@@ -94,6 +95,21 @@ export interface NotificationContentClient {
   passwordResetToken: {
     create(args: Prisma.PasswordResetTokenCreateArgs): Promise<{ id: string }>;
   };
+  /**
+   * The PORTAL_ACCOUNT branch's three needs ([[PORTAL-002]]): the gate (an ACTIVE access with a
+   * credential), the tenant whose slug goes in the link, and the token it mints at send time.
+   */
+  customerPortalAccess: {
+    findFirst(
+      args: Prisma.CustomerPortalAccessFindFirstArgs
+    ): Promise<{ id: string; status: string; credential?: unknown } | null>;
+  };
+  tenant: {
+    findFirst(args: Prisma.TenantFindFirstArgs): Promise<{ id: string; slug: string } | null>;
+  };
+  portalPasswordResetToken: {
+    create(args: Prisma.PortalPasswordResetTokenCreateArgs): Promise<{ id: string }>;
+  };
 }
 
 /**
@@ -151,6 +167,13 @@ export function createNotificationContentBuilder(args: {
           return buildFiscalNotice(args.client, request, delivery.sourceId);
         case "STAFF_ACCOUNT":
           return buildStaffRecovery(args.client, args.staffAppBaseUrl, delivery.sourceId);
+        case "PORTAL_ACCOUNT":
+          return buildPortalRecovery(
+            args.client,
+            args.staffAppBaseUrl,
+            delivery.sourceId,
+            request.tenantId
+          );
         default:
           return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
       }
@@ -294,6 +317,66 @@ async function buildStaffRecovery(
     // The link is the message. There is no greeting, no name and no tenant: the mail
     // is about a credential, and the fewer facts it carries about who received it, the
     // less it is worth to anybody who reads the inbox by accident.
+    body: `Podés elegir una contraseña nueva con este enlace: ${url}`,
+    parameters: [url],
+  };
+}
+
+/**
+ * The portal's password-recovery message ([[PORTAL-002]]).
+ *
+ * Gated on the access being ACTIVE and having a credential, read NOW rather than trusted from the
+ * event that created the intent: a holder who lost either cannot sign in, so a link that changes
+ * their password is a link to nowhere.
+ *
+ * The link carries the tenant's SLUG in the path, because the portal surface is `/[slug]/…` and the
+ * page must know which clinic the holder is at before any session exists. The token is minted HERE,
+ * for the reason the staff branch records: content is built at send time, a plaintext token cannot be
+ * rebuilt from a digest, and minting at send time keeps the plaintext inside this one function.
+ *
+ * `staffAppBaseUrl` is reused deliberately: one web app serves both surfaces, and the deployment
+ * input's name is a misnomer this Story records rather than renames — changing it would break every
+ * existing deployment for a word.
+ */
+async function buildPortalRecovery(
+  client: NotificationContentClient,
+  appBaseUrl: string,
+  portalAccessId: string,
+  tenantId: string
+): Promise<NotificationContentOutcome> {
+  const access = await client.customerPortalAccess.findFirst({
+    where: { id: portalAccessId, tenantId },
+    select: { id: true, status: true, credential: { select: { portalAccessId: true } } },
+  });
+  // The status is explicit — a SUSPENDED access is not a holder who can sign in — and the credential
+  // is FALSY rather than `=== null`, because a client that does not model the relation answers
+  // `undefined` and a strict null check would read "no credential" as "has one".
+  if (access?.status !== "ACTIVE" || !access?.credential) {
+    return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
+  }
+
+  const tenant = await client.tenant.findFirst({
+    where: { id: tenantId },
+    select: { id: true, slug: true },
+  });
+  if (tenant === null) return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
+
+  const token = generatePasswordResetToken();
+  const now = new Date();
+  await client.portalPasswordResetToken.create({
+    data: {
+      portalAccessId,
+      // Only the DIGEST: the plaintext leaves this function inside the message.
+      tokenHash: hashPasswordResetToken(token),
+      expiresAt: new Date(now.getTime() + PASSWORD_RESET_TOKEN_TTL_MS),
+    },
+    select: { id: true },
+  });
+
+  const url = portalRecoveryUrl(appBaseUrl, tenant.slug, token);
+  return {
+    outcome: "READY",
+    subject: "Recuperación de contraseña",
     body: `Podés elegir una contraseña nueva con este enlace: ${url}`,
     parameters: [url],
   };

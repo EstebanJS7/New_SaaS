@@ -26,6 +26,10 @@ const STAFF_APP_BASE_URL = "https://app.example.test";
 const staffProfileId = "66666666-6666-4666-8666-666666666666";
 const staffDelivery = { sourceType: "STAFF_ACCOUNT", sourceId: staffProfileId };
 
+/** The portal access a recovery delivery points at, passed explicitly below. */
+const portalAccessId = "77777777-7777-4777-8777-777777777777";
+const portalDelivery = { sourceType: "PORTAL_ACCOUNT", sourceId: portalAccessId };
+
 function setup(args: {
   readonly sourceType?: "APPOINTMENT" | "FISCAL_DOCUMENT" | "STAFF_ACCOUNT";
   readonly delivery?: { sourceType: string; sourceId: string } | null;
@@ -34,6 +38,7 @@ function setup(args: {
   readonly fiscalDocument?: { status: string; invoiceId: string; cdc: string | null } | null;
   readonly invoice?: { series: string; number: number | null } | null;
   readonly profile?: { id: string; credential?: unknown } | null;
+  readonly portalAccess?: { id: string; status: string; credential?: unknown } | null;
 }) {
   // Locals hold the mocks: an assertion against `client.x.findFirst` would detach
   // an object's method from its receiver, which the lint refuses.
@@ -76,6 +81,17 @@ function setup(args: {
   // Typed with a parameter so the call's ARGUMENTS are readable in an assertion:
   // a zero-argument mock gives a tuple type of length 0.
   const tokenCreate = vi.fn((_args: { data: unknown }) => Promise.resolve({ id: "token-1" }));
+  const tenantFind = vi.fn(() => Promise.resolve({ id: "t-1", slug: "demo" }));
+  const portalAccessFind = vi.fn((_args: { where: unknown }) =>
+    Promise.resolve(
+      args.portalAccess === undefined
+        ? { id: "pa-1", status: "ACTIVE", credential: { portalAccessId: "pa-1" } }
+        : args.portalAccess
+    )
+  );
+  const portalTokenCreate = vi.fn((_args: { data: unknown }) =>
+    Promise.resolve({ id: "portal-token-1" })
+  );
 
   const client = {
     notificationDelivery: { findFirst: deliveryFind },
@@ -85,6 +101,9 @@ function setup(args: {
     invoice: { findFirst: invoiceFind },
     userProfile: { findFirst: profileFind },
     passwordResetToken: { create: tokenCreate },
+    tenant: { findFirst: tenantFind },
+    customerPortalAccess: { findFirst: portalAccessFind },
+    portalPasswordResetToken: { create: portalTokenCreate },
   } as unknown as NotificationContentClient;
 
   return {
@@ -95,6 +114,8 @@ function setup(args: {
     fiscalFind,
     profileFind,
     tokenCreate,
+    portalAccessFind,
+    portalTokenCreate,
   };
 }
 
@@ -331,5 +352,48 @@ describe("the staff password-recovery message (DAT-007)", () => {
     // person. A tenant predicate here would find nobody.
     expect(profileFind.mock.calls[0]?.[0].where).toEqual({ id: staffProfileId });
     expect(JSON.stringify(profileFind.mock.calls[0]?.[0]?.where)).not.toContain(tenantId);
+  });
+});
+
+describe("the portal password-recovery message (PORTAL-002)", () => {
+  it("mints the token AT SEND TIME, keyed to the access, and builds the link with the tenant SLUG", async () => {
+    const { builder, portalTokenCreate, portalAccessFind } = setup({ delivery: portalDelivery });
+    const url = `${STAFF_APP_BASE_URL}/demo/reset-password?token=`;
+    const outcome = await builder.build({ ...request, tenantId: "t-1" });
+
+    if (outcome.outcome !== "READY") throw new Error(`expected READY, got ${outcome.outcome}`);
+    // The slug is in the PATH, because the page has to know which clinic the holder is at before any
+    // session exists.
+    expect(outcome.body).toContain(url);
+    const created = portalTokenCreate.mock.calls[0]?.[0] as {
+      data: { portalAccessId: string; tokenHash: string; expiresAt: Date };
+    };
+    expect(created.data.portalAccessId).toBe(portalAccessId);
+    expect(created.data.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    // The plaintext is in the message and nowhere else: the row holds the digest.
+    const plaintext = outcome.parameters[0]?.split("token=")[1] ?? "";
+    expect(plaintext).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(created.data.tokenHash).not.toContain(plaintext);
+
+    // The gate is TENANT-predicated: an access belongs to a clinic.
+    expect(portalAccessFind.mock.calls[0]?.[0].where).toEqual({
+      id: portalAccessId,
+      tenantId: "t-1",
+    });
+  });
+
+  it("refuses a SUSPENDED access and one with no credential, minting nothing", async () => {
+    for (const portalAccess of [
+      { id: portalAccessId, status: "SUSPENDED", credential: { portalAccessId } },
+      { id: portalAccessId, status: "ACTIVE", credential: null },
+      null,
+    ]) {
+      const { builder, portalTokenCreate } = setup({ delivery: portalDelivery, portalAccess });
+      await expect(builder.build({ ...request, tenantId: "t-1" })).resolves.toMatchObject({
+        outcome: "UNAVAILABLE",
+        reasonCode: NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE,
+      });
+      expect(portalTokenCreate).not.toHaveBeenCalled();
+    }
   });
 });

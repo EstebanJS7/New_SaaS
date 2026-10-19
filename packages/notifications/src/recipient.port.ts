@@ -21,7 +21,7 @@ import type { NotificationChannel } from "./channel/channel.port.js";
  * DAT-007 for password recovery, and the reason its reader deliberately applies no
  * tenant predicate.
  */
-export type NotificationRecipientType = "CUSTOMER" | "STAFF";
+export type NotificationRecipientType = "CUSTOMER" | "STAFF" | "PORTAL_HOLDER";
 
 export interface NotificationRecipientReference {
   readonly tenantId: string;

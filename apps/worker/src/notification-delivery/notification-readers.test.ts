@@ -21,8 +21,9 @@ function recipientClient(result: { value: string } | null) {
   const findFirst = vi.fn((_args: RecipientFindArgs) => Promise.resolve(result));
   const client: NotificationRecipientClient = {
     customerContact: { findFirst },
-    // Not exercised by these cases: the STAFF branch has its own below.
+    // Not exercised by these cases: the STAFF and PORTAL_HOLDER branches have their own below.
     userProfile: { findFirst: () => Promise.resolve(null) },
+    customerPortalAccess: { findFirst: () => Promise.resolve(null) },
   };
   return { client, findFirst };
 }
@@ -36,6 +37,26 @@ function staffClient(result: { email: string } | null) {
   const client: NotificationRecipientClient = {
     customerContact: { findFirst: () => Promise.resolve(null) },
     userProfile: { findFirst },
+    customerPortalAccess: { findFirst: () => Promise.resolve(null) },
+  };
+  return { client, findFirst };
+}
+
+/**
+ * A client that serves the PORTAL_HOLDER branch and records what it was asked for.
+ *
+ * The property under test is which ADDRESS is resolved, so the stub answers with the access's own
+ * contact email and the case asserts the tenant predicate and the value.
+ */
+function portalHolderClient(result: { contactEmail: string } | null) {
+  const findFirst = vi.fn(
+    (_args: Parameters<NotificationRecipientClient["customerPortalAccess"]["findFirst"]>[0]) =>
+      Promise.resolve(result)
+  );
+  const client: NotificationRecipientClient = {
+    customerContact: { findFirst: () => Promise.resolve(null) },
+    userProfile: { findFirst: () => Promise.resolve(null) },
+    customerPortalAccess: { findFirst },
   };
   return { client, findFirst };
 }
@@ -114,6 +135,39 @@ describe("the recipient reader", () => {
     });
   });
 
+  it("resolves a PORTAL_HOLDER as the ACCESS's own contactEmail, tenant-predicated", async () => {
+    const { client, findFirst } = portalHolderClient({ contactEmail: "holder@portal.test" });
+    const reader = createNotificationRecipientReader({ client });
+
+    await expect(
+      reader.resolve({
+        tenantId: "99999999-9999-4999-8999-999999999999",
+        recipientType: "PORTAL_HOLDER",
+        recipientId: "11111111-1111-4111-8111-111111111111",
+        channel: "EMAIL",
+      })
+    ).resolves.toEqual({ address: "holder@portal.test" });
+
+    // The id AND the tenant: a portal access belongs to a clinic, unlike a staff profile.
+    expect(findFirst.mock.calls[0]?.[0].where).toEqual({
+      id: "11111111-1111-4111-8111-111111111111",
+      tenantId: "99999999-9999-4999-8999-999999999999",
+    });
+  });
+
+  it("settles a PORTAL_HOLDER that no longer exists", async () => {
+    const { client } = portalHolderClient(null);
+    const reader = createNotificationRecipientReader({ client });
+    await expect(
+      reader.resolve({
+        tenantId: "99999999-9999-4999-8999-999999999999",
+        recipientType: "PORTAL_HOLDER",
+        recipientId: "11111111-1111-4111-8111-111111111111",
+        channel: "EMAIL",
+      })
+    ).resolves.toBeNull();
+  });
+
   it("settles a STAFF profile that no longer exists, rather than retrying forever", async () => {
     const { client } = staffClient(null);
     const reader = createNotificationRecipientReader({ client });
@@ -134,6 +188,7 @@ describe("the recipient reader", () => {
         findFirst: () => Promise.reject(new Error("connection terminated")),
       },
       userProfile: { findFirst: () => Promise.resolve(null) },
+      customerPortalAccess: { findFirst: () => Promise.resolve(null) },
     };
     const reader = createNotificationRecipientReader({ client });
 

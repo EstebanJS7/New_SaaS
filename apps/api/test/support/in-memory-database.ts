@@ -260,6 +260,15 @@ export interface PortalCredentialRow {
   updatedAt: Date;
 }
 
+/** A portal recovery token row ([[PORTAL-002]]). Only the digest is stored. */
+export interface PortalPasswordResetTokenRow {
+  id: string;
+  portalAccessId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  consumedAt: Date | null;
+}
+
 /** Portal session row (EPIC-08 D1); mirrors PortalSessionService's shape. */
 export interface PortalSessionRow {
   id: string;
@@ -1344,6 +1353,30 @@ export interface IsolationDatabase {
         data: { portalAccessId: string; passwordHash: string };
       }) => PortalCredentialRow;
       findUnique: (args: { where: { portalAccessId: string } }) => PortalCredentialRow | null;
+      /** The reset's write ([[PORTAL-002]]). */
+      update: (args: {
+        where: { portalAccessId: string };
+        data: { passwordHash: string };
+      }) => PortalCredentialRow;
+    };
+    /**
+     * The portal's recovery token ([[PORTAL-002]]). The `updateMany` WHERE shapes the two callers:
+     * the compare-and-set by `id` and the "spend the others" by `portalAccessId`.
+     */
+    portalPasswordResetToken: {
+      create: (args: {
+        data: { portalAccessId: string; tokenHash: string; expiresAt: Date };
+      }) => PortalPasswordResetTokenRow;
+      findFirst: (args: { where: { tokenHash: string } }) => PortalPasswordResetTokenRow | null;
+      updateMany: (args: {
+        where: {
+          id?: string;
+          portalAccessId?: string;
+          consumedAt?: null;
+          expiresAt?: { gt: Date };
+        };
+        data: { consumedAt: Date };
+      }) => { count: number };
     };
     portalSession: {
       create: (args: {
@@ -1360,6 +1393,10 @@ export interface IsolationDatabase {
         where: { id: string };
         data: Partial<PortalSessionRow>;
       }) => PortalSessionRow;
+      /** By token (logout) or by ACCESS — the reset ends every session of a holder. */
+      deleteMany: (args: { where: { tokenHash?: string; portalAccessId?: string } }) => {
+        count: number;
+      };
       updateMany: (args: {
         where: { tokenHash?: string; portalAccessId?: string; revokedAt?: null };
         data: { revokedAt: Date };
@@ -2748,6 +2785,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const portalAccess = new Map<string, CustomerPortalAccessRow>();
   const portalCredentials = new Map<string, PortalCredentialRow>();
   const portalSessions = new Map<string, PortalSessionRow>();
+  const portalResetTokens = new Map<string, PortalPasswordResetTokenRow>();
   const speciesTable = new Map<string, SpeciesRow>();
   const breedTable = new Map<string, BreedRow>();
   // GLOBAL tax rates are seeded reference data — the same three rows for every
@@ -3363,6 +3401,42 @@ export function createIsolationDatabase(): IsolationDatabase {
         return { count: 1 };
       },
     },
+    portalPasswordResetToken: {
+      create: ({ data }) => {
+        const created: PortalPasswordResetTokenRow = {
+          id: randomUUID(),
+          portalAccessId: data.portalAccessId,
+          tokenHash: data.tokenHash,
+          expiresAt: data.expiresAt,
+          consumedAt: null,
+        };
+        portalResetTokens.set(created.id, created);
+        return created;
+      },
+      findFirst: ({ where }) =>
+        [...portalResetTokens.values()].find((entry) => entry.tokenHash === where.tokenHash) ??
+        null,
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const row of portalResetTokens.values()) {
+          if (where.id !== undefined && row.id !== where.id) continue;
+          if (where.portalAccessId !== undefined && row.portalAccessId !== where.portalAccessId) {
+            continue;
+          }
+          // The CAS's own conditions, honoured: a spent or expired row must not count.
+          if (where.consumedAt === null && row.consumedAt !== null) continue;
+          if (
+            where.expiresAt !== undefined &&
+            row.expiresAt.getTime() <= where.expiresAt.gt.getTime()
+          ) {
+            continue;
+          }
+          row.consumedAt = data.consumedAt;
+          count += 1;
+        }
+        return { count };
+      },
+    },
     portalCredential: {
       create: ({ data }) => {
         const now = new Date();
@@ -3376,6 +3450,17 @@ export function createIsolationDatabase(): IsolationDatabase {
         return created;
       },
       findUnique: ({ where }) => portalCredentials.get(where.portalAccessId) ?? null,
+      update: ({ where, data }) => {
+        const existing = portalCredentials.get(where.portalAccessId);
+        if (!existing) {
+          // The real delegate rejects P2025 for a missing row; a silent no-op would let a broken
+          // reset look like a working one.
+          throw Object.assign(new Error("Record not found"), { code: "P2025" });
+        }
+        Object.assign(existing, data);
+        existing.updatedAt = new Date();
+        return existing;
+      },
     },
     portalSession: {
       create: ({ data }) => {
@@ -3391,6 +3476,22 @@ export function createIsolationDatabase(): IsolationDatabase {
         return created;
       },
       findUnique: ({ where }) => portalSessions.get(where.tokenHash) ?? null,
+      /**
+       * By token (logout, the portal service's own revocation) or by ACCESS — the reset ends every
+       * session a holder has ([[PORTAL-002]]).
+       */
+      deleteMany: ({ where }: { where: { tokenHash?: string; portalAccessId?: string } }) => {
+        let count = 0;
+        for (const [hash, row] of portalSessions) {
+          if (where.tokenHash !== undefined && row.tokenHash !== where.tokenHash) continue;
+          if (where.portalAccessId !== undefined && row.portalAccessId !== where.portalAccessId) {
+            continue;
+          }
+          portalSessions.delete(hash);
+          count += 1;
+        }
+        return { count };
+      },
       update: ({ where, data }) => {
         const existing = [...portalSessions.values()].find((entry) => entry.id === where.id);
         if (!existing) {

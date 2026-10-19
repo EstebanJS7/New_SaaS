@@ -16,9 +16,9 @@ import { PrismaService } from "@newsaas/database";
 export interface NotificationIntentArgs {
   readonly tenantId: string;
   readonly channel: "EMAIL" | "WHATSAPP";
-  readonly sourceType: "APPOINTMENT" | "FISCAL_DOCUMENT" | "STAFF_ACCOUNT";
+  readonly sourceType: "APPOINTMENT" | "FISCAL_DOCUMENT" | "STAFF_ACCOUNT" | "PORTAL_ACCOUNT";
   readonly sourceId: string;
-  readonly recipientType: "CUSTOMER" | "STAFF";
+  readonly recipientType: "CUSTOMER" | "STAFF" | "PORTAL_HOLDER";
   readonly recipientId: string;
   readonly scheduledAt: Date;
   readonly dedupeKey: string;

@@ -126,6 +126,12 @@ export {
 export type { ReminderDedupeKeyArgs } from "./reminder.policy.js";
 export type { NotificationDeliveryReason } from "./delivery.reason.js";
 export {
+  PORTAL_RECOVERY_CHANNEL,
+  portalRecoveryDedupeKey,
+  portalRecoveryUrl,
+  portalRecoveryWindow,
+} from "./portal-recovery.policy.js";
+export {
   STAFF_RECOVERY_CHANNEL,
   staffRecoveryDedupeKey,
   staffRecoveryWindow,

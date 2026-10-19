@@ -96,12 +96,15 @@ describe("the portal sign-in form", () => {
     expect(problem.textContent).not.toContain("a-secret");
   });
 
-  it("offers NO recovery link, because there is nothing for a customer to recover with", () => {
+  it("offers the recovery link, in THAT clinic's path", () => {
     render(<PortalLoginForm tenantSlug="acme" />);
-    // The API's recovery authorises a `UserCredential` and a portal identity holds a
-    // `PortalCredential`. A link to the staff flow would send a customer into a page that
-    // cannot help them — worse than the absence, which PORTAL-001 names as its largest gap.
-    expect(screen.queryByText(/forgot|recover/i)).not.toBeInTheDocument();
+    // PORTAL-001 deliberately omitted this link because there was no portal flow to point it at, and
+    // this case asserted its ABSENCE — a test that encoded the gap. PORTAL-002 built the flow, and the
+    // href carries the slug because the recovery page has to know which clinic the holder is at.
+    expect(screen.getByTestId("portal-login-forgot-password")).toHaveAttribute(
+      "href",
+      "/acme/forgot-password"
+    );
   });
 
   it("cannot submit without both fields", () => {
