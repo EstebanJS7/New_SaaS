@@ -18,6 +18,12 @@ loadRepoEnv();
  */
 process.env.DEMO_RECOVERABLE_EMAIL ??= `recoverable+e2e-${Date.now()}@demo.newsaas.test`;
 
+// The same reasoning for the portal: a portal recovery delivery is deduped per (portalAccessId, hour)
+// and a portal access can never be erased once it has acted, so a fixed holder receives one message an
+// hour. A fresh address is a fresh access row — and its own customer, because the partial index
+// `customer_portal_access_active_customer_key` allows one ACTIVE holder per customer.
+process.env.DEMO_PORTAL_HOLDER_EMAIL ??= `portal-holder+e2e-${Date.now()}@demo.newsaas.test`;
+
 /**
  * The browser lane's configuration.
  *

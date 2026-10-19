@@ -49,15 +49,17 @@ for a real person and not something a seed should imitate.
 
 **What the lane does NOT cover, named rather than implied:**
 
-- **The portal's recovery flow — attempted, not landed.** The fixture is built
-  and tested (below), and the flow passes when it runs alone. It does not hold
-  when BOTH recovery flows run in one lane: they share one queue consumer,
-  Playwright gives each spec FILE its own worker process, and the send that
-  lands and the send that is claimed but never delivered swap places depending
-  on which worker boots first. Merging the two flows into one file fixed that
-  ordering and exposed the next layer — the minimal SMTP sink delivers the first
-  message and not the second — which is where this stopped rather than shipping
-  a flaky spec. Named precisely, because the next attempt starts here.
+- **Nothing, for recovery.** The portal's flow is in, and the bug that kept it
+  out was in the LANE, not in the product: the sink rejected a timed-out wait
+  but LEFT ITS WAITER IN THE QUEUE, so the next message was handed to a promise
+  nobody could observe — the caller that was actually waiting timed out as well,
+  and the message was gone. That is "the first recovery flow passes and the
+  second one hangs", exactly. The sink now removes its waiter on timeout,
+  refuses whatever is still waiting when it closes, and has its own suite of
+  eight; it was the most delicate file in the lane and the only one with no
+  tests, which is how it hid this. Both flows live in ONE spec file, because
+  Playwright gives each spec file its own worker process and two files meant two
+  consumers of one queue.
 - **A handful of flows, not the product.** What is not in a spec is not checked.
 - **It is not the gate.** A browser test is slower and flakier than a unit test;
   the fast suites stay the primary evidence and the lane is deliberately outside

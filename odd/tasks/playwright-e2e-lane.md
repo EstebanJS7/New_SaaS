@@ -74,9 +74,15 @@ which is exactly where this session's bugs lived.
 - [ ] **WU-2 — the portal flow.** Sign in at `/[slug]/login` → open a pet → and
       the gate: a protected page without a session redirects to the login.
 - [x] **WU-3 — the recovery flow, end to end.** Request a reset → be the SMTP
-- [ ] **The portal's recovery flow — attempted, NOT landed.** The fixture is
-      built and tested: the demo seed mints a run-scoped portal holder at a
-      fresh address, on a customer of its own (the partial index
+- [x] **The portal's recovery flow — IN.** Both identities' recovery now live in
+      ONE spec file (one worker, one sink, one consumer), because split across
+      files Playwright gives each file its own worker process and the flows
+      fought over the queue. The bug that had kept it out was the sink's: a
+      timed-out wait left its waiter in the queue, so the next message resolved
+      a promise nobody could observe. Fixed, and the sink now has its own suite
+      of eight — it was the lane's most delicate file and the only one with no
+      tests. built and tested: the demo seed mints a run-scoped portal holder at
+      a fresh address, on a customer of its own (the partial index
       `customer_portal_access_active_customer_key` allows one ACTIVE holder per
       customer). The flow passes when it runs alone. In one lane with the staff
       flow it does not hold: one queue consumer, one worker PROCESS PER SPEC
