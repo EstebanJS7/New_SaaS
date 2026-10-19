@@ -327,7 +327,7 @@ describe("reference seed · portal role matrix (EPIC-08 WU1)", () => {
 function makeFakePortalDb(): {
   db: DemoPortalSeedClient;
   tables: {
-    customers: Map<string, { id: string; tenantId: string }>;
+    customers: Map<string, { id: string; tenantId: string; displayName: string }>;
     access: Map<
       string,
       { id: string; tenantId: string; customerId: string; contactEmail: string; status: string }
@@ -349,14 +349,20 @@ function makeFakePortalDb(): {
     writesOutsideTransaction: number;
   };
 } {
-  const customers = new Map<string, { id: string; tenantId: string }>([
-    [DEMO_PORTAL_CUSTOMER_ID, { id: DEMO_PORTAL_CUSTOMER_ID, tenantId: "tenant-demo" }],
+  const customers = new Map<string, { id: string; tenantId: string; displayName: string }>([
+    [
+      DEMO_PORTAL_CUSTOMER_ID,
+      { id: DEMO_PORTAL_CUSTOMER_ID, tenantId: "tenant-demo", displayName: "Ana García" },
+    ],
   ]);
+  let nextCustomerId = 0;
   const access = new Map<
     string,
     { id: string; tenantId: string; customerId: string; contactEmail: string; status: string }
   >();
   const credentials = new Map<string, { portalAccessId: string; passwordHash: string }>();
+  /** Run-scoped holders get their own id, exactly as `gen_random_uuid()` gives them one. */
+  let nextAccessId = 0;
   const bookingRequests = new Map<
     string,
     {
@@ -380,7 +386,36 @@ function makeFakePortalDb(): {
   let inTransaction = false;
 
   const txClient: DemoPortalSeedTxClient = {
+    customer: {
+      findFirst: ({ where }) => {
+        const found =
+          where.id !== undefined
+            ? customers.get(where.id)
+            : [...customers.values()].find(
+                (row) => row.tenantId === where.tenantId && row.displayName === where.displayName
+              );
+        return Promise.resolve(found?.tenantId === where.tenantId ? { id: found.id } : null);
+      },
+      create: ({ data }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        const row = { id: `customer-extra-${++nextCustomerId}`, ...data };
+        customers.set(row.id, row);
+        return Promise.resolve({ id: row.id });
+      },
+    },
     customerPortalAccess: {
+      findFirst: ({ where }) => {
+        const found = [...access.values()].find(
+          (row) => row.tenantId === where.tenantId && row.contactEmail === where.contactEmail
+        );
+        return Promise.resolve(found === undefined ? null : { id: found.id });
+      },
+      create: ({ data }) => {
+        if (!inTransaction) tables.writesOutsideTransaction += 1;
+        const row = { id: `access-extra-${++nextAccessId}`, ...data };
+        access.set(row.id, row);
+        return Promise.resolve({ id: row.id });
+      },
       createMany: ({ data }) => {
         if (!inTransaction) tables.writesOutsideTransaction += 1;
         for (const row of data) access.set(row.id, row);
@@ -408,12 +443,6 @@ function makeFakePortalDb(): {
   };
 
   const db: DemoPortalSeedClient = {
-    customer: {
-      findFirst: ({ where }: { where: { id: string; tenantId: string } }) => {
-        const row = customers.get(where.id);
-        return Promise.resolve(row?.tenantId === where.tenantId ? { id: row.id } : null);
-      },
-    },
     ...txClient,
     $transaction: async <T>(fn: (tx: DemoPortalSeedTxClient) => Promise<T>): Promise<T> => {
       tables.transactionCount += 1;
@@ -461,6 +490,40 @@ describe("seedDemoPortal (EPIC-08 WU1)", () => {
     // The hash it was GIVEN, not the password: the seed never sees the plaintext.
     expect(credential?.passwordHash).toBe("argon2-hash");
     expect(DEMO_PORTAL_HOLDER_PASSWORD).not.toBe(DEMO_PORTAL_HOLDER_EMAIL);
+  });
+
+  it("mints a fresh holder when asked, so a portal recovery lane gets a fresh window", async () => {
+    const { db, tables } = makeFakePortalDb();
+
+    const run1 = await seedDemoPortal(db, "tenant-demo", "argon2-hash", {
+      holderEmail: "holder+run1@demo.test",
+    });
+    const run2 = await seedDemoPortal(db, "tenant-demo", "argon2-hash", {
+      holderEmail: "holder+run2@demo.test",
+    });
+
+    // A portal recovery delivery is deduped per (accessId, hour) and a portal access can never be
+    // erased once it has acted, so a fixed holder gets one message an hour. A fresh access row is a
+    // fresh key — and it costs one row, because holders per customer are not constrained.
+    expect(run1.recoverablePortalAccessId).toBeDefined();
+    expect(run2.recoverablePortalAccessId).not.toBe(run1.recoverablePortalAccessId);
+    const credential = tables.credentials.get(run2.recoverablePortalAccessId ?? "");
+    expect(credential?.passwordHash).toBe("argon2-hash");
+  });
+
+  it("converges when a caller asks for the SAME holder twice", async () => {
+    const { db, tables } = makeFakePortalDb();
+
+    const first = await seedDemoPortal(db, "tenant-demo", "argon2-hash", {
+      holderEmail: "holder+same@demo.test",
+    });
+    const second = await seedDemoPortal(db, "tenant-demo", "argon2-hash", {
+      holderEmail: "holder+same@demo.test",
+    });
+
+    expect(second.recoverablePortalAccessId).toBe(first.recoverablePortalAccessId);
+    // The fixed holder plus the one asked for, and nothing else.
+    expect(tables.access.size).toBe(2);
   });
 
   it("writes the holder and request inside one transaction", async () => {

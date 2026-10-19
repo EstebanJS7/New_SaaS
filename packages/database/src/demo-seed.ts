@@ -705,11 +705,30 @@ export async function seedDemoScheduling(
 }
 
 /**
+ * The synthetic customer a run-scoped portal holder belongs to.
+ *
+ * Derived from the address so that a caller passing the same address twice finds the same customer, and
+ * named clearly enough that anyone reading the demo database can tell it apart from a real one.
+ */
+function holderCustomerName(holderEmail: string): string {
+  return `Portal holder ${holderEmail}`;
+}
+
+/**
  * Transactional delegate scope used inside {@link seedDemoPortal}'s
  * `$transaction`.
  */
 export interface DemoPortalSeedTxClient {
+  customer: DemoPortalSeedClient["customer"];
   customerPortalAccess: {
+    findFirst: (args: {
+      where: { tenantId: string; contactEmail: string };
+      select: { id: true };
+    }) => Promise<{ id: string } | null>;
+    create: (args: {
+      data: { tenantId: string; customerId: string; contactEmail: string; status: string };
+      select: { id: true };
+    }) => Promise<{ id: string }>;
     createMany: (args: {
       data: {
         id: string;
@@ -752,9 +771,13 @@ export interface DemoPortalSeedTxClient {
 export interface DemoPortalSeedClient extends DemoPortalSeedTxClient {
   customer: {
     findFirst: (args: {
-      where: { id: string; tenantId: string };
+      where: { id?: string; tenantId: string; displayName?: string };
       select: { id: true };
     }) => Promise<{ id: string } | null>;
+    create: (args: {
+      data: { tenantId: string; kind: "INDIVIDUAL"; displayName: string };
+      select: { id: true };
+    }) => Promise<{ id: string }>;
   };
   $transaction: <T>(fn: (tx: DemoPortalSeedTxClient) => Promise<T>) => Promise<T>;
 }
@@ -762,6 +785,17 @@ export interface DemoPortalSeedClient extends DemoPortalSeedTxClient {
 export interface DemoPortalSeedResult {
   access: number;
   bookingRequests: number;
+  /**
+   * The run-scoped holder's access id, when a caller asked for one — the identity a portal recovery
+   * test may spend, and the reason it is separate from the fixed holder's.
+   */
+  recoverablePortalAccessId?: string;
+}
+
+/** Options for {@link seedDemoPortal}. */
+export interface DemoPortalSeedOptions {
+  /** A run-scoped holder's address. See the note on the creation for why one is needed at all. */
+  readonly holderEmail?: string;
 }
 
 /**
@@ -804,7 +838,8 @@ export async function seedDemoPortal(
    * The argon2id hash of {@link DEMO_PORTAL_HOLDER_PASSWORD}, computed by the caller exactly as the
    * owner's is: hashing is expensive and the seed's contract is to write what it is given.
    */
-  portalPasswordHash: string
+  portalPasswordHash: string,
+  options: DemoPortalSeedOptions = {}
 ): Promise<DemoPortalSeedResult> {
   const customer = await db.customer.findFirst({
     where: { id: DEMO_PORTAL_CUSTOMER_ID, tenantId },
@@ -837,6 +872,69 @@ export async function seedDemoPortal(
       update: { passwordHash: portalPasswordHash },
     });
 
+    // A RUN-SCOPED holder, when a caller asks for one, for exactly the reason the staff recoverable
+    // user exists: a portal recovery delivery is deduped per `portal-recovery:<accessId>:<hour>`, the
+    // delivery table refuses a delete by design, and a portal access can never be erased once it has
+    // acted (the audit trail's foreign key is RESTRICT). A fixed holder therefore receives ONE recovery
+    // message an hour, and a lane that ran twice inside one would fail on the second run for a reason
+    // that has nothing to do with the product.
+    //
+    // It needs a CUSTOMER OF ITS OWN, and that is the partial index rather than a preference:
+    // `customer_portal_access_active_customer_key` permits at most one ACTIVE holder per customer, and
+    // the demo customer already has one. The same predicate is why a revoked holder may be re-granted —
+    // "a Customer may accumulate historical holders" — which is the product's path for a real person and
+    // not something a seed should imitate. Found first, so a caller passing the same address twice
+    // converges instead of duplicating.
+    let recoverablePortalAccessId: string | undefined;
+    if (options.holderEmail !== undefined) {
+      const existing = await tx.customerPortalAccess.findFirst({
+        where: { tenantId, contactEmail: options.holderEmail },
+        select: { id: true },
+      });
+
+      const holderCustomerId =
+        existing?.id === undefined
+          ? ((
+              await tx.customer.findFirst({
+                where: { tenantId, displayName: holderCustomerName(options.holderEmail) },
+                select: { id: true },
+              })
+            )?.id ??
+            (
+              await tx.customer.create({
+                data: {
+                  tenantId,
+                  kind: "INDIVIDUAL",
+                  displayName: holderCustomerName(options.holderEmail),
+                },
+                select: { id: true },
+              })
+            ).id)
+          : // Only used when there is no holder yet, so the value is irrelevant on this branch.
+            customer.id;
+
+      const accessId =
+        existing?.id ??
+        (
+          await tx.customerPortalAccess.create({
+            data: {
+              tenantId,
+              customerId: holderCustomerId,
+              contactEmail: options.holderEmail,
+              status: DEMO_PORTAL_ACTIVE_STATUS,
+            },
+            select: { id: true },
+          })
+        ).id;
+
+      await tx.portalCredential.upsert({
+        where: { portalAccessId: accessId },
+        create: { portalAccessId: accessId, passwordHash: portalPasswordHash },
+        update: { passwordHash: portalPasswordHash },
+      });
+      recoverablePortalAccessId = accessId;
+    }
+
     const bookingRequests = await tx.portalBookingRequest.createMany({
       data: [
         {
@@ -852,7 +950,11 @@ export async function seedDemoPortal(
       skipDuplicates: true,
     });
 
-    return { access: access.count, bookingRequests: bookingRequests.count };
+    return {
+      access: access.count,
+      bookingRequests: bookingRequests.count,
+      ...(recoverablePortalAccessId === undefined ? {} : { recoverablePortalAccessId }),
+    };
   });
 }
 

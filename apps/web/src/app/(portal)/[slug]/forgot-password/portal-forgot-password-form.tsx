@@ -75,41 +75,48 @@ export function PortalForgotPasswordForm({
         <CardDescription>We will send you a link to choose a new one.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <label htmlFor="portal-forgot-email" className="text-sm font-medium">
-            Email
-          </label>
-          <input
-            id="portal-forgot-email"
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </div>
-        {problem === null ? null : (
-          <p data-testid="portal-forgot-problem" className="text-sm text-destructive">
-            {problem}
-          </p>
-        )}
-        <div className="flex items-center justify-between gap-4">
-          <Button
-            type="button"
-            disabled={email.trim().length === 0 || submitting}
-            onClick={() => {
-              void submit();
-            }}
-          >
-            {submitting ? "Sending..." : "Send the link"}
-          </Button>
-          <Link
-            href={`/${tenantSlug}/login`}
-            className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-          >
-            Back to sign in
-          </Link>
-        </div>
+        {/*
+          A real `<form>`, for the reason every other sign-in and recovery form in this app needed one:
+          with the fields in a plain container and the button as `type="button"`, pressing Enter did
+          nothing. The browser lane asserts the keyboard path here too.
+        */}
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          <div className="space-y-2">
+            <label htmlFor="portal-forgot-email" className="text-sm font-medium">
+              Email
+            </label>
+            <input
+              id="portal-forgot-email"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          {problem === null ? null : (
+            <p data-testid="portal-forgot-problem" className="text-sm text-destructive">
+              {problem}
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-4">
+            <Button type="submit" disabled={email.trim().length === 0 || submitting}>
+              {submitting ? "Sending..." : "Send the link"}
+            </Button>
+            <Link
+              href={`/${tenantSlug}/login`}
+              className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+            >
+              Back to sign in
+            </Link>
+          </div>
+        </form>
       </CardContent>
     </Card>
   );
