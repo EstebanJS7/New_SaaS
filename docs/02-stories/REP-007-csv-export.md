@@ -3,7 +3,7 @@ id: REP-007
 type: story
 title: The CSV export
 epic: EPIC-18
-status: planned
+status: done
 priority: medium
 depends_on:
   - REP-003
@@ -49,6 +49,30 @@ with no clinical free text ([[REP-006]]).
 reading a table on screen and exfiltrating it as a file are different decisions,
 and a role may reasonably be allowed the first and not the second.
 
+**The two keys are CONJUNCTIVE, in one direction only.** An export requires
+BOTH: the route declares `reports.export`, and the report's own service method —
+which the export must call, because the export and the report have to render the
+same rows — re-asserts `reports.read` exactly as it does for the JSON route. So:
+
+```text
+reports.read only    -> refused  (403 at the export route)
+reports.export only  -> refused  (403 at the report's own re-assertion)
+both                 -> the file
+neither              -> refused
+```
+
+That asymmetry is deliberate and is the whole point of having a second key:
+`reports.export` must never become a way to obtain data the caller is not
+allowed to READ. Granting the export key alone would make it exactly that — a
+side door around the read permission — which is the opposite of what DEC-062
+separated the keys for.
+
+A consequence worth stating: the seed grants `reports.export` only to `OWNER`
+and `ADMIN`, and both already hold `reports.read`, so the conjunction is
+invisible in practice today. It becomes visible the moment somebody is granted
+the export key without the read key, and at that point the refusal is the
+correct answer.
+
 ## In Scope
 
 - A CSV serializer: RFC 4180 quoting, `\n` line endings, UTF-8, an explicit
@@ -73,25 +97,25 @@ and a role may reasonably be allowed the first and not the second.
 
 ## Acceptance Criteria
 
-- [ ] `GET /reports/:reportCode/export` returns `200 text/csv; charset=utf-8`
+- [x] `GET /reports/:reportCode/export` returns `200 text/csv; charset=utf-8`
       with a `Content-Disposition` attachment filename for every shipped report.
-- [ ] The header row is explicit and stable per report; the column order is a
+- [x] The header row is explicit and stable per report; the column order is a
       documented contract, not incidental.
-- [ ] Money and quantity values are emitted exactly as their decimal string —
+- [x] Money and quantity values are emitted exactly as their decimal string —
       `1234.50` is never `1234.5`, `"1,234.50"` or `1234.5`.
-- [ ] A field containing a comma, a double quote or a newline is quoted and its
+- [x] A field containing a comma, a double quote or a newline is quoted and its
       quotes doubled, per RFC 4180.
-- [ ] An empty period produces a file with a header row and no data rows — not
+- [x] An empty period produces a file with a header row and no data rows — not
       an empty body and not an error.
-- [ ] A period whose row count exceeds the cap returns its stable error code and
+- [x] A period whose row count exceeds the cap returns its stable error code and
       **no partial file**.
-- [ ] The export route requires `reports.export`; `reports.read` alone is not
+- [x] The export route requires `reports.export`; `reports.read` alone is not
       enough, and the test asserts both refusals separately.
-- [ ] The export is tenant-scoped: the file never contains another tenant's
+- [x] The export is tenant-scoped: the file never contains another tenant's
       rows.
-- [ ] The web BFF proxy buffers text and the response arrives intact in the
+- [x] The web BFF proxy buffers text and the response arrives intact in the
       browser.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -143,13 +167,77 @@ None.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented on `feat/epic-18-dashboards-reports`.
+
+- **ONE route, not twelve**: `GET /reports/:reportCode/export` driven by a
+  single `REPORT_EXPORT_DEFINITIONS` table that owns, per code, the query
+  contract, the column order and the filename. Twelve near-identical handlers
+  would have been twelve chances for one of them to accept the wrong query
+  shape.
+  - Period reports reuse the shipped period schema and resolver; the two due
+    reports reuse the shipped horizon schema and resolver; `low-stock` takes no
+    query and refuses any key. No third contract was invented.
+- **The export is a RENDERING, not a second query.** Every code calls the same
+  `ReportingService` method the JSON route calls, and an integration test
+  compares the parsed CSV against the JSON response field for field. A second
+  query would make that agreement unverifiable.
+- **The serializer is hand-written** (no dependency): RFC 4180 quoting on `,`,
+  `"`, `\n` or `\r` with doubled inner quotes, `\n` line endings, UTF-8 with no
+  BOM, an explicit header row always, and **no value reformatted** — a decimal
+  string leaves verbatim and a `null` renders as an EMPTY field rather than
+  `"null"`.
+- **The cap is checked BEFORE serialization**, so an over-cap request produces
+  no partial body rather than a truncated file. It is 10 000 data rows; the
+  header is not counted, and the underlying report's own read cap still applies,
+  so whichever fires first wins.
+- **`reports.export` and `reports.read` are CONJUNCTIVE, in one direction**: the
+  route declares the export key and the report's own method re-asserts the read
+  key. `reports.read` alone is refused at the route; `reports.export` alone is
+  refused at the service. That asymmetry is the reason the second key exists:
+  **`reports.export` must never become a side door to data the caller cannot
+  read.**
+- The web BFF proxy validates the code against the same allowlist locally before
+  any upstream call, forwards the staff cookie and `x-request-id`, buffers the
+  body as TEXT, and forwards **both** `content-type` and `content-disposition` —
+  without the latter the browser invents a filename.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (23/23 turbo tasks)
+pnpm typecheck      PASS  (23/23)
+pnpm build          PASS  (13/13)
+pnpm test           PASS  (23/23)
+  api        114 files (111 landed + 3 new)      1634 passed | 266 skipped  (+46)
+  web        111 files (110 landed + 1 new)      1172 passed               (+8)
+  database    30 files                            549 passed
 ```
+
+54 new tests: 13 serializer, 21 service, 11 integration, 1 RBAC pin and 8 BFF.
+
+**A real CSV was produced from real PostgreSQL**, because the route tests run on
+the in-memory fixture and a serializer that agrees with a fake proves nothing
+about the values. Against a migrated database with one completed sale of two
+lines:
+
+```text
+bucketDate,saleCount,net,tax,gross
+2026-06-05,1,2569.00,0.00,2569.00
+
+name,kind,quantity,gross
+Consulta,SERVICE,1.000,100.00
+"Gasa ""sterile"", 10cm",PRODUCT,2.000,2469.00
+
+empty period ->
+bucketDate
+```
+
+Three things to read in that output. `2569.00` survives the round trip exactly —
+no float, no `2569`, no thousands separator. The item name containing a comma
+AND embedded quotes is quoted and its quotes doubled, which is the RFC 4180 case
+most serializers get wrong. And an empty period is a header line and nothing
+else, not an empty body.
 
 ## Tests Added
 
@@ -167,14 +255,26 @@ Not run.
 
 ## Known Limitations
 
-- The cap is fixed; a tenant above it cannot export without narrowing the
-  period.
-- No streaming backpressure: the API buffers the file it returns. Recorded with
-  [[TD-051]].
+- The cap is fixed; a tenant above it must narrow the period. Recorded with
+  [[TD-051]] as the trigger for the asynchronous path.
+- **The export cap binds in practice only on `sales-by-product-service`**, whose
+  row set is one per distinct item sold and has no read cap of its own; every
+  other row-bearing report is already bounded below 10 000 by its own read cap.
+  A tenant with 10 001 distinct items sold in one period gets a refusal rather
+  than a file.
+- **The web allowlist restates the API's report codes**, because no shared
+  package was in scope. A drift means the browser refuses locally (`400`) a code
+  the API would have accepted (`404` upstream) — a local refusal, never a wrong
+  file.
+- The BFF answers `400` for an unknown code while the API answers `404`, because
+  the proxy refuses locally without an upstream call. The asymmetry is
+  deliberate (no upstream request for an obviously invalid code) and is
+  documented.
+- No row content is ever logged; the file exists only in the response.
 
 ## Technical Debt
 
-- [[TD-051]] — asynchronous export above the row cap.
+- [[TD-051]] — asynchronous export above the row cap, with its trigger.
 
 ## Decisions / ADRs
 
@@ -189,4 +289,6 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+All required gates passed on 2026-10-19. The `apps/e2e` lane was not run (Docker
+unavailable); the export's browser path is covered by the BFF unit suite
+instead.

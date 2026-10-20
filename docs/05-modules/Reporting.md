@@ -1057,6 +1057,102 @@ carried because staff must act on it, dates, and no clinical content at all.
 }
 ```
 
+## The CSV export
+
+`GET /reports/:reportCode/export` renders ANY of the twelve reports as a file.
+
+```text
+reportCode is a CLOSED allowlist; an unknown code is 404 NOT_FOUND.
+The query contract is the one the report itself takes:
+  nine period reports      the shipped period schema and resolver
+  vaccines-due, deworming-due   the shipped horizon schema and resolver
+  low-stock                NO query at all; any key is a refusal
+```
+
+### The export is a RENDERING, not a second query
+
+The export calls the same `ReportingService` method the JSON route calls and
+renders its rows. It issues no query of its own, which is what makes the export
+and the report provably the same data for the same arguments — an integration
+test compares the parsed CSV against the JSON response field for field.
+
+### The permission conjunction
+
+An export requires **BOTH** `reports.export` and `reports.read`: the route
+declares the former and the report's own method re-asserts the latter.
+
+| caller holds          | result                                 |
+| --------------------- | -------------------------------------- |
+| `reports.read` only   | `403` at the export route              |
+| `reports.export` only | `403` at the report's own re-assertion |
+| both                  | the file                               |
+| neither               | `403`                                  |
+
+Deliberate, and the reason the second key exists: `reports.export` must never be
+a side door to data the caller cannot READ. The seed grants the export key only
+to `OWNER` and `ADMIN`, both of whom already hold the read key, so the
+conjunction is invisible in practice today and becomes the correct refusal the
+moment somebody is granted one without the other.
+
+### The CSV contract
+
+- RFC 4180 quoting: a field is quoted when it contains `,`, `"`, `\n` or `\r`;
+  an embedded `"` is doubled. Nothing else is escaped.
+- `\n` line ending, UTF-8, **no BOM**.
+- An explicit header row, always — an empty result is the header line and
+  nothing else, never an empty body.
+- **No value is reformatted.** A money field arrives as the decimal string the
+  report produced and leaves verbatim: `"1234.50"` never becomes `1234.5`, and
+  `"0.10"` never becomes `0.1`. A `null` renders as an EMPTY field, never as
+  `"null"` — a cash-movement row's `direction` is null for every non-adjustment
+  kind.
+- `Content-Type: text/csv; charset=utf-8` and
+  `Content-Disposition: attachment; filename="<code>-<range>.csv"`, where the
+  range is the resolved period, the resolved as-of date, or for `low-stock` the
+  tenant's own day. ASCII only, no spaces, and no caller input in the name.
+
+### Column order per report — the documented contract
+
+```text
+sales-by-period           bucketDate saleCount net tax gross
+payment-methods           method paymentCount amount shareOfGross
+sales-by-product-service  catalogItemId name kind quantity net tax gross
+cash-sessions             sessionId registerId openedAt closedAt openingAmount
+                          expectedAmount countedAmount differenceAmount
+cash-movements            type direction movementCount signedAmount
+purchases                 purchaseId supplierId supplierName receivedAt lineCount
+                          totalQuantity
+stock                     catalogItemId name kind quantity inbound outbound net
+low-stock                 catalogItemId name quantity threshold shortfall
+consultations             bucketDate consultationCount
+new-patients              bucketDate count
+vaccines-due              patientId patientName vaccine administeredAt nextDueAt status
+deworming-due             patientId patientName product administeredAt nextDueAt status
+```
+
+Renaming or reordering a column is a contract change: a downstream spreadsheet
+breaks silently otherwise.
+
+### The cap, and where it actually binds
+
+`REPORT_EXPORT_ROW_LIMIT` is **10 000 data rows** (the header is not counted).
+Over it, the request is refused and **no partial body is produced** — the cap is
+checked before anything is serialized, not while streaming.
+
+The underlying report's own per-read cap still applies independently, so
+whichever fires first wins. In practice the export cap binds on
+`sales-by-product-service`, whose row set is one per distinct item sold and has
+no read cap of its own; every other row-bearing report is already bounded below
+10 000 by its own read cap. That is stated here rather than left to be
+discovered by a tenant with 10 001 items.
+
+### Data classification and logging
+
+An export is INTERNAL tenant data, and the two due reports carry CONFIDENTIAL
+patient names. No clinical free text is exported, because no report reads any.
+**No row content is ever logged** — neither the rows, nor the rendered file, nor
+its first line.
+
 ## Invariants
 
 - **A draft is never revenue.** The query filters `status = COMPLETED` **and**
@@ -1187,14 +1283,14 @@ carried because staff must act on it, dates, and no clinical content at all.
 
 ## What later stories add
 
-The CSV export ([[REP-007]]) consumes `reports.export`. The dashboard
-([[REP-008]]) consumes the same service methods rather than a second query. The
-staff surface that ENTERS a due date is [[REP-010]] ([[DEC-067]]) — until it
-ships, the two due reports are correct and empty, because the fact they filter
-on is not recordable from the API yet. Stock **valuation** stays out of scope:
-no item carries a cost ([[DEC-010]]), so a valuation report would invent a
-costing method, and repairing a wrong `stock_balance` belongs to EPIC-10 rather
-than to a report.
+The CSV export ([[REP-007]]) is documented above and consumes both
+`reports.export` and `reports.read`. The dashboard ([[REP-008]]) consumes the
+same service methods rather than a second query. The staff surface that ENTERS a
+due date is [[REP-010]] ([[DEC-067]]) — until it ships, the two due reports are
+correct and empty, because the fact they filter on is not recordable from the
+API yet. Stock **valuation** stays out of scope: no item carries a cost
+([[DEC-010]]), so a valuation report would invent a costing method, and
+repairing a wrong `stock_balance` belongs to EPIC-10 rather than to a report.
 
 ## Tests
 

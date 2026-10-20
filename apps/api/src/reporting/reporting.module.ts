@@ -5,6 +5,8 @@ import { SettingsModule } from "../settings/settings.module.js";
 import { ReportingController } from "./reporting.controller.js";
 import { ReportRepository } from "./reporting.repository.js";
 import { ReportingService } from "./reporting.service.js";
+import { ReportExportController } from "./export/report-export.controller.js";
+import { ReportExportService } from "./export/report-export.service.js";
 
 /**
  * Reporting module (EPIC-18 REP-002). A leaf consumer of the platform: it imports
@@ -23,10 +25,16 @@ import { ReportingService } from "./reporting.service.js";
  * entitlement, so reports are ungated by feature code and guarded by
  * `reports.read`/`reports.export` alone. Adding a gate here would silently
  * reverse an accepted decision.
+ *
+ * **The CSV export ([[REP-007]]) is a second controller over the SAME service.**
+ * It declares the narrower `reports.export` key ([[DEC-062]]) and adds no
+ * repository, no read and no provider of its own: `ReportExportService` calls
+ * `ReportingService`'s public methods, so an export row and a report row are the
+ * same row by construction ([[DEC-066]]).
  */
 @Module({
   imports: [ContextModule, RbacModule, SettingsModule],
-  controllers: [ReportingController],
-  providers: [ReportRepository, ReportingService],
+  controllers: [ReportingController, ReportExportController],
+  providers: [ReportRepository, ReportingService, ReportExportService],
 })
 export class ReportingModule {}

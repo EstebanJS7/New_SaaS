@@ -104,6 +104,14 @@ thirteenth code is added and the PRD is unchanged.
 enforced server-side on every report route and its export route. Frontend
 permission checks remain UX only.
 
+**The two keys are conjunctive for an export, in one direction.** An export
+declares `reports.export` at the route AND reaches the report's own service
+method, which re-asserts `reports.read`. So an export needs both, while a plain
+read needs only `reports.read`. That is not an oversight of the separation; it
+is what makes the separation safe: `reports.export` must never become a side
+door to data the caller cannot read. The reverse would be a privilege escalation
+dressed as a convenience.
+
 **The dashboard consumes the report service, never a second query.** A card and
 its report share one repository method; [[REP-008]] asserts that with a test
 rather than a convention.

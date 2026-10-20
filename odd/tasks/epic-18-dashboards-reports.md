@@ -79,7 +79,7 @@ Each work unit is one commit carrying its tests and documentation.
       log._
 - [x] **WU-F — [[REP-006]] the veterinary reports.** Two commits: **WU-F1**
       consultations + new patients; **WU-F2** the two due reports. _Done._
-- [ ] **WU-G — [[REP-007]] the CSV export.**
+- [x] **WU-G — [[REP-007]] the CSV export.** _Done: see the evidence log._
 - [ ] **WU-H — [[REP-010]] the clinical record entry surface.** Vaccinations and
       deworming: list, create and correct, on the proxy and permissions that
       already ship ([[DEC-067]]). Lands BEFORE REP-008, whose empty state links
@@ -318,3 +318,36 @@ Commit `WU-F2` on `feat/epic-18-dashboards-reports`.
 
 **Skipped:** `apps/e2e` (no UI in this work unit). Both reports stay empty until
 [[REP-010]] ships the entry surface.
+
+### WU-G — the CSV export
+
+Commit `WU-G` on `feat/epic-18-dashboards-reports`.
+
+- **One route**, `GET /reports/:reportCode/export`, driven by a single
+  definitions table that owns the query contract, the column order and the
+  filename per code. Twelve handlers would have been twelve chances for one to
+  accept the wrong query.
+- The export calls the report's OWN service method, so export rows and report
+  rows are the same rows by construction; an integration test compares the
+  parsed CSV against the JSON field for field.
+- Hand-written RFC 4180 serializer: quoting on `,` `"` `\n` `\r` with doubled
+  inner quotes, `\n` endings, UTF-8 no BOM, explicit header always, and **no
+  value reformatted** — a decimal string leaves verbatim, a `null` renders
+  empty.
+- The cap is checked BEFORE serialization, so an over-cap request yields no
+  partial file.
+- **`reports.export` and `reports.read` are conjunctive in one direction.** The
+  route declares the export key and the report's method re-asserts the read key,
+  so `reports.export` can never be a side door to data the caller cannot read.
+  The implementation had this right and the delegation spec had it wrong; the
+  Story and [[DEC-062]] now state the conjunction explicitly so nobody "fixes"
+  it later.
+- Gates: api **1588 → 1634**, web **1164 → 1172**; format/lint/typecheck/build
+  green.
+- A real CSV was produced from real PostgreSQL: `2569.00` survived verbatim, and
+  an item name containing both a comma and embedded quotes came out as
+  `"Gasa ""sterile"", 10cm"`. An empty period is the header line and nothing
+  else.
+
+**Skipped:** the `apps/e2e` lane (Docker unavailable); the browser path is
+covered by the BFF unit suite.
