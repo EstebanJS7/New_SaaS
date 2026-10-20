@@ -89,8 +89,13 @@ Each work unit is one commit carrying its tests and documentation.
 ## Review workload
 
 Nine work units, each a self-contained commit. The two riskiest are **WU-A**,
-because it touches five already-`done` epics' write paths, and **WU-G**, because
-it is the only path where a report's data leaves the API as a file.
+because it touches five already-`done` epics' write paths; **WU-G**, because it
+is the only path where a report's data leaves the API as a file; and **WU-H**,
+because it is the only unit that adds UI a human types clinical data into.
+
+Inserted after the epic opened ([[DEC-067]]): **WU-H is [[REP-010]]**, and the
+two units after it were renumbered `WU-I`/`WU-J` so the letters keep execution
+order.
 
 ## Evidence log
 
