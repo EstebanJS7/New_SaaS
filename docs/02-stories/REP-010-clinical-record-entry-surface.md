@@ -225,11 +225,30 @@ as one.
   the component source (button names, label text, notice copy, the displayed
   `YYYY-MM-DD HH:mm` form) but never against a rendered page. The first real
   lane run is where that gets proven.
-- **The `datetime-local` value is converted using the BROWSER's zone.** A staff
-  member working outside the tenant's zone would shift the stored instant — the
-  same behaviour every other `datetime-local` in this app already has (the
-  agenda included), so it is consistent rather than a new gap, and it is named
-  here.
+- **A browser-zone defect was found by independent verification AFTER this Story
+  was reported green, and is fixed.** The first implementation parsed a
+  `datetime-local` value with `new Date(...)`, which uses the BROWSER's clock,
+  and the due reports classify dates in `America/Asuncion`. With `TZ=UTC`,
+  typing `2026-10-19T00:15` stored an instant whose tenant-local date was
+  **2026-10-18**, so a vaccination entered for the 19th could be reported
+  overdue on the 19th. The round-trip test compared that parser against itself
+  and could not catch it.
+
+  Both date fields are now `<input type="date">` and the wire form is **noon
+  UTC** of the chosen date. Noon is what makes the tenant-local calendar date
+  equal the typed date for any tenant offset in `(-12, +12)` — twelve hours of
+  margin either side — and taking a plain calendar date removes the browser's
+  clock from the conversion entirely. Verified by execution: with the browser in
+  `UTC`, `America/Asuncion` and `Asia/Tokyo`, the tenant-local date of
+  `2026-11-18` is `2026-11-18` in every case. Months and days are validated
+  against the Gregorian calendar, so `2026-13-01`, `2026-02-30` and `2026-02-29`
+  are refused while `2024-02-29` is accepted.
+
+- **The noon-UTC convention has a stated bound**: a tenant at offset `+13` or
+  more would see the following day. Asunción is `-03`, and `TENANT_TIME_ZONE` is
+  a single platform constant, so the convention is correct for every deployment
+  the product has; a per-tenant zone would need the conversion to move
+  server-side.
 - Three of the five specialized record kinds (treatments, studies, weights)
   remain API-only. [[TD-055]] tracks them and was narrowed, not closed, by
   [[DEC-067]].

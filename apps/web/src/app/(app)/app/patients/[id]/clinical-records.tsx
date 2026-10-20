@@ -42,57 +42,100 @@ import {
  *    monitored" and the reports omit the row rather than deriving a date.
  * 2. **A wrong due date is REMOVABLE, not only replaceable.** Clearing sends an
  *    explicit `nextDueAt: null`, which is the contract the API already ships.
- * 3. **This surface computes nothing.** Every instant comes from the API and
- *    every instant it sends is the browser's conversion of the wall-clock value
- *    staff typed into `<input type="datetime-local">`, so the due reports bucket
- *    the row to the local day the veterinarian actually chose.
+ * 3. **This surface computes nothing.** Every instant comes from the API, and the
+ *    only value it constructs is the wire form of a calendar date staff picked in
+ *    `<input type="date">`: noon UTC of that date (see {@link fromDateInput} for
+ *    why noon, and why the browser's clock is deliberately not consulted). That is
+ *    what makes the due reports bucket the row to the day the veterinarian chose
+ *    even when the browser's zone is not the tenant's.
  *
  * Data classification: the vaccine/product name and both instants are
  * CONFIDENTIAL clinical data. They are rendered only inside the authenticated
  * staff workspace; nothing here writes them to a log, a URL, or a Portal view.
  */
 
+/** Length of a `YYYY-MM-DD` calendar date prefix. */
+const DATE_PREFIX_LENGTH = 10;
+
+/** A whole calendar date, the only shape the date fields accept. */
+const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Month lengths for a non-leap year; February is decided by the leap rule. */
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+/**
+ * True for a date the Gregorian calendar actually has.
+ *
+ * The shape check alone is not enough: `2026-13-01` and `2026-02-30` both match
+ * `\d{4}-\d{2}-\d{2}` and would otherwise be pinned to a noon-UTC instant for a
+ * day that does not exist, which the API would then store and the due report would
+ * classify.
+ */
+function isCalendarDate(value: string): boolean {
+  if (!CALENDAR_DATE_PATTERN.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number) as [number, number, number];
+  if (month < 1 || month > 12 || day < 1) return false;
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const length = month === 2 && isLeapYear ? 29 : (DAYS_IN_MONTH[month - 1] ?? 0);
+  return day <= length;
+}
+
+/**
+ * The time-of-day this surface pins a calendar date to on the wire: **noon UTC**.
+ * Twelve hours of margin either side is what keeps the tenant-local calendar date
+ * equal to the date staff typed, whatever the tenant's offset.
+ */
+const DUE_INSTANT_TIME_PART = "12:00:00.000";
+
 /** Permission that gates the create affordance (UX only; the API re-asserts it). */
 export const CLINICAL_CREATE_PERMISSION = "vet.clinical.create";
 /** Permission that gates the correct/clear affordances (UX only). */
 export const CLINICAL_CORRECT_PERMISSION = "vet.clinical.update";
 
-function pad2(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
 /**
- * Formats an instant as a `datetime-local` input value in this browser's clock.
+ * Formats a stored instant as a `date` input value.
  *
- * The same clock is used for display and for entry, so what staff type is what
- * they see. The value that leaves the browser is always an ISO instant, never a
- * date-only string: a hand-rolled "midnight UTC" would make the due report
- * bucket the row to the previous local day.
+ * The wire form this surface WRITES is noon UTC of the chosen calendar date (see
+ * {@link fromDateInput}), so taking the first ten characters of the stored value
+ * recovers exactly the date the veterinarian picked. It deliberately does not run
+ * the instant through `new Date(...)` and reformat in the browser's clock: that
+ * is what produced the defect this helper replaced.
  */
-export function toLocalInput(iso: string): string {
-  const instant = new Date(iso);
-  if (Number.isNaN(instant.getTime())) return "";
-  return `${instant.getFullYear()}-${pad2(instant.getMonth() + 1)}-${pad2(
-    instant.getDate()
-  )}T${pad2(instant.getHours())}:${pad2(instant.getMinutes())}`;
+export function toDateInput(iso: string): string {
+  return iso.slice(0, DATE_PREFIX_LENGTH);
 }
 
 /**
- * Converts a `datetime-local` value to an ISO instant, or `null` when the field
- * is empty (or carries something the Date parser rejects). `null` is the only
- * "no value" the callers accept: an empty string is never sent to the API.
+ * Converts a `date` input value to the instant this surface stores, or `null`
+ * when the field is empty or does not carry a whole calendar date.
+ *
+ * **Why noon UTC and not midnight.** The due reports classify a row by its
+ * CALENDAR DATE in the tenant's zone (`America/Asuncion`, `-03`), never by an
+ * instant. Midnight UTC lands at 21:00 of the PREVIOUS tenant day, so "due
+ * 2026-11-18" would be reported as due the 17th — one day early, silently. Noon
+ * UTC has twelve hours of margin on both sides, so the tenant-local calendar date
+ * equals the date staff typed for any tenant offset in `(-12, +12)`, which covers
+ * Asunción and every realistic deployment.
+ *
+ * **Why this is browser-zone independent.** The previous implementation parsed a
+ * `datetime-local` value with `new Date(...)`, which uses the BROWSER's clock. A
+ * staff member (or a CI run) in a different zone from the tenant then stored an
+ * instant whose tenant-local date was the day before, and the row was reported as
+ * overdue a day early. Taking a plain calendar date and pinning it to noon UTC
+ * removes the browser's clock from the conversion entirely.
+ *
+ * An empty field is `null` — the only "no value" the callers accept. A partial or
+ * malformed value is also `null`, so nothing unparseable reaches the API.
  */
-export function fromLocalInput(value: string): string | null {
+export function fromDateInput(value: string): string | null {
   const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-  const instant = new Date(trimmed);
-  return Number.isNaN(instant.getTime()) ? null : instant.toISOString();
+  if (!isCalendarDate(trimmed)) return null;
+  return `${trimmed}T${DUE_INSTANT_TIME_PART}Z`;
 }
 
-/** Renders an instant for reading: the local date and minute, no seconds. */
-export function formatRecordedInstant(iso: string): string {
-  const localInput = toLocalInput(iso);
-  return localInput === "" ? "" : localInput.replace("T", " ");
+/** Renders a stored instant for reading: the calendar date staff chose. */
+export function formatRecordedDate(iso: string): string {
+  return toDateInput(iso);
 }
 
 /** The fields both record kinds share; the adapters below name their own. */
@@ -322,8 +365,8 @@ function RecordCreateForm({
   const [administeredAt, setAdministeredAt] = useState("");
   const [nextDueAt, setNextDueAt] = useState("");
 
-  const administeredInstant = fromLocalInput(administeredAt);
-  const dueInstant = fromLocalInput(nextDueAt);
+  const administeredInstant = fromDateInput(administeredAt);
+  const dueInstant = fromDateInput(nextDueAt);
   const dueIsInvalid = nextDueAt.trim().length > 0 && dueInstant === null;
   const canSubmit =
     !pending && name.trim().length > 0 && administeredInstant !== null && !dueIsInvalid;
@@ -359,11 +402,11 @@ function RecordCreateForm({
       </div>
       <div className="space-y-2">
         <label htmlFor={`${kind.slug}-administered-at`} className="text-sm font-medium">
-          Administered at
+          Administered on
         </label>
         <input
           id={`${kind.slug}-administered-at`}
-          type="datetime-local"
+          type="date"
           value={administeredAt}
           onChange={(event) => setAdministeredAt(event.target.value)}
           disabled={pending}
@@ -376,7 +419,7 @@ function RecordCreateForm({
         </label>
         <input
           id={`${kind.slug}-due-at`}
-          type="datetime-local"
+          type="date"
           value={nextDueAt}
           onChange={(event) => setNextDueAt(event.target.value)}
           disabled={pending}
@@ -422,13 +465,13 @@ function RecordCorrectionForm({
   readonly onClearDueDate: () => void;
 }): JSX.Element {
   const [name, setName] = useState(record.name);
-  const [administeredAt, setAdministeredAt] = useState(() => toLocalInput(record.administeredAt));
+  const [administeredAt, setAdministeredAt] = useState(() => toDateInput(record.administeredAt));
   const [nextDueAt, setNextDueAt] = useState(() =>
-    record.nextDueAt === null ? "" : toLocalInput(record.nextDueAt)
+    record.nextDueAt === null ? "" : toDateInput(record.nextDueAt)
   );
 
-  const administeredInstant = fromLocalInput(administeredAt);
-  const dueInstant = fromLocalInput(nextDueAt);
+  const administeredInstant = fromDateInput(administeredAt);
+  const dueInstant = fromDateInput(nextDueAt);
   const dueIsInvalid = nextDueAt.trim().length > 0 && dueInstant === null;
   const canSubmit =
     !pending && name.trim().length > 0 && administeredInstant !== null && !dueIsInvalid;
@@ -463,11 +506,11 @@ function RecordCorrectionForm({
       </div>
       <div className="space-y-2">
         <label htmlFor={`${kind.slug}-correct-administered-at`} className="text-sm font-medium">
-          Administered at
+          Administered on
         </label>
         <input
           id={`${kind.slug}-correct-administered-at`}
-          type="datetime-local"
+          type="date"
           value={administeredAt}
           onChange={(event) => setAdministeredAt(event.target.value)}
           disabled={pending}
@@ -480,7 +523,7 @@ function RecordCorrectionForm({
         </label>
         <input
           id={`${kind.slug}-correct-due-at`}
-          type="datetime-local"
+          type="date"
           value={nextDueAt}
           onChange={(event) => setNextDueAt(event.target.value)}
           disabled={pending}
@@ -622,14 +665,14 @@ function RecordKindPanel({
                   <dl className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
                     <div className="flex gap-1">
                       <dt className="font-medium">Administered</dt>
-                      <dd>{formatRecordedInstant(record.administeredAt)}</dd>
+                      <dd>{formatRecordedDate(record.administeredAt)}</dd>
                     </div>
                     <div className="flex gap-1">
                       <dt className="font-medium">Next due</dt>
                       <dd>
                         {record.nextDueAt === null
                           ? "No due date recorded"
-                          : formatRecordedInstant(record.nextDueAt)}
+                          : formatRecordedDate(record.nextDueAt)}
                       </dd>
                     </div>
                   </dl>

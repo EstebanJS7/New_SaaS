@@ -838,11 +838,24 @@ export class ReportingService {
     await this.requireReadPermission();
 
     const period = resolveReportPeriod(query, this.now());
+    // ORDER MATTERS, and it is not cosmetic. The two reads are not one snapshot, so
+    // a commit landing between them is visible to exactly one of them. Reading the
+    // FLOW first makes that benign: a purchase committing between the two reads has
+    // its movement seen here and its balance seen by the LATER read, so the item is
+    // present in both. The reverse order was a real defect surfaced by independent
+    // verification — a purchase of a previously unstocked item made the balance read
+    // miss an item the movement read had seen, and the report answered `INTERNAL`
+    // for perfectly valid committed data.
+    //
+    // The residual skew is the unavoidable one of any two-read approach: an
+    // existing item can pair a pre-commit quantity with a post-commit flow. That is
+    // a stale number, not a failure, and [[TD-053]] owns the single-snapshot fix.
+    //
+    // The FLOW: the ledger, bounded to the period.
+    const movements = await this.reports.listStockMovements(period.fromInstant, period.toInstant);
     // The SNAPSHOT: the projection, read whole. A balance row has no date, so it
     // is never bounded by the period — that is the point of the two reads.
     const balances = await this.reports.listStockBalances();
-    // The FLOW: the ledger, bounded to the period.
-    const movements = await this.reports.listStockMovements(period.fromInstant, period.toInstant);
 
     const flows = new Map<string, StockFlow>();
     for (const movement of movements) {

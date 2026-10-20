@@ -225,12 +225,12 @@ lines:
 bucketDate,saleCount,net,tax,gross
 2026-06-05,1,2569.00,0.00,2569.00
 
-name,kind,quantity,gross
-Consulta,SERVICE,1.000,100.00
-"Gasa ""sterile"", 10cm",PRODUCT,2.000,2469.00
+catalogItemId,name,kind,quantity,net,tax,gross
+c0000000-…-0002,Consulta,SERVICE,1.000,100.00,0.00,100.00
+c0000000-…-0001,"Gasa ""sterile"", 10cm",PRODUCT,2.000,2469.00,0.00,2469.00
 
 empty period ->
-bucketDate
+bucketDate,saleCount,net,tax,gross
 ```
 
 Three things to read in that output. `2569.00` survives the round trip exactly —

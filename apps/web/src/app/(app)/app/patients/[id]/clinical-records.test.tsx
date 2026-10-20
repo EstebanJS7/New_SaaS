@@ -3,9 +3,9 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   ClinicalRecordsSection,
-  formatRecordedInstant,
-  fromLocalInput,
-  toLocalInput,
+  formatRecordedDate,
+  fromDateInput,
+  toDateInput,
 } from "./clinical-records";
 import type { ClinicalDeworming, ClinicalVaccination } from "./clinical-api";
 
@@ -21,16 +21,18 @@ const VACCINATION_ID = "55555555-5555-4555-8555-555555555555";
 const DEWORMING_ID = "66666666-6666-4666-8666-666666666666";
 
 /** Instants with no seconds so a local round trip preserves them exactly. */
-const ADMINISTERED_AT = "2026-10-19T12:30:00.000Z";
-const DUE_AT = "2027-10-19T12:30:00.000Z";
+const ADMINISTERED_AT = "2026-10-19T12:00:00.000Z";
+const DUE_AT = "2027-10-19T12:00:00.000Z";
 
 /**
- * The instant the correction expects, derived exactly as the form derives it:
- * the typed wall-clock value converted by this browser's clock, never a
- * hand-written UTC assumption about the runner's timezone.
+ * The instant the correction expects, derived exactly as the form derives it: the
+ * chosen calendar date pinned to NOON UTC. Written out rather than computed so the
+ * wire contract is visible, and so a change to it fails this expectation instead of
+ * silently re-deriving itself — the previous version converted through the
+ * browser's clock and therefore compared the parser against itself.
  */
-const CORRECTED_DUE_INPUT = "2028-01-05T08:00";
-const CORRECTED_DUE_AT = new Date(CORRECTED_DUE_INPUT).toISOString();
+const CORRECTED_DUE_INPUT = "2028-01-05";
+const CORRECTED_DUE_AT = "2028-01-05T12:00:00.000Z";
 
 const VACCINATION: ClinicalVaccination = {
   id: VACCINATION_ID,
@@ -303,8 +305,8 @@ describe("clinical record entry surface", () => {
 
     const list = await screen.findByTestId("vaccination-records");
     expect(await within(list).findByText("Rabies")).toBeInTheDocument();
-    expect(within(list).getByText(formatRecordedInstant(ADMINISTERED_AT))).toBeInTheDocument();
-    expect(within(list).getByText(formatRecordedInstant(DUE_AT))).toBeInTheDocument();
+    expect(within(list).getByText(formatRecordedDate(ADMINISTERED_AT))).toBeInTheDocument();
+    expect(within(list).getByText(formatRecordedDate(DUE_AT))).toBeInTheDocument();
     expect(within(list).queryByText("No due date recorded")).not.toBeInTheDocument();
   });
 
@@ -325,7 +327,7 @@ describe("clinical record entry surface", () => {
     const list = await screen.findByTestId("deworming-records");
     expect(await within(list).findByText("No due date recorded")).toBeInTheDocument();
     expect(within(list).getByText("Praziquantel")).toBeInTheDocument();
-    expect(within(list).getByText(formatRecordedInstant(ADMINISTERED_AT))).toBeInTheDocument();
+    expect(within(list).getByText(formatRecordedDate(ADMINISTERED_AT))).toBeInTheDocument();
   });
 
   it("surfaces a generic error for the vaccination list", async () => {
@@ -383,11 +385,11 @@ describe("clinical record entry surface", () => {
     renderRecords();
     await openVaccinationForm();
     fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies" } });
-    fireEvent.change(screen.getByLabelText("Administered at"), {
-      target: { value: "2026-10-19T09:30" },
+    fireEvent.change(screen.getByLabelText("Administered on"), {
+      target: { value: "2026-10-19" },
     });
     fireEvent.change(screen.getByLabelText("Next dose due (optional)"), {
-      target: { value: "2027-10-19T09:30" },
+      target: { value: "2027-10-19" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
 
@@ -399,14 +401,14 @@ describe("clinical record entry surface", () => {
     // this browser before it leaves: no hand-rolled midnight UTC.
     expect(created[0]?.body).toEqual({
       vaccine: "Rabies",
-      administeredAt: new Date("2026-10-19T09:30").toISOString(),
-      nextDueAt: new Date("2027-10-19T09:30").toISOString(),
+      administeredAt: "2026-10-19T12:00:00.000Z",
+      nextDueAt: "2027-10-19T12:00:00.000Z",
     });
 
     const list = await screen.findByTestId("vaccination-records");
     expect(await within(list).findByText("Rabies")).toBeInTheDocument();
     expect(
-      within(list).getByText(formatRecordedInstant(new Date("2027-10-19T09:30").toISOString()))
+      within(list).getByText(formatRecordedDate("2027-10-19T12:00:00.000Z"))
     ).toBeInTheDocument();
   });
 
@@ -416,8 +418,8 @@ describe("clinical record entry surface", () => {
     renderRecords();
     await openVaccinationForm();
     fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies" } });
-    fireEvent.change(screen.getByLabelText("Administered at"), {
-      target: { value: "2026-10-19T09:30" },
+    fireEvent.change(screen.getByLabelText("Administered on"), {
+      target: { value: "2026-10-19" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
 
@@ -428,7 +430,7 @@ describe("clinical record entry surface", () => {
     // date" and rejects an explicit null (only UPDATE accepts null).
     expect(body).toEqual({
       vaccine: "Rabies",
-      administeredAt: new Date("2026-10-19T09:30").toISOString(),
+      administeredAt: "2026-10-19T12:00:00.000Z",
     });
     expect(body).not.toHaveProperty("nextDueAt");
 
@@ -459,7 +461,7 @@ describe("clinical record entry surface", () => {
 
     const list = await screen.findByTestId("vaccination-records");
     expect(await within(list).findByText("Rabies (booster)")).toBeInTheDocument();
-    expect(within(list).getByText(formatRecordedInstant(CORRECTED_DUE_AT))).toBeInTheDocument();
+    expect(within(list).getByText(formatRecordedDate(CORRECTED_DUE_AT))).toBeInTheDocument();
   });
 
   it("clears a vaccination due date with an explicit null and shows the no-due state", async () => {
@@ -467,7 +469,7 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
     const list = await screen.findByTestId("vaccination-records");
-    expect(await within(list).findByText(formatRecordedInstant(DUE_AT))).toBeInTheDocument();
+    expect(await within(list).findByText(formatRecordedDate(DUE_AT))).toBeInTheDocument();
 
     fireEvent.click(within(list).getByRole("button", { name: "Correct" }));
     fireEvent.click(screen.getByRole("button", { name: "Clear due date" }));
@@ -483,7 +485,7 @@ describe("clinical record entry surface", () => {
     await waitFor(() => {
       expect(within(list).getByText("No due date recorded")).toBeInTheDocument();
     });
-    expect(within(list).queryByText(formatRecordedInstant(DUE_AT))).not.toBeInTheDocument();
+    expect(within(list).queryByText(formatRecordedDate(DUE_AT))).not.toBeInTheDocument();
   });
 
   it("records a deworming treatment with a due date and lists it", async () => {
@@ -492,11 +494,11 @@ describe("clinical record entry surface", () => {
     renderRecords();
     await openDewormingForm();
     fireEvent.change(screen.getByLabelText("Product"), { target: { value: "Praziquantel" } });
-    fireEvent.change(screen.getByLabelText("Administered at"), {
-      target: { value: "2026-10-19T09:30" },
+    fireEvent.change(screen.getByLabelText("Administered on"), {
+      target: { value: "2026-10-19" },
     });
     fireEvent.change(screen.getByLabelText("Next treatment due (optional)"), {
-      target: { value: "2027-01-19T09:30" },
+      target: { value: "2027-01-19" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save deworming" }));
 
@@ -506,8 +508,8 @@ describe("clinical record entry surface", () => {
     expect(created).toHaveLength(1);
     expect(created[0]?.body).toEqual({
       product: "Praziquantel",
-      administeredAt: new Date("2026-10-19T09:30").toISOString(),
-      nextDueAt: new Date("2027-01-19T09:30").toISOString(),
+      administeredAt: "2026-10-19T12:00:00.000Z",
+      nextDueAt: "2027-01-19T12:00:00.000Z",
     });
 
     const list = await screen.findByTestId("deworming-records");
@@ -519,7 +521,7 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
     const list = await screen.findByTestId("deworming-records");
-    expect(await within(list).findByText(formatRecordedInstant(DUE_AT))).toBeInTheDocument();
+    expect(await within(list).findByText(formatRecordedDate(DUE_AT))).toBeInTheDocument();
 
     fireEvent.click(within(list).getByRole("button", { name: "Correct" }));
     fireEvent.click(screen.getByRole("button", { name: "Clear due date" }));
@@ -576,8 +578,8 @@ describe("clinical record entry surface", () => {
     renderRecords();
     await openVaccinationForm();
     fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies" } });
-    fireEvent.change(screen.getByLabelText("Administered at"), {
-      target: { value: "2026-10-19T09:30" },
+    fireEvent.change(screen.getByLabelText("Administered on"), {
+      target: { value: "2026-10-19" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
 
@@ -601,8 +603,8 @@ describe("clinical record entry surface", () => {
     renderRecords();
     await openVaccinationForm();
     fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies" } });
-    fireEvent.change(screen.getByLabelText("Administered at"), {
-      target: { value: "2026-10-19T09:30" },
+    fireEvent.change(screen.getByLabelText("Administered on"), {
+      target: { value: "2026-10-19" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
 
@@ -621,8 +623,8 @@ describe("clinical record entry surface", () => {
     renderRecords();
     await openDewormingForm();
     fireEvent.change(screen.getByLabelText("Product"), { target: { value: "Praziquantel" } });
-    fireEvent.change(screen.getByLabelText("Administered at"), {
-      target: { value: "2026-10-19T09:30" },
+    fireEvent.change(screen.getByLabelText("Administered on"), {
+      target: { value: "2026-10-19" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save deworming" }));
 
@@ -638,8 +640,8 @@ describe("clinical record entry surface", () => {
     await openVaccinationForm();
     // A tenant-looking value typed into the form is a NAME, never an authority.
     fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: TENANT_ID } });
-    fireEvent.change(screen.getByLabelText("Administered at"), {
-      target: { value: "2026-10-19T09:30" },
+    fireEvent.change(screen.getByLabelText("Administered on"), {
+      target: { value: "2026-10-19" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
 
@@ -653,18 +655,51 @@ describe("clinical record entry surface", () => {
   });
 });
 
-describe("clinical record instant helpers", () => {
-  it("formats an instant as a local date and time", () => {
-    expect(formatRecordedInstant(ADMINISTERED_AT)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+describe("clinical record date helpers", () => {
+  it("renders the stored instant as the calendar date staff chose", () => {
+    expect(formatRecordedDate(ADMINISTERED_AT)).toBe("2026-10-19");
+    expect(formatRecordedDate(ADMINISTERED_AT)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("round-trips an instant through the datetime-local value", () => {
-    expect(toLocalInput(ADMINISTERED_AT)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
-    expect(fromLocalInput(toLocalInput(ADMINISTERED_AT))).toBe(ADMINISTERED_AT);
+  it("pins a chosen date to noon UTC, so the TENANT day is the day staff typed", () => {
+    expect(fromDateInput("2026-10-19")).toBe("2026-10-19T12:00:00.000Z");
+    // The decisive assertion: whatever zone the BROWSER is in, the tenant-local
+    // calendar date of the value that leaves this surface equals what was typed.
+    const wire = fromDateInput("2026-11-18")!;
+    const tenantDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Asuncion",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(wire));
+    expect(tenantDate).toBe("2026-11-18");
   });
 
-  it("treats an empty datetime-local value as no value at all", () => {
-    expect(fromLocalInput("")).toBeNull();
-    expect(fromLocalInput("not-a-date")).toBeNull();
+  it("keeps the tenant day correct for other plausible tenant zones too", () => {
+    // Noon UTC has twelve hours of margin either side, so any offset in (-12,+12)
+    // keeps the tenant-local date equal to the chosen date.
+    for (const timeZone of ["America/Asuncion", "UTC", "Asia/Tokyo", "America/New_York"]) {
+      const wire = fromDateInput("2026-11-18")!;
+      const tenantDate = new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(wire));
+      expect(tenantDate).toBe("2026-11-18");
+    }
+  });
+
+  it("round-trips a chosen date through the stored instant", () => {
+    expect(toDateInput(fromDateInput("2026-10-19")!)).toBe("2026-10-19");
+    expect(toDateInput(ADMINISTERED_AT)).toBe("2026-10-19");
+  });
+
+  it("treats an empty or malformed date as no value at all", () => {
+    expect(fromDateInput("")).toBeNull();
+    expect(fromDateInput("   ")).toBeNull();
+    expect(fromDateInput("not-a-date")).toBeNull();
+    expect(fromDateInput("2026-13-01")).toBeNull();
+    expect(fromDateInput("2026-10")).toBeNull();
   });
 });

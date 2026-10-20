@@ -251,6 +251,17 @@ movement falls outside the period — the clearest possible demonstration that
   check.** The runtime movement read is period-bounded, so proving the equality
   live would need a second, all-time ledger read per item. The test recomputes
   it independently and the real-database proof above confirms it on real rows.
+- **A read-order defect was found by independent verification AFTER this Story
+  was reported green, and is fixed.** The two reads are not one snapshot, so a
+  commit landing between them is visible to exactly one. Reading balances FIRST
+  meant a purchase of a previously unstocked item had its movement seen but not
+  its balance, and the report answered `INTERNAL` for perfectly valid committed
+  data. Reading the FLOW first makes that benign: a purchase committing between
+  the reads has its movement seen here and its balance seen by the later read.
+  The residual skew is the unavoidable one of any two-read approach — an
+  existing item can pair a pre-commit quantity with a post-commit flow, which is
+  a stale number rather than a failure — and [[TD-053]] owns the single-snapshot
+  fix.
 - The low-stock shortfall ordering is a total order on
   `(shortfall DESC, name ASC)` only; two rows tied on both fall back to the
   balance read's order via a stable sort. Deterministic, but not a declared
