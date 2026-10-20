@@ -3,7 +3,7 @@ id: REP-004
 type: story
 title: The cash and purchase reports
 epic: EPIC-18
-status: planned
+status: done
 priority: medium
 depends_on:
   - REP-002
@@ -68,22 +68,22 @@ would be reporting a number the domain deliberately does not own.
 
 ## Acceptance Criteria
 
-- [ ] `cash-movements` resolves the sign of every kind and reports
+- [x] `cash-movements` resolves the sign of every kind and reports
       `SALE`/correction kinds as they are defined in `DEC-030`, with
       `ADJUSTMENT` taking its sign from `direction`.
-- [ ] The reported net equals the signed sum of the movements in the period, and
+- [x] The reported net equals the signed sum of the movements in the period, and
       a test proves it against an independently computed expectation.
-- [ ] `cash-sessions` reports closed sessions only, with `expected`, `counted`
+- [x] `cash-sessions` reports closed sessions only, with `expected`, `counted`
       and `difference` as decimal strings, and asserts
       `counted - expected = difference` for every row it returns.
-- [ ] A session closed outside the period does not appear, and a session
+- [x] A session closed outside the period does not appear, and a session
       **opened** inside it does not appear unless it also closed inside it.
-- [ ] `purchases` reports receive-state purchases with line count and total
+- [x] `purchases` reports receive-state purchases with line count and total
       quantity, and carries no money field at all.
-- [ ] A `CANCELLED` purchase and a `DRAFT` purchase never appear.
-- [ ] All three routes require `reports.read` and are tenant-scoped.
-- [ ] Empty-period behaviour: an empty row set with the period echoed.
-- [ ] Tests required by the Story pass.
+- [x] A `CANCELLED` purchase and a `DRAFT` purchase never appear.
+- [x] All three routes require `reports.read` and are tenant-scoped.
+- [x] Empty-period behaviour: an empty row set with the period echoed.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -102,13 +102,13 @@ would be reporting a number the domain deliberately does not own.
 
 ```text
 GET /reports/cash-sessions?period=…|from=&to=
-  -> 200 { report, period, currency, rows: [
+  -> 200 { report, period, rows: [
              { sessionId, registerId, openedAt, closedAt,
                openingAmount, expectedAmount, countedAmount, differenceAmount } ],
            totals: { expected, counted, difference } }
 
 GET /reports/cash-movements?period=…|from=&to=
-  -> 200 { report, period, currency, net,
+  -> 200 { report, period, net,
            rows: [ { type, direction, movementCount, signedAmount } ] }
 
 GET /reports/purchases?period=…|from=&to=
@@ -146,13 +146,93 @@ with their indexes.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented on `feat/epic-18-dashboards-reports`, extending the same module.
+
+- **The sign map is imported, not copied.** `reporting.service.ts` imports
+  `cashMovementSign` from `../cash/cash.expected-amount.js`. DEC-030 exists
+  because the sign lives in the movement KIND, and a second copy of that switch
+  statement would be a second opinion about the same money; a test asserts the
+  coupling, so the report cannot drift from the close command. `signedAmount` is
+  `amount` or `amount.negated()` on `Prisma.Decimal` — never a float multiply.
+- **`cash-sessions` reads `CLOSED` sessions dated by `closedAt`** and **asserts
+  the domain invariant per row**: `counted - expected === difference`, compared
+  with `Decimal.equals()`. A row whose three stored amounts disagree throws
+  `INTERNAL` naming the session, because reporting a drawer that does not add up
+  without saying so is worse than refusing.
+- **`cash-movements` dates each movement by its own `createdAt`.**
+  `cash_movement` is append-only with no `updated_at`, so its creation instant
+  IS the movement's business instant; dating a movement by its session's close
+  would move it to a different period.
+- **`purchases` reads `RECEIVED` rows dated by `receivedAt`** and carries **no
+  money field and no total**, asserted structurally in a test. The aggregate
+  owns no total and no payment state, and `unitCost` is informational; a total
+  derived from it would report a number the domain deliberately does not have.
+  Suppliers resolve in ONE batched tenant-predicated read.
+- **No `currency` key on either cash response.** The first version of this
+  Story's API sketch showed one; `docs/05-modules/Cash.md` and the models
+  confirm the Cash domain carries **no currency column**, so inventing one would
+  have been the same class of error as inventing a purchase total. The sketch is
+  corrected above.
+- Three per-read caps (5 000 sessions, 20 000 movements, 5 000 purchases), each
+  with `take: LIMIT + 1` and a refusal rather than a truncated aggregate.
+- The three routes are behind `reports.read`, re-asserted in the service, and
+  pinned in `EXPECTED_ROUTE_INVENTORY` and `REPORTING_PERMISSION_BY_ROUTE`.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (23/23 turbo tasks)
+pnpm typecheck      PASS  (23/23)
+pnpm build          PASS  (13/13)
+pnpm test           PASS  (23/23)
+  api        106 files (104 landed + 2 new)      1478 passed | 266 skipped  (+46)
+  database    30 files                            549 passed
+  web        110 files                           1164 passed
 ```
+
+46 new tests: 32 service (one case per movement kind plus `ADJUSTMENT` in both
+directions, the net against an independently recomputed signed sum, the
+close-result mismatch refusal, the caps, the permission-before-any-read
+ordering, the structural absence of a purchase money key) and 14 integration
+through `bootTestApp()` (the period echo, the row-level
+`OPENED inside / CLOSED outside` exclusion, the
+`DRAFT`/`CANCELLED`/null-`receivedAt` exclusions, the half-open boundary, and
+tenant isolation for all three).
+
+The boundary tests are deliberately split by layer: the service suite proves the
+_query_ the report issues, and the integration suite proves the _predicate the
+fixture actually applies_. A stub returns whatever it is handed, so only the
+second can catch a fake that agrees with a bug.
+
+**All three queries were also proven against real PostgreSQL**, because the
+route suites run on the in-memory fixture and a fake that agrees with the code
+proves nothing about the planner. Against a freshly migrated database seeded
+through the real invariants (a movement cannot enter a CLOSED session, one OPEN
+session per register, manual kinds need a reason), for the period
+`[2026-06-01T03:00Z, 2026-06-11T03:00Z)` in `America/Asuncion`:
+
+```text
+cash-sessions rows: 1   (the CLOSED session; the OPEN one is correctly excluded)
+  closed 2026-06-05T20:00Z expected 600.00 counted 595.00 diff -5.00
+  counted - expected === difference -> true
+
+cash-movements rows: 3   (the 2026-06-20 sale is outside the period)
+  SALE                amount 150.00  signed  150.00
+  WITHDRAWAL          amount  40.00  signed  -40.00
+  ADJUSTMENT/DECREASE amount   2.50  signed   -2.50
+  net: 107.50   (exactly 150.00 - 40.00 - 2.50, signed by the shipped map)
+
+purchases rows: 1   (the DRAFT purchase has a null receivedAt)
+  received 2026-06-04T10:00Z supplier VetSupply lines 2 qty 3.750
+  supplier read resolved: 1 of 1   (one batched read, no N+1)
+```
+
+The seeding itself surfaced three database invariants this report must respect
+and does not bypass: `cash_movement_no_insert_into_closed_session`,
+`cash_session_one_open_per_register_key` and `cash_movement_reason_required`. A
+movement's history is append-only inside an open drawer, which is precisely why
+the movement report dates rows by their own `createdAt`.
 
 ## Tests Added
 
@@ -174,12 +254,25 @@ Not run.
 ## Known Limitations
 
 - No cash-versus-payments reconciliation, because `cash_movement` carries no
-  sale linkage. Recorded as an explicit non-goal rather than a silent gap.
+  sale linkage. An explicit non-goal rather than a silent gap.
 - No purchase money total, because the purchase aggregate owns none.
+- **The cash reports are tenant-wide and have no per-register cut.** Each
+  session row carries its `registerId`, but there is no register filter and the
+  movement report aggregates every register together. There is no `branchId`
+  anywhere (DEC-020), so a branch cut is [[TD-052]]'s problem, but a
+  per-register filter is a smaller and separate gap this Story does not close.
+- `listSuppliersByIds` carries no explicit row cap: its id set is derived from
+  the already-capped purchase read and deduped, so it is bounded by that cap.
+  Recorded so a later reader does not mistake the asymmetry for an oversight.
+- Two extra `INTERNAL` messages were needed because `closedAt`/the close amounts
+  and `receivedAt` are nullable in Prisma. They assert presence rather than
+  defaulting a missing close amount to `"0.00"` or dropping an undated receipt.
+  No error _codes_ were minted.
 
 ## Technical Debt
 
-- [[TD-052]], [[TD-053]].
+- [[TD-052]] — the branch dimension no finance ledger carries.
+- [[TD-053]] — report query performance beyond directed indexes.
 
 ## Decisions / ADRs
 
@@ -193,4 +286,5 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+All required gates passed on 2026-10-19. The `apps/e2e` lane was not run (Docker
+unavailable; this Story adds no UI).

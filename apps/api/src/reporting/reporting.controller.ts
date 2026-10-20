@@ -6,14 +6,17 @@ import { ReportingService } from "./reporting.service.js";
 import {
   REPORT_PERIOD_QUERY_INVALID_MESSAGE,
   reportPeriodQuerySchema,
+  type CashMovementsResponse,
+  type CashSessionsResponse,
   type PaymentMethodsResponse,
+  type PurchasesResponse,
   type ReportPeriodQuery,
   type SalesByPeriodResponse,
   type SalesByProductServiceResponse,
 } from "./reporting.dto.js";
 
 /**
- * The staff reporting surface (EPIC-18 REP-002, REP-003).
+ * The staff reporting surface (EPIC-18 REP-002, REP-003, REP-004).
  *
  * **Read-only.** Reports aggregate; they never write, so there is no command
  * route, no `PATCH` and no `DELETE` on this surface at all.
@@ -63,6 +66,39 @@ export class ReportingController {
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async salesByProductService(@Query() query: unknown): Promise<SalesByProductServiceResponse> {
     return this.reporting.salesByProductService(this.parsePeriod(query));
+  }
+
+  /**
+   * Cash sessions (PRD §31, [[REP-004]]): the sessions that CLOSED in the period,
+   * with their opening, expected, counted and difference amounts. Same period
+   * contract as every report on this surface.
+   */
+  @Get("cash-sessions")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async cashSessions(@Query() query: unknown): Promise<CashSessionsResponse> {
+    return this.reporting.cashSessions(this.parsePeriod(query));
+  }
+
+  /**
+   * Cash movements (PRD §31, [[REP-004]]): the period's movements rolled up by
+   * `(type, direction)` with the [[DEC-030]] sign resolved, plus the net. Same
+   * period contract.
+   */
+  @Get("cash-movements")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async cashMovements(@Query() query: unknown): Promise<CashMovementsResponse> {
+    return this.reporting.cashMovements(this.parsePeriod(query));
+  }
+
+  /**
+   * Purchases (PRD §31, [[REP-004]]): the purchases RECEIVED in the period, with
+   * their line count, total quantity and supplier — and deliberately no money
+   * total, because the purchase aggregate owns none. Same period contract.
+   */
+  @Get("purchases")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async purchases(@Query() query: unknown): Promise<PurchasesResponse> {
+    return this.reporting.purchases(this.parsePeriod(query));
   }
 
   /**

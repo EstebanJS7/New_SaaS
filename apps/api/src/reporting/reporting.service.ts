@@ -1,12 +1,23 @@
 import { Injectable, Optional } from "@nestjs/common";
 import { Prisma } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
+// Value import (not `import type`): the sign MAP is the function under contract.
+// It is the ONLY implementation of the convention in the repo ([[DEC-030]]), so
+// this module RESOLVES the sign by calling it and never by restating it.
+import { cashMovementSign } from "../cash/cash.expected-amount.js";
+import type { CashMovementDirectionValue, CashMovementTypeValue } from "../cash/cash.repository.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { TenantSettingsService } from "../settings/tenant-settings.service.js";
 import type {
+  CashMovementRowDto,
+  CashMovementsResponse,
+  CashSessionRowDto,
+  CashSessionsResponse,
   KindTotalDto,
   PaymentMethodRowDto,
   PaymentMethodsResponse,
+  PurchaseRowDto,
+  PurchasesResponse,
   ReportPeriodDto,
   ReportPeriodQuery,
   SalesByPeriodResponse,
@@ -22,6 +33,7 @@ import {
 } from "./report.period.js";
 import {
   ReportRepository,
+  type ReportCashSessionRow,
   type ReportSaleLineRow,
   type ReportSaleRow,
 } from "./reporting.repository.js";
@@ -49,6 +61,66 @@ export const REPORT_CURRENCY_UNRESOLVED_MESSAGE = "The tenant sale currency coul
  */
 export function reportCatalogItemMissingMessage(catalogItemId: string): string {
   return `The report read a sale line whose catalog item is missing: ${catalogItemId}`;
+}
+
+/**
+ * Stable message when a closed session's stored `countedAmount - expectedAmount`
+ * is not its stored `differenceAmount`.
+ *
+ * The close command computes both from the same inputs ([[DEC-031]]), so the
+ * three columns agree by construction and this branch is unreachable through the
+ * command. It is ASSERTED rather than assumed because the stored
+ * `differenceAmount` is the authoritative one: a report that quietly printed a
+ * row where the three disagree would be publishing a drawer result that never
+ * happened, and a report that recomputed the difference instead would silently
+ * overrule what the operator counted.
+ */
+export function reportCashSessionDifferenceMismatchMessage(sessionId: string): string {
+  return `The report read a closed cash session whose counted minus expected amount is not its difference: ${sessionId}`;
+}
+
+/**
+ * Stable message when a purchase names a supplier the batched supplier read did
+ * not return. `purchase.supplier_id` is a `RESTRICT` composite foreign key, so
+ * this is UNREACHABLE; it is asserted rather than assumed for the same reason as
+ * the missing-catalog-item refusal — a receipt with no supplier name is a row the
+ * report cannot honestly render, and dropping it would be worse.
+ */
+export function reportSupplierMissingMessage(supplierId: string): string {
+  return `The report read a purchase whose supplier is missing: ${supplierId}`;
+}
+
+/**
+ * The response order of the movement roll-up: `type` ascending (this list is that
+ * alphabetical order) and then `direction` ascending with `null` FIRST.
+ *
+ * Declared as explicit orders rather than `localeCompare` so the contract is
+ * TOTAL and locale-independent: two rows can never compare equal and inherit a
+ * map's insertion order, which would make the response depend on the order the
+ * database happened to return.
+ */
+const CASH_MOVEMENT_TYPE_ORDER: readonly CashMovementTypeValue[] = [
+  "ADJUSTMENT",
+  "DEPOSIT",
+  "EXPENSE",
+  "INCOME",
+  "REFUND",
+  "SALE",
+  "WITHDRAWAL",
+];
+
+const CASH_MOVEMENT_DIRECTION_ORDER: readonly (CashMovementDirectionValue | null)[] = [
+  null,
+  "DECREASE",
+  "INCREASE",
+];
+
+/** One accumulating `(type, direction)` group of the movement ledger. */
+interface MovementBucket {
+  readonly type: CashMovementTypeValue;
+  readonly direction: CashMovementDirectionValue | null;
+  movementCount: number;
+  signedAmount: Prisma.Decimal;
 }
 
 /** One accumulating calendar-day bucket. Money is `Decimal` from the first add. */
@@ -152,6 +224,28 @@ function kindTotalDto(totals: DecimalTotals): KindTotalDto {
     gross: totals.gross.toFixed(2),
     quantity: totals.quantity.toFixed(3),
   };
+}
+
+/**
+ * The signed amount a movement contributes to the drawer ([[DEC-030]]):
+ *
+ *   signed = amount * cashMovementSign(type, direction)
+ *
+ * The stored `amount` is ALWAYS POSITIVE — the kind owns the sign — so this is
+ * the ONE place the reporting module resolves it, and it resolves it with the
+ * SAME map the close command validated on write. A second copy of the map here
+ * would be two chances for the report and the drawer to disagree about what a
+ * `REFUND` does, which is precisely what [[DEC-030]] exists to prevent.
+ *
+ * Both branches are `Prisma.Decimal` arithmetic: `negated()` is exact, whereas
+ * multiplying by a JavaScript `-1` would route the money through a float.
+ */
+function signedCashMovementAmount(
+  type: CashMovementTypeValue,
+  direction: CashMovementDirectionValue | null,
+  amount: Prisma.Decimal
+): Prisma.Decimal {
+  return cashMovementSign(type, direction) === 1 ? amount : amount.negated();
 }
 
 /**
@@ -403,6 +497,227 @@ export class ReportingService {
       totalsByKind,
       rows,
     };
+  }
+
+  /**
+   * Cash sessions by period (PRD §31, [[REP-004]]): the sessions that CLOSED in
+   * the period, with their opening, expected, counted and difference amounts.
+   *
+   * The rows are the stored close result — the report never recomputes a drawer.
+   * What it DOES do is assert the domain invariant on every row it returns:
+   * `countedAmount - expectedAmount` must equal the stored `differenceAmount`, or
+   * the row refuses with a loud `INTERNAL` naming the session. The stored
+   * difference is authoritative and the report must not silently publish a row
+   * whose three amounts disagree, because a reader cannot tell such a row from a
+   * correct one.
+   *
+   * There is no `currency` in the response: a drawer amount is the tenant's own
+   * cash and the Cash domain carries no currency column (`Cash.md`), so a code
+   * here would be invented rather than resolved.
+   *
+   * An EMPTY period is an answer: `rows: []`, every total `"0.00"`, period
+   * echoed.
+   */
+  async cashSessions(query: ReportPeriodQuery): Promise<CashSessionsResponse> {
+    await this.requireReadPermission();
+
+    const period = resolveReportPeriod(query, this.now());
+    const sessions = await this.reports.listClosedCashSessions(
+      period.fromInstant,
+      period.toInstant
+    );
+
+    const totals = {
+      expected: new Prisma.Decimal(0),
+      counted: new Prisma.Decimal(0),
+      difference: new Prisma.Decimal(0),
+    };
+    const rows: CashSessionRowDto[] = [];
+
+    for (const session of sessions) {
+      const amounts = this.assertCloseResult(session);
+      rows.push({
+        sessionId: session.id,
+        registerId: session.registerId,
+        openedAt: session.openedAt.toISOString(),
+        closedAt: session.closedAt.toISOString(),
+        openingAmount: toDecimal(session.openingAmount).toFixed(2),
+        expectedAmount: amounts.expected.toFixed(2),
+        countedAmount: amounts.counted.toFixed(2),
+        differenceAmount: amounts.difference.toFixed(2),
+      });
+      totals.expected = totals.expected.plus(amounts.expected);
+      totals.counted = totals.counted.plus(amounts.counted);
+      totals.difference = totals.difference.plus(amounts.difference);
+    }
+
+    return {
+      report: "cash-sessions",
+      period: toPeriodDto(period),
+      rows,
+      totals: {
+        expected: totals.expected.toFixed(2),
+        counted: totals.counted.toFixed(2),
+        difference: totals.difference.toFixed(2),
+      },
+    };
+  }
+
+  /**
+   * Cash movements by period (PRD §31, [[REP-004]]): the period's movements rolled
+   * up by `(type, direction)`, with the sign convention of [[DEC-030]] resolved,
+   * plus the period's net.
+   *
+   * The stored `amount` is ALWAYS POSITIVE and the kind owns the sign, so a report
+   * that summed `amount` would be wrong by construction. Each row's
+   * `signedAmount` is `amount * cashMovementSign(type, direction)` in
+   * `Prisma.Decimal`, and `net` is the sum of EVERY signed amount in the period —
+   * accumulated as the movements are read, not derived from the rows, so the two
+   * are computed independently and a rounding bug cannot agree with itself.
+   *
+   * `direction` is non-null exactly for `ADJUSTMENT`; every other kind carries
+   * `null` because its kind, not a direction, owns its sign.
+   *
+   * Order is `type` ascending, then `direction` ascending with `null` first.
+   * An EMPTY period is `rows: []` with `net: "0.00"`.
+   */
+  async cashMovements(query: ReportPeriodQuery): Promise<CashMovementsResponse> {
+    await this.requireReadPermission();
+
+    const period = resolveReportPeriod(query, this.now());
+    const movements = await this.reports.listCashMovements(period.fromInstant, period.toInstant);
+
+    const buckets = new Map<string, MovementBucket>();
+    let net = new Prisma.Decimal(0);
+
+    for (const movement of movements) {
+      const key = `${movement.type}\u0000${movement.direction ?? ""}`;
+      let bucket = buckets.get(key);
+      if (bucket === undefined) {
+        bucket = {
+          type: movement.type,
+          direction: movement.direction,
+          movementCount: 0,
+          signedAmount: new Prisma.Decimal(0),
+        };
+        buckets.set(key, bucket);
+      }
+      const signed = signedCashMovementAmount(
+        movement.type,
+        movement.direction,
+        toDecimal(movement.amount)
+      );
+      bucket.movementCount += 1;
+      bucket.signedAmount = bucket.signedAmount.plus(signed);
+      net = net.plus(signed);
+    }
+
+    // The row order is part of the response contract, so it is applied HERE from
+    // an explicit total order and never inherited from the map's insertion order.
+    const ordered = [...buckets.values()].sort((left, right) => {
+      const byType =
+        CASH_MOVEMENT_TYPE_ORDER.indexOf(left.type) - CASH_MOVEMENT_TYPE_ORDER.indexOf(right.type);
+      if (byType !== 0) {
+        return byType;
+      }
+      return (
+        CASH_MOVEMENT_DIRECTION_ORDER.indexOf(left.direction) -
+        CASH_MOVEMENT_DIRECTION_ORDER.indexOf(right.direction)
+      );
+    });
+
+    const rows: CashMovementRowDto[] = ordered.map((bucket) => ({
+      type: bucket.type,
+      direction: bucket.direction,
+      movementCount: bucket.movementCount,
+      signedAmount: bucket.signedAmount.toFixed(2),
+    }));
+
+    return {
+      report: "cash-movements",
+      period: toPeriodDto(period),
+      net: net.toFixed(2),
+      rows,
+    };
+  }
+
+  /**
+   * Purchases by period (PRD §31, [[REP-004]]): the purchases RECEIVED in the
+   * period, with their line count, total quantity and supplier.
+   *
+   * The period predicate is `receivedAt` and the status predicate is `RECEIVED`: a
+   * `DRAFT` was never received and a `CANCELLED` one was never stock.
+   *
+   * There is NO money column and no total. `PurchaseLine.unitCost` is optional and
+   * informational ([[DEC-013]]) and the purchase aggregate owns no total and no
+   * payment state (`Purchases.md`), so a "purchase total" would report a number
+   * the domain deliberately does not have. What the domain DOES own is the line
+   * quantity at the ledger's `Decimal(10, 3)` scale, and that is what is summed.
+   *
+   * Suppliers are resolved in ONE batched read; a name the read does not return is
+   * a loud `INTERNAL` naming the id, never a dropped receipt (the
+   * `reportCatalogItemMissingMessage` discipline).
+   */
+  async purchases(query: ReportPeriodQuery): Promise<PurchasesResponse> {
+    await this.requireReadPermission();
+
+    const period = resolveReportPeriod(query, this.now());
+    const received = await this.reports.listReceivedPurchases(period.fromInstant, period.toInstant);
+
+    // An EMPTY period asks the supplier read for nothing: the id set is empty, so
+    // `listSuppliersByIds` short-circuits and no round trip answers known-nothing.
+    const supplierIds = [...new Set(received.map((purchase) => purchase.supplierId))];
+    const suppliers = await this.reports.listSuppliersByIds(supplierIds);
+    const supplierById = new Map(suppliers.map((supplier) => [supplier.id, supplier]));
+
+    const rows: PurchaseRowDto[] = received.map((purchase) => {
+      const supplier = supplierById.get(purchase.supplierId);
+      if (supplier === undefined) {
+        throw new DomainError("INTERNAL", reportSupplierMissingMessage(purchase.supplierId));
+      }
+      let totalQuantity = new Prisma.Decimal(0);
+      for (const line of purchase.lines) {
+        totalQuantity = totalQuantity.plus(toDecimal(line.quantity));
+      }
+      return {
+        purchaseId: purchase.id,
+        supplierId: purchase.supplierId,
+        supplierName: supplier.name,
+        receivedAt: purchase.receivedAt.toISOString(),
+        lineCount: purchase.lines.length,
+        totalQuantity: totalQuantity.toFixed(3),
+      };
+    });
+
+    return {
+      report: "purchases",
+      period: toPeriodDto(period),
+      rows,
+    };
+  }
+
+  /**
+   * Asserts the stored close result of one session agrees with itself and returns
+   * the three amounts as `Decimal`s.
+   *
+   * `counted - expected === difference` is the domain invariant the close command
+   * establishes ([[DEC-031]]); the report re-checks it rather than trusting it,
+   * because the stored `differenceAmount` is authoritative and a row where the
+   * three disagree is a row no reader could detect. Exact arithmetic, no epsilon:
+   * these are `Decimal(14, 2)` values, so equality is equality.
+   */
+  private assertCloseResult(session: ReportCashSessionRow): {
+    expected: Prisma.Decimal;
+    counted: Prisma.Decimal;
+    difference: Prisma.Decimal;
+  } {
+    const expected = toDecimal(session.expectedAmount);
+    const counted = toDecimal(session.countedAmount);
+    const difference = toDecimal(session.differenceAmount);
+    if (!counted.minus(expected).equals(difference)) {
+      throw new DomainError("INTERNAL", reportCashSessionDifferenceMismatchMessage(session.id));
+    }
+    return { expected, counted, difference };
   }
 
   /**

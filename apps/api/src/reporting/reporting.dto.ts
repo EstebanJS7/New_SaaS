@@ -4,10 +4,11 @@ import { z } from "zod";
  * The reporting response contract (EPIC-18 REP-002, [[DEC-062]]).
  *
  * Data classification (PRD §41): every value here is INTERNAL — aggregate
- * counts, calendar dates and money totals of the tenant's OWN confirmed sales.
- * No customer, patient, clinical or fiscal identity is read, and no CONFIDENTIAL
- * or RESTRICTED payload crosses this boundary. Prisma models are never returned;
- * only the keys declared here leave the process.
+ * counts, calendar dates and money totals of the tenant's OWN confirmed sales,
+ * cash ledger and received purchases. No customer, patient, clinical or fiscal
+ * identity is read, and no CONFIDENTIAL or RESTRICTED payload crosses this
+ * boundary. Prisma models are never returned; only the keys declared here leave
+ * the process.
  *
  * Decimal projections are fixed-scale exact strings at their stored column scale
  * (`Decimal(14, 2)` for every money aggregate), never JavaScript floats and never
@@ -170,8 +171,154 @@ export interface SalesByProductServiceResponse {
 }
 
 /**
+ * One CLOSED cash session of the period (`GET /reports/cash-sessions`,
+ * [[REP-004]]).
+ *
+ * An OPEN session never appears: it has no close result and no close instant, so
+ * reporting it would print NULLs — or, worse, zeros — for a drawer that was
+ * never counted. `CLOSED` is terminal ([[DEC-036]]), so these four amounts are
+ * written exactly once by the close command ([[DEC-031]]) and this report only
+ * READS them.
+ */
+export interface CashSessionRowDto {
+  /** The `cash_session` id the close result belongs to. */
+  readonly sessionId: string;
+  /** The register the drawer belonged to. */
+  readonly registerId: string;
+  /** ISO 8601 instant the session was opened (context, never the period predicate). */
+  readonly openedAt: string;
+  /** ISO 8601 instant of the `OPEN` → `CLOSED` transition — the period predicate. */
+  readonly closedAt: string;
+  /** The stored opening float, exact fixed-scale (2 decimals). */
+  readonly openingAmount: string;
+  /** The stored server-computed expected amount, exact fixed-scale (2 decimals). */
+  readonly expectedAmount: string;
+  /** The stored operator-counted amount, exact fixed-scale (2 decimals). */
+  readonly countedAmount: string;
+  /**
+   * The stored `countedAmount - expectedAmount`, exact fixed-scale (2 decimals),
+   * NEGATIVE when the drawer is short. It is the AUTHORITATIVE value: the report
+   * asserts it against the other two amounts and never recomputes it in place of
+   * the stored one.
+   */
+  readonly differenceAmount: string;
+}
+
+/** The period roll-up of {@link CashSessionRowDto}, at the money scale. */
+export interface CashSessionsTotalsDto {
+  /** Exact fixed-scale (2 decimals). */
+  readonly expected: string;
+  /** Exact fixed-scale (2 decimals). */
+  readonly counted: string;
+  /** Exact fixed-scale (2 decimals), may be negative. */
+  readonly difference: string;
+}
+
+/**
+ * `GET /reports/cash-sessions` (PRD §31, [[REP-004]]): what the drawer actually
+ * did — every session that CLOSED in the period, with its counted-versus-expected
+ * difference.
+ *
+ * There is deliberately NO `currency`: a drawer amount is the tenant's own cash
+ * and the Cash domain carries no currency column (`Cash.md`), so a currency code
+ * here would be a number with an invented label in front of it.
+ */
+export interface CashSessionsResponse {
+  readonly report: "cash-sessions";
+  readonly period: ReportPeriodDto;
+  /** `closedAt` ascending. An empty period is `[]`, never an error. */
+  readonly rows: CashSessionRowDto[];
+  /** The sum of the rows. `"0.00"` for every column when the period is empty. */
+  readonly totals: CashSessionsTotalsDto;
+}
+
+/**
+ * One `(type, direction)` group of the period's cash movements
+ * (`GET /reports/cash-movements`, [[REP-004]]).
+ *
+ * The stored `amount` is ALWAYS POSITIVE — the kind owns the sign ([[DEC-030]]) —
+ * so `signedAmount` is the only place the report resolves it, through the SAME
+ * `cashMovementSign` map the close command uses.
+ */
+export interface CashMovementRowDto {
+  /** The `CashMovementType` enum literal — `SALE`, `REFUND`, `INCOME`, … */
+  readonly type: string;
+  /** The `ADJUSTMENT`-only direction; `null` for every type-owned kind. */
+  readonly direction: string | null;
+  /** Movements of this `(type, direction)` in the period. */
+  readonly movementCount: number;
+  /**
+   * Summed signed `Decimal(14, 2)` amount, exact fixed-scale (2 decimals).
+   * NEGATIVE for a subtractive kind, and the sign is always rendered.
+   */
+  readonly signedAmount: string;
+}
+
+/**
+ * `GET /reports/cash-movements` (PRD §31, [[REP-004]]): the movements recorded in
+ * the period, rolled up by kind with the sign convention of [[DEC-030]] resolved.
+ *
+ * The period predicate is the MOVEMENT's own `createdAt`: `cash_movement` is
+ * append-only with no `updated_at`, so its creation instant IS its business
+ * instant. The session it belongs to is a different fact and never dates it.
+ */
+export interface CashMovementsResponse {
+  readonly report: "cash-movements";
+  readonly period: ReportPeriodDto;
+  /**
+   * The signed sum of every movement in the period, exact fixed-scale (2
+   * decimals), negative when the subtractive kinds dominate.
+   */
+  readonly net: string;
+  /**
+   * `type` ascending, then `direction` ascending with `null` first — a total
+   * order, never the insertion order of a map. An empty period is `[]`.
+   */
+  readonly rows: CashMovementRowDto[];
+}
+
+/**
+ * One purchase RECEIVED in the period (`GET /reports/purchases`, [[REP-004]]).
+ *
+ * There is deliberately no money column: `PurchaseLine.unitCost` is optional and
+ * informational ([[DEC-013]]), and the purchase aggregate owns no total and no
+ * payment state (`Purchases.md`). A "purchase total" would be a number the
+ * domain deliberately does not have, so the report reports lines and the ledger's
+ * quantity scale instead.
+ */
+export interface PurchaseRowDto {
+  /** The `purchase` id. */
+  readonly purchaseId: string;
+  /** The tenant's supplier id the receipt was booked against. */
+  readonly supplierId: string;
+  /** The supplier's name as the registry holds it today (INTERNAL). */
+  readonly supplierName: string;
+  /** ISO 8601 instant of the `DRAFT` → `RECEIVED` transition — the period predicate. */
+  readonly receivedAt: string;
+  /** How many lines the purchase was received with. */
+  readonly lineCount: number;
+  /** Summed `Decimal(10, 3)` quantity, exact fixed-scale (3 decimals), e.g. `"12.500"`. */
+  readonly totalQuantity: string;
+}
+
+/**
+ * `GET /reports/purchases` (PRD §31, [[REP-004]]): what the tenant actually
+ * received. Only `RECEIVED` purchases appear — a `DRAFT` was never received and a
+ * `CANCELLED` one was never stock — and only inside the period of their
+ * `receivedAt`.
+ */
+export interface PurchasesResponse {
+  readonly report: "purchases";
+  readonly period: ReportPeriodDto;
+  /** `receivedAt` ascending. An empty period is `[]`, never an error. */
+  readonly rows: PurchaseRowDto[];
+}
+
+/**
  * The query contract of every report route (`GET /reports/sales-by-period`,
- * `GET /reports/payment-methods`, `GET /reports/sales-by-product-service`).
+ * `GET /reports/payment-methods`, `GET /reports/sales-by-product-service`,
+ * `GET /reports/cash-sessions`, `GET /reports/cash-movements`,
+ * `GET /reports/purchases`).
  *
  * `.strict()` so an unknown key is REFUSED rather than silently ignored: a
  * typo'd `from_` would otherwise widen the report to a different question while

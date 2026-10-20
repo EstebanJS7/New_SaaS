@@ -118,6 +118,29 @@ function harness(
         return Promise.resolve(options.catalogItems ?? []);
       },
     },
+    // REP-004's reads are not exercised by this suite: they THROW rather than
+    // answer `[]`, so a REP-002/REP-003 case that reached one would fail loudly
+    // instead of quietly aggregating an empty set. Their own suite supplies them.
+    cashSession: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read cash sessions.");
+      },
+    },
+    cashMovement: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read cash movements.");
+      },
+    },
+    purchase: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read purchases.");
+      },
+    },
+    supplier: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read suppliers.");
+      },
+    },
   };
   const requestContext = {
     requireTenantId: () => TENANT,

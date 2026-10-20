@@ -15,7 +15,8 @@ reversal to reason about here.
 
 [[REP-002]] established the foundation every later report consumes: the period
 rule, the response contract and the permission family. [[REP-003]] added the two
-commercial cuts over the same completed sales.
+commercial cuts over the same completed sales, and [[REP-004]] added the cash
+ledger and the receipts.
 
 ## Access
 
@@ -101,6 +102,9 @@ hours. Local midnight of 2024-10-06 never existed (the clock jumped 00:00 →
 | `GET /reports/sales-by-period`          | `reports.read` | Completed sales of the resolved period, bucketed by the tenant's local day, money as decimal strings.       |
 | `GET /reports/payment-methods`          | `reports.read` | The period's payments summed per `PaymentMethod`, with a payment count and the share of the period's gross. |
 | `GET /reports/sales-by-product-service` | `reports.read` | The period's sale lines grouped per `catalog_item`, with quantity, net, tax, gross and the `kind` roll-up.  |
+| `GET /reports/cash-sessions`            | `reports.read` | The sessions that **closed** in the period, with their stored opening, expected, counted and difference.    |
+| `GET /reports/cash-movements`           | `reports.read` | The period's movements rolled up per `(type, direction)` with the [[DEC-030]] sign resolved, plus the net.  |
+| `GET /reports/purchases`                | `reports.read` | The purchases **received** in the period, with their line count, total quantity and supplier (no money).    |
 
 There is deliberately no command route, no `PATCH` and no `DELETE`: a report
 aggregates and never writes. Tenant identity is never an input — it comes from
@@ -311,6 +315,240 @@ exactly like a correct one.
 }
 ```
 
+### `GET /reports/cash-sessions`
+
+What the drawer actually did. Every session that **closed** inside the period,
+with the close result the close command stored.
+
+The period predicate is `cash_session.closed_at`, **never** `opened_at` and
+never `created_at`: a session opened yesterday and closed today is today's
+close, and a session opened today and closed next week belongs to next week's
+report. `OPEN` sessions never appear — an open drawer has no close result and no
+close instant, and printing NULLs (or zeros) for it would report a count nobody
+performed.
+
+| Column             | Meaning                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| `sessionId`        | The `cash_session` id.                                                    |
+| `registerId`       | The register the drawer belonged to.                                      |
+| `openedAt`         | ISO 8601 instant the session was opened — context, not the predicate.     |
+| `closedAt`         | ISO 8601 instant of the `OPEN` → `CLOSED` transition — the predicate.     |
+| `openingAmount`    | Stored opening float, exact fixed-scale 2 decimals.                       |
+| `expectedAmount`   | Stored server-computed expected amount, exact fixed-scale 2 decimals.     |
+| `countedAmount`    | Stored operator-counted amount, exact fixed-scale 2 decimals.             |
+| `differenceAmount` | Stored `counted − expected`, fixed-scale 2 decimals, negative when short. |
+
+Rows are ordered by `closedAt` ascending. `totals` carries `expected`, `counted`
+and `difference` summed with `Prisma.Decimal`, so the period total is the row
+sums exactly.
+
+There is no `currency`: a drawer amount is the tenant's own cash and the Cash
+domain carries no currency column (`Cash.md`), so a code here would be invented
+rather than resolved.
+
+**The report asserts `counted − expected = difference` on every row it
+returns.** The close command computes both from the same inputs ([[DEC-031]]),
+so the three columns agree by construction; the report re-checks the invariant
+instead of trusting it, and a row that violates it refuses with a loud
+`500 INTERNAL` naming the session id. The stored `differenceAmount` is
+authoritative: a report that silently printed a row where the three disagree
+would publish a drawer result that never happened, and one that recomputed the
+difference instead would silently overrule what the operator counted.
+
+An empty period is `rows: []` with every total `"0.00"`.
+
+```json
+{
+  "report": "cash-sessions",
+  "period": {
+    "preset": null,
+    "fromDate": "2026-06-10",
+    "toDate": "2026-06-11",
+    "timeZone": "America/Asuncion",
+    "fromInstant": "2026-06-10T03:00:00.000Z",
+    "toInstant": "2026-06-12T03:00:00.000Z"
+  },
+  "rows": [
+    {
+      "sessionId": "7c1f…",
+      "registerId": "41ab…",
+      "openedAt": "2026-06-09T12:00:00.000Z",
+      "closedAt": "2026-06-10T20:00:00.000Z",
+      "openingAmount": "100.00",
+      "expectedAmount": "250.00",
+      "countedAmount": "245.00",
+      "differenceAmount": "-5.00"
+    }
+  ],
+  "totals": { "expected": "250.00", "counted": "245.00", "difference": "-5.00" }
+}
+```
+
+### `GET /reports/cash-movements`
+
+The movements recorded in the period, rolled up per `(type, direction)`, with
+the sign convention of [[DEC-030]] resolved.
+
+The period predicate is the movement's OWN `created_at`. `cash_movement` is
+append-only with no `updated_at` by design, so its creation instant IS the
+movement's business instant. The session a movement belongs to is a different
+fact and never dates it: a movement recorded at 23:59 belongs to that day even
+if its drawer closes the next morning.
+
+| Column          | Meaning                                                                               |
+| --------------- | ------------------------------------------------------------------------------------- |
+| `type`          | The `CashMovementType` enum literal.                                                  |
+| `direction`     | The `ADJUSTMENT`-only direction; `null` for every type-owned kind.                    |
+| `movementCount` | Movements of this `(type, direction)` in the period.                                  |
+| `signedAmount`  | Summed SIGNED amount, exact fixed-scale 2 decimals — negative for a subtractive kind. |
+
+Rows are ordered by `type` ascending, then `direction` ascending with `null`
+first, so the contract is total and stable rather than a map's insertion order.
+`net` is the signed sum of EVERY movement in the period and may be negative: a
+drawer that only paid out reports a negative net, and the sign is always
+rendered.
+
+**The stored `amount` is ALWAYS POSITIVE — the kind owns the sign**
+([[DEC-030]]): `SALE`, `INCOME` and `DEPOSIT` add; `REFUND`, `EXPENSE` and
+`WITHDRAWAL` subtract; `ADJUSTMENT` follows its explicit `direction`. The report
+resolves the sign by IMPORTING `cashMovementSign` from `cash.expected-amount.ts`
+— the ONE implementation of the map in the repository — and never by restating
+it here. A second copy would be exactly the drift DEC-030 exists to prevent, so
+a report that summed `amount` without that call is wrong by construction.
+
+`net` is accumulated from the movements as they are read while each row's
+`signedAmount` is accumulated per group, so the two are computed on independent
+paths and a rounding mistake cannot agree with itself.
+
+An empty period is `rows: []` with `net: "0.00"`.
+
+```json
+{
+  "report": "cash-movements",
+  "period": {
+    "preset": null,
+    "fromDate": "2026-06-10",
+    "toDate": "2026-06-11",
+    "timeZone": "America/Asuncion",
+    "fromInstant": "2026-06-10T03:00:00.000Z",
+    "toInstant": "2026-06-12T03:00:00.000Z"
+  },
+  "net": "73.50",
+  "rows": [
+    {
+      "type": "ADJUSTMENT",
+      "direction": "DECREASE",
+      "movementCount": 1,
+      "signedAmount": "-2.00"
+    },
+    {
+      "type": "ADJUSTMENT",
+      "direction": "INCREASE",
+      "movementCount": 1,
+      "signedAmount": "1.00"
+    },
+    {
+      "type": "DEPOSIT",
+      "direction": null,
+      "movementCount": 1,
+      "signedAmount": "20.00"
+    },
+    {
+      "type": "EXPENSE",
+      "direction": null,
+      "movementCount": 1,
+      "signedAmount": "-5.50"
+    },
+    {
+      "type": "INCOME",
+      "direction": null,
+      "movementCount": 1,
+      "signedAmount": "3.00"
+    },
+    {
+      "type": "REFUND",
+      "direction": null,
+      "movementCount": 1,
+      "signedAmount": "-10.00"
+    },
+    {
+      "type": "SALE",
+      "direction": null,
+      "movementCount": 2,
+      "signedAmount": "107.00"
+    },
+    {
+      "type": "WITHDRAWAL",
+      "direction": null,
+      "movementCount": 1,
+      "signedAmount": "-40.00"
+    }
+  ]
+}
+```
+
+This report reads `cash_movement` and never `payment`, and it does NOT reconcile
+the drawer against the day's payments: `cash_movement` carries no `sale_id`, so
+the reconciliation is not expressible and is an explicit non-goal ([[REP-004]])
+rather than a silent gap.
+
+### `GET /reports/purchases`
+
+What the tenant actually received. Only `RECEIVED` purchases whose `received_at`
+falls in the period: a `DRAFT` was never received and a `CANCELLED` one was
+never stock.
+
+| Column          | Meaning                                                                         |
+| --------------- | ------------------------------------------------------------------------------- |
+| `purchaseId`    | The `purchase` id.                                                              |
+| `supplierId`    | The supplier the receipt was booked against.                                    |
+| `supplierName`  | The supplier's name as the registry holds it today.                             |
+| `receivedAt`    | ISO 8601 instant of the `DRAFT` → `RECEIVED` transition — the predicate.        |
+| `lineCount`     | How many lines the purchase was received with.                                  |
+| `totalQuantity` | Summed `Decimal(10, 3)` quantity, exact fixed-scale **3 decimals** (`"3.750"`). |
+
+Rows are ordered by `receivedAt` ascending. Suppliers are resolved in ONE
+batched, tenant-predicated read (no query per purchase); an empty period asks
+for nothing. A supplier the read does not return refuses with a loud
+`500 INTERNAL` naming the id — `purchase.supplier_id` is a `RESTRICT` composite
+foreign key, so the branch is unreachable, and a dropped receipt would be worse
+than a failure.
+
+**There is NO money column and no total anywhere in this response.**
+`PurchaseLine.unitCost` is optional and explicitly informational ([[DEC-013]]),
+and the purchase aggregate owns no total and no payment state (`Purchases.md`).
+Inventing a total from the unit costs would report a number the domain
+deliberately does not have; what the domain DOES own is the line quantity at the
+ledger scale, and that is what is summed. The row type is pinned key-by-key in
+the service suite (`Record<keyof PurchaseRowDto, true>`), so adding a money key
+fails to compile as well as failing the runtime key-set assertion.
+
+An empty period is `rows: []`.
+
+```json
+{
+  "report": "purchases",
+  "period": {
+    "preset": null,
+    "fromDate": "2026-06-10",
+    "toDate": "2026-06-11",
+    "timeZone": "America/Asuncion",
+    "fromInstant": "2026-06-10T03:00:00.000Z",
+    "toInstant": "2026-06-12T03:00:00.000Z"
+  },
+  "rows": [
+    {
+      "purchaseId": "b3d2…",
+      "supplierId": "9f04…",
+      "supplierName": "Distribuidora Norte",
+      "receivedAt": "2026-06-10T10:00:00.000Z",
+      "lineCount": 2,
+      "totalQuantity": "3.750"
+    }
+  ]
+}
+```
+
 ## Invariants
 
 - **A draft is never revenue.** The query filters `status = COMPLETED` **and**
@@ -326,10 +564,31 @@ exactly like a correct one.
   Prisma-delegate native, with no `aggregate`, no `groupBy` and no raw SQL.
 - **The tenant comes from the request context**, never from a query parameter,
   so a report cannot be pointed at another tenant's rows.
-- **The row cap is a refusal, not a truncation.** `REPORT_SALE_ROW_LIMIT` (20
-  000 rows) is asked for as one extra row; exceeding it refuses with a stable
-  message rather than returning a silently partial aggregate ([[TD-053]] owns
-  the eventual pushdown).
+- **The row cap is a refusal, not a truncation.** Each read has its own cap and
+  asks for one extra row: `REPORT_SALE_ROW_LIMIT` (20 000 completed sales),
+  `REPORT_CASH_MOVEMENT_ROW_LIMIT` (20 000 movements), and
+  `REPORT_CASH_SESSION_ROW_LIMIT` / `REPORT_PURCHASE_ROW_LIMIT` (5 000 sessions
+  / receipts). Exceeding one refuses with a stable message rather than returning
+  a silently partial aggregate ([[TD-053]] owns the eventual pushdown). The caps
+  differ because a drawer closes once a day per register while a movement ledger
+  is the dense one.
+- **A report dates a row by its BUSINESS instant, never by a bookkeeping one.**
+  Sales: `completed_at`. Closes: `closed_at`. Movements: their own `created_at`
+  (the ledger is append-only, so the creation instant IS the business instant —
+  and never the session's close). Receipts: `received_at`. `created_at` and
+  `updated_at` are never substitutes, and consecutive periods partition because
+  every range is half-open `[fromInstant, toInstant)`.
+- **The cash sign lives in exactly one place.** Every cash amount is stored
+  positive and the kind owns the sign ([[DEC-030]]); the cash reports resolve it
+  by importing `cashMovementSign` from `cash.expected-amount.ts`, the same map
+  the close command uses. The reporting module holds no second copy.
+- **A closed session's stored difference is authoritative.** The report asserts
+  `counted − expected = difference` for every row and refuses loudly naming the
+  session otherwise; it never recomputes the difference in place of the stored
+  one.
+- **A purchase has no money total.** `unitCost` is informational and the
+  aggregate owns no total ([[DEC-013]], `Purchases.md`), so the receipts report
+  reports lines and quantities only.
 - **An empty period is an answer.** It returns `rows: []`, `saleCount: 0` and
   `"0.00"` totals with the period echoed — never an error, so a caller can tell
   "no sales" apart from "rejected".
@@ -353,7 +612,7 @@ exactly like a correct one.
 
 ## What later stories add
 
-The remaining reports ([[REP-004]] to [[REP-006]]) reuse `resolveReportPeriod`,
+The remaining reports ([[REP-005]], [[REP-006]]) reuse `resolveReportPeriod`,
 the response contract and the `reports.read` key. The CSV export ([[REP-007]])
 consumes `reports.export`. The dashboard ([[REP-008]]) consumes the same service
 methods rather than a second query.
@@ -382,6 +641,26 @@ methods rather than a second query.
   the cross-report invariant over three days and three methods, tenant isolation
   for payments and sale lines, the empty period, 400 per malformed period on
   both, and 403 without `reports.read` on both.
+- `reporting.cash-purchase.service.test.ts` — [[REP-004]]: one sign case per
+  `CashMovementType` plus `ADJUSTMENT` in both directions, the grouped roll-up
+  and its total order, the net against an independently computed signed sum, a
+  period of only corrections and one of only subtractive kinds (negative net),
+  the `counted − expected = difference` refusal naming the session, the query
+  predicates (`CLOSED` / `receivedAt` / movement `createdAt`, half-open), the
+  purchase quantity at scale 3, the purchase row's exact key set (no money key),
+  the missing-supplier `INTERNAL`, the batched supplier read and its
+  empty-period skip, every empty period, each row cap, and the 403 that reaches
+  no query.
+- `reporting.cash-purchase.integration.test.ts` — [[REP-004]]: all three routes
+  200 with the period echoed, the closed-session rows and totals with `closedAt`
+  ordering, a session opened inside but closed outside EXCLUDED, a session
+  opened before but closed inside INCLUDED, an `OPEN` session absent, a close
+  exactly at `toInstant` counted in the next period, the movement roll-up with
+  the sign resolved and the net, movements dated by their own `createdAt` and
+  not by their session, the received purchases with line count and total
+  quantity, `DRAFT`/`CANCELLED`/boundary receipts absent, tenant isolation for
+  sessions, movements and purchases, the empty period, 400 per malformed period
+  on all three, 403 without `reports.read` on all three and 401 unauthenticated.
 - `packages/database/src/reference-seed.test.ts` — `reports.read` is held by all
   six roles and `reports.export` by exactly `OWNER` and `ADMIN`.
 - `route-contract.probe.test.ts` — the route and its exact permission are

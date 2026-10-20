@@ -285,6 +285,12 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // behind the same key. Still no command route: they aggregate, they do not write.
   "GET /reports/payment-methods",
   "GET /reports/sales-by-product-service",
+  // EPIC-18 REP-004 — the cash ledger and the receipts. Still reads behind the
+  // same `reports.read` key: a report never writes, and no cash or purchase
+  // command is reachable from this surface.
+  "GET /reports/cash-sessions",
+  "GET /reports/cash-movements",
+  "GET /reports/purchases",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -510,9 +516,9 @@ const BILLING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-18 REP-002/REP-003 reporting surface. Every report route MUST declare
- * exactly `reports.read` — the key DEC-062 maps to all six roles — and NEVER
- * `reports.export`, which is the narrower owning-roles key the CSV path of
+ * EPIC-18 REP-002/REP-003/REP-004 reporting surface. Every report route MUST
+ * declare exactly `reports.read` — the key DEC-062 maps to all six roles — and
+ * NEVER `reports.export`, which is the narrower owning-roles key the CSV path of
  * REP-007 consumes. Pinning them by name means a route silently moved onto the
  * export key (or onto no key at all) fails here rather than shipping.
  */
@@ -520,6 +526,9 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /reports/sales-by-period": REPORTING_PERMISSIONS.read,
   "GET /reports/payment-methods": REPORTING_PERMISSIONS.read,
   "GET /reports/sales-by-product-service": REPORTING_PERMISSIONS.read,
+  "GET /reports/cash-sessions": REPORTING_PERMISSIONS.read,
+  "GET /reports/cash-movements": REPORTING_PERMISSIONS.read,
+  "GET /reports/purchases": REPORTING_PERMISSIONS.read,
 };
 
 describe("route-contract probe (deny-by-default)", () => {

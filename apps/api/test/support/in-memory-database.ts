@@ -390,6 +390,18 @@ export interface SupplierRow {
   updatedAt: Date;
 }
 
+/** Predicate fields the in-memory supplier reads/writes are allowed to build. */
+export interface SupplierWhere {
+  tenantId: string;
+  isActive?: boolean;
+  /**
+   * Batched identity resolution (EPIC-18 REP-004): `id IN (...)`. The tenant
+   * predicate stays mandatory, so an id from another tenant resolves to nothing
+   * rather than to that tenant's supplier.
+   */
+  id?: { in: string[] };
+}
+
 /** Lifecycle values pinned by schema enum `purchase_status` (PRD §17). */
 export type PurchaseStatusRow = "DRAFT" | "RECEIVED" | "CANCELLED";
 
@@ -437,11 +449,19 @@ export interface PurchaseWhere {
   id?: string;
   tenantId?: string;
   status?: PurchaseStatusRow;
+  /**
+   * Report-dated receive range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on the
+   * business instant `receivedAt`. A `null` instant matches no bound, exactly as
+   * PostgreSQL's NULL semantics do.
+   */
+  receivedAt?: { gte?: Date; lt?: Date };
 }
 
 /** Ordering clauses the in-memory purchase list accepts. */
 export interface PurchaseOrderBy {
   createdAt?: "asc" | "desc";
+  /** REP-004 reads the receive report in `receivedAt` order; NULLs sort last on `asc`. */
+  receivedAt?: "asc" | "desc";
   id?: "asc" | "desc";
 }
 
@@ -928,11 +948,38 @@ export interface CashSessionWhere {
   id?: string;
   tenantId?: string;
   status?: CashSessionRow["status"];
+  /**
+   * Report-dated close range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on `closedAt`,
+   * the business instant of the `OPEN` → `CLOSED` transition. A `null` `closedAt`
+   * (an open session) matches no bound, which is what PostgreSQL's NULL semantics
+   * already do and NOT what "treat null as the epoch" would.
+   */
+  closedAt?: { gte?: Date; lt?: Date };
+}
+
+/**
+ * Predicate fields the in-memory cash-movement reads are allowed to build. Named
+ * (rather than inline at the delegate) from EPIC-18 REP-004, because the report
+ * read adds the `createdAt` range and an inline shape would have to be widened in
+ * two places.
+ */
+export interface CashMovementWhere {
+  tenantId: string;
+  registerId?: string;
+  sessionId?: string;
+  /**
+   * Report-dated movement range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on the
+   * movement's own `createdAt`. `cash_movement` is append-only with no
+   * `updated_at`, so its creation instant IS its business instant.
+   */
+  createdAt?: { gte?: Date; lt?: Date };
 }
 
 /** Ordering clauses the in-memory cash lists accept. */
 export interface CashOrderBy {
   createdAt?: "asc" | "desc";
+  /** REP-004 reads the close report in `closedAt` order; NULLs sort last on `asc`. */
+  closedAt?: "asc" | "desc";
   id?: "asc" | "desc";
 }
 
@@ -1498,7 +1545,7 @@ export interface IsolationDatabase {
     };
     supplier: {
       findMany: (args: {
-        where: { tenantId: string; isActive?: boolean };
+        where: SupplierWhere;
         orderBy?: readonly { name?: "asc" | "desc"; id?: "asc" | "desc" }[];
       }) => SupplierRow[];
       findFirst: (args: { where: { id: string; tenantId: string } }) => SupplierRow | null;
@@ -1883,7 +1930,7 @@ export interface IsolationDatabase {
       }) => CashMovementRow;
       findUnique: (args: { where: { id: string } }) => CashMovementRow | null;
       findMany: (args: {
-        where: { tenantId: string; registerId?: string; sessionId?: string };
+        where: CashMovementWhere;
         orderBy?: readonly CashOrderBy[];
       }) => CashMovementRow[];
     };
@@ -2600,7 +2647,7 @@ function orderStockBalances(
 /**
  * Ordering for the purchase list: `createdAt` (newest first on the shipped
  * query) with `id` as the stable tie-break, mirroring the repository's declared
- * deterministic order.
+ * deterministic order. `receivedAt` is the EPIC-18 REP-004 receive-report order.
  */
 function orderPurchases(
   rows: PurchaseHeaderRow[],
@@ -2612,6 +2659,10 @@ function orderPurchases(
       if (clause.createdAt !== undefined) {
         const compared = left.createdAt.getTime() - right.createdAt.getTime();
         if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.receivedAt !== undefined) {
+        const compared = compareNullableInstants(left.receivedAt, right.receivedAt);
+        if (compared !== 0) return clause.receivedAt === "asc" ? compared : -compared;
       }
       if (clause.id !== undefined) {
         const compared = left.id.localeCompare(right.id);
@@ -2641,21 +2692,51 @@ function linesForPurchase(
 }
 
 /**
+ * Half-open business-instant predicate shared by every report-dated read
+ * (`completedAt`, `closedAt`, `createdAt`, `receivedAt`):
+ * `instant >= gte` AND `instant < lt`. A `null` instant satisfies NO bound,
+ * which is what PostgreSQL's NULL semantics already do and NOT what "treat null
+ * as the epoch" would.
+ *
+ * One implementation, because this is exactly where a fake silently disagrees
+ * with PostgreSQL: four hand-written copies of the same three comparisons are
+ * four chances to get an edge wrong, and the report would then be "tested"
+ * against a boundary the database does not have.
+ */
+function matchesHalfOpenInstant(
+  instant: Date | null,
+  filter: { gte?: Date; lt?: Date } | undefined
+): boolean {
+  if (filter === undefined) return true;
+  if (instant === null) return false;
+  const at = instant.getTime();
+  if (filter.gte !== undefined && at < filter.gte.getTime()) return false;
+  if (filter.lt !== undefined && at >= filter.lt.getTime()) return false;
+  return true;
+}
+
+/**
+ * Total order over nullable instants: `null` sorts LAST on `asc` (mirroring
+ * PostgreSQL's `NULLS LAST` default for ASC) and therefore first on `desc`.
+ */
+function compareNullableInstants(left: Date | null, right: Date | null): number {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return left.getTime() - right.getTime();
+}
+
+/**
  * Half-open business-instant predicate for the sale reads (EPIC-18 REP-002):
- * `completedAt >= gte` AND `completedAt < lt`. A `null` `completedAt` (a draft)
- * satisfies no bound, which is what PostgreSQL's NULL semantics already do and
- * NOT what "treat null as the epoch" would.
+ * `completedAt >= gte` AND `completedAt < lt`. Delegates to
+ * {@link matchesHalfOpenInstant} so every report-dated read applies the SAME
+ * boundary and NULL rule.
  */
 function matchesCompletedAt(
   candidate: SaleHeaderRow,
   filter: { gte?: Date; lt?: Date } | undefined
 ): boolean {
-  if (filter === undefined) return true;
-  if (candidate.completedAt === null) return false;
-  const instant = candidate.completedAt.getTime();
-  if (filter.gte !== undefined && instant < filter.gte.getTime()) return false;
-  if (filter.lt !== undefined && instant >= filter.lt.getTime()) return false;
-  return true;
+  return matchesHalfOpenInstant(candidate.completedAt, filter);
 }
 
 /**
@@ -2814,9 +2895,11 @@ function linesForInvoice(
 /**
  * Ordering for the cash register/session/movement lists: `createdAt` (newest
  * first on the shipped queries) with `id` as the stable tie-break, mirroring the
- * repository's declared deterministic order.
+ * repository's declared deterministic order. `closedAt` is the EPIC-18 REP-004
+ * close-report order; a session that is still `OPEN` has no close instant and
+ * sorts last on `asc`, like PostgreSQL.
  */
-function orderCashRows<T extends { id: string; createdAt: Date }>(
+function orderCashRows<T extends { id: string; createdAt: Date; closedAt?: Date | null }>(
   rows: T[],
   orderBy: readonly CashOrderBy[] | undefined
 ): T[] {
@@ -2826,6 +2909,10 @@ function orderCashRows<T extends { id: string; createdAt: Date }>(
       if (clause.createdAt !== undefined) {
         const compared = left.createdAt.getTime() - right.createdAt.getTime();
         if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.closedAt !== undefined) {
+        const compared = compareNullableInstants(left.closedAt ?? null, right.closedAt ?? null);
+        if (compared !== 0) return clause.closedAt === "asc" ? compared : -compared;
       }
       if (clause.id !== undefined) {
         const compared = left.id.localeCompare(right.id);
@@ -3741,7 +3828,8 @@ export function createIsolationDatabase(): IsolationDatabase {
         let rows = [...supplierTable.values()].filter(
           (candidate) =>
             candidate.tenantId === where.tenantId &&
-            (where.isActive === undefined || candidate.isActive === where.isActive)
+            (where.isActive === undefined || candidate.isActive === where.isActive) &&
+            (where.id === undefined || where.id.in.includes(candidate.id))
         );
         if (orderBy) {
           rows = rows.sort((left, right) => {
@@ -3808,7 +3896,8 @@ export function createIsolationDatabase(): IsolationDatabase {
             (candidate) =>
               (where.id === undefined || candidate.id === where.id) &&
               (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-              (where.status === undefined || candidate.status === where.status)
+              (where.status === undefined || candidate.status === where.status) &&
+              matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)
           ) ?? null;
         if (!header) return null;
         return include?.lines
@@ -3820,7 +3909,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where.status === undefined || candidate.status === where.status)
+            (where.status === undefined || candidate.status === where.status) &&
+            matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)
         );
         const ordered = orderBy === undefined ? headers : orderPurchases(headers, orderBy);
         return ordered.map((header) =>
@@ -3867,6 +3957,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (where.id !== undefined && candidate.id !== where.id) continue;
           if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) continue;
           if (where.status !== undefined && candidate.status !== where.status) continue;
+          if (!matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)) continue;
           if (data.supplierId !== undefined) candidate.supplierId = data.supplierId;
           if (data.status !== undefined) candidate.status = data.status;
           if (data.receivedAt !== undefined) candidate.receivedAt = data.receivedAt;
@@ -4599,14 +4690,16 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where.status === undefined || candidate.status === where.status)
+            (where.status === undefined || candidate.status === where.status) &&
+            matchesHalfOpenInstant(candidate.closedAt, where.closedAt)
         ) ?? null,
       findMany: ({ where, orderBy }) => {
         const rows = [...cashSessionTable.values()].filter(
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where.status === undefined || candidate.status === where.status)
+            (where.status === undefined || candidate.status === where.status) &&
+            matchesHalfOpenInstant(candidate.closedAt, where.closedAt)
         );
         return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
       },
@@ -4639,7 +4732,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (
             (where.id === undefined || row.id === where.id) &&
             (where.tenantId === undefined || row.tenantId === where.tenantId) &&
-            (where.status === undefined || row.status === where.status)
+            (where.status === undefined || row.status === where.status) &&
+            matchesHalfOpenInstant(row.closedAt, where.closedAt)
           ) {
             if (data.status !== undefined) row.status = data.status;
             if (data.expectedAmount !== undefined) {
@@ -4682,7 +4776,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             candidate.tenantId === where.tenantId &&
             (where.registerId === undefined || candidate.registerId === where.registerId) &&
-            (where.sessionId === undefined || candidate.sessionId === where.sessionId)
+            (where.sessionId === undefined || candidate.sessionId === where.sessionId) &&
+            matchesHalfOpenInstant(candidate.createdAt, where.createdAt)
         );
         return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
       },

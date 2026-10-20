@@ -73,7 +73,8 @@ Each work unit is one commit carrying its tests and documentation.
       reference report end to end. _Done: see the evidence log._
 - [x] **WU-C — [[REP-003]] the commercial reports.** _Done: see the evidence
       log._
-- [ ] **WU-D — [[REP-004]] the cash and purchase reports.**
+- [x] **WU-D — [[REP-004]] the cash and purchase reports.** _Done: see the
+      evidence log._
 - [ ] **WU-E — [[REP-005]] the inventory reports.**
 - [ ] **WU-F — [[REP-006]] the veterinary reports.**
 - [ ] **WU-G — [[REP-007]] the CSV export.**
@@ -191,5 +192,31 @@ Commit `WU-C` on `feat/epic-18-dashboards-reports`.
   payments sum exactly to the sale total and a sale's total derives from its
   lines; this is the test that makes three endpoints agree on one revenue.
 - Gates: api **1405 → 1429** (+24); format/lint/typecheck/build green.
+
+**Skipped:** the `apps/e2e` lane (no UI in this work unit).
+
+### WU-D — the cash and purchase reports
+
+Commit `WU-D` on `feat/epic-18-dashboards-reports`.
+
+- `GET /reports/cash-sessions` reads `CLOSED` sessions dated by `closedAt` and
+  asserts `counted - expected = difference` per row with `Decimal.equals()`,
+  refusing loudly with the session id when the three stored amounts disagree.
+- `GET /reports/cash-movements` dates each movement by its own `createdAt` and
+  resolves the sign by **importing `cashMovementSign`** from the cash domain — a
+  second copy of DEC-030's switch would be a second opinion about the same
+  money. One test case per movement kind plus `ADJUSTMENT` in both directions,
+  and the net checked against an independently recomputed signed sum.
+- `GET /reports/purchases` reads `RECEIVED` rows dated by `receivedAt`, resolves
+  suppliers in one batched tenant-predicated read, and carries **no money field
+  and no total** — asserted structurally, because the aggregate owns neither and
+  a total from `unitCost` would be invented.
+- No `currency` on either cash response: the Cash domain has no currency column.
+  The Story's own API sketch said otherwise and was corrected.
+- The in-memory fake gained `closedAt` / `createdAt` / `receivedAt` ranges and
+  `supplier.id.in` **implemented in the filters**, plus one shared half-open
+  predicate (`matchesHalfOpenInstant`) so the `>= gte` / `< lt` / NULL-matches-
+  nothing rule has a single implementation instead of five copies.
+- Gates: api **1432 → 1478** (+46); format/lint/typecheck/build green.
 
 **Skipped:** the `apps/e2e` lane (no UI in this work unit).
