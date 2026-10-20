@@ -73,10 +73,13 @@ rather than touching `stock_balance` directly.
 
 - `Purchase` — tenant-scoped aggregate, mapped to table `purchase`. `id` (`UUID`
   PK, `gen_random_uuid()`), `tenantId`, required `supplierId`, `status`
-  (`purchase_status NOT NULL DEFAULT 'DRAFT'`), `createdAt`, `updatedAt`
-  (`TIMESTAMPTZ(3)`). The schema declares `@@unique([tenantId, id])`,
-  `@@index([tenantId, status])` and `@@map("purchase")`. There is deliberately
-  **no** number, code, total, tax or valuation column ([[DEC-018]],
+  (`purchase_status NOT NULL DEFAULT 'DRAFT'`), `receivedAt` (`TIMESTAMPTZ(3)`,
+  nullable — the business instant of the `DRAFT` → `RECEIVED` transition,
+  written once by the receive transaction and `NULL` while `DRAFT` and for
+  `CANCELLED`, [[DEC-064]]), `createdAt`, `updatedAt` (`TIMESTAMPTZ(3)`). The
+  schema declares `@@unique([tenantId, id])`, `@@index([tenantId, status])`,
+  `@@index([tenantId, receivedAt])` and `@@map("purchase")`. There is
+  deliberately **no** number, code, total, tax or valuation column ([[DEC-018]],
   [[DEC-013]]).
 - `PurchaseLine` — tenant-scoped child, mapped to table `purchase_line`. `id`
   (`UUID` PK), `tenantId`, `purchaseId`, `catalogItemId`, `quantity`
@@ -192,14 +195,15 @@ assert it.
 ### Response projection
 
 `PurchaseResponse` (exactly these keys): `id`, `tenantId`, `supplierId`,
-`status`, `lines`, `createdAt`, `updatedAt`. `tenantId` is always the caller's
-own tenant, matching the sibling DTOs. Each entry of `lines` is
-`PurchaseLineResponse` with exactly `id`, `catalogItemId`, `quantity`,
-`unitCost`. There is deliberately no `number`, `code`, `total` or `tax` key
-([[DEC-018]], [[DEC-013]]). Decimal fields are projected as **fixed-scale exact
-strings** at their column scale — `quantity` at `Decimal(10,3)`, `unitCost` at
-`Decimal(14,2)` — never as JavaScript floats; an omitted cost projects as
-`null`, never `"0.00"`.
+`status`, `receivedAt`, `lines`, `createdAt`, `updatedAt`. `receivedAt` is an
+ISO 8601 string, or `null` while the purchase is not `RECEIVED` ([[DEC-064]]).
+`tenantId` is always the caller's own tenant, matching the sibling DTOs. Each
+entry of `lines` is `PurchaseLineResponse` with exactly `id`, `catalogItemId`,
+`quantity`, `unitCost`. There is deliberately no `number`, `code`, `total` or
+`tax` key ([[DEC-018]], [[DEC-013]]). Decimal fields are projected as
+**fixed-scale exact strings** at their column scale — `quantity` at
+`Decimal(10,3)`, `unitCost` at `Decimal(14,2)` — never as JavaScript floats; an
+omitted cost projects as `null`, never `"0.00"`.
 
 ### Read ordering and filters
 

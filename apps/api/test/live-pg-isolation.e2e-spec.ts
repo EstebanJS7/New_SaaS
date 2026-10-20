@@ -635,6 +635,7 @@ const PURCHASE_DTO_KEYS = [
   "createdAt",
   "id",
   "lines",
+  "receivedAt",
   "status",
   "supplierId",
   "tenantId",
@@ -646,6 +647,7 @@ const PURCHASE_LINE_DTO_KEYS = ["catalogItemId", "id", "quantity", "unitCost"].s
 
 /** Exact allowlisted key set of the sale response DTO (EPIC-12 contract). */
 const SALE_DTO_KEYS = [
+  "completedAt",
   "createdAt",
   "currency",
   "customerId",
@@ -682,9 +684,11 @@ const CASH_REGISTER_DTO_KEYS = ["createdAt", "id", "isActive", "name", "updatedA
  * Exact allowlisted key set of the cash session response DTO. Carries the three
  * EPIC-13 CASH-003 close-result amounts (DEC-031): they are ALWAYS present on
  * the projection and are `null` while the session is `OPEN`, so the key set is
- * identical before and after a close.
+ * identical before and after a close. `closedAt` (REP-001, DEC-064) follows the
+ * same rule: always a key, `null` until the close command writes it.
  */
 const CASH_SESSION_DTO_KEYS = [
+  "closedAt",
   "countedAmount",
   "createdAt",
   "differenceAmount",

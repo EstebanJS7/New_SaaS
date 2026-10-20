@@ -1774,6 +1774,11 @@ model Purchase {
   /// PRD §17 lifecycle. Defaults to DRAFT: a new purchase is a draft until the
   /// explicit receive command (PUR-002) transitions it.
   status     PurchaseStatus @default(DRAFT)
+  /// The business instant the purchase was RECEIVED, set exactly once by the
+  /// `DRAFT -> RECEIVED` transition of the receive command (PUR-002, DEC-064).
+  /// NULL while `DRAFT` and for `CANCELLED`, which is never received: a report
+  /// dates a receipt by this column and never by `createdAt`/`updatedAt`.
+  receivedAt DateTime?      @map("received_at") @db.Timestamptz(3)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1791,6 +1796,10 @@ model Purchase {
   /// purchase list without a second scan (there is no numbering column to sort
   /// on).
   @@index([tenantId, status])
+  /// Report range scan: `(tenant_id, received_at)` serves "receipts by period"
+  /// (PRD §31, DEC-064) as a tenant-leading range on the business instant the
+  /// report dates, instead of a full-tenant scan of `created_at`.
+  @@index([tenantId, receivedAt])
   @@map("purchase")
 }
 
@@ -1907,16 +1916,22 @@ enum SaleStatus {
 model Sale {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
-  tenantId   String     @map("tenant_id") @db.Uuid
+  tenantId    String     @map("tenant_id") @db.Uuid
   /// OPTIONAL customer (DEC-028): a walk-in counter sale needs none.
-  customerId String?    @map("customer_id") @db.Uuid
+  customerId  String?    @map("customer_id") @db.Uuid
   /// Single sale currency: an ISO 4217 code resolved server-side from the typed
   /// `sales.defaultCurrency` tenant setting (DEC-022). No conversion exists.
-  currency   String     @db.VarChar(3)
+  currency    String     @db.VarChar(3)
   /// PRD §18 lifecycle. Defaults to DRAFT: a new sale is a draft until the
   /// explicit cancel command (POS-001) or the CompleteSale transaction
   /// (POS-003) transitions it.
-  status     SaleStatus @default(DRAFT)
+  status      SaleStatus @default(DRAFT)
+  /// Set exactly once by the POS-003 CompleteSale transaction: the business
+  /// instant the sale became revenue (DEC-064). NULL while `DRAFT` and for
+  /// `CANCELLED`, which never completes, so a cancelled sale can never be
+  /// counted as revenue retroactively. Reports date a sale by this column,
+  /// never by `createdAt`.
+  completedAt DateTime?  @map("completed_at") @db.Timestamptz(3)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1947,6 +1962,10 @@ model Sale {
   /// Tenant list lookup: `(tenant_id, status)` serves the status-filtered sale
   /// list without a second scan (there is no numbering column to sort on).
   @@index([tenantId, status])
+  /// Report range scan: `(tenant_id, completed_at)` serves "sales by period"
+  /// (PRD §31, DEC-064) as a tenant-leading range on the business instant the
+  /// report dates, instead of a full-tenant scan of `created_at`.
+  @@index([tenantId, completedAt])
   @@map("sale")
 }
 
@@ -2323,6 +2342,11 @@ model CashSession {
   countedAmount        Decimal? @map("counted_amount") @db.Decimal(14, 2)
   /// Counted minus expected amount at close, stored by the close command.
   differenceAmount     Decimal? @map("difference_amount") @db.Decimal(14, 2)
+  /// The business instant the session was CLOSED, written by the close command
+  /// in the SAME statement as the three amounts above (DEC-064). NULL while the
+  /// session is `OPEN`; a report dates a close by this column, never by
+  /// `updatedAt`.
+  closedAt             DateTime? @map("closed_at") @db.Timestamptz(3)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -2343,6 +2367,10 @@ model CashSession {
   /// Tenant list lookup: `(tenant_id, status)` serves the status-filtered
   /// session list without a second scan.
   @@index([tenantId, status])
+  /// Report range scan: `(tenant_id, closed_at)` serves "cash closes by period"
+  /// (PRD §31, DEC-064) as a tenant-leading range on the business instant the
+  /// report dates, instead of a full-tenant scan of `created_at`.
+  @@index([tenantId, closedAt])
   @@map("cash_session")
 }
 

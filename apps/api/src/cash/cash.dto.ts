@@ -56,8 +56,10 @@ export interface CashRegisterResponse {
  * The three close-result amounts (DEC-031) are `null` while the session is
  * `OPEN` and populated exactly once, by the close command. `differenceAmount`
  * is `countedAmount - expectedAmount` and is legitimately NEGATIVE when the
- * drawer is short. Like every other projection here there is deliberately NO
- * `tenantId` key.
+ * drawer is short. `closedAt` follows the same OPEN/CLOSED nullability: it is
+ * the ISO 8601 business instant the close command wrote, `null` until closed
+ * and never derived from `updatedAt` (DEC-064). Like every other projection
+ * here there is deliberately NO `tenantId` key.
  */
 export interface CashSessionResponse {
   readonly id: string;
@@ -73,6 +75,8 @@ export interface CashSessionResponse {
   readonly countedAmount: string | null;
   /** `countedAmount - expectedAmount`, MAY be negative; `null` until closed. */
   readonly differenceAmount: string | null;
+  /** ISO 8601 instant the session was closed; `null` until the session is closed. */
+  readonly closedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

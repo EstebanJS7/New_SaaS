@@ -95,6 +95,12 @@ export interface CashSession {
    * drawer is short, so the UI must render the sign rather than assume a
    * magnitude. */
   readonly differenceAmount: string | null;
+  /**
+   * The ISO 8601 business instant the close command wrote (REP-001, DEC-064),
+   * `null` while `OPEN`. It is the close instant, never a substitute for
+   * `updatedAt`.
+   */
+  readonly closedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

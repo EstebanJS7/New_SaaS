@@ -59,6 +59,12 @@ export interface CashSessionRow {
    * legitimately NEGATIVE when the drawer is short.
    */
   differenceAmount: Prisma.Decimal | string | null;
+  /**
+   * The business instant the session was CLOSED (DEC-064), written in the SAME
+   * statement as the three close amounts and `null` while the session is
+   * `OPEN`.
+   */
+  closedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -182,7 +188,7 @@ export interface CashSessionDelegate {
    */
   updateMany: (args: {
     where: CashSessionWhere;
-    data: CashSessionCloseData & { status: CashSessionStatusValue };
+    data: CashSessionCloseData & { status: CashSessionStatusValue; closedAt?: Date | null };
   }) => Promise<{ count: number }>;
 }
 
@@ -572,6 +578,12 @@ export class CashRepository {
    * the same stable `409 CONFLICT` as any other non-`OPEN` session. `CLOSED` is
    * the ONLY status this method can produce and the close amounts are written
    * exactly once, in the same statement.
+   *
+   * The business instant `closedAt` is written in that SAME statement
+   * (DEC-064), so the session and the moment it was closed cannot disagree.
+   * Because the `where` pins `status = OPEN`, the assignment happens exactly
+   * once: a replayed or lost-race close matches zero rows and therefore can
+   * never rewrite the original instant.
    */
   async close(id: string, amounts: CashSessionCloseData, tx?: CashTx): Promise<boolean> {
     const tenantId = this.requestContext.requireTenantId();
@@ -580,6 +592,7 @@ export class CashRepository {
       where: { id, tenantId, status: "OPEN" },
       data: {
         status: "CLOSED",
+        closedAt: new Date(),
         expectedAmount: amounts.expectedAmount,
         countedAmount: amounts.countedAmount,
         differenceAmount: amounts.differenceAmount,

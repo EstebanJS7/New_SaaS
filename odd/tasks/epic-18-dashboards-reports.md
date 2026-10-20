@@ -64,9 +64,10 @@ Each work unit is one commit carrying its tests and documentation.
 
 - [ ] **WU-0 — the planning record.** This file, the epic, [[REP-001]] through
       [[REP-009]] and [[DEC-062]]–[[DEC-066]]. No source.
-- [ ] **WU-A — [[REP-001]] the report data prerequisites.** Three event
-      timestamps, the catalog threshold, the two clinical due dates, their
-      writers and their validators. Migration + backfill.
+- [ ] **WU-A — [[REP-001]] the report data prerequisites.** Two migrations.
+      **WU-A1** (done) the three business-event instants and their writers.
+      **WU-A2** (pending) the catalog threshold, the two clinical due dates,
+      their validators and the two forms.
 - [ ] **WU-B — [[REP-002]] the reporting foundation.** `resolveReportPeriod`,
       the report contract, the `reports.*` permissions, the route pins and one
       reference report end to end.
@@ -90,4 +91,26 @@ Recorded per work unit as it lands: the commit, the test counts it moved, and
 anything it could not verify. A work unit closes only when its own gates were
 observed green.
 
-_Empty until WU-A lands._
+### WU-A1 — the three business-event instants
+
+Commit `WU-A1` on `feat/epic-18-dashboards-reports`.
+
+- Migration `20261019000002_rep_001_report_event_timestamps`: three nullable
+  `TIMESTAMPTZ(3)` columns, three tenant-leading range indexes, and a backfill
+  from `updated_at` restricted to terminal rows with an `IS NULL` guard.
+- One assignment each inside the three existing conditional `updateMany`
+  terminal writes, so the instant is stamped exactly once and never rewritten.
+- Additive ISO-or-null projection on `SaleResponse`, `PurchaseResponse` and
+  `CashSessionResponse`; the in-memory fixture models the field in both halves
+  of its whitelist. The `apps/web` cash mirror and its four fixtures follow.
+- Tests: three exact-once/replay cases (null before, value after, original value
+  preserved through the refusal path) plus `completedAt`/`receivedAt` staying
+  `null` on a cancelled row.
+- Gates: format, lint, typecheck and build green; `pnpm test` green with api
+  **1349 → 1352**; live PostgreSQL **266/266** with all 50 migrations applied on
+  a disposable PostgreSQL 16.
+- Found and recorded [[TD-054]]: the live-PG lane is timezone-dependent and
+  `America/Asuncion` is the zone that breaks it.
+
+**Skipped:** the `apps/e2e` lane — Docker is unavailable in this environment and
+this work unit adds no UI.

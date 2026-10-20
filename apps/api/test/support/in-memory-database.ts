@@ -399,6 +399,8 @@ export interface PurchaseHeaderRow {
   tenantId: string;
   supplierId: string;
   status: PurchaseStatusRow;
+  /** Business instant of the DRAFT -> RECEIVED transition; `null` until then. */
+  receivedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -466,6 +468,8 @@ export interface SaleHeaderRow {
   customerId: string | null;
   currency: string;
   status: SaleStatusRow;
+  /** Business instant of the DRAFT -> COMPLETED transition; `null` until then. */
+  completedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -866,6 +870,8 @@ export interface CashSessionRow {
   countedAmount: string | null;
   /** `countedAmount - expectedAmount`, may be negative; `null` while `OPEN` (DEC-031). */
   differenceAmount: string | null;
+  /** Business instant of the OPEN -> CLOSED transition; `null` while `OPEN` (DEC-064). */
+  closedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1515,7 +1521,7 @@ export interface IsolationDatabase {
       }) => PurchaseRow;
       updateMany: (args: {
         where: PurchaseWhere;
-        data: { supplierId?: string; status?: PurchaseStatusRow };
+        data: { supplierId?: string; status?: PurchaseStatusRow; receivedAt?: Date | null };
       }) => { count: number };
     };
     purchaseLine: {
@@ -1557,7 +1563,7 @@ export interface IsolationDatabase {
       }) => SaleRow;
       updateMany: (args: {
         where: SaleWhere;
-        data: { customerId?: string | null; status?: SaleStatusRow };
+        data: { customerId?: string | null; status?: SaleStatusRow; completedAt?: Date | null };
       }) => { count: number };
     };
     saleLine: {
@@ -1809,13 +1815,15 @@ export interface IsolationDatabase {
       create: (args: { data: CashSessionCreateData & { tenantId: string } }) => CashSessionRow;
       /**
        * Conditional close write (EPIC-13 CASH-003): matches the STORED `status`
-       * in `where`, writes `CLOSED` plus the three close amounts and reports how
-       * many rows it touched, so the service's lost-race `409` is exercisable.
+       * in `where`, writes `CLOSED` plus the three close amounts and the close
+       * instant, and reports how many rows it touched, so the service's
+       * lost-race `409` is exercisable.
        */
       updateMany: (args: {
         where: CashSessionWhere;
         data: {
           status?: CashSessionRow["status"];
+          closedAt?: Date | null;
           expectedAmount?: string | { toString(): string };
           countedAmount?: string | { toString(): string };
           differenceAmount?: string | { toString(): string };
@@ -3756,6 +3764,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           supplierId: data.supplierId,
           // Mirrors the schema default so an omitted status still lands DRAFT.
           status: data.status ?? "DRAFT",
+          // Written ONLY by the receive command (DEC-064).
+          receivedAt: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -3786,6 +3796,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (where.status !== undefined && candidate.status !== where.status) continue;
           if (data.supplierId !== undefined) candidate.supplierId = data.supplierId;
           if (data.status !== undefined) candidate.status = data.status;
+          if (data.receivedAt !== undefined) candidate.receivedAt = data.receivedAt;
           candidate.updatedAt = new Date();
           count += 1;
         }
@@ -3870,6 +3881,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           currency: data.currency,
           // Mirrors the schema default so an omitted status still lands DRAFT.
           status: data.status ?? "DRAFT",
+          // Written ONLY by the completion transaction (DEC-064).
+          completedAt: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -3904,6 +3917,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (where.status !== undefined && candidate.status !== where.status) continue;
           if (data.customerId !== undefined) candidate.customerId = data.customerId;
           if (data.status !== undefined) candidate.status = data.status;
+          if (data.completedAt !== undefined) candidate.completedAt = data.completedAt;
           candidate.updatedAt = new Date();
           count += 1;
         }
@@ -4527,10 +4541,12 @@ export function createIsolationDatabase(): IsolationDatabase {
           openedAt: now,
           openedByMembershipId: data.openedByMembershipId,
           openingAmount: toDecimalString(data.openingAmount),
-          // Close results are written only by the close command (DEC-031).
+          // Close results and the close instant are written only by the close
+          // command (DEC-031, DEC-064).
           expectedAmount: null,
           countedAmount: null,
           differenceAmount: null,
+          closedAt: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -4555,6 +4571,7 @@ export function createIsolationDatabase(): IsolationDatabase {
             if (data.differenceAmount !== undefined) {
               row.differenceAmount = toDecimalString(data.differenceAmount);
             }
+            if (data.closedAt !== undefined) row.closedAt = data.closedAt;
             row.updatedAt = new Date();
             count += 1;
           }

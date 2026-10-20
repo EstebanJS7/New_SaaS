@@ -43,6 +43,12 @@ export interface PurchaseResponse {
   readonly supplierId: string;
   readonly status: PurchaseStatusDto;
   readonly lines: PurchaseLineResponse[];
+  /**
+   * ISO 8601 instant the purchase was RECEIVED (DEC-064); `null` while `DRAFT`
+   * and for `CANCELLED`. `createdAt` answers a different question and is never a
+   * substitute for it.
+   */
+  readonly receivedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
