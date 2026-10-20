@@ -9,14 +9,18 @@ updated: 2026-10-20
 
 The reporting module answers PRD §31's questions about data the tenant already
 owns: sales by period, payment methods, sales by product/service, the cash
-ledger, the receipts and the inventory. It is a Core domain and a **read-only**
-one — nothing in this module writes, so there is no ledger, no audit row and no
-reversal to reason about here.
+ledger, the receipts, the inventory, the consultations it closed and the
+patients it gained. It is a Core domain and a **read-only** one — nothing in
+this module writes, so there is no ledger, no audit row and no reversal to
+reason about here.
 
 [[REP-002]] established the foundation every later report consumes: the period
 rule, the response contract and the permission family. [[REP-003]] added the two
 commercial cuts over the same completed sales, [[REP-004]] added the cash ledger
-and the receipts, and [[REP-005]] added the two inventory reports.
+and the receipts, [[REP-005]] added the two inventory reports, and [[REP-006]]
+added the two veterinary reports that need no due date: consultations and new
+patients. The due reports of the same Story (`vaccines-due`, `deworming-due`)
+are its second half and are not part of this surface yet.
 
 ## Access
 
@@ -107,6 +111,8 @@ hours. Local midnight of 2024-10-06 never existed (the clock jumped 00:00 →
 | `GET /reports/purchases`                | `reports.read` | The purchases **received** in the period, with their line count, total quantity and supplier (no money).    |
 | `GET /reports/stock`                    | `reports.read` | The CURRENT balance per tracked item, plus the PERIOD's ledger flow (in, out, net).                         |
 | `GET /reports/low-stock`                | `reports.read` | The items at or below their own threshold. **No query parameters at all.**                                  |
+| `GET /reports/consultations`            | `reports.read` | The encounters CLOSED in the period, with amendments counted **separately** and kept out of the buckets.    |
+| `GET /reports/new-patients`             | `reports.read` | The patients REGISTERED in the period, bucketed by the tenant's local day, deactivated ones included.       |
 
 There is deliberately no command route, no `PATCH` and no `DELETE`: a report
 aggregates and never writes. Tenant identity is never an input — it comes from
@@ -730,6 +736,131 @@ view that echoed a range would claim a filter that was never applied.
 }
 ```
 
+### `GET /reports/consultations`
+
+How many consultations the practice closed, and how many corrections it
+recorded. A **consultation** is a `ClinicalEncounter` that reached `CLOSED`
+(`Clinical.md`).
+
+The period predicate is `clinical_encounter.closed_at`, **never** `created_at`:
+the clinical event is the close, so an encounter drafted in March and closed in
+April is April's consultation. `DRAFT` rows are excluded by the `status`
+predicate at the query — a draft was never a consultation, whatever date it was
+created on.
+
+| Column              | Scope    | Meaning                                                                                                   |
+| ------------------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `consultationCount` | response | `CLOSED` encounters of the period with a NULL `amendsEncounterId` — the sum of the row counts.            |
+| `amendmentCount`    | response | The period's amendments: `CLOSED` rows carrying a non-NULL `amendsEncounterId`. Never added to the above. |
+| `bucketDate`        | row      | `YYYY-MM-DD` in the tenant zone — the **local** day the consultation was closed on.                       |
+| `consultationCount` | row      | Consultations closed on that local day.                                                                   |
+
+**An amendment is not a second consultation.** Correcting a closed encounter
+does not edit it: it creates a **new** `CLOSED` row whose `amendsEncounterId`
+points at the original, and the original is never mutated (`Clinical.md`).
+Counting both would report the practice as busier than it was, so a row carrying
+a correction link is counted in `amendmentCount` and **skipped**: it contributes
+to neither `consultationCount` nor the day buckets. The corrections stay visible
+— they are simply not activity. Because of that choice the bucket series
+describes **consultations only**: a day whose sole row is an amendment produces
+no bucket at all, rather than a bucket claiming activity the report did not
+measure.
+
+`bucketDate` is the LOCAL day of `closedAt`, produced by the same
+`tenantCalendarDate` helper that resolved the period boundaries, so a
+consultation closed at 23:00 local is counted on the day the practice worked —
+no second conversion exists. Rows ascend by `bucketDate`; days without a closed
+consultation are absent, never zero rows.
+
+**A `CLOSED` row with a NULL `closed_at` cannot exist**: the close command
+writes the instant in the same transition that sets `CLOSED`, and a closed
+encounter is immutable. If one appears, the report refuses with a loud
+`500 INTERNAL` naming the encounter instead of inventing a day for it: an
+invented day is a number nobody closed anything on.
+
+An empty period is `rows: []` with both counts `0`, never an error: "this
+practice closed nothing" is an answer.
+
+**Data classification (PRD §41).** This response is aggregate COUNTS of the
+tenant's own clinical activity and nothing else. The read's `select` is three
+columns — `id`, `closed_at`, `amends_encounter_id` — so the report never loads
+`reason_for_visit`, `anamnesis`, `diagnosis`, `treatment_plan`, the CONFIDENTIAL
+`client_summary` or the RESTRICTED `internal_notes`, and it never touches
+`Patient` (`name` and `birth_date` are CONFIDENTIAL). No patient id, no patient
+name and no clinical free text crosses this boundary, and the service suite pins
+that both in the response types and on the serialized payload.
+
+```json
+{
+  "report": "consultations",
+  "period": {
+    "preset": null,
+    "fromDate": "2026-06-10",
+    "toDate": "2026-06-11",
+    "timeZone": "America/Asuncion",
+    "fromInstant": "2026-06-10T03:00:00.000Z",
+    "toInstant": "2026-06-12T03:00:00.000Z"
+  },
+  "consultationCount": 3,
+  "amendmentCount": 1,
+  "rows": [
+    { "bucketDate": "2026-06-10", "consultationCount": 2 },
+    { "bucketDate": "2026-06-11", "consultationCount": 1 }
+  ]
+}
+```
+
+### `GET /reports/new-patients`
+
+How many patients the practice gained, bucketed by the tenant's local day. The
+business instant is `patient.created_at`: registering a patient **is** the
+event, and `Patient` carries no second date.
+
+**Soft deactivation does not remove the fact.** `Patients.md` has no hard
+delete: `POST /patients/:id/deactivate` only flips `is_active`, so a patient
+created in the period and deactivated since still counts — it was new then. The
+read applies **no `is_active` predicate at all**, and the selected projection
+does not even carry the column.
+
+| Column            | Scope    | Meaning                                                                  |
+| ----------------- | -------- | ------------------------------------------------------------------------ |
+| `newPatientCount` | response | Patients registered in the period — the sum of the row counts.           |
+| `bucketDate`      | row      | `YYYY-MM-DD` in the tenant zone — the **local** day of the registration. |
+| `count`           | row      | Registrations on that local day, deactivated ones included.              |
+
+`bucketDate` comes from the same `tenantCalendarDate` helper as every other
+bucket in this module, so a registration at 23:00 local belongs to that local
+day and not to the next UTC one. Rows ascend by `bucketDate`; a day with no
+registration is absent, never a zero row. The period range is half-open
+`[fromInstant, toInstant)`, so a patient registered exactly at `toInstant`
+belongs to the next period and is counted there.
+
+An empty period is `rows: []` with `newPatientCount: 0` and the period echoed —
+never an error.
+
+**Data classification (PRD §41).** A headcount, and nothing else: the read's
+`select` is `id` and `created_at` only, so `Patient.name` and `birth_date`
+(CONFIDENTIAL) are never read into the reporting path, let alone returned.
+
+```json
+{
+  "report": "new-patients",
+  "period": {
+    "preset": null,
+    "fromDate": "2026-06-10",
+    "toDate": "2026-06-11",
+    "timeZone": "America/Asuncion",
+    "fromInstant": "2026-06-10T03:00:00.000Z",
+    "toInstant": "2026-06-12T03:00:00.000Z"
+  },
+  "newPatientCount": 3,
+  "rows": [
+    { "bucketDate": "2026-06-10", "count": 2 },
+    { "bucketDate": "2026-06-11", "count": 1 }
+  ]
+}
+```
+
 ## Invariants
 
 - **A draft is never revenue.** The query filters `status = COMPLETED` **and**
@@ -748,13 +879,16 @@ view that echoed a range would claim a filter that was never applied.
 - **The row cap is a refusal, not a truncation.** Each read has its own cap and
   asks for one extra row: `REPORT_SALE_ROW_LIMIT` (20 000 completed sales),
   `REPORT_CASH_MOVEMENT_ROW_LIMIT` (20 000 movements),
-  `REPORT_STOCK_MOVEMENT_ROW_LIMIT` (20 000 stock movements), and
-  `REPORT_CASH_SESSION_ROW_LIMIT` / `REPORT_PURCHASE_ROW_LIMIT` /
-  `REPORT_STOCK_BALANCE_ROW_LIMIT` (5 000 sessions / receipts / balances).
-  Exceeding one refuses with a stable message rather than returning a silently
-  partial aggregate ([[TD-053]] owns the eventual pushdown). The caps differ
-  because a drawer closes once a day per register and an inventory holds one
-  balance per item, while a movement ledger is the dense one.
+  `REPORT_STOCK_MOVEMENT_ROW_LIMIT` (20 000 stock movements),
+  `REPORT_CLOSED_ENCOUNTER_ROW_LIMIT` (20 000 closed encounters, amendments
+  included in the same read), and `REPORT_CASH_SESSION_ROW_LIMIT` /
+  `REPORT_PURCHASE_ROW_LIMIT` / `REPORT_STOCK_BALANCE_ROW_LIMIT` /
+  `REPORT_NEW_PATIENT_ROW_LIMIT` (5 000 sessions / receipts / balances, 10 000
+  registrations). Exceeding one refuses with a stable message rather than
+  returning a silently partial aggregate ([[TD-053]] owns the eventual
+  pushdown). The caps differ because a drawer closes once a day per register, an
+  inventory holds one balance per item and a patient is registered once, while a
+  movement ledger is the dense one.
 - **A snapshot and a flow are never the same number.** The inventory reports
   read `stock_balance` (a projection: CURRENT quantity, one row per item, no
   history) for `quantity`, and `stock_movement` (the immutable ledger) for the
@@ -776,11 +910,34 @@ view that echoed a range would claim a filter that was never applied.
 - **`tracksStock = false` is not inventory.** A non-tracking item appears in
   neither inventory report, whatever balance or threshold it holds.
 - **A report dates a row by its BUSINESS instant, never by a bookkeeping one.**
-  Sales: `completed_at`. Closes: `closed_at`. Movements: their own `created_at`
-  (the ledger is append-only, so the creation instant IS the business instant —
-  and never the session's close). Receipts: `received_at`. `created_at` and
-  `updated_at` are never substitutes, and consecutive periods partition because
-  every range is half-open `[fromInstant, toInstant)`.
+  Sales: `completed_at`. Closes: `closed_at` — both a cash session's and a
+  clinical encounter's. Movements: their own `created_at` (the ledger is
+  append-only, so the creation instant IS the business instant — and never the
+  session's close). Receipts: `received_at`. Registrations: `patient.created_at`
+  (registering a patient IS the event). `updated_at` is never a substitute, and
+  `created_at` is not one for a row that has a later business instant: an
+  encounter drafted in March and closed in April is April's consultation.
+  Consecutive periods partition because every range is half-open
+  `[fromInstant, toInstant)`.
+- **An amendment is a correction, not a consultation.** Correcting a closed
+  encounter creates a NEW linked `CLOSED` row (`amendsEncounterId`; the original
+  is never mutated), so the consultations report counts amendments separately
+  and keeps them out of both `consultationCount` and the day buckets. Reporting
+  two consultations for one visit would inflate the practice's own activity.
+- **Soft deactivation does not unfact a registration.** `Patient` has no hard
+  delete, so a patient created in the period and deactivated since is still new
+  in that period: the new-patients read applies no `is_active` predicate, and
+  the projection it selects does not even carry the column.
+- **A count is a `number`, never a decimal string.** Money and quantities are
+  `Prisma.Decimal`; a count of consultations, amendments or patients is a plain
+  integer, because no arithmetic on it can lose precision. The two veterinary
+  responses therefore carry no `currency` and no money `Decimal` at all.
+- **A report reads only the columns it needs.** The consultations read selects
+  `id`, `closed_at` and `amends_encounter_id`; the new-patients read selects
+  `id` and `created_at`. That is a data-classification boundary (PRD §41), not
+  an optimization: `internal_notes` is RESTRICTED, `client_summary`,
+  `Patient.name` and `Patient.birth_date` are CONFIDENTIAL, and a staff-only
+  aggregate has no reason to read clinical free text or a patient's identity.
 - **The cash sign lives in exactly one place.** Every cash amount is stored
   positive and the kind owns the sign ([[DEC-030]]); the cash reports resolve it
   by importing `cashMovementSign` from `cash.expected-amount.ts`, the same map
@@ -815,8 +972,11 @@ view that echoed a range would claim a filter that was never applied.
 
 ## What later stories add
 
-The remaining reports ([[REP-006]]) reuse `resolveReportPeriod`, the response
-contract and the `reports.read` key. The CSV export ([[REP-007]]) consumes
+The second half of [[REP-006]] — `vaccines-due` and `deworming-due` — reads the
+staff-entered `next_due_at` added by [[DEC-065]] and splits it into overdue and
+upcoming against today in the tenant zone. It is not implemented yet: no
+protocol or interval is projected, because the veterinarian knows the booster
+interval and the system does not. The CSV export ([[REP-007]]) consumes
 `reports.export`. The dashboard ([[REP-008]]) consumes the same service methods
 rather than a second query. Stock **valuation** stays out of scope: no item
 carries a cost ([[DEC-010]]), so a valuation report would invent a costing
@@ -891,5 +1051,24 @@ a report.
   balances, movements, items and low-stock rows.
 - `packages/database/src/reference-seed.test.ts` — `reports.read` is held by all
   six roles and `reports.export` by exactly `OWNER` and `ADMIN`.
-- `route-contract.probe.test.ts` — the route and its exact permission are
-  pinned.
+- `reporting.veterinary.service.test.ts` — [[REP-006]]: the amendment excluded
+  from `consultationCount` and counted in `amendmentCount` (and kept out of the
+  buckets, including a day whose only row is an amendment), the local-day bucket
+  of `02:00Z` into the previous local day (the assertion that proves the shared
+  helper is used), the `status`/`closedAt` predicate and the absent `createdAt`
+  one, the minimal `select` on both reads, the missing-`closedAt` `INTERNAL`
+  naming the encounter, both row caps, the empty periods, the 403 that reaches
+  no query, and the exact key set of both responses (counts as `number`, no
+  `currency`, no clinical field, no patient id).
+- `reporting.veterinary.integration.test.ts` — [[REP-006]]: both routes 200 with
+  the period echoed and their local-day buckets, a `DRAFT` created inside the
+  period and an encounter closed outside it both absent (the wide-period count
+  is the proof), the encounter closed outside the narrow period counted in the
+  period it belongs to, the patients registered before the period and exactly at
+  the exclusive end absent (the latter counted in the next period), a
+  deactivated patient still counted, the empty period, the `INTERNAL`-free
+  payload carrying no clinical text or patient identity, 400 per malformed
+  period on both routes, 403 without `reports.read` on both, 401
+  unauthenticated, and tenant isolation for consultations and patients.
+- `route-contract.probe.test.ts` — every report route and its exact permission
+  are pinned.

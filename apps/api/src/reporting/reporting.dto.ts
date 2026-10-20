@@ -5,10 +5,13 @@ import { z } from "zod";
  *
  * Data classification (PRD §41): every value here is INTERNAL — aggregate
  * counts, calendar dates and money totals of the tenant's OWN confirmed sales,
- * cash ledger and received purchases. No customer, patient, clinical or fiscal
- * identity is read, and no CONFIDENTIAL or RESTRICTED payload crosses this
- * boundary. Prisma models are never returned; only the keys declared here leave
- * the process.
+ * cash ledger, received purchases, inventory, closed consultations and
+ * registered patients. No customer, patient, clinical or fiscal identity is read,
+ * and no CONFIDENTIAL or RESTRICTED payload crosses this boundary: the veterinary
+ * reports read a patient row as an `id` plus its `created_at` and a clinical
+ * encounter as an `id` plus its close instant and correction link, so no patient
+ * name and no clinical free text is ever loaded. Prisma models are never
+ * returned; only the keys declared here leave the process.
  *
  * Decimal projections are fixed-scale exact strings at their stored column scale
  * (`Decimal(14, 2)` for every money aggregate), never JavaScript floats and never
@@ -444,11 +447,103 @@ export interface LowStockReportResponse {
 }
 
 /**
+ * One calendar day of the consultation report, in the TENANT's day. `bucketDate`
+ * is the local day an encounter's `closedAt` belongs to, computed by the SAME
+ * helper that resolved the period boundaries, so a consultation closed at 23:30
+ * local is counted on that day and not on the next UTC one.
+ */
+export interface ConsultationDayRowDto {
+  /** `YYYY-MM-DD` in the tenant zone. */
+  readonly bucketDate: string;
+  /**
+   * Consultations closed on this local day: `status = CLOSED` rows with a NULL
+   * `amendsEncounterId`. An amendment is never counted here — it corrects a
+   * consultation, it does not add one.
+   */
+  readonly consultationCount: number;
+}
+
+/**
+ * `GET /reports/consultations` (PRD §12, §31, [[REP-006]]): how many
+ * consultations the practice closed, and how many corrections it recorded.
+ *
+ * Two figures, deliberately not one. An AMENDMENT is a NEW closed encounter that
+ * points at the original through `amendsEncounterId`; the original is never
+ * mutated (`Clinical.md`), so counting both as activity would inflate the
+ * practice's own numbers. `consultationCount` therefore counts only the rows with
+ * a NULL link, and `amendmentCount` reports the corrections separately.
+ *
+ * Data classification (PRD §41): aggregate COUNTS of the tenant's own clinical
+ * activity, and nothing else. No patient identity, no patient id, no `bucketDate`
+ * beyond a calendar day, and no clinical free text — the read behind this
+ * response never loads `reasonForVisit`, `anamnesis`, `diagnosis`,
+ * `treatmentPlan`, `clientSummary` or the RESTRICTED `internalNotes`, and
+ * `Patient.name` (CONFIDENTIAL) is never touched at all.
+ */
+export interface ConsultationsResponse {
+  readonly report: "consultations";
+  readonly period: ReportPeriodDto;
+  /**
+   * Closed encounters with a NULL `amendsEncounterId` in the period — the sum of
+   * the row counts, and the whole point of the report.
+   */
+  readonly consultationCount: number;
+  /**
+   * The period's AMENDMENTS, counted separately and never added to
+   * `consultationCount`. They are deliberately ABSENT from `rows`: the bucket
+   * series describes consultations, and a correction is not an additional one.
+   */
+  readonly amendmentCount: number;
+  /**
+   * Ascending by `bucketDate`; a day with no closed consultation is ABSENT rather
+   * than a zero row. An empty period is `[]`, never an error.
+   */
+  readonly rows: ConsultationDayRowDto[];
+}
+
+/**
+ * One calendar day of the new-patients report, in the TENANT's day. `bucketDate`
+ * is the local day a patient's `createdAt` belongs to.
+ */
+export interface NewPatientDayRowDto {
+  /** `YYYY-MM-DD` in the tenant zone. */
+  readonly bucketDate: string;
+  /** Patients registered on this local day, deactivated ones included. */
+  readonly count: number;
+}
+
+/**
+ * `GET /reports/new-patients` (PRD §12, §31, [[REP-006]]): how many patients the
+ * practice gained in the period, bucketed by the tenant's local day.
+ *
+ * The instant is `Patient.createdAt` — registering a patient IS the event — and
+ * deactivation is SOFT: a patient created in the period and deactivated since
+ * still counts, because it was new then. The report therefore never filters on
+ * `isActive`.
+ *
+ * Data classification (PRD §41): aggregate COUNTS only. `Patient.name` and
+ * `Patient.birthDate` are CONFIDENTIAL and the read behind this response selects
+ * neither — a headcount needs no name.
+ */
+export interface NewPatientsResponse {
+  readonly report: "new-patients";
+  readonly period: ReportPeriodDto;
+  /** Every patient created in the period — the sum of the row counts. */
+  readonly newPatientCount: number;
+  /**
+   * Ascending by `bucketDate`; a day with no registration is ABSENT rather than a
+   * zero row. An empty period is `[]`, never an error.
+   */
+  readonly rows: NewPatientDayRowDto[];
+}
+
+/**
  * The query contract of every PERIOD-shaped report route
  * (`GET /reports/sales-by-period`, `GET /reports/payment-methods`,
  * `GET /reports/sales-by-product-service`, `GET /reports/cash-sessions`,
  * `GET /reports/cash-movements`, `GET /reports/purchases`,
- * `GET /reports/stock`).
+ * `GET /reports/stock`, `GET /reports/consultations`,
+ * `GET /reports/new-patients`).
  *
  * It is deliberately NOT the contract of `GET /reports/low-stock`: a current-state
  * view has no period, and {@link reportNoQuerySchema} is its own.

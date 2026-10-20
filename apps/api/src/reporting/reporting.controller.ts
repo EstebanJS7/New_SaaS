@@ -10,7 +10,9 @@ import {
   reportPeriodQuerySchema,
   type CashMovementsResponse,
   type CashSessionsResponse,
+  type ConsultationsResponse,
   type LowStockReportResponse,
+  type NewPatientsResponse,
   type PaymentMethodsResponse,
   type PurchasesResponse,
   type ReportPeriodQuery,
@@ -20,7 +22,8 @@ import {
 } from "./reporting.dto.js";
 
 /**
- * The staff reporting surface (EPIC-18 REP-002, REP-003, REP-004, REP-005).
+ * The staff reporting surface (EPIC-18 REP-002, REP-003, REP-004, REP-005,
+ * REP-006).
  *
  * **Read-only.** Reports aggregate; they never write, so there is no command
  * route, no `PATCH` and no `DELETE` on this surface at all.
@@ -131,6 +134,28 @@ export class ReportingController {
   async lowStock(@Query() query: unknown): Promise<LowStockReportResponse> {
     this.assertNoQuery(query);
     return this.reporting.lowStock();
+  }
+
+  /**
+   * Consultations (PRD §12, §31, [[REP-006]]): the encounters CLOSED in the
+   * period, with amendments counted separately because a correction is not an
+   * additional consultation. Same period contract as every report here.
+   */
+  @Get("consultations")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async consultations(@Query() query: unknown): Promise<ConsultationsResponse> {
+    return this.reporting.consultations(this.parsePeriod(query));
+  }
+
+  /**
+   * New patients (PRD §12, §31, [[REP-006]]): the patients REGISTERED in the
+   * period, deactivated ones included, bucketed by the tenant's local day. Same
+   * period contract.
+   */
+  @Get("new-patients")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async newPatients(@Query() query: unknown): Promise<NewPatientsResponse> {
+    return this.reporting.newPatients(this.parsePeriod(query));
   }
 
   /**

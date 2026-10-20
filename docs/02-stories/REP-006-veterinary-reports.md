@@ -3,7 +3,7 @@ id: REP-006
 type: story
 title: The veterinary reports
 epic: EPIC-18
-status: planned
+status: in-progress
 priority: medium
 depends_on:
   - REP-002
@@ -160,13 +160,80 @@ None — REP-001 added the two next_due_at columns and their indexes.
 
 ## Implementation Summary
 
-_Not implemented._
+**Part 1 implemented (consultations and new patients); part 2 (the two due
+reports) pending.** Part 2 is a separate work unit because it needs a
+`clinicalDeworming` fixture delegate that does not exist yet.
+
+Part 1 — commit `WU-F1`:
+
+- **`GET /reports/consultations`** reads `CLOSED` encounters by `closedAt` with
+  a MINIMAL `select` — `id`, `closedAt`, `amendsEncounterId` and nothing else.
+  No `internalNotes`, `diagnosis`, `anamnesis`, `treatmentPlan`,
+  `reasonForVisit` or `clientSummary` is ever read, let alone returned, and a
+  test asserts the response type and the runtime key set carry none of them.
+  `internalNotes` is RESTRICTED and a staff-only aggregate has no reason to
+  touch it.
+- **An amendment is not a second consultation.** A `CLOSED` row with a non-NULL
+  `amendsEncounterId` is a correction of an earlier encounter (the original is
+  never mutated); it is counted in `amendmentCount` and skipped, so it
+  contributes to neither `consultationCount` nor the daily buckets. Both figures
+  come from ONE read over the same half-open range, so they cannot disagree at a
+  boundary.
+- **`GET /reports/new-patients`** reads `Patient.createdAt` with a minimal
+  select, and **soft deactivation does not unfact a registration**: a patient
+  created in the period and deactivated since still counts. The `where`
+  deliberately has no `isActive`.
+- Both bucket by the LOCAL calendar day through the shared `tenantCalendarDate`
+  helper, ascending, so there is no second day-boundary implementation.
+- Caps: 20 000 closed encounters (amendments share the read) and 10 000 new
+  patients, each refusing rather than truncating.
+
+Part 2 is not started.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (23/23 turbo tasks)
+pnpm typecheck      PASS  (23/23)
+pnpm build          PASS  (13/13)
+pnpm test           PASS  (23/23)
+  api        110 files (108 landed + 2 new)      1551 passed | 266 skipped  (+31)
+  database    30 files                            549 passed
+  web        110 files                           1164 passed
 ```
+
+Part 1 adds 31 tests: 18 service and 13 integration, covering the
+amendment-versus-consultation separation, the local-day bucket, the `DRAFT` and
+cross-period exclusions, the deactivated patient, both caps,
+permission-before-any- read, the forbidden-field scan, and tenant isolation for
+both reports.
+
+**Both queries were also proven against real PostgreSQL.** For the period
+`[2026-06-01T03:00Z, 2026-06-11T03:00Z)` in `America/Asuncion`, with two
+consultations, one amendment, one `DRAFT`, one encounter closed outside the
+period and three patients (one deactivated):
+
+```text
+consultations read: 3   (the DRAFT and the 2026-06-25 CLOSED are excluded)
+  consultationCount 2   amendmentCount 1
+  buckets: 2026-06-05=1  2026-06-10=1
+  the 2026-06-11T02:00Z encounter bucketed to 2026-06-10  (NOT 06-11)
+  keys read: amendsEncounterId,closedAt,id
+
+new-patients count: 2   (Michi is DEACTIVATED and still counted)
+  buckets: 2026-06-03=1  2026-06-09=1
+```
+
+`keys read` is the interesting line: it is the actual Prisma projection, so the
+absence of clinical free text is demonstrated rather than asserted. And the
+`02:00Z` → `06-10` bucket is the tenant-zone rule holding on real rows, three
+hours away from the UTC day.
+
+Seeding those rows also surfaced real database invariants the fixture does not
+model: a patient must carry exactly one active primary guardian (checked by a
+deferred constraint, so the patient and its guardian must be inserted in one
+transaction), and `customer_kind` accepts only `INDIVIDUAL`/`COMPANY`.
 
 ## Tests Added
 
@@ -185,12 +252,19 @@ Not run.
 
 ## Known Limitations
 
-- Both due reports are empty until a veterinarian enters a `next_due_at`. There
-  is no backfill by construction.
-- The upcoming horizon is a request parameter with a server-side bound, not a
-  tenant setting.
-- No vaccine-to-appointment linkage: a due vaccine does not become an agenda
-  item.
+- **The `clinicalDeworming` delegate does not exist in the in-memory fixture**,
+  so part 2 must add it (mirroring `clinicalVaccination`) before the deworming
+  due report can be exercised through `bootTestApp()`. Recorded here so it is
+  not discovered mid-unit.
+- The fixture did not carry `amendsEncounterId` on `ClinicalEncounterRow` at
+  all, although the real column exists and the fake returns the full row.
+  Without that widening `undefined !== null` would have won and EVERY
+  consultation would have counted as an amendment — a false green in the most
+  important assertion of this unit. It is now on the row type and on the
+  mirrored `create`.
+- Both due reports stay empty until a staff due date exists; [[REP-010]] builds
+  that surface ([[DEC-067]]), and [[TD-055]] records that three other record
+  kinds remain API-only.
 
 ## Technical Debt
 
@@ -211,4 +285,5 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Part 1 gates passed on 2026-10-19; the Story stays `in-progress` until part 2
+lands.

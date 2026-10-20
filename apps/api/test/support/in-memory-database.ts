@@ -1084,6 +1084,12 @@ export interface ClinicalEncounterRow {
   clientSummary: string | null;
   internalNotes: string | null;
   closedAt: Date | null;
+  /**
+   * Non-NULL exactly for an AMENDMENT: the original encounter this row corrects
+   * (EPIC-18 REP-006 reads it to keep a correction out of the consultation
+   * count). The real column is nullable and so is this one.
+   */
+  amendsEncounterId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -2005,7 +2011,17 @@ export interface IsolationDatabase {
     patient: {
       findMany: (args: {
         // `id.in` mirrors the portal read's holder-owned pet id set.
-        where: { tenantId: string; isActive?: boolean; id?: { in: string[] } };
+        where: {
+          tenantId: string;
+          isActive?: boolean;
+          id?: { in: string[] };
+          /**
+           * Report-dated registration range (EPIC-18 REP-006): HALF-OPEN
+           * `[gte, lt)` on the patient's own `createdAt`. Registering a patient
+           * IS the business event, and `Patient` has no second date to use.
+           */
+          createdAt?: { gte?: Date; lt?: Date };
+        };
         orderBy?: { name?: "asc" | "desc" };
       }) => PatientRow[];
       findFirst: (args: { where: { id: string; tenantId: string } }) => PatientRow | null;
@@ -2063,11 +2079,32 @@ export interface IsolationDatabase {
           clientSummary?: string | null;
           internalNotes?: string | null;
           closedAt?: Date | null;
+          /**
+           * The explicit correction link (EPIC-18 REP-006). An amendment is a NEW
+           * closed row carrying the original's id; the original is never mutated.
+           * Omitted mirrors the nullable column, i.e. an ordinary encounter.
+           */
+          amendsEncounterId?: string | null;
         };
       }) => ClinicalEncounterRow;
       /** `select` is accepted but NOT enforced: the caller's projection is under test. */
       findMany: (args: {
-        where: { tenantId: string; patientId: string };
+        where: {
+          tenantId: string;
+          /**
+           * OPTIONAL since EPIC-18 REP-006: the patient-anchored clinical reads
+           * still pass it, and the consultation report reads a TENANT's closed
+           * encounters without naming a patient.
+           */
+          patientId?: string;
+          status?: "DRAFT" | "CLOSED";
+          /**
+           * Report-dated close range (EPIC-18 REP-006): HALF-OPEN `[gte, lt)` on
+           * `closedAt`. A row with a NULL close instant satisfies NO bound, which
+           * is PostgreSQL's NULL semantics — a draft is never "in the period".
+           */
+          closedAt?: { gte?: Date; lt?: Date };
+        };
         select?: unknown;
       }) => ClinicalEncounterRow[];
     };
@@ -4891,7 +4928,11 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             candidate.tenantId === where.tenantId &&
             (where.isActive === undefined || candidate.isActive === where.isActive) &&
-            (where.id === undefined || where.id.in.includes(candidate.id))
+            (where.id === undefined || where.id.in.includes(candidate.id)) &&
+            // EPIC-18 REP-006: the SAME half-open predicate every other
+            // report-dated read uses, so the fake cannot disagree with
+            // PostgreSQL about a boundary row.
+            matchesHalfOpenInstant(candidate.createdAt, where.createdAt)
         );
         if (orderBy?.name) {
           rows = rows.sort((left, right) => left.name.localeCompare(right.name));
@@ -4995,6 +5036,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           clientSummary: data.clientSummary ?? null,
           internalNotes: data.internalNotes ?? null,
           closedAt: data.closedAt ?? null,
+          // Mirrors the nullable column: an ordinary encounter carries no link.
+          amendsEncounterId: data.amendsEncounterId ?? null,
           createdAt: now,
           updatedAt: now,
         };
@@ -5006,7 +5049,14 @@ export function createIsolationDatabase(): IsolationDatabase {
       findMany: ({ where }) =>
         [...clinicalEncounterTable.values()].filter(
           (candidate) =>
-            candidate.tenantId === where.tenantId && candidate.patientId === where.patientId
+            candidate.tenantId === where.tenantId &&
+            // OPTIONAL since EPIC-18 REP-006: the clinical suites anchor on a
+            // patient, while the consultation report reads the whole tenant.
+            (where.patientId === undefined || candidate.patientId === where.patientId) &&
+            (where.status === undefined || candidate.status === where.status) &&
+            // A NULL `closedAt` satisfies NO bound, exactly as PostgreSQL's NULL
+            // semantics do: an unclosed draft is never inside a period.
+            matchesHalfOpenInstant(candidate.closedAt, where.closedAt)
         ),
     },
     clinicalVaccination: {

@@ -77,7 +77,9 @@ Each work unit is one commit carrying its tests and documentation.
       evidence log._
 - [x] **WU-E — [[REP-005]] the inventory reports.** _Done: see the evidence
       log._
-- [ ] **WU-F — [[REP-006]] the veterinary reports.**
+- [ ] **WU-F — [[REP-006]] the veterinary reports.** Two commits: **WU-F1**
+      (done) consultations + new patients; **WU-F2** (pending) the two due
+      reports.
 - [ ] **WU-G — [[REP-007]] the CSV export.**
 - [ ] **WU-H — [[REP-010]] the clinical record entry surface.** Vaccinations and
       deworming: list, create and correct, on the proxy and permissions that
@@ -258,3 +260,33 @@ Commit `WU-E` on `feat/epic-18-dashboards-reports`.
 - Gates: api **1478 → 1520** (+42); format/lint/typecheck/build green.
 
 **Skipped:** the `apps/e2e` lane (no UI in this work unit).
+
+### WU-F1 — consultations and new patients
+
+Commit `WU-F1` on `feat/epic-18-dashboards-reports`.
+
+- `GET /reports/consultations` reads `CLOSED` encounters by `closedAt` with a
+  minimal `select` (`id`, `closedAt`, `amendsEncounterId`) and **never** reads
+  clinical free text. An amendment is a `CLOSED` row with a non-NULL
+  `amendsEncounterId`: it is counted in `amendmentCount` and skipped, so it
+  reaches neither the consultation count nor the buckets. Both figures come from
+  one read over one half-open range.
+- `GET /reports/new-patients` reads `Patient.createdAt` and deliberately has no
+  `isActive` predicate, because soft deactivation does not unfact a
+  registration.
+- Both bucket by the LOCAL day through the shared `tenantCalendarDate` helper.
+- **The fixture was missing `amendsEncounterId` entirely.** Without it
+  `undefined !== null` would have won and every consultation would have been
+  counted as an amendment — a false green in the unit's most important
+  assertion.
+- Gates: api **1520 → 1551** (+31); format/lint/typecheck/build green.
+- Proven on real PostgreSQL: 2 consultations + 1 amendment from 3 read rows,
+  buckets `06-05=1`/`06-10=1`, and the `2026-06-11T02:00Z` encounter bucketing
+  to `06-10`. `keys read: amendsEncounterId,closedAt,id` demonstrates the
+  redaction.
+
+**Skipped:** `apps/e2e` (no UI in this work unit).
+
+**WU-F2 must first add a `clinicalDeworming` delegate to the fixture** — it does
+not exist, and the deworming due report cannot be exercised through
+`bootTestApp()` without it.

@@ -296,6 +296,13 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // takes NO query at all, because it is a current-state view.
   "GET /reports/stock",
   "GET /reports/low-stock",
+  // EPIC-18 REP-006 — the two veterinary reports that need no due date: the
+  // consultations CLOSED in the period (amendments counted separately, never as
+  // extra consultations) and the patients REGISTERED in the period. Still reads
+  // behind `reports.read`, still no command route: they aggregate clinical and
+  // patient facts, they never write one.
+  "GET /reports/consultations",
+  "GET /reports/new-patients",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -521,11 +528,11 @@ const BILLING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-18 REP-002/REP-003/REP-004 reporting surface. Every report route MUST
- * declare exactly `reports.read` — the key DEC-062 maps to all six roles — and
- * NEVER `reports.export`, which is the narrower owning-roles key the CSV path of
- * REP-007 consumes. Pinning them by name means a route silently moved onto the
- * export key (or onto no key at all) fails here rather than shipping.
+ * EPIC-18 REP-002/REP-003/REP-004/REP-005/REP-006 reporting surface. Every report
+ * route MUST declare exactly `reports.read` — the key DEC-062 maps to all six
+ * roles — and NEVER `reports.export`, which is the narrower owning-roles key the
+ * CSV path of REP-007 consumes. Pinning them by name means a route silently moved
+ * onto the export key (or onto no key at all) fails here rather than shipping.
  */
 const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /reports/sales-by-period": REPORTING_PERMISSIONS.read,
@@ -536,6 +543,10 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /reports/purchases": REPORTING_PERMISSIONS.read,
   "GET /reports/stock": REPORTING_PERMISSIONS.read,
   "GET /reports/low-stock": REPORTING_PERMISSIONS.read,
+  // REP-006: the two period-shaped veterinary reports. `vaccines-due` and
+  // `deworming-due` are the Story's second half and are deliberately absent.
+  "GET /reports/consultations": REPORTING_PERMISSIONS.read,
+  "GET /reports/new-patients": REPORTING_PERMISSIONS.read,
 };
 
 describe("route-contract probe (deny-by-default)", () => {

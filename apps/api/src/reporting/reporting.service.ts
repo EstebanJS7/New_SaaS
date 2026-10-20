@@ -13,9 +13,13 @@ import type {
   CashMovementsResponse,
   CashSessionRowDto,
   CashSessionsResponse,
+  ConsultationDayRowDto,
+  ConsultationsResponse,
   KindTotalDto,
   LowStockReportResponse,
   LowStockReportRowDto,
+  NewPatientDayRowDto,
+  NewPatientsResponse,
   PaymentMethodRowDto,
   PaymentMethodsResponse,
   PurchaseRowDto,
@@ -964,6 +968,115 @@ export class ReportingService {
     return {
       report: "low-stock",
       thresholdsConfigured,
+      rows,
+    };
+  }
+
+  /**
+   * Consultations closed in the period (PRD §12, §31, [[REP-006]]).
+   *
+   * A "consultation" is a `CLOSED` encounter whose business instant is its
+   * `closedAt`, so the period filters on the CLOSE and never on the draft: an
+   * encounter drafted in March and closed in April is April's consultation.
+   *
+   * **An amendment is not a second consultation.** Correcting a closed encounter
+   * creates a NEW linked `CLOSED` row that carries a non-NULL
+   * `amendsEncounterId` pointing at the original, which is never mutated
+   * (`Clinical.md`). Counting both would report the practice as busier than it
+   * was, so a row with a correction link is counted in `amendmentCount` and
+   * SKIPPED entirely: it contributes to neither `consultationCount` nor the day
+   * buckets. Reporting the two figures separately is the transparent version —
+   * the corrections are still visible, they are just not activity.
+   *
+   * The bucket date is the LOCAL day of `closedAt`, produced by the SAME
+   * `tenantCalendarDate` helper the period boundaries use, so a consultation
+   * closed at 23:30 local belongs to that local day and the bucket series can
+   * never disagree with the range that selected the rows.
+   *
+   * There is no `currency` and no money anywhere: these are counts.
+   *
+   * An EMPTY period is an answer: `rows: []`, both counts zero, period echoed,
+   * never an error.
+   */
+  async consultations(query: ReportPeriodQuery): Promise<ConsultationsResponse> {
+    await this.requireReadPermission();
+
+    const period = resolveReportPeriod(query, this.now());
+    const encounters = await this.reports.listClosedEncounters(
+      period.fromInstant,
+      period.toInstant
+    );
+
+    const perDay = new Map<string, number>();
+    let consultationCount = 0;
+    let amendmentCount = 0;
+
+    for (const encounter of encounters) {
+      if (encounter.amendsEncounterId !== null) {
+        amendmentCount += 1;
+        continue;
+      }
+      consultationCount += 1;
+      const bucketDate = tenantCalendarDate(encounter.closedAt, period.timeZone);
+      perDay.set(bucketDate, (perDay.get(bucketDate) ?? 0) + 1);
+    }
+
+    // Ascending by local day. The query is already chronological, but the row
+    // order is part of the response contract, so it is applied rather than
+    // inherited from the read or from a map's insertion order.
+    const rows: ConsultationDayRowDto[] = [...perDay.entries()]
+      .map(([bucketDate, count]) => ({ bucketDate, consultationCount: count }))
+      .sort((left, right) => left.bucketDate.localeCompare(right.bucketDate));
+
+    return {
+      report: "consultations",
+      period: toPeriodDto(period),
+      consultationCount,
+      amendmentCount,
+      rows,
+    };
+  }
+
+  /**
+   * Patients registered in the period (PRD §12, §31, [[REP-006]]), bucketed by
+   * the tenant's local day.
+   *
+   * `Patient.createdAt` is the business instant: registering a patient IS the
+   * event, and the domain has no separate registration date. **Soft deactivation
+   * does not remove the fact** — `Patients.md` has no hard delete, so a patient
+   * created in the period and deactivated since was still new then, and the read
+   * applies no `isActive` predicate at all.
+   *
+   * The helper that produces `bucketDate` is the same one the period boundaries
+   * use, so the buckets and the range cannot disagree about which day a
+   * registration belongs to.
+   *
+   * There is no `currency` and no money anywhere: these are counts.
+   *
+   * An EMPTY period is an answer: `rows: []`, `newPatientCount: 0`, period
+   * echoed, never an error.
+   */
+  async newPatients(query: ReportPeriodQuery): Promise<NewPatientsResponse> {
+    await this.requireReadPermission();
+
+    const period = resolveReportPeriod(query, this.now());
+    const patients = await this.reports.listPatientsCreated(period.fromInstant, period.toInstant);
+
+    const perDay = new Map<string, number>();
+    for (const patient of patients) {
+      const bucketDate = tenantCalendarDate(patient.createdAt, period.timeZone);
+      perDay.set(bucketDate, (perDay.get(bucketDate) ?? 0) + 1);
+    }
+
+    // Ascending by local day, applied HERE for the same reason as above.
+    const rows: NewPatientDayRowDto[] = [...perDay.entries()]
+      .map(([bucketDate, count]) => ({ bucketDate, count }))
+      .sort((left, right) => left.bucketDate.localeCompare(right.bucketDate));
+
+    return {
+      report: "new-patients",
+      period: toPeriodDto(period),
+      newPatientCount: patients.length,
       rows,
     };
   }

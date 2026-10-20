@@ -147,6 +147,18 @@ function harness(
         throw new Error("The cash and purchase reports must not read stock movements.");
       },
     },
+    // REP-006's veterinary reads, same rule: a cash or purchase report that read a
+    // clinical encounter or a patient would be reporting facts it does not own.
+    clinicalEncounter: {
+      findMany: () => {
+        throw new Error("The cash and purchase reports must not read clinical encounters.");
+      },
+    },
+    patient: {
+      findMany: () => {
+        throw new Error("The cash and purchase reports must not read patients.");
+      },
+    },
   };
 
   const requestContext = {

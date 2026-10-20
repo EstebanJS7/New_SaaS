@@ -156,6 +156,18 @@ function harness(
         return Promise.resolve(options.movements ?? []);
       },
     },
+    // REP-006's veterinary reads are not inventory reads: they THROW here so an
+    // inventory case that reached one fails loudly rather than counting nothing.
+    clinicalEncounter: {
+      findMany: () => {
+        throw new Error("The inventory reports must not read clinical encounters.");
+      },
+    },
+    patient: {
+      findMany: () => {
+        throw new Error("The inventory reports must not read patients.");
+      },
+    },
   };
 
   const requestContext = {

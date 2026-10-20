@@ -219,6 +219,54 @@ export interface ReportStockMovementRow {
 }
 
 /**
+ * Persistence row for one CLOSED encounter as the consultation report reads it
+ * ([[REP-006]]) — and deliberately NOTHING else.
+ *
+ * The `select` on this read is mandatory and minimal, and that is the contract:
+ * a `clinical_encounter` row also carries `reasonForVisit`, `anamnesis`,
+ * `diagnosis`, `treatmentPlan`, the CONFIDENTIAL `clientSummary` and the
+ * RESTRICTED `internalNotes` (PRD §41), and a staff-only aggregate of how many
+ * consultations the practice closed has no business touching any of them. The
+ * three columns below are the whole projection, so a later edit that swapped
+ * `select` for a full row would have to change this type first.
+ *
+ * `closedAt` is typed nullable because the COLUMN is; the read below asserts it
+ * rather than inventing a day for a closed row that somehow has no instant.
+ */
+export interface ReportClosedEncounterReadRow {
+  readonly id: string;
+  readonly closedAt: Date | null;
+  /**
+   * Non-NULL exactly for an AMENDMENT: a NEW closed row correcting an earlier
+   * one, which the amendment command links here and never mutates in place.
+   * `null` is therefore the whole difference between a consultation and a
+   * correction of one.
+   */
+  readonly amendsEncounterId: string | null;
+}
+
+/** A closed encounter whose business instant is present. */
+export interface ReportClosedEncounterRow {
+  readonly id: string;
+  readonly closedAt: Date;
+  readonly amendsEncounterId: string | null;
+}
+
+/**
+ * Persistence row for one patient created in the period ([[REP-006]]).
+ *
+ * `select`-minimal again, and for a stronger reason than the encounter read:
+ * `Patient.name` and `Patient.birthDate` are CONFIDENTIAL (PRD §41), and a count
+ * of how many patients the practice gained needs neither — not even to bucket
+ * them. `createdAt` is the patient's business instant and the ONLY date this
+ * read uses.
+ */
+export interface ReportPatientCreatedRow {
+  readonly id: string;
+  readonly createdAt: Date;
+}
+
+/**
  * The cash and purchase reads of [[REP-004]], in the same shape as the sale and
  * catalog delegates above: Prisma's own arg types, a promise of narrow rows, reads
  * only. Each one is a single `findMany` so the predicate and the order live in ONE
@@ -253,6 +301,25 @@ export interface ReportingStockMovementDelegate {
   findMany(args: Prisma.StockMovementFindManyArgs): Promise<ReportStockMovementRow[]>;
 }
 
+/**
+ * The two veterinary reads of [[REP-006]]: the practitioner's closed encounters
+ * and the patients the practice gained. Same shape as every delegate above —
+ * Prisma's own arg types, a promise of narrow rows, reads only.
+ *
+ * Two delegates and not one, because they read two different aggregates of two
+ * different domains: `Clinical` owns the encounter and `Patients` owns the
+ * patient, and neither repository is imported here — a report reads the columns
+ * it needs through its own predicated query, exactly as it does for sales, cash
+ * and the stock ledger.
+ */
+export interface ReportingClinicalEncounterDelegate {
+  findMany(args: Prisma.ClinicalEncounterFindManyArgs): Promise<ReportClosedEncounterReadRow[]>;
+}
+
+export interface ReportingPatientDelegate {
+  findMany(args: Prisma.PatientFindManyArgs): Promise<ReportPatientCreatedRow[]>;
+}
+
 export interface ReportingReadPrisma {
   readonly sale: ReportingSaleDelegate;
   readonly catalogItem: ReportingCatalogItemDelegate;
@@ -262,6 +329,8 @@ export interface ReportingReadPrisma {
   readonly supplier: ReportingSupplierDelegate;
   readonly stockBalance: ReportingStockBalanceDelegate;
   readonly stockMovement: ReportingStockMovementDelegate;
+  readonly clinicalEncounter: ReportingClinicalEncounterDelegate;
+  readonly patient: ReportingPatientDelegate;
 }
 
 /**
@@ -330,6 +399,38 @@ export const REPORT_STOCK_BALANCE_ROW_LIMIT_EXCEEDED_MESSAGE = `The tenant has m
 export const REPORT_STOCK_MOVEMENT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_STOCK_MOVEMENT_ROW_LIMIT} stock movements. Narrow the period and try again.`;
 
 /**
+ * Hard cap on the number of CLOSED encounter rows the consultation report may
+ * read ([[REP-006]]), AMENDMENTS INCLUDED — they are part of the same read, and
+ * a cap that counted only consultations would bound the read by a number the
+ * query does not filter on.
+ *
+ * A consultation is the dense clinical read: a practice closes several a day,
+ * every working day, so twenty thousand is far past a year of them in any
+ * veterinary tenant. The same discipline as every cap above: the extra row
+ * makes an over-limit period REFUSE rather than return a partial count that
+ * would look exactly like a correct one ([[TD-053]] owns the eventual
+ * pushdown).
+ */
+export const REPORT_CLOSED_ENCOUNTER_ROW_LIMIT = 20_000;
+
+/**
+ * Hard cap on the number of PATIENT rows the new-patients report may read
+ * ([[REP-006]]).
+ *
+ * Sparser than the consultation read by an order of magnitude — a patient is
+ * registered once and comes back for every later consultation — but the period
+ * can span a full year (366 days), so ten thousand is still the point past which
+ * a period is pathological rather than busy.
+ */
+export const REPORT_NEW_PATIENT_ROW_LIMIT = 10_000;
+
+/** Stable message when a period needs more closed encounters than the cap allows. */
+export const REPORT_CLOSED_ENCOUNTER_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_CLOSED_ENCOUNTER_ROW_LIMIT} closed consultations. Narrow the period and try again.`;
+
+/** Stable message when a period needs more new patients than the cap allows. */
+export const REPORT_NEW_PATIENT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_NEW_PATIENT_ROW_LIMIT} new patients. Narrow the period and try again.`;
+
+/**
  * Stable message when a required relation is absent from a completed-sale read.
  * The call site always names its `include`, so this is unreachable; it is
  * asserted rather than assumed for the same reason the missing-catalog-item
@@ -362,6 +463,19 @@ export function reportCashSessionCloseResultMissingMessage(sessionId: string): s
  */
 export function reportPurchaseReceivedInstantMissingMessage(purchaseId: string): string {
   return `The report read a received purchase without its receive instant: ${purchaseId}`;
+}
+
+/**
+ * Stable message when a `CLOSED` encounter read carries no close instant.
+ *
+ * The close command writes `closed_at` in the same transition that sets `CLOSED`
+ * and a closed encounter is immutable (`Clinical.md`), so this is UNREACHABLE. It
+ * is asserted rather than assumed because the alternative — bucketing the row by
+ * some other instant, or skipping it — would either invent a day the practice
+ * never closed anything on or hide a consultation it did close.
+ */
+export function reportClosedEncounterMissingClosedAtMessage(encounterId: string): string {
+  return `The report read a closed encounter without its close instant: ${encounterId}`;
 }
 
 /**
@@ -651,6 +765,80 @@ export class ReportRepository {
     }
     return rows;
   }
+
+  /**
+   * The caller tenant's CLOSED encounters whose `closedAt` falls in the
+   * HALF-OPEN range `[fromInstant, toInstant)` ([[REP-006]]).
+   *
+   * `closedAt` is the period predicate, never `createdAt`: the clinical event is
+   * the CLOSE, so an encounter drafted in March and closed in April is APRIL's
+   * consultation. `status: "CLOSED"` is part of the predicate and not a later
+   * filter — a `DRAFT` was never a consultation, whatever its `createdAt` says.
+   *
+   * Amendments are READ here and separated by the CALLER, deliberately: both
+   * figures the report publishes are period-scoped by the same instant, so one
+   * read bounded by `closed_at` answers both, and splitting it in SQL would mean
+   * two reads that could disagree about the boundary.
+   *
+   * The projection is the three columns of
+   * {@link ReportClosedEncounterReadRow} — id, business instant and the
+   * correction link. No clinical free text, no patient identity: this read never
+   * loads `internalNotes`, `diagnosis`, `anamnesis`, `reasonForVisit`,
+   * `treatmentPlan` or `clientSummary`, which is a data-classification boundary
+   * (PRD §41) rather than an optimization.
+   */
+  async listClosedEncounters(
+    fromInstant: Date,
+    toInstant: Date
+  ): Promise<ReportClosedEncounterRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.clinicalEncounter.findMany({
+      where: {
+        tenantId,
+        status: "CLOSED",
+        closedAt: { gte: fromInstant, lt: toInstant },
+      },
+      select: { id: true, closedAt: true, amendsEncounterId: true },
+      orderBy: [{ closedAt: "asc" }, { id: "asc" }],
+      take: REPORT_CLOSED_ENCOUNTER_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_CLOSED_ENCOUNTER_ROW_LIMIT) {
+      throw new DomainError(
+        "VALIDATION_FAILED",
+        REPORT_CLOSED_ENCOUNTER_ROW_LIMIT_EXCEEDED_MESSAGE
+      );
+    }
+    return rows.map((row) => requireClosedInstant(row));
+  }
+
+  /**
+   * The caller tenant's patients created in the HALF-OPEN range
+   * `[fromInstant, toInstant)` ([[REP-006]]).
+   *
+   * `createdAt` is the business instant: registering a patient IS the event the
+   * report counts, and `Patient` has no separate one. There is deliberately NO
+   * `isActive` predicate — deactivation is SOFT and it does not unfact the
+   * registration, so a patient created in the period and deactivated since was
+   * still new then (`Patients.md`).
+   */
+  async listPatientsCreated(
+    fromInstant: Date,
+    toInstant: Date
+  ): Promise<ReportPatientCreatedRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.patient.findMany({
+      where: { tenantId, createdAt: { gte: fromInstant, lt: toInstant } },
+      select: { id: true, createdAt: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: REPORT_NEW_PATIENT_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_NEW_PATIENT_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_NEW_PATIENT_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows;
+  }
 }
 
 /**
@@ -691,6 +879,22 @@ function requireCloseResult(row: ReportCashSessionReadRow): ReportCashSessionRow
     countedAmount,
     differenceAmount,
   };
+}
+
+/**
+ * Asserts the close instant of a `CLOSED` encounter is present, and narrows the
+ * row to the non-null shape the report consumes.
+ *
+ * The close command writes both columns together and a closed encounter is
+ * immutable, so this is UNREACHABLE; it is asserted rather than papered over
+ * because the alternatives are both wrong — inventing a day for a row that has
+ * none, or dropping a consultation the practice really closed.
+ */
+function requireClosedInstant(row: ReportClosedEncounterReadRow): ReportClosedEncounterRow {
+  if (row.closedAt === null) {
+    throw new DomainError("INTERNAL", reportClosedEncounterMissingClosedAtMessage(row.id));
+  }
+  return { id: row.id, closedAt: row.closedAt, amendsEncounterId: row.amendsEncounterId };
 }
 
 /**

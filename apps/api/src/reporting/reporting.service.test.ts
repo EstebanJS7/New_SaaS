@@ -160,6 +160,19 @@ function harness(
         throw new Error("REP-002/REP-003 must not read stock movements.");
       },
     },
+    // REP-006's veterinary reads are supplied by their own suite, for the same
+    // reason again: a clinical or patient read here would be a crossing of the
+    // service boundaries these cases exist to pin.
+    clinicalEncounter: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read clinical encounters.");
+      },
+    },
+    patient: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read patients.");
+      },
+    },
   };
   const requestContext = {
     requireTenantId: () => TENANT,
