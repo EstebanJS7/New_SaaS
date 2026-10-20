@@ -4,21 +4,26 @@ import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
 import { REPORTING_PERMISSIONS } from "./reporting.permissions.js";
 import { ReportingService } from "./reporting.service.js";
 import {
+  REPORT_DUE_QUERY_INVALID_MESSAGE,
   REPORT_PERIOD_QUERY_INVALID_MESSAGE,
   REPORT_QUERY_NOT_ALLOWED_MESSAGE,
+  reportDueQuerySchema,
   reportNoQuerySchema,
   reportPeriodQuerySchema,
   type CashMovementsResponse,
   type CashSessionsResponse,
   type ConsultationsResponse,
+  type DewormingDueResponse,
   type LowStockReportResponse,
   type NewPatientsResponse,
   type PaymentMethodsResponse,
   type PurchasesResponse,
+  type ReportDueQuery,
   type ReportPeriodQuery,
   type SalesByPeriodResponse,
   type SalesByProductServiceResponse,
   type StockReportResponse,
+  type VaccinesDueResponse,
 } from "./reporting.dto.js";
 
 /**
@@ -30,9 +35,10 @@ import {
  *
  * Tenant identity is never an input — it comes from the request context inside
  * the repository — so there is no cross-tenant-addressable resource, no path
- * parameter and no body. The only input is the period, and it is deliberately
- * narrow: a closed query schema (an unknown key is refused, not ignored) whose
- * semantic rejections all live in the period rule, so every malformed period
+ * parameter and no body. The only inputs are the period and the due reports'
+ * horizon, and both are deliberately narrow: a closed query schema (an unknown key
+ * is refused, not ignored) whose semantic rejections all live in their own rule
+ * module — `report.period.ts` and `report.horizon.ts` — so every malformed input
  * produces ONE stable message per condition rather than a parser's paraphrase.
  * The ONE current-state route (`low-stock`) accepts no query at all and refuses
  * every key for the same reason.
@@ -159,6 +165,30 @@ export class ReportingController {
   }
 
   /**
+   * Vaccinations coming due or overdue (PRD §12, §31, [[REP-006]]).
+   *
+   * `?horizonDays=N` — OPTIONAL, a whole number of days in `1..365`, defaulting
+   * to 30. **No period**: `?from=` on this route is a `400`, not a silently
+   * ignored key, because a due report answers "what is due" rather than "what
+   * happened in a window".
+   */
+  @Get("vaccines-due")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async vaccinesDue(@Query() query: unknown): Promise<VaccinesDueResponse> {
+    return this.reporting.vaccinesDue(this.parseHorizon(query));
+  }
+
+  /**
+   * Deworming treatments coming due or overdue (PRD §12, §31, [[REP-006]]): the
+   * same contract as `vaccines-due` over `clinical_deworming`.
+   */
+  @Get("deworming-due")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async dewormingDue(@Query() query: unknown): Promise<DewormingDueResponse> {
+    return this.reporting.dewormingDue(this.parseHorizon(query));
+  }
+
+  /**
    * The ONE period parser every report route uses: shape first, semantics in the
    * period rule. Factored so a new report cannot grow a second, drifting parser.
    */
@@ -166,6 +196,20 @@ export class ReportingController {
     const parsed = reportPeriodQuerySchema.safeParse(query);
     if (!parsed.success) {
       throw new DomainError("VALIDATION_FAILED", REPORT_PERIOD_QUERY_INVALID_MESSAGE);
+    }
+    return parsed.data;
+  }
+
+  /**
+   * The horizon parser the two DUE routes use: shape first, semantics in the
+   * horizon rule. A third parser and not a flag on the period one, because the
+   * two routes accept a DIFFERENT key: a due report has no period, so `from` must
+   * be refused there and `horizonDays` is meaningless on a period report.
+   */
+  private parseHorizon(query: unknown): ReportDueQuery {
+    const parsed = reportDueQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_DUE_QUERY_INVALID_MESSAGE);
     }
     return parsed.data;
   }

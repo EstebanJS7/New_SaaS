@@ -3,15 +3,23 @@ import { z } from "zod";
 /**
  * The reporting response contract (EPIC-18 REP-002, [[DEC-062]]).
  *
- * Data classification (PRD §41): every value here is INTERNAL — aggregate
+ * Data classification (PRD §41): almost every value here is INTERNAL — aggregate
  * counts, calendar dates and money totals of the tenant's OWN confirmed sales,
  * cash ledger, received purchases, inventory, closed consultations and
- * registered patients. No customer, patient, clinical or fiscal identity is read,
- * and no CONFIDENTIAL or RESTRICTED payload crosses this boundary: the veterinary
- * reports read a patient row as an `id` plus its `created_at` and a clinical
- * encounter as an `id` plus its close instant and correction link, so no patient
- * name and no clinical free text is ever loaded. Prisma models are never
- * returned; only the keys declared here leave the process.
+ * registered patients. No customer, clinical or fiscal identity is read, and no
+ * RESTRICTED payload crosses this boundary: the veterinary period reports read a
+ * patient row as an `id` plus its `created_at` and a clinical encounter as an
+ * `id` plus its close instant and correction link, so no patient name and no
+ * clinical free text is ever loaded. Prisma models are never returned; only the
+ * keys declared here leave the process.
+ *
+ * The ONE deliberate exception is the two DUE reports (`vaccines-due`,
+ * `deworming-due`), which carry `Patient.name` — CONFIDENTIAL — because a list
+ * of due vaccinations nobody can act on is not a report. They carry the name and
+ * the two dates and NO clinical content whatsoever, and each of their row DTOs
+ * states that boundary in place. No report on this surface ever reads
+ * `ClinicalEncounter.internalNotes`, `diagnosis`, `anamnesis` or any other
+ * clinical free text.
  *
  * Decimal projections are fixed-scale exact strings at their stored column scale
  * (`Decimal(14, 2)` for every money aggregate), never JavaScript floats and never
@@ -538,6 +546,138 @@ export interface NewPatientsResponse {
 }
 
 /**
+ * Where a due record sits relative to today in the tenant zone (`GET
+ * /reports/vaccines-due`, `GET /reports/deworming-due`, [[REP-006]]).
+ *
+ * `overdue` is a local due date BEFORE today; `upcoming` is today or later — so
+ * a record due TODAY is `upcoming`, never `overdue` ([[DEC-065]], and
+ * [[DEC-063]] for the tenant date it is compared against). The split is decided
+ * on CALENDAR DATES in `TENANT_TIME_ZONE`, never on instants: a due date at
+ * 23:00 local is due that day even though its UTC day is already the next one.
+ */
+export type ReportDueStatus = "overdue" | "upcoming";
+
+/**
+ * One vaccination due or overdue (`GET /reports/vaccines-due`, [[REP-006]]).
+ *
+ * Data classification (PRD §41): `patientName` is **CONFIDENTIAL** and is
+ * carried HERE on purpose — a due-vaccination list whose rows do not say which
+ * animal is due is a list nobody can act on, and this report exists to be acted
+ * on by staff. It is the ONLY confidential value in the response: the row
+ * carries dates, a patient identity and the vaccine's name and **no clinical
+ * content whatsoever** — no `internalNotes` (RESTRICTED), no diagnosis, no
+ * anamnesis and no reason for visit. The portal never receives this payload;
+ * patient identity on the holder-facing surface is `PortalReadService`'s
+ * business, not a report's.
+ */
+export interface VaccineDueRowDto {
+  /** The patient the vaccination belongs to (tenant-scoped). */
+  readonly patientId: string;
+  /**
+   * The patient's name as `Patient` holds it today — CONFIDENTIAL, and carried
+   * because staff must act on the row. Never a birth date, a species or a
+   * guardian.
+   */
+  readonly patientName: string;
+  /** The `clinical_vaccination.vaccine` value as the record stores it. */
+  readonly vaccine: string;
+  /** ISO 8601 instant the vaccine was administered (context, not the predicate). */
+  readonly administeredAt: string;
+  /**
+   * ISO 8601 instant of the staff-entered `next_due_at` ([[DEC-065]]) — the
+   * report's whole predicate. Never a projected booster date: no protocol is
+   * derived, the veterinarian entered this date or the row is absent.
+   */
+  readonly nextDueAt: string;
+  /** `overdue` when the LOCAL due date is before today, `upcoming` when it is today or later. */
+  readonly status: ReportDueStatus;
+}
+
+/**
+ * `GET /reports/vaccines-due` (PRD §12, §31, [[REP-006]], [[DEC-065]]): what is
+ * due, split into overdue and upcoming.
+ *
+ * It takes **no period**: a period answers "what happened", and a due date is a
+ * future-or-past fact about a record, so a window would be a filter the report
+ * cannot honour. It takes a bounded forward HORIZON instead, and there is
+ * deliberately no lower bound — an overdue vaccination is overdue however old.
+ *
+ * `asOfDate`, `timeZone` and `horizonDays` are echoed so a caller can PROVE
+ * which day the split was made against and, when it omitted `horizonDays`, which
+ * default it got.
+ *
+ * There is no `currency` anywhere: these are dates, names and counts.
+ */
+export interface VaccinesDueResponse {
+  readonly report: "vaccines-due";
+  /** `YYYY-MM-DD` in the tenant zone — today, the overdue/upcoming pivot. */
+  readonly asOfDate: string;
+  /** The zone the pivot and `horizonEndInstant` were resolved in. Never a request parameter. */
+  readonly timeZone: string;
+  /** The horizon actually applied, defaulted to 30 and bounded to `1..365`. */
+  readonly horizonDays: number;
+  /** Rows whose LOCAL due date is before `asOfDate`. */
+  readonly overdueCount: number;
+  /** Rows whose LOCAL due date is `asOfDate` or later, inside the horizon. */
+  readonly upcomingCount: number;
+  /**
+   * `nextDueAt` ascending, then `id` ascending — so the longest-overdue record is
+   * first and the soonest upcoming ones follow, which is the order a practice
+   * works through. `overdueCount + upcomingCount` is exactly `rows.length`.
+   */
+  readonly rows: VaccineDueRowDto[];
+}
+
+/**
+ * One deworming treatment due or overdue (`GET /reports/deworming-due`,
+ * [[REP-006]]). The same row as {@link VaccineDueRowDto} over
+ * `clinical_deworming`, whose free-text field is `product` instead of `vaccine`.
+ *
+ * Data classification (PRD §41) is identical: `patientName` is CONFIDENTIAL and
+ * carried because staff must act on it, and the row carries no clinical content
+ * at all.
+ */
+export interface DewormingDueRowDto {
+  /** The patient the treatment belongs to (tenant-scoped). */
+  readonly patientId: string;
+  /** The patient's name as `Patient` holds it today — CONFIDENTIAL. */
+  readonly patientName: string;
+  /** The `clinical_deworming.product` value as the record stores it. */
+  readonly product: string;
+  /** ISO 8601 instant the treatment was administered (context, not the predicate). */
+  readonly administeredAt: string;
+  /** ISO 8601 instant of the staff-entered `next_due_at` ([[DEC-065]]) — the predicate. */
+  readonly nextDueAt: string;
+  /** `overdue` when the LOCAL due date is before today, `upcoming` when it is today or later. */
+  readonly status: ReportDueStatus;
+}
+
+/**
+ * `GET /reports/deworming-due` (PRD §12, §31, [[REP-006]], [[DEC-065]]): the
+ * same question as {@link VaccinesDueResponse} over `clinical_deworming`.
+ *
+ * The same rules apply exactly — no period, a bounded forward horizon, no lower
+ * bound, calendar-date comparison in the tenant zone, due today is upcoming — and
+ * they are stated once, in the vaccine DTO, rather than paraphrased here where
+ * they could drift.
+ */
+export interface DewormingDueResponse {
+  readonly report: "deworming-due";
+  /** `YYYY-MM-DD` in the tenant zone — today, the overdue/upcoming pivot. */
+  readonly asOfDate: string;
+  /** The zone the pivot and `horizonEndInstant` were resolved in. Never a request parameter. */
+  readonly timeZone: string;
+  /** The horizon actually applied, defaulted to 30 and bounded to `1..365`. */
+  readonly horizonDays: number;
+  /** Rows whose LOCAL due date is before `asOfDate`. */
+  readonly overdueCount: number;
+  /** Rows whose LOCAL due date is `asOfDate` or later, inside the horizon. */
+  readonly upcomingCount: number;
+  /** `nextDueAt` ascending, then `id` ascending. `overdueCount + upcomingCount` is `rows.length`. */
+  readonly rows: DewormingDueRowDto[];
+}
+
+/**
  * The query contract of every PERIOD-shaped report route
  * (`GET /reports/sales-by-period`, `GET /reports/payment-methods`,
  * `GET /reports/sales-by-product-service`, `GET /reports/cash-sessions`,
@@ -583,3 +723,31 @@ export const reportNoQuerySchema = z.object({}).strict();
 
 /** Stable message behind every rejection of a query sent to a no-query report route. */
 export const REPORT_QUERY_NOT_ALLOWED_MESSAGE = "This report takes no query parameters.";
+
+/**
+ * The query contract of the two DUE reports
+ * (`GET /reports/vaccines-due`, `GET /reports/deworming-due`, [[REP-006]]).
+ *
+ * **This is NOT {@link reportPeriodQuerySchema}.** A due report answers "what is
+ * due", not "what happened in a window", so it accepts no period at all and
+ * `.strict()` is what turns `?from=2026-06-01` into an explicit refusal instead
+ * of a key that is silently ignored while the caller believes a range was
+ * applied.
+ *
+ * `horizonDays` is only SHAPE-validated here (a string, no unknown keys). The
+ * default of 30, the integer requirement and the `1..365` bound — with one
+ * stable message per condition — live in `report.horizon.ts`, exactly as every
+ * period rejection lives in `report.period.ts` ([[DEC-063]]). Declaring
+ * `z.coerce.number()` here would move those refusals into a parser's
+ * paraphrase.
+ */
+export const reportDueQuerySchema = z
+  .object({
+    horizonDays: z.string().optional(),
+  })
+  .strict();
+
+export type ReportDueQuery = z.infer<typeof reportDueQuerySchema>;
+
+/** Stable message behind every rejection of the due-report query SHAPE (unknown key, wrong type). */
+export const REPORT_DUE_QUERY_INVALID_MESSAGE = "Invalid report due query.";

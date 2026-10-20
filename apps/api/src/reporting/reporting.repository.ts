@@ -267,6 +267,77 @@ export interface ReportPatientCreatedRow {
 }
 
 /**
+ * Persistence row for one patient the DUE reports NAME ([[REP-006]] part 2).
+ *
+ * `Patient.name` is CONFIDENTIAL (PRD §41) and is carried only because a due
+ * vaccination or deworming list has to say which animal to call. The projection
+ * is `id` + `name` and NOTHING else: no birth date, no species, no guardian, no
+ * clinical field. A patient name here is the minimum needed to act, not a
+ * widening of what the report reads.
+ */
+export interface ReportPatientNameRow {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * What ONE `patient.findMany` may return: whichever of the two minimal
+ * projections its call site selected.
+ *
+ * A UNION and not one row with optional fields, because "the read did not select
+ * it" must not be able to look like "the column is NULL": `created_at` and
+ * `name` are both NOT NULL, so an optional field would invent a third state
+ * neither column has. Each call site's `select` is pinned by its own assertion,
+ * so the narrowing its repository method performs is a PROJECTION assertion
+ * (the `reportRelationNotLoadedMessage` discipline), never a nullability guess.
+ */
+export type ReportPatientReadRow = ReportPatientCreatedRow | ReportPatientNameRow;
+
+/**
+ * Persistence row for one vaccination the due report reads ([[REP-006]] part 2).
+ *
+ * `nextDueAt` is typed NULLABLE because the COLUMN is ([[DEC-065]]): the read
+ * filters `not: null`, so a null cannot arrive, and
+ * {@link ReportRepository.listDueVaccinations} asserts it rather than inventing a
+ * due date for a row that has none — the same discipline as a closed encounter
+ * with no close instant.
+ */
+export interface ReportDueVaccinationReadRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly vaccine: string;
+  readonly administeredAt: Date;
+  readonly nextDueAt: Date | null;
+}
+
+/** A due vaccination whose staff-entered due date is present. */
+export interface ReportDueVaccinationRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly vaccine: string;
+  readonly administeredAt: Date;
+  readonly nextDueAt: Date;
+}
+
+/** The same two rows over `clinical_deworming`, whose free-text field is `product` ([[DEC-065]]). */
+export interface ReportDueDewormingReadRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly product: string;
+  readonly administeredAt: Date;
+  readonly nextDueAt: Date | null;
+}
+
+/** A due deworming treatment whose staff-entered due date is present. */
+export interface ReportDueDewormingRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly product: string;
+  readonly administeredAt: Date;
+  readonly nextDueAt: Date;
+}
+
+/**
  * The cash and purchase reads of [[REP-004]], in the same shape as the sale and
  * catalog delegates above: Prisma's own arg types, a promise of narrow rows, reads
  * only. Each one is a single `findMany` so the predicate and the order live in ONE
@@ -302,22 +373,43 @@ export interface ReportingStockMovementDelegate {
 }
 
 /**
- * The two veterinary reads of [[REP-006]]: the practitioner's closed encounters
- * and the patients the practice gained. Same shape as every delegate above —
- * Prisma's own arg types, a promise of narrow rows, reads only.
+ * The two period-shaped veterinary reads of [[REP-006]]: the practitioner's
+ * closed encounters and the patients the practice gained. Same shape as every
+ * delegate above — Prisma's own arg types, a promise of narrow rows, reads only.
  *
  * Two delegates and not one, because they read two different aggregates of two
  * different domains: `Clinical` owns the encounter and `Patients` owns the
  * patient, and neither repository is imported here — a report reads the columns
  * it needs through its own predicated query, exactly as it does for sales, cash
  * and the stock ledger.
+ *
+ * The `patient` delegate answers BOTH minimal patient projections this module
+ * needs (a registration instant and a name), which is why its row type is the
+ * union {@link ReportPatientReadRow} rather than one shape with optional fields.
  */
 export interface ReportingClinicalEncounterDelegate {
   findMany(args: Prisma.ClinicalEncounterFindManyArgs): Promise<ReportClosedEncounterReadRow[]>;
 }
 
 export interface ReportingPatientDelegate {
-  findMany(args: Prisma.PatientFindManyArgs): Promise<ReportPatientCreatedRow[]>;
+  findMany(args: Prisma.PatientFindManyArgs): Promise<ReportPatientReadRow[]>;
+}
+
+/**
+ * The two DUE reads of [[REP-006]] part 2 — one per clinical record table.
+ *
+ * Two delegates and not one: `clinical_vaccination` and `clinical_deworming` are
+ * two tables of the same vertical, and a report that read them through a shared
+ * abstraction would have to unify `vaccine` with `product`, which are different
+ * facts. Same discipline as every delegate above: Prisma's own arg types, a
+ * promise of narrow rows, reads only.
+ */
+export interface ReportingClinicalVaccinationDelegate {
+  findMany(args: Prisma.ClinicalVaccinationFindManyArgs): Promise<ReportDueVaccinationReadRow[]>;
+}
+
+export interface ReportingClinicalDewormingDelegate {
+  findMany(args: Prisma.ClinicalDewormingFindManyArgs): Promise<ReportDueDewormingReadRow[]>;
 }
 
 export interface ReportingReadPrisma {
@@ -330,6 +422,8 @@ export interface ReportingReadPrisma {
   readonly stockBalance: ReportingStockBalanceDelegate;
   readonly stockMovement: ReportingStockMovementDelegate;
   readonly clinicalEncounter: ReportingClinicalEncounterDelegate;
+  readonly clinicalVaccination: ReportingClinicalVaccinationDelegate;
+  readonly clinicalDeworming: ReportingClinicalDewormingDelegate;
   readonly patient: ReportingPatientDelegate;
 }
 
@@ -431,6 +525,28 @@ export const REPORT_CLOSED_ENCOUNTER_ROW_LIMIT_EXCEEDED_MESSAGE = `The report pe
 export const REPORT_NEW_PATIENT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_NEW_PATIENT_ROW_LIMIT} new patients. Narrow the period and try again.`;
 
 /**
+ * Hard cap on the number of vaccination rows the vaccines-due report may read
+ * ([[REP-006]] part 2).
+ *
+ * This cap bounds the tenant's WHOLE due-date history, not a window: the read
+ * deliberately has no lower bound, because an overdue vaccination is overdue
+ * however old it is. Ten thousand rows is far past a practice's working list — a
+ * clinic that reached it would be reading a data-cleanup task, not a list of
+ * animals to call — and the cap refuses rather than truncating, exactly as every
+ * cap above does ([[TD-053]] owns the eventual pushdown).
+ */
+export const REPORT_DUE_VACCINATION_ROW_LIMIT = 10_000;
+
+/** The same cap over `clinical_deworming`, applied to that read alone. */
+export const REPORT_DUE_DEWORMING_ROW_LIMIT = 10_000;
+
+/** Stable message when the vaccines-due read would need more rows than the cap allows. */
+export const REPORT_DUE_VACCINATION_ROW_LIMIT_EXCEEDED_MESSAGE = `The report read more than ${REPORT_DUE_VACCINATION_ROW_LIMIT} vaccinations with a due date. Narrow the horizon and try again.`;
+
+/** Stable message when the deworming-due read would need more rows than the cap allows. */
+export const REPORT_DUE_DEWORMING_ROW_LIMIT_EXCEEDED_MESSAGE = `The report read more than ${REPORT_DUE_DEWORMING_ROW_LIMIT} deworming treatments with a due date. Narrow the horizon and try again.`;
+
+/**
  * Stable message when a required relation is absent from a completed-sale read.
  * The call site always names its `include`, so this is unreachable; it is
  * asserted rather than assumed for the same reason the missing-catalog-item
@@ -476,6 +592,33 @@ export function reportPurchaseReceivedInstantMissingMessage(purchaseId: string):
  */
 export function reportClosedEncounterMissingClosedAtMessage(encounterId: string): string {
   return `The report read a closed encounter without its close instant: ${encounterId}`;
+}
+
+/**
+ * Stable message when a DUE read returns a row whose `next_due_at` is NULL.
+ *
+ * The read filters `nextDueAt: { not: null }`, so this is UNREACHABLE. It is
+ * asserted rather than assumed because both alternatives are wrong: silently
+ * dropping the row would hide a record the predicate selected, and treating a
+ * missing due date as "today" would put an animal on a call list on a date
+ * nobody entered ([[DEC-065]] — the due date is staff-entered, never derived).
+ */
+export function reportDueInstantMissingMessage(recordId: string): string {
+  return `The report read a due record without its due date: ${recordId}`;
+}
+
+/**
+ * Stable message when a patient read did not return the column its call site
+ * selected.
+ *
+ * Each projection is pinned by its own `select`, so this is UNREACHABLE: it is a
+ * PROJECTION assertion, the same shape as
+ * {@link reportRelationNotLoadedMessage}. Without it a name-less row would be
+ * rendered as `"undefined"` beside a real date, and a consultation count would
+ * silently lose a registration the read had matched.
+ */
+export function reportPatientProjectionMissingMessage(patientId: string): string {
+  return `The report patient read did not return the selected patient fields: ${patientId}`;
 }
 
 /**
@@ -837,7 +980,106 @@ export class ReportRepository {
     if (rows.length > REPORT_NEW_PATIENT_ROW_LIMIT) {
       throw new DomainError("VALIDATION_FAILED", REPORT_NEW_PATIENT_ROW_LIMIT_EXCEEDED_MESSAGE);
     }
-    return rows;
+    return rows.map(requirePatientCreatedAt);
+  }
+
+  /**
+   * The caller tenant's patient NAMES for the given ids, in ONE batched,
+   * tenant-predicated read (no N+1) — the due reports' name lookup ([[REP-006]]
+   * part 2).
+   *
+   * The tenant predicate is applied HERE, so an id from another tenant resolves
+   * to nothing rather than to that tenant's patient. An EMPTY id set skips the
+   * query entirely, exactly as {@link listCatalogItemsByIds} does: `in: []` is a
+   * question with a known answer.
+   *
+   * The projection is `id` + `name`. `Patient.name` is CONFIDENTIAL (PRD §41)
+   * and is read because the report names the animal a practice has to call; the
+   * birth date, the species, the guardian and every clinical field stay
+   * unread.
+   */
+  async listPatientNamesByIds(ids: readonly string[]): Promise<ReportPatientNameRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.patient.findMany({
+      where: { tenantId, id: { in: [...ids] } },
+      select: { id: true, name: true },
+    });
+    return rows.map(requirePatientName);
+  }
+
+  /**
+   * The caller tenant's vaccinations whose staff-entered due date is before the
+   * EXCLUSIVE `horizonEndInstant` ([[REP-006]] part 2, [[DEC-065]]).
+   *
+   * **There is deliberately NO lower bound.** An overdue vaccination is overdue
+   * however old it is, and a practice that asks "what is due?" is asking about
+   * its whole history, not about a window: a booster that came due two years ago
+   * is MORE urgent than one due next week, so bounding the past would hide
+   * exactly the rows that matter most. The row cap is what keeps that honest.
+   *
+   * `nextDueAt: { not: null }` is a SKIP, not a bound: a vaccination whose due
+   * date was never recorded is in neither the overdue nor the upcoming set
+   * ([[DEC-065]] — no date is invented from a protocol). The `lt` is half-open on
+   * purpose: it is the first instant of the day AFTER the last horizon day, so a
+   * due date exactly on that last day is INCLUDED.
+   *
+   * The order is `nextDueAt` ascending, then `id` ascending, so the longest
+   * overdue row is first and the soonest upcoming rows follow — the order a
+   * practice works through.
+   */
+  async listDueVaccinations(horizonEndInstant: Date): Promise<ReportDueVaccinationRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.clinicalVaccination.findMany({
+      where: { tenantId, nextDueAt: { not: null, lt: horizonEndInstant } },
+      select: {
+        id: true,
+        patientId: true,
+        vaccine: true,
+        administeredAt: true,
+        nextDueAt: true,
+      },
+      orderBy: [{ nextDueAt: "asc" }, { id: "asc" }],
+      take: REPORT_DUE_VACCINATION_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_DUE_VACCINATION_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_DUE_VACCINATION_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows.map(requireNextDueAt);
+  }
+
+  /**
+   * The same read over `clinical_deworming` ([[REP-006]] part 2): the
+   * caller tenant's treatments whose due date is before the EXCLUSIVE
+   * `horizonEndInstant`, in `nextDueAt`/`id` order, with no lower bound.
+   *
+   * A separate method and a separate cap rather than a shared one, because the
+   * two reports read two tables and each read must be able to refuse on its own
+   * subject — `product` is not `vaccine` and a merged read would have to pretend
+   * it was.
+   */
+  async listDueDewormings(horizonEndInstant: Date): Promise<ReportDueDewormingRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.clinicalDeworming.findMany({
+      where: { tenantId, nextDueAt: { not: null, lt: horizonEndInstant } },
+      select: {
+        id: true,
+        patientId: true,
+        product: true,
+        administeredAt: true,
+        nextDueAt: true,
+      },
+      orderBy: [{ nextDueAt: "asc" }, { id: "asc" }],
+      take: REPORT_DUE_DEWORMING_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_DUE_DEWORMING_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_DUE_DEWORMING_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows.map(requireNextDueAt);
   }
 }
 
@@ -911,4 +1153,52 @@ function requireReceivedInstant(row: ReportPurchaseReadRow): ReportPurchaseRow {
     receivedAt: row.receivedAt,
     lines: row.lines,
   };
+}
+
+/**
+ * Asserts a patient read returned the `createdAt` its call site selected, and
+ * narrows the row to the shape the new-patients report consumes.
+ *
+ * A projection assertion, not a nullability one: `created_at` is NOT NULL, and
+ * the read names it, so this is UNREACHABLE. Without it the union
+ * {@link ReportPatientReadRow} would have to be trusted, and a name-only row
+ * reaching the count would bucket a registration under `Invalid Date`.
+ */
+function requirePatientCreatedAt(row: ReportPatientReadRow): ReportPatientCreatedRow {
+  if (!("createdAt" in row)) {
+    throw new DomainError("INTERNAL", reportPatientProjectionMissingMessage(row.id));
+  }
+  return { id: row.id, createdAt: row.createdAt };
+}
+
+/**
+ * The same assertion for the due reports' name projection. `Patient.name` is
+ * NOT NULL and the read selects it, so a row without it cannot arrive; a
+ * nameless due row would be a list entry a practice cannot act on, which is why
+ * it refuses by id rather than rendering `"undefined"`.
+ */
+function requirePatientName(row: ReportPatientReadRow): ReportPatientNameRow {
+  if (!("name" in row)) {
+    throw new DomainError("INTERNAL", reportPatientProjectionMissingMessage(row.id));
+  }
+  return { id: row.id, name: row.name };
+}
+
+/**
+ * Asserts a DUE row carries the `next_due_at` the read filtered on, and narrows
+ * the row to the non-null shape the due reports consume.
+ *
+ * The read applies `nextDueAt: { not: null }`, so a null cannot arrive; it is
+ * asserted rather than assumed because a silent `null` would either drop a row
+ * the predicate matched or place it on a call list at a date nobody entered
+ * ([[DEC-065]]). Generic over the two record shapes because the assertion — not
+ * the field set — is what the two reports share.
+ */
+function requireNextDueAt<TRow extends { readonly id: string; readonly nextDueAt: Date | null }>(
+  row: TRow
+): TRow & { readonly nextDueAt: Date } {
+  if (row.nextDueAt === null) {
+    throw new DomainError("INTERNAL", reportDueInstantMissingMessage(row.id));
+  }
+  return { ...row, nextDueAt: row.nextDueAt };
 }

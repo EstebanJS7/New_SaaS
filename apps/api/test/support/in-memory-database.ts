@@ -1107,6 +1107,27 @@ export interface ClinicalVaccinationRow {
   updatedAt: Date;
 }
 
+/**
+ * Tenant-scoped ClinicalDeworming row (EPIC-06), mirroring the real table.
+ *
+ * Modelled from EPIC-18 REP-006 part 2 rather than earlier because the deworming
+ * due report is the first reader the in-memory boundary needed: the clinical HTTP
+ * suite drives deworming through the module but never asserted against a stored
+ * row, so the table was absent. `nextDueAt` is the staff-entered due date of
+ * DEC-065, nullable for the same reason the column is.
+ */
+export interface ClinicalDewormingRow {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  product: string;
+  administeredAt: Date;
+  /** EPIC-18 REP-001 staff-entered due date (DEC-065); null mirrors "not recorded". */
+  nextDueAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /** Tenant-scoped Branch row (EPIC-07 scheduling anchor; branch admin stays out of scope). */
 export interface BranchRow {
   id: string;
@@ -2120,9 +2141,46 @@ export interface IsolationDatabase {
         };
       }) => ClinicalVaccinationRow;
       findMany: (args: {
-        where: { tenantId: string; patientId: string };
+        where: {
+          tenantId: string;
+          /**
+           * OPTIONAL since EPIC-18 REP-006 part 2: the patient-anchored clinical
+           * reads still pass it, while the due report reads the TENANT's
+           * vaccinations without naming a patient.
+           */
+          patientId?: string;
+          /**
+           * The due-date predicate of the due report: `{ not: null }` skips rows
+           * with no recorded due date, and the optional `lt` is the half-open
+           * upper bound of the horizon (NULL satisfies neither).
+           */
+          nextDueAt?: { not: null; lt?: Date };
+        };
+        /** The due read's `[{ nextDueAt: "asc" }, { id: "asc" }]`; see {@link orderDueRows}. */
+        orderBy?: readonly Record<string, "asc" | "desc">[] | { createdAt?: "asc" | "desc" };
         select?: unknown;
       }) => ClinicalVaccinationRow[];
+    };
+    clinicalDeworming: {
+      create: (args: {
+        data: {
+          tenantId: string;
+          patientId: string;
+          product: string;
+          administeredAt: Date;
+          /** EPIC-18 REP-001 due date; omitted mirrors the nullable column. */
+          nextDueAt?: Date | null;
+        };
+      }) => ClinicalDewormingRow;
+      findMany: (args: {
+        where: {
+          tenantId: string;
+          patientId?: string;
+          nextDueAt?: { not: null; lt?: Date };
+        };
+        orderBy?: readonly Record<string, "asc" | "desc">[];
+        select?: unknown;
+      }) => ClinicalDewormingRow[];
     };
     branch: {
       create: (args: { data: { tenantId: string; name: string } }) => BranchRow;
@@ -2421,6 +2479,7 @@ export interface IsolationDatabase {
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
     clinicalVaccinations: Map<string, ClinicalVaccinationRow>;
+    clinicalDewormings: Map<string, ClinicalDewormingRow>;
     branches: Map<string, BranchRow>;
     appointments: Map<string, AppointmentRow>;
     portalBookingRequests: Map<string, PortalBookingRequestRow>;
@@ -2779,6 +2838,51 @@ function matchesHalfOpenInstant(
 }
 
 /**
+ * The due-date predicate of the due reports (EPIC-18 REP-006 part 2).
+ *
+ * `{ not: null }` is applied as a SKIP and not as a comparison: a record whose
+ * due date was never entered satisfies no predicate at all (DEC-065), so it is
+ * in neither the overdue nor the upcoming set. The optional `lt` upper bound
+ * delegates to {@link matchesHalfOpenInstant}, which already returns `false` for a
+ * NULL instant — so NULL keeps satisfying no bound, exactly as PostgreSQL's NULL
+ * semantics do, and there is no second copy of the boundary comparison.
+ */
+function matchesNullableDueDate(
+  dueAt: Date | null,
+  filter: { not: null; lt?: Date } | undefined
+): boolean {
+  if (filter === undefined) return true;
+  if (dueAt === null) return false;
+  return matchesHalfOpenInstant(dueAt, filter);
+}
+
+/**
+ * The order the DUE reads pass, applied to the in-memory clinical tables
+ * (EPIC-18 REP-006 part 2): `nextDueAt` ascending with NULL last, then `id`
+ * ascending.
+ *
+ * A fake that returned INSERTION order would let a broken `orderBy` pass — the
+ * report's row order is part of its response contract (overdue first, then the
+ * soonest upcoming), so the assertion has to be able to disagree with the order
+ * the rows were seeded in. Only the ARRAY shape the due read builds is handled:
+ * every other `orderBy` these two delegates receive (the patient-anchored
+ * clinical and portal reads pass a plain object or nothing) is left exactly as
+ * it was, so no existing suite's behaviour changes.
+ */
+function orderDueRows<TRow extends { id: string; nextDueAt: Date | null }>(
+  rows: TRow[],
+  orderBy: unknown
+): TRow[] {
+  if (!Array.isArray(orderBy)) return rows;
+  const orders = orderBy as readonly Record<string, "asc" | "desc">[];
+  if (!orders.some((entry) => entry.nextDueAt === "asc")) return rows;
+  return [...rows].sort((left, right) => {
+    const byDue = compareNullableInstants(left.nextDueAt, right.nextDueAt);
+    return byDue !== 0 ? byDue : left.id.localeCompare(right.id);
+  });
+}
+
+/**
  * Total order over nullable instants: `null` sorts LAST on `asc` (mirroring
  * PostgreSQL's `NULLS LAST` default for ASC) and therefore first on `desc`.
  */
@@ -3060,6 +3164,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
   const clinicalVaccinationTable = new Map<string, ClinicalVaccinationRow>();
+  const clinicalDewormingTable = new Map<string, ClinicalDewormingRow>();
   const branchTable = new Map<string, BranchRow>();
   const appointmentTable = new Map<string, AppointmentRow>();
   const portalBookingRequestTable = new Map<string, PortalBookingRequestRow>();
@@ -3118,6 +3223,7 @@ export function createIsolationDatabase(): IsolationDatabase {
     patientGuardians: patientGuardianTable,
     clinicalEncounters: clinicalEncounterTable,
     clinicalVaccinations: clinicalVaccinationTable,
+    clinicalDewormings: clinicalDewormingTable,
     branches: branchTable,
     appointments: appointmentTable,
     portalBookingRequests: portalBookingRequestTable,
@@ -5076,10 +5182,45 @@ export function createIsolationDatabase(): IsolationDatabase {
         clinicalVaccinationTable.set(created.id, created);
         return created;
       },
-      findMany: ({ where }) =>
-        [...clinicalVaccinationTable.values()].filter(
-          (candidate) =>
-            candidate.tenantId === where.tenantId && candidate.patientId === where.patientId
+      findMany: ({ where, orderBy }) =>
+        orderDueRows(
+          [...clinicalVaccinationTable.values()].filter(
+            (candidate) =>
+              candidate.tenantId === where.tenantId &&
+              // OPTIONAL since EPIC-18 REP-006 part 2: the clinical suites anchor on
+              // a patient, while the due report reads the whole tenant.
+              (where.patientId === undefined || candidate.patientId === where.patientId) &&
+              matchesNullableDueDate(candidate.nextDueAt, where.nextDueAt)
+          ),
+          orderBy
+        ),
+    },
+    clinicalDeworming: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: ClinicalDewormingRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          patientId: data.patientId,
+          product: data.product,
+          administeredAt: data.administeredAt,
+          // Mirrors the nullable column: an omitted due date stays unrecorded.
+          nextDueAt: data.nextDueAt ?? null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        clinicalDewormingTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where, orderBy }) =>
+        orderDueRows(
+          [...clinicalDewormingTable.values()].filter(
+            (candidate) =>
+              candidate.tenantId === where.tenantId &&
+              (where.patientId === undefined || candidate.patientId === where.patientId) &&
+              matchesNullableDueDate(candidate.nextDueAt, where.nextDueAt)
+          ),
+          orderBy
         ),
     },
     branch: {
@@ -5776,6 +5917,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,
       clinicalVaccinations: clinicalVaccinationTable,
+      clinicalDewormings: clinicalDewormingTable,
       branches: branchTable,
       appointments: appointmentTable,
       portalBookingRequests: portalBookingRequestTable,

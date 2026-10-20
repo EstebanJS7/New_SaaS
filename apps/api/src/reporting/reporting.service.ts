@@ -15,6 +15,8 @@ import type {
   CashSessionsResponse,
   ConsultationDayRowDto,
   ConsultationsResponse,
+  DewormingDueResponse,
+  DewormingDueRowDto,
   KindTotalDto,
   LowStockReportResponse,
   LowStockReportRowDto,
@@ -24,6 +26,8 @@ import type {
   PaymentMethodsResponse,
   PurchaseRowDto,
   PurchasesResponse,
+  ReportDueQuery,
+  ReportDueStatus,
   ReportPeriodDto,
   ReportPeriodQuery,
   SalesByPeriodResponse,
@@ -32,8 +36,11 @@ import type {
   SalesByProductServiceRowDto,
   StockReportResponse,
   StockReportRowDto,
+  VaccineDueRowDto,
+  VaccinesDueResponse,
 } from "./reporting.dto.js";
 import { REPORTING_PERMISSIONS } from "./reporting.permissions.js";
+import { resolveReportHorizon, type ResolvedReportHorizon } from "./report.horizon.js";
 import {
   resolveReportPeriod,
   tenantCalendarDate,
@@ -123,6 +130,35 @@ export function reportStockMovementBalanceMissingMessage(catalogItemId: string):
  */
 export function reportStockCatalogItemMissingMessage(catalogItemId: string): string {
   return `The report read a stock row whose catalog item is missing: ${catalogItemId}`;
+}
+
+/**
+ * Stable message when a due read returns a row whose LOCAL due date is past the
+ * horizon the query bounded it with.
+ *
+ * The read applies `nextDueAt < horizonEndInstant`, so this is UNREACHABLE. It is
+ * asserted rather than labelled: silently reporting such a row as `upcoming`
+ * would claim the practice has more forward notice than it asked for, and
+ * silently dropping it would hide a record the read matched. Naming the id is
+ * what makes the anomaly diagnosable.
+ */
+export function reportDueRowBeyondHorizonMessage(recordId: string): string {
+  return `The report read a due record beyond the requested horizon: ${recordId}`;
+}
+
+/**
+ * Stable message when a due row names a patient the batched patient read did not
+ * return.
+ *
+ * `clinical_vaccination` and `clinical_deworming` both carry a `RESTRICT`
+ * composite `(tenant_id, patient_id)` foreign key, so this is UNREACHABLE — the
+ * same discipline as the missing catalog item and the missing supplier: a due row
+ * whose patient cannot be named is refused loudly, never rendered nameless and
+ * never silently dropped, because a list of animals to call with a blank line in
+ * it is worse than a failure.
+ */
+export function reportDuePatientMissingMessage(patientId: string): string {
+  return `The report read a due record whose patient is missing: ${patientId}`;
 }
 
 /**
@@ -1082,6 +1118,135 @@ export class ReportingService {
   }
 
   /**
+   * Vaccinations coming due or overdue (PRD §12, §31, [[REP-006]], [[DEC-065]]).
+   *
+   * **This report takes no period.** A period answers "what happened in a
+   * window"; this answers "what is due", which is a fact about a record's own
+   * `nextDueAt` relative to TODAY. The window is the forward HORIZON instead, and
+   * it is bounded above only.
+   *
+   * **There is no lower bound, deliberately.** An overdue vaccination is overdue
+   * however old it is: a booster that came due two years ago is the most urgent
+   * row on the list, not a row outside the report. Bounding the past would hide
+   * exactly the animals a practice has already lost track of; the row cap is what
+   * keeps the read honest ([[TD-053]]).
+   *
+   * The split is decided on CALENDAR DATES in the tenant zone, never on instants
+   * ([[DEC-063]]): `localDueDate = tenantCalendarDate(nextDueAt, timeZone)`, and
+   * `localDueDate < asOfDate` is `overdue` while `localDueDate >= asOfDate` is
+   * `upcoming` — **a record due TODAY is upcoming**, which is the sentence the
+   * Story and [[DEC-065]] both state and the boundary triad in the suite pins. A
+   * due instant at 23:00 local is due that local day even though its UTC day is
+   * already the next one, and a report that compared instants would disagree with
+   * the practice about which day it is.
+   *
+   * Rows arrive in `nextDueAt` ascending order, so the longest overdue record is
+   * first and the soonest upcoming ones follow — the order a practice works
+   * through. Patients are resolved in ONE batched, tenant-predicated read, skipped
+   * entirely when there is no row.
+   *
+   * There is no `currency` and no money anywhere: these are dates, names and
+   * counts. An EMPTY answer is `rows: []` with both counts zero and the resolved
+   * horizon echoed — a practice with nothing due is an answer, not an error.
+   */
+  async vaccinesDue(query: ReportDueQuery): Promise<VaccinesDueResponse> {
+    await this.requireReadPermission();
+
+    const horizon = resolveReportHorizon(query, this.now());
+    const rows = await this.reports.listDueVaccinations(horizon.horizonEndInstant);
+    const patientNames = await this.readPatientNames(rows.map((row) => row.patientId));
+
+    let overdueCount = 0;
+    let upcomingCount = 0;
+
+    const dueRows: VaccineDueRowDto[] = rows.map((row) => {
+      const status = this.classifyDueDate(row.nextDueAt, horizon, row.id);
+      if (status === "overdue") {
+        overdueCount += 1;
+      } else {
+        upcomingCount += 1;
+      }
+      const patientName = patientNames.get(row.patientId);
+      if (patientName === undefined) {
+        throw new DomainError("INTERNAL", reportDuePatientMissingMessage(row.patientId));
+      }
+      return {
+        patientId: row.patientId,
+        patientName,
+        vaccine: row.vaccine,
+        administeredAt: row.administeredAt.toISOString(),
+        nextDueAt: row.nextDueAt.toISOString(),
+        status,
+      };
+    });
+
+    return {
+      report: "vaccines-due",
+      asOfDate: horizon.asOfDate,
+      timeZone: horizon.timeZone,
+      horizonDays: horizon.horizonDays,
+      overdueCount,
+      upcomingCount,
+      rows: dueRows,
+    };
+  }
+
+  /**
+   * Deworming treatments coming due or overdue (PRD §12, §31, [[REP-006]],
+   * [[DEC-065]]): the same question as {@link vaccinesDue} over
+   * `clinical_deworming`, whose free-text field is `product` rather than
+   * `vaccine`.
+   *
+   * Every rule applies identically — no period, a bounded forward horizon, NO
+   * lower bound, calendar-date comparison in the tenant zone, due today is
+   * upcoming, one batched patient read — and it is written out rather than
+   * delegated to a shared generic because the two reports are two different
+   * tables about two different treatments and a merged implementation would have
+   * to pretend `product` and `vaccine` are one field.
+   */
+  async dewormingDue(query: ReportDueQuery): Promise<DewormingDueResponse> {
+    await this.requireReadPermission();
+
+    const horizon = resolveReportHorizon(query, this.now());
+    const rows = await this.reports.listDueDewormings(horizon.horizonEndInstant);
+    const patientNames = await this.readPatientNames(rows.map((row) => row.patientId));
+
+    let overdueCount = 0;
+    let upcomingCount = 0;
+
+    const dueRows: DewormingDueRowDto[] = rows.map((row) => {
+      const status = this.classifyDueDate(row.nextDueAt, horizon, row.id);
+      if (status === "overdue") {
+        overdueCount += 1;
+      } else {
+        upcomingCount += 1;
+      }
+      const patientName = patientNames.get(row.patientId);
+      if (patientName === undefined) {
+        throw new DomainError("INTERNAL", reportDuePatientMissingMessage(row.patientId));
+      }
+      return {
+        patientId: row.patientId,
+        patientName,
+        product: row.product,
+        administeredAt: row.administeredAt.toISOString(),
+        nextDueAt: row.nextDueAt.toISOString(),
+        status,
+      };
+    });
+
+    return {
+      report: "deworming-due",
+      asOfDate: horizon.asOfDate,
+      timeZone: horizon.timeZone,
+      horizonDays: horizon.horizonDays,
+      overdueCount,
+      upcomingCount,
+      rows: dueRows,
+    };
+  }
+
+  /**
    * Asserts the stored close result of one session agrees with itself and returns
    * the three amounts as `Decimal`s.
    *
@@ -1148,6 +1313,48 @@ export class ReportingService {
     };
     buckets.set(bucketDate, created);
     return created;
+  }
+
+  /**
+   * The tenant's patient names for the given ids as a lookup map, resolved in ONE
+   * batched, tenant-predicated read (no N+1).
+   *
+   * The ids are DEDUPLICATED before the read — an animal can have several records
+   * due and must not appear several times in the `in` list — and an EMPTY set asks
+   * the repository for nothing: `listPatientNamesByIds` short-circuits it, because
+   * `in: []` is a question whose answer is already known. A practice with nothing
+   * due therefore performs no patient read at all.
+   */
+  private async readPatientNames(patientIds: readonly string[]): Promise<Map<string, string>> {
+    const names = await this.reports.listPatientNamesByIds([...new Set(patientIds)]);
+    return new Map(names.map((row) => [row.id, row.name]));
+  }
+
+  /**
+   * The overdue/upcoming split of ONE due row: CALENDAR DATES in the tenant zone,
+   * never instants.
+   *
+   * `YYYY-MM-DD` strings compare chronologically, so the comparison needs no
+   * second date parser: `localDueDate < asOfDate` is overdue and anything else —
+   * INCLUDING today — is upcoming. That "including today" is the whole rule and
+   * the reason this lives in one place: an owner called the day the booster comes
+   * due is being reminded on time, not chased.
+   *
+   * A row whose local due date is past the horizon cannot arrive, because the
+   * read is bounded by `horizonEndInstant`; if one does, it refuses naming the
+   * record instead of being labelled `upcoming`, because that label would promise
+   * a forward window the caller never asked for.
+   */
+  private classifyDueDate(
+    nextDueAt: Date,
+    horizon: ResolvedReportHorizon,
+    recordId: string
+  ): ReportDueStatus {
+    const localDueDate = tenantCalendarDate(nextDueAt, horizon.timeZone);
+    if (localDueDate > horizon.horizonEndDate) {
+      throw new DomainError("INTERNAL", reportDueRowBeyondHorizonMessage(recordId));
+    }
+    return localDueDate < horizon.asOfDate ? "overdue" : "upcoming";
   }
 
   /** Defense in depth behind `@RequirePermissions`: a denial reaches no query. */

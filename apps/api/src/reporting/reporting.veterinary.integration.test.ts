@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import supertest from "supertest";
+import { TENANT_TIME_ZONE } from "@newsaas/shared";
 import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-app.js";
 import type { IsolationDatabase } from "../../test/support/in-memory-database.js";
 import {
@@ -11,11 +12,18 @@ import {
 import {
   REPORT_PERIOD_DATE_FORMAT_MESSAGE,
   REPORT_PERIOD_MISSING_MESSAGE,
+  shiftCalendarDays,
+  startOfTenantDay,
+  tenantCalendarDate,
 } from "./report.period.js";
+import { REPORT_HORIZON_INTEGER_MESSAGE, REPORT_HORIZON_RANGE_MESSAGE } from "./report.horizon.js";
 import {
+  REPORT_DUE_QUERY_INVALID_MESSAGE,
   REPORT_PERIOD_QUERY_INVALID_MESSAGE,
   type ConsultationsResponse,
+  type DewormingDueResponse,
   type NewPatientsResponse,
+  type VaccinesDueResponse,
 } from "./reporting.dto.js";
 import { REPORTING_PERMISSIONS } from "./reporting.permissions.js";
 
@@ -32,10 +40,11 @@ import { REPORTING_PERMISSIONS } from "./reporting.permissions.js";
  * The range is always an explicit `from`/`to` pair: a preset resolves against the
  * live clock, and an assertion about "today" is not a test.
  *
- * What is deliberately NOT here: `vaccines-due` and `deworming-due`. They are the
- * Story's second half, they depend on the staff-entered `nextDueAt` of REP-001,
- * and their horizon logic is owned elsewhere — a fixture delegate for
- * `clinicalDeworming` is added with them, not before them.
+ * The Story's second half — the two DUE reports, `vaccines-due` and
+ * `deworming-due` — lives in the same suite because it needs the same fixture and
+ * the same boot: it reads the staff-entered `nextDueAt` of [[DEC-065]] against
+ * today in the tenant zone, and the `clinicalDeworming` delegate it requires
+ * exists in the in-memory boundary for it.
  */
 
 interface ErrorDto {
@@ -67,6 +76,25 @@ interface VeterinaryFixture {
       /** Overridable, because the draft must be CREATED inside the period. */
       createdAt?: Date;
       amendsEncounterId?: string | null;
+    }
+  ): { id: string };
+  createVaccination(
+    owner: ReportTenant,
+    options: {
+      patientId: string;
+      vaccine?: string;
+      administeredAt?: Date;
+      /** `null` mirrors "no due date was recorded" (DEC-065). */
+      nextDueAt?: Date | null;
+    }
+  ): { id: string };
+  createDeworming(
+    owner: ReportTenant,
+    options: {
+      patientId: string;
+      product?: string;
+      administeredAt?: Date;
+      nextDueAt?: Date | null;
     }
   ): { id: string };
 }
@@ -152,7 +180,35 @@ function seedVeterinary(db: IsolationDatabase): VeterinaryFixture {
     return { id: created.id };
   };
 
-  return { a, b, noPermission, createPatient, createEncounter };
+  const createVaccination: VeterinaryFixture["createVaccination"] = (owner, options) => {
+    const created = db.prisma.clinicalVaccination.create({
+      data: {
+        tenantId: owner.id,
+        patientId: options.patientId,
+        vaccine: options.vaccine ?? "Antirrábica",
+        administeredAt: options.administeredAt ?? new Date("2025-06-01T12:00:00.000Z"),
+        // `undefined` keeps the column NULL, which is the state the report must
+        // omit rather than guess a due date for (DEC-065).
+        nextDueAt: options.nextDueAt ?? null,
+      },
+    });
+    return { id: created.id };
+  };
+
+  const createDeworming: VeterinaryFixture["createDeworming"] = (owner, options) => {
+    const created = db.prisma.clinicalDeworming.create({
+      data: {
+        tenantId: owner.id,
+        patientId: options.patientId,
+        product: options.product ?? "Antiparasitario",
+        administeredAt: options.administeredAt ?? new Date("2025-06-01T12:00:00.000Z"),
+        nextDueAt: options.nextDueAt ?? null,
+      },
+    });
+    return { id: created.id };
+  };
+
+  return { a, b, noPermission, createPatient, createEncounter, createVaccination, createDeworming };
 }
 
 /**
@@ -173,9 +229,38 @@ const EXPECTED_PERIOD_ECHO = {
   toInstant: TO_INSTANT,
 } as const;
 
+/**
+ * The due reports pivot on TODAY in the tenant zone, which is the live clock — an
+ * assertion about "today" cannot be written, but the ROWS can be seeded relative
+ * to it, which is what makes the reachable cases reachable on any run:
+ *
+ * - `ANCIENT_DUE_AT` is five years in the past: overdue forever, and the proof
+ *   that the read has no lower bound.
+ * - `UPCOMING_DUE_AT` is three days out: inside a 30-day default horizon and
+ *   inside a 7-day one on any run.
+ * - `BEYOND_HORIZON_DUE_AT` is four hundred days out: outside the bounded horizon
+ *   on any run, so its absence is a predicate's work and not a coincidence.
+ */
+const TENANT_TODAY = tenantCalendarDate(new Date(), TENANT_TIME_ZONE);
+const UPCOMING_DUE_AT = startOfTenantDay(shiftCalendarDays(TENANT_TODAY, 3), TENANT_TIME_ZONE);
+const BEYOND_HORIZON_DUE_AT = startOfTenantDay(
+  shiftCalendarDays(TENANT_TODAY, 400),
+  TENANT_TIME_ZONE
+);
+const ANCIENT_DUE_AT = new Date("2020-01-05T12:00:00.000Z");
+
+/** The ids and names the due assertions read, captured while the rows are seeded. */
+interface DueFixture {
+  vaccinationOverduePatientId: string;
+  vaccinationUpcomingPatientId: string;
+  dewormingOverduePatientId: string;
+  dewormingUpcomingPatientId: string;
+}
+
 describe("the veterinary reports (REP-006)", () => {
   let booted: BootedTestApp;
   let fixture: VeterinaryFixture;
+  let due: DueFixture;
 
   beforeAll(async () => {
     booted = await bootTestApp();
@@ -265,6 +350,74 @@ describe("the veterinary reports (REP-006)", () => {
       status: "CLOSED",
       closedAt: new Date("2026-06-10T15:00:00.000Z"),
     });
+
+    // ---- The DUE rows ([[REP-006]] part 2) ---------------------------------
+    // Every patient here already exists, so the period reports' figures above are
+    // untouched: a vaccination record is not a registration and not a
+    // consultation.
+    //
+    // The UPCOMING row is seeded BEFORE the overdue one on purpose: the report's
+    // order is `nextDueAt` ascending, so the response must contradict the order
+    // these rows were created in — otherwise the ordering assertion below would
+    // be satisfied by insertion order and prove nothing.
+    fixture.createVaccination(fixture.a, {
+      patientId: patientInside.id,
+      vaccine: "Séxtuple",
+      nextDueAt: UPCOMING_DUE_AT,
+    });
+    fixture.createVaccination(fixture.a, {
+      patientId: patientBefore.id,
+      vaccine: "Antirrábica",
+      administeredAt: new Date("2019-12-01T12:00:00.000Z"),
+      nextDueAt: ANCIENT_DUE_AT,
+    });
+    // NO due date recorded: in neither the overdue nor the upcoming set.
+    fixture.createVaccination(fixture.a, { patientId: patientInside.id, vaccine: "Tos ferina" });
+    // Due FOUR HUNDRED days out: past the default horizon, and past the 7-day one.
+    fixture.createVaccination(fixture.a, {
+      patientId: patientBefore.id,
+      vaccine: "Leptospira",
+      nextDueAt: BEYOND_HORIZON_DUE_AT,
+    });
+
+    fixture.createDeworming(fixture.a, {
+      patientId: patientLate.id,
+      product: "Praziquantel",
+      nextDueAt: UPCOMING_DUE_AT,
+    });
+    fixture.createDeworming(fixture.a, {
+      patientId: patientInside.id,
+      product: "Antiparasitario",
+      administeredAt: new Date("2019-12-01T12:00:00.000Z"),
+      nextDueAt: ANCIENT_DUE_AT,
+    });
+    // NO due date recorded.
+    fixture.createDeworming(fixture.a, { patientId: patientInside.id, product: "Ivermectina" });
+    // Due four hundred days out.
+    fixture.createDeworming(fixture.a, {
+      patientId: patientBefore.id,
+      product: "Febendazol",
+      nextDueAt: BEYOND_HORIZON_DUE_AT,
+    });
+
+    // Tenant B holds one of each, so a leak would be visible in both reports.
+    fixture.createVaccination(fixture.b, {
+      patientId: patientForeign.id,
+      vaccine: "Antirrábica ajena",
+      nextDueAt: ANCIENT_DUE_AT,
+    });
+    fixture.createDeworming(fixture.b, {
+      patientId: patientForeign.id,
+      product: "Antiparasitario ajeno",
+      nextDueAt: ANCIENT_DUE_AT,
+    });
+
+    due = {
+      vaccinationOverduePatientId: patientBefore.id,
+      vaccinationUpcomingPatientId: patientInside.id,
+      dewormingOverduePatientId: patientInside.id,
+      dewormingUpcomingPatientId: patientLate.id,
+    };
   });
 
   afterAll(async () => {
@@ -496,6 +649,209 @@ describe("the veterinary reports (REP-006)", () => {
     });
   });
 
+  describe("GET /reports/vaccines-due", () => {
+    it("reports A's call list: overdue first, then upcoming, with the horizon echoed", async () => {
+      // The pivot is TODAY in the tenant zone and the clock is live, so the date is
+      // sampled on both sides of the request: the assertion is "one of the two days
+      // around this request", which is exact without racing midnight.
+      const before = tenantCalendarDate(new Date(), TENANT_TIME_ZONE);
+      const response = await supertest(booted.app.getHttpServer())
+        .get("/reports/vaccines-due")
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(200);
+      const after = tenantCalendarDate(new Date(), TENANT_TIME_ZONE);
+
+      const body = response.body as VaccinesDueResponse;
+      expect([before, after]).toContain(body.asOfDate);
+      expect(body.timeZone).toBe(TENANT_TIME_ZONE);
+      // Omitted by the caller, so the echoed 30 is the DEFAULT it actually got.
+      expect(body.horizonDays).toBe(30);
+      expect(body.report).toBe("vaccines-due");
+      // The five-year-old booster is the OVERDUE row and the three-days-out one is
+      // UPCOMING: no lower bound, one bounded forward window, and overdue first.
+      expect(body.overdueCount).toBe(1);
+      expect(body.upcomingCount).toBe(1);
+      expect(body.rows).toEqual([
+        {
+          patientId: due.vaccinationOverduePatientId,
+          patientName: "Toby viejo",
+          vaccine: "Antirrábica",
+          administeredAt: "2019-12-01T12:00:00.000Z",
+          nextDueAt: ANCIENT_DUE_AT.toISOString(),
+          status: "overdue",
+        },
+        {
+          patientId: due.vaccinationUpcomingPatientId,
+          patientName: "Luna",
+          vaccine: "Séxtuple",
+          administeredAt: "2025-06-01T12:00:00.000Z",
+          nextDueAt: UPCOMING_DUE_AT.toISOString(),
+          status: "upcoming",
+        },
+      ]);
+    });
+
+    it("omits a NULL due date and a due date past the horizon, and honours an explicit one", async () => {
+      // THE ROW-LEVEL PREDICATE PROOF: the fixture holds four of A's vaccinations
+      // and the response has two. `?horizonDays=7` still contains the +3 day row
+      // and still excludes the +400 day one, so the horizon really is applied and
+      // the bounded window is not a coincidence of the seed dates.
+      const response = await supertest(booted.app.getHttpServer())
+        .get("/reports/vaccines-due?horizonDays=7")
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(200);
+
+      const body = response.body as VaccinesDueResponse;
+      expect(body.horizonDays).toBe(7);
+      expect(body.overdueCount + body.upcomingCount).toBe(body.rows.length);
+      expect(body.rows.map((row) => row.vaccine)).toEqual(["Antirrábica", "Séxtuple"]);
+      // The recorded-nowhere due date and the far-future one are absent by NAME.
+      expect(body.rows.map((row) => row.vaccine)).not.toContain("Tos ferina");
+      expect(body.rows.map((row) => row.vaccine)).not.toContain("Leptospira");
+    });
+
+    it("refuses a malformed horizonDays and any period key", async () => {
+      const cases: readonly { label: string; query: string; message: string }[] = [
+        {
+          label: "non-integer",
+          query: "horizonDays=1.5",
+          message: REPORT_HORIZON_INTEGER_MESSAGE,
+        },
+        {
+          label: "not-a-number",
+          query: "horizonDays=treinta",
+          message: REPORT_HORIZON_INTEGER_MESSAGE,
+        },
+        { label: "zero", query: "horizonDays=0", message: REPORT_HORIZON_RANGE_MESSAGE },
+        { label: "negative", query: "horizonDays=-5", message: REPORT_HORIZON_RANGE_MESSAGE },
+        { label: "too long", query: "horizonDays=366", message: REPORT_HORIZON_RANGE_MESSAGE },
+        // A due report has no period: `from` is REFUSED, never silently ignored.
+        {
+          label: "period key",
+          query: "from=2026-06-01&to=2026-06-30",
+          message: REPORT_DUE_QUERY_INVALID_MESSAGE,
+        },
+        {
+          label: "unknown key",
+          query: "horizonDays=7&tenantId=11111111-1111-4111-8111-111111111111",
+          message: REPORT_DUE_QUERY_INVALID_MESSAGE,
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await supertest(booted.app.getHttpServer())
+          .get(`/reports/vaccines-due?${scenario.query}`)
+          .set("Cookie", fixture.a.actor.cookie)
+          .expect(400);
+        expect((response.body as ErrorDto).error.code, scenario.label).toBe("VALIDATION_FAILED");
+        expect((response.body as ErrorDto).error.message, scenario.label).toBe(scenario.message);
+      }
+    });
+
+    it("refuses without reports.read, before any row is read", async () => {
+      const response = await supertest(booted.app.getHttpServer())
+        .get("/reports/vaccines-due")
+        .set("Cookie", fixture.noPermission.cookie)
+        .expect(403);
+
+      expect((response.body as ErrorDto).error.code).toBe("FORBIDDEN");
+      expect(JSON.stringify(response.body)).not.toContain("overdueCount");
+    });
+
+    it("requires authentication at all", async () => {
+      await supertest(booted.app.getHttpServer()).get("/reports/vaccines-due").expect(401);
+    });
+  });
+
+  describe("GET /reports/deworming-due", () => {
+    it("reports A's deworming call list with `product` and the horizon echoed", async () => {
+      const before = tenantCalendarDate(new Date(), TENANT_TIME_ZONE);
+      const response = await supertest(booted.app.getHttpServer())
+        .get("/reports/deworming-due")
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(200);
+      const after = tenantCalendarDate(new Date(), TENANT_TIME_ZONE);
+
+      const body = response.body as DewormingDueResponse;
+      expect([before, after]).toContain(body.asOfDate);
+      expect(body.timeZone).toBe(TENANT_TIME_ZONE);
+      expect(body.horizonDays).toBe(30);
+      expect(body.report).toBe("deworming-due");
+      expect(body.overdueCount).toBe(1);
+      expect(body.upcomingCount).toBe(1);
+      expect(body.rows).toEqual([
+        {
+          patientId: due.dewormingOverduePatientId,
+          patientName: "Luna",
+          product: "Antiparasitario",
+          administeredAt: "2019-12-01T12:00:00.000Z",
+          nextDueAt: ANCIENT_DUE_AT.toISOString(),
+          status: "overdue",
+        },
+        {
+          patientId: due.dewormingUpcomingPatientId,
+          patientName: "Michi",
+          product: "Praziquantel",
+          administeredAt: "2025-06-01T12:00:00.000Z",
+          nextDueAt: UPCOMING_DUE_AT.toISOString(),
+          status: "upcoming",
+        },
+      ]);
+    });
+
+    it("omits a NULL due date and a due date past the horizon", async () => {
+      const response = await supertest(booted.app.getHttpServer())
+        .get("/reports/deworming-due?horizonDays=7")
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(200);
+
+      const body = response.body as DewormingDueResponse;
+      expect(body.rows.map((row) => row.product)).toEqual(["Antiparasitario", "Praziquantel"]);
+      expect(body.rows.map((row) => row.product)).not.toContain("Ivermectina");
+      expect(body.rows.map((row) => row.product)).not.toContain("Febendazol");
+    });
+
+    it("refuses a malformed horizonDays and any period key", async () => {
+      const cases: readonly { label: string; query: string; message: string }[] = [
+        {
+          label: "non-integer",
+          query: "horizonDays=2.5",
+          message: REPORT_HORIZON_INTEGER_MESSAGE,
+        },
+        { label: "zero", query: "horizonDays=0", message: REPORT_HORIZON_RANGE_MESSAGE },
+        { label: "too long", query: "horizonDays=366", message: REPORT_HORIZON_RANGE_MESSAGE },
+        {
+          label: "period key",
+          query: "preset=today",
+          message: REPORT_DUE_QUERY_INVALID_MESSAGE,
+        },
+      ];
+
+      for (const scenario of cases) {
+        const response = await supertest(booted.app.getHttpServer())
+          .get(`/reports/deworming-due?${scenario.query}`)
+          .set("Cookie", fixture.a.actor.cookie)
+          .expect(400);
+        expect((response.body as ErrorDto).error.code, scenario.label).toBe("VALIDATION_FAILED");
+        expect((response.body as ErrorDto).error.message, scenario.label).toBe(scenario.message);
+      }
+    });
+
+    it("refuses without reports.read, before any row is read", async () => {
+      const response = await supertest(booted.app.getHttpServer())
+        .get("/reports/deworming-due")
+        .set("Cookie", fixture.noPermission.cookie)
+        .expect(403);
+
+      expect((response.body as ErrorDto).error.code).toBe("FORBIDDEN");
+      expect(JSON.stringify(response.body)).not.toContain("overdueCount");
+    });
+
+    it("requires authentication at all", async () => {
+      await supertest(booted.app.getHttpServer()).get("/reports/deworming-due").expect(401);
+    });
+  });
+
   describe("tenant isolation", () => {
     it("never counts another tenant's consultations", async () => {
       const foreign = await supertest(booted.app.getHttpServer())
@@ -537,6 +893,53 @@ describe("the veterinary reports (REP-006)", () => {
       const localBody = local.body as NewPatientsResponse;
       // Three, not four: B's registration never crosses.
       expect(localBody.newPatientCount).toBe(3);
+    });
+
+    it("never reports another tenant's due vaccinations or patients", async () => {
+      const foreign = await supertest(booted.app.getHttpServer())
+        .get("/reports/vaccines-due")
+        .set("Cookie", fixture.b.actor.cookie)
+        .expect(200);
+
+      const foreignBody = foreign.body as VaccinesDueResponse;
+      // B's own row, named with B's own patient — and none of A's.
+      expect(foreignBody.rows.map((row) => [row.vaccine, row.patientName, row.status])).toEqual([
+        ["Antirrábica ajena", "Michi ajeno", "overdue"],
+      ]);
+
+      const local = await supertest(booted.app.getHttpServer())
+        .get("/reports/vaccines-due")
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(200);
+
+      const localBody = local.body as VaccinesDueResponse;
+      // Two rows, not three: B's vaccination never crosses, and A's patients are
+      // named from A's own patient table.
+      expect(localBody.overdueCount).toBe(1);
+      expect(localBody.upcomingCount).toBe(1);
+      expect(JSON.stringify(localBody)).not.toContain("ajena");
+    });
+
+    it("never reports another tenant's due deworming records or patients", async () => {
+      const foreign = await supertest(booted.app.getHttpServer())
+        .get("/reports/deworming-due")
+        .set("Cookie", fixture.b.actor.cookie)
+        .expect(200);
+
+      const foreignBody = foreign.body as DewormingDueResponse;
+      expect(foreignBody.rows.map((row) => [row.product, row.patientName, row.status])).toEqual([
+        ["Antiparasitario ajeno", "Michi ajeno", "overdue"],
+      ]);
+
+      const local = await supertest(booted.app.getHttpServer())
+        .get("/reports/deworming-due")
+        .set("Cookie", fixture.a.actor.cookie)
+        .expect(200);
+
+      const localBody = local.body as DewormingDueResponse;
+      expect(localBody.overdueCount).toBe(1);
+      expect(localBody.upcomingCount).toBe(1);
+      expect(JSON.stringify(localBody)).not.toContain("ajena");
     });
   });
 });

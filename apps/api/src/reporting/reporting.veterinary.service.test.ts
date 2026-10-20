@@ -145,6 +145,19 @@ function harness(
         return Promise.resolve(options.encounters ?? []);
       },
     },
+    // The two DUE reads are unreachable from the period-shaped reports: each stub
+    // THROWS instead of answering `[]`, so a case that reached one fails loudly
+    // rather than silently aggregating an empty set.
+    clinicalVaccination: {
+      findMany: () => {
+        throw new Error("The period-shaped veterinary reports must not read vaccinations.");
+      },
+    },
+    clinicalDeworming: {
+      findMany: () => {
+        throw new Error("The period-shaped veterinary reports must not read deworming records.");
+      },
+    },
     patient: {
       findMany: (args) => {
         patientQueries.push(args);

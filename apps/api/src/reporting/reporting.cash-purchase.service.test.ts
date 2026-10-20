@@ -159,6 +159,16 @@ function harness(
         throw new Error("The cash and purchase reports must not read patients.");
       },
     },
+    clinicalVaccination: {
+      findMany: () => {
+        throw new Error("The cash and purchase reports must not read vaccinations.");
+      },
+    },
+    clinicalDeworming: {
+      findMany: () => {
+        throw new Error("The cash and purchase reports must not read deworming records.");
+      },
+    },
   };
 
   const requestContext = {

@@ -296,8 +296,18 @@ function serialToDate(serial: number): string {
   });
 }
 
-/** Calendar-day arithmetic on UTC midnights: no DST, so a day is always a day. */
-function shiftCalendarDays(date: string, days: number): string {
+/**
+ * Calendar-day arithmetic on UTC midnights: no DST, so a day is always a day.
+ *
+ * EXPORTED because it is the only safe way to move a calendar date by whole
+ * days in this repository, and the DUE reports of [[REP-006]] need exactly that
+ * for their horizon. It refuses a malformed date (through
+ * {@link parseCalendarDate}) and does the arithmetic on `YYYY-MM-DD` serials, so
+ * a horizon of `N` days is `N` calendar days in the tenant's calendar — not
+ * `N * 86_400_000` milliseconds, which is what drifts across a DST transition
+ * and what silently turns a "day" into 23 or 25 hours.
+ */
+export function shiftCalendarDays(date: string, days: number): string {
   return serialToDate(calendarSerial(parseCalendarDate(date)) + days * MS_PER_DAY);
 }
 

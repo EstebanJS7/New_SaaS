@@ -303,6 +303,12 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // patient facts, they never write one.
   "GET /reports/consultations",
   "GET /reports/new-patients",
+  // EPIC-18 REP-006 part 2 — the two DUE reports. They take no period (they
+  // answer "what is due", not "what happened"), only a bounded `horizonDays`, and
+  // they are still reads behind the same key: recording the due date is the
+  // clinical module's command, not this surface's.
+  "GET /reports/vaccines-due",
+  "GET /reports/deworming-due",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -543,10 +549,14 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /reports/purchases": REPORTING_PERMISSIONS.read,
   "GET /reports/stock": REPORTING_PERMISSIONS.read,
   "GET /reports/low-stock": REPORTING_PERMISSIONS.read,
-  // REP-006: the two period-shaped veterinary reports. `vaccines-due` and
-  // `deworming-due` are the Story's second half and are deliberately absent.
+  // REP-006: the two period-shaped veterinary reports and the two DUE reports.
+  // The due reports take a `horizonDays` instead of a period, and the permission
+  // contract is identical — an aggregate of the tenant's own clinical records is
+  // a read, not a new grant.
   "GET /reports/consultations": REPORTING_PERMISSIONS.read,
   "GET /reports/new-patients": REPORTING_PERMISSIONS.read,
+  "GET /reports/vaccines-due": REPORTING_PERMISSIONS.read,
+  "GET /reports/deworming-due": REPORTING_PERMISSIONS.read,
 };
 
 describe("route-contract probe (deny-by-default)", () => {

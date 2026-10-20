@@ -3,7 +3,7 @@ id: REP-006
 type: story
 title: The veterinary reports
 epic: EPIC-18
-status: in-progress
+status: done
 priority: medium
 depends_on:
   - REP-002
@@ -80,23 +80,23 @@ but they expose no clinical content and no internal notes.
 
 ## Acceptance Criteria
 
-- [ ] `consultations` counts only `CLOSED` encounters with `amendsEncounterId`
+- [x] `consultations` counts only `CLOSED` encounters with `amendsEncounterId`
       NULL, and reports amendments separately.
-- [ ] A `DRAFT` encounter never appears, and an encounter closed outside the
+- [x] A `DRAFT` encounter never appears, and an encounter closed outside the
       period does not appear even if it was created inside it.
-- [ ] `new-patients` counts patients by `created_at` in the period, including
+- [x] `new-patients` counts patients by `created_at` in the period, including
       patients deactivated since.
-- [ ] `vaccines-due` returns `overdue` (`next_due_at` before today in the tenant
+- [x] `vaccines-due` returns `overdue` (`next_due_at` before today in the tenant
       zone) and `upcoming` (within a bounded horizon) as separate sets.
-- [ ] A vaccination with a NULL `next_due_at` appears in neither set.
-- [ ] The same four assertions hold for `deworming-due`.
-- [ ] The "today" used for overdue/upcoming is resolved in `TENANT_TIME_ZONE`,
+- [x] A vaccination with a NULL `next_due_at` appears in neither set.
+- [x] The same four assertions hold for `deworming-due`.
+- [x] The "today" used for overdue/upcoming is resolved in `TENANT_TIME_ZONE`,
       and a test fixes `now` to prove the boundary: due today is **upcoming**,
       due yesterday is **overdue**.
-- [ ] No response contains `internalNotes`, `diagnosis`, `anamnesis` or any
+- [x] No response contains `internalNotes`, `diagnosis`, `anamnesis` or any
       clinical free text — asserted structurally.
-- [ ] All four routes require `reports.read` and are tenant-scoped.
-- [ ] Tests required by the Story pass.
+- [x] All four routes require `reports.read` and are tenant-scoped.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -188,7 +188,31 @@ Part 1 — commit `WU-F1`:
 - Caps: 20 000 closed encounters (amendments share the read) and 10 000 new
   patients, each refusing rather than truncating.
 
-Part 2 is not started.
+Part 2 — commit `WU-F2`:
+
+- **`GET /reports/vaccines-due` and `GET /reports/deworming-due`** take no
+  period: they answer "what is due", not "what happened in a window".
+  `horizonDays` is optional, defaults to **30**, must be an integer, and must be
+  within **1..365**; the query schema is `.strict()`, so a period key on these
+  routes is refused rather than ignored.
+- **The horizon runs through the shared helpers and nothing else.**
+  `shiftCalendarDays` is now exported from `report.period.ts` precisely so the
+  horizon cannot grow a second `+ days * 86400000`. `horizonEndInstant` is the
+  start of the tenant day AFTER the horizon, so a due date exactly on the last
+  horizon day is INCLUDED.
+- **There is deliberately no lower bound.** An overdue vaccination is overdue
+  however old, so an unbounded past is correct and the row cap is what keeps it
+  honest.
+- **Classification compares CALENDAR DATES in the tenant zone, not instants**: a
+  due date before `asOfDate` is `overdue`, and `>= asOfDate` is `upcoming` —
+  **due today is upcoming, not overdue**. Rows are ordered by `nextDueAt`
+  ascending, so overdue comes first and then the soonest upcoming: the order a
+  practice works through.
+- Patient names resolve in ONE batched tenant-predicated read; a patient the
+  read does not return is a loud `INTERNAL` naming the id.
+- **The in-memory fixture gained the `clinicalDeworming` delegate that never
+  existed**, mirroring `clinicalVaccination`, and `clinicalVaccination.findMany`
+  was widened to an optional `patientId` plus a `nextDueAt` filter.
 
 ## Verification
 
@@ -198,42 +222,38 @@ pnpm lint           PASS  (23/23 turbo tasks)
 pnpm typecheck      PASS  (23/23)
 pnpm build          PASS  (13/13)
 pnpm test           PASS  (23/23)
-  api        110 files (108 landed + 2 new)      1551 passed | 266 skipped  (+31)
+  api        111 files (108 landed + 3 new)      1588 passed | 266 skipped  (+68)
   database    30 files                            549 passed
   web        110 files                           1164 passed
 ```
 
-Part 1 adds 31 tests: 18 service and 13 integration, covering the
-amendment-versus-consultation separation, the local-day bucket, the `DRAFT` and
-cross-period exclusions, the deactivated patient, both caps,
-permission-before-any- read, the forbidden-field scan, and tenant isolation for
-both reports.
+68 new tests across both halves: 25 for the due reports (the boundary triad, the
+calendar-date comparison, the half-open horizon, the refusals, the caps, the
+permission ordering, the structural key sets and forbidden-field scan) and 12
+integration (the echoes, the row-level predicate proof per report, the refusals
+and tenant isolation), plus part 1's 31.
 
-**Both queries were also proven against real PostgreSQL.** For the period
-`[2026-06-01T03:00Z, 2026-06-11T03:00Z)` in `America/Asuncion`, with two
-consultations, one amendment, one `DRAFT`, one encounter closed outside the
-period and three patients (one deactivated):
+**All four queries were proven against real PostgreSQL.** For
+`now = 2026-10-19T12:00Z` in `America/Asuncion`, with `horizonDays` omitted:
 
 ```text
-consultations read: 3   (the DRAFT and the 2026-06-25 CLOSED are excluded)
-  consultationCount 2   amendmentCount 1
-  buckets: 2026-06-05=1  2026-06-10=1
-  the 2026-06-11T02:00Z encounter bucketed to 2026-06-10  (NOT 06-11)
-  keys read: amendsEncounterId,closedAt,id
+asOfDate: 2026-10-19  horizonDays: 30  horizonEndDate: 2026-11-18
+horizonEndInstant: 2026-11-19T03:00:00.000Z   (half-open, local midnight after)
 
-new-patients count: 2   (Michi is DEACTIVATED and still counted)
-  buckets: 2026-06-03=1  2026-06-09=1
+vaccinations read: 3   (the +31-day row and the NULL row are excluded)
+  Rabies      due 2026-10-18 -> OVERDUE
+  Distemper   due 2026-10-19 -> UPCOMING   <- due TODAY is upcoming
+  Leptospira  due 2026-11-18 -> UPCOMING   <- exactly on the horizon, included
+  overdueCount 1  upcomingCount 2
+  keys read: administeredAt,id,nextDueAt,patientId,vaccine
+
+deworming Praziquantel due 2026-10-10 -> OVERDUE
 ```
 
-`keys read` is the interesting line: it is the actual Prisma projection, so the
-absence of clinical free text is demonstrated rather than asserted. And the
-`02:00Z` → `06-10` bucket is the tenant-zone rule holding on real rows, three
-hours away from the UTC day.
-
-Seeding those rows also surfaced real database invariants the fixture does not
-model: a patient must carry exactly one active primary guardian (checked by a
-deferred constraint, so the patient and its guardian must be inserted in one
-transaction), and `customer_kind` accepts only `INDIVIDUAL`/`COMPANY`.
+The three due dates are deliberately one day apart around the boundary, because
+that is the only way to show that `due today` is upcoming while `due yesterday`
+is already overdue — the semantic [[DEC-065]] chose and the one a naive `<`
+comparison gets wrong.
 
 ## Tests Added
 
@@ -252,26 +272,25 @@ transaction), and `customer_kind` accepts only `INDIVIDUAL`/`COMPANY`.
 
 ## Known Limitations
 
-- **The `clinicalDeworming` delegate does not exist in the in-memory fixture**,
-  so part 2 must add it (mirroring `clinicalVaccination`) before the deworming
-  due report can be exercised through `bootTestApp()`. Recorded here so it is
-  not discovered mid-unit.
-- The fixture did not carry `amendsEncounterId` on `ClinicalEncounterRow` at
-  all, although the real column exists and the fake returns the full row.
-  Without that widening `undefined !== null` would have won and EVERY
-  consultation would have counted as an amendment — a false green in the most
-  important assertion of this unit. It is now on the row type and on the
-  mirrored `create`.
-- Both due reports stay empty until a staff due date exists; [[REP-010]] builds
-  that surface ([[DEC-067]]), and [[TD-055]] records that three other record
-  kinds remain API-only.
+- **Both due reports are empty until a staff due date exists.** That surface is
+  [[REP-010]] ([[DEC-067]]); until it lands, a due date can only be set through
+  the API. The reports are correct and ready, not broken.
+- Three other clinical record kinds (treatments, studies, weights) remain
+  API-only; [[TD-055]] tracks them and was narrowed by [[DEC-067]].
+- The due read has no lower bound by design, so a tenant with years of unhandled
+  overdue records will hit the 10 000-row cap rather than receive a partial
+  list. That is the honest failure: a truncated due list would look like a
+  complete one.
+- The integration suite cannot pin `asOfDate` (the app uses the real clock), so
+  it asserts the value is one of the two tenant dates sampled around the request
+  — exact, but not a fixed literal.
+- `horizonDays` uses TWO refusal messages, not four: a non-integer gets the
+  shape message, and `0`, a negative and `366` share the range message.
 
 ## Technical Debt
 
-- [[TD-053]].
-- A vaccine-due notification is not created. Whether vaccination should feed the
-  notification mechanism is recorded as an open product question rather than
-  implemented here.
+- [[TD-055]] — the three clinical record kinds still without a staff surface.
+- [[TD-053]] — report query performance beyond directed indexes.
 
 ## Decisions / ADRs
 

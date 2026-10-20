@@ -173,6 +173,16 @@ function harness(
         throw new Error("REP-002/REP-003 must not read patients.");
       },
     },
+    clinicalVaccination: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read vaccinations.");
+      },
+    },
+    clinicalDeworming: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read deworming records.");
+      },
+    },
   };
   const requestContext = {
     requireTenantId: () => TENANT,

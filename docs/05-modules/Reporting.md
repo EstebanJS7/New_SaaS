@@ -9,18 +9,19 @@ updated: 2026-10-20
 
 The reporting module answers PRD §31's questions about data the tenant already
 owns: sales by period, payment methods, sales by product/service, the cash
-ledger, the receipts, the inventory, the consultations it closed and the
-patients it gained. It is a Core domain and a **read-only** one — nothing in
-this module writes, so there is no ledger, no audit row and no reversal to
-reason about here.
+ledger, the receipts, the inventory, the consultations it closed, the patients
+it gained and which vaccines and deworming treatments are coming due or overdue.
+It is a Core domain and a **read-only** one — nothing in this module writes, so
+there is no ledger, no audit row and no reversal to reason about here.
 
 [[REP-002]] established the foundation every later report consumes: the period
 rule, the response contract and the permission family. [[REP-003]] added the two
 commercial cuts over the same completed sales, [[REP-004]] added the cash ledger
 and the receipts, [[REP-005]] added the two inventory reports, and [[REP-006]]
-added the two veterinary reports that need no due date: consultations and new
-patients. The due reports of the same Story (`vaccines-due`, `deworming-due`)
-are its second half and are not part of this surface yet.
+added the four veterinary reports: the two period-shaped ones (consultations and
+new patients) and the two DUE ones (`vaccines-due`, `deworming-due`), which take
+a forward horizon instead of a period because they answer "what is due" rather
+than "what happened in a window".
 
 ## Access
 
@@ -113,6 +114,8 @@ hours. Local midnight of 2024-10-06 never existed (the clock jumped 00:00 →
 | `GET /reports/low-stock`                | `reports.read` | The items at or below their own threshold. **No query parameters at all.**                                  |
 | `GET /reports/consultations`            | `reports.read` | The encounters CLOSED in the period, with amendments counted **separately** and kept out of the buckets.    |
 | `GET /reports/new-patients`             | `reports.read` | The patients REGISTERED in the period, bucketed by the tenant's local day, deactivated ones included.       |
+| `GET /reports/vaccines-due`             | `reports.read` | What is due over `clinical_vaccination`: overdue rows and the bounded upcoming window. **No period.**       |
+| `GET /reports/deworming-due`            | `reports.read` | The same question over `clinical_deworming`, with `product` instead of `vaccine`. **No period.**            |
 
 There is deliberately no command route, no `PATCH` and no `DELETE`: a report
 aggregates and never writes. Tenant identity is never an input — it comes from
@@ -861,6 +864,199 @@ never an error.
 }
 ```
 
+### `GET /reports/vaccines-due`
+
+What is **due**, not what happened. The report reads
+`clinical_vaccination.next_due_at` — the OPTIONAL, staff-entered due date of
+[[DEC-065]] — and splits it into `overdue` and `upcoming` against TODAY in the
+tenant zone. It takes **no period** and it is not a projection of a protocol:
+the veterinarian who administered the vaccine knows the booster interval and the
+system does not, so a record whose due date was never entered simply does not
+appear.
+
+| Column           | Scope    | Meaning                                                                                           |
+| ---------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `asOfDate`       | response | `YYYY-MM-DD` in the tenant zone — today, the pivot of the split. Echoed so the split is provable. |
+| `timeZone`       | response | The zone the pivot was resolved in — `TENANT_TIME_ZONE`, never a request parameter.               |
+| `horizonDays`    | response | The horizon actually applied, after the default and the bounds (see below).                       |
+| `overdueCount`   | response | Rows whose LOCAL due date is BEFORE `asOfDate`.                                                   |
+| `upcomingCount`  | response | Rows whose LOCAL due date is `asOfDate` or later, inside the horizon.                             |
+| `patientId`      | row      | The patient the vaccination belongs to.                                                           |
+| `patientName`    | row      | The patient's name — **CONFIDENTIAL**, carried because staff must act on the row.                 |
+| `vaccine`        | row      | The `clinical_vaccination.vaccine` value as stored.                                               |
+| `administeredAt` | row      | ISO 8601 instant the vaccine was administered (context, never the predicate).                     |
+| `nextDueAt`      | row      | ISO 8601 instant of the staff-entered due date — the report's whole predicate.                    |
+| `status`         | row      | `overdue` when the LOCAL due date is before today, `upcoming` when it is today or later.          |
+
+#### The `horizonDays` contract
+
+| Condition           | Result                                                                      |
+| ------------------- | --------------------------------------------------------------------------- |
+| omitted             | **30** days, and the response echoes `30` so the caller sees what it got.   |
+| not a whole number  | `400` `The report horizon must be a whole number of days.`                  |
+| outside `1..365`    | `400` `The report horizon must be between 1 and 365 days.`                  |
+| any other query key | `400` `Invalid report due query.` — `?from=…` here is a refusal, not a key. |
+
+The query schema is `.strict()` and is **not** the period schema: a due report
+has no window, so a period key must be refused rather than silently ignored. The
+horizon is a CALENDAR-DAY count resolved through the same `tenantCalendarDate` /
+`shiftCalendarDays` / `startOfTenantDay` helpers the period rule uses — never
+`now + N * 86_400_000`, which is what drifts across a DST transition and quietly
+turns a day into 23 or 25 hours.
+
+Resolution, in order:
+
+```text
+asOfDate         = tenantCalendarDate(now, timeZone)          → today, locally
+horizonEndDate   = shiftCalendarDays(asOfDate, horizonDays)    → the LAST day shown
+horizonEndInstant = startOfTenantDay(shiftCalendarDays(horizonEndDate, 1), timeZone)
+```
+
+#### Overdue vs upcoming, and the boundary rule
+
+The split compares **CALENDAR DATES in the tenant zone**, never instants:
+
+```text
+localDueDate = tenantCalendarDate(nextDueAt, timeZone)
+localDueDate <  asOfDate   → overdue
+localDueDate >= asOfDate   → upcoming
+```
+
+- **A record due TODAY is `upcoming`, not `overdue`.** Calling an owner on the
+  day the booster comes due is being on time, not being chased.
+- A due instant at 23:00 local is due THAT local day even though its UTC day is
+  already the next one, because the comparison is on dates in
+  `TENANT_TIME_ZONE`.
+- A due instant at 08:00 local is still `upcoming` even though it is already
+  behind `now`: the pivot is the day, not the hour.
+
+#### The window: bounded above, unbounded below
+
+The read is `next_due_at IS NOT NULL AND next_due_at < horizonEndInstant`,
+ordered `next_due_at` ascending then `id` ascending:
+
+- The upper bound is the first instant of the day **after** `horizonEndDate`, so
+  the read is **half-open** and a due date exactly on the last horizon day is
+  **included**; one that falls on the next day is not.
+- **There is deliberately no lower bound.** An overdue vaccination is overdue
+  however old it is — a booster that came due two years ago is the most urgent
+  row on the list, not a row outside the report — so the whole past is in scope
+  and the row cap is what keeps the read honest.
+- `next_due_at IS NULL` is a SKIP, not a bound: no due date was recorded, so the
+  record is in neither set ([[DEC-065]]).
+- **Overdue rows come first**, because they share the same `next_due_at`
+  ascending order as the upcoming ones: the longest-overdue record is the first
+  row and the soonest upcoming ones follow, which is the order a practice works
+  through.
+
+Patients are resolved in **one batched, tenant-predicated read** (no query per
+row), skipped entirely when nothing is due. A due row whose patient the read
+does not return refuses with a loud `500 INTERNAL` naming the patient — the
+composite `RESTRICT` foreign key makes it unreachable, and a call list with a
+blank line in it would be worse than a failure. The same applies to a row whose
+due date is somehow `NULL` after the predicate, and to a row whose local due
+date somehow falls past the horizon: each refuses naming the record instead of
+being silently dropped or mislabelled `upcoming`.
+
+An empty answer is `rows: []` with both counts `0` and the resolved horizon
+echoed — a first-run state the UI must render honestly, because no due date is
+backfilled and every tenant starts here.
+
+**Data classification (PRD §41).** `patientName` is **CONFIDENTIAL** and is
+carried on purpose: a due-vaccination list that does not say which animal is due
+is not a report, and this one exists to be acted on by staff. It is the ONLY
+confidential value in the response. The row carries the patient identity, the
+two dates and the vaccine name, and **no clinical content whatsoever** — no
+`internalNotes` (RESTRICTED), no `diagnosis`, no `anamnesis`, no
+`reasonForVisit`. The read's `select` is `id`, `patient_id`, `vaccine`,
+`administered_at`, `next_due_at`, and the batched patient read selects `id` and
+`name` only — no birth date, no species, no guardian. This payload never reaches
+the portal.
+
+```json
+{
+  "report": "vaccines-due",
+  "asOfDate": "2026-06-10",
+  "timeZone": "America/Asuncion",
+  "horizonDays": 30,
+  "overdueCount": 1,
+  "upcomingCount": 1,
+  "rows": [
+    {
+      "patientId": "9f04…",
+      "patientName": "Toby",
+      "vaccine": "Antirrábica",
+      "administeredAt": "2019-12-01T12:00:00.000Z",
+      "nextDueAt": "2020-01-05T12:00:00.000Z",
+      "status": "overdue"
+    },
+    {
+      "patientId": "57aa…",
+      "patientName": "Luna",
+      "vaccine": "Séxtuple",
+      "administeredAt": "2025-06-01T12:00:00.000Z",
+      "nextDueAt": "2026-06-13T03:00:00.000Z",
+      "status": "upcoming"
+    }
+  ]
+}
+```
+
+### `GET /reports/deworming-due`
+
+The same question over `clinical_deworming`, and every rule applies identically:
+no period, `?horizonDays=` with the same default and the same `1..365` bounds
+and the same two stable messages, the same calendar-date split in the tenant
+zone (**due today is upcoming**), the same half-open upper bound, the same
+absent lower bound, the same `next_due_at IS NULL` skip, the same
+`next_due_at`/`id` ordering and the same batched patient read.
+
+| Column           | Scope | Meaning                                                                            |
+| ---------------- | ----- | ---------------------------------------------------------------------------------- |
+| `product`        | row   | The `clinical_deworming.product` value as stored — this report's free-text field.  |
+| `patientId`      | row   | The patient the treatment belongs to.                                              |
+| `patientName`    | row   | The patient's name — **CONFIDENTIAL**, carried because staff must act on the row.  |
+| `administeredAt` | row   | ISO 8601 instant the treatment was administered (context, never the predicate).    |
+| `nextDueAt`      | row   | ISO 8601 instant of the staff-entered due date — the predicate.                    |
+| `status`         | row   | `overdue` when the LOCAL due date is before today, `upcoming` when today or later. |
+
+`asOfDate`, `timeZone`, `horizonDays`, `overdueCount` and `upcomingCount` are
+the same response fields as `vaccines-due`, and `overdueCount + upcomingCount`
+is exactly `rows.length` on both. The two reports read two tables and each has
+its own row cap, so neither can refuse on the other's behalf.
+
+**Data classification (PRD §41)** is identical: a patient name (CONFIDENTIAL)
+carried because staff must act on it, dates, and no clinical content at all.
+
+```json
+{
+  "report": "deworming-due",
+  "asOfDate": "2026-06-10",
+  "timeZone": "America/Asuncion",
+  "horizonDays": 30,
+  "overdueCount": 1,
+  "upcomingCount": 1,
+  "rows": [
+    {
+      "patientId": "57aa…",
+      "patientName": "Luna",
+      "product": "Antiparasitario",
+      "administeredAt": "2019-12-01T12:00:00.000Z",
+      "nextDueAt": "2020-01-05T12:00:00.000Z",
+      "status": "overdue"
+    },
+    {
+      "patientId": "41ab…",
+      "patientName": "Michi",
+      "product": "Praziquantel",
+      "administeredAt": "2025-06-01T12:00:00.000Z",
+      "nextDueAt": "2026-06-13T03:00:00.000Z",
+      "status": "upcoming"
+    }
+  ]
+}
+```
+
 ## Invariants
 
 - **A draft is never revenue.** The query filters `status = COMPLETED` **and**
@@ -881,14 +1077,17 @@ never an error.
   `REPORT_CASH_MOVEMENT_ROW_LIMIT` (20 000 movements),
   `REPORT_STOCK_MOVEMENT_ROW_LIMIT` (20 000 stock movements),
   `REPORT_CLOSED_ENCOUNTER_ROW_LIMIT` (20 000 closed encounters, amendments
-  included in the same read), and `REPORT_CASH_SESSION_ROW_LIMIT` /
-  `REPORT_PURCHASE_ROW_LIMIT` / `REPORT_STOCK_BALANCE_ROW_LIMIT` /
-  `REPORT_NEW_PATIENT_ROW_LIMIT` (5 000 sessions / receipts / balances, 10 000
-  registrations). Exceeding one refuses with a stable message rather than
-  returning a silently partial aggregate ([[TD-053]] owns the eventual
-  pushdown). The caps differ because a drawer closes once a day per register, an
-  inventory holds one balance per item and a patient is registered once, while a
-  movement ledger is the dense one.
+  included in the same read), `REPORT_DUE_VACCINATION_ROW_LIMIT` /
+  `REPORT_DUE_DEWORMING_ROW_LIMIT` (10 000 due records each) and
+  `REPORT_CASH_SESSION_ROW_LIMIT` / `REPORT_PURCHASE_ROW_LIMIT` /
+  `REPORT_STOCK_BALANCE_ROW_LIMIT` / `REPORT_NEW_PATIENT_ROW_LIMIT` (5 000
+  sessions / receipts / balances, 10 000 registrations). Exceeding one refuses
+  with a stable message rather than returning a silently partial aggregate
+  ([[TD-053]] owns the eventual pushdown). The caps differ because a drawer
+  closes once a day per register, an inventory holds one balance per item and a
+  patient is registered once, while a movement ledger is the dense one, and a
+  due read is bounded by the tenant's whole due-date history because it has no
+  lower bound.
 - **A snapshot and a flow are never the same number.** The inventory reports
   read `stock_balance` (a projection: CURRENT quantity, one row per item, no
   history) for `quantity`, and `stock_movement` (the immutable ledger) for the
@@ -934,10 +1133,26 @@ never an error.
   responses therefore carry no `currency` and no money `Decimal` at all.
 - **A report reads only the columns it needs.** The consultations read selects
   `id`, `closed_at` and `amends_encounter_id`; the new-patients read selects
-  `id` and `created_at`. That is a data-classification boundary (PRD §41), not
-  an optimization: `internal_notes` is RESTRICTED, `client_summary`,
-  `Patient.name` and `Patient.birth_date` are CONFIDENTIAL, and a staff-only
-  aggregate has no reason to read clinical free text or a patient's identity.
+  `id` and `created_at`; each due read selects `id`, `patient_id`, its own
+  free-text field, `administered_at` and `next_due_at`; the due reports' batched
+  patient read selects `id` and `name`. That is a data-classification boundary
+  (PRD §41), not an optimization: `internal_notes` is RESTRICTED,
+  `client_summary`, `Patient.name` and `Patient.birth_date` are CONFIDENTIAL,
+  and a staff-only aggregate has no reason to read clinical free text. The due
+  reports carry `Patient.name` because staff must call the owner, and nothing
+  else confidential follows it.
+- **A due date is entered, never derived.** Both due reports filter on
+  `next_due_at` and skip NULL (`[[DEC-065]]`): no protocol table, no booster
+  interval and no projected date exists in this module or in the schema. A
+  tenant that has recorded no due date gets an EMPTY report — a first-run state,
+  not a failure.
+- **Due today is upcoming, and today is the tenant's today.** The split compares
+  `tenantCalendarDate(next_due_at, TENANT_TIME_ZONE)` with
+  `tenantCalendarDate(now, TENANT_TIME_ZONE)`, so a due instant late in the UTC
+  day belongs to the local day the practice is working and a record due today is
+  `upcoming`. The window is bounded above only: the last horizon day is INCLUDED
+  (half-open bound at the start of the next day) and the past is unbounded
+  because an overdue record stays overdue.
 - **The cash sign lives in exactly one place.** Every cash amount is stored
   positive and the kind owns the sign ([[DEC-030]]); the cash reports resolve it
   by importing `cashMovementSign` from `cash.expected-amount.ts`, the same map
@@ -972,16 +1187,14 @@ never an error.
 
 ## What later stories add
 
-The second half of [[REP-006]] — `vaccines-due` and `deworming-due` — reads the
-staff-entered `next_due_at` added by [[DEC-065]] and splits it into overdue and
-upcoming against today in the tenant zone. It is not implemented yet: no
-protocol or interval is projected, because the veterinarian knows the booster
-interval and the system does not. The CSV export ([[REP-007]]) consumes
-`reports.export`. The dashboard ([[REP-008]]) consumes the same service methods
-rather than a second query. Stock **valuation** stays out of scope: no item
-carries a cost ([[DEC-010]]), so a valuation report would invent a costing
-method, and repairing a wrong `stock_balance` belongs to EPIC-10 rather than to
-a report.
+The CSV export ([[REP-007]]) consumes `reports.export`. The dashboard
+([[REP-008]]) consumes the same service methods rather than a second query. The
+staff surface that ENTERS a due date is [[REP-010]] ([[DEC-067]]) — until it
+ships, the two due reports are correct and empty, because the fact they filter
+on is not recordable from the API yet. Stock **valuation** stays out of scope:
+no item carries a cost ([[DEC-010]]), so a valuation report would invent a
+costing method, and repairing a wrong `stock_balance` belongs to EPIC-10 rather
+than to a report.
 
 ## Tests
 
@@ -1069,6 +1282,27 @@ a report.
   deactivated patient still counted, the empty period, the `INTERNAL`-free
   payload carrying no clinical text or patient identity, 400 per malformed
   period on both routes, 403 without `reports.read` on both, 401
-  unauthenticated, and tenant isolation for consultations and patients.
+  unauthenticated, and tenant isolation for consultations and patients. For the
+  DUE reports: both routes 200 with `asOfDate` / `timeZone` / `horizonDays`
+  echoed (the horizon sampled around the request so a live clock is still
+  exact), the five-year-old overdue row present and the three-days-out row
+  upcoming, the NULL-due row and the four-hundred-days-out row ABSENT on both
+  reports (the row-level proof that the fixture applies `next_due_at`),
+  `?horizonDays=7` honoured, 400 per malformed horizon and per period key, 403
+  without `reports.read`, 401 unauthenticated, and tenant isolation for
+  vaccinations, deworming records and the patient names they resolve.
+- `reporting.veterinary-due.service.test.ts` — [[REP-006]] part 2: the boundary
+  triad (yesterday `overdue`, today `upcoming`, horizon-end-day `upcoming` and
+  included), the two rows that separate a calendar-date comparison from a UTC
+  one and from `nextDueAt < now`, the half-open bound with no `gte` on the read,
+  the minimal `select` and the per-read caps, the deduplicated single batched
+  patient read skipped when nothing is due, `horizonDays` defaulted to 30 and
+  echoed, its two stable refusals (non-integer, out of `1..365`) reaching no
+  query, the strict query schema refusing a period key, the `INTERNAL` refusals
+  for a row past the horizon / a missing patient / a NULL due date (each naming
+  the id), `overdueCount + upcomingCount === rows.length`, a very old overdue
+  row kept, the cap refusing instead of truncating, the 403 that reaches no
+  query, and the exact key set of both responses (CONFIDENTIAL `patientName`
+  present, no `currency`, no `period`, no clinical field).
 - `route-contract.probe.test.ts` — every report route and its exact permission
   are pinned.
