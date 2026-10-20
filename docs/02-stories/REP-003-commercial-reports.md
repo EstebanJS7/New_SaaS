@@ -3,7 +3,7 @@ id: REP-003
 type: story
 title: The commercial reports — payment methods and sales by product/service
 epic: EPIC-18
-status: planned
+status: done
 priority: medium
 depends_on:
   - REP-002
@@ -71,19 +71,19 @@ never `payment`. They are different ledgers about different facts.
 
 ## Acceptance Criteria
 
-- [ ] `payment-methods` returns one row per method **present in the period**,
+- [x] `payment-methods` returns one row per method **present in the period**,
       with summed `amount` as a decimal string and a payment count.
-- [ ] The sum of per-method amounts equals the period's gross from
+- [x] The sum of per-method amounts equals the period's gross from
       `sales-by-period` exactly — asserted in a test, not assumed.
-- [ ] `sales-by-product-service` returns quantity, net, tax and gross per item,
+- [x] `sales-by-product-service` returns quantity, net, tax and gross per item,
       with the item's `kind`, for completed sales only.
-- [ ] An item with no sales in the period does not appear; an item sold and then
+- [x] An item with no sales in the period does not appear; an item sold and then
       cancelled does not appear.
-- [ ] Both routes require `reports.read` server-side.
-- [ ] Both are tenant-scoped; no cross-tenant row is reachable.
-- [ ] Empty-period behaviour: an empty row set with the period echoed.
-- [ ] Loading/error/empty/success UX: N/A for the API.
-- [ ] Tests required by the Story pass.
+- [x] Both routes require `reports.read` server-side.
+- [x] Both are tenant-scoped; no cross-tenant row is reachable.
+- [x] Empty-period behaviour: an empty row set with the period echoed.
+- [x] Loading/error/empty/success UX: N/A for the API.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -140,13 +140,87 @@ None — REP-001 created the indexes these reports read.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented on `feat/epic-18-dashboards-reports`, extending the REP-002 module.
+
+- **The completed-sale predicate has ONE implementation.** `readCompletedSales`
+  is a private repository helper holding the tenant predicate,
+  `status: COMPLETED`, the half-open `completedAt` range, the deterministic
+  ordering and the `REPORT_SALE_ROW_LIMIT + 1` cap; `listCompletedSales` (lines)
+  and `listCompletedSalesWithPayments` (payments) are thin wrappers that name
+  their `include`. Two copies of that `where` would be two chances to disagree
+  about what counts as revenue.
+- A relation the caller did not load is a loud `INTERNAL` (`requireLoaded`), not
+  an empty array: a report that treated an unloaded relation as empty would
+  print a confidently wrong zero.
+- **`payment-methods`** groups the payments of the period's sales by `method`,
+  sums with `Prisma.Decimal`, and computes `shareOfGross` as
+  `amount.div(totalGross).toFixed(4)` — Decimal division, never a float, and
+  `"0.0000"` when the period has no revenue rather than a division by zero. Rows
+  are ordered by `amount` descending then `method` ascending; a method with no
+  payments in the period does not appear.
+- **`sales-by-product-service`** groups lines by `catalogItemId`, sums
+  `quantity` on the ledger's `Decimal(10,3)` scale and the three money amounts
+  on `Decimal(14,2)`, and resolves names and kinds in **one** tenant-predicated
+  catalog read (`id: { in: ids }`) — no N+1. A referenced item the catalog read
+  does not return is a loud `INTERNAL`, because `sale_line.catalog_item_id` is a
+  `RESTRICT` composite FK and a silently dropped revenue line is worse than a
+  failure. `totalsByKind` rolls the same numbers up by `kind`.
+- Both routes are behind `reports.read`, re-asserted in the service before any
+  query, and both reuse `reportPeriodQuerySchema` and `resolveReportPeriod` — no
+  second period contract.
+- `rbac/route-contract.probe.test.ts` pins both routes in
+  `EXPECTED_ROUTE_INVENTORY` and in `REPORTING_PERMISSION_BY_ROUTE`.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (23/23 turbo tasks)
+pnpm typecheck      PASS  (23/23)
+pnpm build          PASS  (13/13)
+pnpm test           PASS  (23/23)
+  api        104 files                                                 1429 passed | 266 skipped  (+24)
+  database    30 files                                                  549 passed
+  web        110 files                                                 1164 passed
 ```
+
+**The cross-report invariant is proven with string equality, not a tolerance.**
+For one seeded period the three reports must describe one revenue, and the test
+asserts it as an exact identity:
+
+```text
+sales-by-period.totalGross                     = "2430.00"
+payment-methods.totalGross                     = "2430.00"   (equal, not close)
+sum(payment-methods.rows[].amount)             = "2430.00"
+sum(sales-by-product-service.rows[].gross)     = "2430.00"
+and explicitly NOT "2430.0000000000005"
+```
+
+`Sales.md` states payments sum _exactly_ to the sale total, and a sale's total
+is derived from its lines; this test is what turns that pair of statements into
+a checked claim about three separate endpoints. If two of these ever disagree,
+one of them is wrong — and no epsilon would have caught it.
+
+**Both new queries were also proven against real PostgreSQL**, because the route
+suites run on the in-memory fixture and that fake does not model the planner or
+the real `Decimal` decoding. Against a freshly migrated database with two
+completed sales, three payments and two items:
+
+```text
+payment-methods totalGross: 2430.00
+  CASH: 1000.55  share 0.4117
+  CARD: 1000.55  share 0.4117
+  QR:   428.90   share 0.1765
+catalog read resolved: 2 of 2 referenced items   (one batched read, no N+1)
+  Gasa (PRODUCT)     qty 2.000  gross 2001.10
+  Consulta (SERVICE) qty 1.000  gross  428.90
+INVARIANT payments === line gross: 2430.00 === 2430.00 -> true
+```
+
+The first sale is deliberately paid with two tenders and carries an amount whose
+float representation is inexact (`1000.55`), so the identity above is not a
+property of round numbers. The shares sum to `0.9999`, which is expected and
+documented: a rounded share is a display value, and only the amounts are exact.
 
 ## Tests Added
 
@@ -164,7 +238,17 @@ Not run.
 ## Known Limitations
 
 - No cost or margin dimension; the system has no accepted costing method.
-- No customer cut and no branch cut.
+  `PurchaseLine.unitCost` is informational and `CatalogItem` carries only an
+  optional reference price, so a margin report would have to invent a costing
+  method the system does not have.
+- No customer cut and no branch cut ([[TD-052]]).
+- Aggregation is TypeScript `Decimal` over loaded rows, like REP-002, so both
+  reports inherit the row cap and [[TD-053]]'s performance question.
+- `payment-methods` and `sales-by-period` read the same sales through two
+  different relations (`payments` and `lines`). That is what makes the invariant
+  test meaningful, and it is also two reads of the same period rather than one.
+  A single round trip returning both relations was rejected: it would make the
+  agreement trivial instead of checked.
 
 ## Technical Debt
 
@@ -183,4 +267,5 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+All required gates passed on 2026-10-19. The `apps/e2e` lane was not run (Docker
+unavailable; this Story adds no UI).

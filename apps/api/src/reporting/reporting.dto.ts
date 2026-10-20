@@ -77,7 +77,101 @@ export interface SalesByPeriodResponse {
 }
 
 /**
- * The query contract of `GET /reports/sales-by-period`.
+ * One tender of the period (`GET /reports/payment-methods`, [[REP-003]]).
+ *
+ * The period predicate is the SALE's `completedAt`, never `Payment.createdAt`: a
+ * payment row is written only by the `CompleteSale` transaction ([[DEC-029]]), so
+ * its own timestamp is an implementation detail of the same commit and the two
+ * reports that describe one revenue must not be able to cut it differently.
+ */
+export interface PaymentMethodRowDto {
+  /** The `PaymentMethod` enum literal — `CASH`, `CARD`, `BANK_TRANSFER`, `QR`, `CHECK`, `OTHER`. */
+  readonly method: string;
+  /** Payments recorded with this method in the period. */
+  readonly paymentCount: number;
+  /** Summed `Decimal(14, 2)` amount, exact fixed-scale (2 decimals). */
+  readonly amount: string;
+  /**
+   * `amount / totalGross` as a fixed-scale (4 decimals) string. `"0.0000"` when
+   * the period's gross is zero: the share is a refusal to divide, never a NaN.
+   * Rounded shares need not add to `"1.0000"`.
+   */
+  readonly shareOfGross: string;
+}
+
+/**
+ * `GET /reports/payment-methods` (PRD §31, [[REP-003]]): how the money arrived.
+ * It reads `payment`, never `cash_movement` — `cash_movement` carries no
+ * `sale_id`, so the two ledgers answer different questions and never substitute
+ * for each other.
+ */
+export interface PaymentMethodsResponse {
+  readonly report: "payment-methods";
+  readonly period: ReportPeriodDto;
+  /** ISO-4217 code of the tenant's configured sale currency. */
+  readonly currency: string;
+  /** Every payment amount in the period, exact fixed-scale (2 decimals). */
+  readonly totalGross: string;
+  /** `amount` descending, then `method` ascending. An empty period is `[]`. */
+  readonly rows: PaymentMethodRowDto[];
+}
+
+/**
+ * One catalog item that earned revenue in the period (`GET
+ * /reports/sales-by-product-service`, [[REP-003]]).
+ */
+export interface SalesByProductServiceRowDto {
+  /** The frozen `sale_line.catalog_item_id` the lines were grouped by. */
+  readonly catalogItemId: string;
+  /** The item's name as the catalog holds it today (INTERNAL). */
+  readonly name: string;
+  /** `CatalogItem.kind` as a fact about the item — `PRODUCT`, `SERVICE`, `MEDICATION`, `SUPPLY`. */
+  readonly kind: string;
+  /** Summed `Decimal(10, 3)` quantity, exact fixed-scale (3 decimals), e.g. `"3.500"`. */
+  readonly quantity: string;
+  /** Summed taxable base, exact fixed-scale (2 decimals). */
+  readonly net: string;
+  /** Summed tax amount, exact fixed-scale (2 decimals). */
+  readonly tax: string;
+  /** Summed line total (tax included), exact fixed-scale (2 decimals). */
+  readonly gross: string;
+}
+
+/** The `kind` roll-up of {@link SalesByProductServiceRowDto}, on both scales. */
+export interface KindTotalDto {
+  /** Exact fixed-scale (2 decimals). */
+  readonly net: string;
+  /** Exact fixed-scale (2 decimals). */
+  readonly tax: string;
+  /** Exact fixed-scale (2 decimals). */
+  readonly gross: string;
+  /** Exact fixed-scale (3 decimals) — the ledger's quantity scale. */
+  readonly quantity: string;
+}
+
+/**
+ * `GET /reports/sales-by-product-service` (PRD §31, [[REP-003]]): which products
+ * and services earned the money. Only `COMPLETED` sales contribute; an item with
+ * no sale in the period, or sold only in a cancelled one, does not appear.
+ */
+export interface SalesByProductServiceResponse {
+  readonly report: "sales-by-product-service";
+  readonly period: ReportPeriodDto;
+  /** ISO-4217 code of the tenant's configured sale currency. */
+  readonly currency: string;
+  /**
+   * Per `kind` that actually appears in the period, keyed by the enum literal.
+   * A kind with no line in the period is ABSENT, never a zero row: a zero would
+   * claim the tenant sold nothing under it, which the report did not measure.
+   */
+  readonly totalsByKind: Record<string, KindTotalDto>;
+  /** `gross` descending, then `name` ascending. An empty period is `[]`. */
+  readonly rows: SalesByProductServiceRowDto[];
+}
+
+/**
+ * The query contract of every report route (`GET /reports/sales-by-period`,
+ * `GET /reports/payment-methods`, `GET /reports/sales-by-product-service`).
  *
  * `.strict()` so an unknown key is REFUSED rather than silently ignored: a
  * typo'd `from_` would otherwise widen the report to a different question while

@@ -4,10 +4,15 @@ import { DomainError } from "@newsaas/shared";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { TenantSettingsService } from "../settings/tenant-settings.service.js";
 import type {
+  KindTotalDto,
+  PaymentMethodRowDto,
+  PaymentMethodsResponse,
   ReportPeriodDto,
   ReportPeriodQuery,
   SalesByPeriodResponse,
   SalesByPeriodRowDto,
+  SalesByProductServiceResponse,
+  SalesByProductServiceRowDto,
 } from "./reporting.dto.js";
 import { REPORTING_PERMISSIONS } from "./reporting.permissions.js";
 import {
@@ -15,7 +20,11 @@ import {
   tenantCalendarDate,
   type ResolvedReportPeriod,
 } from "./report.period.js";
-import { ReportRepository, type ReportSaleRow } from "./reporting.repository.js";
+import {
+  ReportRepository,
+  type ReportSaleLineRow,
+  type ReportSaleRow,
+} from "./reporting.repository.js";
 
 /**
  * Stable message behind every report `403`. The route decorator is the first
@@ -31,6 +40,17 @@ export const REPORT_READ_FORBIDDEN_MESSAGE = "The required report permission is 
  */
 export const REPORT_CURRENCY_UNRESOLVED_MESSAGE = "The tenant sale currency could not be resolved.";
 
+/**
+ * Stable message when a sale line names a catalog item the catalog read did not
+ * return. `sale_line.catalog_item_id` is a `RESTRICT` composite foreign key, so
+ * this is UNREACHABLE; it is asserted rather than assumed because the
+ * alternative — dropping the revenue line — would be a report that is quietly
+ * short by an amount nobody can see, which is worse than a loud failure.
+ */
+export function reportCatalogItemMissingMessage(catalogItemId: string): string {
+  return `The report read a sale line whose catalog item is missing: ${catalogItemId}`;
+}
+
 /** One accumulating calendar-day bucket. Money is `Decimal` from the first add. */
 interface Bucket {
   readonly bucketDate: string;
@@ -38,6 +58,33 @@ interface Bucket {
   net: Prisma.Decimal;
   tax: Prisma.Decimal;
   gross: Prisma.Decimal;
+}
+
+/** One accumulating tender row: how many payments of one method, and their sum. */
+interface TenderBucket {
+  paymentCount: number;
+  amount: Prisma.Decimal;
+}
+
+/**
+ * One accumulating money/quantity row, at BOTH stored scales: quantities on the
+ * ledger's `Decimal(10, 3)` and money on `Decimal(14, 2)`. Every member starts as
+ * a `Decimal` zero, so no value in the aggregate is ever a JavaScript `number`.
+ */
+interface DecimalTotals {
+  quantity: Prisma.Decimal;
+  net: Prisma.Decimal;
+  tax: Prisma.Decimal;
+  gross: Prisma.Decimal;
+}
+
+function zeroTotals(): DecimalTotals {
+  return {
+    quantity: new Prisma.Decimal(0),
+    net: new Prisma.Decimal(0),
+    tax: new Prisma.Decimal(0),
+    gross: new Prisma.Decimal(0),
+  };
 }
 
 /** Exact decimal from a row's stored value — `Decimal` in, never a float. */
@@ -63,6 +110,47 @@ function toRowDto(bucket: Bucket): SalesByPeriodRowDto {
     net: bucket.net.toFixed(2),
     tax: bucket.tax.toFixed(2),
     gross: bucket.gross.toFixed(2),
+  };
+}
+
+/**
+ * `amount / totalGross` at four decimals. A zero gross is answered with
+ * `"0.0000"` rather than a division: the `payment.amount > 0` CHECK makes that
+ * branch unreachable, and a NaN share would poison a JSON response rather than
+ * fail.
+ */
+function shareOfGross(totalGross: Prisma.Decimal, amount: Prisma.Decimal): string {
+  if (totalGross.isZero()) {
+    return "0.0000";
+  }
+  return amount.div(totalGross).toFixed(4);
+}
+
+/** The get-or-create accessor every grouping pass uses, so no map is ever trusted to be pre-filled. */
+function totalsFor(map: Map<string, DecimalTotals>, key: string): DecimalTotals {
+  const existing = map.get(key);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = zeroTotals();
+  map.set(key, created);
+  return created;
+}
+
+/** Adds one sale line to a totals row, at each column's own stored scale. */
+function addLine(totals: DecimalTotals, line: ReportSaleLineRow): void {
+  totals.quantity = totals.quantity.plus(toDecimal(line.quantity));
+  totals.net = totals.net.plus(toDecimal(line.taxableBase));
+  totals.tax = totals.tax.plus(toDecimal(line.taxAmount));
+  totals.gross = totals.gross.plus(toDecimal(line.lineTotal));
+}
+
+function kindTotalDto(totals: DecimalTotals): KindTotalDto {
+  return {
+    net: totals.net.toFixed(2),
+    tax: totals.tax.toFixed(2),
+    gross: totals.gross.toFixed(2),
+    quantity: totals.quantity.toFixed(3),
   };
 }
 
@@ -158,6 +246,162 @@ export class ReportingService {
       totalTax: totals.tax.toFixed(2),
       totalGross: totals.gross.toFixed(2),
       rows: ordered.map(toRowDto),
+    };
+  }
+
+  /**
+   * Payment methods (PRD §31): how the money arrived, one row per method that
+   * actually has payments in the period.
+   *
+   * The rows are read through the SALE's `completedAt` predicate, because a
+   * payment's own timestamp is written by the same completion transaction and is
+   * not a second business fact. That is what makes this report and
+   * `salesByPeriod` two views of ONE revenue: their totals must agree exactly,
+   * and the suite asserts it rather than trusting it.
+   *
+   * Ordering is `amount` descending (the biggest tender first), then `method`
+   * ascending so equal totals have one order rather than the map's.
+   *
+   * An EMPTY period is an answer: `rows: []` and `totalGross: "0.00"` with the
+   * period echoed, never an error.
+   */
+  async paymentMethods(query: ReportPeriodQuery): Promise<PaymentMethodsResponse> {
+    await this.requireReadPermission();
+
+    const period = resolveReportPeriod(query, this.now());
+    const currency = await this.resolveCurrency();
+    const sales = await this.reports.listCompletedSalesWithPayments(
+      period.fromInstant,
+      period.toInstant
+    );
+
+    const tenders = new Map<string, TenderBucket>();
+    let totalGross = new Prisma.Decimal(0);
+
+    for (const sale of sales) {
+      for (const payment of sale.payments) {
+        const amount = toDecimal(payment.amount);
+        const bucket = tenders.get(payment.method) ?? {
+          paymentCount: 0,
+          amount: new Prisma.Decimal(0),
+        };
+        bucket.paymentCount += 1;
+        bucket.amount = bucket.amount.plus(amount);
+        tenders.set(payment.method, bucket);
+        totalGross = totalGross.plus(amount);
+      }
+    }
+
+    // The row order is part of the response contract, so it is applied HERE and
+    // never inherited from the map's insertion order.
+    const ordered = [...tenders.entries()].sort((left, right) => {
+      const byAmount = right[1].amount.comparedTo(left[1].amount);
+      if (byAmount !== 0) {
+        return byAmount;
+      }
+      return left[0].localeCompare(right[0]);
+    });
+
+    const rows: PaymentMethodRowDto[] = ordered.map(([method, bucket]) => ({
+      method,
+      paymentCount: bucket.paymentCount,
+      amount: bucket.amount.toFixed(2),
+      shareOfGross: shareOfGross(totalGross, bucket.amount),
+    }));
+
+    return {
+      report: "payment-methods",
+      period: toPeriodDto(period),
+      currency,
+      totalGross: totalGross.toFixed(2),
+      rows,
+    };
+  }
+
+  /**
+   * Sales by product/service (PRD §31): which catalog items earned the money, and
+   * the roll-up per `kind`.
+   *
+   * Lines are grouped by their frozen `catalog_item_id`; the identity, name and
+   * kind are then resolved in ONE tenant-predicated catalog read (no N+1). A
+   * referenced item the catalog read does not return is a LOUD `INTERNAL`, never
+   * a silent drop: the foreign key makes it unreachable, which is why it is an
+   * assertion about the data layer rather than a user-facing 400.
+   *
+   * Ordering is `gross` descending, then `name` ascending. A kind with no line in
+   * the period is ABSENT from `totalsByKind`, never a zero row.
+   */
+  async salesByProductService(query: ReportPeriodQuery): Promise<SalesByProductServiceResponse> {
+    await this.requireReadPermission();
+
+    const period = resolveReportPeriod(query, this.now());
+    const currency = await this.resolveCurrency();
+    const sales = await this.reports.listCompletedSales(period.fromInstant, period.toInstant);
+
+    const byItem = new Map<string, DecimalTotals>();
+    for (const sale of sales) {
+      for (const line of sale.lines) {
+        addLine(totalsFor(byItem, line.catalogItemId), line);
+      }
+    }
+
+    // An empty period asks the catalog for nothing: `listCatalogItemsByIds`
+    // short-circuits an empty id set, so no round trip answers known-nothing.
+    const items = await this.reports.listCatalogItemsByIds([...byItem.keys()]);
+    const catalog = new Map(items.map((item) => [item.id, item]));
+
+    const byKind = new Map<string, DecimalTotals>();
+    const grouped: {
+      catalogItemId: string;
+      name: string;
+      kind: string;
+      totals: DecimalTotals;
+    }[] = [];
+
+    for (const [catalogItemId, totals] of byItem) {
+      const item = catalog.get(catalogItemId);
+      if (item === undefined) {
+        throw new DomainError("INTERNAL", reportCatalogItemMissingMessage(catalogItemId));
+      }
+      grouped.push({ catalogItemId, name: item.name, kind: item.kind, totals });
+      const kindTotals = totalsFor(byKind, item.kind);
+      kindTotals.quantity = kindTotals.quantity.plus(totals.quantity);
+      kindTotals.net = kindTotals.net.plus(totals.net);
+      kindTotals.tax = kindTotals.tax.plus(totals.tax);
+      kindTotals.gross = kindTotals.gross.plus(totals.gross);
+    }
+
+    // Sorted BEFORE formatting so the comparison is on exact decimals, never on
+    // the rendered strings. Ties keep the query's order, which is deterministic.
+    grouped.sort((left, right) => {
+      const byGross = right.totals.gross.comparedTo(left.totals.gross);
+      if (byGross !== 0) {
+        return byGross;
+      }
+      return left.name.localeCompare(right.name);
+    });
+
+    const rows: SalesByProductServiceRowDto[] = grouped.map((row) => ({
+      catalogItemId: row.catalogItemId,
+      name: row.name,
+      kind: row.kind,
+      quantity: row.totals.quantity.toFixed(3),
+      net: row.totals.net.toFixed(2),
+      tax: row.totals.tax.toFixed(2),
+      gross: row.totals.gross.toFixed(2),
+    }));
+
+    const totalsByKind: Record<string, KindTotalDto> = {};
+    for (const [kind, totals] of byKind) {
+      totalsByKind[kind] = kindTotalDto(totals);
+    }
+
+    return {
+      report: "sales-by-product-service",
+      period: toPeriodDto(period),
+      currency,
+      totalsByKind,
+      rows,
     };
   }
 

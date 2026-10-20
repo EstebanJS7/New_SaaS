@@ -71,7 +71,8 @@ Each work unit is one commit carrying its tests and documentation.
 - [x] **WU-B — [[REP-002]] the reporting foundation.** `resolveReportPeriod`,
       the report contract, the `reports.*` permissions, the route pins and one
       reference report end to end. _Done: see the evidence log._
-- [ ] **WU-C — [[REP-003]] the commercial reports.**
+- [x] **WU-C — [[REP-003]] the commercial reports.** _Done: see the evidence
+      log._
 - [ ] **WU-D — [[REP-004]] the cash and purchase reports.**
 - [ ] **WU-E — [[REP-005]] the inventory reports.**
 - [ ] **WU-F — [[REP-006]] the veterinary reports.**
@@ -169,5 +170,26 @@ Commit `WU-B` on `feat/epic-18-dashboards-reports`.
   (tzdata 2025c, verified by scanning 2018–2030). The DST assertion uses the
   historical 2024-10 window; the resolver stays offset-correct rather than
   assuming the fixed offset.
+
+**Skipped:** the `apps/e2e` lane (no UI in this work unit).
+
+### WU-C — the commercial reports
+
+Commit `WU-C` on `feat/epic-18-dashboards-reports`.
+
+- `GET /reports/payment-methods` groups the period's payments by `method` and
+  reports `amount` plus `shareOfGross` (`amount.div(totalGross).toFixed(4)`).
+- `GET /reports/sales-by-product-service` groups lines by `catalogItemId`, sums
+  quantity on scale 3 and money on scale 2, and resolves names and kinds in one
+  tenant-predicated catalog read.
+- The completed-sale predicate now has ONE implementation
+  (`readCompletedSales`), with the two public reads as wrappers that name their
+  `include`; a relation the caller did not load throws `INTERNAL` rather than
+  reading as empty.
+- **The cross-report invariant is proven by string equality**: `"2430.00"` in
+  all three reports, and explicitly not `"2430.0000000000005"`. `Sales.md` says
+  payments sum exactly to the sale total and a sale's total derives from its
+  lines; this is the test that makes three endpoints agree on one revenue.
+- Gates: api **1405 → 1429** (+24); format/lint/typecheck/build green.
 
 **Skipped:** the `apps/e2e` lane (no UI in this work unit).

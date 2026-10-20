@@ -501,9 +501,15 @@ export interface SaleLineRow {
   updatedAt: Date;
 }
 
-/** Sale read model WITH its line set (the `include: { lines: true }` shape). */
+/**
+ * Sale read model with its line set (the `include: { lines: true }` shape) and,
+ * when the read asked for it, its payment set (`include: { payments: true }`,
+ * EPIC-18 REP-003). `payments` is OPTIONAL because Prisma only returns a
+ * relation the query named: a lines-only read carries no `payments` key at all.
+ */
 export interface SaleRow extends SaleHeaderRow {
   lines: SaleLineRow[];
+  payments?: PaymentRow[];
 }
 
 /** Predicate fields the in-memory sale reads/writes are allowed to build. */
@@ -1563,11 +1569,18 @@ export interface IsolationDatabase {
       }) => PurchaseLineRow;
     };
     sale: {
-      /** Reads assemble the line set, mirroring `include: { lines: true }`. */
-      findFirst: (args: { where: SaleWhere; include?: { lines?: true } }) => SaleRow | null;
+      /**
+       * Reads assemble the relations the caller named, mirroring Prisma's
+       * `include`: `lines` is always present (empty when not requested, the
+       * pre-existing shape) and `payments` is present exactly when requested.
+       */
+      findFirst: (args: {
+        where: SaleWhere;
+        include?: { lines?: true; payments?: true };
+      }) => SaleRow | null;
       findMany: (args: {
         where: SaleWhere;
-        include?: { lines?: true };
+        include?: { lines?: true; payments?: true };
         orderBy?: readonly SaleOrderBy[];
       }) => SaleRow[];
       /** Nested line create; the fake fills tenant/sale ids from the header. */
@@ -2677,6 +2690,22 @@ function orderSales(
 function linesForSale(saleLineTable: Map<string, SaleLineRow>, saleId: string): SaleLineRow[] {
   return [...saleLineTable.values()]
     .filter((line) => line.saleId === saleId)
+    .sort((left, right) => {
+      const byCreated = left.createdAt.getTime() - right.createdAt.getTime();
+      if (byCreated !== 0) return byCreated;
+      return left.id.localeCompare(right.id);
+    });
+}
+
+/**
+ * A sale's payments in insertion order, `id` as the tie-break. The reporting
+ * payment-method aggregate groups them and never depends on their order, and the
+ * real `include` declares no `orderBy` either — the shape is assembled so it is
+ * present, not to imply a reading order that does not exist.
+ */
+function paymentsForSale(paymentTable: Map<string, PaymentRow>, saleId: string): PaymentRow[] {
+  return [...paymentTable.values()]
+    .filter((payment) => payment.saleId === saleId)
     .sort((left, right) => {
       const byCreated = left.createdAt.getTime() - right.createdAt.getTime();
       if (byCreated !== 0) return byCreated;
@@ -3899,9 +3928,10 @@ export function createIsolationDatabase(): IsolationDatabase {
               matchesCompletedAt(candidate, where.completedAt)
           ) ?? null;
         if (!header) return null;
-        return include?.lines
-          ? { ...header, lines: linesForSale(saleLineTable, header.id) }
-          : { ...header, lines: [] };
+        const lines = include?.lines ? linesForSale(saleLineTable, header.id) : [];
+        return include?.payments
+          ? { ...header, lines, payments: paymentsForSale(paymentTable, header.id) }
+          : { ...header, lines };
       },
       findMany: ({ where, include, orderBy }) => {
         const headers = [...saleTable.values()].filter(
@@ -3912,11 +3942,12 @@ export function createIsolationDatabase(): IsolationDatabase {
             matchesCompletedAt(candidate, where.completedAt)
         );
         const ordered = orderBy === undefined ? headers : orderSales(headers, orderBy);
-        return ordered.map((header) =>
-          include?.lines
-            ? { ...header, lines: linesForSale(saleLineTable, header.id) }
-            : { ...header, lines: [] }
-        );
+        return ordered.map((header) => {
+          const lines = include?.lines ? linesForSale(saleLineTable, header.id) : [];
+          return include?.payments
+            ? { ...header, lines, payments: paymentsForSale(paymentTable, header.id) }
+            : { ...header, lines };
+        });
       },
       create: ({ data }) => {
         const now = new Date();

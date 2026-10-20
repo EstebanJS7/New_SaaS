@@ -8,23 +8,30 @@ import { RequestContextService } from "../context/request-context.service.js";
 /**
  * Persistence row for one COMPLETED sale line as the reporting boundary reads it
  * (the same projection `SaleRepository` uses). The three money amounts are exact
- * `Decimal(14, 2)` — `Prisma.Decimal` against PostgreSQL, a plain exact string in
- * the in-memory boundary — and are NEVER coerced to a JavaScript float here or
- * anywhere downstream.
+ * `Decimal(14, 2)` and `quantity` is the ledger's `Decimal(10, 3)` — `Prisma.Decimal`
+ * against PostgreSQL, a plain exact string in the in-memory boundary — and are
+ * NEVER coerced to a JavaScript float here or anywhere downstream.
  */
 export interface ReportSaleLineRow {
+  readonly catalogItemId: string;
+  readonly quantity: Prisma.Decimal | string;
   readonly lineTotal: Prisma.Decimal | string;
   readonly taxableBase: Prisma.Decimal | string;
   readonly taxAmount: Prisma.Decimal | string;
 }
 
 /**
- * Persistence row for one COMPLETED sale with its line set. Only the fields a
- * report actually aggregates are named: there is deliberately no customer,
- * patient or clinical reference on this boundary, because the report reads money
- * and instants and nothing else.
+ * Persistence row for one payment of a COMPLETED sale, as the payment-method
+ * report reads it: the PRD §19 `method` and the exact `Decimal(14, 2)` amount.
+ * There is deliberately no tender, change or refund column — none exists.
  */
-export interface ReportSaleRow {
+export interface ReportSalePaymentRow {
+  readonly method: string;
+  readonly amount: Prisma.Decimal | string;
+}
+
+/** The header projection every completed-sale report reads. No customer, patient or clinical reference. */
+export interface ReportSaleHeaderRow {
   readonly id: string;
   readonly currency: string;
   /**
@@ -34,22 +41,57 @@ export interface ReportSaleRow {
    * row that somehow does not, rather than inventing a day for it.
    */
   readonly completedAt: Date | null;
-  readonly lines: readonly ReportSaleLineRow[];
 }
 
 /**
- * The narrow read contract this repository needs, declared with Prisma's OWN arg
- * type so the real client fits by construction and a unit suite can pass a stub
- * (the `NotificationDeliveryReadPrisma` precedent). It carries ONE method: a
+ * The row the shared completed-sale read returns: the header plus WHICHEVER
+ * relation the query asked to `include`. Both relations are optional because
+ * Prisma returns only what the query named — a `payments` read genuinely carries
+ * no `lines` — and each public repository method narrows the one it requested.
+ */
+export interface ReportSaleReadRow extends ReportSaleHeaderRow {
+  readonly lines?: readonly ReportSaleLineRow[];
+  readonly payments?: readonly ReportSalePaymentRow[];
+}
+
+/** A completed sale WITH its line set (`listCompletedSales`). */
+export interface ReportSaleRow extends ReportSaleHeaderRow {
+  readonly lines: readonly ReportSaleLineRow[];
+}
+
+/** A completed sale WITH its payment set (`listCompletedSalesWithPayments`). */
+export interface ReportSaleWithPaymentsRow extends ReportSaleHeaderRow {
+  readonly payments: readonly ReportSalePaymentRow[];
+}
+
+/**
+ * The catalog projection the by-product report needs: identity, display name and
+ * the `kind` that is a FACT about the item (never re-derived from `tracksStock`).
+ */
+export interface ReportCatalogItemRow {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: string;
+}
+
+/**
+ * The narrow read contracts this repository needs, declared with Prisma's OWN arg
+ * types so the real client fits by construction and a unit suite can pass a stub
+ * (the `NotificationDeliveryReadPrisma` precedent). They carry reads only: a
  * report reads and never writes, and there is no aggregate/groupBy seam here
  * because the aggregation is TypeScript `Decimal` arithmetic over these rows.
  */
 export interface ReportingSaleDelegate {
-  findMany(args: Prisma.SaleFindManyArgs): Promise<ReportSaleRow[]>;
+  findMany(args: Prisma.SaleFindManyArgs): Promise<ReportSaleReadRow[]>;
+}
+
+export interface ReportingCatalogItemDelegate {
+  findMany(args: Prisma.CatalogItemFindManyArgs): Promise<ReportCatalogItemRow[]>;
 }
 
 export interface ReportingReadPrisma {
   readonly sale: ReportingSaleDelegate;
+  readonly catalogItem: ReportingCatalogItemDelegate;
 }
 
 /**
@@ -67,6 +109,17 @@ export const REPORT_SALE_ROW_LIMIT = 20_000;
 
 /** Stable message when a period needs more rows than the cap allows. */
 export const REPORT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_SALE_ROW_LIMIT} completed sales. Narrow the period and try again.`;
+
+/**
+ * Stable message when a required relation is absent from a completed-sale read.
+ * The call site always names its `include`, so this is unreachable; it is
+ * asserted rather than assumed for the same reason the missing-catalog-item
+ * refusal is: a report that silently treated an unloaded relation as empty would
+ * print a confidently wrong zero.
+ */
+export function reportRelationNotLoadedMessage(relation: string): string {
+  return `The report sale read did not load the ${relation} relation.`;
+}
 
 /**
  * Tenant-safe read access for the reporting module (EPIC-18 REP-002).
@@ -101,6 +154,70 @@ export class ReportRepository {
    * truncated — an over-limit period throws before any caller sees a row.
    */
   async listCompletedSales(fromInstant: Date, toInstant: Date): Promise<ReportSaleRow[]> {
+    const rows = await this.readCompletedSales(fromInstant, toInstant, { lines: true });
+    return rows.map((row) => ({
+      id: row.id,
+      currency: row.currency,
+      completedAt: row.completedAt,
+      lines: requireLoaded(row.lines, "lines"),
+    }));
+  }
+
+  /**
+   * The SAME completed sales, with their payments instead of their lines.
+   *
+   * The predicate is the sale's `completedAt` and never `Payment.createdAt`: a
+   * payment row is written only by the `CompleteSale` transaction ([[DEC-029]]),
+   * so its own timestamp is an implementation detail of that same commit. Cutting
+   * the payment report on the payment's timestamp would let it disagree with
+   * `sales-by-period` about one revenue — which is exactly the invariant
+   * [[REP-003]] asserts instead of assuming.
+   *
+   * `lines` is deliberately NOT included: this report never reads a line, and an
+   * unread relation on a bounded read is pure memory.
+   */
+  async listCompletedSalesWithPayments(
+    fromInstant: Date,
+    toInstant: Date
+  ): Promise<ReportSaleWithPaymentsRow[]> {
+    const rows = await this.readCompletedSales(fromInstant, toInstant, { payments: true });
+    return rows.map((row) => ({
+      id: row.id,
+      currency: row.currency,
+      completedAt: row.completedAt,
+      payments: requireLoaded(row.payments, "payments"),
+    }));
+  }
+
+  /**
+   * The caller tenant's catalog items for the given ids, in one predicated read
+   * (no N+1). The tenant predicate is applied HERE, so an id from another tenant
+   * resolves to nothing rather than to that tenant's item.
+   *
+   * An EMPTY id set skips the query entirely: `in: []` is a question with a
+   * known answer and a round trip that cannot return a row.
+   */
+  async listCatalogItemsByIds(ids: readonly string[]): Promise<ReportCatalogItemRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const tenantId = this.requestContext.requireTenantId();
+    return this.prisma.catalogItem.findMany({
+      where: { tenantId, id: { in: [...ids] } },
+    });
+  }
+
+  /**
+   * The ONE completed-sale query both reports run. Factored so the predicate, the
+   * deterministic order and the row cap cannot drift apart between them: two
+   * hand-written copies of this filter would be two chances to disagree about
+   * which sale is revenue.
+   */
+  private async readCompletedSales(
+    fromInstant: Date,
+    toInstant: Date,
+    include: { lines: true } | { payments: true }
+  ): Promise<ReportSaleReadRow[]> {
     const tenantId = this.requestContext.requireTenantId();
     const rows = await this.prisma.sale.findMany({
       where: {
@@ -108,7 +225,7 @@ export class ReportRepository {
         status: "COMPLETED",
         completedAt: { gte: fromInstant, lt: toInstant },
       },
-      include: { lines: true },
+      include,
       orderBy: [{ completedAt: "asc" }, { id: "asc" }],
       take: REPORT_SALE_ROW_LIMIT + 1,
     });
@@ -118,4 +235,16 @@ export class ReportRepository {
     }
     return rows;
   }
+}
+
+/**
+ * The requested relation of an included read. A missing one is a programming
+ * defect, so it fails loudly instead of aggregating an empty set: `[]` would be
+ * indistinguishable from "no rows" in the response.
+ */
+function requireLoaded<T>(value: T | undefined, relation: string): T {
+  if (value === undefined) {
+    throw new DomainError("INTERNAL", reportRelationNotLoadedMessage(relation));
+  }
+  return value;
 }

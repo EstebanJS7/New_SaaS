@@ -6,14 +6,17 @@ import { ReportingService } from "./reporting.service.js";
 import {
   REPORT_PERIOD_QUERY_INVALID_MESSAGE,
   reportPeriodQuerySchema,
+  type PaymentMethodsResponse,
+  type ReportPeriodQuery,
   type SalesByPeriodResponse,
+  type SalesByProductServiceResponse,
 } from "./reporting.dto.js";
 
 /**
- * The staff reporting surface (EPIC-18 REP-002).
+ * The staff reporting surface (EPIC-18 REP-002, REP-003).
  *
- * **Read-only, one route.** Reports aggregate; they never write, so there is no
- * command route, no `PATCH` and no `DELETE` on this surface at all.
+ * **Read-only.** Reports aggregate; they never write, so there is no command
+ * route, no `PATCH` and no `DELETE` on this surface at all.
  *
  * Tenant identity is never an input — it comes from the request context inside
  * the repository — so there is no cross-tenant-addressable resource, no path
@@ -39,10 +42,38 @@ export class ReportingController {
   @Get("sales-by-period")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async salesByPeriod(@Query() query: unknown): Promise<SalesByPeriodResponse> {
+    return this.reporting.salesByPeriod(this.parsePeriod(query));
+  }
+
+  /**
+   * Payment methods (PRD §31, [[REP-003]]): how the money arrived, per tender.
+   * Same period contract as every report on this surface.
+   */
+  @Get("payment-methods")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async paymentMethods(@Query() query: unknown): Promise<PaymentMethodsResponse> {
+    return this.reporting.paymentMethods(this.parsePeriod(query));
+  }
+
+  /**
+   * Sales by product/service (PRD §31, [[REP-003]]): quantity, net, tax and gross
+   * per catalog item, plus the per-`kind` roll-up. Same period contract.
+   */
+  @Get("sales-by-product-service")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async salesByProductService(@Query() query: unknown): Promise<SalesByProductServiceResponse> {
+    return this.reporting.salesByProductService(this.parsePeriod(query));
+  }
+
+  /**
+   * The ONE period parser every report route uses: shape first, semantics in the
+   * period rule. Factored so a new report cannot grow a second, drifting parser.
+   */
+  private parsePeriod(query: unknown): ReportPeriodQuery {
     const parsed = reportPeriodQuerySchema.safeParse(query);
     if (!parsed.success) {
       throw new DomainError("VALIDATION_FAILED", REPORT_PERIOD_QUERY_INVALID_MESSAGE);
     }
-    return this.reporting.salesByPeriod(parsed.data);
+    return parsed.data;
   }
 }

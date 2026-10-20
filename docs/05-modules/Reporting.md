@@ -2,19 +2,20 @@
 type: module
 status: implemented
 epic: EPIC-18
-updated: 2026-10-19
+updated: 2026-10-20
 ---
 
 # Reporting
 
 The reporting module answers PRD §31's questions about data the tenant already
-owns: sales by period today, and the ten further reports EPIC-18 will add. It is
-a Core domain and a **read-only** one — nothing in this module writes, so there
-is no ledger, no audit row and no reversal to reason about here.
+owns: sales by period, payment methods and sales by product/service today, and
+the further reports EPIC-18 will add. It is a Core domain and a **read-only**
+one — nothing in this module writes, so there is no ledger, no audit row and no
+reversal to reason about here.
 
 [[REP-002]] established the foundation every later report consumes: the period
-rule, the response contract and the permission family. It shipped one report end
-to end so the contract is proven rather than declared.
+rule, the response contract and the permission family. [[REP-003]] added the two
+commercial cuts over the same completed sales.
 
 ## Access
 
@@ -95,9 +96,11 @@ hours. Local midnight of 2024-10-06 never existed (the clock jumped 00:00 →
 
 ## Routes
 
-| Route                          | Permission     | Contract                                                                                              |
-| ------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------- |
-| `GET /reports/sales-by-period` | `reports.read` | Completed sales of the resolved period, bucketed by the tenant's local day, money as decimal strings. |
+| Route                                   | Permission     | Contract                                                                                                    |
+| --------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GET /reports/sales-by-period`          | `reports.read` | Completed sales of the resolved period, bucketed by the tenant's local day, money as decimal strings.       |
+| `GET /reports/payment-methods`          | `reports.read` | The period's payments summed per `PaymentMethod`, with a payment count and the share of the period's gross. |
+| `GET /reports/sales-by-product-service` | `reports.read` | The period's sale lines grouped per `catalog_item`, with quantity, net, tax, gross and the `kind` roll-up.  |
 
 There is deliberately no command route, no `PATCH` and no `DELETE`: a report
 aggregates and never writes. Tenant identity is never an input — it comes from
@@ -149,6 +152,165 @@ tenant's configured `sales.defaultCurrency`, read server-side through
 `TenantSettingsService` ([[DEC-022]]); it is never a literal and never a request
 parameter, and no conversion exists anywhere in the system.
 
+### `GET /reports/payment-methods`
+
+How the money arrived. One row per `PaymentMethod` that HAS payments in the
+period — `CASH`, `CARD`, `BANK_TRANSFER`, `QR`, `CHECK`, `OTHER`.
+
+The period predicate is the SALE's `completed_at`, **never**
+`payment.created_at`: a payment row is written only by the `CompleteSale`
+transaction ([[DEC-029]]), so its own timestamp is an implementation detail of
+the same commit. Cutting this report on the payment timestamp would let two
+reports disagree about one revenue.
+
+| Column         | Meaning                                                                               |
+| -------------- | ------------------------------------------------------------------------------------- |
+| `method`       | The `PaymentMethod` enum literal.                                                     |
+| `paymentCount` | Payments recorded with this method in the period.                                     |
+| `amount`       | Summed `Decimal(14, 2)` amount, exact fixed-scale string.                             |
+| `shareOfGross` | `amount / totalGross`, fixed-scale **4 decimals**; `"0.0000"` when the gross is zero. |
+
+Rows are ordered by `amount` **descending**, then `method` ascending: the
+biggest tender is first, and two equal totals still have one order. A method
+with no payment in the period is ABSENT — never a zero row that would claim the
+tenant was paid nothing that way. Rounded shares need not add to `"1.0000"`.
+
+The report reads `payment` and never `cash_movement`: `cash_movement` carries no
+`sale_id`, so a payment cannot be traced to a cash movement and the two ledgers
+answer different questions (the cash reports of [[REP-004]] read the other one).
+
+```json
+{
+  "report": "payment-methods",
+  "period": {
+    "preset": null,
+    "fromDate": "2026-06-10",
+    "toDate": "2026-06-11",
+    "timeZone": "America/Asuncion",
+    "fromInstant": "2026-06-10T03:00:00.000Z",
+    "toInstant": "2026-06-12T03:00:00.000Z"
+  },
+  "currency": "PYG",
+  "totalGross": "2430.00",
+  "rows": [
+    {
+      "method": "CASH",
+      "paymentCount": 1,
+      "amount": "1000.55",
+      "shareOfGross": "0.4117"
+    },
+    {
+      "method": "BANK_TRANSFER",
+      "paymentCount": 1,
+      "amount": "850.00",
+      "shareOfGross": "0.3498"
+    },
+    {
+      "method": "CARD",
+      "paymentCount": 2,
+      "amount": "579.45",
+      "shareOfGross": "0.2385"
+    }
+  ]
+}
+```
+
+### `GET /reports/sales-by-product-service`
+
+Which products and services earned the money. Lines are grouped by their frozen
+`sale_line.catalog_item_id`, and the item's identity, name and `kind` are
+resolved in ONE tenant-predicated catalog read — no query per item.
+
+| Column          | Meaning                                                                                       |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| `catalogItemId` | The frozen `sale_line.catalog_item_id` the lines were grouped by.                             |
+| `name`          | The item's name as the catalog holds it today.                                                |
+| `kind`          | `PRODUCT`, `SERVICE`, `MEDICATION` or `SUPPLY` — a FACT about the item (never `tracksStock`). |
+| `quantity`      | Summed `Decimal(10, 3)` quantity, exact fixed-scale **3 decimals** (`"3.500"`).               |
+| `net`           | Summed `taxable_base`, exact fixed-scale 2 decimals.                                          |
+| `tax`           | Summed `tax_amount`, exact fixed-scale 2 decimals.                                            |
+| `gross`         | Summed `line_total` (tax included), exact fixed-scale 2 decimals.                             |
+
+`totalsByKind` carries `net`, `tax`, `gross` and `quantity` for every `kind`
+that actually appears, keyed by the enum literal. A kind with no line in the
+period is ABSENT, never a zero block.
+
+Rows are ordered by `gross` descending, then `name` ascending. An item with no
+sale in the period does not appear, and an item sold only in a `CANCELLED` sale
+does not appear either — the status predicate excludes the line at the query,
+not by a later filter.
+
+A referenced item the catalog read does not return is a **loud** `500 INTERNAL`
+naming the id, never a silently dropped revenue line.
+`sale_line.catalog_item_id` is a `RESTRICT` composite foreign key, so the branch
+is unreachable; it is asserted rather than assumed precisely because the
+alternative — a report that is quietly short by an amount nobody can see — looks
+exactly like a correct one.
+
+```json
+{
+  "report": "sales-by-product-service",
+  "period": {
+    "preset": null,
+    "fromDate": "2026-06-10",
+    "toDate": "2026-06-11",
+    "timeZone": "America/Asuncion",
+    "fromInstant": "2026-06-10T03:00:00.000Z",
+    "toInstant": "2026-06-12T03:00:00.000Z"
+  },
+  "currency": "PYG",
+  "totalsByKind": {
+    "PRODUCT": {
+      "net": "1500.00",
+      "tax": "0.00",
+      "gross": "1500.00",
+      "quantity": "3.000"
+    },
+    "SERVICE": {
+      "net": "550.00",
+      "tax": "30.00",
+      "gross": "580.00",
+      "quantity": "2.000"
+    },
+    "MEDICATION": {
+      "net": "350.00",
+      "tax": "0.00",
+      "gross": "350.00",
+      "quantity": "3.500"
+    }
+  },
+  "rows": [
+    {
+      "catalogItemId": "2222…",
+      "name": "Vacuna antirrábica",
+      "kind": "PRODUCT",
+      "quantity": "3.000",
+      "net": "1500.00",
+      "tax": "0.00",
+      "gross": "1500.00"
+    },
+    {
+      "catalogItemId": "3333…",
+      "name": "Consulta clínica",
+      "kind": "SERVICE",
+      "quantity": "2.000",
+      "net": "550.00",
+      "tax": "30.00",
+      "gross": "580.00"
+    },
+    {
+      "catalogItemId": "4444…",
+      "name": "Antibiótico",
+      "kind": "MEDICATION",
+      "quantity": "3.500",
+      "net": "350.00",
+      "tax": "0.00",
+      "gross": "350.00"
+    }
+  ]
+}
+```
+
 ## Invariants
 
 - **A draft is never revenue.** The query filters `status = COMPLETED` **and**
@@ -173,13 +335,28 @@ parameter, and no conversion exists anywhere in the system.
   "no sales" apart from "rejected".
 - **One aggregation path.** A dashboard card and its report will call the same
   service method ([[DEC-062]]); this module is the only place the query exists.
+- **The three commercial reports describe ONE revenue.** `Sales.md` states that
+  a completed sale's payments sum EXACTLY to its total, and a sale's total is
+  the sum of its line totals. Therefore, for the SAME period, the sum of
+  `payment-methods` amounts, the sum of `sales-by-product-service` row grosses
+  and `sales-by-period`'s `totalGross` must be the same string — not almost the
+  same. The suite asserts it with exact string equality and no epsilon; if the
+  three ever diverge, one of them is lying. This is also why the payment report
+  cuts on the sale's `completed_at` rather than the payment's own timestamp.
+- **Money and quantity are never a `number`.** Every aggregate is
+  `Prisma.Decimal` from the first add, and every value crosses the boundary as a
+  fixed-scale string at its column scale: 2 decimals for money
+  (`Decimal(14, 2)`), 3 for quantities (`Decimal(10, 3)`), 4 for `shareOfGross`.
+  No `aggregate`, no `groupBy` and no raw SQL: the aggregation is TypeScript
+  `Decimal` arithmetic over the rows, because the module has no second place a
+  total could be computed.
 
 ## What later stories add
 
-The ten remaining reports ([[REP-003]] to [[REP-006]]) reuse
-`resolveReportPeriod`, the response contract and the `reports.read` key. The CSV
-export ([[REP-007]]) consumes `reports.export`. The dashboard ([[REP-008]])
-consumes the same service methods rather than a second query.
+The remaining reports ([[REP-004]] to [[REP-006]]) reuse `resolveReportPeriod`,
+the response contract and the `reports.read` key. The CSV export ([[REP-007]])
+consumes `reports.export`. The dashboard ([[REP-008]]) consumes the same service
+methods rather than a second query.
 
 ## Tests
 
@@ -190,11 +367,21 @@ consumes the same service methods rather than a second query.
 - `reporting.service.test.ts` — Decimal summation (a float accumulator cannot
   produce `"0.30"`), local-day bucketing, the declared half-open predicate, the
   empty period, the row cap at and over its limit, and the 403 that reaches no
-  query.
+  query. For the commercial reports: tender grouping and counting, the
+  `amount`-descending order with the `method` tie-break, the zero-gross share
+  guard, the by-item grouping at both scales, an item sold in two lines of one
+  sale, the `gross`-descending order with the `name` tie-break, the `kind`
+  roll-up, the single catalog read, the missing-catalog-item `INTERNAL`, the
+  empty period that reads no catalog, and the cross-report equality of tenders
+  and period gross.
 - `reporting.integration.test.ts` — 200 with the period echoed, 400 per
   malformed period, 401 unauthenticated, 403 without `reports.read`, the
   exclusive-boundary sale counted in the next period, and tenant isolation
-  (tenant B's sales never appear in tenant A's report for the same period).
+  (tenant B's sales never appear in tenant A's report for the same period). For
+  the commercial reports: both routes 200 with their seeded rows and ordering,
+  the cross-report invariant over three days and three methods, tenant isolation
+  for payments and sale lines, the empty period, 400 per malformed period on
+  both, and 403 without `reports.read` on both.
 - `packages/database/src/reference-seed.test.ts` — `reports.read` is held by all
   six roles and `reports.export` by exactly `OWNER` and `ADMIN`.
 - `route-contract.probe.test.ts` — the route and its exact permission are
