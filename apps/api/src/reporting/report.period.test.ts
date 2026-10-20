@@ -9,6 +9,7 @@ import {
   REPORT_PERIOD_SHAPE_CONFLICT_MESSAGE,
   REPORT_PERIOD_TOO_LONG_MESSAGE,
   REPORT_PERIOD_UNKNOWN_PRESET_MESSAGE,
+  REPORT_PERIOD_YEAR_RANGE_MESSAGE,
   resolveReportPeriod,
   startOfTenantDay,
   tenantCalendarDate,
@@ -321,6 +322,38 @@ describe("resolveReportPeriod · rejections carry their own stable message", () 
     ).toEqual({ code: "VALIDATION_FAILED", message: REPORT_PERIOD_INVERTED_MESSAGE });
   });
 
+  it("refuses a date whose year predates the supported range, closing the two-digit-year hole", () => {
+    // REGRESSION (found by independent verification). `Date.UTC(99, 0, 1)` is
+    // 1999, not year 99: `0099-01-01`..`1999-01-01` once serialised to the SAME
+    // instant, counted as ONE day, passed the span bound and answered a 1999
+    // report while echoing `0099-01-01`. One request, two different periods.
+    expect(
+      rejection(() => resolveReportPeriod({ from: "0099-01-01", to: "1999-01-01" }, now))
+    ).toEqual({ code: "VALIDATION_FAILED", message: REPORT_PERIOD_YEAR_RANGE_MESSAGE });
+
+    expect(
+      rejection(() => resolveReportPeriod({ from: "1899-06-01", to: "1899-06-10" }, now))
+    ).toEqual({ code: "VALIDATION_FAILED", message: REPORT_PERIOD_YEAR_RANGE_MESSAGE });
+  });
+
+  it("counts a multi-year span correctly, so the bound sees the real day count", () => {
+    // The year-correct serial is what makes this a DAY-COUNT rejection rather than
+    // the one-day acceptance the two-digit remap produced.
+    expect(
+      rejection(() => resolveReportPeriod({ from: "1900-01-01", to: "9999-12-31" }, now))
+    ).toEqual({ code: "VALIDATION_FAILED", message: REPORT_PERIOD_TOO_LONG_MESSAGE });
+  });
+
+  it("resolves the leap day and refuses a day the month does not have", () => {
+    const leap = resolveReportPeriod({ from: "2024-02-29", to: "2024-02-29" }, now);
+    expect(leap.dayCount).toBe(1);
+    expect(leap.fromInstant.toISOString()).toBe("2024-02-29T03:00:00.000Z");
+
+    expect(
+      rejection(() => resolveReportPeriod({ from: "2026-02-30", to: "2026-03-01" }, now))
+    ).toEqual({ code: "VALIDATION_FAILED", message: REPORT_PERIOD_DATE_FORMAT_MESSAGE });
+  });
+
   it("keeps every rejection message distinct, so a caller can tell them apart", () => {
     const messages = [
       REPORT_PERIOD_UNKNOWN_PRESET_MESSAGE,
@@ -330,6 +363,7 @@ describe("resolveReportPeriod · rejections carry their own stable message", () 
       REPORT_PERIOD_DATE_FORMAT_MESSAGE,
       REPORT_PERIOD_INVERTED_MESSAGE,
       REPORT_PERIOD_TOO_LONG_MESSAGE,
+      REPORT_PERIOD_YEAR_RANGE_MESSAGE,
     ];
     expect(new Set(messages).size).toBe(messages.length);
   });

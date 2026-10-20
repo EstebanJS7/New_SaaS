@@ -90,6 +90,27 @@ export const REPORT_PERIOD_INVERTED_MESSAGE = "The report period starts after it
 /** Over the span bound ([[DEC-063]]). Never truncated, never swapped. */
 export const REPORT_PERIOD_TOO_LONG_MESSAGE = `The report period spans more than ${REPORT_PERIOD_MAX_DAYS} days.`;
 
+/**
+ * Stable message for a calendar date whose YEAR is outside the supported range.
+ *
+ * This is not defensive padding: it closes a real hole. `Date.UTC(99, 0, 1)`
+ * returns **1999**, not year 99, because JavaScript maps two-digit years 0..99
+ * onto 1900..1999. A `from`/`to` pair like `0099-01-01`..`1999-01-01` therefore
+ * serialised as the SAME instant, counted as ONE day, passed the span bound and
+ * answered a 1999 report while echoing `0099-01-01` — a silently wrong period.
+ * {@link calendarSerial} is now year-correct, and this bound makes an absurd
+ * year an explicit refusal rather than a quietly empty report. 1900 is far below
+ * any tenant's oldest row and far above the two-digit trap.
+ */
+export const REPORT_PERIOD_YEAR_RANGE_MESSAGE =
+  "The report period contains a year outside the supported range (1900-9999).";
+
+/** Lowest calendar year a report period may name. */
+export const REPORT_PERIOD_MIN_YEAR = 1900;
+
+/** Highest calendar year a report period may name. */
+export const REPORT_PERIOD_MAX_YEAR = 9999;
+
 /** The raw request-shaped input this resolver accepts. */
 export interface ReportPeriodInput {
   readonly preset?: string;
@@ -122,6 +143,9 @@ const MS_PER_DAY = 86_400_000;
 
 /** Digits only: an ISO instant fails this shape, which is the point. */
 const CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Month lengths for a non-leap year; February is handled by the leap rule. */
+const DAYS_IN_MONTH_BY_INDEX = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 
 interface CalendarDateParts {
   readonly year: number;
@@ -205,9 +229,26 @@ function formatCalendarDate(parts: CalendarDateParts): string {
   return `${pad(parts.year, 4)}-${pad(parts.month, 2)}-${pad(parts.day, 2)}`;
 }
 
+/**
+ * Length of one calendar month, by the Gregorian rule stated outright.
+ *
+ * This deliberately does NOT use `new Date(Date.UTC(year, month, 0))`. That idiom
+ * carries two separate traps: `Date.UTC` reads a year below 100 as 19xx, and
+ * computing "day 0 of the next month" and then correcting the year rolls over
+ * whenever the target year is not a leap year (2000-02-29 + setUTCFullYear(2026)
+ * becomes 2026-03-01, so February would report one day). The arithmetic here has
+ * no date object in it at all, so it cannot drift.
+ */
 function daysInMonth(year: number, month: number): number {
-  // Day 0 of the NEXT month is the last day of THIS one; pure UTC arithmetic.
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (month === 2) {
+    return isLeapYear(year) ? 29 : 28;
+  }
+  return DAYS_IN_MONTH_BY_INDEX[month - 1] ?? 31;
+}
+
+/** Gregorian leap rule: divisible by 4, except centuries, except 400. */
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 }
 
 /**
@@ -223,6 +264,11 @@ function parseCalendarDate(value: string): CalendarDateParts {
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
+  if (year < REPORT_PERIOD_MIN_YEAR || year > REPORT_PERIOD_MAX_YEAR) {
+    // Its OWN message: this is not a malformed date, it is a date whose year no
+    // tenant can have data for, and the caller should be told which.
+    throw new DomainError("VALIDATION_FAILED", REPORT_PERIOD_YEAR_RANGE_MESSAGE);
+  }
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
     throw new DomainError("VALIDATION_FAILED", REPORT_PERIOD_DATE_FORMAT_MESSAGE);
   }
@@ -231,7 +277,14 @@ function parseCalendarDate(value: string): CalendarDateParts {
 
 /** The UTC midnight that NAMES a calendar date — the arithmetic identity. */
 function calendarSerial(parts: CalendarDateParts): number {
-  return Date.UTC(parts.year, parts.month - 1, parts.day);
+  // NOT `Date.UTC(year, month, day)`: that maps years 0..99 onto 1900..1999, so
+  // `0099-01-01` and `1999-01-01` would serialise to the same instant and a
+  // 1,900-year span would validate as one day. Build the month/day on a LEAP year
+  // (2000, so 02-29 is representable) and then set the real year, which preserves
+  // the month and day without the two-digit remap.
+  const date = new Date(Date.UTC(2000, parts.month - 1, parts.day));
+  date.setUTCFullYear(parts.year);
+  return date.getTime();
 }
 
 function serialToDate(serial: number): string {

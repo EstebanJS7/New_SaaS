@@ -259,6 +259,20 @@ on all six roles and `reports.export` on `OWNER` and `ADMIN` only.
 
 ## Known Limitations
 
+- **A two-digit-year defect was found by independent verification AFTER this
+  Story was first reported green, and is fixed.** `Date.UTC(99, 0, 1)` returns
+  **1999**, not year 99, because JavaScript maps years `00`–`99` onto
+  `1900`–`1999`. A `from`/`to` pair of `0099-01-01`..`1999-01-01` therefore
+  serialised to the SAME instant, counted as **one day**, passed the 366-day
+  bound, and answered a 1999 report while echoing `0099-01-01` — one request,
+  two different periods. The serial now builds the month and day on a leap year
+  and then sets the real year, `daysInMonth` states the Gregorian rule outright
+  instead of deriving it from a `Date` (which also removed a second, latent
+  rollover bug where correcting the year after "day 0 of the next month" turned
+  2026-02-29 into 2026-03-01), and a year outside `1900–9999` is refused with
+  its own stable message. Three regression tests pin it. The lesson is worth
+  keeping: the period suite passed and the defect still shipped, because every
+  existing case used a 21st-century year.
 - One report is implemented; the contract is proven, not the catalogue.
 - **The report aggregates in TypeScript rather than in SQL.** The in-memory test
   fixture's `$queryRaw` is a deliberate allowlist of advisory-lock queries that
