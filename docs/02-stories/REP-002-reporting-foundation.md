@@ -3,7 +3,7 @@ id: REP-002
 type: story
 title: The reporting foundation — period, contract and permissions
 epic: EPIC-18
-status: planned
+status: done
 priority: high
 depends_on:
   - REP-001
@@ -50,9 +50,14 @@ never a `403` that confirms existence.
 - `reports.read` and `reports.export` in `PERMISSION_SEEDS`, mapped to the roles
   that already read the underlying domains, with their RBAC route pins.
 - `resolveReportPeriod(input, now)`: the five presets and a `from`/`to` calendar
-  pair resolved in `TENANT_TIME_ZONE` to an inclusive-exclusive UTC instant
-  range, with the 366-day bound and stable error codes for an inverted, empty or
-  over-long range.
+  pair resolved in `TENANT_TIME_ZONE` to an **inclusive-start, exclusive-end**
+  UTC instant range, with the 366-day bound.
+  - Errors are `VALIDATION_FAILED` with a distinct, stable **message** per
+    condition. `packages/shared/src/errors/registry.ts` is frozen and closed
+    (`ErrorCode` is a union of registered keys) and modules do not mint codes,
+    so no `REPORTS_PERIOD_*` code is added. An inverted range and a zero-length
+    range are the same condition (`from > to` has no days); the span bound and
+    the shape errors are the other two.
 - The report response contract: a period echo, a currency where money is
   involved, decimal strings for every money/quantity aggregate, and rows.
 - The reporting module skeleton: `apps/api/src/reporting/` with a service, a
@@ -72,25 +77,40 @@ never a `403` that confirms existence.
 
 ## Acceptance Criteria
 
-- [ ] `resolveReportPeriod` resolves all five presets and a custom range in
-      `TENANT_TIME_ZONE`, returning a half-open UTC instant range.
-- [ ] A range crossing the Asunción DST transition resolves to a range whose
-      local-day boundaries are correct on both sides.
-- [ ] An inverted range, an empty range and a range over 366 days each produce
-      their own stable error code — none is silently coerced.
-- [ ] Any range is refused when it arrives as raw instants rather than calendar
-      dates.
-- [ ] `reports.read` and `reports.export` exist in `PERMISSION_SEEDS`, are
+- [x] `resolveReportPeriod` resolves all five presets and a custom range in
+      `TENANT_TIME_ZONE`, returning a half-open UTC instant range
+      (`[fromInstant, toInstant)`), where `toInstant` is the start of the day
+      **after** `toDate`.
+- [x] Presets are fixed and documented: `today` = today only; `last7Days` = the
+      seven days ending today inclusive; `last30Days` = the thirty days ending
+      today inclusive; `thisMonth` = month-to-date; `lastMonth` = the whole
+      previous calendar month.
+- [x] A request carrying both a preset and `from`/`to`, or neither, is
+      `VALIDATION_FAILED`.
+- [x] A range crossing a real Asunción offset transition resolves to a range
+      whose local-day boundaries are correct on both sides. **The test uses the
+      historical 2024-10 window**, because Paraguay abolished DST and the zone
+      has been permanently `-03` since 2024-10-06T04:00:00Z (see the correction
+      in [[DEC-063]]); `[2024-10-04, 2024-10-08]` is 5 calendar days and 119
+      hours.
+- [x] An inverted range (which is also the zero-length case) and a range over
+      366 days each produce `VALIDATION_FAILED` with their own stable message —
+      none is silently coerced, truncated or swapped.
+- [x] Any range is refused when it arrives as raw instants rather than calendar
+      dates: `from`/`to` are `YYYY-MM-DD` calendar dates in the tenant zone,
+      never ISO instants, so a caller cannot bypass the span bound by choosing
+      instants.
+- [x] `reports.read` and `reports.export` exist in `PERMISSION_SEEDS`, are
       mapped to roles and appear in the RBAC route-contract probe.
-- [ ] Every report route requires `reports.read` server-side; a request without
+- [x] Every report route requires `reports.read` server-side; a request without
       it is refused before any query runs.
-- [ ] `GET /reports/sales-by-period` aggregates completed sales only, sums
+- [x] `GET /reports/sales-by-period` aggregates completed sales only, sums
       `Decimal` values and returns them as decimal strings.
-- [ ] The report is tenant-scoped and a cross-tenant attempt cannot reach
+- [x] The report is tenant-scoped and a cross-tenant attempt cannot reach
       another tenant's rows.
-- [ ] Loading/error/empty/success UX: N/A for the API; the empty range returns
+- [x] Loading/error/empty/success UX: N/A for the API; the empty range returns
       an empty row set with the period echoed, not an error.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -110,9 +130,10 @@ GET /reports/sales-by-period?period=<preset>|from=&to=
   -> 200 { report, period: { preset|from,to, timeZone, fromInstant, toInstant },
            currency, totalNet, totalTax, totalGross, saleCount,
            rows: [{ bucketDate, saleCount, net, tax, gross }] }
-  -> 400 REPORTS_PERIOD_INVALID | REPORTS_PERIOD_INVERTED |
-         REPORTS_PERIOD_EMPTY | REPORTS_PERIOD_TOO_LONG
-  -> 403 (missing reports.read)
+  -> 400 VALIDATION_FAILED (one stable message per condition:
+         unknown preset · preset combined with from/to · neither supplied ·
+         malformed calendar date · from after to · span over 366 days)
+  -> 403 FORBIDDEN (missing reports.read)
 ```
 
 ### Changed
@@ -140,13 +161,88 @@ None — REP-001 created the columns and indexes this report reads.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented on `feat/epic-18-dashboards-reports`.
+
+- **`apps/api/src/reporting/report.period.ts`** is the single place a calendar
+  date becomes an instant. It resolves the five presets and a `from`/`to` pair
+  in `TENANT_TIME_ZONE`, returns a half-open `[fromInstant, toInstant)` range
+  where `toInstant` is local midnight of the day after `toDate`, and exposes
+  `startOfTenantDay` and `tenantCalendarDate` so no other module re-implements
+  the conversion.
+  - Calendar-day arithmetic happens on UTC-midnight serials, never on
+    tenant-zone instants: UTC has no offset changes, so day and month hops are
+    exact there and only the final conversion touches the tenant zone.
+  - The offset is resolved with `Intl.DateTimeFormat` in two passes, re-checking
+    the offset at the corrected instant. `hourCycle: "h23"` is load-bearing:
+    `en-US` renders midnight as hour `24` without it and the offset lands a day
+    off.
+  - Every rejection is `VALIDATION_FAILED` with its own stable message — no new
+    error code, because `packages/shared/src/errors/registry.ts` is a frozen
+    closed registry and modules do not mint codes.
+- **`reporting.repository.ts`** resolves the tenant from the request context
+  (never an argument) and reads only `status: COMPLETED` with a half-open
+  `completedAt` predicate. It carries an explicit `REPORT_SALE_ROW_LIMIT` cap
+  and refuses rather than returning a silently truncated aggregate.
+- **`reporting.service.ts`** re-asserts `reports.read` as defense in depth
+  behind the route decorator, takes an injected clock, buckets by the LOCAL
+  calendar date of `completedAt` through the shared helper, and sums with
+  `Prisma.Decimal`, emitting fixed-scale strings. Money is never a JavaScript
+  `number`. The currency is the tenant's configured `sales.defaultCurrency`,
+  never a constant.
+- **`reporting.controller.ts` / `reporting.module.ts`** expose
+  `GET /reports/sales-by-period` behind `reports.read`, with a `.strict()` query
+  schema. Per [[DEC-062]] the module asserts **no** entitlement.
+- **`reference-seed.ts`** seeds `reports.read` (all six roles, the
+  `notifications.delivery.read` read-wide precedent) and `reports.export` (OWNER
+  and ADMIN only): reading an aggregate and taking a file out of the system are
+  different decisions. Catalog 62 → 64 keys.
+- **`rbac/route-contract.probe.test.ts`** pins the route in
+  `EXPECTED_ROUTE_INVENTORY` and adds a `REPORTING_PERMISSION_BY_ROUTE`
+  assertion, so the new permission is pinned rather than merely declared.
+- **`docs/05-modules/Reporting.md`** created and indexed.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (23/23 turbo tasks)
+pnpm typecheck      PASS  (23/23)
+pnpm build          PASS  (13/13)
+pnpm test           PASS  (23/23)
+  api        104 files (101 passed | 1 skipped after the new suites)  1405 passed | 266 skipped  (+44)
+  database    30 files                                                  549 passed  (+1)
+  web        110 files                                                 1164 passed
+  worker      17 files                                                  245 passed
 ```
+
+The period resolver was additionally verified by direct execution against the
+real tzdata, not only through its assertions:
+
+```text
+startOfTenantDay("2026-10-19") -> 2026-10-19T03:00:00.000Z   (-03, the live offset)
+startOfTenantDay("2024-10-05") -> 2024-10-05T04:00:00.000Z   (-04)
+startOfTenantDay("2024-10-06") -> 2024-10-06T04:00:00.000Z   (local midnight never existed)
+startOfTenantDay("2024-10-07") -> 2024-10-07T03:00:00.000Z   (-03)
+[2024-10-04, 2024-10-08]        -> 5 calendar days, 119 hours
+{preset: "today"} @ 2026-10-19 -> [2026-10-19T03:00Z, 2026-10-20T03:00Z)
+```
+
+**The report query was proven against real PostgreSQL**, because the route's own
+suite runs on the in-memory fixture and that fake does not model a real planner.
+Against a freshly migrated database (50 migrations + the reference seed) with
+three sales — two `COMPLETED` and one `DRAFT` — the repository's exact query for
+`[2026-06-01T03:00Z, 2026-06-11T03:00Z)` returned:
+
+```text
+rows in range: 1   (the sale at 2026-06-11T02:00Z; the one at 2026-06-11T03:00Z
+                    sits exactly on the EXCLUSIVE end and is correctly excluded)
+lines per row:  1  (include: { lines: true } resolves)
+total gross: "2001.10"   emitted as a STRING, never a float
+DRAFT rows: 1, completed_at NULL — excluded by the status predicate
+```
+
+The applied schema also reports **64** seeded permissions, with `reports.read`
+on all six roles and `reports.export` on `OWNER` and `ADMIN` only.
 
 ## Tests Added
 
@@ -164,13 +260,33 @@ Not run.
 ## Known Limitations
 
 - One report is implemented; the contract is proven, not the catalogue.
+- **The report aggregates in TypeScript rather than in SQL.** The in-memory test
+  fixture's `$queryRaw` is a deliberate allowlist of advisory-lock queries that
+  throws on anything else ("fails loudly rather than return wrong rows"), and
+  the repository has no `aggregate`/`groupBy` usage. A SQL aggregate would have
+  made the route untestable through `bootTestApp()` without teaching the fake to
+  answer report queries — a second in-memory engine that could agree with the
+  code and still be wrong. The bound is the explicit `REPORT_SALE_ROW_LIMIT`;
+  the cost is [[TD-053]]'s subject, to be revisited with measurement rather than
+  now.
+- `America/Asuncion` has had a fixed `-03` offset since 2024-10-06, so the DST
+  correctness path is only exercised by historical ranges. [[DEC-063]] records
+  the correction; the code stays offset-correct rather than assuming the fixed
+  offset.
+- The row cap is not proven against the in-memory fake's `take` (the fake
+  returns every match), so the cap is asserted by row count rather than by a
+  truncated read. The live-PostgreSQL lane is where the `take` bound would be
+  exercised.
 - The currency in a response is the tenant's configured sale currency; no
   conversion exists anywhere in the system ([[DEC-022]]) and the report does not
   invent one.
 
 ## Technical Debt
 
-- [[TD-053]] — report query performance beyond directed indexes.
+- [[TD-053]] — report query performance beyond directed indexes; this Story
+  makes the TypeScript-aggregation choice it will have to revisit.
+- [[TD-055]] — unchanged by this Story: the veterinary reports this foundation
+  serves still have no staff entry surface.
 
 ## Decisions / ADRs
 
@@ -188,4 +304,5 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+All required gates passed on 2026-10-19. The `apps/e2e` lane was not run (Docker
+unavailable, and this Story adds no UI).

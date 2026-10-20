@@ -115,6 +115,13 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   two owning roles, bringing the catalog to 58.
  *   The pre-existing `fiscal.invoice.issue` stays a Fiscal capability consumed
  *   by no EPIC-14 route and reserved for EPIC-15 (DEC-040).
+ * - EPIC-18 REP-002 adds the `reports` family (DEC-062): `reports.read` mirrors
+ *   the read-wide shape every other `*.read` key has, and `reports.export` is
+ *   the owning-roles key for taking a file OUT of the system. The family is
+ *   deliberately NOT inside a feature code: PRD §9.1 fixes twelve codes and
+ *   `reporting` is a domain, not an entitlement, so `advanced_reports` stays
+ *   unspent and no thirteenth code is added. The two keys move the seeded
+ *   catalog 62 -> 64.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -219,6 +226,17 @@ export const PERMISSION_SEEDS = [
   // the tenant's database — it tells the tax administration that numbers will
   // never be used — and it cannot be undone.
   { key: "fiscal.range.void", name: "Void a timbrado range's remaining numbers" },
+  // EPIC-18 REP-002 adds the `reports` family (DEC-062). Reports read data the
+  // tenant already owns through its own domain surfaces, so there is no
+  // feature-code gate: `reports.read` follows the read-wide shape of every
+  // other `*.read` key, and `reports.export` is a SEPARATE key held by the two
+  // owning roles only. Reading an aggregate on screen and taking a file out of
+  // the system are different decisions — a CSV crosses the tenant's boundary
+  // and survives the session that produced it — so the narrower grant is the
+  // honest one. Both are seeded BEFORE the REP-002 route that consumes
+  // `reports.read`; `reports.export` is consumed by REP-007.
+  { key: "reports.read", name: "Read reports" },
+  { key: "reports.export", name: "Export reports" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -291,6 +309,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "fiscal.signing_material.manage",
     "fiscal.profile.manage",
     "fiscal.range.void",
+    // EPIC-18 REP-002 (DEC-062): both report keys are owning-role grants —
+    // `reports.export` is the one that leaves the tenant boundary.
+    "reports.read",
+    "reports.export",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -355,6 +377,8 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "fiscal.signing_material.manage",
     "fiscal.profile.manage",
     "fiscal.range.void",
+    "reports.read",
+    "reports.export",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
@@ -377,6 +401,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.read",
     "billing.read",
     "fiscal.read",
+    "reports.read",
   ],
   RECEPTIONIST: [
     "inventory.stock.read",
@@ -400,6 +425,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.read",
     "billing.read",
     "fiscal.read",
+    "reports.read",
   ],
   CASHIER: [
     "cash.session.close",
@@ -423,6 +449,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.create",
     "billing.confirm",
     "billing.cancel",
+    "reports.read",
   ],
   // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
   // catalog keys plus the EPIC-10 stock write key; front-desk, veterinary and
@@ -449,6 +476,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.read",
     "billing.read",
     "fiscal.read",
+    "reports.read",
   ],
 };
 

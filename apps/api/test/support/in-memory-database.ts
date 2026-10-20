@@ -511,6 +511,13 @@ export interface SaleWhere {
   id?: string;
   tenantId?: string;
   status?: SaleStatusRow;
+  /**
+   * Half-open business-instant window (EPIC-18 REP-002): `completedAt >= gte`
+   * AND `completedAt < lt`. A row whose `completedAt` is `null` (a draft) is
+   * excluded by any bound, exactly as PostgreSQL excludes a NULL from a range
+   * comparison rather than treating it as the epoch.
+   */
+  completedAt?: { gte?: Date; lt?: Date };
 }
 
 /** Ordering clauses the in-memory sale list accepts. */
@@ -2621,6 +2628,24 @@ function linesForPurchase(
 }
 
 /**
+ * Half-open business-instant predicate for the sale reads (EPIC-18 REP-002):
+ * `completedAt >= gte` AND `completedAt < lt`. A `null` `completedAt` (a draft)
+ * satisfies no bound, which is what PostgreSQL's NULL semantics already do and
+ * NOT what "treat null as the epoch" would.
+ */
+function matchesCompletedAt(
+  candidate: SaleHeaderRow,
+  filter: { gte?: Date; lt?: Date } | undefined
+): boolean {
+  if (filter === undefined) return true;
+  if (candidate.completedAt === null) return false;
+  const instant = candidate.completedAt.getTime();
+  if (filter.gte !== undefined && instant < filter.gte.getTime()) return false;
+  if (filter.lt !== undefined && instant >= filter.lt.getTime()) return false;
+  return true;
+}
+
+/**
  * Ordering for the sale list: `createdAt` (newest first on the shipped query)
  * with `id` as the stable tie-break, mirroring the repository's declared
  * deterministic order.
@@ -3870,7 +3895,8 @@ export function createIsolationDatabase(): IsolationDatabase {
             (candidate) =>
               (where.id === undefined || candidate.id === where.id) &&
               (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-              (where.status === undefined || candidate.status === where.status)
+              (where.status === undefined || candidate.status === where.status) &&
+              matchesCompletedAt(candidate, where.completedAt)
           ) ?? null;
         if (!header) return null;
         return include?.lines
@@ -3882,7 +3908,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where.status === undefined || candidate.status === where.status)
+            (where.status === undefined || candidate.status === where.status) &&
+            matchesCompletedAt(candidate, where.completedAt)
         );
         const ordered = orderBy === undefined ? headers : orderSales(headers, orderBy);
         return ordered.map((header) =>
@@ -3934,6 +3961,9 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (where.id !== undefined && candidate.id !== where.id) continue;
           if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) continue;
           if (where.status !== undefined && candidate.status !== where.status) continue;
+          // Same predicate as the reads: the where type is shared, so a filter the
+          // fake accepts but ignores would silently update the wrong rows.
+          if (!matchesCompletedAt(candidate, where.completedAt)) continue;
           if (data.customerId !== undefined) candidate.customerId = data.customerId;
           if (data.status !== undefined) candidate.status = data.status;
           if (data.completedAt !== undefined) candidate.completedAt = data.completedAt;

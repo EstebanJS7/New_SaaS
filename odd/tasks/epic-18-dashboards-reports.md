@@ -68,9 +68,9 @@ Each work unit is one commit carrying its tests and documentation.
       **WU-A1** (done) the three business-event instants and their writers.
       **WU-A2** (done) the catalog threshold, the two clinical due dates, their
       validators and the catalog form.
-- [ ] **WU-B — [[REP-002]] the reporting foundation.** `resolveReportPeriod`,
+- [x] **WU-B — [[REP-002]] the reporting foundation.** `resolveReportPeriod`,
       the report contract, the `reports.*` permissions, the route pins and one
-      reference report end to end.
+      reference report end to end. _Done: see the evidence log._
 - [ ] **WU-C — [[REP-003]] the commercial reports.**
 - [ ] **WU-D — [[REP-004]] the cash and purchase reports.**
 - [ ] **WU-E — [[REP-005]] the inventory reports.**
@@ -142,3 +142,32 @@ Commit `WU-A2` on `feat/epic-18-dashboards-reports`.
 **Skipped:** a clinical record form (it does not exist to extend, and building
 one is [[EPIC-06]] surface), and the `apps/e2e` lane (no UI beyond the catalog
 field, and Docker is unavailable here).
+
+### WU-B — the reporting foundation
+
+Commit `WU-B` on `feat/epic-18-dashboards-reports`.
+
+- `apps/api/src/reporting/report.period.ts` owns every calendar-date→instant
+  conversion: five presets plus a `from`/`to` calendar pair resolved in
+  `TENANT_TIME_ZONE` to a half-open `[fromInstant, toInstant)` range, with a
+  366-day bound. Two-pass `Intl` offset resolution with `hourCycle: "h23"`.
+- All rejections are `VALIDATION_FAILED` with distinct stable messages. The
+  error registry is a frozen closed union, so no `REPORTS_PERIOD_*` code was
+  invented — the Story was corrected on that point before implementation.
+- `REPORT_SALE_ROW_LIMIT` refuses rather than returning a silently truncated
+  aggregate. Aggregation is `Prisma.Decimal` in TypeScript, not SQL: the
+  in-memory fake's `$queryRaw` is a deliberate lock allowlist that throws on
+  anything else, and a report query added to it would be a second aggregation
+  engine that could agree with the code and still be wrong.
+- `reports.read` seeded to all six roles and `reports.export` to OWNER/ADMIN
+  only (read-wide / write-to-owning-roles, the `notifications.delivery.read`
+  precedent). Catalog 62 → 64.
+- Gates: api **1361 → 1405** (+44), database **548 → 549**,
+  format/lint/typecheck/ build green.
+- **Corrected a premise in [[DEC-063]]:** Paraguay abolished DST, so
+  `America/Asuncion` has been permanently `-03` since 2024-10-06T04:00:00Z
+  (tzdata 2025c, verified by scanning 2018–2030). The DST assertion uses the
+  historical 2024-10 window; the resolver stays offset-correct rather than
+  assuming the fixed offset.
+
+**Skipped:** the `apps/e2e` lane (no UI in this work unit).

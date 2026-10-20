@@ -14,6 +14,7 @@ import { SALES_PERMISSIONS } from "../sales/sales.permissions.js";
 import { CASH_PERMISSIONS } from "../cash/cash.permissions.js";
 import { BILLING_PERMISSIONS } from "../billing/billing.permissions.js";
 import { FISCAL_PERMISSIONS } from "../fiscal/fiscal.permissions.js";
+import { REPORTING_PERMISSIONS } from "../reporting/reporting.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -275,6 +276,11 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /portal/profile",
   "POST /customers/:customerId/portal-access",
   "POST /customers/:customerId/portal-access/revoke",
+  // EPIC-18 REP-002 — the reporting foundation. ONE read route behind
+  // `reports.read`; there is deliberately no command, no PATCH and no DELETE,
+  // because a report aggregates and never writes. DEC-062 leaves the whole
+  // surface UNGATED by feature code, so no entitlement sits in front of it.
+  "GET /reports/sales-by-period",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -497,6 +503,17 @@ const BILLING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /invoices": BILLING_PERMISSIONS.create,
   "POST /invoices/:id/confirm": BILLING_PERMISSIONS.confirm,
   "POST /invoices/:id/cancel": BILLING_PERMISSIONS.cancel,
+};
+
+/**
+ * EPIC-18 REP-002 reporting surface. The single report route MUST declare exactly
+ * `reports.read` — the key DEC-062 maps to all six roles — and NEVER
+ * `reports.export`, which is the narrower owning-roles key the CSV path of
+ * REP-007 consumes. Pinning it by name means a route silently moved onto the
+ * export key (or onto no key at all) fails here rather than shipping.
+ */
+const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /reports/sales-by-period": REPORTING_PERMISSIONS.read,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -802,6 +819,34 @@ describe("route-contract probe (deny-by-default)", () => {
     for (const route of actualByRoute.keys()) {
       if (!(route in BILLING_PERMISSION_BY_ROUTE)) {
         report.push(`UNDECLARED BILLING ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("maps EVERY report route to its single intended granular reports.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/reports"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(REPORTING_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING REPORT ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG REPORT PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in REPORTING_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED REPORT ROUTE: ${route}`);
       }
     }
     expect(report).toEqual([]);

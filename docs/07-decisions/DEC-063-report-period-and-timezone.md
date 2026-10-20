@@ -54,9 +54,37 @@ calendar dates, with the resolved inclusive-exclusive instant range computed
 server-side. A custom range is bounded to **366 days**; exceeding it is a
 validation error, not a truncated result.
 
-Asunción observes DST (`-04`/`-03`), so a period boundary is a real edge: a
-range that crosses the transition has days of 23 and 25 hours in it. The tests
-assert a range spanning the transition, not just a comfortable mid-year range.
+A period boundary is a real edge in this zone, and **the correction below is
+part of this decision** because the version first written here had the current
+behaviour wrong.
+
+```text
+correction (2026-10-19, verified against tzdata 2025c)
+
+the first draft of this section said "Asunción observes DST (-04/-03), so a
+period boundary is a real edge". That was true until 2024 and is NOT true for
+the periods a tenant will actually request.
+
+Paraguay abolished DST. In tzdata 2025c the LAST transition in
+America/Asuncion is 2024-10-06T04:00:00Z, -04 -> -03, after which the zone is
+permanently -03. Verified by scanning monthly offsets 2018..2030: fourteen
+transitions, the last in October 2024, none after.
+```
+
+Both halves of that matter, and they point in opposite directions:
+
+- **For every period from late 2024 onward the offset is fixed at `-03`**, so
+  the common case is the simple one and nobody should expect a DST surprise in a
+  2026 report.
+- **Historical ranges still cross real transitions** — a tenant exporting 2019
+  data gets a range with 23- and 25-hour days in it. The resolver must therefore
+  remain offset-correct rather than assume a fixed `-03`, and the DST assertion
+  uses the historical 2024-10 window, where `[2024-10-04, 2024-10-08]` is five
+  calendar days and **119 hours**, and local midnight of 2024-10-06 never
+  existed (it resolves to `2024-10-06T04:00:00Z`).
+
+The lesson worth keeping: a decision doc that asserts a timezone's _current_ DST
+posture without checking tzdata is asserting a fact that expires.
 
 ### Option B — `TENANT_TIME_ZONE`, presets only
 
