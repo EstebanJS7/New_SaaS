@@ -3,7 +3,7 @@ id: REP-008
 type: story
 title: The staff surfaces — the dashboard and the reports workspace
 epic: EPIC-18
-status: in-progress
+status: done
 priority: medium
 depends_on:
   - REP-003
@@ -85,23 +85,23 @@ to them.
 
 ## Acceptance Criteria
 
-- [ ] `/app` renders the dashboard cards from the report API for the selected
+- [x] `/app` renders the dashboard cards from the report API for the selected
       period, and no card issues a query the reports workspace does not use —
       asserted by a test on the shared data hook, not by convention.
-- [ ] `/app/reports` lists every report the epic ships and opens each one.
-- [ ] Period controls offer the five presets and a custom range; an over-long
+- [x] `/app/reports` lists every report the epic ships and opens each one.
+- [x] Period controls offer the five presets and a custom range; an over-long
       range surfaces the API's error message rather than a generic failure.
-- [ ] The export action downloads a CSV file through the BFF proxy.
-- [ ] The export action is hidden for a caller without `reports.export` and the
+- [x] The export action downloads a CSV file through the BFF proxy.
+- [x] The export action is hidden for a caller without `reports.export` and the
       API still refuses that caller (UX-only check, backend authoritative).
-- [ ] The low-stock and due-report first-run states explain their emptiness and
+- [x] The low-stock and due-report first-run states explain their emptiness and
       link to the surface where the missing fact is entered.
-- [ ] Every state renders: loading, empty, error, success and permission-denied.
-- [ ] Every component consumes semantic tokens only — no literal brand colour,
+- [x] Every state renders: loading, empty, error, success and permission-denied.
+- [x] Every component consumes semantic tokens only — no literal brand colour,
       radius or font — and the existing surface-integrity test covers the new
       files.
-- [ ] Playwright covers the dashboard and one report with its CSV export.
-- [ ] Tests required by the Story pass.
+- [x] Playwright covers the dashboard and one report with its CSV export.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -166,7 +166,10 @@ None.
 **Part 1 implemented (the BFF proxies and the reports workspace); part 2 (the
 dashboard at `/app` and the Playwright specs) pending.**
 
-Part 1 — commit `WU-I1`:
+Part 1 — commit `WU-I1` (the BFF proxies and the reports workspace); part 2 —
+commit `WU-I2` (the dashboard and the Playwright specs).
+
+Part 1 — the BFF proxies and the reports workspace:
 
 - **One GET-only catch-all proxy** at
   `apps/web/src/app/api/reports/[[...path]]`, driven by ONE local allowlist
@@ -212,17 +215,27 @@ Part 1 — commit `WU-I1`:
 pnpm format-check   PASS
 pnpm lint           PASS  (23/23 turbo tasks)
 pnpm typecheck      PASS  (23/23)
-pnpm build          PASS  (13/13)  — registers BOTH /api/reports routes
+pnpm build          PASS  (13/13)  — registers the reports routes AND the dashboard page
 pnpm test           PASS  (23/23)
-  web        117 files (112 landed + 5 new)      1268 passed  (+54)
+  web        118 files (112 landed + 6 new)      1282 passed  (+68)
   api        114 files                           1634 passed | 266 skipped
   database    30 files                            549 passed
 ```
 
-54 new tests: 14 proxy, 11 api-client, 6 column derivation, 4 index and 19
-report-view. The two pre-existing nav assertions that count the sidebar's
-entries were updated for the new destination and now assert its `href` and its
-absence of a feature gate.
+68 new web tests across both halves. Part 2's centrepiece is the DEC-062
+assertion, and it was mutation-verified: temporarily pointing the gross card at
+a different URL made it fail with
+`expected [ …(2) ] to have a length of 1 but got 2` while the other three
+assertions still passed, which is exactly the failure a second aggregation path
+should produce.
+
+**The `apps/e2e` specs are written and UNRUN.** Docker is unavailable in this
+environment, so the lane has no built apps, no API and no database. Both specs
+are statically valid (`apps/e2e` typecheck and lint exit 0), and the reports
+spec reads the reports through `page.request` so each card is asserted against
+the API's own answer rather than against a hardcoded figure — the demo seed
+creates no sale, no cash session and no catalog item, so the honest expectation
+there is zero and the not-configured low-stock state.
 
 ## Tests Added
 
@@ -237,13 +250,35 @@ absence of a feature gate.
 
 ## Known Limitations
 
-- No charts.
-- The dashboard's card set is fixed; a configurable dashboard is not in scope.
+- **Neither Playwright spec has ever executed.** Selectors were written against
+  the component source, not a rendered page, and the reports spec's CSV step
+  asserts a download event that has never been triggered. The first real lane
+  run is where both get proven.
+- **The dashboard and the reports workspace nest their root inside the shell's
+  `<main>`.** They were `<main>` elements themselves; a `<main>` inside a
+  `<main>` is invalid HTML, so all three surfaces now use a `<div>` root and the
+  shell remains the only `<main>`. The earlier `report-workspace.tsx` and
+  `reports-index.tsx` had the same defect and are fixed with it.
+- **The demo seed has no sales, no cash session and no catalog item**, so a lane
+  run shows zeros and the low-stock not-configured state. The reports spec
+  therefore asserts each card against the API's own answer instead of a literal,
+  and a non-zero demonstration needs seeded transactional data — a seed change
+  outside this Story.
+- The export action's visibility is proven at component level only: no page
+  supplies the `permissions` prop today, so in production the link always
+  renders and the API remains the authority. Same shape as the clinical
+  surface's `vet.clinical.*` gate.
+- The index's loading/error/permission-denied states come from ONE access probe
+  (`GET /api/reports/low-stock`, the only parameterless report) through the same
+  aggregation path. A purely static index could not have those three states
+  honestly; the cost is one cheap read per index visit.
 
 ## Technical Debt
 
 - [[TD-052]] — the branch dimension the finance ledgers do not carry, which also
   blocks any per-branch dashboard card.
+- [[TD-056]] — the in-memory boundary cannot prove `take` enforcement; the caps
+  the dashboard's reports rely on are proven at service level.
 
 ## Decisions / ADRs
 

@@ -84,7 +84,7 @@ Each work unit is one commit carrying its tests and documentation.
       evidence log._ deworming: list, create and correct, on the proxy and
       permissions that already ship ([[DEC-067]]). Lands BEFORE REP-008, whose
       empty state links here.
-- [ ] **WU-I — [[REP-008]] the staff surfaces and the e2e lane.**
+- [x] **WU-I — [[REP-008]] the staff surfaces and the e2e lane.** _Done._
 - [ ] **WU-J — [[REP-009]] the epic closure and evidence.**
 
 ## Review workload
@@ -386,3 +386,56 @@ no database). The spec is written, statically valid and explicitly unrun.
 - [[TD-055]] — the three clinical record kinds still without a staff surface.
 - [[TD-056]] — the in-memory reporting boundary cannot prove `take` enforcement
   or `select` projection; added after two independent verifications flagged it.
+
+### WU-I1 — the BFF proxies and the reports workspace
+
+Commit `WU-I1` on `feat/epic-18-dashboards-reports`.
+
+- One GET-only catch-all proxy at `/api/reports/[[...path]]` driven by ONE
+  allowlist module carrying both the twelve codes and each one's query shape;
+  the workspace catalogue reads the same module, so a code cannot drift inside
+  the app. An unknown code, an unknown key, a `tenantId`, a wrong-shape key, a
+  two-segment path and a missing session are all refused locally, and a refusal
+  never touches the network.
+- The export proxy is untouched, and the **build** settled the precedence
+  question by registering both routes as separate entries — an argument the
+  worker could not make because `pnpm build` was not in its authorized list.
+- The report view derives its CONTROLS from the query shape (presets + range, or
+  `horizonDays`, or nothing for `low-stock`) and its COLUMNS from the response
+  type (`Record<keyof Row, string>`, so a DTO change is a compile error until
+  its header exists; order from the payload's own key order; an exhaustive
+  `ReportTable` switch).
+- Three actionable empty states: `low-stock` → `/app/catalog`, both due reports
+  → `/app/patients`, configured-but-clear → a sentence with no link.
+- Gates: web **1214 → 1268** (+54). The two pre-existing nav assertions that
+  count sidebar entries were updated by the parent (they were outside the
+  worker's surfaces).
+
+### WU-I2 — the dashboard and the e2e lane
+
+Commit `WU-I2` on `feat/epic-18-dashboards-reports`.
+
+- The `/app` placeholder is gone. Four cards — gross sales, sales, cash
+  difference, low stock — each read through `fetchReport`, the same client the
+  report view uses. `low-stock` is requested with `{ kind: "none" }`, so it
+  carries no period and is never refetched by the period selector.
+- **The DEC-062 assertion is real and mutation-verified**: the test compares the
+  dashboard's observed request URL against the report view's live URL and
+  against `reportRequestPath`, three ways (same URL, same builder, requested
+  once). Pointing the gross card at a different URL made it fail while the other
+  three assertions still passed — exactly the failure a second aggregation path
+  should produce.
+- A nested-`<main>` defect was found and fixed: the dashboard and both workspace
+  surfaces were `<main>` inside the shell's `<main>`. All three are `<div>` now
+  and the shell remains the only `<main>`.
+- `apps/e2e/specs/reports.spec.ts` added: dashboard cards asserted against the
+  API's OWN answers via `page.request`, a report opened, its period changed, and
+  the CSV download's filename and first line checked.
+- Gates: web **1268 → 1282** (+14), api 1634, database 549;
+  format/lint/typecheck/ build green; `apps/e2e` typecheck+lint green.
+
+**Not verified:** the `apps/e2e` lane cannot run here (no Docker, no built apps,
+no database). Both specs are written, statically valid and explicitly unrun. The
+demo seed also creates no sale, no cash session and no catalog item, so a lane
+run shows zeros and the low-stock not-configured state — which is why the spec
+asserts against the API's answers instead of a literal.

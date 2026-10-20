@@ -43,7 +43,7 @@ export function ReportsIndex(): JSX.Element {
   const denied = isReportAccessDenied(access.error);
 
   return (
-    <main data-testid="reports-workspace" className="mx-auto max-w-5xl space-y-6">
+    <div data-testid="reports-workspace" className="mx-auto max-w-5xl space-y-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
         <p className="text-sm text-muted-foreground">
@@ -89,7 +89,7 @@ export function ReportsIndex(): JSX.Element {
           entries={reportsInGroup(group.id)}
         />
       ))}
-    </main>
+    </div>
   );
 }
 

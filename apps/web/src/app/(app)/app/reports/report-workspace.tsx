@@ -140,7 +140,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
   const accessDenied = isReportAccessDenied(readError);
 
   return (
-    <main data-testid="report-workspace" className="mx-auto max-w-5xl space-y-6">
+    <div data-testid="report-workspace" className="mx-auto max-w-5xl space-y-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">
           {definition.title}
@@ -299,6 +299,6 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
         ) : (
           <ReportTable response={query.data} />
         ))}
-    </main>
+    </div>
   );
 }

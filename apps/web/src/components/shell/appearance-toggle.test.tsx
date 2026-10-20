@@ -1,10 +1,26 @@
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { APPEARANCE_STORAGE_KEY, DARK_CLASS } from "@/lib/appearance";
 import AppShellLayout from "@/app/(app)/layout";
 import AppHomePage from "@/app/(app)/app/page";
+import { QueryProvider } from "@/providers/query-provider";
 import { activeProductPreset, resolveBrand } from "@newsaas/ui/branding";
 import { AppearanceToggle } from "./appearance-toggle";
+
+/**
+ * The shell home is a live surface now ([[REP-008]]): its cards read the reporting
+ * API through TanStack Query. The root layout owns the QueryClient in production
+ * and this suite renders the layout WITHOUT it, so the provider is supplied here —
+ * at the same point of the tree the root layout supplies it.
+ */
+function homePage(): ReactElement {
+  return (
+    <QueryProvider>
+      <AppHomePage />
+    </QueryProvider>
+  );
+}
 
 /* eslint-disable @typescript-eslint/unbound-method -- tests reference MediaQueryList mock methods as plain call records. */
 function resetAppearanceState(): void {
@@ -156,21 +172,26 @@ describe("AppearanceToggle", () => {
     expect(document.documentElement.classList.contains(DARK_CLASS)).toBe(true);
   });
 
-  it("re-themes the bounded sample-card region through tokens only", async () => {
+  it("re-themes the bounded dashboard region through tokens only", async () => {
     window.localStorage.setItem(APPEARANCE_STORAGE_KEY, "light");
-    const element = await AppShellLayout({ children: <AppHomePage /> });
+    const element = await AppShellLayout({ children: homePage() });
     render(element);
 
-    const card = screen.getByTestId("sample-card");
-    // Sample content inherits semantic tokens; no component-local colors.
-    expect(card.className).toContain("bg-card");
+    // The property under test is the CONTENT's, and it is the same one the
+    // placeholder card carried: a semantic token surface with no component-local
+    // colour, so an appearance change re-themes it through the cascade. It is
+    // asserted on the dashboard root because that is what the shell home renders
+    // now — keeping the `sample-card` testid here would have proved nothing once
+    // the placeholder was replaced.
+    const dashboard = screen.getByTestId("app-dashboard");
+    expect(dashboard.className).toContain("bg-card");
 
     fireEvent.click(screen.getByTestId("appearance-toggle"));
     expect(document.documentElement.classList.contains(DARK_CLASS)).toBe(true);
 
-    // The card element itself never changes — the cascade re-themes it.
-    expect(card.className).toContain("text-card-foreground");
-    expect(card.getAttribute("style")).toBeNull();
+    // The element itself never changes — the cascade re-themes it.
+    expect(dashboard.className).toContain("text-card-foreground");
+    expect(dashboard.getAttribute("style")).toBeNull();
 
     fireEvent.click(screen.getByTestId("appearance-toggle"));
     expect(document.documentElement.classList.contains(DARK_CLASS)).toBe(false);
