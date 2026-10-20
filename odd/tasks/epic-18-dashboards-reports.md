@@ -80,10 +80,10 @@ Each work unit is one commit carrying its tests and documentation.
 - [x] **WU-F — [[REP-006]] the veterinary reports.** Two commits: **WU-F1**
       consultations + new patients; **WU-F2** the two due reports. _Done._
 - [x] **WU-G — [[REP-007]] the CSV export.** _Done: see the evidence log._
-- [ ] **WU-H — [[REP-010]] the clinical record entry surface.** Vaccinations and
-      deworming: list, create and correct, on the proxy and permissions that
-      already ship ([[DEC-067]]). Lands BEFORE REP-008, whose empty state links
-      here.
+- [x] **WU-H — [[REP-010]] the clinical record entry surface.** _Done: see the
+      evidence log._ deworming: list, create and correct, on the proxy and
+      permissions that already ship ([[DEC-067]]). Lands BEFORE REP-008, whose
+      empty state links here.
 - [ ] **WU-I — [[REP-008]] the staff surfaces and the e2e lane.**
 - [ ] **WU-J — [[REP-009]] the epic closure and evidence.**
 
@@ -351,3 +351,34 @@ Commit `WU-G` on `feat/epic-18-dashboards-reports`.
 
 **Skipped:** the `apps/e2e` lane (Docker unavailable); the browser path is
 covered by the BFF unit suite.
+
+### WU-H — the clinical record entry surface
+
+Commit `WU-H` on `feat/epic-18-dashboards-reports`.
+
+- **The first work unit in the epic with no backend change.** The API routes,
+  the BFF allowlist and `vet.clinical.*` all shipped in EPIC-06 and were never
+  consumed by a staff screen; what was missing was a client module and a form.
+- `clinical-api.ts` gains the list/create/update trio for vaccinations and
+  deworming, with `nextDueAt?: string | null` on update.
+- `clinical-records.tsx` renders both kinds in the existing patient workspace:
+  list, create, correct, and an explicit remove-the-due-date control that sends
+  exactly `{ nextDueAt: null }` — nothing else is resubmitted, so clearing a
+  wrong date cannot rewrite the name or the administration instant in the same
+  write.
+- An absent due date renders as "No due date recorded", because DEC-065 made
+  NULL a real state and the due reports depend on telling it apart from a date.
+- Date entry is `<input type="datetime-local">`, the agenda's control. A
+  hand-rolled date-only "midnight UTC" would have made the due report bucket the
+  row to the previous local day.
+- **A wrong path in my own brief was caught here**: the spec said
+  `apps/e2e/tests/`, which does not exist — `playwright.config.ts` pins
+  `testDir: "./specs"` and both tsconfig and lint target `specs/**/*`. The
+  worker stopped rather than write a spec the lane would never discover, and the
+  file went to `apps/e2e/specs/`. The Story and this log now use the real path.
+- Gates: web **1172 → 1212** (+40), api 1634, database 549;
+  format/lint/typecheck/ build green, and `apps/e2e` typecheck+lint pass so the
+  spec is statically valid.
+
+**Not verified:** the `apps/e2e` lane cannot run here (no Docker, no built apps,
+no database). The spec is written, statically valid and explicitly unrun.
