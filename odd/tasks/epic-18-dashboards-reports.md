@@ -79,8 +79,12 @@ Each work unit is one commit carrying its tests and documentation.
       log._
 - [ ] **WU-F — [[REP-006]] the veterinary reports.**
 - [ ] **WU-G — [[REP-007]] the CSV export.**
-- [ ] **WU-H — [[REP-008]] the staff surfaces and the e2e lane.**
-- [ ] **WU-I — [[REP-009]] the epic closure and evidence.**
+- [ ] **WU-H — [[REP-010]] the clinical record entry surface.** Vaccinations and
+      deworming: list, create and correct, on the proxy and permissions that
+      already ship ([[DEC-067]]). Lands BEFORE REP-008, whose empty state links
+      here.
+- [ ] **WU-I — [[REP-008]] the staff surfaces and the e2e lane.**
+- [ ] **WU-J — [[REP-009]] the epic closure and evidence.**
 
 ## Review workload
 

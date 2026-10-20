@@ -2,7 +2,8 @@
 id: TD-055
 type: tech-debt
 title:
-  The staff clinical surface is encounters only — five record kinds are API-only
+  The staff clinical surface is encounters plus two — three record kinds stay
+  API-only
 status: open
 severity: medium
 owner: product
@@ -34,11 +35,16 @@ fully implements:
 ```text
 kind          API routes                                                      staff UI
 treatments    GET|POST /patients/:patientId/clinical/treatments               none
-vaccinations  GET|POST /patients/:patientId/clinical/vaccinations             none
-deworming     GET|POST /patients/:patientId/clinical/deworming                none
+vaccinations  GET|POST /patients/:patientId/clinical/vaccinations             REP-010
+deworming     GET|POST /patients/:patientId/clinical/deworming                REP-010
 studies       GET|POST /patients/:patientId/clinical/studies                  none
 weights       GET|POST /patients/:patientId/clinical/weights                  none
 ```
+
+**Narrowed by [[REP-010]]** ([[DEC-067]]): vaccinations and deworming gained a
+staff surface, because [[EPIC-18]] introduced `next_due_at` on exactly those two
+kinds and therefore owned the smallest path that can fill it. The three kinds
+with `none` remain API-only, which is what this item now tracks.
 
 Three surfaces exist for them and none is a staff write path:
 
@@ -51,23 +57,28 @@ So a tenant can display a patient's vaccinations to its owner but has no screen
 on which to record one. The capability is reachable only by calling the API
 directly, which no staff role does.
 
-## Why this matters to [[EPIC-18]] specifically
+## How the gap divided, and why
 
 PRD §31 asks for "upcoming/overdue vaccines" and "upcoming deworming".
-[[DEC-065]] made those computable by adding a nullable `next_due_at` to both
-tables, entered by staff — because the veterinarian knows the booster interval
-and the system must not guess it.
+[[DEC-065]] made those computable by adding a nullable `next_due_at`, entered by
+staff, because the veterinarian knows the booster interval and the system must
+not guess it.
 
-[[REP-001]] delivered the column and the API contract. **It could not deliver
-the entry surface, because there was no surface to add a field to.** That was
-recorded rather than papered over: creating a whole clinical-record form inside
-a "prerequisites" Story would have been a silent scope expansion across two
-epics.
+[[REP-001]] delivered the column and the API contract, and **could not deliver
+the entry surface, because there was no surface to add a field to.**
 
-The consequence is stated plainly: until this item lands, both due reports are
-empty for every tenant, and the only way to populate them is a direct API call.
-That is the same limitation the vaccination capability already had; the report
-inherits it rather than creating it.
+[[DEC-067]] then split the gap on a boundary instead of taking all of it:
+
+- **vaccinations and deworming → [[REP-010]]**, because this epic introduced the
+  field those two kinds carry. An epic that creates a field and ships the report
+  reading it owns the smallest path that can fill it.
+- **treatments, studies and weights → this item**, because no report this epic
+  delivers reads them. They have different shapes (dose, study type, weight plus
+  unit) and together they are a UI epic, not a work unit.
+
+The proxy (`apps/web/src/app/api/clinical/[[...path]]/route.ts`) already
+allowlists all five kinds and `vet.clinical.create/update/read` are already
+seeded and granted, so REP-010 needed neither: it is a client module and a form.
 
 ## What a fix would need
 

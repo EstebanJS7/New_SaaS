@@ -82,6 +82,9 @@ approximating them. The accepted decisions are [[DEC-062]] (gating and surface),
   custom range ([[DEC-063]]).
 - The staff dashboard at `/app` and the reports surface at `/app/reports`
   ([[DEC-062]]).
+- The narrow clinical entry surface the due reports depend on: recording a
+  vaccination or a deworming treatment with its due date, and correcting it
+  ([[REP-010]], [[DEC-067]]).
 - Synchronous, bounded CSV export of any report ([[DEC-066]]).
 - Tenant isolation for every new read, with the cross-tenant UUID answering
   `404`.
@@ -106,6 +109,10 @@ approximating them. The accepted decisions are [[DEC-062]] (gating and surface),
 - **No CSV import.** That is [[EPIC-19]].
 - **No revaccination protocol engine.** [[DEC-065]] adds a staff-entered due
   date, not immunology the system would have to assume.
+- **No clinical record module.** [[REP-010]] builds the entry path for the two
+  kinds whose due date this epic introduced, and nothing else. Treatments,
+  studies and weights stay API-only ([[TD-055]], narrowed by [[DEC-067]]) —
+  building them here would be a UI epic hung off a reporting epic's closure.
 
 ## Acceptance Criteria
 
@@ -141,6 +148,7 @@ approximating them. The accepted decisions are [[DEC-062]] (gating and surface),
 - [[REP-005]] — The inventory reports.
 - [[REP-006]] — The veterinary reports.
 - [[REP-007]] — The CSV export.
+- [[REP-010]] — The clinical record entry surface (vaccinations and deworming).
 - [[REP-008]] — The staff surfaces.
 - [[REP-009]] — The epic closure and evidence.
 
