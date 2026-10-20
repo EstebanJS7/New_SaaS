@@ -382,3 +382,7 @@ Commit `WU-H` on `feat/epic-18-dashboards-reports`.
 
 **Not verified:** the `apps/e2e` lane cannot run here (no Docker, no built apps,
 no database). The spec is written, statically valid and explicitly unrun.
+
+- [[TD-055]] — the three clinical record kinds still without a staff surface.
+- [[TD-056]] — the in-memory reporting boundary cannot prove `take` enforcement
+  or `select` projection; added after two independent verifications flagged it.

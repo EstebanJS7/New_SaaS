@@ -268,6 +268,9 @@ the movement report dates rows by their own `createdAt`.
   and `receivedAt` are nullable in Prisma. They assert presence rather than
   defaulting a missing close amount to `"0.00"` or dropping an undated receipt.
   No error _codes_ were minted.
+- The caps on the three reads are proven at the SERVICE level (the suites assert
+  the `take: LIMIT + 1` argument and the refusal), not against the engine: the
+  in-memory fake ignores `take`. [[TD-056]] records that gap and its trigger.
 
 ## Technical Debt
 

@@ -271,6 +271,12 @@ else, not an empty body.
   deliberate (no upstream request for an obviously invalid code) and is
   documented.
 - No row content is ever logged; the file exists only in the response.
+- The 10 000-row export cap is proven at the SERVICE level against a stub,
+  because the in-memory fake ignores `take`; [[TD-056]] records that gap.
+- The CSV samples above were corrected after independent verification: the first
+  version showed four- and one-column files while the definitions emit seven and
+  five. An illustration that does not match the contract teaches the wrong
+  contract, which is why the samples are now copied from the real header rows.
 
 ## Technical Debt
 

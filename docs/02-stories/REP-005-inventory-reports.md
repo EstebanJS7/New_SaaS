@@ -271,6 +271,10 @@ movement falls outside the period — the clearest possible demonstration that
   correctness costs one extra indexed existence query, which the first version
   of this Story did not budget — the corrected defect below is why it is worth
   it.
+- The caps on both inventory reads are proven at the SERVICE level (the suites
+  assert the `take: LIMIT + 1` argument and the refusal), not against the
+  engine: the in-memory fake ignores `take`. [[TD-056]] records that gap and its
+  trigger.
 
 ## Technical Debt
 

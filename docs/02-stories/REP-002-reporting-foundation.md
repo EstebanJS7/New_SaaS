@@ -289,8 +289,10 @@ on all six roles and `reports.export` on `OWNER` and `ADMIN` only.
   offset.
 - The row cap is not proven against the in-memory fake's `take` (the fake
   returns every match), so the cap is asserted by row count rather than by a
-  truncated read. The live-PostgreSQL lane is where the `take` bound would be
-  exercised.
+  truncated read. Two independent verifications flagged this; it is now
+  [[TD-056]], which records the concrete implication: the service suites pin the
+  `take` ARGUMENT, but no reporting block exists in the live-PostgreSQL lane, so
+  the engine's own enforcement of `take` is unproven for every report.
 - The currency in a response is the tenant's configured sale currency; no
   conversion exists anywhere in the system ([[DEC-022]]) and the report does not
   invent one.
