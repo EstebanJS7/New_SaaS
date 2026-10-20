@@ -370,6 +370,23 @@ export interface StockBalanceRow {
 }
 
 /**
+ * Predicate fields the in-memory stock-ledger reads are allowed to build. Named
+ * (rather than inline at the delegate) from EPIC-18 REP-005, because the stock
+ * report's flow read adds the `createdAt` range and an inline shape would have to
+ * be widened in two places.
+ */
+export interface StockMovementWhere {
+  tenantId: string;
+  catalogItemId?: string;
+  /**
+   * Report-dated movement range (EPIC-18 REP-005): HALF-OPEN `[gte, lt)` on the
+   * movement's own `createdAt`. `stock_movement` is append-only and immutable, so
+   * its creation instant IS its business instant.
+   */
+  createdAt?: { gte?: Date; lt?: Date };
+}
+
+/**
  * Tenant-scoped supplier identity row (EPIC-11 W2). Data classification
  * (DEC-011): `name` is INTERNAL and the five optional identity/contact fields
  * are CONFIDENTIAL. This fake does NOT enforce the per-tenant `taxId` partial
@@ -1512,7 +1529,16 @@ export interface IsolationDatabase {
         };
         orderBy?: readonly { name?: "asc" | "desc"; id?: "asc" | "desc" }[];
       }) => CatalogItemRow[];
-      findFirst: (args: { where: { id: string; tenantId: string } }) => CatalogItemRow | null;
+      findFirst: (args: {
+        where: {
+          id?: string;
+          tenantId: string;
+          tracksStock?: boolean;
+          /** Existence probe for "does this tenant monitor anything?" (REP-005). */
+          lowStockThreshold?: { not: null };
+        };
+        select?: { id?: true; name?: true; kind?: true };
+      }) => CatalogItemRow | null;
       create: (args: {
         data: {
           tenantId: string;
@@ -1950,7 +1976,7 @@ export interface IsolationDatabase {
         };
       }) => StockMovementRow;
       findMany: (args: {
-        where: { tenantId: string; catalogItemId?: string };
+        where: StockMovementWhere;
         orderBy?: readonly {
           createdAt?: "asc" | "desc";
           id?: "asc" | "desc";
@@ -3773,9 +3799,19 @@ export function createIsolationDatabase(): IsolationDatabase {
         return rows;
       },
       findFirst: ({ where }) =>
-        [...catalogItemTable.values()].find(
-          (candidate) => candidate.id === where.id && candidate.tenantId === where.tenantId
-        ) ?? null,
+        [...catalogItemTable.values()].find((candidate) => {
+          if (candidate.tenantId !== where.tenantId) return false;
+          if (where.id !== undefined && candidate.id !== where.id) return false;
+          if (where.tracksStock !== undefined && candidate.tracksStock !== where.tracksStock) {
+            return false;
+          }
+          // `{ not: null }` is the only shape the report asks for: the item is
+          // MONITORED. A NULL threshold means "not monitored" (DEC-065).
+          if (where.lowStockThreshold !== undefined && candidate.lowStockThreshold === null) {
+            return false;
+          }
+          return true;
+        }) ?? null,
       create: ({ data }) => {
         const now = new Date();
         const created: CatalogItemRow = {
@@ -4804,7 +4840,11 @@ export function createIsolationDatabase(): IsolationDatabase {
         const rows = [...stockMovementTable.values()].filter(
           (candidate) =>
             candidate.tenantId === where.tenantId &&
-            (where.catalogItemId === undefined || candidate.catalogItemId === where.catalogItemId)
+            (where.catalogItemId === undefined ||
+              candidate.catalogItemId === where.catalogItemId) &&
+            // REP-005: the period's flow. One shared half-open predicate, so the
+            // fake cannot disagree with PostgreSQL about a boundary.
+            matchesHalfOpenInstant(candidate.createdAt, where.createdAt)
         );
         return orderBy === undefined ? rows : orderStockMovements(rows, orderBy);
       },

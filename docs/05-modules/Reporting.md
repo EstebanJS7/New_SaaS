@@ -8,15 +8,15 @@ updated: 2026-10-20
 # Reporting
 
 The reporting module answers PRD §31's questions about data the tenant already
-owns: sales by period, payment methods and sales by product/service today, and
-the further reports EPIC-18 will add. It is a Core domain and a **read-only**
+owns: sales by period, payment methods, sales by product/service, the cash
+ledger, the receipts and the inventory. It is a Core domain and a **read-only**
 one — nothing in this module writes, so there is no ledger, no audit row and no
 reversal to reason about here.
 
 [[REP-002]] established the foundation every later report consumes: the period
 rule, the response contract and the permission family. [[REP-003]] added the two
-commercial cuts over the same completed sales, and [[REP-004]] added the cash
-ledger and the receipts.
+commercial cuts over the same completed sales, [[REP-004]] added the cash ledger
+and the receipts, and [[REP-005]] added the two inventory reports.
 
 ## Access
 
@@ -105,6 +105,8 @@ hours. Local midnight of 2024-10-06 never existed (the clock jumped 00:00 →
 | `GET /reports/cash-sessions`            | `reports.read` | The sessions that **closed** in the period, with their stored opening, expected, counted and difference.    |
 | `GET /reports/cash-movements`           | `reports.read` | The period's movements rolled up per `(type, direction)` with the [[DEC-030]] sign resolved, plus the net.  |
 | `GET /reports/purchases`                | `reports.read` | The purchases **received** in the period, with their line count, total quantity and supplier (no money).    |
+| `GET /reports/stock`                    | `reports.read` | The CURRENT balance per tracked item, plus the PERIOD's ledger flow (in, out, net).                         |
+| `GET /reports/low-stock`                | `reports.read` | The items at or below their own threshold. **No query parameters at all.**                                  |
 
 There is deliberately no command route, no `PATCH` and no `DELETE`: a report
 aggregates and never writes. Tenant identity is never an input — it comes from
@@ -113,6 +115,10 @@ cross-tenant-addressable resource on this surface.
 
 Query: `?preset=<preset>` **or** `?from=YYYY-MM-DD&to=YYYY-MM-DD`. The query
 schema is strict, so an unknown key is refused rather than ignored.
+`GET /reports/low-stock` is the ONE exception and takes no query at all: it is a
+current-state view, so every key — `from`, `to`, `preset`, a typo, a `tenantId`
+— is a `400` with `This report takes no query parameters.` instead of a key that
+silently does nothing.
 
 Response (`GET /reports/sales-by-period?from=2026-06-10&to=2026-06-11`):
 
@@ -549,6 +555,181 @@ An empty period is `rows: []`.
 }
 ```
 
+### `GET /reports/stock`
+
+What is on hand, and what moved in the period. **Two different facts live in
+every row and they must never be read as one:**
+
+| Column                          | Source                       | Meaning                                                                                                     |
+| ------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `quantity`                      | `stock_balance` (PROJECTION) | The **CURRENT BALANCE** — a SNAPSHOT as of now. No history, no date, never narrowed by the period.          |
+| `inbound`                       | `stock_movement` (LEDGER)    | The **PERIOD'S** sum of the POSITIVE ledger quantities.                                                     |
+| `outbound`                      | `stock_movement` (LEDGER)    | The **PERIOD'S** negative quantities as a POSITIVE MAGNITUDE — the absolute value of their sum.             |
+| `net`                           | `stock_movement` (LEDGER)    | The **PERIOD'S** signed sum: `inbound − outbound` exactly, negative when the period moved more out than in. |
+| `name`, `kind`, `catalogItemId` | `catalog_item`               | The item's identity as the catalog holds it today.                                                          |
+
+`quantity` is **not** the period's net. An item stocked last year and sold last
+week has a positive `quantity` and a negative `net` for last week; an item with
+a balance and no movement in the period reports `"0.000"` for all three flow
+columns while keeping its balance. The two numbers answer different questions,
+which is why the report reads the projection for one and the ledger for the
+other and never derives either from the other.
+
+`stock_balance` is a transactional projection — exactly one row per
+`(tenant, item)`, written in the same transaction as the movements that change
+it, under the per-`(tenant, item)` advisory lock EPIC-10 introduced after the
+projection's `BLOCK` race produced a real lost update. `stock_movement` is the
+immutable ledger. The balance is **never** the source of truth and this report
+never recalculates or repairs it: if it were wrong, that is an EPIC-10 concern,
+not a reporting one.
+
+`stock_movement.quantity` is **already signed** — positive is an input, negative
+an output — and the database rejects zero. No movement type owns that sign (the
+contrast with cash is deliberate: [[DEC-030]] puts the sign in the kind). The
+types are only `ADJUSTMENT`, `PURCHASE` and `SALE`, and the report never
+interprets them for the flow: `inbound` sums the positives, `outbound` sums the
+absolute values of the negatives, `net` sums the signed rows. All three are
+`Prisma.Decimal` from the first add and are emitted on the column's own
+`Decimal(10, 3)` scale.
+
+One row per item that has a balance row **and** `tracksStock = true`. An item
+with `tracksStock = false` appears in neither inventory report, even when it has
+a balance and a threshold. An item with no balance row has never moved and is
+absent: there is no snapshot to report.
+
+Rows are ordered by `name` ascending, then `catalogItemId` ascending.
+
+An item with movements in the period but **no** balance row is an anomalous data
+state — the projection is co-committed with its movements — and the report
+refuses with a loud `500 INTERNAL` naming the item instead of dropping the flow.
+A body that names a catalog item the batched read did not return is the same
+refusal: the composite `RESTRICT` foreign key makes it unreachable, and a
+nameless row would be worse than a failure.
+
+There is no `currency`: a quantity is not money, and no item carries a cost
+([[DEC-010]]), so valuation would invent a costing method ([[REP-005]], out of
+scope).
+
+```json
+{
+  "report": "stock",
+  "period": {
+    "preset": null,
+    "fromDate": "2026-06-10",
+    "toDate": "2026-06-11",
+    "timeZone": "America/Asuncion",
+    "fromInstant": "2026-06-10T03:00:00.000Z",
+    "toInstant": "2026-06-12T03:00:00.000Z"
+  },
+  "rows": [
+    {
+      "catalogItemId": "57aa…",
+      "name": "Balanceado 10kg",
+      "kind": "SUPPLY",
+      "quantity": "10.000",
+      "inbound": "15.000",
+      "outbound": "5.000",
+      "net": "10.000"
+    },
+    {
+      "catalogItemId": "41ab…",
+      "name": "Jeringa 5ml",
+      "kind": "SUPPLY",
+      "quantity": "0.000",
+      "inbound": "0.000",
+      "outbound": "20.000",
+      "net": "-20.000"
+    }
+  ]
+}
+```
+
+An empty period over an empty inventory is `rows: []` with the period echoed,
+never an error.
+
+**The balance-versus-ledger invariant is a TEST-level check, not a runtime
+one.** EPIC-10's closure proved that the projection equals the signed sum of its
+movements, and the service suite reuses that equality as a report-level guard
+for a seeded item with inbound and outbound movements. It cannot be asserted at
+runtime: the report's ledger read is **period-bounded**, so production never
+sees an item's lifetime movements and could not compute the lifetime sum the
+balance represents. That asymmetry is exactly why the two numbers are labelled
+separately in the DTO.
+
+### `GET /reports/low-stock`
+
+What is about to run out. It is a **current-state** view, not a period view, so
+it takes **no query parameters at all**: `?from=…` on this route is a `400`
+rather than a silently ignored key.
+
+| Column          | Meaning                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| `catalogItemId` | The item the threshold belongs to.                                                         |
+| `name`          | The item's name as the catalog holds it today.                                             |
+| `quantity`      | The **CURRENT BALANCE**, exact fixed-scale 3 decimals — a snapshot, exactly as in `stock`. |
+| `threshold`     | The item's own non-NULL `low_stock_threshold`, 3 decimals.                                 |
+| `shortfall`     | `threshold − quantity`, 3 decimals. Always `>= 0`; `"0.000"` means exactly at it.          |
+
+A row appears only when the item's threshold is **non-NULL** and
+`quantity <= threshold`. The comparison is `<=`, not `<`: an item sitting
+exactly on its threshold has nothing to spare, so it is low; one a thousandth
+above it is not.
+
+**NULL means "not monitored", and the report never invents a default**
+([[DEC-065]]). An item with a NULL threshold never appears — not even at
+quantity zero — because nobody said what "low" means for it. A tenant-level
+default was explicitly rejected: ten units of a vaccine and ten units of a
+syringe are not the same fact. Every tenant therefore starts with an empty
+report, which is a first-run state the UI must render honestly rather than as a
+failure.
+
+`tracksStock = false` items never appear here either.
+
+Rows are ordered `shortfall` **descending**, then `name` ascending: the most
+depleted item is first, and two items equally short still have one order. The
+sort runs on exact `Decimal` values before anything is formatted, so the
+ordering is never decided by a rendered string.
+
+**`thresholdsConfigured` makes the two empty answers distinguishable.** Both are
+an empty `rows` array, and they must not look identical:
+
+| `thresholdsConfigured` | `rows` | Meaning                                                   |
+| ---------------------- | ------ | --------------------------------------------------------- |
+| `false`                | `[]`   | Nobody has set a threshold yet — the report is unstarted. |
+| `true`                 | `[]`   | Thresholds exist and every item is above its own.         |
+
+The flag is true when at least one tracked item the report read carries a
+non-NULL threshold. It is computed over the items that HAVE a balance row,
+because the projection is what the report reads: an item that has a threshold
+but has never moved has no balance to compare and no row to render, so it is not
+visible to this view (a data-source limitation of [[REP-005]], not a bug).
+
+There is no `period` echo and no `currency` on this response: a current-state
+view that echoed a range would claim a filter that was never applied.
+
+```json
+{
+  "report": "low-stock",
+  "thresholdsConfigured": true,
+  "rows": [
+    {
+      "catalogItemId": "41ab…",
+      "name": "Jeringa 5ml",
+      "quantity": "0.000",
+      "threshold": "2.000",
+      "shortfall": "2.000"
+    },
+    {
+      "catalogItemId": "6cd1…",
+      "name": "Alcohol 500ml",
+      "quantity": "6.000",
+      "threshold": "6.000",
+      "shortfall": "0.000"
+    }
+  ]
+}
+```
+
 ## Invariants
 
 - **A draft is never revenue.** The query filters `status = COMPLETED` **and**
@@ -566,12 +747,34 @@ An empty period is `rows: []`.
   so a report cannot be pointed at another tenant's rows.
 - **The row cap is a refusal, not a truncation.** Each read has its own cap and
   asks for one extra row: `REPORT_SALE_ROW_LIMIT` (20 000 completed sales),
-  `REPORT_CASH_MOVEMENT_ROW_LIMIT` (20 000 movements), and
-  `REPORT_CASH_SESSION_ROW_LIMIT` / `REPORT_PURCHASE_ROW_LIMIT` (5 000 sessions
-  / receipts). Exceeding one refuses with a stable message rather than returning
-  a silently partial aggregate ([[TD-053]] owns the eventual pushdown). The caps
-  differ because a drawer closes once a day per register while a movement ledger
-  is the dense one.
+  `REPORT_CASH_MOVEMENT_ROW_LIMIT` (20 000 movements),
+  `REPORT_STOCK_MOVEMENT_ROW_LIMIT` (20 000 stock movements), and
+  `REPORT_CASH_SESSION_ROW_LIMIT` / `REPORT_PURCHASE_ROW_LIMIT` /
+  `REPORT_STOCK_BALANCE_ROW_LIMIT` (5 000 sessions / receipts / balances).
+  Exceeding one refuses with a stable message rather than returning a silently
+  partial aggregate ([[TD-053]] owns the eventual pushdown). The caps differ
+  because a drawer closes once a day per register and an inventory holds one
+  balance per item, while a movement ledger is the dense one.
+- **A snapshot and a flow are never the same number.** The inventory reports
+  read `stock_balance` (a projection: CURRENT quantity, one row per item, no
+  history) for `quantity`, and `stock_movement` (the immutable ledger) for the
+  period's `inbound`/`outbound`/`net`. Neither is derived from the other,
+  `quantity` is never presented as a period figure, and the DTO, this document
+  and the module doc all state the difference. A balance with no movement in the
+  period reports `"0.000"` flows; a movement with no balance row refuses with
+  `INTERNAL` rather than being dropped.
+- **The stock sign is the stored one.** `stock_movement.quantity` is already
+  signed — positive in, negative out, zero rejected by the database — and no
+  type owns it (unlike cash, [[DEC-030]]). `outbound` is emitted as a POSITIVE
+  magnitude and `net` keeps the sign, so a reader never has to guess which
+  column carries a minus.
+- **A NULL threshold is not a default.** The low-stock report compares against
+  the item's own `low_stock_threshold` and skips NULL entirely ([[DEC-065]]): an
+  unmonitored item never appears, not even at quantity zero.
+  `thresholdsConfigured` is what lets a caller tell "nobody opted in" from
+  "everything is fine" — both are an empty `rows` array.
+- **`tracksStock = false` is not inventory.** A non-tracking item appears in
+  neither inventory report, whatever balance or threshold it holds.
 - **A report dates a row by its BUSINESS instant, never by a bookkeeping one.**
   Sales: `completed_at`. Closes: `closed_at`. Movements: their own `created_at`
   (the ledger is append-only, so the creation instant IS the business instant —
@@ -612,10 +815,13 @@ An empty period is `rows: []`.
 
 ## What later stories add
 
-The remaining reports ([[REP-005]], [[REP-006]]) reuse `resolveReportPeriod`,
-the response contract and the `reports.read` key. The CSV export ([[REP-007]])
-consumes `reports.export`. The dashboard ([[REP-008]]) consumes the same service
-methods rather than a second query.
+The remaining reports ([[REP-006]]) reuse `resolveReportPeriod`, the response
+contract and the `reports.read` key. The CSV export ([[REP-007]]) consumes
+`reports.export`. The dashboard ([[REP-008]]) consumes the same service methods
+rather than a second query. Stock **valuation** stays out of scope: no item
+carries a cost ([[DEC-010]]), so a valuation report would invent a costing
+method, and repairing a wrong `stock_balance` belongs to EPIC-10 rather than to
+a report.
 
 ## Tests
 
@@ -661,6 +867,28 @@ methods rather than a second query.
   quantity, `DRAFT`/`CANCELLED`/boundary receipts absent, tenant isolation for
   sessions, movements and purchases, the empty period, 400 per malformed period
   on all three, 403 without `reports.read` on all three and 401 unauthenticated.
+- `reporting.inventory.service.test.ts` — [[REP-005]]: the
+  balance-equals-signed- ledger-sum invariant with the reason it is a test-level
+  check only, the signed flow split into a positive `inbound` /
+  positive-magnitude `outbound` / signed `net`, the half-open movement query and
+  the undated balance query, the balance with no period movement, an item sold
+  to exactly zero, the missing-balance `INTERNAL` naming the item, the
+  missing-catalog-item `INTERNAL`, the union catalog read, both orderings, the
+  `tracksStock = false` exclusion from BOTH reports, the empty inventories, the
+  exact row key sets (no `currency`), both row caps, the 403 that reaches no
+  query, and for low stock: at-threshold included / just-above excluded /
+  NULL-threshold excluded at quantity zero, the exact shortfall, the
+  `shortfall`-descending order with the `name` tie-break, and the two
+  distinguishable empty states.
+- `reporting.inventory.integration.test.ts` — [[REP-005]]: both routes 200 with
+  the snapshot and the period's flow, the period echoed on `stock` only, a
+  boundary movement counted in the NEXT period, out-of-period movements reaching
+  no total, the non-tracking item and the NULL-threshold item absent, the
+  low-stock ordering with the `name` tie-break and an at-threshold row,
+  `thresholdsConfigured: false` for a tenant where nobody opted in, 400 per
+  malformed period on `stock`, **400 for ANY query key on `low-stock`**, 403
+  without `reports.read` on both, 401 unauthenticated, and tenant isolation for
+  balances, movements, items and low-stock rows.
 - `packages/database/src/reference-seed.test.ts` — `reports.read` is held by all
   six roles and `reports.export` by exactly `OWNER` and `ADMIN`.
 - `route-contract.probe.test.ts` — the route and its exact permission are

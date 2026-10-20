@@ -75,7 +75,8 @@ Each work unit is one commit carrying its tests and documentation.
       log._
 - [x] **WU-D — [[REP-004]] the cash and purchase reports.** _Done: see the
       evidence log._
-- [ ] **WU-E — [[REP-005]] the inventory reports.**
+- [x] **WU-E — [[REP-005]] the inventory reports.** _Done: see the evidence
+      log._
 - [ ] **WU-F — [[REP-006]] the veterinary reports.**
 - [ ] **WU-G — [[REP-007]] the CSV export.**
 - [ ] **WU-H — [[REP-008]] the staff surfaces and the e2e lane.**
@@ -218,5 +219,33 @@ Commit `WU-D` on `feat/epic-18-dashboards-reports`.
   predicate (`matchesHalfOpenInstant`) so the `>= gte` / `< lt` / NULL-matches-
   nothing rule has a single implementation instead of five copies.
 - Gates: api **1432 → 1478** (+46); format/lint/typecheck/build green.
+
+**Skipped:** the `apps/e2e` lane (no UI in this work unit).
+
+### WU-E — the inventory reports
+
+Commit `WU-E` on `feat/epic-18-dashboards-reports`.
+
+- `GET /reports/stock` reports the CURRENT `stock_balance` quantity beside the
+  PERIOD's `inbound`/`outbound`/`net` from the `stock_movement` ledger. The DTO,
+  the docs and the real-database proof all state that these are different
+  questions: one item read
+  `quantity 10.000 / inbound 20.000 / outbound 8.000 / net 12.000`, and the
+  difference is a movement outside the period.
+- `stock_movement.quantity` is already signed, so `outbound` is reported as a
+  POSITIVE magnitude — the stored sign already says the direction. No movement
+  type owns the sign here, unlike cash.
+- `GET /reports/low-stock` takes **no query at all** and refuses any key, so a
+  period cannot be silently ignored on a current-state report. The comparison is
+  `<=` (at the threshold is already low) and a NULL threshold is skipped before
+  any comparison.
+- **Fixed a defect found in this work unit:** `thresholdsConfigured` was derived
+  from the balanced items, so a tenant whose only thresholded item had never
+  moved was told "nobody configured anything". It is now its own existence probe
+  over `catalog_item`, with a regression test.
+- The balance-versus-ledger equality is proven as a TEST invariant and confirmed
+  on real PostgreSQL (`balance === all-time ledger sum: true`), because the
+  runtime movement read is period-bounded and cannot assert it live.
+- Gates: api **1478 → 1520** (+42); format/lint/typecheck/build green.
 
 **Skipped:** the `apps/e2e` lane (no UI in this work unit).

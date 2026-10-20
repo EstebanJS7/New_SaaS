@@ -3,7 +3,7 @@ id: REP-005
 type: story
 title: The inventory reports — stock and low stock
 epic: EPIC-18
-status: planned
+status: done
 priority: medium
 depends_on:
   - REP-002
@@ -68,23 +68,23 @@ render honestly rather than as a failure.
 
 ## Acceptance Criteria
 
-- [ ] `stock` returns one row per tracked item with a balance row, with
+- [x] `stock` returns one row per tracked item with a balance row, with
       `quantity` as a decimal string on the `Decimal(10,3)` scale.
-- [ ] The reported balance equals the signed sum of that item's `stock_movement`
+- [x] The reported balance equals the signed sum of that item's `stock_movement`
       rows — asserted for the seeded fixture.
-- [ ] The period's flow (in, out, net) is reported per item and a movement
+- [x] The period's flow (in, out, net) is reported per item and a movement
       outside the period does not contribute.
-- [ ] An item with `tracksStock = false` appears in neither report.
-- [ ] `low-stock` returns only items whose threshold is non-NULL and whose
+- [x] An item with `tracksStock = false` appears in neither report.
+- [x] `low-stock` returns only items whose threshold is non-NULL and whose
       quantity is `<= threshold`, ordered most-depleted first.
-- [ ] An item with a NULL threshold never appears in `low-stock`, even at
+- [x] An item with a NULL threshold never appears in `low-stock`, even at
       quantity zero.
-- [ ] An item exactly at its threshold appears; one just above does not.
-- [ ] Both routes require `reports.read` and are tenant-scoped.
-- [ ] Empty behaviour: `low-stock` returns an empty set with a distinguishable
+- [x] An item exactly at its threshold appears; one just above does not.
+- [x] Both routes require `reports.read` and are tenant-scoped.
+- [x] Empty behaviour: `low-stock` returns an empty set with a distinguishable
       reason when no item has a threshold, versus when thresholds exist and all
       are satisfied.
-- [ ] Tests required by the Story pass.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -140,13 +140,80 @@ None — REP-001 added catalog_item.low_stock_threshold.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented on `feat/epic-18-dashboards-reports`, extending the same module.
+
+- **The snapshot and the flow are separate numbers and the DTO says so.**
+  `quantity` comes from the `stock_balance` PROJECTION and is CURRENT, with no
+  history; `inbound`/`outbound`/`net` come from the `stock_movement` LEDGER and
+  are the PERIOD's flow. The real-data proof below shows one item at
+  `quantity 10.000`, `inbound 20.000`, `outbound 8.000`, `net 12.000` — three
+  different numbers for one item, which is exactly why they cannot be conflated.
+- `stock_movement.quantity` is already signed (positive is an input, negative an
+  output) and the DB rejects zero. `inbound` sums the positives, `outbound`
+  reports the negatives as a POSITIVE magnitude — the stored sign already says
+  the direction, so printing a second minus beside the label would double the
+  meaning — and `net` is the signed sum. No movement TYPE owns the sign here, in
+  contrast with cash ([[DEC-030]]).
+- `low-stock` takes **no query parameters at all** and refuses ANY key with its
+  own message, so `?from=...` on a current-state report is an error rather than
+  silently ignored.
+- The comparison is `<=`, not `<`: an item AT its threshold is already low. A
+  NULL threshold is skipped BEFORE any comparison, because NULL means "not
+  monitored" ([[DEC-065]]) and inventing a default is what that decision
+  refused.
+- **`thresholdsConfigured` is answered by its own existence probe, not derived
+  from the loop.** See the corrected limitation below: the first implementation
+  derived it from the balanced items, which is wrong for the one tenant it
+  matters to.
+- Both reads carry `take: LIMIT + 1` caps (5 000 balances, 20 000 movements) and
+  refuse rather than truncating; an item with movements in the period but no
+  balance row, or a balance naming an unresolvable catalog item, is a loud
+  `INTERNAL` naming the id.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (23/23 turbo tasks)
+pnpm typecheck      PASS  (23/23)
+pnpm build          PASS  (13/13)
+pnpm test           PASS  (23/23)
+  api        108 files (106 landed + 2 new)      1520 passed | 266 skipped  (+42)
+  database    30 files                            549 passed
+  web        110 files                           1164 passed
 ```
+
+42 new tests: 29 service and 13 integration. They prove the
+balance-versus-ledger equality, the positive-magnitude `outbound`, the
+period-bounded flow, the `<=` boundary, the NULL-threshold skip, the two
+distinguishable empty answers, the shortfall ordering with its name tie-break,
+both caps, permission-before-any-read, and the refusal of any query key on the
+current-state report.
+
+**Both queries were also proven against real PostgreSQL.** For the period
+`[2026-06-01T03:00Z, 2026-06-11T03:00Z)` in `America/Asuncion`, with one tracked
+item that moved, one non-tracked item, and one thresholded item that never
+moved:
+
+```text
+thresholdsConfigured probe -> Feed   (the tracksStock=false Grooming item is NOT
+                                     the answer; Vitamin is thresholded but has
+                                     no balance row, which is why the probe
+                                     cannot be derived from the balanced items)
+
+period movements read: 2   (the 2026-06-20 sale is outside the period)
+  Feed (tracksStock=true)
+    quantity 10.000   <- CURRENT balance, a snapshot with no history
+    inbound  20.000   <- the PERIOD's input
+    outbound  8.000   <- the PERIOD's output, as a positive magnitude
+    net      12.000   <- the PERIOD's signed sum
+    balance === all-time ledger sum: true (10.000)
+    at-or-below threshold 10.000: true   (the `<=` boundary)
+```
+
+The three flow numbers differ from the snapshot precisely because the `-2`
+movement falls outside the period — the clearest possible demonstration that
+`quantity` and `net` answer different questions.
 
 ## Tests Added
 
@@ -164,14 +231,39 @@ Not run.
 
 ## Known Limitations
 
+- **A `thresholdsConfigured` defect was found during this work unit and is
+  fixed.** The first implementation derived the flag from the balanced items, so
+  a tenant that set a threshold on an item which had never moved — no balance
+  row, therefore invisible to the batched catalog read — was told "nobody has
+  configured anything" while its configuration sat in the catalog. The flag is
+  now answered by its own indexed existence probe over `catalog_item`
+  (`tracksStock = true` **and** `lowStockThreshold IS NOT NULL`), and a
+  regression test pins the exact case: a tenant with a thresholded, never-moved
+  item now reads `thresholdsConfigured: true` with empty `rows`. The gap was
+  real precisely because it only misfires for the tenant who did the
+  configuring.
 - The stock snapshot has no as-of-date history: `stock_balance` is current only.
   A historical balance is not recoverable from this report, and reconstructing
   it from the ledger is not attempted here.
-- No valuation.
+- No valuation: no item carries a cost, only an optional informational reference
+  price ([[DEC-010]]), so a valuation would invent a costing method.
+- **The balance-versus-ledger equality is a TEST-level invariant, not a runtime
+  check.** The runtime movement read is period-bounded, so proving the equality
+  live would need a second, all-time ledger read per item. The test recomputes
+  it independently and the real-database proof above confirms it on real rows.
+- The low-stock shortfall ordering is a total order on
+  `(shortfall DESC, name ASC)` only; two rows tied on both fall back to the
+  balance read's order via a stable sort. Deterministic, but not a declared
+  third key (unlike the stock report's `(name, catalogItemId)`).
+- `thresholdsConfigured` is answered by an existence probe over the CATALOG, so
+  it is correct for a tenant whose only thresholded item has never moved. That
+  correctness costs one extra indexed existence query, which the first version
+  of this Story did not budget — the corrected defect below is why it is worth
+  it.
 
 ## Technical Debt
 
-- [[TD-053]].
+- [[TD-053]] — report query performance beyond directed indexes.
 
 ## Decisions / ADRs
 
@@ -185,4 +277,5 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+All required gates passed on 2026-10-19. The `apps/e2e` lane was not run (Docker
+unavailable; this Story adds no UI).

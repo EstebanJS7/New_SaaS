@@ -291,6 +291,11 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /reports/cash-sessions",
   "GET /reports/cash-movements",
   "GET /reports/purchases",
+  // EPIC-18 REP-005 — the inventory reports. `stock` is period-shaped (the
+  // projection's current quantity plus the period's ledger flow); `low-stock`
+  // takes NO query at all, because it is a current-state view.
+  "GET /reports/stock",
+  "GET /reports/low-stock",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -529,6 +534,8 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /reports/cash-sessions": REPORTING_PERMISSIONS.read,
   "GET /reports/cash-movements": REPORTING_PERMISSIONS.read,
   "GET /reports/purchases": REPORTING_PERMISSIONS.read,
+  "GET /reports/stock": REPORTING_PERMISSIONS.read,
+  "GET /reports/low-stock": REPORTING_PERMISSIONS.read,
 };
 
 describe("route-contract probe (deny-by-default)", () => {

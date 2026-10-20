@@ -5,18 +5,22 @@ import { REPORTING_PERMISSIONS } from "./reporting.permissions.js";
 import { ReportingService } from "./reporting.service.js";
 import {
   REPORT_PERIOD_QUERY_INVALID_MESSAGE,
+  REPORT_QUERY_NOT_ALLOWED_MESSAGE,
+  reportNoQuerySchema,
   reportPeriodQuerySchema,
   type CashMovementsResponse,
   type CashSessionsResponse,
+  type LowStockReportResponse,
   type PaymentMethodsResponse,
   type PurchasesResponse,
   type ReportPeriodQuery,
   type SalesByPeriodResponse,
   type SalesByProductServiceResponse,
+  type StockReportResponse,
 } from "./reporting.dto.js";
 
 /**
- * The staff reporting surface (EPIC-18 REP-002, REP-003, REP-004).
+ * The staff reporting surface (EPIC-18 REP-002, REP-003, REP-004, REP-005).
  *
  * **Read-only.** Reports aggregate; they never write, so there is no command
  * route, no `PATCH` and no `DELETE` on this surface at all.
@@ -27,6 +31,8 @@ import {
  * narrow: a closed query schema (an unknown key is refused, not ignored) whose
  * semantic rejections all live in the period rule, so every malformed period
  * produces ONE stable message per condition rather than a parser's paraphrase.
+ * The ONE current-state route (`low-stock`) accepts no query at all and refuses
+ * every key for the same reason.
  *
  * There is NO feature-code gate ([[DEC-062]]): `reports.read` is the whole
  * server-side guard, re-asserted in the service as defense in depth.
@@ -102,6 +108,32 @@ export class ReportingController {
   }
 
   /**
+   * Stock (PRD §31, [[REP-005]]): the CURRENT balance per tracked item from the
+   * projection, plus the PERIOD's movement flow from the ledger. Two different
+   * facts with two different shapes — `quantity` is a snapshot, `inbound` /
+   * `outbound` / `net` are the period. Same period contract as every report here.
+   */
+  @Get("stock")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async stock(@Query() query: unknown): Promise<StockReportResponse> {
+    return this.reporting.stock(this.parsePeriod(query));
+  }
+
+  /**
+   * Low stock (PRD §31, [[REP-005]]): the items at or below their own threshold.
+   *
+   * This route takes **no query parameters at all** — it is a current-state view,
+   * so a period cannot narrow it and `?from=…` here is a refusal rather than a
+   * key that silently does nothing.
+   */
+  @Get("low-stock")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async lowStock(@Query() query: unknown): Promise<LowStockReportResponse> {
+    this.assertNoQuery(query);
+    return this.reporting.lowStock();
+  }
+
+  /**
    * The ONE period parser every report route uses: shape first, semantics in the
    * period rule. Factored so a new report cannot grow a second, drifting parser.
    */
@@ -111,5 +143,18 @@ export class ReportingController {
       throw new DomainError("VALIDATION_FAILED", REPORT_PERIOD_QUERY_INVALID_MESSAGE);
     }
     return parsed.data;
+  }
+
+  /**
+   * The refusal a CURRENT-STATE report applies to its query: it accepts no keys,
+   * so every key — a known-looking `from`, a typo, a tenant id — is refused with
+   * the same stable message. Silently ignoring one would let a caller believe a
+   * period had been applied to a report that has no period.
+   */
+  private assertNoQuery(query: unknown): void {
+    const parsed = reportNoQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_QUERY_NOT_ALLOWED_MESSAGE);
+    }
   }
 }

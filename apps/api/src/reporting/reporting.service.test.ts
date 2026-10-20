@@ -117,6 +117,13 @@ function harness(
         catalogQueries.push(args);
         return Promise.resolve(options.catalogItems ?? []);
       },
+      // The low-stock existence probe belongs to REP-005 and is not exercised by
+      // this suite: it THROWS rather than answering `false`, so a REP-002/REP-003
+      // case that reached it would fail loudly instead of silently reporting
+      // "nobody configured anything".
+      findFirst: () => {
+        throw new Error("This suite must not run the low-stock threshold probe.");
+      },
     },
     // REP-004's reads are not exercised by this suite: they THROW rather than
     // answer `[]`, so a REP-002/REP-003 case that reached one would fail loudly
@@ -139,6 +146,18 @@ function harness(
     supplier: {
       findMany: () => {
         throw new Error("REP-002/REP-003 must not read suppliers.");
+      },
+    },
+    // REP-005's inventory reads are supplied by their own suite, for the same
+    // reason as REP-004's: they THROW here so a case that reached one fails loudly.
+    stockBalance: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read stock balances.");
+      },
+    },
+    stockMovement: {
+      findMany: () => {
+        throw new Error("REP-002/REP-003 must not read stock movements.");
       },
     },
   };
@@ -570,8 +589,23 @@ describe("ReportingService · sales by product/service ([[REP-003]])", () => {
         ]),
       ],
       catalogItems: [
-        { id: ITEM_PRODUCT, name: "Vacuna", kind: "PRODUCT" },
-        { id: ITEM_SERVICE, name: "Consulta", kind: "SERVICE" },
+        // REP-003 reads only identity, name and `kind`; the two inventory columns
+        // are REQUIRED on the row so "not selected" can never pass for a NULL
+        // threshold (DEC-065) — see `ReportCatalogItemRow`.
+        {
+          id: ITEM_PRODUCT,
+          name: "Vacuna",
+          kind: "PRODUCT",
+          tracksStock: true,
+          lowStockThreshold: null,
+        },
+        {
+          id: ITEM_SERVICE,
+          name: "Consulta",
+          kind: "SERVICE",
+          tracksStock: false,
+          lowStockThreshold: null,
+        },
       ],
     });
 
@@ -637,7 +671,15 @@ describe("ReportingService · sales by product/service ([[REP-003]])", () => {
           },
         ]),
       ],
-      catalogItems: [{ id: ITEM_PRODUCT, name: "Vacuna", kind: "PRODUCT" }],
+      catalogItems: [
+        {
+          id: ITEM_PRODUCT,
+          name: "Vacuna",
+          kind: "PRODUCT",
+          tracksStock: true,
+          lowStockThreshold: null,
+        },
+      ],
     });
 
     const response = await service.salesByProductService({
@@ -666,6 +708,8 @@ describe("ReportingService · sales by product/service ([[REP-003]])", () => {
       id: catalogItemId,
       name,
       kind: "PRODUCT",
+      tracksStock: true,
+      lowStockThreshold: null,
     });
     const line = (catalogItemId: string, total: string): SaleLineFixture => ({
       catalogItemId,
@@ -751,8 +795,20 @@ describe("ReportingService · sales by product/service ([[REP-003]])", () => {
         ]),
       ],
       catalogItems: [
-        { id: ITEM_PRODUCT, name: "Vacuna", kind: "PRODUCT" },
-        { id: ITEM_SERVICE, name: "Consulta", kind: "SERVICE" },
+        {
+          id: ITEM_PRODUCT,
+          name: "Vacuna",
+          kind: "PRODUCT",
+          tracksStock: true,
+          lowStockThreshold: null,
+        },
+        {
+          id: ITEM_SERVICE,
+          name: "Consulta",
+          kind: "SERVICE",
+          tracksStock: false,
+          lowStockThreshold: null,
+        },
       ],
     });
 

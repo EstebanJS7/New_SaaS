@@ -14,6 +14,8 @@ import type {
   CashSessionRowDto,
   CashSessionsResponse,
   KindTotalDto,
+  LowStockReportResponse,
+  LowStockReportRowDto,
   PaymentMethodRowDto,
   PaymentMethodsResponse,
   PurchaseRowDto,
@@ -24,6 +26,8 @@ import type {
   SalesByPeriodRowDto,
   SalesByProductServiceResponse,
   SalesByProductServiceRowDto,
+  StockReportResponse,
+  StockReportRowDto,
 } from "./reporting.dto.js";
 import { REPORTING_PERMISSIONS } from "./reporting.permissions.js";
 import {
@@ -33,6 +37,7 @@ import {
 } from "./report.period.js";
 import {
   ReportRepository,
+  type ReportCatalogItemRow,
   type ReportCashSessionRow,
   type ReportSaleLineRow,
   type ReportSaleRow,
@@ -91,6 +96,32 @@ export function reportSupplierMissingMessage(supplierId: string): string {
 }
 
 /**
+ * Stable message when the period's ledger names an item that has NO balance row.
+ *
+ * `stock_balance` is written in the SAME transaction as the movement that
+ * changes it (EPIC-10), under the per-`(tenant, item)` advisory lock, so the
+ * projection always exists once a movement does. This branch is therefore
+ * UNREACHABLE; it is asserted rather than assumed because the alternative —
+ * dropping the movement's flow — would report an item as untouched in a period
+ * where stock actually moved, and the row would look exactly like a correct one.
+ */
+export function reportStockMovementBalanceMissingMessage(catalogItemId: string): string {
+  return `The report read a stock movement whose item has no stock balance: ${catalogItemId}`;
+}
+
+/**
+ * Stable message when a stock read names a catalog item the batched catalog read
+ * did not return. `stock_balance` and `stock_movement` both carry a `RESTRICT`
+ * composite `(tenant_id, catalog_item_id)` foreign key, so this is UNREACHABLE —
+ * the same discipline as the missing sale line item and the missing supplier: a
+ * row whose name cannot be resolved is refused loudly, never rendered nameless
+ * and never silently dropped.
+ */
+export function reportStockCatalogItemMissingMessage(catalogItemId: string): string {
+  return `The report read a stock row whose catalog item is missing: ${catalogItemId}`;
+}
+
+/**
  * The response order of the movement roll-up: `type` ascending (this list is that
  * alphabetical order) and then `direction` ascending with `null` FIRST.
  *
@@ -139,6 +170,30 @@ interface TenderBucket {
 }
 
 /**
+ * One item's PERIOD FLOW from the immutable ledger ([[REP-005]]), held as exact
+ * decimals from the first add.
+ *
+ * `inbound` and `outbound` are both POSITIVE magnitudes: the stored sign already
+ * says which way a movement went, so `outbound` is reported as the size of the
+ * negative rows rather than as a second negative. `net` keeps the sign and is
+ * exactly `inbound - outbound`.
+ */
+interface StockFlow {
+  inbound: Prisma.Decimal;
+  outbound: Prisma.Decimal;
+  net: Prisma.Decimal;
+}
+
+/** One low-stock candidate BEFORE formatting, so the sort compares exact decimals. */
+interface LowStockCandidate {
+  readonly catalogItemId: string;
+  readonly name: string;
+  readonly quantity: Prisma.Decimal;
+  readonly threshold: Prisma.Decimal;
+  readonly shortfall: Prisma.Decimal;
+}
+
+/**
  * One accumulating money/quantity row, at BOTH stored scales: quantities on the
  * ledger's `Decimal(10, 3)` and money on `Decimal(14, 2)`. Every member starts as
  * a `Decimal` zero, so no value in the aggregate is ever a JavaScript `number`.
@@ -156,6 +211,14 @@ function zeroTotals(): DecimalTotals {
     net: new Prisma.Decimal(0),
     tax: new Prisma.Decimal(0),
     gross: new Prisma.Decimal(0),
+  };
+}
+
+function zeroStockFlow(): StockFlow {
+  return {
+    inbound: new Prisma.Decimal(0),
+    outbound: new Prisma.Decimal(0),
+    net: new Prisma.Decimal(0),
   };
 }
 
@@ -206,6 +269,17 @@ function totalsFor(map: Map<string, DecimalTotals>, key: string): DecimalTotals 
   }
   const created = zeroTotals();
   map.set(key, created);
+  return created;
+}
+
+/** The same accessor for the per-item stock flow, so no map is pre-filled. */
+function stockFlowFor(map: Map<string, StockFlow>, catalogItemId: string): StockFlow {
+  const existing = map.get(catalogItemId);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = zeroStockFlow();
+  map.set(catalogItemId, created);
   return created;
 }
 
@@ -697,6 +771,204 @@ export class ReportingService {
   }
 
   /**
+   * Stock on hand and the period's flow (PRD §31, [[REP-005]]): one row per
+   * tracked item that HAS a balance row.
+   *
+   * **Two different facts, and the report never lets them merge.** `quantity` is
+   * read from `stock_balance` — a transactional PROJECTION with one row per
+   * `(tenant, item)` and no history — so it is the CURRENT BALANCE and no period
+   * can narrow it. `inbound`/`outbound`/`net` are summed from the immutable
+   * `stock_movement` LEDGER inside the resolved period, so they are the PERIOD'S
+   * FLOW. An item stocked last year and sold last week has a positive `quantity`
+   * and a negative `net` for last week; conflating the two labels would make one
+   * of those numbers a lie.
+   *
+   * The ledger's `quantity` is ALREADY SIGNED, so `inbound` sums the positives,
+   * `outbound` sums the absolute values of the negatives (a POSITIVE magnitude)
+   * and `net` sums every row with its sign. All three are `Prisma.Decimal` from
+   * the first add and are emitted at the column's own scale of three decimals.
+   *
+   * An item with a balance and no movement in the period is NORMAL and reports
+   * `"0.000"` flows. An item with a movement and NO balance row is not: the
+   * projection is written in the same transaction as its movements, so it is an
+   * anomalous data state and refuses with `INTERNAL` naming the item rather than
+   * dropping the flow.
+   */
+  async stock(query: ReportPeriodQuery): Promise<StockReportResponse> {
+    await this.requireReadPermission();
+
+    const period = resolveReportPeriod(query, this.now());
+    // The SNAPSHOT: the projection, read whole. A balance row has no date, so it
+    // is never bounded by the period — that is the point of the two reads.
+    const balances = await this.reports.listStockBalances();
+    // The FLOW: the ledger, bounded to the period.
+    const movements = await this.reports.listStockMovements(period.fromInstant, period.toInstant);
+
+    const flows = new Map<string, StockFlow>();
+    for (const movement of movements) {
+      const quantity = toDecimal(movement.quantity);
+      const flow = stockFlowFor(flows, movement.catalogItemId);
+      if (quantity.isNegative()) {
+        // ABSOLUTE value: the stored sign says the direction, so the report
+        // renders the size and does not print a second minus beside `inbound`.
+        flow.outbound = flow.outbound.plus(quantity.abs());
+      } else if (quantity.isPositive()) {
+        flow.inbound = flow.inbound.plus(quantity);
+      }
+      flow.net = flow.net.plus(quantity);
+    }
+
+    const balanceByItem = new Map(
+      balances.map((balance) => [balance.catalogItemId, balance] as const)
+    );
+
+    // A movement whose item has no projection is anomalous (EPIC-10 writes both
+    // in one transaction under the `(tenant, item)` advisory lock), so it is
+    // refused by id instead of being dropped from the flow.
+    for (const catalogItemId of flows.keys()) {
+      if (!balanceByItem.has(catalogItemId)) {
+        throw new DomainError("INTERNAL", reportStockMovementBalanceMissingMessage(catalogItemId));
+      }
+    }
+
+    // ONE batched catalog read over the UNION of both id sets, skipped entirely
+    // when there is neither a balance nor a movement to identify (no N+1).
+    const catalog = await this.readCatalog(new Set([...balanceByItem.keys(), ...flows.keys()]));
+
+    const rows: StockReportRowDto[] = [];
+    for (const [catalogItemId, balance] of balanceByItem) {
+      const item = catalog.get(catalogItemId);
+      if (item === undefined) {
+        throw new DomainError("INTERNAL", reportStockCatalogItemMissingMessage(catalogItemId));
+      }
+      // `tracksStock = false` is a SERVICE or an explicitly untracked item: it is
+      // not inventory, so it appears in neither inventory report.
+      if (!item.tracksStock) {
+        continue;
+      }
+      const flow = flows.get(catalogItemId) ?? zeroStockFlow();
+      rows.push({
+        catalogItemId,
+        name: item.name,
+        kind: item.kind,
+        // The SNAPSHOT, padded to the column's three decimals.
+        quantity: toDecimal(balance.quantity).toFixed(3),
+        inbound: flow.inbound.toFixed(3),
+        outbound: flow.outbound.toFixed(3),
+        net: flow.net.toFixed(3),
+      });
+    }
+
+    // The row order is part of the response contract, so it is applied HERE.
+    rows.sort((left, right) => {
+      const byName = left.name.localeCompare(right.name);
+      return byName !== 0 ? byName : left.catalogItemId.localeCompare(right.catalogItemId);
+    });
+
+    return {
+      report: "stock",
+      period: toPeriodDto(period),
+      rows,
+    };
+  }
+
+  /**
+   * Items at or below their own low-stock threshold (PRD §31, [[REP-005]]).
+   *
+   * This is a CURRENT-STATE view and therefore takes NO period: it compares the
+   * projection's quantity with the item's own threshold, and neither has a date.
+   * The route refuses every query key for the same reason.
+   *
+   * An item is MONITORED only when somebody set a threshold on it ([[DEC-065]]):
+   * `lowStockThreshold === null` means "not monitored" and the item NEVER appears,
+   * not even at quantity zero. No default is invented — a tenant default is
+   * exactly what that decision rejected — so the report starts empty and a tenant
+   * opts in item by item.
+   *
+   * The comparison is `quantity <= threshold`, exact `Decimal` arithmetic, so an
+   * item sitting EXACTLY on its threshold is low (it has nothing to spare) and one
+   * a thousandth above it is not. `shortfall = threshold - quantity` is therefore
+   * never negative for a returned row.
+   *
+   * `thresholdsConfigured` separates the two empty answers: `false` with no rows
+   * means nobody has set a threshold yet, `true` with no rows means thresholds
+   * exist and every item is above its own. Both are an empty array, and a UI that
+   * could not tell them apart would report a working inventory setup as a
+   * misconfiguration.
+   */
+  async lowStock(): Promise<LowStockReportResponse> {
+    await this.requireReadPermission();
+
+    const balances = await this.reports.listStockBalances();
+    // ONE batched catalog read for the balanced items; an empty inventory asks the
+    // catalog for nothing at all.
+    const catalog = await this.readCatalog(
+      new Set(balances.map((balance) => balance.catalogItemId))
+    );
+
+    // Asked SEPARATELY, not derived from the loop below: a tenant that sets a
+    // threshold on an item which has never moved has no balance row, so that item
+    // is invisible to the balanced catalog read and the loop would report
+    // "nobody configured anything" to the one tenant who did.
+    const thresholdsConfigured = await this.reports.hasAnyLowStockThreshold();
+    const candidates: LowStockCandidate[] = [];
+
+    for (const balance of balances) {
+      const item = catalog.get(balance.catalogItemId);
+      if (item === undefined) {
+        throw new DomainError(
+          "INTERNAL",
+          reportStockCatalogItemMissingMessage(balance.catalogItemId)
+        );
+      }
+      // Not inventory at all: never low, never listed.
+      if (!item.tracksStock) {
+        continue;
+      }
+      // NULL is NOT a zero threshold: it means nobody monitors this item
+      // ([[DEC-065]]), so it is skipped BEFORE any comparison.
+      if (item.lowStockThreshold === null) {
+        continue;
+      }
+      const quantity = toDecimal(balance.quantity);
+      const threshold = toDecimal(item.lowStockThreshold);
+      // `<=`, not `<`: AT the threshold is already low. Above it is not.
+      if (quantity.greaterThan(threshold)) {
+        continue;
+      }
+      candidates.push({
+        catalogItemId: balance.catalogItemId,
+        name: item.name,
+        quantity,
+        threshold,
+        shortfall: threshold.minus(quantity),
+      });
+    }
+
+    // Sorted BEFORE formatting so the comparison is on exact decimals, never on
+    // the rendered strings. The tie-break is `name`; two rows equal on both keep
+    // the balance read's `catalogItemId` order, which `sort` preserves.
+    candidates.sort((left, right) => {
+      const byShortfall = right.shortfall.comparedTo(left.shortfall);
+      return byShortfall !== 0 ? byShortfall : left.name.localeCompare(right.name);
+    });
+
+    const rows: LowStockReportRowDto[] = candidates.map((candidate) => ({
+      catalogItemId: candidate.catalogItemId,
+      name: candidate.name,
+      quantity: candidate.quantity.toFixed(3),
+      threshold: candidate.threshold.toFixed(3),
+      shortfall: candidate.shortfall.toFixed(3),
+    }));
+
+    return {
+      report: "low-stock",
+      thresholdsConfigured,
+      rows,
+    };
+  }
+
+  /**
    * Asserts the stored close result of one session agrees with itself and returns
    * the three amounts as `Decimal`s.
    *
@@ -718,6 +990,19 @@ export class ReportingService {
       throw new DomainError("INTERNAL", reportCashSessionDifferenceMismatchMessage(session.id));
     }
     return { expected, counted, difference };
+  }
+
+  /**
+   * The tenant's catalog items for the given ids as a lookup map, resolved in ONE
+   * batched, tenant-predicated read (no N+1).
+   *
+   * An EMPTY id set asks the repository for nothing: `listCatalogItemsByIds`
+   * short-circuits it, because `in: []` is a question whose answer is already
+   * known.
+   */
+  private async readCatalog(ids: ReadonlySet<string>): Promise<Map<string, ReportCatalogItemRow>> {
+    const items = await this.reports.listCatalogItemsByIds([...ids]);
+    return new Map(items.map((item) => [item.id, item]));
   }
 
   /**

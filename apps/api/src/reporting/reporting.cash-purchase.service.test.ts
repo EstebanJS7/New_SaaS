@@ -107,6 +107,9 @@ function harness(
       findMany: () => {
         throw new Error("The cash and purchase reports must not read catalog items.");
       },
+      findFirst: () => {
+        throw new Error("The cash and purchase reports must not read catalog items.");
+      },
     },
     cashSession: {
       findMany: (args) => {
@@ -130,6 +133,18 @@ function harness(
       findMany: (args) => {
         supplierQueries.push(args);
         return Promise.resolve(options.suppliers ?? []);
+      },
+    },
+    // REP-005's inventory reads are not exercised here: they THROW rather than
+    // answer `[]`, so a REP-004 case that reached one would fail loudly.
+    stockBalance: {
+      findMany: () => {
+        throw new Error("The cash and purchase reports must not read stock balances.");
+      },
+    },
+    stockMovement: {
+      findMany: () => {
+        throw new Error("The cash and purchase reports must not read stock movements.");
       },
     },
   };

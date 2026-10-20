@@ -315,10 +315,143 @@ export interface PurchasesResponse {
 }
 
 /**
- * The query contract of every report route (`GET /reports/sales-by-period`,
- * `GET /reports/payment-methods`, `GET /reports/sales-by-product-service`,
- * `GET /reports/cash-sessions`, `GET /reports/cash-movements`,
- * `GET /reports/purchases`).
+ * One tracked item's stock row (`GET /reports/stock`, [[REP-005]]).
+ *
+ * TWO DIFFERENT FACTS LIVE IN THIS ROW, and conflating them is the mistake this
+ * DTO exists to prevent:
+ *
+ * - `quantity` is the **CURRENT BALANCE**: a SNAPSHOT read from the
+ *   `stock_balance` projection, which holds exactly one row per `(tenant, item)`
+ *   and no history whatsoever. It is NOT the period's net, it is NOT bounded by
+ *   the report's period, and no period can narrow it — the column has no date.
+ * - `inbound`, `outbound` and `net` are the **PERIOD'S FLOW**: a signed sum over
+ *   the immutable `stock_movement` ledger rows inside the resolved period.
+ *
+ * They answer different questions. A reader who takes `quantity` for the period's
+ * `net` will conclude that an item stocked last year and sold last week moved
+ * nothing last week, which is exactly what the label must prevent.
+ *
+ * `inbound`/`outbound`/`net` are `Decimal(10, 3)` fixed-scale strings. The ledger
+ * stores `quantity` ALREADY SIGNED — positive is an input, negative an output,
+ * and zero is rejected by the database — and no movement type owns that sign
+ * (unlike cash, where the kind does: [[DEC-030]]). `outbound` is therefore
+ * reported as a POSITIVE MAGNITUDE, so "40 out" is `"40.000"` and never
+ * `"-40.000"` beside an `inbound` that also carries a sign.
+ */
+export interface StockReportRowDto {
+  /** The item the balance and the flow belong to. */
+  readonly catalogItemId: string;
+  /** The item's name as the catalog holds it today (INTERNAL). */
+  readonly name: string;
+  /** `CatalogItem.kind` as a fact about the item — `PRODUCT`, `SERVICE`, `MEDICATION`, `SUPPLY`. */
+  readonly kind: string;
+  /**
+   * CURRENT BALANCE, exact fixed-scale (3 decimals), e.g. `"12.500"`.
+   *
+   * A SNAPSHOT of `stock_balance.quantity` as of now — NOT the period's net and
+   * NOT narrowed by the report's period. It is the same number whether the
+   * caller asks for today or for last month.
+   */
+  readonly quantity: string;
+  /** PERIOD FLOW IN, fixed-scale (3 decimals): the sum of the POSITIVE ledger quantities. */
+  readonly inbound: string;
+  /**
+   * PERIOD FLOW OUT, fixed-scale (3 decimals), reported as a POSITIVE MAGNITUDE:
+   * the absolute value of the sum of the NEGATIVE ledger quantities. `"0.000"`
+   * when nothing left in the period.
+   */
+  readonly outbound: string;
+  /**
+   * PERIOD FLOW NET, fixed-scale (3 decimals) and SIGNED: the sum of every
+   * ledger quantity in the period, so `inbound - outbound` exactly. NEGATIVE when
+   * the period moved more out than in. It is NOT `quantity`.
+   */
+  readonly net: string;
+}
+
+/**
+ * `GET /reports/stock` (PRD §31, [[REP-005]]): what is on hand per tracked item,
+ * plus what moved in the period.
+ *
+ * One row per item that has a balance row AND tracks stock. An item with no
+ * balance row has never moved, so there is no snapshot to report and it is
+ * absent; an item with `tracksStock = false` appears in neither inventory report.
+ *
+ * There is deliberately NO `currency`: a quantity is not money, and no item
+ * carries a cost ([[DEC-010]]) — valuation is out of scope for this Story.
+ */
+export interface StockReportResponse {
+  readonly report: "stock";
+  readonly period: ReportPeriodDto;
+  /**
+   * `name` ascending, then `catalogItemId` ascending. An empty period over an
+   * empty inventory is `[]`, never an error.
+   */
+  readonly rows: StockReportRowDto[];
+}
+
+/**
+ * One item at or below its own low-stock threshold (`GET /reports/low-stock`,
+ * [[REP-005]]).
+ *
+ * `quantity` is the CURRENT BALANCE, exactly as in {@link StockReportRowDto}: a
+ * snapshot of the projection, not a period figure. This report takes no period at
+ * all, so nothing in it is bounded by one.
+ */
+export interface LowStockReportRowDto {
+  /** The item this threshold belongs to. */
+  readonly catalogItemId: string;
+  /** The item's name as the catalog holds it today (INTERNAL). */
+  readonly name: string;
+  /** CURRENT BALANCE, exact fixed-scale (3 decimals). */
+  readonly quantity: string;
+  /** The item's own non-NULL threshold, exact fixed-scale (3 decimals). */
+  readonly threshold: string;
+  /**
+   * `threshold - quantity`, exact fixed-scale (3 decimals). ALWAYS `>= 0` for a
+   * returned row, because only rows whose quantity is at or below the threshold
+   * are returned; `"0.000"` means the item is exactly at its threshold.
+   */
+  readonly shortfall: string;
+}
+
+/**
+ * `GET /reports/low-stock` (PRD §31, [[REP-005]]): what is about to run out.
+ *
+ * It takes **no query parameters** — it is a current-state view, not a period
+ * view — so a `?from=…` on this route is a refusal, not a silently ignored key.
+ *
+ * Only items with a NON-NULL `catalog_item.low_stock_threshold` can appear
+ * ([[DEC-065]]): NULL means "not monitored", and inventing a default for it is
+ * exactly what that decision refused. Every tenant therefore starts with an empty
+ * report — a first-run state the UI must render honestly rather than as a
+ * failure.
+ */
+export interface LowStockReportResponse {
+  readonly report: "low-stock";
+  /**
+   * True when at least one tracked item the report read carries a non-NULL
+   * threshold.
+   *
+   * This is what makes the two empty states distinguishable. `thresholdsConfigured:
+   * false` with `rows: []` means "nobody has set a threshold yet"; `true` with
+   * `rows: []` means "thresholds exist and every item is above its own". Both are
+   * an empty array, and a caller must never have to guess which one it received.
+   */
+  readonly thresholdsConfigured: boolean;
+  /** `shortfall` descending, then `name` ascending — most depleted first. */
+  readonly rows: LowStockReportRowDto[];
+}
+
+/**
+ * The query contract of every PERIOD-shaped report route
+ * (`GET /reports/sales-by-period`, `GET /reports/payment-methods`,
+ * `GET /reports/sales-by-product-service`, `GET /reports/cash-sessions`,
+ * `GET /reports/cash-movements`, `GET /reports/purchases`,
+ * `GET /reports/stock`).
+ *
+ * It is deliberately NOT the contract of `GET /reports/low-stock`: a current-state
+ * view has no period, and {@link reportNoQuerySchema} is its own.
  *
  * `.strict()` so an unknown key is REFUSED rather than silently ignored: a
  * typo'd `from_` would otherwise widen the report to a different question while
@@ -342,3 +475,16 @@ export type ReportPeriodQuery = z.infer<typeof reportPeriodQuerySchema>;
 
 /** Stable message behind every rejection of the query SHAPE (unknown key, wrong type). */
 export const REPORT_PERIOD_QUERY_INVALID_MESSAGE = "Invalid report period query.";
+
+/**
+ * The query contract of the CURRENT-STATE reports — `GET /reports/low-stock`.
+ *
+ * It accepts NO keys at all: the report is a snapshot of the projection, so a
+ * period would be a parameter the report cannot honour. `.strict()` on an empty
+ * object is what turns "`?from=2026-01-01`" into an explicit refusal instead of a
+ * silently ignored key that leaves the caller believing a period was applied.
+ */
+export const reportNoQuerySchema = z.object({}).strict();
+
+/** Stable message behind every rejection of a query sent to a no-query report route. */
+export const REPORT_QUERY_NOT_ALLOWED_MESSAGE = "This report takes no query parameters.";

@@ -66,13 +66,24 @@ export interface ReportSaleWithPaymentsRow extends ReportSaleHeaderRow {
 }
 
 /**
- * The catalog projection the by-product report needs: identity, display name and
- * the `kind` that is a FACT about the item (never re-derived from `tracksStock`).
+ * The catalog projection every item-resolving report needs: identity, display
+ * name, the `kind` that is a FACT about the item (never re-derived from
+ * `tracksStock`) and the two columns the inventory reports filter on.
+ *
+ * `tracksStock` and `lowStockThreshold` are REQUIRED, not optional, and they are
+ * read from the SAME batched query that resolves the name. An optional field
+ * here would let "the query did not select it" masquerade as "the column is
+ * NULL", and NULL has a specific meaning in this domain: not monitored
+ * ([[DEC-065]]). A missing threshold is therefore not representable.
  */
 export interface ReportCatalogItemRow {
   readonly id: string;
   readonly name: string;
   readonly kind: string;
+  /** Whether the item participates in the stock ledger (EPIC-10). */
+  readonly tracksStock: boolean;
+  /** The opt-in low-stock threshold; `null` means NOT MONITORED ([[DEC-065]]). */
+  readonly lowStockThreshold: Prisma.Decimal | string | null;
 }
 
 /**
@@ -88,6 +99,17 @@ export interface ReportingSaleDelegate {
 
 export interface ReportingCatalogItemDelegate {
   findMany(args: Prisma.CatalogItemFindManyArgs): Promise<ReportCatalogItemRow[]>;
+  /**
+   * Existence probe for `countsAsConfigured` on the low-stock report: does the
+   * caller's tenant monitor AT LEAST ONE tracked item?
+   *
+   * It cannot be answered from the balances plus a catalog read of the BALANCED
+   * items: a tenant that sets a threshold on an item which has never moved has no
+   * balance row, so the item is invisible to that read and the report would say
+   * "nobody configured anything" to the one tenant who did. One indexed existence
+   * check answers it exactly.
+   */
+  findFirst(args: Prisma.CatalogItemFindFirstArgs): Promise<ReportCatalogItemRow | null>;
 }
 
 /**
@@ -168,6 +190,35 @@ export interface ReportSupplierRow {
 }
 
 /**
+ * One row of the stock PROJECTION as the inventory reports read it ([[REP-005]]):
+ * the item and its CURRENT quantity.
+ *
+ * `stock_balance` is a transactional projection with exactly one row per
+ * `(tenant, item)` and no history at all, so `quantity` is a SNAPSHOT — the
+ * balance as of now. It is deliberately NOT a period figure and it is not
+ * derivable from the period-bounded ledger read, which is why the two are
+ * carried as separate facts all the way to the response.
+ */
+export interface ReportStockBalanceRow {
+  readonly catalogItemId: string;
+  readonly quantity: Prisma.Decimal | string;
+}
+
+/**
+ * One immutable ledger row as the stock report's flow read returns it
+ * ([[REP-005]]).
+ *
+ * `quantity` is already SIGNED on the ledger — positive is an input, negative an
+ * output, and the database rejects zero — and no movement type owns that sign
+ * (unlike cash, where the kind does: [[DEC-030]]). The report therefore reads the
+ * stored sign and never resolves one from the type.
+ */
+export interface ReportStockMovementRow {
+  readonly catalogItemId: string;
+  readonly quantity: Prisma.Decimal | string;
+}
+
+/**
  * The cash and purchase reads of [[REP-004]], in the same shape as the sale and
  * catalog delegates above: Prisma's own arg types, a promise of narrow rows, reads
  * only. Each one is a single `findMany` so the predicate and the order live in ONE
@@ -189,6 +240,19 @@ export interface ReportingSupplierDelegate {
   findMany(args: Prisma.SupplierFindManyArgs): Promise<ReportSupplierRow[]>;
 }
 
+/**
+ * The two inventory reads of [[REP-005]]: the projection (a capped snapshot) and
+ * the ledger (a capped, period-bounded flow). Same shape as every delegate above
+ * — Prisma's own arg types, a promise of narrow rows, reads only.
+ */
+export interface ReportingStockBalanceDelegate {
+  findMany(args: Prisma.StockBalanceFindManyArgs): Promise<ReportStockBalanceRow[]>;
+}
+
+export interface ReportingStockMovementDelegate {
+  findMany(args: Prisma.StockMovementFindManyArgs): Promise<ReportStockMovementRow[]>;
+}
+
 export interface ReportingReadPrisma {
   readonly sale: ReportingSaleDelegate;
   readonly catalogItem: ReportingCatalogItemDelegate;
@@ -196,6 +260,8 @@ export interface ReportingReadPrisma {
   readonly cashMovement: ReportingCashMovementDelegate;
   readonly purchase: ReportingPurchaseDelegate;
   readonly supplier: ReportingSupplierDelegate;
+  readonly stockBalance: ReportingStockBalanceDelegate;
+  readonly stockMovement: ReportingStockMovementDelegate;
 }
 
 /**
@@ -240,6 +306,28 @@ export const REPORT_CASH_MOVEMENT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report perio
 
 /** Stable message when a period needs more received purchases than the cap allows. */
 export const REPORT_PURCHASE_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_PURCHASE_ROW_LIMIT} received purchases. Narrow the period and try again.`;
+
+/**
+ * Hard cap on the number of stock BALANCES one inventory report may read.
+ *
+ * One row per tracked item, so this bounds a CATALOG rather than a period: five
+ * thousand items is far past any veterinary tenant. Both inventory reports (the
+ * snapshot and the low-stock view) share it, because both read the projection.
+ */
+export const REPORT_STOCK_BALANCE_ROW_LIMIT = 5_000;
+
+/** Hard cap on the number of stock MOVEMENT rows the stock report's flow may read. */
+export const REPORT_STOCK_MOVEMENT_ROW_LIMIT = 20_000;
+
+/**
+ * Stable message when a tenant holds more balances than the cap allows. There is
+ * no period to narrow here — the projection has no date — so the message names
+ * the tenant's own inventory size instead of suggesting an impossible fix.
+ */
+export const REPORT_STOCK_BALANCE_ROW_LIMIT_EXCEEDED_MESSAGE = `The tenant has more than ${REPORT_STOCK_BALANCE_ROW_LIMIT} stock balances. The inventory report cannot aggregate them in one response.`;
+
+/** Stable message when a period needs more stock movements than the cap allows. */
+export const REPORT_STOCK_MOVEMENT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_STOCK_MOVEMENT_ROW_LIMIT} stock movements. Narrow the period and try again.`;
 
 /**
  * Stable message when a required relation is absent from a completed-sale read.
@@ -405,6 +493,24 @@ export class ReportRepository {
    * silent `0.00` would be indistinguishable from a drawer that really closed
    * empty (`reportCashSessionCloseResultMissingMessage`).
    */
+  /**
+   * True when the caller's tenant monitors at least one tracked item, i.e. has a
+   * non-NULL `low_stock_threshold` on something that actually holds stock.
+   *
+   * The low-stock report needs this to tell its TWO empty answers apart: "nobody
+   * has opted in yet" and "thresholds exist and everything is above them". See
+   * {@link ReportingCatalogItemDelegate.findFirst} for why the batched catalog
+   * read cannot answer it.
+   */
+  async hasAnyLowStockThreshold(): Promise<boolean> {
+    const tenantId = this.requestContext.requireTenantId();
+    const found = await this.prisma.catalogItem.findFirst({
+      where: { tenantId, tracksStock: true, lowStockThreshold: { not: null } },
+      select: { id: true, name: true, kind: true },
+    });
+    return found !== null;
+  }
+
   async listClosedCashSessions(
     fromInstant: Date,
     toInstant: Date
@@ -494,6 +600,56 @@ export class ReportRepository {
     return this.prisma.supplier.findMany({
       where: { tenantId, id: { in: [...ids] } },
     });
+  }
+
+  /**
+   * The caller tenant's stock PROJECTION ([[REP-005]]): one row per tracked item
+   * at its CURRENT quantity, in `catalogItemId` order.
+   *
+   * There is deliberately no date predicate and no ordering by anything else: a
+   * balance row has no business instant, so asking this read for a period would
+   * be asking a snapshot to remember history. The period applies to the LEDGER
+   * read below, which is a different question with a different answer.
+   *
+   * `take` asks for one row past the cap, exactly as every read above does: an
+   * inventory that would need more rows REFUSES rather than returning a partial
+   * snapshot that looks complete.
+   */
+  async listStockBalances(): Promise<ReportStockBalanceRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.stockBalance.findMany({
+      where: { tenantId },
+      orderBy: [{ catalogItemId: "asc" }],
+      take: REPORT_STOCK_BALANCE_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_STOCK_BALANCE_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_STOCK_BALANCE_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows;
+  }
+
+  /**
+   * The caller tenant's stock movements whose own `createdAt` falls in the
+   * HALF-OPEN range `[fromInstant, toInstant)` ([[REP-005]]).
+   *
+   * `stock_movement` is append-only and immutable, so its creation instant IS the
+   * movement's business instant. The period boundary is resolved by
+   * `resolveReportPeriod` and nowhere else, and the range is half-open so two
+   * consecutive periods partition without counting a boundary row twice.
+   */
+  async listStockMovements(fromInstant: Date, toInstant: Date): Promise<ReportStockMovementRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.stockMovement.findMany({
+      where: { tenantId, createdAt: { gte: fromInstant, lt: toInstant } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: REPORT_STOCK_MOVEMENT_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_STOCK_MOVEMENT_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_STOCK_MOVEMENT_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows;
   }
 }
 
