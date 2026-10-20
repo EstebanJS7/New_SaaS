@@ -3,7 +3,7 @@ id: REP-008
 type: story
 title: The staff surfaces — the dashboard and the reports workspace
 epic: EPIC-18
-status: planned
+status: in-progress
 priority: medium
 depends_on:
   - REP-003
@@ -163,13 +163,66 @@ None.
 
 ## Implementation Summary
 
-_Not implemented._
+**Part 1 implemented (the BFF proxies and the reports workspace); part 2 (the
+dashboard at `/app` and the Playwright specs) pending.**
+
+Part 1 — commit `WU-I1`:
+
+- **One GET-only catch-all proxy** at
+  `apps/web/src/app/api/reports/[[...path]]`, driven by ONE local allowlist
+  module that carries both the twelve codes and the query shape each accepts
+  (`period`, `due`, `none`). The workspace catalogue and the proxy read the same
+  module, so a code cannot drift inside the app.
+  - An unknown code, an unknown query key, a `tenantId`, a wrong-shape key, a
+    two-segment path and a missing session are ALL refused locally with no
+    upstream call — a refusal never touches the network.
+  - The export path is untouched. The build registers both routes as separate
+    entries (`/api/reports/[[...path]]/route` and
+    `/api/reports/[reportCode]/export/route`), which settles the precedence
+    question structurally; the catch-all additionally 404s any path that is not
+    exactly one known code, so the CSV can never be silently proxied as a JSON
+    read.
+- **The reports workspace**: an index of the twelve reports grouped Core (8) and
+  Veterinary (4), and a per-report view whose controls are DERIVED from the
+  report's query shape — five presets and a custom range for the nine period
+  reports, a `horizonDays` control for the two due reports, and **no control at
+  all** for `low-stock`, which sends no query. A half-typed custom range is
+  never sent, and the export link always carries exactly the query being
+  displayed.
+- **Columns are derived from the response type, not declared twice.** Each
+  report's header map is typed `Record<keyof Row, string>`, so a field added to,
+  renamed in or removed from the mirrored DTO is a compile error until its
+  header exists; the column ORDER comes from the payload's own key order, and a
+  field the API starts sending renders under its raw key rather than being
+  dropped. `ReportTable` is an exhaustive switch, so a thirteenth report will
+  not compile until it has a table.
+- **Three actionable empty states**, which is the point of the ordering
+  decision: `low-stock` with `thresholdsConfigured: false` links to
+  `/app/catalog` where a threshold is set; both due reports link to
+  `/app/patients`, where [[REP-010]] landed the clinical record surface; and
+  `low-stock` configured but clear says so without a link, because there is
+  nothing to fix.
+- Decimal strings render **verbatim** — the tests assert `"1234.50"` appears and
+  that `1234.5` does not exist — and counts render as numbers.
+- `Reports` joins the nav **without** a `requiredFeature`, per [[DEC-062]].
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (23/23 turbo tasks)
+pnpm typecheck      PASS  (23/23)
+pnpm build          PASS  (13/13)  — registers BOTH /api/reports routes
+pnpm test           PASS  (23/23)
+  web        117 files (112 landed + 5 new)      1268 passed  (+54)
+  api        114 files                           1634 passed | 266 skipped
+  database    30 files                            549 passed
 ```
+
+54 new tests: 14 proxy, 11 api-client, 6 column derivation, 4 index and 19
+report-view. The two pre-existing nav assertions that count the sidebar's
+entries were updated for the new destination and now assert its `href` and its
+absence of a feature gate.
 
 ## Tests Added
 
@@ -208,4 +261,5 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+Part 1 gates passed on 2026-10-19; the Story stays `in-progress` until the
+dashboard and the Playwright specs land.

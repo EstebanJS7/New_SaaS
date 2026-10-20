@@ -10,7 +10,7 @@ describe("NavSidebar", () => {
     expect(within(sidebar).getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
 
     const entries = within(sidebar).getAllByTestId("nav-entry");
-    expect(entries).toHaveLength(15);
+    expect(entries).toHaveLength(16);
 
     const [
       customers,
@@ -22,6 +22,7 @@ describe("NavSidebar", () => {
       cash,
       billing,
       fiscal,
+      reports,
       agenda,
       notifications,
       branding,
@@ -62,6 +63,12 @@ describe("NavSidebar", () => {
     expect(fiscal.getAttribute("href")).toBe("/app/fiscal");
     expect(fiscal.textContent).toBe("Fiscal");
 
+    // EPIC-18 REP-008: Reports is a real destination and, by DEC-062, carries no
+    // `requiredFeature` — reports are ungated by feature code.
+    expect(reports.tagName).toBe("A");
+    expect(reports.getAttribute("href")).toBe("/app/reports");
+    expect(reports.textContent).toBe("Reports");
+
     expect(agenda.tagName).toBe("A");
     expect(agenda.getAttribute("href")).toBe("/app/agenda");
     expect(agenda.textContent).toBe("Agenda");
@@ -76,7 +83,7 @@ describe("NavSidebar", () => {
     expect(branding.getAttribute("href")).toBe("/app/settings/branding");
     expect(branding.textContent).toBe("Branding");
 
-    for (const entry of entries.slice(12)) {
+    for (const entry of entries.slice(13)) {
       expect(entry.tagName).toBe("BUTTON");
       expect((entry as HTMLButtonElement).type).toBe("button");
       expect(entry.textContent).toMatch(/^Section [a-z]+$/i);
@@ -87,7 +94,7 @@ describe("NavSidebar", () => {
     const { container } = render(<NavSidebar />);
 
     const links = [...container.querySelectorAll("a")];
-    expect(links).toHaveLength(12);
+    expect(links).toHaveLength(13);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/app/customers",
       "/app/patients",
@@ -98,6 +105,7 @@ describe("NavSidebar", () => {
       "/app/cash",
       "/app/billing",
       "/app/fiscal",
+      "/app/reports",
       "/app/agenda",
       "/app/notifications",
       "/app/settings/branding",
