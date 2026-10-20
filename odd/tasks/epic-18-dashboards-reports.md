@@ -77,9 +77,8 @@ Each work unit is one commit carrying its tests and documentation.
       evidence log._
 - [x] **WU-E — [[REP-005]] the inventory reports.** _Done: see the evidence
       log._
-- [ ] **WU-F — [[REP-006]] the veterinary reports.** Two commits: **WU-F1**
-      (done) consultations + new patients; **WU-F2** (pending) the two due
-      reports.
+- [x] **WU-F — [[REP-006]] the veterinary reports.** Two commits: **WU-F1**
+      consultations + new patients; **WU-F2** the two due reports. _Done._
 - [ ] **WU-G — [[REP-007]] the CSV export.**
 - [ ] **WU-H — [[REP-010]] the clinical record entry surface.** Vaccinations and
       deworming: list, create and correct, on the proxy and permissions that
@@ -290,3 +289,32 @@ Commit `WU-F1` on `feat/epic-18-dashboards-reports`.
 **WU-F2 must first add a `clinicalDeworming` delegate to the fixture** — it does
 not exist, and the deworming due report cannot be exercised through
 `bootTestApp()` without it.
+
+### WU-F2 — the two due reports
+
+Commit `WU-F2` on `feat/epic-18-dashboards-reports`.
+
+- `GET /reports/vaccines-due` and `GET /reports/deworming-due`: no period, an
+  optional `horizonDays` defaulting to 30 with an integer shape and a `1..365`
+  bound, and a `.strict()` query so a period key is refused rather than ignored.
+- **The horizon runs through the shared helpers only.** `shiftCalendarDays` is
+  now exported from `report.period.ts` so the horizon cannot grow a second
+  `+ days * 86400000`. `horizonEndInstant` is the tenant day AFTER the horizon,
+  so a due date on the last horizon day is included.
+- **No lower bound, deliberately**: an overdue vaccination is overdue however
+  old, and the row cap is the honest failure rather than a truncated list that
+  looks complete.
+- **Classification compares calendar dates in the tenant zone, not instants**,
+  and **due today is UPCOMING**. Rows are ordered `nextDueAt` ascending, so
+  overdue comes first — the order the practice works through.
+- **The fixture gained the `clinicalDeworming` delegate that never existed**,
+  plus an optional `patientId` and a `nextDueAt` filter on
+  `clinicalVaccination`.
+- Gates: api **1551 → 1588** (+37); format/lint/typecheck/build green.
+- Proven on real PostgreSQL with three due dates one day apart around the
+  boundary: `2026-10-18 -> OVERDUE`, `2026-10-19 -> UPCOMING` (today),
+  `2026-11-18 -> UPCOMING` (exactly on the horizon), while `+31 days` and a NULL
+  due date are excluded. The projection stays minimal.
+
+**Skipped:** `apps/e2e` (no UI in this work unit). Both reports stay empty until
+[[REP-010]] ships the entry surface.
