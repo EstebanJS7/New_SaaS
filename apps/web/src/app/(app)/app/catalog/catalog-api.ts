@@ -60,6 +60,14 @@ export interface CatalogItem {
   readonly taxRate: TaxRateProjection;
   readonly referencePriceAmount: string | null;
   readonly referencePriceCurrency: string | null;
+  /**
+   * Opt-in low-stock threshold as an exact fixed-scale (3 decimals) quantity
+   * string, or `null` when the item is NOT monitored (DEC-065). `null` means
+   * "no threshold", never zero. Optional here because this mirror is the
+   * SUBSET of the DTO the staff UI consumes (it also omits `tracksStock`), so a
+   * caller that does not read the threshold is not forced to model it.
+   */
+  readonly lowStockThreshold?: string | null;
   readonly isActive: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;

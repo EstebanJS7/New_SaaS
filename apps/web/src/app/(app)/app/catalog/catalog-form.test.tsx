@@ -40,6 +40,7 @@ const ITEM: CatalogItem = {
   taxRate: { code: "IVA_10", name: "IVA 10%", rate: "0.1" },
   referencePriceAmount: "150000.00",
   referencePriceCurrency: "PYG",
+  lowStockThreshold: null,
   isActive: true,
   createdAt: "2026-09-25T00:00:00.000Z",
   updatedAt: "2026-09-25T00:00:00.000Z",
@@ -209,6 +210,90 @@ describe("CatalogForm", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("sends the low-stock threshold as a decimal string on create", async () => {
+    mockRatesFetch();
+    const onSubmit = vi.fn();
+
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+      </TestWrapper>
+    );
+
+    await screen.findByRole("option", { name: "IVA 10%" });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Vacuna" } });
+    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
+    fireEvent.change(screen.getByLabelText("Low-stock threshold"), {
+      target: { value: "10.5" },
+    });
+
+    submitForm();
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith({
+        name: "Vacuna",
+        kind: "PRODUCT",
+        taxRateId: RATE_ID,
+        lowStockThreshold: "10.5",
+      });
+    });
+    // A quantity never travels as a JavaScript number.
+    const submitted = onSubmit.mock.calls[0][0] as { lowStockThreshold?: unknown };
+    expect(typeof submitted.lowStockThreshold).toBe("string");
+  });
+
+  it("omits the threshold when it is left empty, the not-monitored state", async () => {
+    mockRatesFetch();
+    const onSubmit = vi.fn();
+
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+      </TestWrapper>
+    );
+
+    await screen.findByRole("option", { name: "IVA 10%" });
+    // The label and its hint must make "empty = not monitored" discoverable.
+    expect(screen.getByLabelText("Low-stock threshold")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Gasa" } });
+    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
+
+    submitForm();
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith({
+        name: "Gasa",
+        kind: "PRODUCT",
+        taxRateId: RATE_ID,
+      });
+    });
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("lowStockThreshold");
+  });
+
+  it("rejects a zero or over-scaled threshold client-side before calling the API", async () => {
+    mockRatesFetch();
+    const onSubmit = vi.fn();
+
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+      </TestWrapper>
+    );
+
+    await screen.findByRole("option", { name: "IVA 10%" });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Consulta" } });
+    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
+
+    for (const value of ["0", "0.000", "1.2345"]) {
+      fireEvent.change(screen.getByLabelText("Low-stock threshold"), { target: { value } });
+      submitForm();
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Low-stock threshold must be greater than zero with at most 3 decimals."
+      );
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("surfaces a 400 server field error truthfully", () => {
     mockRatesFetch();
 
@@ -270,5 +355,36 @@ describe("CatalogForm", () => {
         referencePriceCurrency: null,
       });
     });
+  });
+
+  it("sends the threshold only when it changed and clears it with an explicit null", async () => {
+    mockRatesFetch();
+    const onSubmit = vi.fn();
+    const monitored = { ...ITEM, lowStockThreshold: "10.000" };
+
+    render(
+      <TestWrapper>
+        <CatalogForm item={monitored} onSubmit={onSubmit} isPending={false} error={null} />
+      </TestWrapper>
+    );
+
+    await screen.findByRole("option", { name: "IVA 10%" });
+    // The stored fixed-scale value is what the field starts from.
+    expect(screen.getByLabelText("Low-stock threshold")).toHaveValue("10.000");
+
+    // An untouched threshold is not sent, so an unrelated edit cannot rewrite it.
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({}));
+
+    onSubmit.mockClear();
+    fireEvent.change(screen.getByLabelText("Low-stock threshold"), { target: { value: "4.5" } });
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ lowStockThreshold: "4.5" }));
+
+    // Emptying the field stops monitoring: an explicit null, never a zero.
+    onSubmit.mockClear();
+    fireEvent.change(screen.getByLabelText("Low-stock threshold"), { target: { value: "" } });
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ lowStockThreshold: null }));
   });
 });

@@ -24,6 +24,12 @@ export interface ClinicalVaccinationResponse {
   readonly patientId: string;
   readonly vaccine: string;
   readonly administeredAt: string;
+  /**
+   * Staff-entered booster due date as an ISO instant (DEC-065), or `null` when
+   * none was recorded. A client must read `null` as "no due date", never as "due
+   * now": the upcoming/overdue reports omit the row instead of guessing.
+   */
+  readonly nextDueAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -34,6 +40,11 @@ export interface ClinicalDewormingResponse {
   readonly patientId: string;
   readonly product: string;
   readonly administeredAt: string;
+  /**
+   * Staff-entered next-deworming due date as an ISO instant (DEC-065), or `null`
+   * when none was recorded (the same `null` semantics as the vaccination row).
+   */
+  readonly nextDueAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

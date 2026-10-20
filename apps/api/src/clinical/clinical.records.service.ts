@@ -38,6 +38,8 @@ export interface ClinicalVaccinationRow {
   patientId: string;
   vaccine: string;
   administeredAt: Date;
+  /** EPIC-18 REP-001 staff-entered booster due date (DEC-065); null = none recorded. */
+  nextDueAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -48,6 +50,8 @@ export interface ClinicalDewormingRow {
   patientId: string;
   product: string;
   administeredAt: Date;
+  /** EPIC-18 REP-001 staff-entered next due date (DEC-065); null = none recorded. */
+  nextDueAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -89,21 +93,29 @@ export interface UpdateTreatmentInput {
 export interface CreateVaccinationInput {
   readonly vaccine: string;
   readonly administeredAt: string;
+  /** Optional staff-entered due date (DEC-065); omitted records no due date. */
+  readonly nextDueAt?: string;
 }
 
 export interface UpdateVaccinationInput {
   readonly vaccine?: string;
   readonly administeredAt?: string;
+  /** `null` CLEARS the due date; an absent key leaves it untouched (DEC-065). */
+  readonly nextDueAt?: string | null;
 }
 
 export interface CreateDewormingInput {
   readonly product: string;
   readonly administeredAt: string;
+  /** Optional staff-entered due date (DEC-065); omitted records no due date. */
+  readonly nextDueAt?: string;
 }
 
 export interface UpdateDewormingInput {
   readonly product?: string;
   readonly administeredAt?: string;
+  /** `null` CLEARS the due date; an absent key leaves it untouched (DEC-065). */
+  readonly nextDueAt?: string | null;
 }
 
 export interface CreateStudyInput {
@@ -144,6 +156,8 @@ export interface VaccinationCreateData {
   patientId: string;
   vaccine: string;
   administeredAt: Date;
+  /** Always written explicitly: null is the "no due date recorded" state. */
+  nextDueAt: Date | null;
 }
 
 export type VaccinationUpdateData = Partial<Omit<VaccinationCreateData, "tenantId" | "patientId">>;
@@ -153,6 +167,8 @@ export interface DewormingCreateData {
   patientId: string;
   product: string;
   administeredAt: Date;
+  /** Always written explicitly: null is the "no due date recorded" state. */
+  nextDueAt: Date | null;
 }
 
 export type DewormingUpdateData = Partial<Omit<DewormingCreateData, "tenantId" | "patientId">>;
@@ -270,6 +286,7 @@ function toVaccinationResponse(row: ClinicalVaccinationRow): ClinicalVaccination
     patientId: row.patientId,
     vaccine: row.vaccine,
     administeredAt: toIso(row.administeredAt),
+    nextDueAt: row.nextDueAt === null ? null : toIso(row.nextDueAt),
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };
@@ -282,6 +299,7 @@ function toDewormingResponse(row: ClinicalDewormingRow): ClinicalDewormingRespon
     patientId: row.patientId,
     product: row.product,
     administeredAt: toIso(row.administeredAt),
+    nextDueAt: row.nextDueAt === null ? null : toIso(row.nextDueAt),
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };
@@ -455,11 +473,13 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
         patientId,
         vaccine: input.vaccine,
         administeredAt: new Date(input.administeredAt),
+        // Always written: an omitted due date stores null, never a guessed one.
+        nextDueAt: input.nextDueAt === undefined ? null : new Date(input.nextDueAt),
       },
       {
         action: "clinical_vaccination.created",
         targetType: "clinical_vaccination",
-        changedFields: ["vaccine", "administeredAt"],
+        changedFields: ["vaccine", "administeredAt", "nextDueAt"],
       }
     );
     return toVaccinationResponse(row);
@@ -483,6 +503,13 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     if (input.administeredAt !== undefined) {
       data.administeredAt = new Date(input.administeredAt);
       changedFields.push("administeredAt");
+    }
+    if (input.nextDueAt !== undefined) {
+      // `null` is an explicit CLEAR of a wrong due date, not an absent key
+      // (DEC-065): a veterinarian who typed the wrong year must be able to take
+      // it off, not only replace it.
+      data.nextDueAt = input.nextDueAt === null ? null : new Date(input.nextDueAt);
+      changedFields.push("nextDueAt");
     }
 
     const row = await this.updateRecord(
@@ -531,11 +558,13 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
         patientId,
         product: input.product,
         administeredAt: new Date(input.administeredAt),
+        // Always written: an omitted due date stores null, never a guessed one.
+        nextDueAt: input.nextDueAt === undefined ? null : new Date(input.nextDueAt),
       },
       {
         action: "clinical_deworming.created",
         targetType: "clinical_deworming",
-        changedFields: ["product", "administeredAt"],
+        changedFields: ["product", "administeredAt", "nextDueAt"],
       }
     );
     return toDewormingResponse(row);
@@ -559,6 +588,11 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     if (input.administeredAt !== undefined) {
       data.administeredAt = new Date(input.administeredAt);
       changedFields.push("administeredAt");
+    }
+    if (input.nextDueAt !== undefined) {
+      // `null` is an explicit CLEAR of a wrong due date (DEC-065).
+      data.nextDueAt = input.nextDueAt === null ? null : new Date(input.nextDueAt);
+      changedFields.push("nextDueAt");
     }
 
     const row = await this.updateRecord(

@@ -38,6 +38,13 @@ export interface CatalogItemRow {
    * omit it, and only the service owns the by-kind default.
    */
   tracksStock: boolean;
+  /**
+   * EPIC-18 REP-001 opt-in low-stock threshold (DEC-065), at the stock ledger's
+   * `Decimal(10, 3)` quantity scale. `null` means the item is NOT monitored; the
+   * low-stock report skips it. Never a JavaScript float, and no arithmetic is
+   * performed on it here.
+   */
+  lowStockThreshold: Prisma.Decimal | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -63,6 +70,12 @@ export interface CatalogItemCreateData {
    * write path always sends an explicit value from the service.
    */
   readonly tracksStock?: boolean;
+  /**
+   * Opt-in low-stock threshold. Like `referencePriceAmount` it accepts only an
+   * exact `Decimal` or its decimal-string form — never a `number` — so a float
+   * cannot reach the column. Omitted or `null` means "not monitored".
+   */
+  readonly lowStockThreshold?: Prisma.Decimal | string | null;
 }
 
 /**
@@ -79,6 +92,11 @@ export interface CatalogItemUpdateData {
   isActive?: boolean;
   /** Absent leaves the stored flag untouched; a present value changes it. */
   tracksStock?: boolean;
+  /**
+   * Opt-in low-stock threshold: absent leaves the stored value untouched, an
+   * explicit `null` clears it ("stop monitoring"), and a value replaces it.
+   */
+  lowStockThreshold?: Prisma.Decimal | string | null;
 }
 
 /** Supported read filters for {@link CatalogRepository.list}. */
@@ -143,6 +161,9 @@ function buildUpdateData(input: CatalogItemUpdateData): CatalogItemUpdateData {
   }
   if (input.isActive !== undefined) data.isActive = input.isActive;
   if (input.tracksStock !== undefined) data.tracksStock = input.tracksStock;
+  if (input.lowStockThreshold !== undefined) {
+    data.lowStockThreshold = input.lowStockThreshold;
+  }
   return data;
 }
 

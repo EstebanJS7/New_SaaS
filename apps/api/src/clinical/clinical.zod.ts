@@ -27,6 +27,30 @@ export function parseClinicalInput<T>(schema: ZodType<T>, value: unknown, messag
 /** ISO-8601 with an explicit offset (or `Z`); stored as UTC by the service. */
 const isoDate = z.string().datetime({ offset: true });
 
+/**
+ * Optional staff-entered due date (EPIC-18 REP-001, DEC-065). It reuses
+ * `isoDate` on purpose: the administration instant and the due date must not
+ * disagree about which formats are accepted, so a request cannot carry one as a
+ * `Date`-parsable string and the other as an ISO instant. The service owns the
+ * `Date` conversion. Omitted means "no due date recorded" — a fact the reports
+ * omit rather than derive.
+ */
+const optionalNextDueAt = isoDate.optional();
+
+/**
+ * The UPDATE form (EPIC-18 REP-001). It differs from {@link optionalNextDueAt}
+ * by accepting an explicit `null`, because a due date can be WRONG as well as
+ * absent: a veterinarian who typed the wrong year must be able to take it off,
+ * not only replace it. `null` clears it and an absent key leaves it untouched,
+ * the same convention the catalog's reference-price pair and its low-stock
+ * threshold already use.
+ *
+ * `administeredAt` deliberately does NOT gain a nullable form: it is the record's
+ * own event, and a specialized record without its administration instant has no
+ * meaning.
+ */
+const nullableNextDueAt = isoDate.nullable().optional();
+
 /** Free-text clinical field: bounded so a request cannot carry unbounded data. */
 const encounterText = z.string().max(10_000);
 const encounterTextField = encounterText.nullable().optional();
@@ -115,17 +139,25 @@ export const updateTreatmentBody = z
   .strict();
 
 export const createVaccinationBody = z
-  .object({ vaccine: recordText, administeredAt: isoDate })
+  .object({ vaccine: recordText, administeredAt: isoDate, nextDueAt: optionalNextDueAt })
   .strict();
 export const updateVaccinationBody = z
-  .object({ vaccine: recordText.optional(), administeredAt: isoDate.optional() })
+  .object({
+    vaccine: recordText.optional(),
+    administeredAt: isoDate.optional(),
+    nextDueAt: nullableNextDueAt,
+  })
   .strict();
 
 export const createDewormingBody = z
-  .object({ product: recordText, administeredAt: isoDate })
+  .object({ product: recordText, administeredAt: isoDate, nextDueAt: optionalNextDueAt })
   .strict();
 export const updateDewormingBody = z
-  .object({ product: recordText.optional(), administeredAt: isoDate.optional() })
+  .object({
+    product: recordText.optional(),
+    administeredAt: isoDate.optional(),
+    nextDueAt: nullableNextDueAt,
+  })
   .strict();
 
 export const createStudyBody = z

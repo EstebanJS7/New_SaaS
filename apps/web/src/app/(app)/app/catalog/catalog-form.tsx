@@ -43,12 +43,21 @@ const KIND_LABELS: Record<CatalogItemKind, string> = {
  */
 const AMOUNT_PATTERN = /^\d{1,12}(\.\d{1,2})?$/;
 
+/**
+ * Mirrors the API's `Decimal(10, 3)` low-stock threshold shape: up to 7 integer
+ * digits and 3 decimals — the stock ledger's quantity scale. Zero and negatives
+ * are rejected by the value check below, exactly like the server. Client-side
+ * convenience only; the server re-validates and stays the authority.
+ */
+const THRESHOLD_PATTERN = /^\d{1,7}(\.\d{1,3})?$/;
+
 interface CatalogFormValues {
   name: string;
   kind: CatalogItemKind;
   taxRateId: string;
   referencePriceAmount: string;
   referencePriceCurrency: CatalogReferencePriceCurrency;
+  lowStockThreshold: string;
 }
 
 function emptyValues(): CatalogFormValues {
@@ -58,6 +67,8 @@ function emptyValues(): CatalogFormValues {
     taxRateId: "",
     referencePriceAmount: "",
     referencePriceCurrency: "PYG",
+    // Empty means "not monitored": the API stores NULL, never a zero.
+    lowStockThreshold: "",
   };
 }
 
@@ -69,6 +80,7 @@ function itemToValues(item: CatalogItem): CatalogFormValues {
     referencePriceAmount: item.referencePriceAmount ?? "",
     referencePriceCurrency:
       (item.referencePriceCurrency as CatalogReferencePriceCurrency | null) ?? "PYG",
+    lowStockThreshold: item.lowStockThreshold ?? "",
   };
 }
 
@@ -83,6 +95,13 @@ function buildCreateBody(values: CatalogFormValues): Record<string, unknown> {
   if (amount) {
     body.referencePriceAmount = amount;
     body.referencePriceCurrency = values.referencePriceCurrency;
+  }
+
+  // The threshold is opt-in and independent of the price pair: an empty field
+  // sends nothing, which the API stores as NULL ("not monitored").
+  const threshold = values.lowStockThreshold.trim();
+  if (threshold) {
+    body.lowStockThreshold = threshold;
   }
 
   return body;
@@ -110,6 +129,16 @@ function buildUpdateBody(values: CatalogFormValues, item: CatalogItem): Record<s
   } else if (amount !== currentAmount || values.referencePriceCurrency !== currentCurrency) {
     body.referencePriceAmount = amount;
     body.referencePriceCurrency = values.referencePriceCurrency;
+  }
+
+  // Threshold: absent leaves the stored value untouched, an emptied field CLEARS
+  // it with an explicit null ("stop monitoring"), and a changed value replaces it.
+  const threshold = values.lowStockThreshold.trim();
+  const currentThreshold = item.lowStockThreshold ?? "";
+  if (threshold === "") {
+    if (currentThreshold !== "") body.lowStockThreshold = null;
+  } else if (threshold !== currentThreshold) {
+    body.lowStockThreshold = threshold;
   }
 
   return body;
@@ -156,6 +185,11 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
     const amount = values.referencePriceAmount.trim();
     if (amount && !AMOUNT_PATTERN.test(amount)) {
       setLocalError("Reference price must be a non-negative decimal with at most 2 decimals.");
+      return;
+    }
+    const threshold = values.lowStockThreshold.trim();
+    if (threshold && (!THRESHOLD_PATTERN.test(threshold) || !(Number(threshold) > 0))) {
+      setLocalError("Low-stock threshold must be greater than zero with at most 3 decimals.");
       return;
     }
 
@@ -308,6 +342,33 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
             The reference price is informational. It is stored as an exact amount and currency; it
             is never a sale, invoice or fiscal total.
           </p>
+
+          <div className="space-y-2">
+            <label htmlFor="lowStockThreshold" className="text-sm font-medium">
+              Low-stock threshold
+            </label>
+            <input
+              id="lowStockThreshold"
+              type="text"
+              inputMode="decimal"
+              value={values.lowStockThreshold}
+              onChange={(event) =>
+                setValues((previous) => ({
+                  ...previous,
+                  lowStockThreshold: event.target.value,
+                }))
+              }
+              disabled={isPending}
+              placeholder="Leave empty if this item is not monitored"
+              aria-describedby="lowStockThreshold-hint"
+              className={inputClassName}
+            />
+            <p id="lowStockThreshold-hint" className="text-xs text-muted-foreground">
+              Optional quantity, at most 3 decimals. When the stock balance falls to or below it the
+              item is reported as low stock. Leave it empty and the item is not monitored, so it
+              never appears in that report.
+            </p>
+          </div>
 
           <div className="flex flex-wrap items-center gap-3 pt-4">
             <Button type="submit" disabled={isPending}>

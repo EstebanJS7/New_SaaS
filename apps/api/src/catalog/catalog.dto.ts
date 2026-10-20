@@ -6,14 +6,16 @@
  * Prisma models are never returned; only the keys declared here cross the HTTP
  * boundary, and no rate is copied into the item.
  *
- * Decimal fields are projected as FIXED-SCALE STRINGS at the stored two-decimal
- * scale, never as JavaScript floats and never in the trimmed form a real read
- * would otherwise produce (`"10"` for `DECIMAL(5,2)` `10.00`). The scale is the
- * column's own: EPIC-09 fixed the reference-price scale at `Decimal(14, 2)` for
- * every currency. Padding to that scale is lossless, and this slice performs no
- * price or tax arithmetic, rounding or conversion on these values
- * (`ClinicalWeight.quantity` is the precedent). The canonical spelling is
- * documented in `CAT-003` ("Decimal projections are fixed-scale").
+ * Decimal fields are projected as FIXED-SCALE STRINGS at the stored scale of
+ * their own column, never as JavaScript floats and never in the trimmed form a
+ * real read would otherwise produce (`"10"` for `DECIMAL(5,2)` `10.00`). The
+ * scale is the column's own: EPIC-09 fixed the reference-price scale at
+ * `Decimal(14, 2)` for every currency, and the EPIC-18 REP-001 low-stock
+ * threshold is a QUANTITY at the stock ledger's `Decimal(10, 3)` scale. Padding
+ * to that scale is lossless, and this slice performs no price, tax or stock
+ * arithmetic, rounding or conversion on these values (`ClinicalWeight.quantity`
+ * is the precedent). The canonical spelling is documented in `CAT-003`
+ * ("Decimal projections are fixed-scale").
  */
 
 /** Item kinds pinned by the `catalog_item_kind` database enum (PRD §15). */
@@ -63,6 +65,13 @@ export interface CatalogItemResponse {
   readonly isActive: boolean;
   /** Whether the item participates in the EPIC-10 stock ledger. */
   readonly tracksStock: boolean;
+  /**
+   * Opt-in low-stock threshold as an exact fixed-scale (3 decimals) quantity
+   * string, or `null` when the item is NOT monitored (DEC-065). A client must
+   * read `null` as "no threshold", never as zero: the low-stock report skips an
+   * item with no threshold instead of inventing one.
+   */
+  readonly lowStockThreshold: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

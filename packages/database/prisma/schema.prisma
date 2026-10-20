@@ -1092,6 +1092,7 @@ model ClinicalTreatment {
 }
 
 /// Vaccination record (minimum facts: vaccine reference, administered date).
+/// `nextDueAt` is an OPTIONAL, staff-supplied due date (DEC-065), never derived.
 model ClinicalVaccination {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
@@ -1101,6 +1102,15 @@ model ClinicalVaccination {
   vaccine        String
   administeredAt DateTime @map("administered_at") @db.Timestamptz(3)
 
+  /// EPIC-18 REP-001 staff-entered booster due date (DEC-065). The veterinarian
+  /// who administers the vaccine knows the interval; the system does not, and no
+  /// protocol table is derived from it. NULL means "no due date was recorded",
+  /// and the upcoming/overdue reports simply omit the row instead of computing
+  /// one. The `(tenantId, nextDueAt)` index serves the tenant-scoped due-date
+  /// range scans those reports run; the existing `(tenantId, patientId)` index
+  /// cannot substitute for it.
+  nextDueAt DateTime? @map("next_due_at") @db.Timestamptz(3)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1109,10 +1119,12 @@ model ClinicalVaccination {
   patient Patient @relation(fields: [tenantId, patientId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([tenantId, patientId])
+  @@index([tenantId, nextDueAt])
   @@map("clinical_vaccination")
 }
 
 /// Deworming record (minimum facts: product, administered date).
+/// `nextDueAt` is an OPTIONAL, staff-supplied due date (DEC-065), never derived.
 model ClinicalDeworming {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
@@ -1122,6 +1134,12 @@ model ClinicalDeworming {
   product        String
   administeredAt DateTime @map("administered_at") @db.Timestamptz(3)
 
+  /// EPIC-18 REP-001 staff-entered next-deworming due date (DEC-065). Same
+  /// nullable, staff-supplied shape as `ClinicalVaccination.nextDueAt`: a row
+  /// without it is omitted by the upcoming/overdue report rather than guessed
+  /// at, and `(tenantId, nextDueAt)` serves the tenant-scoped range scan.
+  nextDueAt DateTime? @map("next_due_at") @db.Timestamptz(3)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1130,6 +1148,7 @@ model ClinicalDeworming {
   patient Patient @relation(fields: [tenantId, patientId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([tenantId, patientId])
+  @@index([tenantId, nextDueAt])
   @@map("clinical_deworming")
 }
 
@@ -1494,6 +1513,16 @@ model CatalogItem {
   /// explicitly by kind. It is the only stock dimension on the catalog — no
   /// SKU, barcode, category, unit or branch column exists.
   tracksStock Boolean @default(true) @map("tracks_stock")
+
+  /// EPIC-18 REP-001 per-item low-stock threshold (DEC-065). The quantity scale
+  /// is the stock ledger's own `Decimal(10, 3)`, so a threshold and the
+  /// `stock_balance.quantity` it is compared against are the same kind of
+  /// number. NULL means "not monitored": the low-stock report SKIPS an item with
+  /// no threshold rather than inventing a default, so an unset item never
+  /// appears as a false shortage. The migration also pins `> 0` as a CHECK
+  /// constraint, so a non-positive threshold cannot be stored even if the API
+  /// validation is bypassed.
+  lowStockThreshold Decimal? @map("low_stock_threshold") @db.Decimal(10, 3)
 
   /// `cUniMed` (`Unidades_Medida_v141.xsd`, SIFEN-BASELINE.md §22.6): the
   /// protocol's own unit code, up to four characters (`77` UNI Unidad, `2366`,

@@ -66,8 +66,8 @@ Each work unit is one commit carrying its tests and documentation.
       [[REP-009]] and [[DEC-062]]–[[DEC-066]]. No source.
 - [ ] **WU-A — [[REP-001]] the report data prerequisites.** Two migrations.
       **WU-A1** (done) the three business-event instants and their writers.
-      **WU-A2** (pending) the catalog threshold, the two clinical due dates,
-      their validators and the two forms.
+      **WU-A2** (done) the catalog threshold, the two clinical due dates, their
+      validators and the catalog form.
 - [ ] **WU-B — [[REP-002]] the reporting foundation.** `resolveReportPeriod`,
       the report contract, the `reports.*` permissions, the route pins and one
       reference report end to end.
@@ -114,3 +114,31 @@ Commit `WU-A1` on `feat/epic-18-dashboards-reports`.
 
 **Skipped:** the `apps/e2e` lane — Docker is unavailable in this environment and
 this work unit adds no UI.
+
+### WU-A2 — the two opt-in inputs
+
+Commit `WU-A2` on `feat/epic-18-dashboards-reports`.
+
+- Migration `20261019000003_rep_001_catalog_and_clinical_inputs`:
+  `catalog_item.low_stock_threshold` with a `> 0` CHECK, and `next_due_at` on
+  both clinical record tables with `(tenant_id, next_due_at)` indexes. No
+  backfill: the fact was never recorded, so the reports start empty by design.
+- The threshold travels as an exact decimal **string** (`> 0`, up to 7 integer
+  digits and 3 decimals), nullable where an explicit `null` means "stop
+  monitoring"; the catalog form gains the field.
+- The due date reuses the file's own `isoDate` validator and is clearable with
+  an explicit `null` on update, because a due date can be wrong as well as
+  absent.
+- **Scope correction, recorded rather than silently expanded:** the Story
+  originally claimed the vaccination and deworming _forms_ would gain the field.
+  No such form exists — the staff clinical workspace handles encounters only,
+  and the five specialized record kinds are API-only on the staff surface. The
+  field therefore landed on the API, and the missing staff entry surface is
+  [[TD-055]]. Without either one, both due reports stay empty for every tenant,
+  and that is stated in the Story's limitations.
+- Gates: api **1352 → 1361**, web **1160 → 1164**, format/lint/typecheck/build
+  green, live PostgreSQL re-run **266/266** with all 51 migrations applied.
+
+**Skipped:** a clinical record form (it does not exist to extend, and building
+one is [[EPIC-06]] surface), and the `apps/e2e` lane (no UI beyond the catalog
+field, and Docker is unavailable here).

@@ -324,6 +324,12 @@ export interface CatalogItemRow {
   isActive: boolean;
   /** EPIC-10 stock dimension. Mirrors the schema default (`true`) when omitted. */
   tracksStock: boolean;
+  /**
+   * EPIC-18 REP-001 opt-in low-stock threshold (DEC-065), stored as an exact
+   * decimal STRING like `referencePriceAmount` — never a JavaScript float.
+   * `null` means "not monitored".
+   */
+  lowStockThreshold: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1012,6 +1018,8 @@ export interface ClinicalVaccinationRow {
   patientId: string;
   vaccine: string;
   administeredAt: Date;
+  /** EPIC-18 REP-001 staff-entered due date (DEC-065); null mirrors "not recorded". */
+  nextDueAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1456,6 +1464,8 @@ export interface IsolationDatabase {
           isActive?: boolean;
           /** EPIC-10 stock dimension; omitted mirrors the schema default `true`. */
           tracksStock?: boolean;
+          /** EPIC-18 REP-001 opt-in threshold; omitted/null means not monitored. */
+          lowStockThreshold?: string | { toString(): string } | null;
         };
       }) => CatalogItemRow;
       updateMany: (args: {
@@ -1468,6 +1478,8 @@ export interface IsolationDatabase {
           referencePriceCurrency?: string | null;
           isActive?: boolean;
           tracksStock?: boolean;
+          /** EPIC-18 REP-001: absent leaves it, null clears it, a value sets it. */
+          lowStockThreshold?: string | { toString(): string } | null;
         };
       }) => { count: number };
     };
@@ -1973,6 +1985,8 @@ export interface IsolationDatabase {
           patientId: string;
           vaccine: string;
           administeredAt: Date;
+          /** EPIC-18 REP-001 due date; omitted mirrors the nullable column. */
+          nextDueAt?: Date | null;
         };
       }) => ClinicalVaccinationRow;
       findMany: (args: {
@@ -3635,6 +3649,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           isActive: data.isActive ?? true,
           // Mirrors the schema default so an omitted flag still tracks stock.
           tracksStock: data.tracksStock ?? true,
+          // Mirrors the nullable opt-in column: no threshold means not monitored.
+          lowStockThreshold: toDecimalStringOrNull(data.lowStockThreshold),
           createdAt: now,
           updatedAt: now,
         };
@@ -3657,6 +3673,9 @@ export function createIsolationDatabase(): IsolationDatabase {
           }
           if (data.isActive !== undefined) candidate.isActive = data.isActive;
           if (data.tracksStock !== undefined) candidate.tracksStock = data.tracksStock;
+          if (data.lowStockThreshold !== undefined) {
+            candidate.lowStockThreshold = toDecimalStringOrNull(data.lowStockThreshold);
+          }
           candidate.updatedAt = new Date();
           count += 1;
         }
@@ -4803,6 +4822,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           patientId: data.patientId,
           vaccine: data.vaccine,
           administeredAt: data.administeredAt,
+          // Mirrors the nullable column: an omitted due date stays unrecorded.
+          nextDueAt: data.nextDueAt ?? null,
           createdAt: now,
           updatedAt: now,
         };

@@ -575,6 +575,7 @@ const CATALOG_ITEM_DTO_KEYS = [
   "id",
   "isActive",
   "kind",
+  "lowStockThreshold",
   "name",
   "referencePriceAmount",
   "referencePriceCurrency",

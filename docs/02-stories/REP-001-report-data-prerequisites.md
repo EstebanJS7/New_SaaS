@@ -3,7 +3,7 @@ id: REP-001
 type: story
 title: The report data prerequisites
 epic: EPIC-18
-status: in-progress
+status: done
 priority: high
 depends_on: []
 prd_sections:
@@ -53,7 +53,9 @@ route and no report.
   CHECK, plus the optional field on the catalog item create and update contract.
 - `clinical_vaccination.next_due_at` and `clinical_deworming.next_due_at`:
   nullable `TIMESTAMPTZ(3)`, indexed on `(tenant_id, next_due_at)`, plus the
-  optional field on the two existing registration requests.
+  optional field on the two existing registration requests — **API only**. There
+  is no staff form for either record kind to extend: see the scope correction
+  below and [[TD-055]].
 - The additive response-contract change: the three aggregates expose their new
   instant in their read DTOs.
 - The migration and its backfill.
@@ -69,24 +71,24 @@ route and no report.
 
 ## Acceptance Criteria
 
-- [ ] The three event instants are written inside the transaction that performs
+- [x] The three event instants are written inside the transaction that performs
       their transition, and are NULL before it.
-- [ ] A repeated terminal command leaves the original instant intact — asserted
+- [x] A repeated terminal command leaves the original instant intact — asserted
       on the refusal path, not assumed.
-- [ ] The three instants are exposed in their aggregates' read DTOs.
-- [ ] `low_stock_threshold` is accepted, validated `> 0`, and returned on the
+- [x] The three instants are exposed in their aggregates' read DTOs.
+- [x] `low_stock_threshold` is accepted, validated `> 0`, and returned on the
       catalog item read contract.
-- [ ] `next_due_at` is accepted and returned on both clinical record contracts.
-- [ ] The backfill sets each instant from `updated_at` **only** for rows already
+- [x] `next_due_at` is accepted and returned on both clinical record contracts.
+- [x] The backfill sets each instant from `updated_at` **only** for rows already
       in a terminal state, and leaves every other row NULL.
-- [ ] Each of the five new read axes has an index that serves a tenant range
+- [x] Each of the five new read axes has an index that serves a tenant range
       scan.
-- [ ] Tenant isolation: no new read path exists, and the existing write paths
+- [x] Tenant isolation: no new read path exists, and the existing write paths
       keep their composite tenant FKs.
-- [ ] Backend authorization is unchanged — this Story adds no route.
-- [ ] Required loading/error/empty/success UX: N/A, no UI in this Story.
-- [ ] Required audit: the terminal commands' existing audit rows are unchanged.
-- [ ] Tests required by the Story pass.
+- [x] Backend authorization is unchanged — this Story adds no route.
+- [x] Required loading/error/empty/success UX: N/A, no UI in this Story.
+- [x] Required audit: the terminal commands' existing audit rows are unchanged.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -172,9 +174,14 @@ self-contained and reviewable on its own.
 
 ## UI
 
-- The catalog item form gains one optional numeric field, and the vaccination
-  and deworming forms gain one optional date field. Both are existing forms; no
-  new screen.
+- The catalog item form gains one optional numeric field (`lowStockThreshold`).
+- **No clinical form is touched, because none exists.** The staff clinical
+  workspace handles encounters only; vaccinations and deworming are API-only on
+  the staff surface and read-only in the portal. This Story therefore corrects
+  its own original scope claim rather than inventing a form: the due date is
+  accepted and projected by the API, and the missing staff entry surface is
+  recorded as [[TD-055]]. Building a clinical-record form here would have been a
+  silent scope expansion into [[EPIC-06]]'s surface.
 - Reusable components keep consuming semantic branding tokens; no literal brand
   colour, radius or font.
 
@@ -200,7 +207,28 @@ Part 1 — commit `WU-A1` on `feat/epic-18-dashboards-reports`:
 - The admin-side `CashSession` mirror in `apps/web` and its four test fixtures
   were updated to keep the client type in step with the API.
 
-Part 2 is not started.
+Part 2 — commit `WU-A2`:
+
+- Migration `20261019000003_rep_001_catalog_and_clinical_inputs`:
+  `catalog_item.low_stock_threshold` (`DECIMAL(10,3)`, nullable, with a `> 0`
+  CHECK), `clinical_vaccination.next_due_at` and
+  `clinical_deworming.next_due_at` (nullable `TIMESTAMPTZ(3)`, indexed on
+  `(tenant_id, next_due_at)`).
+- **No backfill, deliberately.** No column, event or audit row ever held a
+  threshold or a due date, so any backfill would invent one — a threshold from
+  current stock, a due date from an interval, which is the rejected protocol
+  engine. Existing rows stay NULL and the affected reports start empty by
+  design.
+- The threshold is an exact decimal **string** across the HTTP boundary on the
+  same precedent as the reference price (up to 7 integer digits, 3 decimals,
+  `> 0`), nullable on update where an explicit `null` means "stop monitoring".
+  The catalog item form gains the field, with "empty means not monitored"
+  discoverable from its hint.
+- `nextDueAt` reuses the file's existing `isoDate` validator so the due date and
+  the administration instant cannot disagree about accepted formats. The UPDATE
+  body additionally accepts an explicit `null`, because a due date can be
+  **wrong** as well as absent: a veterinarian who typed the wrong year must be
+  able to take it off, not only replace it.
 
 ## Verification
 
@@ -264,6 +292,19 @@ UI, so no spec covers it.
 - The instant is stamped from the application clock. The repo has no injected
   clock, so "never rewritten" is proven by advancing real time between the first
   command and its replay rather than by a fixed clock.
+- **Both due reports are empty until a due date is entered, and no staff screen
+  exists to enter one.** The API accepts `nextDueAt`; the staff clinical
+  workspace has no vaccination or deworming form at all, so the only path today
+  is a direct API call ([[TD-055]]). This is the vaccination capability's
+  pre-existing shape, not a regression this Story introduced.
+- The deprecation-era `CATALOG_DTO_SCHEMA_VERSION` stays `1` even though its own
+  comment says it is bumped when the accepted key set changes, and the catalog
+  item key set did change. It was left alone deliberately: every DTO schema
+  version in the repository is `1` and none has ever been bumped, including for
+  strictly larger key-set changes on `sale`, `cash_session` and `invoice`.
+  Unilaterally bumping one would invent a convention affecting every catalog
+  audit row's metadata; the inconsistency is recorded here rather than resolved
+  by one Story.
 - The in-memory fixture cannot model a real-database state that no longer exists
   — a terminal row with a `null` instant — but no fixture path creates one, and
   every terminal row in the tests is reached through the real command.
@@ -276,6 +317,9 @@ UI, so no spec covers it.
 
 ## Technical Debt
 
+- [[TD-055]] — the staff clinical surface is encounters only, so the vaccination
+  and deworming due dates this Story makes storable have no screen to enter
+  them.
 - [[TD-054]] — found while validating this Story: the live-PostgreSQL lane is
   not timezone-independent, and `America/Asuncion` (the tenant zone) is the
   value that breaks it. Preexisting, unrelated to this Story's columns, and
@@ -301,4 +345,5 @@ UI, so no spec covers it.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+All required gates passed on 2026-10-19: format, lint, typecheck, build,
+unit/integration suites and the live-PostgreSQL lane (51 migrations, 266/266).

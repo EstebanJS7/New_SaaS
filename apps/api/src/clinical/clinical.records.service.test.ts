@@ -283,6 +283,130 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
     });
   });
 
+  it("records a vaccination due date and audits the field name", async () => {
+    const created = await withContext(() =>
+      service.createVaccination(PATIENT_A, {
+        vaccine: "Rabies",
+        administeredAt: "2026-02-01T00:00:00.000Z",
+        nextDueAt: "2027-02-01T00:00:00.000Z",
+      })
+    );
+
+    // Projected as the same ISO instant the sibling `administeredAt` uses.
+    expect(created.nextDueAt).toBe("2027-02-01T00:00:00.000Z");
+    expect(vaccinations.get(created.id)?.nextDueAt).toEqual(new Date("2027-02-01T00:00:00.000Z"));
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(appendMock.mock.calls[0][0]).toMatchObject({
+      action: "clinical_vaccination.created",
+      metadata: { changedFields: ["vaccine", "administeredAt", "nextDueAt"] },
+    });
+  });
+
+  it("records no vaccination due date when none is supplied", async () => {
+    const created = await withContext(() =>
+      service.createVaccination(PATIENT_A, {
+        vaccine: "Rabies",
+        administeredAt: "2026-02-01T00:00:00.000Z",
+      })
+    );
+
+    // Opt-in input: the row reports NULL instead of a computed due date.
+    expect(created.nextDueAt).toBeNull();
+    expect(vaccinations.get(created.id)?.nextDueAt).toBeNull();
+  });
+
+  it("updates a vaccination due date in place and audits only that field", async () => {
+    const created = await withContext(() =>
+      service.createVaccination(PATIENT_A, {
+        vaccine: "Rabies",
+        administeredAt: "2026-02-01T00:00:00.000Z",
+        nextDueAt: "2027-02-01T00:00:00.000Z",
+      })
+    );
+    appendMock.mockClear();
+
+    const updated = await withContext(() =>
+      service.updateVaccination(PATIENT_A, created.id, {
+        nextDueAt: "2028-03-01T00:00:00.000Z",
+      })
+    );
+
+    expect(updated.nextDueAt).toBe("2028-03-01T00:00:00.000Z");
+    expect(updated.administeredAt).toBe("2026-02-01T00:00:00.000Z");
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(appendMock.mock.calls[0][0]).toMatchObject({
+      action: "clinical_vaccination.updated",
+      metadata: { changedFields: ["nextDueAt"] },
+    });
+  });
+
+  it("records and updates a deworming due date", async () => {
+    const created = await withContext(() =>
+      service.createDeworming(PATIENT_A, {
+        product: "Praziquantel",
+        administeredAt: "2026-02-01T00:00:00.000Z",
+        nextDueAt: "2026-05-01T00:00:00.000Z",
+      })
+    );
+    expect(created.nextDueAt).toBe("2026-05-01T00:00:00.000Z");
+    appendMock.mockClear();
+
+    const updated = await withContext(() =>
+      service.updateDeworming(PATIENT_A, created.id, {
+        nextDueAt: "2026-08-01T00:00:00.000Z",
+      })
+    );
+    expect(updated.nextDueAt).toBe("2026-08-01T00:00:00.000Z");
+    expect(appendMock.mock.calls[0][0]).toMatchObject({
+      action: "clinical_deworming.updated",
+      metadata: { changedFields: ["nextDueAt"] },
+    });
+  });
+
+  it("clears a vaccination due date with an explicit null and audits it", async () => {
+    const created = await withContext(() =>
+      service.createVaccination(PATIENT_A, {
+        vaccine: "Rabies",
+        administeredAt: "2026-02-01T00:00:00.000Z",
+        nextDueAt: "2027-02-01T00:00:00.000Z",
+      })
+    );
+    expect(created.nextDueAt).toBe("2027-02-01T00:00:00.000Z");
+    appendMock.mockClear();
+
+    // A wrong due date must be removable, not merely replaceable (DEC-065).
+    const cleared = await withContext(() =>
+      service.updateVaccination(PATIENT_A, created.id, { nextDueAt: null })
+    );
+
+    expect(cleared.nextDueAt).toBeNull();
+    expect(cleared.administeredAt).toBe("2026-02-01T00:00:00.000Z");
+    expect(appendMock.mock.calls[0][0]).toMatchObject({
+      action: "clinical_vaccination.updated",
+      metadata: { changedFields: ["nextDueAt"] },
+    });
+
+    // An ABSENT key still leaves the stored value untouched.
+    const untouched = await withContext(() =>
+      service.updateVaccination(PATIENT_A, created.id, { vaccine: "Rabies (booster)" })
+    );
+    expect(untouched.nextDueAt).toBeNull();
+  });
+
+  it("clears a deworming due date with an explicit null", async () => {
+    const created = await withContext(() =>
+      service.createDeworming(PATIENT_A, {
+        product: "Praziquantel",
+        administeredAt: "2026-02-01T00:00:00.000Z",
+        nextDueAt: "2026-05-01T00:00:00.000Z",
+      })
+    );
+    const cleared = await withContext(() =>
+      service.updateDeworming(PATIENT_A, created.id, { nextDueAt: null })
+    );
+    expect(cleared.nextDueAt).toBeNull();
+  });
+
   it("records and updates a study with its performed date and result", async () => {
     const created = await withContext(() =>
       service.createStudy(PATIENT_A, {

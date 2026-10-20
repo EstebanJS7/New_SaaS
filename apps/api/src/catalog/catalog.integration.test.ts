@@ -39,6 +39,7 @@ interface CatalogItemDto {
   referencePriceCurrency: string | null;
   isActive: boolean;
   tracksStock: boolean;
+  lowStockThreshold: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +60,7 @@ const CATALOG_ITEM_RESPONSE_KEYS: readonly string[] = [
   "referencePriceCurrency",
   "isActive",
   "tracksStock",
+  "lowStockThreshold",
   "createdAt",
   "updatedAt",
 ];
@@ -97,6 +99,7 @@ interface CatalogHttpFixture {
       name?: string;
       referencePriceAmount?: string | null;
       referencePriceCurrency?: string | null;
+      lowStockThreshold?: string | null;
     }
   ): CatalogItemRow;
 }
@@ -168,6 +171,7 @@ function seedCatalogHttp(db: IsolationDatabase): CatalogHttpFixture {
           referencePriceAmount: overrides.referencePriceAmount ?? null,
           referencePriceCurrency: overrides.referencePriceCurrency ?? null,
           isActive: overrides.isActive ?? true,
+          lowStockThreshold: overrides.lowStockThreshold ?? null,
         },
       }),
   };
@@ -530,6 +534,59 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
     expect(auditMeta(rows[0]).changedFields).toEqual(["kind", "name", "taxRateId"]);
   });
 
+  it("persists the opt-in low-stock threshold as an exact quantity string", async () => {
+    const response = await supertest(booted.app.getHttpServer())
+      .post("/catalog")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(
+        createBody({
+          kind: "MEDICATION",
+          name: "Vacuna antirrábica",
+          // Deliberately UNPADDED: the DTO must report the fixed three-decimal
+          // quantity scale, never the caller's own spelling.
+          lowStockThreshold: "10.5",
+        })
+      )
+      .expect(201);
+
+    const body = response.body as CatalogItemDto;
+    expect(body.lowStockThreshold).toBe("10.500");
+    // The threshold is INDEPENDENT of the reference-price pair: it is set on an
+    // item that carries no price at all.
+    expect(body.referencePriceAmount).toBeNull();
+    expect(body.referencePriceCurrency).toBeNull();
+    // Stored as an exact decimal quantity, never a JavaScript float.
+    expect(booted.db.tables.catalogItems.get(body.id)?.lowStockThreshold).toBe("10.5");
+
+    const rows = auditsForTarget(booted, body.id);
+    expect(rows).toHaveLength(1);
+    expect(auditMeta(rows[0]).changedFields).toEqual([
+      "kind",
+      "name",
+      "taxRateId",
+      "lowStockThreshold",
+    ]);
+    // Field NAMES only: the threshold VALUE never reaches the trail.
+    expect(JSON.stringify(rows[0].metadata)).not.toContain("10.5");
+  });
+
+  it("creates an item with no threshold, which is the not-monitored state", async () => {
+    const response = await supertest(booted.app.getHttpServer())
+      .post("/catalog")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(createBody({ kind: "PRODUCT", name: "Sin umbral" }))
+      .expect(201);
+
+    const body = response.body as CatalogItemDto;
+    expect(body.lowStockThreshold).toBeNull();
+    // A null threshold is the column default, so it names no field in the trail.
+    expect(auditMeta(auditsForTarget(booted, body.id)[0]).changedFields).toEqual([
+      "kind",
+      "name",
+      "taxRateId",
+    ]);
+  });
+
   it("defaults tracksStock by kind on create and honors an explicit override", async () => {
     async function create(overrides: Record<string, unknown>): Promise<CatalogItemDto> {
       const response = await supertest(booted.app.getHttpServer())
@@ -621,6 +678,12 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
       ["text tracksStock", createBody({ tracksStock: "true" })],
       ["null tracksStock", createBody({ tracksStock: null })],
       ["numeric tracksStock", createBody({ tracksStock: 1 })],
+      ["zero threshold", createBody({ lowStockThreshold: "0" })],
+      ["zero threshold with decimals", createBody({ lowStockThreshold: "0.000" })],
+      ["negative threshold", createBody({ lowStockThreshold: "-1.000" })],
+      ["over-scaled threshold", createBody({ lowStockThreshold: "1.2345" })],
+      ["over-wide threshold", createBody({ lowStockThreshold: "12345678" })],
+      ["numeric threshold", createBody({ lowStockThreshold: 10 })],
       ["client isActive", createBody({ isActive: false })],
       ["client tenantId", createBody({ tenantId: randomUUID() })],
     ];
@@ -789,6 +852,40 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
     expect(resetBody.referencePriceCurrency).toBe("USD");
   });
 
+  it("sets, leaves untouched and clears the low-stock threshold by update", async () => {
+    const item = fixture.createItem(fixture.a, { lowStockThreshold: "10.000" });
+
+    // An update that never mentions the threshold leaves it exactly as stored.
+    const untouched = await supertest(booted.app.getHttpServer())
+      .put(`/catalog/${item.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ name: "Sigue monitoreado" })
+      .expect(200);
+    expect((untouched.body as CatalogItemDto).lowStockThreshold).toBe("10.000");
+
+    // A supplied value replaces it, at the fixed three-decimal scale.
+    const replaced = await supertest(booted.app.getHttpServer())
+      .put(`/catalog/${item.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ lowStockThreshold: "2.5" })
+      .expect(200);
+    const replacedBody = replaced.body as CatalogItemDto;
+    expect(replacedBody.lowStockThreshold).toBe("2.500");
+    const replaceAudit = auditsForTarget(booted, item.id).at(-1);
+    expect(auditMeta(replaceAudit!).changedFields).toEqual(["lowStockThreshold"]);
+
+    // An explicit null means "stop monitoring" and persists NULL.
+    const cleared = await supertest(booted.app.getHttpServer())
+      .put(`/catalog/${item.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ lowStockThreshold: null })
+      .expect(200);
+    expect((cleared.body as CatalogItemDto).lowStockThreshold).toBeNull();
+    expect(booted.db.tables.catalogItems.get(item.id)?.lowStockThreshold).toBeNull();
+    const clearAudit = auditsForTarget(booted, item.id).at(-1);
+    expect(auditMeta(clearAudit!).changedFields).toEqual(["lowStockThreshold"]);
+  });
+
   it("rejects every invalid update and persists nothing", async () => {
     const item = fixture.createItem(fixture.a, {
       kind: "PRODUCT",
@@ -822,6 +919,10 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
       ["unknown kind", { kind: "UNKNOWN" }],
       ["text tracksStock", { tracksStock: "false" }],
       ["null tracksStock", { tracksStock: null }],
+      ["zero threshold", { lowStockThreshold: "0" }],
+      ["negative threshold", { lowStockThreshold: "-2.500" }],
+      ["over-scaled threshold", { lowStockThreshold: "1.2345" }],
+      ["numeric threshold", { lowStockThreshold: 3 }],
       ["client isActive", { isActive: false }],
     ];
 
