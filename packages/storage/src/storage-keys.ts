@@ -21,4 +21,15 @@ export const STORAGE_KEY_PREFIXES = Object.freeze({
    * exact signed XML the provider is asked to accept (ADR-009).
    */
   fiscalDocument: "fiscal-document",
+  /**
+   * EPIC-19 IMP-001: the uploaded CSV an import job previews and commits from.
+   *
+   * The key is written to `import_job.storage_key` and never leaves the server:
+   * no response carries it and no browser-reachable URL is ever issued for it
+   * ([[DEC-072]]). Upload-once is what binds a preview to its commit — both read
+   * this one object — so the prefix has to be distinguishable from the branding
+   * and fiscal boundaries in a provider dashboard even though the object itself
+   * is a tenant's customer list.
+   */
+  importArtefact: "import",
 });

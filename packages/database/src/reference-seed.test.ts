@@ -362,6 +362,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "billing.read",
       "fiscal.read",
       "reports.read",
+      "imports.read",
     ]);
     for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
       for (const key of [
@@ -742,6 +743,49 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     expect(FEATURE_CODE_SEEDS).toContain("advanced_reports");
   });
 
+  it("seeds the imports permissions and decided matrix (EPIC-19 IMP-001)", () => {
+    const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of ["imports.read", "imports.run"] as const) {
+      expect(seededKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    // DEC-072: importing is NOT gated by a feature code (a thirteenth code was
+    // refused after DEC-058 and DEC-062 refused the same move), so the family is
+    // guarded by permissions alone. `imports.read` follows the read-wide shape
+    // every other `*.read` key has: all six roles see the tenant's own imports.
+    for (const roleCode of [
+      "OWNER",
+      "ADMIN",
+      "VETERINARIAN",
+      "RECEPTIONIST",
+      "CASHIER",
+      "INVENTORY_MANAGER",
+    ] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("imports.read");
+    }
+
+    // `imports.run` is EXACTLY the two owning roles. It is the one action that
+    // creates hundreds of records in one command, so it is the action an
+    // operator should be deliberate about.
+    for (const roleCode of ["OWNER", "ADMIN"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("imports.run");
+    }
+    for (const roleCode of [
+      "VETERINARIAN",
+      "RECEPTIONIST",
+      "CASHIER",
+      "INVENTORY_MANAGER",
+    ] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain("imports.run");
+    }
+
+    // DEC-072 leaves the twelve codes untouched: importing is a staff action
+    // over data the tenant already owns, not an entitlement.
+    expect(FEATURE_CODE_SEEDS).toHaveLength(12);
+    expect(FEATURE_CODE_SEEDS).not.toContain("imports");
+  });
+
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
     expect(SPECIES_SEEDS.map((species) => species.code)).toEqual([
       "dog",
@@ -820,12 +864,16 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // other `*.read` key has -- moving 61 -> 62. EPIC-18 REP-002 adds the
       // two-key `reports` family (DEC-062): `reports.read` is read-wide like
       // every other `*.read` key and `reports.export` is held by the two owning
-      // roles only, moving 62 -> 64.
+      // roles only, moving 62 -> 64. EPIC-19 IMP-001 adds the two-key `imports`
+      // family (DEC-072): `imports.read` is read-wide like every other `*.read`
+      // key, and `imports.run` — the one command that creates hundreds of
+      // records in one go — is held by the two owning roles only, moving
+      // 64 -> 66.
       // DAT-007: the platform tenant owns identity-scoped messages (a staff
       // password-recovery email), because the delivery aggregate's tenant_id is
       // NOT NULL and the reset belongs to an IDENTITY rather than to a customer.
       tenants: 1,
-      permissions: 64,
+      permissions: 66,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

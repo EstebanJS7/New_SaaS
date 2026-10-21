@@ -992,6 +992,86 @@ export interface CashMovementWhere {
   createdAt?: { gte?: Date; lt?: Date };
 }
 
+/**
+ * Import-job row (EPIC-19 IMP-001), mirroring `import_job`. The value unions are
+ * spelled locally (never imported from the API module) so this boundary fake
+ * stays independent of the code under test — a rename there must FAIL a test,
+ * not silently move the fake with it.
+ */
+export interface ImportJobRow {
+  id: string;
+  tenantId: string;
+  entity: "CUSTOMER" | "PATIENT";
+  state:
+    "UPLOADED" | "PREVIEWING" | "PREVIEWED" | "COMMITTING" | "COMMITTED" | "FAILED" | "EXPIRED";
+  storageKey: string;
+  contentType: string;
+  byteSize: number;
+  createdByMembershipId: string;
+  createdCount: number;
+  failedCount: number;
+  suspectedDuplicateCount: number;
+  previewedAt: Date | null;
+  committedAt: Date | null;
+  failedAt: Date | null;
+  artefactExpiresAt: Date;
+  artefactDeletedAt: Date | null;
+  failureReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Row-outcome row (EPIC-19 IMP-001), mirroring `import_row_outcome`. */
+export interface ImportRowOutcomeRow {
+  id: string;
+  tenantId: string;
+  importId: string;
+  rowNumber: number;
+  status: "CREATE" | "FAILED";
+  reasonCode: string | null;
+  message: string | null;
+  suspectedDuplicate: boolean;
+  createdAt: Date;
+}
+
+/**
+ * Predicate fields the in-memory import reads/writes are allowed to build.
+ *
+ * `state` accepts the scalar AND the `{ in }` form because that is exactly how the
+ * state machine refuses a replay: the conditional `updateMany` pins the state(s) a
+ * transition may leave, and a fake that only understood the scalar form would
+ * make those `409`s unprovable.
+ */
+export interface ImportJobWhere {
+  id?: string;
+  tenantId?: string;
+  state?: ImportJobRow["state"] | { in: readonly ImportJobRow["state"][] };
+  /** `null` means "not deleted yet" — the artefact-deletion compare-and-set. */
+  artefactDeletedAt?: Date | null;
+  /** TTL sweep predicate: strictly before this instant. */
+  artefactExpiresAt?: { lt: Date };
+}
+
+/** Ordering clauses the in-memory import lists accept. */
+export interface ImportOrderBy {
+  createdAt?: "asc" | "desc";
+  id?: "asc" | "desc";
+  artefactExpiresAt?: "asc" | "desc";
+}
+
+/** Fields a transition may write (the repository owns the values). */
+export interface ImportJobUpdateData {
+  state?: ImportJobRow["state"];
+  previewedAt?: Date | null;
+  committedAt?: Date | null;
+  failedAt?: Date | null;
+  artefactDeletedAt?: Date | null;
+  failureReason?: string | null;
+  createdCount?: number;
+  failedCount?: number;
+  suspectedDuplicateCount?: number;
+}
+
 /** Ordering clauses the in-memory cash lists accept. */
 export interface CashOrderBy {
   createdAt?: "asc" | "desc";
@@ -1987,6 +2067,51 @@ export interface IsolationDatabase {
         orderBy?: readonly CashOrderBy[];
       }) => CashMovementRow[];
     };
+    /**
+     * Import jobs (EPIC-19 IMP-001). The conditional `updateMany` is the point:
+     * its `where` can pin the state a transition LEAVES (a single value or an
+     * `in` set), so the repository's illegal-transition and replay `409`s are
+     * exercisable without a live PostgreSQL.
+     */
+    importJob: {
+      findFirst: (args: { where: ImportJobWhere }) => ImportJobRow | null;
+      findMany: (args: {
+        where: ImportJobWhere;
+        orderBy?: readonly ImportOrderBy[];
+        take?: number;
+      }) => ImportJobRow[];
+      /**
+       * Insert seam for fixtures. The schema-defaulted fields are optional here
+       * (`state` defaults to `UPLOADED`, the counters to 0, the instants to
+       * `null`), which is what lets a test seed a job directly IN a later state
+       * and then prove a transition from it.
+       */
+      create: (args: {
+        data: Partial<ImportJobRow> &
+          Pick<
+            ImportJobRow,
+            | "tenantId"
+            | "entity"
+            | "storageKey"
+            | "contentType"
+            | "byteSize"
+            | "createdByMembershipId"
+            | "artefactExpiresAt"
+          >;
+      }) => ImportJobRow;
+      updateMany: (args: { where: ImportJobWhere; data: ImportJobUpdateData }) => { count: number };
+    };
+    /** Row verdicts (IMP-001 ships the table and the redacted projection). */
+    importRowOutcome: {
+      findFirst: (args: { where: Partial<ImportRowOutcomeRow> }) => ImportRowOutcomeRow | null;
+      findMany: (args: {
+        where: { tenantId: string; importId: string };
+        orderBy?: readonly { rowNumber?: "asc" | "desc" }[];
+      }) => ImportRowOutcomeRow[];
+      create: (args: {
+        data: Omit<ImportRowOutcomeRow, "id" | "createdAt"> & { createdAt?: Date };
+      }) => ImportRowOutcomeRow;
+    };
     stockMovement: {
       /**
        * Ledger append. The ONLY mutation: there is no update and no delete on
@@ -2475,6 +2600,9 @@ export interface IsolationDatabase {
     cashRegisters: Map<string, CashRegisterRow>;
     cashSessions: Map<string, CashSessionRow>;
     cashMovements: Map<string, CashMovementRow>;
+    /** EPIC-19 IMP-001: the import aggregate and its per-row verdicts. */
+    importJobs: Map<string, ImportJobRow>;
+    importRowOutcomes: Map<string, ImportRowOutcomeRow>;
     patients: Map<string, PatientRow>;
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
@@ -3090,6 +3218,62 @@ function orderCashRows<T extends { id: string; createdAt: Date; closedAt?: Date 
   });
 }
 
+/**
+ * Faithful-enough `import_job` matcher (EPIC-19 IMP-001).
+ *
+ * Every shipped predicate is implemented, not merely typed: scalar `id` /
+ * `tenantId`, the scalar OR `{ in }` state form the transitions build, the
+ * "not deleted yet" CAS (`artefactDeletedAt: null`) and the TTL sweep's strict
+ * `artefactExpiresAt < instant`.
+ */
+function matchesImportJob(where: ImportJobWhere, candidate: ImportJobRow): boolean {
+  if (where.id !== undefined && candidate.id !== where.id) return false;
+  if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) return false;
+  if (where.state !== undefined) {
+    if (typeof where.state === "string") {
+      if (candidate.state !== where.state) return false;
+    } else if (!where.state.in.includes(candidate.state)) {
+      return false;
+    }
+  }
+  if (where.artefactDeletedAt === null && candidate.artefactDeletedAt !== null) return false;
+  if (
+    where.artefactExpiresAt?.lt !== undefined &&
+    candidate.artefactExpiresAt.getTime() >= where.artefactExpiresAt.lt.getTime()
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Ordering for the import lists. `createdAt` is the list order (newest first) and
+ * `artefactExpiresAt` is the TTL sweep's deadline order; `id` breaks ties in both
+ * cases, mirroring the repository's declared deterministic order.
+ */
+function orderImportRows(rows: ImportJobRow[], orderBy: readonly ImportOrderBy[] | undefined) {
+  if (orderBy === undefined) return rows;
+  return [...rows].sort((left, right) => {
+    for (const clause of orderBy) {
+      if (clause.createdAt !== undefined) {
+        const compared = left.createdAt.getTime() - right.createdAt.getTime();
+        if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.artefactExpiresAt !== undefined) {
+        const compared = left.artefactExpiresAt.getTime() - right.artefactExpiresAt.getTime();
+        if (compared !== 0) {
+          return clause.artefactExpiresAt === "asc" ? compared : -compared;
+        }
+      }
+      if (clause.id !== undefined) {
+        const compared = left.id.localeCompare(right.id);
+        if (compared !== 0) return clause.id === "asc" ? compared : -compared;
+      }
+    }
+    return 0;
+  });
+}
+
 /** Builds one isolated database boundary; call per-boot for full isolation. */
 export function createIsolationDatabase(): IsolationDatabase {
   const tenants = new Map<string, TenantRow>();
@@ -3160,6 +3344,12 @@ export function createIsolationDatabase(): IsolationDatabase {
   const cashRegisterTable = new Map<string, CashRegisterRow>();
   const cashSessionTable = new Map<string, CashSessionRow>();
   const cashMovementTable = new Map<string, CashMovementRow>();
+  // EPIC-19 IMP-001: the import aggregate and its per-row verdicts. Both are
+  // written by the shipped surface (the upload creates the job; the verdict rows
+  // are seeded by the aggregate's own no-personal-data test), so the in-memory
+  // boundary must model the CONDITIONAL state write the machine depends on.
+  const importJobTable = new Map<string, ImportJobRow>();
+  const importRowOutcomeTable = new Map<string, ImportRowOutcomeRow>();
   const patientTable = new Map<string, PatientRow>();
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
@@ -4961,6 +5151,107 @@ export function createIsolationDatabase(): IsolationDatabase {
         return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
       },
     },
+    importJob: {
+      findFirst: ({ where }) =>
+        [...importJobTable.values()].find((candidate) => matchesImportJob(where, candidate)) ??
+        null,
+      findMany: ({ where, orderBy, take }) => {
+        const rows = orderImportRows(
+          [...importJobTable.values()].filter((candidate) => matchesImportJob(where, candidate)),
+          orderBy
+        );
+        return take === undefined ? rows : rows.slice(0, take);
+      },
+      create: ({ data }) => {
+        const now = new Date();
+        const created: ImportJobRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          entity: data.entity,
+          // Mirrors the schema default: a created job is `UPLOADED` unless the
+          // fixture says otherwise, so a test can seed a job mid-lifecycle by
+          // inserting it and then moving it with the conditional `updateMany`.
+          state: data.state ?? "UPLOADED",
+          storageKey: data.storageKey,
+          contentType: data.contentType,
+          byteSize: data.byteSize,
+          createdByMembershipId: data.createdByMembershipId,
+          // The counters and the phase instants are the schema's defaults unless
+          // the fixture supplies them.
+          createdCount: data.createdCount ?? 0,
+          failedCount: data.failedCount ?? 0,
+          suspectedDuplicateCount: data.suspectedDuplicateCount ?? 0,
+          previewedAt: data.previewedAt ?? null,
+          committedAt: data.committedAt ?? null,
+          failedAt: data.failedAt ?? null,
+          artefactExpiresAt: data.artefactExpiresAt,
+          artefactDeletedAt: data.artefactDeletedAt ?? null,
+          failureReason: data.failureReason ?? null,
+          createdAt: data.createdAt ?? now,
+          updatedAt: data.updatedAt ?? now,
+        };
+        importJobTable.set(created.id, created);
+        return created;
+      },
+      /**
+       * The conditional write the whole state machine is built from. Every filter
+       * `matchesImportJob` understands is applied, so a replay or a lost race
+       * genuinely matches zero rows here exactly as it does in PostgreSQL.
+       */
+      updateMany: ({ where, data }) => {
+        let count = 0;
+        for (const row of importJobTable.values()) {
+          if (!matchesImportJob(where, row)) continue;
+          if (data.state !== undefined) row.state = data.state;
+          if (data.previewedAt !== undefined) row.previewedAt = data.previewedAt;
+          if (data.committedAt !== undefined) row.committedAt = data.committedAt;
+          if (data.failedAt !== undefined) row.failedAt = data.failedAt;
+          if (data.artefactDeletedAt !== undefined) row.artefactDeletedAt = data.artefactDeletedAt;
+          if (data.failureReason !== undefined) row.failureReason = data.failureReason;
+          if (data.createdCount !== undefined) row.createdCount = data.createdCount;
+          if (data.failedCount !== undefined) row.failedCount = data.failedCount;
+          if (data.suspectedDuplicateCount !== undefined) {
+            row.suspectedDuplicateCount = data.suspectedDuplicateCount;
+          }
+          row.updatedAt = new Date();
+          count += 1;
+        }
+        return { count };
+      },
+    },
+    importRowOutcome: {
+      findFirst: ({ where }) =>
+        [...importRowOutcomeTable.values()].find((candidate) =>
+          Object.entries(where).every(
+            ([key, value]) => candidate[key as keyof ImportRowOutcomeRow] === value
+          )
+        ) ?? null,
+      findMany: ({ where, orderBy }) => {
+        const rows = [...importRowOutcomeTable.values()].filter(
+          (candidate) =>
+            candidate.tenantId === where.tenantId && candidate.importId === where.importId
+        );
+        const direction = orderBy?.[0]?.rowNumber;
+        if (direction === undefined) return rows;
+        const sorted = [...rows].sort((left, right) => left.rowNumber - right.rowNumber);
+        return direction === "asc" ? sorted : sorted.reverse();
+      },
+      create: ({ data }) => {
+        const created: ImportRowOutcomeRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          importId: data.importId,
+          rowNumber: data.rowNumber,
+          status: data.status,
+          reasonCode: data.reasonCode,
+          message: data.message,
+          suspectedDuplicate: data.suspectedDuplicate,
+          createdAt: data.createdAt ?? new Date(),
+        };
+        importRowOutcomeTable.set(created.id, created);
+        return created;
+      },
+    },
     stockMovement: {
       create: ({ data }) => {
         const now = new Date();
@@ -5913,6 +6204,8 @@ export function createIsolationDatabase(): IsolationDatabase {
       cashRegisters: cashRegisterTable,
       cashSessions: cashSessionTable,
       cashMovements: cashMovementTable,
+      importJobs: importJobTable,
+      importRowOutcomes: importRowOutcomeTable,
       patients: patientTable,
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,

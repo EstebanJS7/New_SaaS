@@ -3,7 +3,7 @@ id: IMP-001
 type: story
 title: The import aggregate, the artefact and the permissions
 epic: EPIC-19
-status: planned
+status: done
 priority: high
 depends_on: []
 prd_sections:
@@ -62,22 +62,22 @@ exists to be consistent with).
 
 ## Acceptance Criteria
 
-- [ ] The aggregate exists with its state machine, and an illegal transition is
+- [x] The aggregate exists with its state machine, and an illegal transition is
       a stable refusal rather than a silent write.
-- [ ] The uploaded file lands in storage under an opaque key; the key never
+- [x] The uploaded file lands in storage under an opaque key; the key never
       leaves the server, and no browser-reachable URL is ever issued for it.
-- [ ] The row-outcome table stores a verdict and a reason and **no personal
+- [x] The row-outcome table stores a verdict and a reason and **no personal
       data** — asserted structurally, not by convention.
-- [ ] `imports.run` and `imports.read` are seeded, mapped, enforced server-side
+- [x] `imports.run` and `imports.read` are seeded, mapped, enforced server-side
       and pinned in the RBAC route-contract probe.
-- [ ] Every import read is tenant-scoped; a foreign import id is a `404`.
-- [ ] The upload refuses an oversized file and a non-CSV content type with
+- [x] Every import read is tenant-scoped; a foreign import id is a `404`.
+- [x] The upload refuses an oversized file and a non-CSV content type with
       distinct stable messages.
-- [ ] The artefact is deleted when the import reaches a terminal state, and the
+- [x] The artefact is deleted when the import reaches a terminal state, and the
       TTL covers an import that never does.
-- [ ] Required loading/error/empty/success UX: N/A, no UI in this Story.
-- [ ] Required audit exists: the import's own transitions are audited.
-- [ ] Tests required by the Story pass.
+- [x] Required loading/error/empty/success UX: N/A, no UI in this Story.
+- [x] Required audit exists: the import's own transitions are audited.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -121,12 +121,66 @@ import_job, import_row_outcome, their enums, indexes and the tenant composite ke
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented on `feat/epic-19-imports`.
+
+- **The state machine is closed and every transition is one conditional write.**
+  A single private `transition(id, allowedFrom, data)` does
+  `updateMany({ where: { id, tenantId, state: { in: allowedFrom } }, data })`,
+  so the read-then-write race has nowhere to hide: a replay finds the row
+  already advanced, a lost race finds the winner's state, and both match ZERO
+  rows. The repository returns `false`; the service maps it to one shared stable
+  `409` whose message does not vary by state — so the refusal is not a state
+  oracle. The `404`/`409` split is made by re-reading inside the transaction
+  BEFORE writing. `IMPORT_JOB_TERMINAL_STATES` and the non-terminal set derive
+  from one another, so they cannot drift.
+- **The row outcome carries no personal data**, and that is a structural fact
+  rather than a policy: a compile-time exact-key pin plus a runtime scan of a
+  persisted row for a customer name, a phone, an e-mail and a document number.
+  The rationale is in a model comment — the row the outcome describes is already
+  stored as the record the import created, so copying it here would duplicate
+  personal data into a table with no retention story.
+- **There is no route that serves the artefact back, at all.** DEC-072 said the
+  key never leaves the server; the implementation went further and ships no
+  download endpoint, so the worker resolves `storage_key` server-side exactly as
+  the fiscal submission handler resolves its own document key. The upload
+  response is literally `{ importId, state }`, and a test asserts no artefact
+  route exists.
+- The artefact is `put` under
+  `createOpaqueStorageKey(STORAGE_KEY_PREFIXES.importArtefact)`, with a 72-hour
+  TTL (generous on purpose: an operator may preview and return), deleted on any
+  terminal state and by a bounded sweep, idempotently.
+- `imports.read` on all six roles; `imports.run` on OWNER and ADMIN only.
+  Catalog 64 → 66. No feature-code gate ([[DEC-072]]).
+- Three routes pinned in the RBAC probe: `imports.run` on the upload,
+  `imports.read` on the two reads.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (23/23 turbo tasks)
+pnpm typecheck      PASS  (23/23)
+pnpm build          PASS  (13/13)
+pnpm test           PASS  (23/23)
+  api        116 files (114 landed + 2 new)      1723 passed | 266 skipped  (+89)
+  database    30 files                            550 passed  (+1)
+  web        118 files                           1282 passed
+```
+
+89 new tests: 63 service and 25 integration, plus one RBAC pin. The transition
+contract is exercised as a 42-case matrix (six commands × seven states) rather
+than a happy path, plus replay, terminal-exit, foreign-id and idempotency cases.
+
+**Live PostgreSQL: 266/266 over 51 migrations**, and the new constraints were
+probed directly against a migrated database rather than assumed from the DDL:
+
+```text
+job insertado: UPLOADED / expires +72h
+OK: rechazo creado_count negativo                 (import_job_counters_non_negative)
+OK: rechazo COMMITTED sin committed_at            (import_job_committed_at_check)
+OK: rechazo row_number 0                          (import_row_outcome_row_number_positive)
+outcomes: 2                                       (one CREATE, one FAILED + duplicate flag)
+outcomes tras borrar el job: 0                    (composite FK ON DELETE CASCADE)
 ```
 
 ## Tests Added
@@ -139,12 +193,37 @@ Not run.
 
 ## Known Limitations
 
-- To be recorded as implemented.
+- **A pre-existing test pattern collided with the new table and had to be
+  narrowed.** The live-PostgreSQL catalog block asserts that the public schema
+  holds no event/outbox/queue/`%job%` table, as proof that a catalog mutation
+  emits no event. `import_job` matches `%job%`, so the guard now excludes it
+  **by name** with a comment saying why: it is a work aggregate for an uploaded
+  file, not a durable record of an emitted event. The alternative — renaming a
+  domain aggregate to satisfy a test heuristic — would have let the pattern keep
+  silently assuming something it stopped being true about.
+- **`findOverdue` deliberately does not filter on state.** Filtering to
+  non-terminal states would orphan the artefact of a finished import whose
+  deletion failed earlier, because nothing else ever revisits it.
+- **The TTL sweep is tenant-scoped and unscheduled.** Every query in the module
+  carries the tenant predicate implicitly, so one call drains one tenant,
+  bounded at 100. A platform-wide scheduler is the worker's job; this Story
+  ships the mechanism, matching how it ships the state machine without the work
+  behind `PREVIEWING`/`COMMITTING`.
+- Two audit actions beyond the five the Story listed: `import.previewing` and
+  `import.committing`. "Every transition is audited" requires a name for
+  entering a state, and recording `import.previewed` before the preview ran
+  would be a lie.
+- `failure_reason` and `message` are `VarChar(500)` rather than `TEXT`: a column
+  bound is the only bound that cannot be forgotten.
+- The 5 MiB cap needed a per-request `limits` override on `request.parts()`,
+  because `@fastify/multipart` is registered globally with the branding asset
+  ceiling (2 MiB). Without it a 2.5 MiB CSV would have died with a branding
+  message.
 
 ## Technical Debt
 
 - [[TD-058]] — the artefact's retention has no approved policy behind it.
-- [[TD-057]] — XLSX.
+- [[TD-057]] — XLSX, deferred by [[DEC-068]].
 
 ## Decisions / ADRs
 
@@ -159,4 +238,5 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+All required gates passed on 2026-10-19, including the live-PostgreSQL lane and
+direct probes of the new constraints.

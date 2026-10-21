@@ -15,6 +15,7 @@ import { CASH_PERMISSIONS } from "../cash/cash.permissions.js";
 import { BILLING_PERMISSIONS } from "../billing/billing.permissions.js";
 import { FISCAL_PERMISSIONS } from "../fiscal/fiscal.permissions.js";
 import { REPORTING_PERMISSIONS } from "../reporting/reporting.permissions.js";
+import { IMPORTS_PERMISSIONS } from "../imports/imports.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -315,6 +316,15 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // a file out of the system are different decisions. Still no command route —
   // building a file from confirmed rows writes nothing.
   "GET /reports/:reportCode/export",
+  // EPIC-19 IMP-001 — the imports surface. ONE multipart upload behind
+  // `imports.run` (the owning-roles key, because an import creates hundreds of
+  // records in one command), the bounded list and the single read behind
+  // `imports.read`. DEC-072 leaves the surface UNGATED by feature code. There is
+  // deliberately no PATCH, PUT or DELETE and no route that accepts a state: the
+  // lifecycle is server-owned.
+  "POST /imports",
+  "GET /imports",
+  "GET /imports/:id",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -573,6 +583,24 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   // rather than a sibling one because the assertion it needs is the same one:
   // exactly one granular `reports.*` key per route, by name.
   "GET /reports/:reportCode/export": REPORTING_PERMISSIONS.export,
+};
+
+/**
+ * EPIC-19 IMP-001 imports surface. The multipart upload MUST declare exactly
+ * `imports.run` — the owning-roles key, because it is the command that creates
+ * hundreds of records — and both reads MUST declare exactly `imports.read`, the
+ * key every one of the six roles holds. Pinning them by name means a route
+ * silently moved onto the wider or the narrower key fails here rather than
+ * shipping, which the permission-less 403 sweep cannot catch.
+ *
+ * There is deliberately NO entry for a state route: the lifecycle is
+ * server-owned, and this map fails by name if a `PATCH /imports/:id` or any
+ * other status-accepting route ever appears.
+ */
+const IMPORTS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "POST /imports": IMPORTS_PERMISSIONS.run,
+  "GET /imports": IMPORTS_PERMISSIONS.read,
+  "GET /imports/:id": IMPORTS_PERMISSIONS.read,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -936,6 +964,45 @@ describe("route-contract probe (deny-by-default)", () => {
       expect([...(entry?.permissions ?? [])], route).toEqual([REPORTING_PERMISSIONS.read]);
       expect(entry?.permissions ?? [], route).not.toContain(REPORTING_PERMISSIONS.export);
     }
+  });
+
+  it("pins imports.run on the upload and imports.read on the two reads (IMP-001)", () => {
+    // The imports surface is exactly three routes and ONE of them is a command.
+    // Both halves are asserted by name: the upload must take the narrower
+    // owning-roles key (it is the command that creates hundreds of records), and
+    // neither read may take it — a read carrying `imports.run` would make the
+    // narrow grant unreachable on its own.
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path === "/imports" || entry.path.startsWith("/imports/"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(IMPORTS_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING IMPORT ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG IMPORT PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in IMPORTS_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED IMPORT ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+
+    const exportsGrant = Object.entries(IMPORTS_PERMISSION_BY_ROUTE).filter(
+      ([, key]) => key === IMPORTS_PERMISSIONS.run
+    );
+    expect(exportsGrant.map(([route]) => route)).toEqual(["POST /imports"]);
   });
 
   it("buckets EVERY route as public-exempt, portal-surface, or declared — violations are named", () => {
