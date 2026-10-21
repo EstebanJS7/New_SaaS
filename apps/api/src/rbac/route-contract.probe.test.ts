@@ -323,6 +323,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // deliberately no PATCH, PUT or DELETE and no route that accepts a state: the
   // lifecycle is server-owned.
   "POST /imports",
+  // EPIC-19 IMP-002 — the preview TRIGGER. A command (it queues work) rather than
+  // a read, so it takes the same owning-roles key the upload does; it is the
+  // decision that produces the summary an operator is about to commit.
+  "POST /imports/:id/preview",
   "GET /imports",
   "GET /imports/:id",
 ];
@@ -586,12 +590,16 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /**
- * EPIC-19 IMP-001 imports surface. The multipart upload MUST declare exactly
+ * EPIC-19 imports surface. The multipart upload MUST declare exactly
  * `imports.run` — the owning-roles key, because it is the command that creates
  * hundreds of records — and both reads MUST declare exactly `imports.read`, the
  * key every one of the six roles holds. Pinning them by name means a route
  * silently moved onto the wider or the narrower key fails here rather than
  * shipping, which the permission-less 403 sweep cannot catch.
+ *
+ * [[IMP-002]] added ONE command: `POST /imports/:id/preview`. It writes no record
+ * and returns no row content, but it is the action that decides what an operator
+ * is about to commit, so it takes the narrower key and never the read one.
  *
  * There is deliberately NO entry for a state route: the lifecycle is
  * server-owned, and this map fails by name if a `PATCH /imports/:id` or any
@@ -599,6 +607,7 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  */
 const IMPORTS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /imports": IMPORTS_PERMISSIONS.run,
+  "POST /imports/:id/preview": IMPORTS_PERMISSIONS.run,
   "GET /imports": IMPORTS_PERMISSIONS.read,
   "GET /imports/:id": IMPORTS_PERMISSIONS.read,
 };
@@ -966,12 +975,12 @@ describe("route-contract probe (deny-by-default)", () => {
     }
   });
 
-  it("pins imports.run on the upload and imports.read on the two reads (IMP-001)", () => {
-    // The imports surface is exactly three routes and ONE of them is a command.
-    // Both halves are asserted by name: the upload must take the narrower
-    // owning-roles key (it is the command that creates hundreds of records), and
-    // neither read may take it — a read carrying `imports.run` would make the
-    // narrow grant unreachable on its own.
+  it("pins imports.run on the upload and the preview trigger, and imports.read on the two reads", () => {
+    // Two commands on this surface and both take the narrower owning-roles key —
+    // the upload because it creates hundreds of records, the preview trigger
+    // (IMP-002) because it decides what an operator is about to commit. Neither
+    // read may take it: a read carrying `imports.run` would make the narrow grant
+    // unreachable on its own.
     const actualByRoute = new Map(
       inventory
         .filter((entry) => entry.path === "/imports" || entry.path.startsWith("/imports/"))
@@ -1002,7 +1011,10 @@ describe("route-contract probe (deny-by-default)", () => {
     const exportsGrant = Object.entries(IMPORTS_PERMISSION_BY_ROUTE).filter(
       ([, key]) => key === IMPORTS_PERMISSIONS.run
     );
-    expect(exportsGrant.map(([route]) => route)).toEqual(["POST /imports"]);
+    expect(exportsGrant.map(([route]) => route)).toEqual([
+      "POST /imports",
+      "POST /imports/:id/preview",
+    ]);
   });
 
   it("buckets EVERY route as public-exempt, portal-surface, or declared — violations are named", () => {

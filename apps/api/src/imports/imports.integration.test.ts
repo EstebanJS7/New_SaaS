@@ -19,7 +19,9 @@ import { IMPORT_LIST_LIMIT_MAX } from "./imports.zod.js";
  * IMP-001 HTTP boundary suite.
  *
  * Boots the REAL AppModule (so the real guard chain runs) over the in-memory
- * boundary fake, and drives the three shipped routes with a real multipart body.
+ * boundary fake, and drives the IMP-001 routes with a real multipart body. (The
+ * fourth route — `POST /imports/:id/preview` from IMP-002 — has its own suite,
+ * which replaces the queue producer with a recording double.)
  * What it proves, in the Story's words:
  *
  * - the upload refuses an oversized file and a non-CSV content type with DISTINCT
@@ -138,10 +140,13 @@ describe("imports HTTP boundary", () => {
   }
 
   describe("authentication", () => {
-    it("requires authentication on all three routes", async () => {
+    it("requires authentication on every route", async () => {
       await supertest(booted.app.getHttpServer()).get("/imports").expect(401);
       await supertest(booted.app.getHttpServer()).get(`/imports/${tenantAId}`).expect(401);
       await supertest(booted.app.getHttpServer()).post("/imports").expect(401);
+      // The IMP-002 preview trigger is a command, and an unauthenticated call
+      // reaches neither the service nor the queue.
+      await supertest(booted.app.getHttpServer()).post(`/imports/${tenantAId}/preview`).expect(401);
     });
   });
 
