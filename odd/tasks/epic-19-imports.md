@@ -50,6 +50,10 @@ Each work unit is one commit carrying its tests and documentation.
       [[IMP-006]], [[DEC-068]]–[[DEC-072]] and [[TD-057]]/[[TD-058]]. No source.
 - [x] **WU-A — [[IMP-001]] the import aggregate, the artefact and the
       permissions.** _Done: see the evidence log._ permissions.**
+- [ ] **WU-A2 — [[IMP-001A]] the shared create contracts.** Extracts the create
+      schemas and functions to `packages/customers` / `packages/patients` so the
+      worker can call them. Found while starting WU-B ([[DEC-073]]), not
+      planned.
 - [ ] **WU-B — [[IMP-002]] the CSV pipeline and the customer preview.**
 - [ ] **WU-C — [[IMP-003]] the customer commit and its summary.**
 - [ ] **WU-D — [[IMP-004]] the patient preview and commit.**
