@@ -62,8 +62,9 @@ deworming upcoming          clinical_deworming.next_due_at      REP-006
 
 Each work unit is one commit carrying its tests and documentation.
 
-- [ ] **WU-0 — the planning record.** This file, the epic, [[REP-001]] through
-      [[REP-009]] and [[DEC-062]]–[[DEC-066]]. No source.
+- [x] **WU-0 — the planning record.** This file, the epic, [[REP-001]] through
+      [[REP-010]] and [[DEC-062]]–[[DEC-067]]. No source. [[REP-009]] and
+      [[DEC-062]]–[[DEC-066]]. No source.
 - [ ] **WU-A — [[REP-001]] the report data prerequisites.** Two migrations.
       **WU-A1** (done) the three business-event instants and their writers.
       **WU-A2** (done) the catalog threshold, the two clinical due dates, their
@@ -85,7 +86,7 @@ Each work unit is one commit carrying its tests and documentation.
       permissions that already ship ([[DEC-067]]). Lands BEFORE REP-008, whose
       empty state links here.
 - [x] **WU-I — [[REP-008]] the staff surfaces and the e2e lane.** _Done._
-- [ ] **WU-J — [[REP-009]] the epic closure and evidence.**
+- [x] **WU-J — [[REP-009]] the epic closure and evidence.** _Done._
 
 ## Review workload
 
@@ -439,3 +440,32 @@ no database). Both specs are written, statically valid and explicitly unrun. The
 demo seed also creates no sale, no cash session and no catalog item, so a lane
 run shows zeros and the low-stock not-configured state — which is why the spec
 asserts against the API's answers instead of a literal.
+
+### WU-J — the epic closure and evidence
+
+Commit `WU-J` on `feat/epic-18-dashboards-reports`.
+
+- Criterion→evidence map for the epic and all nine Stories, in the epic file.
+- `docs/10-qa/CI-EVIDENCE.md` gained the EPIC-18 block with the real gate
+  counts, the live-PostgreSQL total, the five claims proven beyond the suites,
+  and the three things `done` does not mean.
+- `docs/09-releases/CHANGELOG.md` records what shipped and the four defects
+  fixed.
+- The roadmap row moved to `done` with the evidence note; the kickoff paragraph
+  is retained below it as history.
+- Six debt items preserved: TD-051 (async export, with its trigger), TD-052
+  (branch dimension, accepted), TD-053 (performance unmeasured), TD-054 (the
+  live-PG lane's timezone dependence), TD-055 (three clinical kinds still
+  API-only, narrowed by DEC-067), TD-056 (the fake cannot prove `take` or
+  `select`).
+
+**Final gates on the closing tree**: format · lint · typecheck · build · test
+green; api **1634** | 266 skipped, web **1282**, database 549, worker 245,
+notifications 84, fiscal 788, fiscal-persistence 100, secret-store 50, ui 36,
+shared 23, preflight 6; live PostgreSQL **266/266** over **50 migrations**;
+catalog **64 permissions**.
+
+**Not verified, and named at closure**: no `apps/e2e` spec has ever executed (no
+Docker); no native review verdict exists (the facade offers no committed-range
+route for a repository that commits every work unit); performance is unknown
+rather than fine.

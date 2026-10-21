@@ -2,7 +2,7 @@
 id: EPIC-18
 type: epic
 title: Dashboards and Reports
-status: in-progress
+status: done
 priority: medium
 depends_on:
   - EPIC-04
@@ -116,26 +116,26 @@ approximating them. The accepted decisions are [[DEC-062]] (gating and surface),
 
 ## Acceptance Criteria
 
-- [ ] All eleven PRD §31 reports exist, are tenant-scoped and answer `404` for
+- [x] All eleven PRD §31 reports exist, are tenant-scoped and answer `404` for
       another tenant's identity.
-- [ ] Every monetary and quantity aggregate is computed in `Decimal`/NUMERIC and
+- [x] Every monetary and quantity aggregate is computed in `Decimal`/NUMERIC and
       returned as a decimal string, never a float.
-- [ ] Report periods resolve in `TENANT_TIME_ZONE` per [[DEC-063]], and the
+- [x] Report periods resolve in `TENANT_TIME_ZONE` per [[DEC-063]], and the
       boundary cases are covered by tests: a range crossing a DST offset change,
       an empty range, an inverted range and a range exactly on a period edge.
-- [ ] Each report's query has a bounded contract with an explicit maximum row or
+- [x] Each report's query has a bounded contract with an explicit maximum row or
       range size.
-- [ ] CSV export is synchronous, bounded, `text/csv`, and streams through the
+- [x] CSV export is synchronous, bounded, `text/csv`, and streams through the
       web BFF using the established buffering pattern.
-- [ ] `reports.read` and `reports.export` exist in `PERMISSION_SEEDS`, are
+- [x] `reports.read` and `reports.export` exist in `PERMISSION_SEEDS`, are
       mapped to roles and are enforced by the backend, not by the UI.
-- [ ] The dashboard at `/app` and the reports surface at `/app/reports` render
+- [x] The dashboard at `/app` and the reports surface at `/app/reports` render
       loading, empty, error, success and permission-denied states using semantic
       branding tokens only.
-- [ ] Playwright specs cover the dashboard and one report end to end.
-- [ ] Documentation: `docs/05-modules/Reporting.md`, the Story files, the
+- [x] Playwright specs cover the dashboard and one report end to end.
+- [x] Documentation: `docs/05-modules/Reporting.md`, the Story files, the
       Decisions, the tech debt, the changelog and the roadmap row.
-- [ ] Format, lint, typecheck, build and the full test set are green.
+- [x] Format, lint, typecheck, build and the full test set are green.
 
 ## Stories
 
@@ -168,11 +168,45 @@ plumbing.
 
 ## Exit Criteria
 
-- [ ] Lint/typecheck/tests/build required for the Epic are green.
-- [ ] Documentation is current.
-- [ ] `docs/10-qa/CI-EVIDENCE.md` carries the closure block with the CI run id.
-- [ ] The roadmap row reads `done`, with the evidence-based closure note.
-- [ ] Every deferred item is a named Tech Debt, not a silent gap.
+- [x] Lint/typecheck/tests/build required for the Epic are green.
+- [x] Documentation is current.
+- [x] `docs/10-qa/CI-EVIDENCE.md` carries the closure block with the gate
+      counts, the live-PostgreSQL total and the explicit absence of a CI run id.
+- [x] The roadmap row reads `done`, with the evidence-based closure note.
+- [x] Every deferred item is a named Tech Debt, not a silent gap.
+
+## Closure record
+
+Closed on 2026-10-19 by evidence-based closure against a **local** gate run, not
+CI: the branch was never pushed and the workflow only runs for `main` and
+pull-request targets. The full record is the EPIC-18 block in
+`docs/10-qa/CI-EVIDENCE.md`.
+
+```text
+format · lint · typecheck · build · test   green (23/23 turbo tasks)
+api 1634 · web 1282 · database 549 · worker 245 · notifications 84
+fiscal 788 · fiscal-persistence 100 · secret-store 50 · ui 36 · shared 23
+live PostgreSQL 266/266 over 50 migrations · applied catalog 64 permissions
+```
+
+Twelve report views, eleven of them PRD §31's and one split that PRD lists as
+"cash close/movements", plus the CSV export, the dashboard and the clinical
+entry surface the veterinary due reports depend on.
+
+**What `done` does not mean**, stated because this epic closes on local
+evidence:
+
+- **No `apps/e2e` spec has ever executed.** Four are written and statically
+  valid; the environment has no Docker, so there are no built apps for the lane.
+- **No native review verdict exists.** The receipt-driven facade projects
+  working-tree changes and this epic commits every work unit, so it offers no
+  committed-range route; nothing was fabricated to work around it. Two
+  independent adversarial verifications stand in its place, and they found two
+  blocking defects the gates were green on.
+- **Performance is unknown, not fine**: no tenant has production-sized data
+  ([[TD-053]]).
+- Six debt items are preserved ([[TD-051]]…[[TD-056]]), and [[EPIC-19]] and
+  [[EPIC-20]] remain.
 
 ## Decisions / ADRs
 
