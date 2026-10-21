@@ -54,7 +54,9 @@ Each work unit is one commit carrying its tests and documentation.
       evidence log._ schemas and functions to `packages/customers` /
       `packages/patients` so the worker can call them. Found while starting WU-B
       ([[DEC-073]]), not planned.
-- [ ] **WU-B — [[IMP-002]] the CSV pipeline and the customer preview.**
+- [ ] **WU-B — [[IMP-002]] the CSV pipeline and the customer preview.** Two
+      commits: **WU-B1** (done) the pure pipeline; **WU-B2** (pending) the queue
+      trigger, the worker consumer and the outcome persistence.
 - [ ] **WU-C — [[IMP-003]] the customer commit and its summary.**
 - [ ] **WU-D — [[IMP-004]] the patient preview and commit.**
 - [ ] **WU-E — [[IMP-005]] the staff surface and the e2e specs.**
@@ -142,3 +144,36 @@ with them.
 **Follow-up named, not hidden:** the two zod shims are `export *`, so they also
 forward the create function and the mappers. Tightening or deleting them is a
 separate cleanup.
+
+### WU-B1 — the pure CSV pipeline
+
+Commit `WU-B1` on `feat/epic-19-imports`.
+
+- `packages/imports` mirrors `packages/notifications`, depends only on
+  `@newsaas/customers`, and has no Nest, no database and no queue — which is
+  what will let the worker call it.
+- The reader has four stable refusals (unterminated quote, field-count mismatch
+  naming its row, blank line in the MIDDLE naming its row, empty file), strips a
+  leading BOM, and treats a row of empty cells as DATA rather than a blank line.
+- Row validation goes through the IMPORTED `createCustomerBody` and
+  `createCustomerContactBody`; a test reads the source and asserts the module
+  declares no `z.object`, no local max-length and no `zod` dependency.
+- The conflict rule: `legal_name`/`tax_id` with `kind` absent or `INDIVIDUAL` is
+  a row ERROR naming the column, never a coercion.
+- The duplicate heuristic is an interface, and a test asserts a suspected
+  duplicate stays `CREATE` — the warning can never become a skip.
+- Gates: **28 turbo tasks**; imports **53 new tests**; api **1723 unchanged**.
+- **Fixed a pre-existing flake** that kept the gate red:
+  `notification-delivery.read.integration.test.ts` scanned the body for
+  `\d{9,}`, which nine hex digits inside a `randomUUID()` satisfy by chance
+  (~1.5 % per UUID, several per delivery). UUIDs are now masked before the scan.
+  Three consecutive full-suite runs green afterwards, where two of eight had
+  failed before.
+
+**New debt named, not worked around:** [[TD-059]] — contact values are validated
+by LENGTH only, so the import accepts what the endpoint accepts. Adding a check
+in the import would make it stricter than the endpoint, which is the drift
+DEC-073 prevents.
+
+**Pending (WU-B2):** the queue contract, the API trigger and the worker
+consumer.

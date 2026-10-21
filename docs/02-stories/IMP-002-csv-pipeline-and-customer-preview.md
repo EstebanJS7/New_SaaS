@@ -3,7 +3,7 @@ id: IMP-002
 type: story
 title: The CSV pipeline and the customer preview
 epic: EPIC-19
-status: planned
+status: in-progress
 priority: high
 depends_on:
   - IMP-001
@@ -123,13 +123,66 @@ None — IMP-001 owns the tables.
 
 ## Implementation Summary
 
-_Not implemented._
+**Part 1 implemented (the pure pipeline); part 2 — the queue trigger, the worker
+consumer and the outcome persistence — pending.** Keeping part 1 pure is
+deliberate: it is where the correctness lives and where the tests need no
+infrastructure.
+
+Part 1 — commit `WU-B1`:
+
+- **`packages/imports`** mirrors `packages/notifications` and depends only on
+  `@newsaas/customers`. No Nest, no database, no queue — it is usable without
+  any of them, which is what will let the worker call it.
+- **The reader** (`csv.ts`) handles RFC 4180 quoting, `\r\n` and `\n` and a lone
+  `\r`, strips a leading BOM (a spreadsheet export usually has one and it would
+  corrupt the first header), and has four stable refusals: unterminated quoted
+  field, field-count mismatch naming its row, a blank line in the MIDDLE naming
+  its row (it would shift every row number after it), and an empty file. A
+  trailing blank line is ignored; a row of empty cells is DATA, not a blank
+  line.
+- **The header contract** is declared once. Headers are normalized (trim,
+  lowercase, whitespace runs to `_`); an unknown column is a file-level error
+  naming it, because silently ignoring a column risks silently dropping its
+  data.
+- **Row validation goes through `createCustomerBody` and
+  `createCustomerContactBody`, imported from `@newsaas/customers`.** A test
+  reads the source and asserts the module declares no `z.object`, no local
+  max-length and no `zod` dependency — parity is proved, not promised.
+- **The conflict rule**: a row carrying `legal_name` or `tax_id` while `kind` is
+  absent or `INDIVIDUAL` is an ERROR naming the column. It is never coerced in
+  either direction — an individual's record must not quietly hold a company's
+  legal name.
+- **The duplicate heuristic is an interface the caller supplies**, so the
+  package stays pure. A test asserts a suspected duplicate is still `CREATE`:
+  the warning can never become a skip ([[DEC-069]]).
+- The contact create schema moved into `packages/customers` behind a shim, so
+  the phone and e-mail rules have one home too.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (28/28 turbo tasks)
+pnpm typecheck      PASS  (28/28)
+pnpm build          PASS  (16/16)
+pnpm test           PASS  (28/28)
+  imports         5 files   53 tests (new)
+  customers          1 file   7 tests
+  api           116 files  1723 passed | 266 skipped   UNCHANGED
 ```
+
+53 new tests, none of which need a database, a queue or an HTTP server. The api
+suite is unchanged at 1723.
+
+**A pre-existing flake was found and fixed here**, because it kept making the
+gate red: `notification-delivery.read.integration.test.ts` asserts the response
+body matches no `/[+]?\d{9,}|@|\bat\b\s*10:00/`, and nine consecutive decimal
+digits occur inside a `randomUUID()` by chance — about 1.5 % per UUID, several
+UUIDs per delivery, so roughly one suite failure in four. The scan now masks
+UUIDs first, which keeps the assertion's subject (no phone number, address or
+payload timestamp reached the projection) and removes the identifier alphabet
+that could impersonate one. Three consecutive full-suite runs were green
+afterwards, where two of eight had failed before.
 
 ## Tests Added
 
@@ -145,11 +198,31 @@ Not run.
 
 ## Known Limitations
 
-- To be recorded as implemented.
+- **Contact values are validated by LENGTH ONLY**, because that is all
+  `createCustomerContactBody` requires. The import accepts `"not-an-email"` as
+  an EMAIL contact for exactly the same reason the endpoint does. Adding a
+  format check inside the import would make it stricter than the endpoint, which
+  is the drift [[DEC-073]] exists to prevent; the fix belongs in the shared
+  contract. Recorded as [[TD-059]].
+- **A COMPANY row has no `document_number`**, so the document-based duplicate
+  heuristic can never fire for one: a company is detected only by its primary
+  contact values. Documented in the heuristic rather than worked around, since
+  [[DEC-069]] gives `document_number` no unique meaning.
+- `kind` is not case-folded: `company` is refused with the create contract's own
+  discriminator message rather than silently becoming `COMPANY`, because folding
+  case would make the import accept a value `POST /customers` rejects.
+- The reader implements exactly the four specified refusals. A `"` that does not
+  start a field is a literal character and text after a closing quote continues
+  the field; RFC 4180 defines neither, and inventing rules would refuse files
+  other tools produce.
+- **Part 2 is not implemented**: no queue, no worker consumer, no route, no
+  persistence. The story's "the preview writes no customer" assertion and the
+  `PREVIEWED` transition land with it.
 
 ## Technical Debt
 
 - [[TD-057]] — XLSX.
+- [[TD-059]] — no contact format validation anywhere in the product.
 
 ## Decisions / ADRs
 

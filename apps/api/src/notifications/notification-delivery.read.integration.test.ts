@@ -130,7 +130,23 @@ describe("Notification delivery read surface", () => {
     // A reference, not the datum: the id is a uuid, never a phone number or an
     // address, and nothing resembling message content is present.
     expect(found?.recipientId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(JSON.stringify(body)).not.toMatch(/[+]?\d{9,}|@|\bat\b\s*10:00/);
+    // The scan runs over the body with UUIDs MASKED OUT.
+    //
+    // This assertion used to scan the raw JSON, and `/[+]?\d{9,}/` matches nine
+    // or more consecutive digits — which a `randomUUID()` contains by chance
+    // (nine hex digits that happen to all be decimal, about 1.5 % per UUID, and
+    // a delivery carries several). That made a green suite fail intermittently on
+    // data nobody wrote, which is the worst kind of flake: it looks like a leak
+    // and it is an artefact of the identifier's alphabet.
+    //
+    // Masking identifiers first keeps the assertion's actual subject — that no
+    // phone number, address or timestamp of the payload reached the projection —
+    // while removing the alphabet that could impersonate one.
+    const withoutIdentifiers = JSON.stringify(body).replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+      "<uuid>"
+    );
+    expect(withoutIdentifiers).not.toMatch(/[+]?\d{9,}|@|\bat\b\s*10:00/);
   });
 
   it("never shows another tenant's delivery", async () => {
