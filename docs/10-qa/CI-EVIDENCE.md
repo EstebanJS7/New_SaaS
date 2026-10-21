@@ -2134,13 +2134,30 @@ separately against real PostgreSQL and is recorded here rather than asserted:
 
 ### Known warnings and open limitations
 
-- **The `apps/e2e` lane has never run, and no spec in it has ever executed.**
-  The environment has no Docker, so there are no built apps, no API and no
-  database for it. Four specs are written and statically valid (`apps/e2e`
-  typecheck and lint exit 0): `clinical-records`, `reports`, and the two the
-  lane already had. Their selectors were written against component source, not
-  against a rendered page. This is the epic's largest unproven surface, and it
-  is recorded as **pending by name**, not as passing.
+- **The `apps/e2e` lane could not run while this epic was built, and its first
+  real execution found a defect in the epic's own spec.** The build environment
+  has no Docker, so four specs were written and only statically checked
+  (`apps/e2e` typecheck and lint exit 0). The lane runs in CI, and PR #145 was
+  its first execution:
+
+  ```text
+  Browser end-to-end   run 39533715413   → 20 passed, 1 failed
+  ```
+
+  **`reports.spec.ts` passed on its first run** — the dashboard, a report opened
+  from its card, a period change and the CSV download, in a real Chromium
+  against the built app and a seeded database. **`clinical-records.spec.ts`
+  failed**, timing out on a `fill` at line 78, because it drove the surface as
+  it existed BEFORE the browser-zone defect was fixed: the date fields had
+  become `<input type="date">` and the row renderer a plain calendar date, while
+  the spec still drove a `datetime-local` control and expected a wall-clock
+  time. It was written against source, and no static check could have caught it.
+  It is corrected and the lane is re-run on the same PR.
+
+  The lesson is the one this epic keeps paying for: a spec that has never
+  executed is a hypothesis, not coverage, and it can be wrong in the same
+  direction as the code it guards.
+
 - **No native RDD review verdict exists for this epic.** The receipt-driven
   review facade projects working-tree changes, and this epic's discipline
   commits every work unit, so a clean tree is the normal state and the facade

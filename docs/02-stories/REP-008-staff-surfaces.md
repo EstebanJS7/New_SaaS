@@ -250,10 +250,14 @@ there is zero and the not-configured low-stock state.
 
 ## Known Limitations
 
-- **Neither Playwright spec has ever executed.** Selectors were written against
-  the component source, not a rendered page, and the reports spec's CSV step
-  asserts a download event that has never been triggered. The first real lane
-  run is where both get proven.
+- **The two Playwright specs had never executed when this Story closed; the
+  first real lane run was in CI on PR #145, and it split them.**
+  `reports.spec.ts` **passed on its first run** — dashboard cards, a report
+  opened from its card, a period change and the CSV download, in a real
+  Chromium. `clinical-records.spec.ts` (added by REP-010) failed there and was
+  corrected; see that Story and `docs/10-qa/CI-EVIDENCE.md`. This Story's own
+  spec is the one that passed, and its selectors were written against the
+  component source.
 - **The dashboard and the reports workspace nest their root inside the shell's
   `<main>`.** They were `<main>` elements themselves; a `<main>` inside a
   `<main>` is invalid HTML, so all three surfaces now use a `<div>` root and the

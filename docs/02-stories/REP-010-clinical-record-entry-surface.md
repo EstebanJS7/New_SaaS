@@ -221,10 +221,17 @@ as one.
 
 ## Known Limitations
 
-- **The Playwright spec has never executed.** Its selectors were written against
-  the component source (button names, label text, notice copy, the displayed
-  `YYYY-MM-DD HH:mm` form) but never against a rendered page. The first real
-  lane run is where that gets proven.
+- **The Playwright spec FAILED on its first real execution, and the fix is part
+  of this Story.** It ran for the first time in CI on PR #145 (the build
+  environment has no Docker) and timed out on a `fill`: it drove the surface as
+  it existed BEFORE the browser-zone fix, with a `datetime-local` control and a
+  `YYYY-MM-DD HH:mm` expectation, while the surface had become an
+  `<input type="date">` rendering a plain calendar date. Two changes to the same
+  surface were made days apart and the spec kept the older one, which no static
+  check could catch. It now types whole calendar dates, uses the real labels
+  (`Administered on`), and asserts the date the staff member typed rather than a
+  wall-clock time — which is precisely the assertion that would have caught the
+  zone defect.
 - **A browser-zone defect was found by independent verification AFTER this Story
   was reported green, and is fixed.** The first implementation parsed a
   `datetime-local` value with `new Date(...)`, which uses the BROWSER's clock,
