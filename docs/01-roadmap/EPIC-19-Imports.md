@@ -126,6 +126,7 @@ Two of those facts shaped the whole design:
 ## Stories
 
 - [[IMP-001]] — The import aggregate, the artefact and the permissions.
+- [[IMP-001A]] — The shared create contracts (found late, [[DEC-073]]).
 - [[IMP-002]] — The CSV pipeline and the customer preview.
 - [[IMP-003]] — The customer commit.
 - [[IMP-004]] — The patient preview and commit.
@@ -159,6 +160,8 @@ public service methods — it adds no column to `customer`, `patient` or
   guardian.
 - [[DEC-071]] — Partial success with a per-row summary.
 - [[DEC-072]] — Always asynchronous, upload once, ungated by feature code.
+- [[DEC-073]] — The customer and patient create contracts move to packages, so
+  the worker validates with the same rules the API enforces.
 
 ## Technical Debt
 
