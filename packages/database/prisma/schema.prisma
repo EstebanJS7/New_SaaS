@@ -219,6 +219,8 @@ model Tenant {
   fiscalDocuments             FiscalDocument[]
   /// EPIC-17 notification deliveries owned by this tenant (NOTIF-001).
   notificationDeliveries      NotificationDelivery[]
+  /// EPIC-19 import jobs owned by this tenant (IMP-001): one uploaded file each.
+  importJobs                  ImportJob[]
   /// EPIC-16 FISC-007 sealed tenant secrets, and the signing materials that
   /// reference them (ADR-005).
   tenantSecrets               TenantSecret[]
@@ -285,6 +287,11 @@ model TenantMembership {
   /// references the membership through the composite `(tenantId, id)` key, so
   /// the opener belongs to the session's tenant by construction.
   openedCashSessions CashSession[]
+
+  /// Import jobs this membership uploaded (EPIC-19 IMP-001). Same composite
+  /// `(tenantId, id)` discipline as the cash opener: the operator who uploaded
+  /// a file is a membership of the job's own tenant by construction.
+  createdImportJobs ImportJob[]
 
   /// One membership per (tenant, profile).
   @@unique([tenantId, userProfileId])
@@ -3743,4 +3750,234 @@ model NotificationDelivery {
   /// The tenant's own view of what is scheduled, ordered by when.
   @@index([tenantId, scheduledAt])
   @@map("notification_delivery")
+}
+
+/// What an import file contains (EPIC-19 IMP-001). Two values because the epic
+/// ships two import kinds and nothing else: an operator uploads a CUSTOMER list
+/// or a PATIENT list, and the two have different validation rules, different
+/// duplicate keys and different commit paths ([[IMP-002]] onwards). The set is
+/// closed on purpose — a third kind would need its own rules, not a new literal
+/// on an existing one. Values are appended, never reordered or removed. Evolve
+/// additively only.
+enum ImportEntity {
+  CUSTOMER
+  PATIENT
+
+  @@map("import_entity")
+}
+
+/// Import job lifecycle (EPIC-19 IMP-001, [[DEC-072]]). One closed machine:
+///
+/// ```text
+/// UPLOADED   → PREVIEWING → PREVIEWED → COMMITTING → COMMITTED
+///                    ↓                       ↓
+///                  FAILED                 FAILED
+/// any non-terminal → EXPIRED
+/// ```
+///
+/// Every arrow is an explicit command on the repository, never a caller-written
+/// status: there is no `PATCH status=`. `COMMITTED`, `FAILED` and `EXPIRED` are
+/// terminal and have no exit — an import that ran is history, and a re-run is a
+/// new job with a new artefact. Values are appended, never reordered or removed.
+enum ImportJobState {
+  UPLOADED
+  PREVIEWING
+  PREVIEWED
+  COMMITTING
+  COMMITTED
+  FAILED
+  EXPIRED
+
+  @@map("import_job_state")
+}
+
+/// One row's verdict inside an import (EPIC-19 IMP-001). TWO values, because
+/// [[DEC-071]] made a commit partial: a row either produced a record or did not.
+/// There is deliberately no `SKIPPED` or `DUPLICATE` status — a suspected
+/// duplicate is a `CREATE` row carrying `suspected_duplicate = true`, so the
+/// duplicate flag is metadata about a row that committed rather than a third
+/// outcome. Values are appended, never reordered or removed.
+enum ImportRowStatus {
+  CREATE
+  FAILED
+
+  @@map("import_row_status")
+}
+
+/// One import: a single uploaded file, its tenant, its entity, its state and
+/// the counters that make it a durable result rather than a request.
+///
+/// WHY THE FILE ITSELF IS NOT IN THIS ROW ([[DEC-072]]): the bytes can be
+/// megabytes of a tenant's customer list and PostgreSQL is the system of record
+/// for the aggregate, not for blobs. Only the OPAQUE, server-generated
+/// `storage_key` lives here, and it never leaves the server SIDE — no response DTO
+/// of any kind carries it and no browser-reachable URL is ever issued for it.
+/// Upload-once is what binds a preview to its commit: both read this one key, so
+/// the file that is committed is provably the file that was previewed.
+///
+/// DATA CLASSIFICATION (PRD §41, [[DEC-072]]): the artefact is INTERNAL tenant
+/// data — a customer list — and it is the one place in this epic where tenant
+/// data sits outside PostgreSQL. It therefore carries an explicit TTL
+/// (`artefact_expires_at`, NOT NULL, defaulted by the command) and an explicit
+/// deletion stamp (`artefact_deleted_at`), so the object's lifetime is a
+/// property of the row instead of a hope. [[TD-058]] records that no approved
+/// retention policy exists to be consistent with; until one does, the deletion
+/// rule is "when the job reaches a terminal state, and at the TTL otherwise".
+///
+/// `created_by_membership_id` is the operator, resolved server-side from the
+/// authenticated request context and pinned to the same tenant by the composite
+/// foreign key, so the uploader of a file can never be chosen by the caller.
+model ImportJob {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+
+  /// What the file contains. Fixed at upload; a different entity is a different
+  /// import.
+  entity ImportEntity
+
+  /// The lifecycle state. Defaults to `UPLOADED` because the row is created
+  /// exactly once the bytes are in storage; every later value is reachable only
+  /// through its command on the repository.
+  state ImportJobState @default(UPLOADED)
+
+  /// The OPAQUE storage key the bytes were written under. Server-generated
+  /// (`createOpaqueStorageKey`) so it encodes no tenant, entity or timestamp, and
+  /// never returned to a client.
+  ///
+  /// WHO READS IT: the server and nothing else. The preview and the commit
+  /// ([[IMP-002]]/[[IMP-003]]) run in the worker, which resolves the row and reads
+  /// this column there, exactly as the fiscal handler resolves its own document —
+  /// so the key crosses a process boundary between two deployables and never a
+  /// network boundary to a browser. There is deliberately NO public or signed URL
+  /// for this object: [[DEC-072]] says the surface never downloads the artefact
+  /// back, and the way to keep a promise like that is to have no route for it.
+  storageKey String @map("storage_key")
+
+  /// The declared content type of the accepted upload. Only the CSV types the
+  /// upload contract allowlists can reach this column ([[DEC-068]]).
+  contentType String @map("content_type")
+
+  /// The exact byte size of the stored object, in bytes.
+  byteSize Int @map("byte_size")
+
+  /// The uploading operator, resolved from the request context.
+  createdByMembershipId String @map("created_by_membership_id") @db.Uuid
+
+  /// How many records the commit created ([[DEC-071]]). Zero until a commit
+  /// runs; never a running total, because the counters describe ONE finished
+  /// commit.
+  createdCount Int @default(0) @map("created_count")
+  /// How many rows failed. `created_count + failed_count` is the number of data
+  /// rows the preview saw, which is what makes the summary checkable.
+  failedCount Int @default(0) @map("failed_count")
+  /// How many rows were created AND flagged as suspected duplicates. A subset of
+  /// `created_count`, not a third bucket: [[DEC-071]] creates the record and
+  /// reports the suspicion.
+  suspectedDuplicateCount Int @default(0) @map("suspected_duplicate_count")
+
+  /// When the preview finished. Present exactly from `PREVIEWED` onward; a
+  /// preview that failed never writes it, which is what keeps "previewed at" from
+  /// claiming a preview that did not happen.
+  previewedAt DateTime? @map("previewed_at") @db.Timestamptz(3)
+  /// When the commit finished. Present exactly when the job is `COMMITTED`.
+  committedAt DateTime? @map("committed_at") @db.Timestamptz(3)
+  /// When the job entered `FAILED`. Present exactly when the job is `FAILED`.
+  failedAt DateTime? @map("failed_at") @db.Timestamptz(3)
+
+  /// When the stored artefact must be gone. NOT NULL because the object exists
+  /// from the moment this row does: the upload command writes
+  /// `now + 72 hours`, which is deliberately generous — an operator may upload a
+  /// file, preview it, leave for the day and come back to commit it, and a TTL
+  /// that expires under a working session would turn a business flow into a
+  /// support ticket.
+  artefactExpiresAt DateTime @map("artefact_expires_at") @db.Timestamptz(3)
+  /// When the artefact was DELETED (terminal state or TTL sweep). Nullable
+  /// because it is an event, not a state: `NULL` means the object may still
+  /// exist, a value means the deletion ran and it must not be run again.
+  artefactDeletedAt DateTime? @map("artefact_deleted_at") @db.Timestamptz(3)
+
+  /// Why the job failed, in bounded operator-readable text. Never the offending
+  /// VALUE from the file: a failure reason names the condition, not the
+  /// customer. Bounded at the column (`VarChar(500)`) rather than only at the
+  /// writer, because a database is the one place a bound cannot be forgotten.
+  failureReason String? @map("failure_reason") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// Composite tenant-ownership FK: the uploader must be a membership of the
+  /// SAME tenant, so the operator of a file is a member of its tenant by
+  /// construction rather than by application convention.
+  createdByMembership TenantMembership @relation(fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// The per-row verdicts. They die with their job: an outcome row has no
+  /// meaning without the import that produced it.
+  rowOutcomes ImportRowOutcome[]
+
+  /// Tenant-ownership key: target of the composite job FK from
+  /// `ImportRowOutcome`.
+  @@unique([tenantId, id])
+  /// The tenant's import list, newest first — the one read this surface has.
+  @@index([tenantId, createdAt])
+  @@map("import_job")
+}
+
+/// One row's outcome inside one import: a VERDICT, not a copy of the row.
+///
+/// THIS TABLE CARRIES NO PERSONAL DATA, AND THAT IS THE POINT. There is no name,
+/// no phone, no e-mail, no document number, no species and no birth date here,
+/// and no reference to the customer or patient the row produced. The row it
+/// describes was already written to the record the import created, so copying it
+/// here would duplicate personal data for no gain and would put a second copy of
+/// a tenant's customer list somewhere with no retention story ([[DEC-071]]).
+/// What is stored is the row's 1-based DATA number (the header is not a row), its
+/// verdict, a stable machine `reason_code`, a bounded human `message` and the
+/// suspicion flag.
+///
+/// `message` must never echo the offending value: "document number already
+/// exists" is a message, the number is personal data. The write path is
+/// responsible for that, and the tests assert it over a persisted row.
+///
+/// `row_number` is 1-based over DATA rows with the header excluded, so an
+/// operator can open the file at the row a failure names.
+model ImportRowOutcome {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  importId String @map("import_id") @db.Uuid
+
+  /// 1-based DATA row number, header excluded.
+  rowNumber Int @map("row_number")
+
+  status ImportRowStatus
+
+  /// Stable machine code an operator's tooling can switch on, e.g.
+  /// `DUPLICATE_DOCUMENT`. Never a rendered sentence and never a value from the
+  /// file.
+  reasonCode String? @map("reason_code")
+  /// Bounded human-readable reason. Names the condition, never the value, and
+  /// bounded at the column for the same reason as `failure_reason`.
+  message String? @db.VarChar(500)
+
+  /// A `CREATE` row that looks like a record the tenant already has
+  /// ([[DEC-071]]): the record is created and the suspicion is reported.
+  suspectedDuplicate Boolean @default(false) @map("suspected_duplicate")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  /// Composite tenant-ownership FK to the job, CASCADE because a verdict without
+  /// its import is meaningless. There is deliberately no separate `tenant` FK:
+  /// this composite key already guarantees the tenant agrees with the job's, and
+  /// a second path to the same fact is a second path that can disagree.
+  importJob ImportJob @relation(fields: [tenantId, importId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  /// One verdict per row per import: a re-run of the same row is the same
+  /// outcome written once.
+  @@unique([tenantId, importId, rowNumber])
+  /// Tenant-ownership key, so a future aggregate can composite-FK to an outcome.
+  @@unique([tenantId, id])
+  @@map("import_row_outcome")
 }

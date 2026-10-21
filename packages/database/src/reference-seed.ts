@@ -122,6 +122,13 @@ export type RoleCode = (typeof ROLE_SEEDS)[number]["code"];
  *   `reporting` is a domain, not an entitlement, so `advanced_reports` stays
  *   unspent and no thirteenth code is added. The two keys move the seeded
  *   catalog 62 -> 64.
+ * - EPIC-19 IMP-001 adds the `imports` family (DEC-072): `imports.read` follows
+ *   the read-wide shape, and `imports.run` is the owning-roles key. It is the one
+ *   action that creates hundreds of records in one go, so the grant is
+ *   deliberately narrow — an operator should be deliberate about it. The family
+ *   is NOT inside a feature code: DEC-072 refused a thirteenth code (after
+ *   DEC-058 and DEC-062 refused the same move) and made the permission family
+ *   the whole guard. The two keys move the seeded catalog 64 -> 66.
  */
 export const PERMISSION_SEEDS = [
   { key: "vet.clinical.create", name: "Create clinical records" },
@@ -237,6 +244,16 @@ export const PERMISSION_SEEDS = [
   // `reports.read`; `reports.export` is consumed by REP-007.
   { key: "reports.read", name: "Read reports" },
   { key: "reports.export", name: "Export reports" },
+  // EPIC-19 IMP-001 adds the `imports` family (DEC-072). Importing is a staff
+  // action over data the tenant already owns, so it needs no feature code —
+  // DEC-072 refused a thirteenth code and made the permission family the guard.
+  // All six roles READ the tenant's own import jobs and their summaries;
+  // `imports.run` is held by `OWNER`/`ADMIN` alone, because an import creates
+  // hundreds of records in one command and that is not a side effect an operator
+  // should be able to trigger by accident. Both are seeded BEFORE the IMP-001
+  // upload route that consumes them.
+  { key: "imports.read", name: "Read import jobs" },
+  { key: "imports.run", name: "Run customer and patient imports" },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_SEEDS)[number]["key"];
@@ -313,6 +330,10 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     // `reports.export` is the one that leaves the tenant boundary.
     "reports.read",
     "reports.export",
+    // EPIC-19 IMP-001 (DEC-072): an import creates hundreds of records in one
+    // command, so running one is an owning-role decision; reading one is not.
+    "imports.read",
+    "imports.run",
   ],
   ADMIN: [
     "inventory.stock.read",
@@ -379,6 +400,9 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "fiscal.range.void",
     "reports.read",
     "reports.export",
+    // EPIC-19 IMP-001 (DEC-072): same owning-role grant as the owner.
+    "imports.read",
+    "imports.run",
   ],
   VETERINARIAN: [
     "inventory.stock.read",
@@ -402,6 +426,9 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.read",
     "fiscal.read",
     "reports.read",
+    // EPIC-19 IMP-001 (DEC-072): every operational role reads the tenant's
+    // imports; none of them holds `imports.run`.
+    "imports.read",
   ],
   RECEPTIONIST: [
     "inventory.stock.read",
@@ -426,6 +453,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.read",
     "fiscal.read",
     "reports.read",
+    "imports.read",
   ],
   CASHIER: [
     "cash.session.close",
@@ -450,6 +478,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.confirm",
     "billing.cancel",
     "reports.read",
+    "imports.read",
   ],
   // The catalog is the inventory domain, so INVENTORY_MANAGER owns all four
   // catalog keys plus the EPIC-10 stock write key; front-desk, veterinary and
@@ -477,6 +506,7 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "billing.read",
     "fiscal.read",
     "reports.read",
+    "imports.read",
   ],
 };
 

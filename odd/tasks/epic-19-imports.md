@@ -48,8 +48,8 @@ Each work unit is one commit carrying its tests and documentation.
 
 - [x] **WU-0 — the planning record.** This file, the epic, [[IMP-001]] through
       [[IMP-006]], [[DEC-068]]–[[DEC-072]] and [[TD-057]]/[[TD-058]]. No source.
-- [ ] **WU-A — [[IMP-001]] the import aggregate, the artefact and the
-      permissions.**
+- [x] **WU-A — [[IMP-001]] the import aggregate, the artefact and the
+      permissions.** _Done: see the evidence log._ permissions.**
 - [ ] **WU-B — [[IMP-002]] the CSV pipeline and the customer preview.**
 - [ ] **WU-C — [[IMP-003]] the customer commit and its summary.**
 - [ ] **WU-D — [[IMP-004]] the patient preview and commit.**
@@ -70,3 +70,39 @@ Recorded per work unit as it lands. A work unit closes only when its own gates
 were observed green.
 
 _Empty until WU-A lands._
+
+### WU-A — the import aggregate, the artefact and the permissions
+
+Commit `WU-A` on `feat/epic-19-imports`.
+
+- Migration `20261019000004_imp_001_import_aggregate`: `import_job` +
+  `import_row_outcome`, three enums, four CHECK backstops, three composite FKs.
+  Migrations 50 → 51.
+- **The state machine is one conditional write per transition**, so a replay or
+  a lost race matches zero rows and maps to ONE shared `409` whose message does
+  not vary by state — the refusal is not a state oracle. `404` vs `409` is
+  decided by a re-read inside the transaction before the write.
+- **The row outcome carries no personal data**, asserted at compile time AND by
+  a runtime scan for a name, a phone, an e-mail and a document number.
+- **No artefact route exists at all**, which is stronger than the decided "the
+  key never leaves the server": the worker resolves the key server-side exactly
+  as the fiscal submission handler does, and a test asserts no such route can
+  appear by accident.
+- `imports.read` on all six roles, `imports.run` on OWNER/ADMIN. Catalog 64
+  → 66.
+- Gates: api **1634 → 1723** (+89), database **549 → 550**, web 1282;
+  format/lint/ typecheck/build green; live PostgreSQL **266/266** over 51
+  migrations.
+- The new constraints were probed against a migrated database rather than
+  trusted from the DDL: negative counters refused, `COMMITTED` without
+  `committed_at` refused, `row_number 0` refused, and deleting the job cascaded
+  its outcomes to zero.
+
+**Collision found and handled:** the live-PostgreSQL catalog block asserts the
+public schema holds no event/outbox/queue/`%job%` table. `import_job` matches
+`%job%`, so the guard now excludes it BY NAME with a comment explaining that it
+is a work aggregate rather than a durable event record. Renaming the aggregate
+to satisfy a test heuristic would have let the pattern keep assuming something
+that stopped being true.
+
+**Skipped:** `apps/e2e` (no UI in this work unit).

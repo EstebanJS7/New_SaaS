@@ -14,6 +14,7 @@ import { CustomersModule } from "./customers/customers.module.js";
 import { EntitlementsModule } from "./entitlements/entitlements.module.js";
 import { FiscalModule } from "./fiscal/fiscal.module.js";
 import { HealthModule } from "./health/health.module.js";
+import { ImportsModule } from "./imports/imports.module.js";
 import { InventoryModule } from "./inventory/inventory.module.js";
 import { PatientsModule } from "./patients/patients.module.js";
 import { PortalModule } from "./portal/portal.module.js";
@@ -121,6 +122,12 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // — kept after Fiscal so the dependency direction reads top-down, and before
     // PortalModule, which must stay last.
     ReportingModule,
+    // EPIC-19 IMP-001 imports: the aggregate an operator uploads a CSV into, and
+    // the second surface DEC-072 leaves UNGATED by feature code — it imports no
+    // EntitlementsModule on purpose. No APP_GUARD either, so its position is free
+    // — kept after Reporting so the dependency direction reads top-down, and
+    // before PortalModule, which must stay last.
+    ImportsModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.
