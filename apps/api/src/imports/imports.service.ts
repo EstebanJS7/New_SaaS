@@ -1,6 +1,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 // Value import (not `import type`): the DI token must exist at runtime.
 import { PrismaService } from "@newsaas/database";
+import {
+  IMPORT_AUDIT_ACTION,
+  IMPORT_AUDIT_TARGET_TYPE,
+  type ImportPreviewProducer,
+  IMPORT_PREVIEW_PRODUCER,
+} from "@newsaas/imports";
 import { DomainError } from "@newsaas/shared";
 import {
   createOpaqueStorageKey,
@@ -14,8 +20,10 @@ import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import type { ParsedImportArtefact } from "./import-artefact.pipe.js";
 import {
   toImportJobResponse,
+  toImportPreviewAcceptedResponse,
   toImportUploadResponse,
   type ImportJobResponse,
+  type ImportPreviewAcceptedResponse,
   type ImportUploadResponse,
 } from "./imports.dto.js";
 import { IMPORTS_PERMISSIONS } from "./imports.permissions.js";
@@ -27,6 +35,15 @@ import {
   type ImportCommitCounters,
   type ImportTx,
 } from "./imports.repository.js";
+
+/**
+ * Stable message when a preview is requested for an entity whose column map does
+ * not exist yet. It names the state of the product rather than a validation
+ * failure, because the upload itself was valid — the preview simply is not
+ * implemented for that entity until [[IMP-004]].
+ */
+export const IMPORT_PREVIEW_ENTITY_UNAVAILABLE_MESSAGE =
+  "A preview is available for customer imports only. Patient imports arrive with a later release.";
 
 /**
  * Everything the audited import closure needs from its transaction handle.
@@ -43,31 +60,29 @@ export interface ImportsPrisma {
 }
 
 /**
- * Audit action codes for the import lifecycle. The repository's established
- * shape is `<domain>.<past_verb>`, and `targetType` matches the table the row was
+ * Audit action codes for the import lifecycle, in the repository's established
+ * `<domain>.<past_verb>` shape, with `targetType` naming the table the row was
  * written for.
  *
- * WHY THERE ARE SEVEN AND NOT FIVE: the story names five
- * (`uploaded`, `previewed`, `committed`, `failed`, `expired`) and requires EVERY
- * transition to be audited. The machine has two further transitions that enter a
- * work phase (`UPLOADED → PREVIEWING`, `PREVIEWED → COMMITTING`) and the five
- * names do not cover them: recording `previewed` before the preview ran would be
- * a lie, and not recording it at all would make a crash inside a phase leave no
- * trace. `import.previewing` and `import.committing` fill exactly that gap and
- * follow the same convention.
+ * THE VOCABULARY IS `@newsaas/imports`'. Two deployables write these rows: this
+ * service issues the transitions an operator commands, and the worker's preview
+ * runner issues the three that belong to the phase it owns (`previewing`,
+ * `previewed`, `failed`). Two copies of the strings would be two copies that can
+ * drift, and the reason the set has SEVEN members rather than the five the Story
+ * names is documented beside the declaration in the package.
  *
  * Reads are never audited.
  */
-export const IMPORT_UPLOADED_ACTION = "import.uploaded";
-export const IMPORT_PREVIEWING_ACTION = "import.previewing";
-export const IMPORT_PREVIEWED_ACTION = "import.previewed";
-export const IMPORT_COMMITTING_ACTION = "import.committing";
-export const IMPORT_COMMITTED_ACTION = "import.committed";
-export const IMPORT_FAILED_ACTION = "import.failed";
-export const IMPORT_EXPIRED_ACTION = "import.expired";
+export const IMPORT_UPLOADED_ACTION = IMPORT_AUDIT_ACTION.uploaded;
+export const IMPORT_PREVIEWING_ACTION = IMPORT_AUDIT_ACTION.previewing;
+export const IMPORT_PREVIEWED_ACTION = IMPORT_AUDIT_ACTION.previewed;
+export const IMPORT_COMMITTING_ACTION = IMPORT_AUDIT_ACTION.committing;
+export const IMPORT_COMMITTED_ACTION = IMPORT_AUDIT_ACTION.committed;
+export const IMPORT_FAILED_ACTION = IMPORT_AUDIT_ACTION.failed;
+export const IMPORT_EXPIRED_ACTION = IMPORT_AUDIT_ACTION.expired;
 
 /** `targetType` recorded on every import audit row. */
-export const IMPORT_TARGET_TYPE = "import_job";
+export const IMPORT_TARGET_TYPE = IMPORT_AUDIT_TARGET_TYPE;
 
 /**
  * Stable `403` for a missing `imports.*` grant, re-asserted in the service behind
@@ -99,10 +114,12 @@ type ImportTransition = (id: string, tx: ImportTx) => Promise<boolean>;
  * The import application boundary (EPIC-19 IMP-001).
  *
  * WHAT THIS SLICE DOES. It uploads an artefact, creates the job, moves the job
- * through its closed state machine and deletes the artefact when the job is
- * finished. WHAT IT DELIBERATELY DOES NOT DO: parse the file, evaluate rows or
- * commit records — [[IMP-002]] onwards own that, and the machine's
- * `PREVIEWING`/`COMMITTING` phases exist here with no work behind them.
+ * through its closed state machine, TRIGGERS the preview ([[IMP-002]]) and deletes
+ * the artefact when the job is finished. WHAT IT DELIBERATELY DOES NOT DO: parse the
+ * file, evaluate rows or commit records — the preview runs in the worker over the
+ * stored artefact ([[DEC-072]]: every import is asynchronous), and the commit is
+ * [[IMP-003]]'s. The machine's `COMMITTING` phase still exists here with no work
+ * behind it.
  *
  * THREE PROPERTIES ARE THIS FILE'S JOB:
  *
@@ -129,7 +146,8 @@ export class ImportsService {
     private readonly requestContext: RequestContextService,
     private readonly permissionResolver: PermissionResolver,
     private readonly audit: AuditWriter,
-    @Inject(STORAGE_PORT) private readonly storage: StoragePort
+    @Inject(STORAGE_PORT) private readonly storage: StoragePort,
+    @Inject(IMPORT_PREVIEW_PRODUCER) private readonly previewProducer: ImportPreviewProducer
   ) {}
 
   /**
@@ -237,11 +255,67 @@ export class ImportsService {
    * `UPLOADED → PREVIEWING`. The work behind the phase belongs to [[IMP-002]]:
    * this command records that it started, and refuses — with the stable `409` —
    * if the import is anywhere else.
+   *
+   * IT IS NOW UNUSED BY THE HTTP SURFACE, deliberately: [[IMP-002]] made the
+   * preview asynchronous, so the trigger ENQUEUES and the worker's runner performs
+   * this transition in the same conditional write that takes the phase. Issuing it
+   * here as well would move the row off `UPLOADED` before the worker looked at it,
+   * and the worker's claim — which pins `UPLOADED` — would then find nothing to
+   * claim and every preview would be skipped. It is kept because it is the
+   * addressed form of the transition for an operator tool or a future synchronous
+   * path, and because deleting a command from the machine is a change to the machine.
    */
   async startPreview(id: string): Promise<ImportJobResponse> {
     return this.transitionOrConflict(id, IMPORT_PREVIEWING_ACTION, (target, tx) =>
       this.repository.startPreview(target, tx)
     );
+  }
+
+  /**
+   * Queues the preview of one uploaded import and answers what to watch.
+   *
+   * FOUR STEPS, AND THE ORDER IS THE CONTRACT:
+   *
+   * 1. The permission is re-asserted first, behind the route decorator, so a caller
+   *    without `imports.run` reaches no read and, above all, no queue call.
+   * 2. The read is tenant-scoped, so an unknown or FOREIGN import is the shared
+   *    byte-equivalent `404` before anything is enqueued.
+   * 3. An import that is not `UPLOADED` is refused with the aggregate's EXISTING
+   *    stable `409` message rather than enqueued: work the state machine will
+   *    certainly reject must not occupy the queue and the worker's claim.
+   * 4. Only then is the job enqueued. An enqueue failure PROPAGATES (the port does
+   *    not swallow it), because the row is still `UPLOADED` and the honest answer
+   *    is "nothing was queued" rather than an accepted import nobody will preview.
+   *
+   * NO STATE CHANGE HAPPENS HERE, and no audit row is written here: the preview
+   * phase is entered by the WORKER, whose runner claims the row and co-commits the
+   * `import.previewing` row with that transition. The state this method returns is
+   * therefore the state the import has been accepted INTO, which is why the
+   * response says `PREVIEWING` while the row may still read `UPLOADED` for the
+   * instant between the enqueue and the claim ([[DEC-072]] made the surface poll).
+   */
+  async preview(id: string): Promise<ImportPreviewAcceptedResponse> {
+    await this.requirePermission(IMPORTS_PERMISSIONS.run);
+
+    const row = await this.repository.findById(id);
+
+    if (row.state !== "UPLOADED") {
+      throw new DomainError("CONFLICT", IMPORT_TRANSITION_CONFLICT_MESSAGE);
+    }
+
+    // A PATIENT preview has no column map yet ([[IMP-004]]), so this refuses
+    // BEFORE the queue rather than enqueueing work the worker would silently
+    // drop. The alternative was worse in both directions: the worker could not
+    // FAIL it, because FAILED is terminal and would strand the import the day the
+    // patient map lands, and leaving it enqueued would accept an import and then
+    // do nothing with it while the operator waited for a preview.
+    if (row.entity !== "CUSTOMER") {
+      throw new DomainError("VALIDATION_FAILED", IMPORT_PREVIEW_ENTITY_UNAVAILABLE_MESSAGE);
+    }
+
+    await this.previewProducer.enqueue({ importJobId: row.id });
+
+    return toImportPreviewAcceptedResponse(row.id);
   }
 
   /** `PREVIEWING → PREVIEWED`, stamping the instant the preview finished. */

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { InMemoryStorageDriver, StoragePort } from "@newsaas/storage";
+import type { ImportPreviewJob, ImportPreviewProducer } from "@newsaas/imports";
 import {
   createIsolationDatabase,
   type ImportJobRow,
@@ -91,6 +92,7 @@ describe("ImportsService", () => {
   let permissionResolver: PermissionResolver;
   let service: ImportsService;
   let storage: RecordingStorage;
+  let previewProducer: ImportPreviewProducer & { readonly enqueued: ImportPreviewJob[] };
   let granted: Set<string>;
   let membershipId: string;
   let userProfileId: string;
@@ -167,6 +169,15 @@ describe("ImportsService", () => {
     userProfileId = profile.id;
     tenantIds = { a: tenantA.id, b: tenantB.id };
 
+    const enqueued: ImportPreviewJob[] = [];
+    previewProducer = {
+      enqueued,
+      enqueue: (job: ImportPreviewJob) => {
+        enqueued.push(job);
+        return Promise.resolve();
+      },
+    };
+
     service = new ImportsService(
       db.prisma as unknown as ConstructorParameters<typeof ImportsService>[0],
       new ImportRepository(
@@ -179,7 +190,8 @@ describe("ImportsService", () => {
         db.prisma as unknown as ConstructorParameters<typeof AuditWriter>[0],
         requestContext
       ),
-      storage.port
+      storage.port,
+      previewProducer
     );
   });
 
@@ -682,6 +694,72 @@ describe("ImportsService", () => {
         code: "FORBIDDEN",
         message: IMPORT_PERMISSION_DENIED_MESSAGE,
       });
+    });
+  });
+
+  describe("the preview trigger (IMP-002)", () => {
+    it("enqueues one job for an UPLOADED import and answers the phase it was accepted into", async () => {
+      const job = seedJob("UPLOADED");
+
+      const response = await withContext(tenantIds.a, () => service.preview(job.id));
+
+      expect(response).toEqual({ importId: job.id, state: "PREVIEWING" });
+      expect(previewProducer.enqueued).toEqual([{ importJobId: job.id }]);
+      // The trigger does NOT transition: the worker's claim owns
+      // `UPLOADED -> PREVIEWING`, and moving the row here would make that claim —
+      // which pins UPLOADED — skip every preview.
+      expect(db.tables.importJobs.get(job.id)?.state).toBe("UPLOADED");
+      expect(auditActions()).toEqual([]);
+    });
+
+    it("refuses every state but UPLOADED with the aggregate's stable 409, before any enqueue", async () => {
+      for (const state of [
+        "PREVIEWING",
+        "PREVIEWED",
+        "COMMITTING",
+        "COMMITTED",
+        "EXPIRED",
+      ] as const) {
+        const job = seedJob(state);
+
+        await expect(withContext(tenantIds.a, () => service.preview(job.id))).rejects.toMatchObject(
+          {
+            code: "CONFLICT",
+            message: IMPORT_TRANSITION_CONFLICT_MESSAGE,
+          }
+        );
+        expect(db.tables.importJobs.get(job.id)?.state).toBe(state);
+      }
+
+      // A FAILED import is refused the same way — no exit from a terminal state.
+      const failed = seedJob("FAILED");
+      await expect(
+        withContext(tenantIds.a, () => service.preview(failed.id))
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+      });
+
+      expect(previewProducer.enqueued).toEqual([]);
+    });
+
+    it("answers a foreign import id with the shared 404 and enqueues nothing", async () => {
+      const foreign = seedJob("UPLOADED", tenantIds.b);
+
+      await expect(
+        withContext(tenantIds.a, () => service.preview(foreign.id))
+      ).rejects.toMatchObject({ code: "NOT_FOUND", message: IMPORT_NOT_FOUND_MESSAGE });
+      expect(previewProducer.enqueued).toEqual([]);
+    });
+
+    it("refuses without imports.run, before the read and before any queue call", async () => {
+      granted = new Set(["imports.read"]);
+      const job = seedJob("UPLOADED");
+
+      await expect(withContext(tenantIds.a, () => service.preview(job.id))).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message: IMPORT_PERMISSION_DENIED_MESSAGE,
+      });
+      expect(previewProducer.enqueued).toEqual([]);
     });
   });
 

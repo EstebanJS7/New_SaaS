@@ -38,6 +38,8 @@ import {
 import { createNotificationEntitlementReader } from "./notification-delivery/notification-entitlement.read.js";
 import { createNotificationRecipientReader } from "./notification-delivery/notification-recipient.read.js";
 import { ApplicationEventsModule } from "./events/application-events.module.js";
+import { ImportPreviewConsumer } from "./imports/preview.consumer.js";
+import { ImportPreviewHandler } from "./imports/preview.handler.js";
 import { RedisHealthService } from "./redis/redis-health.service.js";
 import {
   createFiscalDocumentAssembly,
@@ -235,6 +237,12 @@ const contentBuilderProvider: Provider = {
  * NOTIF-002 wires the notification delivery path: the channel selection, the
  * recipient and entitlement readers over the same Prisma client, the content
  * seam (still failing closed until NOTIF-003), the handler and its consumer.
+ *
+ * EPIC-19 IMP-002 wires the import preview: the handler (which reads the
+ * `import_job` row, takes the tenant FROM that row, reads the stored artefact
+ * through the `@Global` StorageModule and writes the per-row outcomes) and its
+ * consumer. Nothing else is needed — the pipeline itself lives in
+ * `@newsaas/imports`, and its duplicate lookup is scoped by the row's tenant.
  */
 @Module({
   imports: [
@@ -263,6 +271,8 @@ const contentBuilderProvider: Provider = {
     NotificationDeliveryHandler,
     NotificationDeliveryConsumer,
     NotificationFiscalNoticeScheduler,
+    ImportPreviewHandler,
+    ImportPreviewConsumer,
   ],
 })
 export class WorkerModule {}

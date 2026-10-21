@@ -9,10 +9,10 @@ updated: 2026-10-19
 
 The imports module gives a bulk import a durable identity: which tenant, which
 entity, which stored file, what state, and — from [[DEC-071]] — a per-row
-outcome that survives the request that produced it. It is the foundation
-[[IMP-002]] onwards build on: this slice stores the artefact, owns the lifecycle
-and seeds the permissions, and it deliberately contains **no parsing, no preview
-logic and no commit logic**.
+outcome that survives the request that produced it. It stores the artefact, owns
+the lifecycle, seeds the permissions, and — from [[IMP-002]] — runs the preview
+over the stored file and persists one verdict per row. It contains **no commit
+logic**: [[IMP-003]] owns applying a previewed file.
 
 [[DEC-072]] settled the three transport questions, and this module is where
 their consequences are visible:
@@ -74,15 +74,25 @@ exit — what ran is history, and running again is a new job with a new artefact
 is DERIVED from it (`IMPORT_JOB_NON_TERMINAL_STATES`), so the two can never
 drift.
 
-| Command           | From                       | To           | Audit action        |
-| ----------------- | -------------------------- | ------------ | ------------------- |
-| —                 | (row created)              | `UPLOADED`   | `import.uploaded`   |
-| `startPreview`    | `UPLOADED`                 | `PREVIEWING` | `import.previewing` |
-| `completePreview` | `PREVIEWING`               | `PREVIEWED`  | `import.previewed`  |
-| `startCommit`     | `PREVIEWED`                | `COMMITTING` | `import.committing` |
-| `completeCommit`  | `COMMITTING`               | `COMMITTED`  | `import.committed`  |
-| `fail`            | `PREVIEWING`, `COMMITTING` | `FAILED`     | `import.failed`     |
-| `expire`          | any non-terminal           | `EXPIRED`    | `import.expired`    |
+| Command           | From                       | To           | Audit action        | Written by    |
+| ----------------- | -------------------------- | ------------ | ------------------- | ------------- |
+| —                 | (row created)              | `UPLOADED`   | `import.uploaded`   | API service   |
+| `startPreview`    | `UPLOADED`                 | `PREVIEWING` | `import.previewing` | worker runner |
+| `completePreview` | `PREVIEWING`               | `PREVIEWED`  | `import.previewed`  | worker runner |
+| `startCommit`     | `PREVIEWED`                | `COMMITTING` | `import.committing` | API service   |
+| `completeCommit`  | `COMMITTING`               | `COMMITTED`  | `import.committed`  | API service   |
+| `fail`            | `PREVIEWING`, `COMMITTING` | `FAILED`     | `import.failed`     | both          |
+| `expire`          | any non-terminal           | `EXPIRED`    | `import.expired`    | API service   |
+
+The three preview transitions are written by the WORKER ([[IMP-002]]): the
+phase's work happens there, so the `claim` that takes `UPLOADED → PREVIEWING` is
+the same conditional `updateMany` the API's repository performs, and its audit
+row co-commits in one transaction. The action codes are declared once, in
+`@newsaas/imports`, precisely because two deployables write them. The API's
+`startPreview` command still exists and is deliberately unused by the HTTP
+surface: issuing it there would move the row off `UPLOADED` before the worker
+looked at it, and the worker's claim — pinned on `UPLOADED` — would then skip
+every preview.
 
 The two phase-entry actions (`previewing`, `committing`) are there because the
 Story requires EVERY transition to be audited and the five names it lists cover
@@ -149,6 +159,69 @@ platform-wide sweep is the worker's job (iterate tenants, or use its own
 cross-tenant seam); this story ships the mechanism and the batch bound, not a
 scheduler.
 
+## The preview pipeline
+
+[[DEC-072]] made every import asynchronous, so the preview is a queued pass over
+the stored artefact — never a synchronous branch on file size.
+
+```text
+POST /imports/:id/preview          imports.run, UPLOADED only
+      │  enqueue { importJobId }   (job id = `import-preview-<id>`)
+      ▼
+  import-processing queue   →   worker: ImportPreviewConsumer → ImportPreviewHandler
+      │                              │  row = import_job.findFirst(id)   ← the tenant is READ FROM THE ROW
+      │                              │  refuse if missing / not UPLOADED / entity ≠ CUSTOMER
+      │                              │  read import_job.storage_key through STORAGE_PORT
+      │                              │  prefetch the duplicate candidates (tenant-scoped)
+      │                              ▼
+      │                        @newsaas/imports: runCustomerPreview
+      │                          claim()  UPLOADED → PREVIEWING   (conditional, audited)
+      │                          read + planCustomerPreview
+      │                          complete(rows) PREVIEWING → PREVIEWED (+counters)
+      │                          fail(reason)   PREVIEWING → FAILED (+failed_at)
+      ▼
+  import_row_outcome ×N + the counters on import_job
+```
+
+**The job payload is one id.** No tenant, no storage key, no counts: the worker
+resolves everything from the row, and a tenant in the payload would be a second
+source of truth for the one fact the row owns. The job id uses a HYPHEN, because
+BullMQ throws `Custom Id cannot contain :` on an id whose colon-separated form
+is not exactly three segments.
+
+**`claim` is the concurrency contract.** It is a conditional `updateMany` pinned
+on `UPLOADED`; a replayed job or a lost race matches zero rows and the runner
+returns `SKIPPED` having touched nothing — no second set of outcomes, no audit
+row, no state change.
+
+**A claimed phase is never left dangling silently.** Every path after the claim
+settles the row, including an unexpected throw: it is turned into `FAILED` with
+one fixed sentence, because an arbitrary error's text is the field most likely
+to quote the record it was working on. The residual case is a process killed
+mid-run — a restart or an OOM kill leaves the row `PREVIEWING` with no writer,
+and the TTL sweep is what an operator has until a recovery pass exists.
+
+**The counters are written by the transition that produced them.**
+`created_count`, `failed_count` and `suspected_duplicate_count` are written in
+the same statement that enters `PREVIEWED`, so a replayed settle cannot rewrite
+them. The database's biconditional CHECKs are honoured by construction:
+`failed_at` is written only by `fail` (state `FAILED`) and `committed_at` is
+never written here.
+
+**The duplicate lookup is a prefetch, and that is a consequence of the pure
+pipeline.** `DuplicateLookup` answers synchronously — the planner is a pure
+function — so the worker reads the candidate document numbers and contact values
+out of the file (reusing the package's own reader and header contract), asks
+about them in bounded batches of 500 values, and answers from two sets. The
+queries carry the ROW's tenant explicitly: another tenant's customer with the
+same document number is not a duplicate, and a lookup that leaked across tenants
+would turn a warning into a disclosure. A phone number and an e-mail that share
+a string are also different contacts, so a match is on `(kind, value)`.
+
+**A suspected duplicate stays a warning.** A flagged row is still `CREATE`, the
+count is a subset of `created_count`, and nothing in this path can skip a row
+([[DEC-069]]).
+
 ## Permissions
 
 | Key            | Held by                  | Why                                                                                                                           |
@@ -169,11 +242,19 @@ All routes are private, unprefixed (`/imports`, per DEC-002) and tenant-scoped
 from the request context. There is no `PATCH`, no `PUT`, no `DELETE` and no
 route that accepts a state.
 
-| Route              | Permission     | Notes                                                                                            |
-| ------------------ | -------------- | ------------------------------------------------------------------------------------------------ |
-| `POST /imports`    | `imports.run`  | `multipart/form-data` with `entity` and one file; returns `{ importId, state }` and nothing else |
-| `GET /imports`     | `imports.read` | the tenant's imports, newest first, `?limit=` bounded (default 50, max 100)                      |
-| `GET /imports/:id` | `imports.read` | one import with its counters; a foreign id is the byte-equivalent `404`                          |
+| Route                       | Permission     | Notes                                                                                            |
+| --------------------------- | -------------- | ------------------------------------------------------------------------------------------------ |
+| `POST /imports`             | `imports.run`  | `multipart/form-data` with `entity` and one file; returns `{ importId, state }` and nothing else |
+| `POST /imports/:id/preview` | `imports.run`  | `202` with `{ importId, state: "PREVIEWING" }`; queues the preview, moves nothing                |
+| `GET /imports`              | `imports.read` | the tenant's imports, newest first, `?limit=` bounded (default 50, max 100)                      |
+| `GET /imports/:id`          | `imports.read` | one import with its counters; a foreign id is the byte-equivalent `404`                          |
+
+The preview trigger REFUSES an import that is not `UPLOADED` with the same
+stable `409` every other refused transition uses, and it does so BEFORE the
+enqueue: work the state machine would certainly reject must not occupy the
+queue. It also refuses a foreign or unknown id with the shared `404`, and
+`imports.run` guards it because it is the command that decides what an operator
+is about to commit.
 
 The upload response is deliberately two fields. The import is asynchronous by
 decision, so the honest answer to an upload is "accepted, here is what to watch"
@@ -184,8 +265,12 @@ silently shortened page is a page that lies about what exists.
 
 ## What this slice does not do
 
-- **Parsing, validation, preview and commit** — [[IMP-002]] onwards. The
-  machine's `PREVIEWING` and `COMMITTING` phases exist with no work behind them.
+- **The commit** — [[IMP-003]]. The machine's `COMMITTING` phase exists with no
+  work behind it.
+- **A patient preview** — [[IMP-002]] ships the customer column map only. The
+  worker REFUSES a `PATIENT` import (logs it, writes nothing) rather than
+  failing it: `FAILED` is terminal, so a refusal that wrote it would strand the
+  import the day the patient map lands. The row stays `UPLOADED`.
 - **XLSX** — refused by name ([[DEC-068]], [[TD-057]]).
 - **Any UI** — [[IMP-005]] owns the polling surface.
 - **A platform-wide TTL scheduler** — the sweep method and its batch bound are
@@ -197,6 +282,16 @@ silently shortened page is a page that lies about what exists.
   the deletion rule above is the interim.
 - The TTL sweep is tenant-scoped and unscheduled, so an idle tenant's artefacts
   are removed only once something runs the sweep for that tenant.
-- The per-row outcome is stored but not yet written or served; [[IMP-003]] and
-  [[IMP-004]] produce it, and its redacted projection is pinned here so the
-  no-personal-data rule is asserted now rather than discovered later.
+- The per-row outcome is written by the preview ([[IMP-002]]) but not yet
+  served; [[IMP-004]] exposes it, and its redacted projection is pinned here so
+  the no-personal-data rule is asserted now rather than discovered later.
+- **A preview interrupted by a process death leaves the row `PREVIEWING`** with
+  no writer. Nothing in this slice recovers it; the TTL sweep (`EXPIRED`) is the
+  operator's route until a recovery pass exists.
+- The duplicate prefetch asks about every candidate value in the file, so a very
+  large file costs one round trip per 500 values. It is bounded in memory and
+  parameter count, not in wall-clock time.
+- `startPreview` on the service is now unused by the HTTP surface (the worker's
+  claim performs the transition). It is kept because it is the addressed form of
+  the transition, and removing a command from the machine is a change to the
+  machine.

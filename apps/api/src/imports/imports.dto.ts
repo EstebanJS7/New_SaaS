@@ -31,6 +31,20 @@ import type {
  */
 
 /**
+ * The preview trigger's response: the identifier and the state it was accepted
+ * INTO.
+ *
+ * Deliberately two fields, like the upload's. `state` is `PREVIEWING` because that
+ * is the phase the import has been queued for ([[DEC-072]]: always asynchronous),
+ * not a claim that the row already reads that way — the worker's claim is what
+ * performs the transition, so the caller polls and sees the truth.
+ */
+export interface ImportPreviewAcceptedResponse {
+  readonly importId: string;
+  readonly state: "PREVIEWING";
+}
+
+/**
  * The upload response: an identifier and the state to poll.
  *
  * Deliberately two fields. The import is asynchronous by decision ([[DEC-072]]),
@@ -99,6 +113,17 @@ export interface ImportRowOutcomeResponse {
 /** The upload response mapper: two fields, and the identifier is the job's own. */
 export function toImportUploadResponse(row: ImportJobRow): ImportUploadResponse {
   return { importId: row.id, state: row.state };
+}
+
+/**
+ * The preview trigger's mapper: the id and the phase it was accepted into.
+ *
+ * `PREVIEWING` is a literal rather than a read of the row, on purpose: the row is
+ * still `UPLOADED` at this instant, and returning it would tell the caller the
+ * preview is not coming. The transition is the worker's (see the service).
+ */
+export function toImportPreviewAcceptedResponse(importId: string): ImportPreviewAcceptedResponse {
+  return { importId, state: "PREVIEWING" };
 }
 
 /**

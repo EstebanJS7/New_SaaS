@@ -4,7 +4,11 @@ import type { FastifyRequest } from "fastify";
 import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
 import { ImportArtefactPipe } from "./import-artefact.pipe.js";
-import type { ImportJobResponse, ImportUploadResponse } from "./imports.dto.js";
+import type {
+  ImportJobResponse,
+  ImportPreviewAcceptedResponse,
+  ImportUploadResponse,
+} from "./imports.dto.js";
 import { IMPORTS_PERMISSIONS } from "./imports.permissions.js";
 import { ImportsService } from "./imports.service.js";
 import {
@@ -19,12 +23,13 @@ import {
  * Private tenant-scoped imports surface (EPIC-19 IMP-001).
  *
  * Routes are unprefixed (`/imports`, not `/api/v1/imports`) per DEC-002, and the
- * surface is EXACTLY three routes: the multipart upload, the bounded list and the
- * single read. There is deliberately NO `PATCH`, no `PUT` and no `DELETE`, and no
- * route that accepts a state: the lifecycle is server-owned and every transition
- * is an explicit command on the service. The `imports.*` permission is the whole
- * guard — [[DEC-072]] refused a feature code for this surface — and the service
- * re-asserts it as defense in depth.
+ * surface is EXACTLY four routes: the multipart upload, the preview trigger, the
+ * bounded list and the single read. There is deliberately NO `PATCH`, no `PUT` and
+ * no `DELETE`, and no route that accepts a state: the lifecycle is server-owned and
+ * every transition is an explicit command ([[IMP-002]]'s preview is a command that
+ * queues work, never a write of the state it queues for). The `imports.*`
+ * permission is the whole guard — [[DEC-072]] refused a feature code for this
+ * surface — and the service re-asserts it as defense in depth.
  *
  * The upload reads the multipart request through {@link ImportArtefactPipe}, so
  * the size cap, the CSV allowlist and the by-name refusal of a spreadsheet all
@@ -65,6 +70,27 @@ export class ImportsController {
   async list(@Query() query: unknown): Promise<ImportJobResponse[]> {
     const parsed = parseInput(importListQuery, query, IMPORT_LIST_QUERY_INVALID_MESSAGE);
     return this.imports.list(parsed.limit ?? IMPORT_LIST_LIMIT_DEFAULT);
+  }
+
+  /**
+   * Queues the preview of one uploaded import: `202` with `{ importId, state }`.
+   *
+   * `imports.run` and not `imports.read`: previewing reads nothing back to the
+   * caller and writes nothing, but it is the command that DECIDES what an operator
+   * is about to commit — and [[DEC-072]] made it a queued operation, so it takes the
+   * same owning-roles key the upload does.
+   *
+   * The `:id` is validated before the service is reached, so a non-UUID is a `400`
+   * and never a query. A foreign or unknown id is the shared `404`, and an import
+   * that is not `UPLOADED` is the aggregate's stable `409` — the refusals the
+   * service owns, in the order it applies them.
+   */
+  @Post(":id/preview")
+  @HttpCode(202)
+  @RequirePermissions(IMPORTS_PERMISSIONS.run)
+  async preview(@Param() params: unknown): Promise<ImportPreviewAcceptedResponse> {
+    const { id } = parseInput(importIdParam, params, IMPORT_ID_INVALID_MESSAGE);
+    return this.imports.preview(id);
   }
 
   /**

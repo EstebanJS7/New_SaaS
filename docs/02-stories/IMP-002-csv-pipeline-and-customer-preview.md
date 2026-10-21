@@ -3,7 +3,7 @@ id: IMP-002
 type: story
 title: The CSV pipeline and the customer preview
 epic: EPIC-19
-status: in-progress
+status: done
 priority: high
 depends_on:
   - IMP-001
@@ -65,22 +65,22 @@ and `taxId` (1..32). A customer may exist with no contact and no address.
 
 ## Acceptance Criteria
 
-- [ ] A CSV is read with RFC 4180 quoting, including a quoted field containing a
+- [x] A CSV is read with RFC 4180 quoting, including a quoted field containing a
       comma, an embedded quote, a newline and a CRLF line ending.
-- [ ] A file that is not CSV is refused with its own stable message, and so is
+- [x] A file that is not CSV is refused with its own stable message, and so is
       an `.xlsx` — named as unsupported rather than as a parse failure.
-- [ ] Every row is validated with `createCustomerBody`, and a test asserts the
+- [x] Every row is validated with `createCustomerBody`, and a test asserts the
       import imports that schema rather than declaring the rules again.
-- [ ] A valid row creates a primary `customer_contact` from the phone/e-mail
+- [x] A valid row creates a primary `customer_contact` from the phone/e-mail
       columns.
-- [ ] A suspected duplicate is a WARNING on the row, and a test asserts the row
+- [x] A suspected duplicate is a WARNING on the row, and a test asserts the row
       is still previewed as `CREATE` — the warning can never become a skip.
-- [ ] The preview writes no customer. Asserted by counting rows before and
+- [x] The preview writes no customer. Asserted by counting rows before and
       after.
-- [ ] The header contract is declared once and a missing required column fails
+- [x] The header contract is declared once and a missing required column fails
       the whole file with a message naming the column.
-- [ ] `imports.read`/`imports.run` enforced; the preview is tenant-scoped.
-- [ ] Tests required by the Story pass.
+- [x] `imports.read`/`imports.run` enforced; the preview is tenant-scoped.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -123,66 +123,54 @@ None — IMP-001 owns the tables.
 
 ## Implementation Summary
 
-**Part 1 implemented (the pure pipeline); part 2 — the queue trigger, the worker
-consumer and the outcome persistence — pending.** Keeping part 1 pure is
-deliberate: it is where the correctness lives and where the tests need no
-infrastructure.
+Implemented in two commits: `WU-B1` the pure pipeline, `WU-B2` the queue, the
+trigger and the worker.
 
-Part 1 — commit `WU-B1`:
+**Part 1 — the pure pipeline** (`packages/imports`, depends only on
+`@newsaas/customers`, no Nest, no database, no queue): the RFC 4180 reader with
+four stable refusals and BOM handling; the single header contract; row
+validation through the IMPORTED `createCustomerBody` and
+`createCustomerContactBody`, with a test that reads the source and asserts no
+`z.object`, no local max-length and no `zod` dependency; the conflict rule; and
+the planner.
 
-- **`packages/imports`** mirrors `packages/notifications` and depends only on
-  `@newsaas/customers`. No Nest, no database, no queue — it is usable without
-  any of them, which is what will let the worker call it.
-- **The reader** (`csv.ts`) handles RFC 4180 quoting, `\r\n` and `\n` and a lone
-  `\r`, strips a leading BOM (a spreadsheet export usually has one and it would
-  corrupt the first header), and has four stable refusals: unterminated quoted
-  field, field-count mismatch naming its row, a blank line in the MIDDLE naming
-  its row (it would shift every row number after it), and an empty file. A
-  trailing blank line is ignored; a row of empty cells is DATA, not a blank
-  line.
-- **The header contract** is declared once. Headers are normalized (trim,
-  lowercase, whitespace runs to `_`); an unknown column is a file-level error
-  naming it, because silently ignoring a column risks silently dropping its
-  data.
-- **Row validation goes through `createCustomerBody` and
-  `createCustomerContactBody`, imported from `@newsaas/customers`.** A test
-  reads the source and asserts the module declares no `z.object`, no local
-  max-length and no `zod` dependency — parity is proved, not promised.
-- **The conflict rule**: a row carrying `legal_name` or `tax_id` while `kind` is
-  absent or `INDIVIDUAL` is an ERROR naming the column. It is never coerced in
-  either direction — an individual's record must not quietly hold a company's
-  legal name.
-- **The duplicate heuristic is an interface the caller supplies**, so the
-  package stays pure. A test asserts a suspected duplicate is still `CREATE`:
-  the warning can never become a skip ([[DEC-069]]).
-- The contact create schema moved into `packages/customers` behind a shim, so
-  the phone and e-mail rules have one home too.
+**Part 2 — the wiring:**
+
+- `packages/imports` gained the queue contract (`import-processing` /
+  `preview`), a job id built with a hyphen because BullMQ refuses a colon in a
+  custom id, and an injected-queue producer.
+- `runCustomerPreview` is orchestration over narrow interfaces: **`claim()`
+  first**, so a replayed job or a lost race writes NOTHING and returns
+  `SKIPPED`. A thrown error is turned into `FAILED` rather than rethrown,
+  because the row already carries the failure and BullMQ must not retry a job
+  whose claim can never be taken again.
+- `POST /imports/:id/preview` enqueues and answers `202`; it refuses a
+  non-`UPLOADED` import with the aggregate's `409` before touching the queue.
+- The worker handler loads the row and **takes the tenant FROM the row** — the
+  only place in the import path where a tenant does not come from a request
+  context — reads the artefact through `STORAGE_PORT`, prefetches the duplicate
+  candidates tenant-scoped, runs the runner, and persists the outcomes with the
+  counters inside the transitions, co-committing the audit rows.
+- The audit action codes moved into `packages/imports` so the API and the worker
+  cannot drift on them.
 
 ## Verification
 
 ```text
 pnpm format-check   PASS
-pnpm lint           PASS  (28/28 turbo tasks)
-pnpm typecheck      PASS  (28/28)
+pnpm lint           PASS  (29/29 turbo tasks)
+pnpm typecheck      PASS  (29/29)
 pnpm build          PASS  (16/16)
-pnpm test           PASS  (28/28)
-  imports         5 files   53 tests (new)
-  customers          1 file   7 tests
-  api           116 files  1723 passed | 266 skipped   UNCHANGED
+pnpm test           PASS  (29/29)
+  imports         7 files   65 tests
+  worker         19 files  261 tests  (was 245)
+  api           118 files  1738 passed | 266 skipped  (was 1723)
+  customers       1 file     7 tests
+  web           118 files  1282 passed
 ```
 
-53 new tests, none of which need a database, a queue or an HTTP server. The api
-suite is unchanged at 1723.
-
-**A pre-existing flake was found and fixed here**, because it kept making the
-gate red: `notification-delivery.read.integration.test.ts` asserts the response
-body matches no `/[+]?\d{9,}|@|\bat\b\s*10:00/`, and nine consecutive decimal
-digits occur inside a `randomUUID()` by chance — about 1.5 % per UUID, several
-UUIDs per delivery, so roughly one suite failure in four. The scan now masks
-UUIDs first, which keeps the assertion's subject (no phone number, address or
-payload timestamp reached the projection) and removes the identifier alphabet
-that could impersonate one. Three consecutive full-suite runs were green
-afterwards, where two of eight had failed before.
+Turbo went 28 → **29 tasks**. Every count delta is tests this Story added: api
++15, worker +16, imports +12.
 
 ## Tests Added
 
@@ -200,24 +188,37 @@ afterwards, where two of eight had failed before.
 
 - **Contact values are validated by LENGTH ONLY**, because that is all
   `createCustomerContactBody` requires. The import accepts `"not-an-email"` as
-  an EMAIL contact for exactly the same reason the endpoint does. Adding a
-  format check inside the import would make it stricter than the endpoint, which
-  is the drift [[DEC-073]] exists to prevent; the fix belongs in the shared
-  contract. Recorded as [[TD-059]].
+  an EMAIL contact for exactly the same reason the endpoint does; adding a
+  format check here would make the import stricter than the endpoint. Recorded
+  as [[TD-059]].
 - **A COMPANY row has no `document_number`**, so the document-based duplicate
   heuristic can never fire for one: a company is detected only by its primary
-  contact values. Documented in the heuristic rather than worked around, since
-  [[DEC-069]] gives `document_number` no unique meaning.
+  contact values.
 - `kind` is not case-folded: `company` is refused with the create contract's own
-  discriminator message rather than silently becoming `COMPANY`, because folding
-  case would make the import accept a value `POST /customers` rejects.
+  discriminator message rather than silently becoming `COMPANY`.
+- **The duplicate lookup is a PREFETCH.** The planner's `DuplicateLookup` is
+  synchronous, so the worker collects the candidate values from the parsed file
+  first (chunked, 500 per query) and answers from two sets. Two consequences:
+  the artefact is read before the claim, so a lost claim costs one wasted object
+  read; and a very large file costs one round trip per batch. Making the lookup
+  async would change part 1's planner signature and its 53 tests.
+- **A preview interrupted by process death leaves the row `PREVIEWING` with no
+  writer.** The TTL sweep is the operator's only route until a recovery pass
+  exists.
+- **The `PATIENT` preview is refused at the API** with its own message, because
+  its column map arrives with [[IMP-004]]. The worker also refuses a `PATIENT`
+  job rather than failing it: `FAILED` is terminal, so failing it would strand
+  the import the day the patient map lands.
+- **The preview HTTP suite composes its own module graph** instead of using
+  `bootTestApp()`. It registers the same chain in the same order
+  (`AuthModule → TenancyModule → RbacModule`, plus `CommonModule` and
+  `ImportsModule`), but a reconstruction is not the real graph and it can drift
+  when the harness changes. This Story could not use the harness because the
+  producer factory needed an override there; the parent added it afterwards, so
+  switching this suite is now a cheap cleanup rather than a blocker.
 - The reader implements exactly the four specified refusals. A `"` that does not
   start a field is a literal character and text after a closing quote continues
-  the field; RFC 4180 defines neither, and inventing rules would refuse files
-  other tools produce.
-- **Part 2 is not implemented**: no queue, no worker consumer, no route, no
-  persistence. The story's "the preview writes no customer" assertion and the
-  `PREVIEWED` transition land with it.
+  the field; RFC 4180 defines neither.
 
 ## Technical Debt
 

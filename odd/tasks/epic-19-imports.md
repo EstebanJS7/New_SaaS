@@ -54,9 +54,11 @@ Each work unit is one commit carrying its tests and documentation.
       evidence log._ schemas and functions to `packages/customers` /
       `packages/patients` so the worker can call them. Found while starting WU-B
       ([[DEC-073]]), not planned.
-- [ ] **WU-B — [[IMP-002]] the CSV pipeline and the customer preview.** Two
-      commits: **WU-B1** (done) the pure pipeline; **WU-B2** (pending) the queue
-      trigger, the worker consumer and the outcome persistence.
+- [x] **WU-B — [[IMP-002]] the CSV pipeline and the customer preview.** Two
+      commits: **WU-B1** the pure pipeline, **WU-B2** the queue, the trigger and
+      the worker. _Done: see the evidence log._ commits: **WU-B1** (done) the
+      pure pipeline; **WU-B2** (pending) the queue trigger, the worker consumer
+      and the outcome persistence.
 - [ ] **WU-C — [[IMP-003]] the customer commit and its summary.**
 - [ ] **WU-D — [[IMP-004]] the patient preview and commit.**
 - [ ] **WU-E — [[IMP-005]] the staff surface and the e2e specs.**
@@ -177,3 +179,40 @@ DEC-073 prevents.
 
 **Pending (WU-B2):** the queue contract, the API trigger and the worker
 consumer.
+
+### WU-B2 — the queue, the trigger and the worker
+
+Commit `WU-B2` on `feat/epic-19-imports`.
+
+- `packages/imports` gained the queue contract, a hyphenated job id (BullMQ
+  refuses a colon in a custom id), and a producer with the queue injected.
+- `runCustomerPreview` claims FIRST, so a replay or a lost race writes nothing;
+  a thrown error becomes `FAILED` rather than being rethrown, because the row
+  already carries the failure and the claim can never be retaken.
+- `POST /imports/:id/preview` enqueues and answers `202`, refusing a
+  non-`UPLOADED` import with the aggregate's `409` before touching the queue.
+- The worker takes the tenant FROM the row — the one place in the import path
+  where it does not come from a request context — reads the artefact through
+  `STORAGE_PORT`, prefetches duplicate candidates tenant-scoped, and persists
+  outcomes inside the transitions with co-committed audit rows.
+- Gates: turbo 28 → **29**; imports **65**, worker **261** (+16), api **1738**
+  (+15); format/lint/typecheck/build green.
+
+**Parent corrections on top of the worker's work:**
+
+- The API producer factory now **throws at boot** when `REDIS_URL` is absent,
+  like the branding, fiscal and notification producers. The worker had made it
+  fail at use because `boot-test-app.ts` was outside its surfaces; the harness
+  now overrides the token like it overrides the other three. Four producers
+  behaving two ways is worse than one extra override.
+- A **`PATIENT` preview is refused at the API** with its own message instead of
+  being enqueued and silently dropped by the handler. `FAILED` is terminal, so
+  the worker could not fail it without stranding the import the day the patient
+  map lands.
+- `Setup.writes` / `Setup.lookups` in the worker's suite were properties used as
+  namespaces; named `CapturedWrite` / `CapturedLookup` so they resolve.
+
+**Named, not hidden:** the duplicate lookup is a prefetch because part 1's
+planner is synchronous; a preview killed mid-run leaves the row `PREVIEWING`
+with no writer; and the preview HTTP suite still composes its own module graph,
+which is now a cheap cleanup since the harness can override the producer.
