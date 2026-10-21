@@ -1,10 +1,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
+import { createCustomer, toCustomerResponse } from "@newsaas/customers";
+import type { CustomerCreateData, CustomerRow } from "@newsaas/customers";
 import { AuditAppendTx, AuditWriter } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { CUSTOMER_DTO_SCHEMA_VERSION, validateUpdateForKind } from "./customer.zod.js";
-import type { CreateCustomerInput, CustomerKind, UpdateCustomerInput } from "./customer.zod.js";
+import type { CreateCustomerInput, UpdateCustomerInput } from "./customer.zod.js";
 import type { CustomerResponse } from "./customer.dto.js";
 import { ADDRESS_DTO_SCHEMA_VERSION } from "./customer-address.zod.js";
 import type {
@@ -19,31 +21,11 @@ import type {
 } from "./customer-contact.zod.js";
 import type { CustomerContactResponse } from "./customer-contact.dto.js";
 
-export interface CustomerRow {
-  id: string;
-  tenantId: string;
-  kind: CustomerKind;
-  displayName: string;
-  legalName: string | null;
-  taxId: string | null;
-  firstName: string | null;
-  lastName: string | null;
-  documentNumber: string | null;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CustomerCreateData {
-  readonly tenantId: string;
-  readonly kind: CustomerKind;
-  readonly displayName: string;
-  readonly legalName?: string | null;
-  readonly taxId?: string | null;
-  readonly firstName?: string | null;
-  readonly lastName?: string | null;
-  readonly documentNumber?: string | null;
-}
+// Re-exported so the API's existing importers — including the service test, which
+// builds its fakes against these contracts — keep resolving them from this
+// module; the definitions now live in `@newsaas/customers` ([[DEC-073]]).
+// Collapsing these aliases is a separate cleanup.
+export type { CustomerCreateData, CustomerRow } from "@newsaas/customers";
 
 export interface CustomerUpdateData {
   displayName?: string;
@@ -181,49 +163,6 @@ export interface CustomerContactDelegate {
   }) => Promise<{ count: number }>;
 }
 
-function toCustomerResponse(row: CustomerRow): CustomerResponse {
-  return {
-    id: row.id,
-    tenantId: row.tenantId,
-    kind: row.kind,
-    displayName: row.displayName,
-    legalName: row.legalName,
-    taxId: row.taxId,
-    firstName: row.firstName,
-    lastName: row.lastName,
-    documentNumber: row.documentNumber,
-    isActive: row.isActive,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function buildCreateData(tenantId: string, input: CreateCustomerInput): CustomerCreateData {
-  if (input.kind === "COMPANY") {
-    return {
-      tenantId,
-      kind: "COMPANY",
-      displayName: input.displayName,
-      legalName: input.legalName,
-      taxId: input.taxId,
-      firstName: null,
-      lastName: null,
-      documentNumber: null,
-    };
-  }
-
-  return {
-    tenantId,
-    kind: "INDIVIDUAL",
-    displayName: input.displayName,
-    firstName: input.firstName ?? null,
-    lastName: input.lastName ?? null,
-    documentNumber: input.documentNumber ?? null,
-    legalName: null,
-    taxId: null,
-  };
-}
-
 function buildUpdateData(input: UpdateCustomerInput): CustomerUpdateData {
   const data: CustomerUpdateData = {};
   if (input.displayName !== undefined) data.displayName = input.displayName;
@@ -233,18 +172,6 @@ function buildUpdateData(input: UpdateCustomerInput): CustomerUpdateData {
   if (input.legalName !== undefined) data.legalName = input.legalName;
   if (input.taxId !== undefined) data.taxId = input.taxId;
   return data;
-}
-
-function changedFieldsForCreate(input: CreateCustomerInput): string[] {
-  const fields: string[] = ["kind", "displayName"];
-  if (input.kind === "INDIVIDUAL") {
-    if (input.firstName !== undefined) fields.push("firstName");
-    if (input.lastName !== undefined) fields.push("lastName");
-    if (input.documentNumber !== undefined) fields.push("documentNumber");
-  } else {
-    fields.push("legalName", "taxId");
-  }
-  return fields;
 }
 
 function toCustomerAddressResponse(row: CustomerAddressRow): CustomerAddressResponse {
@@ -385,31 +312,27 @@ export class CustomersService {
     return toCustomerResponse(row);
   }
 
+  /**
+   * Creates a Customer through `@newsaas/customers`'s create contract: the API
+   * and the import worker validate and write a Customer the SAME way, and the
+   * audit row (`customer.created`, same metadata) co-commits inside the package's
+   * transaction ([[DEC-073]]).
+   *
+   * Tenant and actor are resolved HERE, from the request context, and handed to
+   * the package as arguments. This method NEVER forwards request input as either
+   * one: the tenant is server-owned here, and a package that accepted it from a
+   * caller would be unsafe in both deployables.
+   */
   async create(input: CreateCustomerInput): Promise<CustomerResponse> {
     const tenantId = this.requestContext.requireTenantId();
     const actorUserProfileId = this.requestContext.requireUserProfileId();
 
-    const row = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.customer.create({
-        data: buildCreateData(tenantId, input),
-      });
-
-      await this.audit.append(
-        {
-          action: "customer.created",
-          tenantId,
-          actorUserProfileId,
-          targetType: "customer",
-          targetId: created.id,
-          metadata: {
-            schemaVersion: CUSTOMER_DTO_SCHEMA_VERSION,
-            changedFields: changedFieldsForCreate(input),
-          },
-        },
-        tx
-      );
-
-      return created;
+    const row = await createCustomer({
+      db: this.prisma,
+      audit: this.audit,
+      tenantId,
+      actorUserProfileId,
+      input,
     });
 
     return toCustomerResponse(row);

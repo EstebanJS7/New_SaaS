@@ -50,10 +50,10 @@ Each work unit is one commit carrying its tests and documentation.
       [[IMP-006]], [[DEC-068]]–[[DEC-072]] and [[TD-057]]/[[TD-058]]. No source.
 - [x] **WU-A — [[IMP-001]] the import aggregate, the artefact and the
       permissions.** _Done: see the evidence log._ permissions.**
-- [ ] **WU-A2 — [[IMP-001A]] the shared create contracts.** Extracts the create
-      schemas and functions to `packages/customers` / `packages/patients` so the
-      worker can call them. Found while starting WU-B ([[DEC-073]]), not
-      planned.
+- [x] **WU-A2 — [[IMP-001A]] the shared create contracts.** _Done: see the
+      evidence log._ schemas and functions to `packages/customers` /
+      `packages/patients` so the worker can call them. Found while starting WU-B
+      ([[DEC-073]]), not planned.
 - [ ] **WU-B — [[IMP-002]] the CSV pipeline and the customer preview.**
 - [ ] **WU-C — [[IMP-003]] the customer commit and its summary.**
 - [ ] **WU-D — [[IMP-004]] the patient preview and commit.**
@@ -110,3 +110,35 @@ to satisfy a test heuristic would have let the pattern keep assuming something
 that stopped being true.
 
 **Skipped:** `apps/e2e` (no UI in this work unit).
+
+### WU-A2 — the shared create contracts
+
+Commit `WU-A2` on `feat/epic-19-imports`. A move, not a rewrite.
+
+- `packages/customers` and `packages/patients` mirror `packages/notifications`.
+  The create schemas, DTOs, row builders, audit field lists, guardian
+  requirement, global-catalog check and primary-guardian link each moved to ONE
+  home.
+- The extracted functions take
+  `{ db, audit, tenantId, actorUserProfileId, input[,  catalog] }` and open the
+  transaction themselves; nothing reads an ambient request context, which is
+  what makes them callable from the worker.
+- The API's `create` methods delegate, still resolving tenant and actor from
+  `RequestContextService` and never from a caller-supplied argument.
+- **THE criterion verified by the parent**: `git diff --stat` on the customer
+  and patient test files is EMPTY, and the api suite is **1723 passed before and
+  after**.
+- Gates: turbo 23 → **27** tasks (two new packages); format/lint/typecheck/build
+  green; api 1723 unchanged, customers 7 new, patients 8 new; live PostgreSQL
+  **266/266**.
+
+**Reached slightly further than `create`, deliberately:**
+`PatientsService.update` and `createGuardian` also call `assertGlobalCatalog`,
+`linkPrimaryGuardian`, `appendGuardianAudit` and `assertTenantCustomer`. Leaving
+those private would have kept a second copy of the same refusals, which DEC-073
+forbids. The untouched patients suites are the proof that behaviour did not move
+with them.
+
+**Follow-up named, not hidden:** the two zod shims are `export *`, so they also
+forward the create function and the mappers. Tightening or deleting them is a
+separate cleanup.

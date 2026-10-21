@@ -1,6 +1,26 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
+import {
+  appendGuardianAudit,
+  assertGlobalCatalog,
+  assertTenantCustomer,
+  changedPatientFields,
+  createPatient,
+  linkPrimaryGuardian,
+  toPatientResponse,
+} from "@newsaas/patients";
+import type {
+  GuardianAudit,
+  PatientCatalog,
+  PatientCreateData,
+  PatientCustomerDelegate,
+  PatientGuardianCreateData,
+  PatientGuardianRow,
+  PatientGuardianUpdateData,
+  PatientGuardianWhere,
+  PatientRow,
+} from "@newsaas/patients";
 import { AuditAppendTx, AuditWriter } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
@@ -14,29 +34,19 @@ import type {
 } from "./patient.zod.js";
 import type { PatientGuardianResponse, PatientResponse } from "./patient.dto.js";
 
-/** Tenant-scoped Patient row as read from Prisma. */
-export interface PatientRow {
-  id: string;
-  tenantId: string;
-  name: string;
-  speciesId: string;
-  breedId: string | null;
-  sex: PatientSex;
-  birthDate: Date | null;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface PatientCreateData {
-  readonly tenantId: string;
-  readonly name: string;
-  readonly speciesId: string;
-  readonly breedId: string | null;
-  readonly sex: PatientSex;
-  readonly birthDate: Date | null;
-  readonly isActive: boolean;
-}
+// Re-exported so the API's existing importers — including the service test, which
+// builds its fakes against these contracts — keep resolving them from this
+// module; the definitions now live in `@newsaas/patients` ([[DEC-073]]).
+// Collapsing these aliases is a separate cleanup.
+export type {
+  PatientCreateData,
+  PatientCustomerDelegate,
+  PatientGuardianCreateData,
+  PatientGuardianRow,
+  PatientGuardianUpdateData,
+  PatientGuardianWhere,
+  PatientRow,
+} from "@newsaas/patients";
 
 export interface PatientUpdateData {
   name?: string;
@@ -60,42 +70,6 @@ export interface PatientDelegate {
   }) => Promise<{ count: number }>;
 }
 
-export interface PatientGuardianRow {
-  id: string;
-  tenantId: string;
-  patientId: string;
-  customerId: string;
-  isPrimary: boolean;
-  isActive: boolean;
-  position: number;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface PatientGuardianCreateData {
-  readonly tenantId: string;
-  readonly patientId: string;
-  readonly customerId: string;
-  readonly isPrimary: boolean;
-  readonly isActive: boolean;
-  readonly position: number;
-}
-
-export interface PatientGuardianUpdateData {
-  isPrimary?: boolean;
-  isActive?: boolean;
-  position?: number;
-}
-
-export interface PatientGuardianWhere {
-  id?: string;
-  tenantId: string;
-  patientId: string;
-  customerId?: string;
-  isPrimary?: boolean;
-  isActive?: boolean;
-}
-
 export interface PatientGuardianDelegate {
   findMany: (args: {
     where: { tenantId: string; patientId: string; isActive?: boolean };
@@ -109,27 +83,13 @@ export interface PatientGuardianDelegate {
   }) => Promise<{ count: number }>;
 }
 
-export interface SpeciesDelegate {
-  findFirst: (args: {
-    where: { id: string };
-    select: { id: true };
-  }) => Promise<{ id: string } | null>;
-}
-
-export interface BreedDelegate {
-  findFirst: (args: {
-    where: { id: string; speciesId: string };
-    select: { id: true };
-  }) => Promise<{ id: string } | null>;
-}
-
-/** Read-only view of the Core Customer needed to validate a guardian link. */
-export interface PatientCustomerDelegate {
-  findFirst: (args: {
-    where: { id: string; tenantId: string };
-    select: { id: true };
-  }) => Promise<{ id: string } | null>;
-}
+/**
+ * The GLOBAL Species/Breed delegates are the package's catalog contracts under the
+ * names this read path uses. Aliasing instead of redeclaring keeps ONE definition,
+ * so `assertGlobalCatalog` and this service can never drift apart.
+ */
+export type SpeciesDelegate = PatientCatalog["species"];
+export type BreedDelegate = PatientCatalog["breed"];
 
 export interface PatientsTransaction {
   patient: PatientDelegate;
@@ -149,28 +109,6 @@ export interface PatientsPrisma {
   customer: PatientCustomerDelegate;
 }
 
-/** Descriptor for the guardian audit row a primary mutation must co-commit. */
-interface GuardianAudit {
-  action: "patient_guardian.created" | "patient_guardian.primary_changed";
-  targetId: string;
-  changedFields: string[];
-}
-
-function toPatientResponse(row: PatientRow): PatientResponse {
-  return {
-    id: row.id,
-    tenantId: row.tenantId,
-    name: row.name,
-    speciesId: row.speciesId,
-    breedId: row.breedId,
-    sex: row.sex,
-    birthDate: row.birthDate ? row.birthDate.toISOString() : null,
-    isActive: row.isActive,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
 function toGuardianResponse(row: PatientGuardianRow): PatientGuardianResponse {
   return {
     id: row.id,
@@ -185,18 +123,6 @@ function toGuardianResponse(row: PatientGuardianRow): PatientGuardianResponse {
   };
 }
 
-function buildPatientCreateData(tenantId: string, input: CreatePatientInput): PatientCreateData {
-  return {
-    tenantId,
-    name: input.name,
-    speciesId: input.speciesId,
-    breedId: input.breedId ?? null,
-    sex: input.sex,
-    birthDate: input.birthDate === undefined ? null : new Date(input.birthDate),
-    isActive: input.isActive ?? true,
-  };
-}
-
 function buildPatientUpdateData(input: UpdatePatientInput): PatientUpdateData {
   const data: PatientUpdateData = {};
   if (input.name !== undefined) data.name = input.name;
@@ -208,14 +134,6 @@ function buildPatientUpdateData(input: UpdatePatientInput): PatientUpdateData {
   }
   if (input.isActive !== undefined) data.isActive = input.isActive;
   return data;
-}
-
-/** Audit field names for the Patient columns only (never the guardian input). */
-function changedPatientFields(input: object): string[] {
-  const source = input as Record<string, unknown>;
-  return ["name", "speciesId", "breedId", "sex", "birthDate", "isActive"].filter(
-    (key) => source[key] !== undefined
-  );
 }
 
 /**
@@ -266,51 +184,31 @@ export class PatientsService {
     return toPatientResponse(row);
   }
 
+  /**
+   * Creates a Patient through `@newsaas/patients`'s create contract: the API and
+   * the import worker validate and write a Patient the SAME way — same create
+   * schema, same active-patient guardian requirement (Decision #2223), same
+   * global-catalog check — and the patient row, its primary guardian and both
+   * audit rows co-commit inside the package's single transaction ([[DEC-073]]).
+   *
+   * Tenant, actor and catalog are resolved HERE, from the request context and the
+   * request-scoped client, and handed to the package as arguments. This method
+   * NEVER forwards request input as any of them.
+   */
   async create(input: CreatePatientInput): Promise<PatientResponse> {
     const tenantId = await this.requireTenantContext();
     const actorUserProfileId = this.requestContext.requireUserProfileId();
 
-    if (input.isActive !== false && input.primaryGuardianCustomerId === undefined) {
-      throw new DomainError(
-        "VALIDATION_FAILED",
-        "primaryGuardianCustomerId is required when creating an active patient."
-      );
-    }
-    await this.assertGlobalCatalog(input.speciesId, input.breedId);
-
-    const row = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.patient.create({
-        data: buildPatientCreateData(tenantId, input),
-      });
-
-      let guardianAudit: GuardianAudit | null = null;
-      if (input.primaryGuardianCustomerId !== undefined) {
-        guardianAudit = await this.linkPrimaryGuardian(
-          tx,
-          tenantId,
-          created.id,
-          input.primaryGuardianCustomerId
-        );
-      }
-
-      await this.audit.append(
-        {
-          action: "patient.created",
-          tenantId,
-          actorUserProfileId,
-          targetType: "patient",
-          targetId: created.id,
-          metadata: {
-            schemaVersion: PATIENT_DTO_SCHEMA_VERSION,
-            changedFields: changedPatientFields(input),
-          },
-        },
-        tx
-      );
-
-      await this.appendGuardianAudit(tx, guardianAudit, created.id, tenantId, actorUserProfileId);
-
-      return created;
+    const row = await createPatient({
+      db: this.prisma,
+      audit: this.audit,
+      tenantId,
+      actorUserProfileId,
+      input,
+      // The taxonomy is a parameter for the same reason the tenant is: the worker
+      // has no module that owns it, so it resolves the global catalog with its own
+      // client and passes the same narrow contract.
+      catalog: this.prisma,
     });
 
     return toPatientResponse(row);
@@ -323,7 +221,8 @@ export class PatientsService {
     const existing = await this.findPatientOrThrow(id, tenantId);
 
     if (input.speciesId !== undefined || input.breedId !== undefined) {
-      await this.assertGlobalCatalog(
+      await assertGlobalCatalog(
+        this.prisma,
         input.speciesId ?? existing.speciesId,
         input.breedId !== undefined ? input.breedId : existing.breedId
       );
@@ -336,7 +235,7 @@ export class PatientsService {
     const row = await this.prisma.$transaction(async (tx) => {
       let guardianAudit: GuardianAudit | null = null;
       if (input.primaryGuardianCustomerId !== undefined) {
-        guardianAudit = await this.linkPrimaryGuardian(
+        guardianAudit = await linkPrimaryGuardian(
           tx,
           tenantId,
           id,
@@ -387,7 +286,7 @@ export class PatientsService {
         );
       }
 
-      await this.appendGuardianAudit(tx, guardianAudit, id, tenantId, actorUserProfileId);
+      await appendGuardianAudit(this.audit, tx, guardianAudit, id, tenantId, actorUserProfileId);
 
       return updated;
     });
@@ -474,7 +373,7 @@ export class PatientsService {
 
     const row = await this.prisma.$transaction(async (tx) => {
       await this.findPatientOrThrowTx(tx, patientId, tenantId);
-      await this.assertTenantCustomer(tx, input.customerId, tenantId);
+      await assertTenantCustomer(tx, input.customerId, tenantId);
 
       const existing = await tx.patientGuardian.findFirst({
         where: { tenantId, patientId, customerId: input.customerId },
@@ -520,7 +419,14 @@ export class PatientsService {
         };
       }
 
-      await this.appendGuardianAudit(tx, guardianAudit, patientId, tenantId, actorUserProfileId);
+      await appendGuardianAudit(
+        this.audit,
+        tx,
+        guardianAudit,
+        patientId,
+        tenantId,
+        actorUserProfileId
+      );
       return created;
     });
 
@@ -729,94 +635,13 @@ export class PatientsService {
     return tenantId;
   }
 
-  /**
-   * Validates Species/Breed against the GLOBAL seeded catalog. Lookups carry NO
-   * tenant predicate: taxonomy is shared across tenants (Decision #2211).
-   * Unknown values are VALIDATION_FAILED, and a Breed must belong to the
-   * referenced Species.
+  /*
+   * `assertGlobalCatalog`, `assertTenantCustomer`, `linkPrimaryGuardian` and
+   * `appendGuardianAudit` moved to `@newsaas/patients` ([[DEC-073]]): they are the
+   * rules the create contract shares with this class, so they have ONE home — the
+   * package — and this class calls them with its own transaction and request
+   * context. A second copy here is exactly what the Story forbids.
    */
-  private async assertGlobalCatalog(speciesId: string, breedId?: string | null): Promise<void> {
-    const species = await this.prisma.species.findFirst({
-      where: { id: speciesId },
-      select: { id: true },
-    });
-    if (!species) {
-      throw new DomainError("VALIDATION_FAILED", "Unknown species.");
-    }
-    if (breedId !== undefined && breedId !== null) {
-      const breed = await this.prisma.breed.findFirst({
-        where: { id: breedId, speciesId },
-        select: { id: true },
-      });
-      if (!breed) {
-        throw new DomainError("VALIDATION_FAILED", "Unknown breed for the selected species.");
-      }
-    }
-  }
-
-  private async assertTenantCustomer(
-    tx: PatientsTransaction,
-    customerId: string,
-    tenantId: string
-  ): Promise<void> {
-    const customer = await tx.customer.findFirst({
-      where: { id: customerId, tenantId },
-      select: { id: true },
-    });
-    if (!customer) {
-      throw new DomainError("NOT_FOUND", "Customer was not found.");
-    }
-  }
-
-  /**
-   * Establishes `customerId` as the Patient's active primary guardian inside
-   * the caller's transaction. DEMOTE runs before PROMOTE because the partial
-   * unique index is immediate. Returns the guardian audit descriptor, or null
-   * when the target already is the active primary (no mutation).
-   */
-  private async linkPrimaryGuardian(
-    tx: PatientsTransaction,
-    tenantId: string,
-    patientId: string,
-    customerId: string
-  ): Promise<GuardianAudit | null> {
-    await this.assertTenantCustomer(tx, customerId, tenantId);
-
-    const current = await tx.patientGuardian.findFirst({
-      where: { tenantId, patientId, isPrimary: true, isActive: true },
-    });
-    if (current?.customerId === customerId) {
-      return null;
-    }
-    if (current) {
-      await tx.patientGuardian.updateMany({
-        where: { id: current.id, tenantId, patientId },
-        data: { isPrimary: false },
-      });
-    }
-
-    const link = await tx.patientGuardian.findFirst({ where: { tenantId, patientId, customerId } });
-    if (link) {
-      await tx.patientGuardian.updateMany({
-        where: { id: link.id, tenantId, patientId },
-        data: { isPrimary: true, isActive: true },
-      });
-      return {
-        action: "patient_guardian.primary_changed",
-        targetId: link.id,
-        changedFields: ["isPrimary", "isActive"],
-      };
-    }
-
-    const created = await tx.patientGuardian.create({
-      data: { tenantId, patientId, customerId, isPrimary: true, isActive: true, position: 0 },
-    });
-    return {
-      action: "patient_guardian.created",
-      targetId: created.id,
-      changedFields: ["customerId", "isPrimary"],
-    };
-  }
 
   /** Demotes the active primary guardian unless it is the `exceptId` link. */
   private async demoteActivePrimary(
@@ -835,31 +660,6 @@ export class PatientsService {
       where: { id: current.id, tenantId, patientId },
       data: { isPrimary: false },
     });
-  }
-
-  private async appendGuardianAudit(
-    tx: PatientsTransaction,
-    descriptor: GuardianAudit | null,
-    patientId: string,
-    tenantId: string,
-    actorUserProfileId: string
-  ): Promise<void> {
-    if (!descriptor) return;
-    await this.audit.append(
-      {
-        action: descriptor.action,
-        tenantId,
-        actorUserProfileId,
-        targetType: "patient_guardian",
-        targetId: descriptor.targetId,
-        metadata: {
-          schemaVersion: PATIENT_GUARDIAN_DTO_SCHEMA_VERSION,
-          changedFields: descriptor.changedFields,
-          patientId,
-        },
-      },
-      tx
-    );
   }
 
   private async findPatientOrThrow(id: string, tenantId: string): Promise<PatientRow> {

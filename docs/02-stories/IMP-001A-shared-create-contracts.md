@@ -3,7 +3,7 @@ id: IMP-001A
 type: story
 title: The shared create contracts
 epic: EPIC-19
-status: planned
+status: done
 priority: high
 depends_on:
   - IMP-001
@@ -59,20 +59,20 @@ late rather than planned. It moves code; it changes no behaviour.
 
 ## Acceptance Criteria
 
-- [ ] `packages/customers` and `packages/patients` exist and export a create
+- [x] `packages/customers` and `packages/patients` exist and export a create
       function the worker could call with no request context.
-- [ ] The create functions take `tenantId` explicitly and never read it from an
+- [x] The create functions take `tenantId` explicitly and never read it from an
       ambient context.
-- [ ] `apps/api`'s two `create` methods delegate, and still resolve tenant and
+- [x] `apps/api`'s two `create` methods delegate, and still resolve tenant and
       actor from the request context — never from a caller-supplied argument.
-- [ ] **Every existing customer and patient test passes with no assertion
+- [x] **Every existing customer and patient test passes with no assertion
       changed.** A diff of the test files shows only import-path updates, if
       any. This is the criterion that distinguishes a move from a rewrite.
-- [ ] No second copy of any validation rule exists: the import will import the
+- [x] No second copy of any validation rule exists: the import will import the
       schema from the package.
-- [ ] The audit action names and metadata are byte-identical to before.
-- [ ] `pnpm build`, `lint`, `typecheck` and the full test set are green.
-- [ ] Tests required by the Story pass.
+- [x] The audit action names and metadata are byte-identical to before.
+- [x] `pnpm build`, `lint`, `typecheck` and the full test set are green.
+- [x] Tests required by the Story pass.
 
 ## Domain Invariants
 
@@ -114,13 +114,58 @@ None.
 
 ## Implementation Summary
 
-_Not implemented._
+Implemented on `feat/epic-19-imports`. It is a **move**:
+`git diff --stat -- '*customers*.test.ts' '*patients*.test.ts'` is empty, and
+the api suite is **1723 passed before and after** with 266 skipped.
+
+- `packages/customers` and `packages/patients` mirror `packages/notifications`
+  exactly (`"type": "module"`, dist-based `main`/`types`, the same four scripts
+  and tooling). They depend on `@newsaas/database` and `@newsaas/shared`, which
+  is the `packages/fiscal-persistence` precedent.
+- The create schemas moved **whole**, so `createCustomerBody` and
+  `createPatientBody` have one home. The response DTOs, the create-row builders,
+  the audit field lists, the guardian requirement, the global-catalog check and
+  the primary-guardian link moved with them.
+- The extracted functions take
+  `{ db, audit, tenantId, actorUserProfileId, input }` (plus `catalog` for
+  patients) as PARAMETERS and open the transaction themselves. Nothing in them
+  reads an ambient request context, which is what makes them callable from the
+  worker.
+- `apps/api`'s two `create` methods delegate, still resolving tenant and actor
+  from `RequestContextService` and never from a caller-supplied argument.
+- Old API paths keep working through documented re-export shims, which is what
+  makes the change a move rather than a churn of every import in two modules.
+- 15 focused tests in the packages run without Nest, over stubbed narrow
+  interfaces.
 
 ## Verification
 
 ```text
-Not run.
+pnpm format-check   PASS
+pnpm lint           PASS  (27/27 turbo tasks)
+pnpm typecheck      PASS  (27/27)
+pnpm build          PASS  (15/15)
+pnpm test           PASS  (27/27)
+  api           116 files          1723 passed | 266 skipped   UNCHANGED
+  customers       1 file              7 passed   (new)
+  patients        1 file              8 passed   (new)
+  web           118 files           1282 passed
+  database · worker · fiscal · notifications · ui · shared   unchanged
+live PostgreSQL                      266/266
 ```
+
+**THE criterion, verified rather than reported**:
+
+```text
+$ git diff --stat -- '*customers*.test.ts' '*patients*.test.ts'
+(no output)
+
+api tests BEFORE: 1723 passed | 266 skipped
+api tests AFTER:  1723 passed | 266 skipped
+```
+
+Turbo went from 23 to **27 tasks**: two new packages, each with
+build/lint/typecheck/test.
 
 ## Tests Added
 
@@ -131,11 +176,30 @@ Not run.
 
 ## Known Limitations
 
-- To be recorded as implemented.
+- **The shims are deliberate and can be collapsed later.** `customer.zod.ts` and
+  `patient.zod.ts` in the API are now `export * from "@newsaas/<pkg>"`, which
+  keeps the API's import graph still and the test diff empty. A knock-on worth
+  naming: an `export *` also forwards the create function and the mappers, so
+  the API's zod module surface is wider than the name suggests. Tightening the
+  shims to exact symbol lists, or deleting them, is a separate cleanup —
+  deliberately not part of a move that must change no behaviour.
+- **The extraction reached slightly further than `create`, and it had to.**
+  `PatientsService.update` also calls `assertGlobalCatalog`,
+  `linkPrimaryGuardian` and `appendGuardianAudit`, and `createGuardian` calls
+  `assertTenantCustomer`. Leaving those private in the API would have kept a
+  second copy of the same refusals, which is exactly what [[DEC-073]] forbids.
+  They are exported from the package and the API calls them with its own `tx`
+  and actor; action names, metadata and refusal order are unchanged, and the
+  untouched patients suites are the proof.
+- The API passes `catalog: this.prisma` because its client already exposes
+  `species`/`breed`. The parameters stay separate from `db` because the worker
+  has no module that owns the taxonomy — merging them would have been tidier
+  here and wrong there.
 
 ## Technical Debt
 
-- None. This removes a boundary problem rather than creating one.
+- None created. The shims are named in Known Limitations as the follow-up they
+  are.
 
 ## Decisions / ADRs
 
@@ -150,4 +214,4 @@ Not run.
 
 ## Completion Notes
 
-_Status must remain non-done until all required gates pass._
+All required gates passed on 2026-10-19, including the live-PostgreSQL lane.

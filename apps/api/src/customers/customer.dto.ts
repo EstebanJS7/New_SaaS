@@ -1,21 +1,11 @@
 /**
- * Allowlisted Customer response. Only these fields are ever returned; no
- * internal metadata, foreign row IDs, or derived classifications are exposed.
+ * Deliberate re-export shim ([[DEC-073]], [[IMP-001A]]).
  *
- * Data classification: displayName, legalName, taxId, firstName, lastName and
- * documentNumber are CONFIDENTIAL. Logs must carry IDs only.
+ * `CustomerResponse` now lives in `@newsaas/customers` beside the create
+ * contract's response mapper, so the API's DTO shape and the shape a caller
+ * outside a request reads cannot drift. Forwarding it here keeps every existing
+ * importer working without a test diff.
+ *
+ * Collapsing this shim is a separate cleanup.
  */
-export interface CustomerResponse {
-  readonly id: string;
-  readonly tenantId: string;
-  readonly kind: "INDIVIDUAL" | "COMPANY";
-  readonly displayName: string;
-  readonly legalName: string | null;
-  readonly taxId: string | null;
-  readonly firstName: string | null;
-  readonly lastName: string | null;
-  readonly documentNumber: string | null;
-  readonly isActive: boolean;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+export type { CustomerResponse } from "@newsaas/customers";
