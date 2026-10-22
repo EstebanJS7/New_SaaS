@@ -556,6 +556,9 @@ importers:
       '@newsaas/customers':
         specifier: workspace:*
         version: link:../customers
+      '@newsaas/patients':
+        specifier: workspace:*
+        version: link:../patients
       bullmq:
         specifier: ^5.46.1
         version: 5.81.3

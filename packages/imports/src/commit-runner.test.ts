@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CUSTOMER_COLUMNS_REJECTION_CODES } from "./customer-columns.js";
-import type { CustomerRowReady } from "./commit.js";
+import { planCustomerCommit, type CustomerCommitPlan, type CustomerRowReady } from "./commit.js";
 import {
   COMMIT_FAILURE_CODE,
   COMMIT_FAILURE_MESSAGE,
@@ -8,7 +8,7 @@ import {
   COMMIT_NO_VALID_ROWS_CODE,
   COMMIT_ROW_FAILURE_CODE,
   COMMIT_ROW_FAILURE_MESSAGE,
-  runCustomerCommit,
+  runImportCommit,
   type CommitCounts,
   type CommitPersistence,
   type CommitWriter,
@@ -50,6 +50,15 @@ const MIXED_CSV = [
   "Bruno Díaz,,,,DOC-2,0986655443,bruno@example.com",
 ].join("\n");
 
+/**
+ * The customer planner as the runner takes it. `planCustomerCommit` takes an OBJECT
+ * because its patient counterpart captures prefetched lookups (the taxonomy, the
+ * resolved guardian references); the runner only ever knows a function of the text.
+ */
+function customerPlanner(csvText: string): CustomerCommitPlan {
+  return planCustomerCommit({ csvText });
+}
+
 interface Recorded {
   readonly claims: number;
   readonly completed: CommitCounts[];
@@ -64,7 +73,7 @@ interface Recorded {
 interface Setup {
   readonly persistence: CommitPersistence;
   readonly artefact: PreviewArtefact;
-  readonly writer: CommitWriter;
+  readonly writer: CommitWriter<CustomerRowReady>;
   readonly recorded: Recorded;
 }
 
@@ -142,7 +151,7 @@ function setup(args: {
     },
   };
 
-  const writer: CommitWriter = {
+  const writer: CommitWriter<CustomerRowReady> = {
     create: (row) => {
       if (args.writerFailsOn?.includes(row.rowNumber) === true) {
         return Promise.reject(new Error(`insert failed for ${row.input.displayName}`));
@@ -169,11 +178,16 @@ function setup(args: {
   };
 }
 
-describe("runCustomerCommit", () => {
+describe("runImportCommit over the customer planner", () => {
   it("claims first, then writes one record per PREVIEW-accepted row and completes with the counters", async () => {
     const { persistence, artefact, writer, recorded } = setup({});
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("COMMITTED");
     // The order is the contract: the claim takes the phase before anything is read
@@ -200,7 +214,12 @@ describe("runCustomerCommit", () => {
   it("writes NOTHING when the claim is refused: a replayed job is not a second commit", async () => {
     const { persistence, artefact, writer, recorded } = setup({ claimResult: false });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("SKIPPED");
     // The claim is the only call. The outcomes are not even read, so an import
@@ -220,7 +239,12 @@ describe("runCustomerCommit", () => {
       csvText: VALID_CSV,
     });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("COMMITTED");
     expect(recorded.written.map((row) => row.rowNumber)).toEqual([1]);
@@ -239,7 +263,12 @@ describe("runCustomerCommit", () => {
       ].join("\n"),
     });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("COMMITTED");
     expect(recorded.written.map((row) => row.rowNumber)).toEqual([1, 2]);
@@ -262,7 +291,12 @@ describe("runCustomerCommit", () => {
       writerFailsOn: [2],
     });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("COMMITTED");
     // DEC-071's partial success: 1 and 3 committed, 2 is a failed ROW, and the
@@ -284,7 +318,12 @@ describe("runCustomerCommit", () => {
       csvText: MIXED_CSV,
     });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("FAILED");
     expect(recorded.written).toEqual([]);
@@ -301,7 +340,7 @@ describe("runCustomerCommit", () => {
       outcomes: [storedOutcome(1, "CREATE", true), storedOutcome(2, "CREATE", false)],
     });
 
-    await runCustomerCommit({ persistence, artefact, writer });
+    await runImportCommit({ persistence, artefact, plan: customerPlanner, writer });
 
     // DEC-069: the warning survives the commit, and the row was still CREATED.
     expect(recorded.completed).toEqual([{ created: 2, failed: 0, suspectedDuplicate: 1 }]);
@@ -314,7 +353,7 @@ describe("runCustomerCommit", () => {
       writerFailsOn: [2],
     });
 
-    await runCustomerCommit({ persistence, artefact, writer });
+    await runImportCommit({ persistence, artefact, plan: customerPlanner, writer });
 
     // `suspectedDuplicate` stays a SUBSET of `created` (the aggregate's own
     // projection says so), and the failed row keeps its flag on its own outcome
@@ -326,7 +365,12 @@ describe("runCustomerCommit", () => {
   it("fails the job with the file's stable code when the artefact can no longer be read as the same file", async () => {
     const { persistence, artefact, writer, recorded } = setup({ csvText: "kind,phone\n,0981" });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("FAILED");
     expect(recorded.written).toEqual([]);
@@ -348,7 +392,12 @@ describe("runCustomerCommit", () => {
       csvText: VALID_CSV,
     });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("COMMITTED");
     // Row 3 is absent from the file: nothing was written for it, it is recorded as
@@ -363,7 +412,12 @@ describe("runCustomerCommit", () => {
       readError: new Error("object store unreachable for ana@example.com"),
     });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("FAILED");
     expect(recorded.calls).toEqual(["claim", "readOutcomes", "read", "fail"]);
@@ -377,7 +431,12 @@ describe("runCustomerCommit", () => {
       completeError: new Error("updateMany timed out for Ana Pérez"),
     });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     expect(outcome).toBe("FAILED");
     expect(recorded.completed).toEqual([]);
@@ -391,7 +450,12 @@ describe("runCustomerCommit", () => {
       failRowError: new Error("outcome write failed"),
     });
 
-    const outcome = await runCustomerCommit({ persistence, artefact, writer });
+    const outcome = await runImportCommit({
+      persistence,
+      artefact,
+      plan: customerPlanner,
+      writer,
+    });
 
     // The per-row record could not be written, so the partial result can no longer
     // be described: the job is failed rather than completed with a summary that
@@ -406,7 +470,7 @@ describe("runCustomerCommit", () => {
       csvText: `display_name,${"x".repeat(500)}\nAna,y\n`,
     });
 
-    await runCustomerCommit({ persistence, artefact, writer });
+    await runImportCommit({ persistence, artefact, plan: customerPlanner, writer });
 
     expect(recorded.failures).toHaveLength(1);
     expect(recorded.failures[0]).toContain(CUSTOMER_COLUMNS_REJECTION_CODES.UNKNOWN_HEADER);
@@ -423,8 +487,8 @@ describe("runCustomerCommit", () => {
     // Nothing is left to do: the phase is claimed and its settlement cannot be
     // written, so the error is the caller's to report rather than a silent
     // `FAILED` that never reached the row.
-    await expect(runCustomerCommit({ persistence, artefact, writer })).rejects.toThrow(
-      "database unreachable"
-    );
+    await expect(
+      runImportCommit({ persistence, artefact, plan: customerPlanner, writer })
+    ).rejects.toThrow("database unreachable");
   });
 });

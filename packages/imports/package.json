@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@newsaas/customers": "workspace:*",
+    "@newsaas/patients": "workspace:*",
     "bullmq": "^5.46.1",
     "ioredis": "^5.6.0"
   },

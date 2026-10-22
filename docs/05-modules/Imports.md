@@ -2,7 +2,7 @@
 type: module
 status: implemented
 epic: EPIC-19
-updated: 2026-10-19
+updated: 2026-10-22
 ---
 
 # Imports
@@ -13,6 +13,9 @@ outcome that survives the request that produced it. It stores the artefact, owns
 the lifecycle, seeds the permissions, runs the preview over the stored file
 ([[IMP-002]]) and applies it ([[IMP-003]]): the commit writes the records the
 preview accepted, per row, and leaves the summary an operator reads afterwards.
+Since [[IMP-004]] the SAME pipeline runs over two entities — customers and
+patients — chosen by `import_job.entity`; the entity decides only WHICH PLANNER
+validates a row and WHO writes it.
 
 [[DEC-072]] settled the three transport questions, and this module is where
 their consequences are visible:
@@ -169,15 +172,15 @@ the stored artefact — never a synchronous branch on file size.
 POST /imports/:id/preview          imports.run, UPLOADED only
       │  enqueue { importJobId }   (job id = `import-preview-<id>`)
       ▼
-  import-processing queue   →   worker: ImportPreviewConsumer → ImportPreviewHandler
+  import-processing queue   →   worker: ImportProcessingConsumer → ImportPreviewHandler
       │                              │  row = import_job.findFirst(id)   ← the tenant is READ FROM THE ROW
-      │                              │  refuse if missing / not UPLOADED / entity ≠ CUSTOMER
+      │                              │  refuse if missing / not UPLOADED
       │                              │  read import_job.storage_key through STORAGE_PORT
-      │                              │  prefetch the duplicate candidates (tenant-scoped)
+      │                              │  prefetch what the ENTITY's planner needs
       │                              ▼
-      │                        @newsaas/imports: runCustomerPreview
+      │                        @newsaas/imports: runImportPreview   ← ONE pass for both entities
       │                          claim()  UPLOADED → PREVIEWING   (conditional, audited)
-      │                          read + planCustomerPreview
+      │                          read + plan(artefact)
       │                          complete(rows) PREVIEWING → PREVIEWED (+counters)
       │                          fail(reason)   PREVIEWING → FAILED (+failed_at)
       ▼
@@ -209,6 +212,15 @@ them. The database's biconditional CHECKs are honoured by construction:
 `failed_at` is written only by `fail` (state `FAILED`) and `committed_at` is
 never written here.
 
+**One pass, one planner per entity.** `runImportPreview` takes an
+`ImportPlanner` — a pure function from the artefact's text to one verdict per
+row — so the claim, the file-refusal handling, the settle and the failure path
+are a single implementation for customers and patients alike ([[IMP-004]]). The
+entity-specific part is the planner the handler builds: `planCustomerPreview`
+for a customer file, `planPatientPreview` for a patient one. The planner is a
+FUNCTION rather than a precomputed plan because the plan depends on the text,
+and the text is read only after the claim.
+
 **The duplicate lookup is a prefetch, and that is a consequence of the pure
 pipeline.** `DuplicateLookup` answers synchronously — the planner is a pure
 function — so the worker reads the candidate document numbers and contact values
@@ -236,19 +248,19 @@ POST /imports/:id/commit           imports.run, PREVIEWED only
       ▼
   import-processing queue   →   worker: ImportProcessingConsumer → ImportCommitHandler
       │                              │  row = import_job.findFirst(id)   ← the tenant is READ FROM THE ROW
-      │                              │  refuse if missing / not PREVIEWED / entity ≠ CUSTOMER
+      │                              │  refuse if missing / not PREVIEWED
       │                              │  resolve the actor from created_by_membership_id
-      │                              │  read import_job.storage_key through STORAGE_PORT (lazily)
+      │                              │  read import_job.storage_key through STORAGE_PORT
       │                              ▼
-      │                        @newsaas/imports: runCustomerCommit
+      │                        @newsaas/imports: runImportCommit   ← ONE loop for both entities
       │                          claim()            PREVIEWED → COMMITTING   (conditional, audited)
       │                          readOutcomes()     ← ONLY these rows are written
-      │                          planCustomerCommit(artefact) ← the PAYLOADS (verdicts are not payloads)
-      │                          per accepted row: createCustomer(customer + contacts + audit) | failRow(n)
+      │                          plan(artefact)     ← the PAYLOADS (verdicts are not payloads)
+      │                          per accepted row: writer.create(row) | failRow(n)
       │                          complete(counts)   COMMITTING → COMMITTED (+counters)
       │                          fail(reason)       COMMITTING → FAILED (+failed_at)
       ▼
-  customer + customer_contact + audit_log rows, and the counters on import_job
+  the records the owning domain writes, and the counters on import_job
 ```
 
 **ONE queue, TWO job names.** The commit is `commit` on the same
@@ -268,16 +280,20 @@ is what makes "commit what you saw" literally true.
 
 **Each row is its own transaction, through the owning service.** One
 `createCustomer` call per accepted row — the customer, its contacts and their
-audit rows, written by `@newsaas/customers` inside the transaction it opens. The
-import never writes a customer column itself, so a record it creates is
-indistinct from one created by `POST /customers`. A failure on row N leaves rows
+audit rows, written by `@newsaas/customers` inside the transaction it opens — or
+one `createPatient` call, which writes the patient, its primary guardian link
+and both audit rows in ITS transaction ([[DEC-070]]). The import never writes a
+customer or patient column itself, so a record it creates is indistinct from one
+created by `POST /customers` or `POST /patients`. A failure on row N leaves rows
 1..N-1 committed, records row N as a failed ROW (with one fixed sentence that
 quotes nothing), and continues to N+1.
 
 **Zero accepted rows is not a partial success.** A file whose every row the
 preview refused commits nothing, ends `FAILED`, and says why
-(`IMPORT_COMMIT_NO_VALID_ROWS`). The check runs before the artefact is read, so
-a refused file costs no object-store call.
+(`IMPORT_COMMIT_NO_VALID_ROWS`). For a CUSTOMER file the check runs before the
+artefact is read, so a refused file costs no object-store call; a PATIENT file
+is read once first, because its planner needs the file's guardian references
+before it can be built (see below).
 
 **The counters are written by the transition that produced them.**
 `created_count`, `failed_count` (preview refusals + commit-time failures) and
@@ -288,6 +304,117 @@ the same statement that enters `COMMITTED`.
 **A replayed commit does nothing.** The claim is pinned on `PREVIEWED`, so a
 second delivery finds the row in `COMMITTING` or a terminal state, matches zero
 rows, and the runner returns `SKIPPED` having written nothing.
+
+## The patient import
+
+[[IMP-004]] adds the second entity. Everything above is shared; what follows is
+what a PATIENTS file adds, and it exists because a patient has something a
+customer does not: an OWNER.
+
+### The file
+
+| Column                                                    | Required    | Meaning                                                      |
+| --------------------------------------------------------- | ----------- | ------------------------------------------------------------ |
+| `name`                                                    | yes         | the patient's name, 1..200 as `createPatientBody` defines it |
+| `species`                                                 | yes         | a species CODE or NAME, resolved against the GLOBAL catalog  |
+| `sex`                                                     | yes         | `MALE` / `FEMALE` / `UNKNOWN`, case-folded                   |
+| `breed`                                                   | no          | a breed CODE or NAME, resolved WITHIN the row's species      |
+| `birth_date`                                              | no          | a calendar date, `YYYY-MM-DD`                                |
+| `guardian_document` / `guardian_phone` / `guardian_email` | exactly one | a reference to an EXISTING customer of this tenant           |
+
+The three header refusals are the CUSTOMER contract's own, from the shared
+resolver (`columns.ts`): duplicates first, then an unknown column, then a
+missing required one. The codes and the noun are per-entity (`PATIENT_HEADER_*`,
+"every imported patient"), because a patient file must not be refused with a
+sentence about customers.
+
+**The guardian reference is a column GROUP, not a required column.** None of the
+three is individually required — a file with no guardian column is a legal file
+whose every row is refused — and a row that fills none, or more than one, is a
+ROW error. Two filled columns are ambiguous, and the import does not guess which
+customer owns the pet.
+
+**`is_active` is not a column.** The import creates ACTIVE patients, which is
+precisely what makes the guardian reference mandatory (Decision #2223). A column
+that let a file create an inactive patient would be a column that opts out of
+the ownership rule, so the header contract refuses it by name.
+
+### The guardian (DEC-070)
+
+A patient row names its owner by a reference that must ALREADY exist in the
+tenant:
+
+- `guardian_document` → a `customer` of this tenant carrying that document
+  number;
+- `guardian_phone` / `guardian_email` → a `customer_contact` of this tenant
+  carrying that `(kind, value)` pair.
+
+`GuardianLookup` answers synchronously (the row contract is pure), so the worker
+prefetches the references out of the file in bounded batches of 500 values — one
+query for document numbers, one for contact values — and answers from two maps.
+**Every one of those queries carries the ROW's tenant**, so a reference
+belonging to another tenant resolves to nothing: that is the same row error an
+unknown reference gets, never a cross-tenant link.
+
+An unresolved reference is a ROW error with a code naming which reference failed
+(`PATIENT_ROW_GUARDIAN_DOCUMENT_UNRESOLVED`, `..._PHONE_...`, `..._EMAIL_...`),
+the row creates NOTHING, and the commit never sees it — the preview refused it,
+so there is no payload to write. A customer is never created from a patient row
+([[DEC-070]] option B, refused).
+
+The resolved customer id becomes the payload's `primaryGuardianCustomerId`, so
+`createPatient` links it as the ACTIVE PRIMARY guardian inside its own
+transaction. The deferred `patient_exactly_one_primary_guardian` trigger is
+therefore satisfied by the same path a manual `POST /patients` uses, and a row
+whose link cannot be made rolls the whole transaction back — a committed patient
+always has exactly one active primary guardian.
+
+### The catalog
+
+`species` and `breed` are GLOBAL catalogs (Decision #2211), resolved by `code`
+FIRST and then by `name`, case-insensitively, each within the row's species for
+a breed. The worker reads the whole taxonomy in one query per job (species with
+their breeds included, both ordered by name) — the same shape
+`PatientsCatalogService.list()` uses in the API — and the SAME snapshot feeds
+the ids the row payload carries and the catalog check `createPatient` runs. An
+unknown species is a row error naming the value; a breed that is not a breed of
+the declared species is its own row error, naming both.
+
+### Two conversions the schema cannot make
+
+**`sex` is case-folded** (`male` → `MALE`). It is a closed domain vocabulary of
+three values that means the same thing in every case, and refusing `male` would
+refuse the file an operator actually has. Only the CASE is folded: a value
+outside the three literals is handed to `createPatientBody` and refused with the
+schema's own message. `kind` is NOT folded for the mirror reason —
+`INDIVIDUAL`/`COMPANY` is a business classification whose misspelling is a
+mistake worth naming.
+
+**`birth_date` is pinned to NOON UTC** (`2021-04-09` →
+`2021-04-09T12:00:00.000Z`). A patient's birth date is a CALENDAR DATE, and the
+surfaces that read it classify it by the tenant-local day; midnight UTC would
+land on the previous tenant day in `America/Asuncion` (-03), so a pet born on
+the 18th would read as born on the 17th. Noon keeps twelve hours of margin
+either side, so the tenant-local date equals the date typed — the same
+convention [[DEC-065]]'s clinical surface already states. A day the calendar
+does not have (`2026-02-30`) is refused rather than rolled forward into March.
+
+### What is shared, and what is proven
+
+`runImportPreview` and `runImportCommit` are ONE function each, for both
+entities: the same claim, the same file-refusal path, the same partial-success
+loop, the same counters. The entity-specific part is a planner
+(`planCustomerPreview` / `planPatientPreview`, `planCustomerCommit` /
+`planPatientCommit`) and a writer (`createCustomerCommitWriter` /
+`createPatientCommitWriter`). The package's suite proves the machinery is shared
+rather than copied: it runs BOTH entities through both runners and asserts the
+identical call sequence and outcome, and it reads the two runner sources to
+assert neither names an entity.
+
+A patient row carries **no suspected-duplicate warning**: a patient has no
+natural unique key a file could compare — a name plus a species is not one — so
+every row reports `false` and no heuristic exists to be wrong. The field is
+still reported because the outcome row, the summary and the counters are shared.
 
 ## The summary
 
@@ -347,8 +474,9 @@ is about to commit.
 The commit trigger is the same shape against `PREVIEWED`, and it is the more
 dangerous of the two: it is the command that turns a file into records, so it
 takes `imports.run` and refuses everything that is not `PREVIEWED` before the
-queue. A `PATIENT` file takes the preview's own "not available for this entity
-yet" refusal, with the same sentence, because it is the same product fact.
+queue. Both entities a job can name are accepted since [[IMP-004]]: the trigger
+is parameterised by the ENTITY ON THE ROW, not by which entity the last story
+wrote.
 
 The summary takes `imports.read` and not `imports.run`: it reports what already
 happened, creates nothing, and every one of the six roles may read an import the
@@ -363,14 +491,13 @@ silently shortened page is a page that lies about what exists.
 
 ## What this slice does not do
 
-- **A patient commit** — [[IMP-004]]. The worker REFUSES a `PATIENT` job (logs
-  it, writes nothing) rather than failing it: `FAILED` is terminal, so a refusal
-  that wrote it would strand the import the day the patient map lands. The API's
-  commit trigger refuses it before the queue, with the preview's own sentence.
-- **A patient preview** — [[IMP-002]] ships the customer column map only. The
-  worker REFUSES a `PATIENT` import (logs it, writes nothing) rather than
-  failing it: `FAILED` is terminal, so a refusal that wrote it would strand the
-  import the day the patient map lands. The row stays `UPLOADED`.
+- **Creating a customer from a patient row** — [[DEC-070]] refused it: the two
+  imports stay independent and ordered (customers first, then patients), so a
+  patients file whose references do not resolve produces named row errors rather
+  than silently invented owners.
+- **An inactive patient from a file** — out of scope by decision: the import
+  creates the live pet the file describes, and an inactive record would sidestep
+  the ownership rule for a record that cannot be used.
 - **Rollback of committed rows** — [[DEC-071]] has none. A partial commit keeps
   what it wrote, and the summary is what says which rows those are; re-running
   is a new import with a new artefact.
@@ -406,7 +533,20 @@ silently shortened page is a page that lies about what exists.
   committing a partial guess.
 - The duplicate prefetch asks about every candidate value in the file, so a very
   large file costs one round trip per 500 values. It is bounded in memory and
-  parameter count, not in wall-clock time.
+  parameter count, not in wall-clock time. The guardian prefetch is the same
+  bound and the same trade.
+- **A patient commit reads the artefact before the zero-accepted-rows check.**
+  The patient planner needs the file's guardian references to resolve them, and
+  the planner is a synchronous function of the text, so the prefetch must be
+  complete first. The outcome is unchanged (`IMPORT_COMMIT_NO_VALID_ROWS`); a
+  patient import with nothing to write costs one object-store read it could have
+  skipped.
+- **No patient duplicate heuristic.** A patient file reports
+  `suspectedDuplicate: false` on every row: there is no natural key a file could
+  compare, and a warning nobody can act on is worse than no warning.
+- **A guardian reference matches EXACTLY** the stored document number or contact
+  value, trimmed. The import does not normalize a document number, because no
+  canonical form of one has been declared.
 - `startPreview` on the service is now unused by the HTTP surface (the worker's
   claim performs the transition), and [[IMP-003]] left
   `startCommit`/`completeCommit` in the same position. They are kept because

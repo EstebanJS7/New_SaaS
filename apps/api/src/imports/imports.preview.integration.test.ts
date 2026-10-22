@@ -216,13 +216,14 @@ describe("POST /imports/:id/preview", () => {
   });
 
   /** Seeds one import job directly, so a test can start it in ANY state. */
-  function seedImport(state: "UPLOADED" | "PREVIEWING" | "PREVIEWED" | "FAILED" = "UPLOADED"): {
-    id: string;
-  } {
+  function seedImport(
+    state: "UPLOADED" | "PREVIEWING" | "PREVIEWED" | "FAILED" = "UPLOADED",
+    entity: "CUSTOMER" | "PATIENT" = "CUSTOMER"
+  ): { id: string } {
     return db.prisma.importJob.create({
       data: {
         tenantId: tenantAId,
-        entity: "CUSTOMER",
+        entity,
         state,
         storageKey: "import_0000000000000000000000",
         contentType: "text/csv",
@@ -251,6 +252,20 @@ describe("POST /imports/:id/preview", () => {
     // The trigger does NOT perform the transition: the worker's claim owns
     // `UPLOADED -> PREVIEWING`, and a trigger that moved the row first would make
     // that claim (pinned on UPLOADED) skip every preview.
+    expect(db.tables.importJobs.get(imported.id)?.state).toBe("UPLOADED");
+  });
+
+  it("queues a PATIENT preview: the entity no longer refuses the phase (IMP-004)", async () => {
+    const imported = seedImport("UPLOADED", "PATIENT");
+
+    const response = await server()
+      .post(`/imports/${imported.id}/preview`)
+      .set("Cookie", runnerCookie)
+      .expect(202);
+
+    expect(response.body).toEqual({ importId: imported.id, state: "PREVIEWING" });
+    expect(harness.producer.enqueued).toEqual([{ importJobId: imported.id }]);
+    // Nothing is written by the trigger, for either entity.
     expect(db.tables.importJobs.get(imported.id)?.state).toBe("UPLOADED");
   });
 

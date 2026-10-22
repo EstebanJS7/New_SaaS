@@ -22,6 +22,11 @@
  * number is stated that way (data rows) because it is what every message in this
  * package already uses, and because the header line shifts nothing: a refusal
  * says "row 412" and the reader knows it means the 412th customer in the file.
+ *
+ * THE PLAN ITSELF IS NOT CUSTOMER-SPECIFIC. `ImportPlan`, `ImportPreviewRow` and
+ * `ImportFileError` live in `plan.ts` with the message bound, because [[IMP-004]]
+ * added a second entity whose preview produces the same shape; the names below are
+ * this entity's aliases for them, so a customer call site still reads as one.
  */
 
 import { parseCsv } from "./csv.js";
@@ -29,60 +34,26 @@ import { resolveCustomerColumns } from "./customer-columns.js";
 import { toCustomerRow } from "./customer-row.js";
 import { detectSuspectedDuplicate } from "./duplicates.js";
 import type { DuplicateLookup } from "./duplicates.js";
+import { boundImportMessage, PREVIEW_MESSAGE_MAX_LENGTH, planFileRefusal } from "./plan.js";
+import type { ImportFileError, ImportPlan, ImportPreviewRow } from "./plan.js";
 
 /**
- * The ceiling for a row message. Messages surface in the preview UI and in the
- * import summary, and one paste-bomb cell must not become an unbounded render.
- * The create contract's own messages are far shorter than this; the bound exists
- * for the file's text, which is operator-supplied.
+ * The ceiling for a row message, re-exported from the shared plan module: BOTH
+ * entities' previews write into the same bounded column, so the bound is one
+ * policy and this is the name the customer suite already reads.
  */
-export const PREVIEW_MESSAGE_MAX_LENGTH = 280;
+export { PREVIEW_MESSAGE_MAX_LENGTH };
 
-const ELLIPSIS = "…";
-
-export interface CustomerPreviewRow {
-  /** 1-based over DATA rows: the header is excluded. */
-  rowNumber: number;
-  status: "CREATE" | "FAILED";
-  /** Stable code, present exactly when `status` is `FAILED`. */
-  code?: string;
-  /** Bounded and human readable, present exactly when `status` is `FAILED`. */
-  message?: string;
-  /**
-   * Whether the row LOOKS like a record that already exists ([[DEC-069]]).
-   * Independent of `status`, and never a reason not to create: a flagged row is
-   * still `CREATE`, and nothing about this flag changes what the import writes.
-   *
-   * Always `false` on a `FAILED` row: a row that creates nothing has no record
-   * to be a duplicate OF, so the lookup is never consulted for one.
-   */
-  suspectedDuplicate: boolean;
-}
-
-export interface CustomerPreviewFileError {
-  readonly code: string;
-  readonly message: string;
-}
-
-export interface CustomerPreviewPlan {
-  /** Present when the FILE is refused; `rows` is then empty. */
-  fileError?: CustomerPreviewFileError;
-  /** One entry per data row, in file order, when the file itself is readable. */
-  rows: CustomerPreviewRow[];
-}
+/** This entity's names for the shared plan shapes (`plan.ts`). */
+export type CustomerPreviewRow = ImportPreviewRow;
+export type CustomerPreviewFileError = ImportFileError;
+export type CustomerPreviewPlan = ImportPlan;
 
 export interface PlanCustomerPreviewArgs {
   /** The artefact's decoded text. */
   csvText: string;
   /** The tenant-scoped existing-record questions the heuristic may ask. */
   duplicates: DuplicateLookup;
-}
-
-function boundMessage(message: string): string {
-  if (message.length <= PREVIEW_MESSAGE_MAX_LENGTH) {
-    return message;
-  }
-  return `${message.slice(0, PREVIEW_MESSAGE_MAX_LENGTH - ELLIPSIS.length)}${ELLIPSIS}`;
 }
 
 /**
@@ -97,13 +68,13 @@ export function planCustomerPreview({
   const parsed = parseCsv(csvText);
 
   if (!parsed.ok) {
-    return { fileError: { code: parsed.code, message: boundMessage(parsed.message) }, rows: [] };
+    return planFileRefusal(parsed.code, parsed.message);
   }
 
   const columns = resolveCustomerColumns(parsed.headers);
 
   if (!columns.ok) {
-    return { fileError: { code: columns.code, message: boundMessage(columns.message) }, rows: [] };
+    return planFileRefusal(columns.code, columns.message);
   }
 
   const rows = parsed.rows.map((cells, offset): CustomerPreviewRow => {
@@ -115,7 +86,7 @@ export function planCustomerPreview({
         rowNumber,
         status: "FAILED",
         code: verdict.code,
-        message: boundMessage(verdict.message),
+        message: boundImportMessage(verdict.message),
         suspectedDuplicate: false,
       };
     }

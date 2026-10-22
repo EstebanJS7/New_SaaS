@@ -193,6 +193,8 @@ export interface ImportCommitCounters {
 export interface ImportJobWhere {
   id?: string;
   tenantId?: string;
+  /** Narrows the history to one entity ([[IMP-004]]). */
+  entity?: ImportEntityValue;
   /** A single state, or the closed set a transition may start from. */
   state?: ImportJobStateValue | { in: readonly ImportJobStateValue[] };
   /** `null` means "not deleted yet" — the artefact-deletion stamp's CAS. */
@@ -398,11 +400,13 @@ export class ImportRepository {
    * the already-validated limit, so this method never invents a default that
    * could disagree with the DTO's.
    */
-  async list(limit: number, tx?: ImportTx): Promise<ImportJobRow[]> {
+  async list(limit: number, entity?: ImportEntityValue, tx?: ImportTx): Promise<ImportJobRow[]> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
     return client.importJob.findMany({
-      where: { tenantId },
+      // The entity filter joins the SAME where clause as the tenant, so it can only
+      // ever narrow a list the caller is already entitled to see.
+      where: entity === undefined ? { tenantId } : { tenantId, entity },
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: limit,
     });

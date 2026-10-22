@@ -32,6 +32,7 @@ import {
 } from "./imports.dto.js";
 import { IMPORTS_PERMISSIONS } from "./imports.permissions.js";
 import {
+  type ImportEntityValue,
   IMPORT_ARTEFACT_TTL_MS,
   IMPORT_TRANSITION_CONFLICT_MESSAGE,
   ImportRepository,
@@ -39,21 +40,6 @@ import {
   type ImportCommitCounters,
   type ImportTx,
 } from "./imports.repository.js";
-
-/**
- * Stable message when a phase is requested for an entity whose column map does not
- * exist yet. It names the state of the product rather than a validation failure,
- * because the upload itself was valid — the phase simply is not implemented for
- * that entity until [[IMP-004]].
- *
- * ONE sentence for BOTH commands, deliberately byte for byte. Renamed from
- * `IMPORT_PREVIEW_ENTITY_UNAVAILABLE_MESSAGE` when [[IMP-003]] added the commit: the
- * refusal is the same product fact about the same entity, and two near-identical
- * sentences would let the two commands disagree about why a patient file is
- * paused. The TEXT is unchanged.
- */
-export const IMPORT_ENTITY_UNAVAILABLE_MESSAGE =
-  "A preview is available for customer imports only. Patient imports arrive with a later release.";
 
 /**
  * Everything the audited import closure needs from its transaction handle.
@@ -249,9 +235,9 @@ export class ImportsService {
    * never truncates silently: a caller asking for more than the ceiling is
    * refused there, not given a shorter list here.
    */
-  async list(limit: number): Promise<ImportJobResponse[]> {
+  async list(limit: number, entity?: ImportEntityValue): Promise<ImportJobResponse[]> {
     await this.requirePermission(IMPORTS_PERMISSIONS.read);
-    const rows = await this.repository.list(limit);
+    const rows = await this.repository.list(limit, entity);
     return rows.map(toImportJobResponse);
   }
 
@@ -313,16 +299,9 @@ export class ImportsService {
       throw new DomainError("CONFLICT", IMPORT_TRANSITION_CONFLICT_MESSAGE);
     }
 
-    // A PATIENT preview has no column map yet ([[IMP-004]]), so this refuses
-    // BEFORE the queue rather than enqueueing work the worker would silently
-    // drop. The alternative was worse in both directions: the worker could not
-    // FAIL it, because FAILED is terminal and would strand the import the day the
-    // patient map lands, and leaving it enqueued would accept an import and then
-    // do nothing with it while the operator waited for a preview.
-    if (row.entity !== "CUSTOMER") {
-      throw new DomainError("VALIDATION_FAILED", IMPORT_ENTITY_UNAVAILABLE_MESSAGE);
-    }
-
+    // BOTH entities a job can name are previewable since [[IMP-004]], so the entity
+    // is no longer a refusal here: the worker's planner is chosen by it, and refusing
+    // one would be a product fact that has stopped being true.
     await this.producer.enqueue({ importJobId: row.id });
 
     return toImportPreviewAcceptedResponse(row.id);
@@ -368,12 +347,8 @@ export class ImportsService {
       throw new DomainError("CONFLICT", IMPORT_TRANSITION_CONFLICT_MESSAGE);
     }
 
-    // A PATIENT commit has no column map yet ([[IMP-004]]), so it is refused BEFORE
-    // the queue — the same product fact the preview refuses, with the same sentence.
-    if (row.entity !== "CUSTOMER") {
-      throw new DomainError("VALIDATION_FAILED", IMPORT_ENTITY_UNAVAILABLE_MESSAGE);
-    }
-
+    // BOTH entities a job can name are committable since [[IMP-004]]: the worker picks
+    // the writer by entity, so this no longer refuses one of them.
     await this.producer.enqueueCommit({ importJobId: row.id });
 
     return toImportCommitAcceptedResponse(row.id);

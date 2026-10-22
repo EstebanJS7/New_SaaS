@@ -81,6 +81,13 @@ export const importListQuery = z
       .min(1)
       .max(IMPORT_LIST_LIMIT_MAX, `The limit must be at most ${IMPORT_LIST_LIMIT_MAX}.`)
       .optional(),
+    /**
+     * Narrows the history to one entity ([[IMP-004]]). Optional and CLOSED: an
+     * unknown value is refused rather than ignored, like every other key here, so
+     * a typo cannot silently return the whole list under a filter the caller
+     * believes it applied.
+     */
+    entity: z.enum(["CUSTOMER", "PATIENT"]).optional(),
   })
   .strict();
 

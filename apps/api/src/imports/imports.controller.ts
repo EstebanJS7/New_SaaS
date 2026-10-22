@@ -75,7 +75,7 @@ export class ImportsController {
   @RequirePermissions(IMPORTS_PERMISSIONS.read)
   async list(@Query() query: unknown): Promise<ImportJobResponse[]> {
     const parsed = parseInput(importListQuery, query, IMPORT_LIST_QUERY_INVALID_MESSAGE);
-    return this.imports.list(parsed.limit ?? IMPORT_LIST_LIMIT_DEFAULT);
+    return this.imports.list(parsed.limit ?? IMPORT_LIST_LIMIT_DEFAULT, parsed.entity);
   }
 
   /**
@@ -104,11 +104,10 @@ export class ImportsController {
    * `{ importId, state: "COMMITTING" }` ([[IMP-003]]).
    *
    * `imports.run` for the preview's reason and a stronger one: this is the command
-   * that decides a file of customers becomes RECORDS, so it takes the owning-roles
-   * key and never the read one. The service refuses a non-`PREVIEWED` import with
-   * the aggregate's stable `409` before the enqueue, a foreign or unknown id with
-   * the shared `404`, and a `PATIENT` file with the same "not available for this
-   * entity yet" refusal the preview gives.
+   * that decides a file becomes RECORDS, so it takes the owning-roles key and never
+   * the read one. The service refuses a non-`PREVIEWED` import with the aggregate's
+   * stable `409` before the enqueue, and a foreign or unknown id with the shared
+   * `404`. Both entities a job can name are committable since [[IMP-004]].
    */
   @Post(":id/commit")
   @HttpCode(202)

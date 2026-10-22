@@ -15,9 +15,11 @@
  * the one refusal the schema cannot express on its own — the kind/company-field
  * conflict below.
  *
- * CELLS ARE TRIMMED. Leading and trailing whitespace in a CSV cell is an artefact
- * of the export in essentially every case, and `createCustomerBody`'s `min(1)`
- * would otherwise accept a `display_name` of three spaces as a name.
+ * CELLS ARE TRIMMED, by the shared reader (`columns.ts`'s `readColumnCell`), and a
+ * blank cell is ABSENT rather than `""`. Leading and trailing whitespace in a CSV
+ * cell is an artefact of the export in essentially every case, and
+ * `createCustomerBody`'s `min(1)` would otherwise accept a `display_name` of three
+ * spaces as a name.
  *
  * `kind` IS NOT CASE-FOLDED. The cell is handed to the create contract
  * unchanged, so the contract's enum decides: `company` is refused with the enum's
@@ -28,7 +30,8 @@
 
 import { createCustomerBody, createCustomerContactBody } from "@newsaas/customers";
 import type { CreateCustomerInput } from "@newsaas/customers";
-import type { CustomerColumnDestination, CustomerColumnLayout } from "./customer-columns.js";
+import { readColumnCell } from "./columns.js";
+import type { CustomerColumnLayout } from "./customer-columns.js";
 
 /** Stable reason codes the caller maps to its own surface. Never re-worded in place. */
 export const CUSTOMER_ROW_REJECTION_CODES = {
@@ -77,32 +80,6 @@ export interface CustomerRowFailure {
 export type CustomerRowResult = CustomerRowSuccess | CustomerRowFailure;
 
 /**
- * Reads one cell by destination field.
- *
- * Returns `undefined` for an absent COLUMN and for a blank CELL alike: both mean
- * "the file did not carry this value", and the create contract's optional fields
- * are `undefined` rather than empty in exactly that case. A blank cell is never
- * forwarded as `""` — `min(1)` would refuse it for some fields and the strict
- * create schema would see a value where the operator wrote none.
- */
-function readCell(
-  cells: readonly string[],
-  layout: CustomerColumnLayout,
-  destination: CustomerColumnDestination
-): string | undefined {
-  const column = layout.index[destination];
-  if (column === undefined) {
-    return undefined;
-  }
-  const cell = cells[column];
-  if (cell === undefined) {
-    return undefined;
-  }
-  const trimmed = cell.trim();
-  return trimmed === "" ? undefined : trimmed;
-}
-
-/**
  * Turns one row's cells into a create payload.
  *
  * THE CONFLICT RULE. `legalName`/`taxId` belong to the COMPANY branch of the
@@ -122,13 +99,13 @@ export function toCustomerRow(
   cells: readonly string[],
   layout: CustomerColumnLayout
 ): CustomerRowResult {
-  const displayName = readCell(cells, layout, "displayName");
-  const kindCell = readCell(cells, layout, "kind");
-  const firstName = readCell(cells, layout, "firstName");
-  const lastName = readCell(cells, layout, "lastName");
-  const documentNumber = readCell(cells, layout, "documentNumber");
-  const legalName = readCell(cells, layout, "legalName");
-  const taxId = readCell(cells, layout, "taxId");
+  const displayName = readColumnCell(cells, layout, "displayName");
+  const kindCell = readColumnCell(cells, layout, "kind");
+  const firstName = readColumnCell(cells, layout, "firstName");
+  const lastName = readColumnCell(cells, layout, "lastName");
+  const documentNumber = readColumnCell(cells, layout, "documentNumber");
+  const legalName = readColumnCell(cells, layout, "legalName");
+  const taxId = readColumnCell(cells, layout, "taxId");
 
   const effectiveKind = kindCell ?? "INDIVIDUAL";
 
@@ -186,7 +163,7 @@ export function toCustomerRow(
 
   const contacts: CustomerRowContact[] = [];
 
-  const phone = readCell(cells, layout, "phone");
+  const phone = readColumnCell(cells, layout, "phone");
   if (phone !== undefined) {
     const parsedPhone = createCustomerContactBody.safeParse({
       kind: "PHONE",
@@ -204,7 +181,7 @@ export function toCustomerRow(
     contacts.push({ kind: "PHONE", value: parsedPhone.data.value, isPrimary: true });
   }
 
-  const email = readCell(cells, layout, "email");
+  const email = readColumnCell(cells, layout, "email");
   if (email !== undefined) {
     const parsedEmail = createCustomerContactBody.safeParse({
       kind: "EMAIL",
