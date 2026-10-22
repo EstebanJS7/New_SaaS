@@ -18,7 +18,10 @@ import { ImportPreviewHandler, type ImportPreviewPrisma } from "./preview.handle
  *   without writing anything at all;
  * - an artefact that cannot be read FAILS the job instead of leaving it `PREVIEWING`;
  * - the tenant is the ROW's, and the duplicate lookup is scoped to it;
- * - a suspected duplicate is a warning on a row that is still `CREATE`.
+ * - a suspected duplicate is a warning on a row that is still `CREATE`;
+ * - since [[IMP-004]] a `PATIENT` file takes the SAME pass: the same claim, the same
+ *   counters, and a guardian reference that resolves to nobody (or to another tenant's
+ *   customer) is a row error that creates nothing.
  */
 
 type ImportJobState =
@@ -37,6 +40,35 @@ const VALID_CSV = [
   "Ana Pérez,,,,DOC-1,0981123456,ana@example.com",
   "Vet Co SA,COMPANY,Vet Co SA,80012345-6,,,",
 ].join("\n");
+
+const PATIENT_HEADERS =
+  "name,species,sex,breed,birth_date,guardian_document,guardian_phone,guardian_email";
+
+/** Two valid patients: one guarded by a document, one by a phone, sex in two cases. */
+const PATIENT_CSV = [
+  PATIENT_HEADERS,
+  "Luna,dog,FEMALE,Labrador,2021-04-09,DOC-9,,",
+  "Michi,Cat,male,,,,0981123456,",
+].join("\n");
+
+/** One valid patient, one whose guardian reference resolves to nobody. */
+const PATIENT_MIXED_CSV = [
+  PATIENT_HEADERS,
+  "Luna,dog,FEMALE,,,DOC-9,,",
+  "Michi,cat,male,,,,NOBODY,",
+].join("\n");
+
+const SPECIES_DOG = "00000000-0000-4000-8000-0000000000a1";
+const SPECIES_CAT = "00000000-0000-4000-8000-0000000000a2";
+const BREED_LABRADOR = "00000000-0000-4000-8000-0000000000b1";
+const CUSTOMER_ANA = "00000000-0000-4000-8000-0000000000c1";
+
+/** The GLOBAL taxonomy: `code` and `name` both addressable, case-insensitively. */
+const TAXONOMY = [
+  { id: SPECIES_DOG, code: "DOG", name: "Dog" },
+  { id: SPECIES_CAT, code: "CAT", name: "Cat" },
+];
+const BREEDS = [{ id: BREED_LABRADOR, speciesId: SPECIES_DOG, code: "LAB", name: "Labrador" }];
 
 /** One valid individual, one row `createCustomerBody` refuses (COMPANY with no tax id). */
 const MIXED_CSV = [
@@ -90,6 +122,21 @@ interface CapturedWrite {
   readonly data: Record<string, unknown>;
 }
 
+/** One tenant customer, as both the duplicate heuristic and the guardian lookup read it. */
+interface CustomerRow {
+  readonly tenantId: string;
+  readonly id: string;
+  readonly documentNumber: string | null;
+}
+
+/** One tenant customer contact, carrying the customer it belongs to. */
+interface ContactRow {
+  readonly tenantId: string;
+  readonly customerId: string;
+  readonly kind: "PHONE" | "EMAIL";
+  readonly value: string;
+}
+
 interface Setup {
   readonly handler: ImportPreviewHandler;
   readonly job: JobRow;
@@ -99,8 +146,10 @@ interface Setup {
   readonly lookups: CapturedLookup[];
   readonly storageReads: string[];
   readonly storageDeletes: string[];
-  readonly documents: { tenantId: string; documentNumber: string | null }[];
-  readonly contacts: { tenantId: string; kind: "PHONE" | "EMAIL"; value: string }[];
+  readonly customers: CustomerRow[];
+  readonly contacts: ContactRow[];
+  /** The taxonomy queries the handler issued, so a test can assert it read it once. */
+  readonly catalogReads: number;
 }
 
 function setup(args: {
@@ -110,8 +159,10 @@ function setup(args: {
   readonly tenantId?: string;
   readonly csv?: string;
   readonly storageError?: boolean;
-  readonly documents?: { tenantId: string; documentNumber: string | null }[];
-  readonly contacts?: { tenantId: string; kind: "PHONE" | "EMAIL"; value: string }[];
+  readonly customers?: CustomerRow[];
+  readonly contacts?: ContactRow[];
+  readonly taxonomy?: { id: string; code: string; name: string }[];
+  readonly breeds?: { id: string; speciesId: string; code: string; name: string }[];
   readonly existingOutcomes?: OutcomeRow[];
 }): Setup {
   const tenantId = args.tenantId ?? TENANT_ID;
@@ -136,8 +187,11 @@ function setup(args: {
   const lookups: CapturedLookup[] = [];
   const storageReads: string[] = [];
   const storageDeletes: string[] = [];
-  const documents = args.documents ?? [];
+  const customers = args.customers ?? [];
   const contacts = args.contacts ?? [];
+  const taxonomy = args.taxonomy ?? [];
+  const breeds = args.breeds ?? [];
+  let catalogReads = 0;
 
   /** The conditional write: only a row matching EVERY predicate is changed. */
   const matchesJob = (where: Record<string, unknown>): boolean =>
@@ -185,37 +239,48 @@ function setup(args: {
       },
     },
     customer: {
-      findMany: ({
-        where,
-      }: {
-        where: { tenantId: string; documentNumber: { in: string[] } };
-        select: { documentNumber: true };
-      }) => {
+      findMany: ({ where }: { where: { tenantId: string; documentNumber: { in: string[] } } }) => {
         lookups.push({ delegate: "customer", where });
         return Promise.resolve(
-          documents
+          customers
             .filter(
               (row) =>
                 row.tenantId === where.tenantId &&
                 row.documentNumber !== null &&
                 where.documentNumber.in.includes(row.documentNumber)
             )
-            .map((row) => ({ documentNumber: row.documentNumber }))
+            // Ordered as the handler asks the database to order them: the FIRST
+            // customer carrying a value is the one that wins.
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .map((row) => ({ id: row.id, documentNumber: row.documentNumber }))
         );
       },
     },
     customerContact: {
-      findMany: ({
-        where,
-      }: {
-        where: { tenantId: string; value: { in: string[] } };
-        select: { kind: true; value: true };
-      }) => {
+      findMany: ({ where }: { where: { tenantId: string; value: { in: string[] } } }) => {
         lookups.push({ delegate: "customerContact", where });
         return Promise.resolve(
           contacts
             .filter((row) => row.tenantId === where.tenantId && where.value.in.includes(row.value))
-            .map((row) => ({ kind: row.kind, value: row.value }))
+            .sort((left, right) => left.customerId.localeCompare(right.customerId))
+            .map((row) => ({ customerId: row.customerId, kind: row.kind, value: row.value }))
+        );
+      },
+    },
+    species: {
+      findMany: () => {
+        catalogReads += 1;
+        // The GLOBAL catalog read: species with their breeds, both by name — the shape
+        // the handler asks for and the order that settles a `name` collision.
+        return Promise.resolve(
+          [...taxonomy]
+            .sort((left, right) => left.name.localeCompare(right.name))
+            .map((row) => ({
+              ...row,
+              breeds: breeds
+                .filter((breed) => breed.speciesId === row.id)
+                .sort((left, right) => left.name.localeCompare(right.name)),
+            }))
         );
       },
     },
@@ -256,8 +321,11 @@ function setup(args: {
     lookups,
     storageReads,
     storageDeletes,
-    documents,
+    customers,
     contacts,
+    get catalogReads(): number {
+      return catalogReads;
+    },
   };
 }
 
@@ -366,18 +434,102 @@ describe("ImportPreviewHandler", () => {
     expect(warn).toHaveBeenCalled();
   });
 
-  it("refuses a PATIENT import, leaving it UPLOADED rather than FAILED", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const fixture = setup({ entity: "PATIENT" });
+  it("previews a PATIENT file through the SAME pass: claim, outcomes, counters", async () => {
+    const fixture = setup({
+      entity: "PATIENT",
+      csv: PATIENT_CSV,
+      taxonomy: TAXONOMY,
+      breeds: BREEDS,
+      // Luna is guarded by DOC-9, Michi by the phone number.
+      customers: [{ tenantId: TENANT_ID, id: CUSTOMER_ANA, documentNumber: "DOC-9" }],
+      contacts: [
+        {
+          tenantId: TENANT_ID,
+          customerId: CUSTOMER_ANA,
+          kind: "PHONE",
+          value: "0981123456",
+        },
+      ],
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     await fixture.handler.handle({ importJobId: JOB_ID });
 
-    // No column map exists for a patient file yet, and `FAILED` is terminal: a
-    // refusal that wrote it would strand the import the day the map lands.
-    expect(fixture.writes).toEqual([]);
-    expect(fixture.job.state).toBe("UPLOADED");
-    expect(fixture.storageReads).toEqual([]);
-    expect(warn).toHaveBeenCalled();
+    // The same two conditional writes as a customer preview, in the same order.
+    expect(fixture.writes.map((write) => write.where.state)).toEqual(["UPLOADED", "PREVIEWING"]);
+    expect(fixture.job.state).toBe("PREVIEWED");
+    expect(fixture.job.createdCount).toBe(2);
+    expect(fixture.job.failedCount).toBe(0);
+    expect(fixture.job.suspectedDuplicateCount).toBe(0);
+    expect(fixture.outcomes.map((row) => [row.rowNumber, row.status])).toEqual([
+      [1, "CREATE"],
+      [2, "CREATE"],
+    ]);
+    // The taxonomy is read ONCE for the whole file, not once per row.
+    expect(fixture.catalogReads).toBe(1);
+  });
+
+  it("refuses a patient row whose guardian reference resolves to nobody, and creates nothing", async () => {
+    const fixture = setup({
+      entity: "PATIENT",
+      csv: PATIENT_MIXED_CSV,
+      taxonomy: TAXONOMY,
+      // DOC-9 exists; "NOBODY" does not resolve to anything.
+      customers: [{ tenantId: TENANT_ID, id: CUSTOMER_ANA, documentNumber: "DOC-9" }],
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await fixture.handler.handle({ importJobId: JOB_ID });
+
+    expect(fixture.job.state).toBe("PREVIEWED");
+    expect(fixture.job.createdCount).toBe(1);
+    expect(fixture.job.failedCount).toBe(1);
+    expect(fixture.outcomes[1]).toMatchObject({
+      rowNumber: 2,
+      status: "FAILED",
+      reasonCode: "PATIENT_ROW_GUARDIAN_PHONE_UNRESOLVED",
+    });
+  });
+
+  it("resolves a guardian reference ONLY inside the row's tenant", async () => {
+    const fixture = setup({
+      entity: "PATIENT",
+      csv: [PATIENT_HEADERS, "Luna,dog,FEMALE,,,DOC-9,,"].join("\n"),
+      taxonomy: TAXONOMY,
+      // The only customer carrying DOC-9 belongs to ANOTHER tenant.
+      customers: [{ tenantId: OTHER_TENANT_ID, id: CUSTOMER_ANA, documentNumber: "DOC-9" }],
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await fixture.handler.handle({ importJobId: JOB_ID });
+
+    // A cross-tenant reference is an unresolved reference: the row fails and nothing
+    // is linked to another tenant's customer.
+    expect(fixture.outcomes[0]).toMatchObject({
+      status: "FAILED",
+      reasonCode: "PATIENT_ROW_GUARDIAN_DOCUMENT_UNRESOLVED",
+    });
+    for (const lookup of fixture.lookups) {
+      expect(lookup.where.tenantId).toBe(TENANT_ID);
+    }
+  });
+
+  it("reads the GLOBAL taxonomy with no tenant predicate, and the references with it", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fixture = setup({
+      entity: "PATIENT",
+      csv: [PATIENT_HEADERS, "Luna,dog,FEMALE,,,DOC-9,,"].join("\n"),
+      taxonomy: TAXONOMY,
+      customers: [{ tenantId: TENANT_ID, id: CUSTOMER_ANA, documentNumber: "DOC-9" }],
+    });
+
+    await fixture.handler.handle({ importJobId: JOB_ID });
+
+    // Decision #2211: the taxonomy is shared, so its read carries no tenant at all.
+    expect(fixture.catalogReads).toBe(1);
+    const customerLookups = fixture.lookups.filter((lookup) => lookup.delegate === "customer");
+    expect(customerLookups).toHaveLength(1);
+    expect(customerLookups[0].where.tenantId).toBe(TENANT_ID);
   });
 
   it("fails the job when the artefact cannot be read, instead of leaving it PREVIEWING", async () => {
@@ -418,7 +570,7 @@ describe("ImportPreviewHandler", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const fixture = setup({
       tenantId: OTHER_TENANT_ID,
-      documents: [{ tenantId: OTHER_TENANT_ID, documentNumber: "DOC-1" }],
+      customers: [{ tenantId: OTHER_TENANT_ID, id: CUSTOMER_ANA, documentNumber: "DOC-1" }],
     });
 
     await fixture.handler.handle({ importJobId: JOB_ID });
@@ -440,8 +592,15 @@ describe("ImportPreviewHandler", () => {
   it("scopes the duplicate lookup to the row's tenant: another tenant's customer is not a match", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const foreign = setup({
-      documents: [{ tenantId: OTHER_TENANT_ID, documentNumber: "DOC-1" }],
-      contacts: [{ tenantId: OTHER_TENANT_ID, kind: "PHONE", value: "0981123456" }],
+      customers: [{ tenantId: OTHER_TENANT_ID, id: CUSTOMER_ANA, documentNumber: "DOC-1" }],
+      contacts: [
+        {
+          tenantId: OTHER_TENANT_ID,
+          customerId: CUSTOMER_ANA,
+          kind: "PHONE",
+          value: "0981123456",
+        },
+      ],
     });
 
     await foreign.handler.handle({ importJobId: JOB_ID });
@@ -453,7 +612,7 @@ describe("ImportPreviewHandler", () => {
   it("reports a suspected duplicate as a WARNING on a row that is still CREATE", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const fixture = setup({
-      documents: [{ tenantId: TENANT_ID, documentNumber: "DOC-1" }],
+      customers: [{ tenantId: TENANT_ID, id: CUSTOMER_ANA, documentNumber: "DOC-1" }],
     });
 
     await fixture.handler.handle({ importJobId: JOB_ID });
@@ -470,7 +629,9 @@ describe("ImportPreviewHandler", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const fixture = setup({
       // The file's row 1 carries 0981123456 as a PHONE; this is an EMAIL.
-      contacts: [{ tenantId: TENANT_ID, kind: "EMAIL", value: "0981123456" }],
+      contacts: [
+        { tenantId: TENANT_ID, customerId: CUSTOMER_ANA, kind: "EMAIL", value: "0981123456" },
+      ],
     });
 
     await fixture.handler.handle({ importJobId: JOB_ID });

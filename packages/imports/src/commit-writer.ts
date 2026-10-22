@@ -57,7 +57,7 @@ export function createCustomerCommitWriter({
   audit,
   tenantId,
   actorUserProfileId,
-}: CustomerCommitWriterArgs): CommitWriter {
+}: CustomerCommitWriterArgs): CommitWriter<CustomerRowReady> {
   return {
     create: async (row: CustomerRowReady): Promise<void> => {
       await createCustomer({

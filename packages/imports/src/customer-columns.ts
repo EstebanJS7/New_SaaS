@@ -6,18 +6,20 @@
  * repository may re-state which columns an imported customer file carries, and
  * nothing may add a column by accepting it silently.
  *
- * STRICT ABOUT HEADERS, deliberately: an unknown column is a refusal, not a
- * skip. This repository is strict everywhere else for the same reason — a column
- * that is silently ignored is data the operator exported, believed was imported
- * and never sees again. A duplicate is a refusal for the mirror reason: two
- * columns mapping to one field has no defined winner, and picking the first is
- * an invisible policy.
- *
- * HEADER NORMALIZATION: trim, collapse internal whitespace runs to `_`, and
- * lowercase. So `Display Name`, ` display  name ` and `DISPLAY_NAME` are the same
- * column. Order in the file is irrelevant — matching is by name, so a
- * spreadsheet that re-ordered the columns imports exactly the same.
+ * THE RESOLVER IS NOT HERE. The three refusals (unknown, duplicate, missing) and the
+ * normalization rule live in `columns.ts`, which shipped with this contract and was
+ * shared with [[IMP-004]]'s patient contract rather than copied. This module is the
+ * declaration plus the names this entity's callers already use.
  */
+
+import { normalizeHeader, resolveColumns } from "./columns.js";
+import type {
+  ColumnContract,
+  ColumnLayout,
+  ColumnsFailure,
+  ColumnsResult,
+  ColumnsSuccess,
+} from "./columns.js";
 
 /**
  * The field a column fills.
@@ -84,88 +86,42 @@ export const CUSTOMER_COLUMNS_REJECTION_CODES = {
 export type CustomerColumnsRejectionCode =
   (typeof CUSTOMER_COLUMNS_REJECTION_CODES)[keyof typeof CUSTOMER_COLUMNS_REJECTION_CODES];
 
+/** Where each contract field sits in one file. */
+export type CustomerColumnLayout = ColumnLayout<CustomerColumnDestination>;
+
+export type CustomerColumnsSuccess = ColumnsSuccess<CustomerColumnDestination>;
+export type CustomerColumnsFailure = ColumnsFailure<CustomerColumnsRejectionCode>;
+export type CustomerColumnsResult = ColumnsResult<
+  CustomerColumnDestination,
+  CustomerColumnsRejectionCode
+>;
+
 /**
- * Where each contract field sits in one file.
+ * This entity's declaration, in the shape the shared resolver takes.
  *
- * `index` carries a column position only for the fields the file actually
- * carries, which is what lets the row contract distinguish "absent column" from
- * "empty cell": both become `undefined`, but a missing `legal_name` column and an
- * empty `legal_name` cell are the same thing to the row, by design.
+ * `requiredSubject` is the noun the missing-column message names, so a customer
+ * file and a patient file get the same sentence with the entity's own word in it.
  */
-export interface CustomerColumnLayout {
-  /** The normalized header per file column, in file order. */
-  readonly headers: string[];
-  readonly index: Partial<Record<CustomerColumnDestination, number>>;
-}
-
-export interface CustomerColumnsSuccess {
-  readonly ok: true;
-  readonly layout: CustomerColumnLayout;
-}
-
-export interface CustomerColumnsFailure {
-  readonly ok: false;
-  readonly code: CustomerColumnsRejectionCode;
-  readonly message: string;
-}
-
-export type CustomerColumnsResult = CustomerColumnsSuccess | CustomerColumnsFailure;
+const CUSTOMER_COLUMN_CONTRACT: ColumnContract<
+  CustomerColumnDestination,
+  CustomerColumnsRejectionCode
+> = {
+  columns: CUSTOMER_COLUMNS,
+  required: REQUIRED_CUSTOMER_COLUMNS,
+  requiredSubject: "customer",
+  codes: {
+    unknown: CUSTOMER_COLUMNS_REJECTION_CODES.UNKNOWN_HEADER,
+    duplicate: CUSTOMER_COLUMNS_REJECTION_CODES.DUPLICATE_HEADER,
+    missingRequired: CUSTOMER_COLUMNS_REJECTION_CODES.MISSING_REQUIRED_HEADER,
+  },
+};
 
 /** Trim, collapse internal whitespace runs to `_`, lowercase. */
 export function normalizeCustomerHeader(header: string): string {
-  return header.trim().replace(/\s+/g, "_").toLowerCase();
+  return normalizeHeader(header);
 }
 
-/**
- * Resolves one file's headers against the contract.
- *
- * Duplicate first, then unknown, then missing: a duplicated required column is
- * reported as a duplicate (the actionable fact), and an unknown column is
- * reported before a missing one because removing the stray column is what an
- * operator does first — the missing `display_name` is usually the same mistake.
- */
+/** Resolves one customer file's headers against the contract above. */
 export function resolveCustomerColumns(headers: readonly string[]): CustomerColumnsResult {
-  const normalized: string[] = [];
-  const seen = new Set<string>();
-
-  for (const header of headers) {
-    const key = normalizeCustomerHeader(header);
-    if (seen.has(key)) {
-      return {
-        ok: false,
-        code: CUSTOMER_COLUMNS_REJECTION_CODES.DUPLICATE_HEADER,
-        message: `The file has two columns that normalize to "${key}". Keep one of them.`,
-      };
-    }
-    seen.add(key);
-    normalized.push(key);
-  }
-
-  const index: Partial<Record<CustomerColumnDestination, number>> = {};
-
-  for (const [column, key] of normalized.entries()) {
-    const destination = Object.hasOwn(CUSTOMER_COLUMNS, key)
-      ? CUSTOMER_COLUMNS[key as CustomerColumnHeader]
-      : undefined;
-    if (destination === undefined) {
-      return {
-        ok: false,
-        code: CUSTOMER_COLUMNS_REJECTION_CODES.UNKNOWN_HEADER,
-        message: `The file has a column this import does not understand: "${key}". Accepted columns are: ${CUSTOMER_COLUMN_HEADERS.join(", ")}.`,
-      };
-    }
-    index[destination] = column;
-  }
-
-  for (const required of REQUIRED_CUSTOMER_COLUMNS) {
-    if (!seen.has(required)) {
-      return {
-        ok: false,
-        code: CUSTOMER_COLUMNS_REJECTION_CODES.MISSING_REQUIRED_HEADER,
-        message: `The file has no "${required}" column, which every imported customer needs.`,
-      };
-    }
-  }
-
-  return { ok: true, layout: { headers: normalized, index } };
+  return resolveColumns(headers, CUSTOMER_COLUMN_CONTRACT);
 }

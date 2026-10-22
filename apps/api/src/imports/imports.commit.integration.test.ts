@@ -25,7 +25,6 @@ import {
 import { seedRoleWithKeys } from "../../test/support/rbac-fixture.js";
 import { insertLiveStaffSession } from "../../test/support/seed-two-tenants.js";
 import { ImportsModule } from "./imports.module.js";
-import { IMPORT_ENTITY_UNAVAILABLE_MESSAGE } from "./imports.service.js";
 import {
   IMPORT_NOT_FOUND_MESSAGE,
   IMPORT_TRANSITION_CONFLICT_MESSAGE,
@@ -51,8 +50,9 @@ import {
  *   answers `202`, and moves nothing (the worker's claim owns the transition);
  * - every other state is refused with the aggregate's existing stable `409`, with
  *   nothing enqueued;
- * - a foreign or unknown id is the byte-equivalent `404`, and a `PATIENT` file takes
- *   the preview's own "not available for this entity yet" refusal;
+ * - a foreign or unknown id is the byte-equivalent `404`, and a `PATIENT` file is
+ *   ACCEPTED since [[IMP-004]] (the refusal that used to be here is gone, and the test
+ *   that asserted it now asserts the queue call);
  * - `GET /imports/:id/summary` serves the totals and a bounded page of the STORED
  *   outcomes (so it is readable after a reload), refuses an oversized page rather
  *   than truncating it, `404`s a foreign id byte-equivalently, and needs
@@ -362,18 +362,19 @@ describe("POST /imports/:id/commit", () => {
     }
   });
 
-  it("refuses a PATIENT import with the preview's own 'not available for this entity yet' message", async () => {
+  it("queues a PATIENT commit: the entity no longer refuses a phase (IMP-004)", async () => {
     const imported = seedImport({ entity: "PATIENT" });
 
     const response = await server()
       .post(`/imports/${imported.id}/commit`)
       .set("Cookie", runnerCookie)
-      .expect(400);
+      .expect(202);
 
-    expect((response.body as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
-    // Byte-identical to the preview's refusal: one product fact, one sentence.
-    expect((response.body as ErrorEnvelope).error.message).toBe(IMPORT_ENTITY_UNAVAILABLE_MESSAGE);
-    expect(harness.producer.enqueuedCommits).toEqual([]);
+    // The same body a customer commit answers, byte for byte: the trigger is
+    // parameterised by the ENTITY ON THE ROW, not by which entity this story wrote last.
+    expect(response.body).toEqual({ importId: imported.id, state: "COMMITTING" });
+    expect(harness.producer.enqueuedCommits).toEqual([{ importJobId: imported.id }]);
+    // The trigger still moves nothing: the worker's claim owns `PREVIEWED -> COMMITTING`.
     expect(db.tables.importJobs.get(imported.id)?.state).toBe("PREVIEWED");
   });
 

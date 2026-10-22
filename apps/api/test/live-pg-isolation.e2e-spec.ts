@@ -39,6 +39,7 @@ import {
   type NotificationDeliveryJob,
   type NotificationDeliveryProducer,
 } from "@newsaas/notifications";
+import { IMPORT_PREVIEW_PRODUCER, type ImportPreviewProducer } from "@newsaas/imports";
 import { allocateDocumentNumber, type FiscalSubmissionJob } from "@newsaas/fiscal";
 import {
   createCustomerFiscalReader,
@@ -1292,6 +1293,21 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
   // Recording fake installed via overrideProvider below. Referenced by the
   // token-identity regression pin, so it must be the exact injected instance.
+  // The import preview producer (EPIC-19). Overridden for the same reason as the
+  // three above: its factory reads `REDIS_URL` at construction, and this suite boots
+  // with `REDIS_URL` unset.
+  const importPreviewProducer: ImportPreviewProducer & { readonly enqueued: string[] } = {
+    enqueued: [],
+    enqueue: (job: { readonly importJobId: string }) => {
+      importPreviewProducer.enqueued.push(job.importJobId);
+      return Promise.resolve();
+    },
+    enqueueCommit: (job: { readonly importJobId: string }) => {
+      importPreviewProducer.enqueued.push(job.importJobId);
+      return Promise.resolve();
+    },
+  };
+
   const cleanupProducer: RecordingCleanupProducer = {
     enqueued: [],
     enqueue: (intentId: string) => {
@@ -1357,6 +1373,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       .useValue(fiscalSubmissionProducer)
       .overrideProvider(NOTIFICATION_DELIVERY_PRODUCER)
       .useValue(notificationDeliveryProducer)
+      .overrideProvider(IMPORT_PREVIEW_PRODUCER)
+      .useValue(importPreviewProducer)
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(

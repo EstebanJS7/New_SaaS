@@ -1,12 +1,19 @@
 /**
- * The commit pass over one previewed artefact (EPIC-19 [[IMP-003]]).
+ * The commit pass over one previewed artefact (EPIC-19 [[IMP-003]], generalised by
+ * [[IMP-004]]).
+ *
+ * ONE PASS, EVERY ENTITY. The file's entity decides only WHICH PLANNER produces the
+ * payloads (`plan: ImportPayloadPlanner<TRow>`) and WHICH WRITER creates a record
+ * from one of them (`writer: CommitWriter<TRow>`); the claim, the authoritative
+ * outcomes, the per-row partial success and the settle below are the same code for
+ * all of them. That is [[IMP-004]]'s generalisation: a patient commit is not a second
+ * loop that happens to agree with this one, it is this loop over a different payload.
  *
  * ORCHESTRATION ONLY. This module knows the ORDER the steps must happen in and
- * nothing about how any of them is done: the database is a `CommitPersistence`,
- * the object store is a `PreviewArtefact`, and the business write is a
- * `CommitWriter`. So the package still needs neither Prisma, nor storage, nor the
- * customer service, and the worker that supplies all three can be tested without a
- * database.
+ * nothing about how any of them is done: the database is a `CommitPersistence`, the
+ * object store is a `PreviewArtefact`, and the business write is a `CommitWriter`. So
+ * the package still needs neither Prisma, nor storage, nor the owning service, and the
+ * worker that supplies all three can be tested without a database.
  *
  * THE ORDER IS THE CONTRACT, and the first line of it is the same one the preview
  * runner states:
@@ -59,7 +66,7 @@
  */
 
 import type { PreviewArtefact } from "./preview-runner.js";
-import { planCustomerCommit, type CustomerRowReady } from "./commit.js";
+import type { ImportPayloadPlan, ImportPayloadPlanner, ImportRowPayload } from "./plan.js";
 
 /**
  * The ceiling for a failure reason. The column is `VARCHAR(500)` and the worker
@@ -167,16 +174,25 @@ export interface CommitPersistence {
   fail(reason: string): Promise<void>;
 }
 
-/** The business-write side of one commit, supplied by the caller. */
-export interface CommitWriter {
+/**
+ * The business-write side of one commit, supplied by the caller.
+ *
+ * Generic in the payload because each entity's payload is its own create contract's
+ * input — a customer row's payload is not a patient row's — while what the runner
+ * does with it is identical: create this row's records atomically, or throw.
+ */
+export interface CommitWriter<TRow extends ImportRowPayload> {
   /** Creates ONE row's business records atomically, or throws. */
-  create(row: CustomerRowReady): Promise<void>;
+  create(row: TRow): Promise<void>;
 }
 
-export interface RunCustomerCommitArgs {
+export interface RunImportCommitArgs<TRow extends ImportRowPayload> {
   readonly persistence: CommitPersistence;
   readonly artefact: PreviewArtefact;
-  readonly writer: CommitWriter;
+  /** The entity's payload planner; see {@link ImportPayloadPlanner}. */
+  readonly plan: ImportPayloadPlanner<TRow>;
+  /** The entity's writer, one accepted row at a time. */
+  readonly writer: CommitWriter<TRow>;
 }
 
 /**
@@ -187,11 +203,12 @@ export interface RunCustomerCommitArgs {
  * pass — the ones that decide whether records exist — be tested with three tiny
  * fakes and no database.
  */
-export async function runCustomerCommit({
+export async function runImportCommit<TRow extends ImportRowPayload>({
   persistence,
   artefact,
+  plan,
   writer,
-}: RunCustomerCommitArgs): Promise<CommitRunOutcome> {
+}: RunImportCommitArgs<TRow>): Promise<CommitRunOutcome> {
   if (!(await persistence.claim())) {
     return "SKIPPED";
   }
@@ -209,18 +226,20 @@ export async function runCustomerCommit({
       return "FAILED";
     }
 
-    const plan = planCustomerCommit({ csvText: await artefact.read() });
+    const planned: ImportPayloadPlan<TRow> = plan(await artefact.read());
 
-    if (plan.fileError !== undefined) {
+    if (planned.fileError !== undefined) {
       // The file the preview read can no longer be read as the same file. That is
       // unrecoverable — there are no payloads to write — so the phase is settled
       // with the package's own stable code rather than a guess about which rows
       // might have been fine.
-      await persistence.fail(boundReason(`${plan.fileError.code}: ${plan.fileError.message}`));
+      await persistence.fail(
+        boundReason(`${planned.fileError.code}: ${planned.fileError.message}`)
+      );
       return "FAILED";
     }
 
-    const readyByRowNumber = new Map(plan.rows.map((row) => [row.rowNumber, row]));
+    const readyByRowNumber = new Map(planned.rows.map((row) => [row.rowNumber, row]));
 
     // The preview's refusals are already failures; they are carried, not re-derived.
     let created = 0;

@@ -22,7 +22,9 @@ import { ImportCommitHandler, type ImportCommitPrisma } from "./commit.handler.j
  * - the tenant comes from the ROW, and every write and audit row is scoped to it;
  * - a per-row failure is recorded on that row and the run CONTINUES;
  * - the import ends `COMMITTED` with the counters, or `FAILED` with a reason;
- * - a `PATIENT` job is refused without changing any state;
+ * - a `PATIENT` job writes the patient AND its primary guardian inside the one
+ *   transaction `createPatient` opens, and a guardian that cannot be linked rolls the
+ *   whole row back ([[IMP-004]], [[DEC-070]]);
  * - a replayed job (already `COMMITTING`) is skipped and writes no record.
  */
 
@@ -37,6 +39,33 @@ const ACTOR_ID = "00000000-0000-4000-8000-0000000000d1";
 const STORAGE_KEY = "import_0000000000000000000000";
 
 const HEADERS = "display_name,kind,legal_name,tax_id,document_number,phone,email";
+
+const PATIENT_HEADERS =
+  "name,species,sex,breed,birth_date,guardian_document,guardian_phone,guardian_email";
+
+/** Two accepted patients: the first guarded by a document, the second by a phone. */
+const PATIENT_CSV = [
+  PATIENT_HEADERS,
+  "Luna,dog,FEMALE,,2021-04-09,DOC-9,,",
+  "Michi,cat,male,,,,0986655443,",
+].join("\n");
+
+/**
+ * Three patient rows: accepted, accepted with a reference that resolves to nobody, and
+ * accepted — the middle one is refused by the row contract, so the COMMIT never sees a
+ * payload for it (the preview would never have marked it `CREATE`).
+ */
+const PATIENT_MIXED_CSV = [
+  PATIENT_HEADERS,
+  "Luna,dog,FEMALE,,,DOC-9,,",
+  "Michi,cat,male,,,,NOBODY,",
+  "Toby,dog,male,,,DOC-9,,",
+].join("\n");
+
+const SPECIES_DOG = "00000000-0000-4000-8000-0000000000a1";
+const SPECIES_CAT = "00000000-0000-4000-8000-0000000000a2";
+const GUARDIAN_ID = "00000000-0000-4000-8000-0000000000c1";
+const SECOND_GUARDIAN_ID = "00000000-0000-4000-8000-0000000000c2";
 
 /** Two accepted individuals, each with a phone and an e-mail. */
 const VALID_CSV = [
@@ -76,6 +105,40 @@ interface CustomerRowRecord {
   documentNumber: string | null;
 }
 
+interface PatientRowRecord {
+  tenantId: string;
+  name: string;
+  speciesId: string;
+  breedId: string | null;
+  sex: "MALE" | "FEMALE" | "UNKNOWN";
+  birthDate: Date | null;
+  isActive: boolean;
+}
+
+interface PatientGuardianRowRecord {
+  tenantId: string;
+  patientId: string;
+  customerId: string;
+  isPrimary: boolean;
+  isActive: boolean;
+  position: number;
+}
+
+/** A tenant customer, as the guardian prefetch reads it. */
+interface LookupCustomerRecord {
+  tenantId: string;
+  id: string;
+  documentNumber: string | null;
+}
+
+/** A tenant customer contact, as the guardian prefetch reads it. */
+interface LookupContactRecord {
+  tenantId: string;
+  customerId: string;
+  kind: "PHONE" | "EMAIL";
+  value: string;
+}
+
 interface ContactRowRecord {
   tenantId: string;
   customerId: string;
@@ -106,6 +169,8 @@ interface Setup {
   readonly outcomes: OutcomeRow[];
   readonly customers: CustomerRowRecord[];
   readonly contacts: ContactRowRecord[];
+  readonly patients: PatientRowRecord[];
+  readonly patientGuardians: PatientGuardianRowRecord[];
   readonly audits: AuditRow[];
   readonly journal: JournalEntry[];
   readonly writes: { where: Record<string, unknown>; data: Record<string, unknown> }[];
@@ -124,7 +189,15 @@ function setup(args: {
   readonly customerFailsOn?: readonly string[];
   /** Contact values whose insert throws, so a row fails AFTER its customer insert. */
   readonly contactFailsOn?: readonly string[];
+  /** Patient names whose insert throws, simulating a constraint violation. */
+  readonly patientFailsOn?: readonly string[];
   readonly membershipMissing?: boolean;
+  /** The tenant customers a guardian reference may resolve to. */
+  readonly lookupCustomers?: readonly LookupCustomerRecord[];
+  /** The tenant customer contacts a guardian reference may resolve to. */
+  readonly lookupContacts?: readonly LookupContactRecord[];
+  readonly taxonomy?: readonly { id: string; code: string; name: string }[];
+  readonly breeds?: readonly { id: string; speciesId: string; code: string; name: string }[];
 }): Setup {
   const tenantId = args.tenantId ?? TENANT_ID;
   const job: JobRow = {
@@ -146,6 +219,12 @@ function setup(args: {
   const outcomes: OutcomeRow[] = [...(args.outcomes ?? [])];
   const customers: CustomerRowRecord[] = [];
   const contacts: ContactRowRecord[] = [];
+  const patients: PatientRowRecord[] = [];
+  const patientGuardians: PatientGuardianRowRecord[] = [];
+  const lookupCustomers = [...(args.lookupCustomers ?? [])];
+  const lookupContacts = [...(args.lookupContacts ?? [])];
+  const taxonomy = args.taxonomy ?? [];
+  const breeds = args.breeds ?? [];
   const audits: AuditRow[] = [];
   const journal: JournalEntry[] = [];
   const writes: { where: Record<string, unknown>; data: Record<string, unknown> }[] = [];
@@ -228,6 +307,25 @@ function setup(args: {
         record(() => customers.splice(customers.indexOf(created), 1));
         return Promise.resolve({ id: `cust-${customers.length}`, ...data });
       },
+      /** The guardian resolution's document-number batch. */
+      findMany: ({ where }: { where: { tenantId: string; documentNumber: { in: string[] } } }) =>
+        Promise.resolve(
+          lookupCustomers
+            .filter(
+              (row) =>
+                row.tenantId === where.tenantId &&
+                row.documentNumber !== null &&
+                where.documentNumber.in.includes(row.documentNumber)
+            )
+            .map((row) => ({ id: row.id, documentNumber: row.documentNumber }))
+        ),
+      /** `createPatient`'s own guard on the guardian link: id AND tenant. */
+      findFirst: ({ where }: { where: { id: string; tenantId: string } }) =>
+        Promise.resolve(
+          lookupCustomers.some((row) => row.id === where.id && row.tenantId === where.tenantId)
+            ? { id: where.id }
+            : null
+        ),
     },
     customerContact: {
       create: ({
@@ -242,6 +340,89 @@ function setup(args: {
         contacts.push(created);
         record(() => contacts.splice(contacts.indexOf(created), 1));
         return Promise.resolve({ id: `contact-${contacts.length}` });
+      },
+      /** The guardian resolution's contact-value batch (the import's own read). */
+      findMany: ({ where }: { where: { tenantId: string; value: { in: string[] } } }) =>
+        Promise.resolve(
+          lookupContacts
+            .filter((row) => row.tenantId === where.tenantId && where.value.in.includes(row.value))
+            .map((row) => ({ customerId: row.customerId, kind: row.kind, value: row.value }))
+        ),
+    },
+    species: {
+      findMany: () =>
+        Promise.resolve(
+          [...taxonomy]
+            .sort((left, right) => left.name.localeCompare(right.name))
+            .map((row) => ({
+              ...row,
+              breeds: breeds.filter((breed) => breed.speciesId === row.id),
+            }))
+        ),
+    },
+    patient: {
+      create: ({ data }: { data: PatientRowRecord }) => {
+        if (args.patientFailsOn?.includes(data.name) === true) {
+          return Promise.reject(new Error(`insert or update violates constraint for ${data.name}`));
+        }
+        const created = { ...data };
+        patients.push(created);
+        record(() => patients.splice(patients.indexOf(created), 1));
+        return Promise.resolve({
+          ...data,
+          id: `patient-${patients.length}`,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      },
+    },
+    patientGuardian: {
+      findFirst: ({
+        where,
+      }: {
+        where: {
+          tenantId: string;
+          patientId: string;
+          customerId?: string;
+          isPrimary?: boolean;
+          isActive?: boolean;
+        };
+      }) => {
+        const found = patientGuardians.find(
+          (row) =>
+            row.tenantId === where.tenantId &&
+            row.patientId === where.patientId &&
+            (where.customerId === undefined || row.customerId === where.customerId) &&
+            (where.isPrimary === undefined || row.isPrimary === where.isPrimary) &&
+            (where.isActive === undefined || row.isActive === where.isActive)
+        );
+        return Promise.resolve(found === undefined ? null : { id: "link", ...found });
+      },
+      create: ({ data }: { data: PatientGuardianRowRecord }) => {
+        const created = { ...data };
+        patientGuardians.push(created);
+        record(() => patientGuardians.splice(patientGuardians.indexOf(created), 1));
+        return Promise.resolve({ id: `guardian-${patientGuardians.length}`, ...data });
+      },
+      updateMany: ({
+        where,
+        data,
+      }: {
+        where: { id: string; tenantId: string; patientId: string };
+        data: { isPrimary?: boolean; isActive?: boolean };
+      }) => {
+        const target = patientGuardians.find(
+          (row) =>
+            row.tenantId === where.tenantId &&
+            row.patientId === where.patientId &&
+            `guardian-${patientGuardians.indexOf(row) + 1}` === where.id
+        );
+        if (target === undefined) return Promise.resolve({ count: 0 });
+        const previous = { ...target };
+        if (data.isPrimary !== undefined) target.isPrimary = data.isPrimary;
+        if (data.isActive !== undefined) target.isActive = data.isActive;
+        record(() => Object.assign(target, previous));
+        return Promise.resolve({ count: 1 });
       },
     },
     tenantMembership: {
@@ -302,10 +483,44 @@ function setup(args: {
     outcomes,
     customers,
     contacts,
+    patients,
+    patientGuardians,
     audits,
     journal,
     writes,
     storageReads,
+  };
+}
+
+/**
+ * The patient fixture's argument set: the taxonomy, and the customer each reference
+ * resolves to.
+ *
+ * `DOC-9` belongs to the first guardian and `0986655443` to the second, so a test can
+ * tell a document match from a contact match. Both live in the ROW's tenant, which is
+ * what makes them resolvable at all.
+ */
+function patientFixture(overrides: { readonly csv?: string } = {}): Parameters<typeof setup>[0] {
+  return {
+    entity: "PATIENT",
+    csv: overrides.csv ?? PATIENT_CSV,
+    taxonomy: [
+      { id: SPECIES_DOG, code: "DOG", name: "Dog" },
+      { id: SPECIES_CAT, code: "CAT", name: "Cat" },
+    ],
+    breeds: [],
+    lookupCustomers: [
+      { tenantId: TENANT_ID, id: GUARDIAN_ID, documentNumber: "DOC-9" },
+      { tenantId: TENANT_ID, id: SECOND_GUARDIAN_ID, documentNumber: "DOC-10" },
+    ],
+    lookupContacts: [
+      {
+        tenantId: TENANT_ID,
+        customerId: SECOND_GUARDIAN_ID,
+        kind: "PHONE",
+        value: "0986655443",
+      },
+    ],
   };
 }
 
@@ -454,20 +669,119 @@ describe("ImportCommitHandler", () => {
     expect(fixture.customers).toHaveLength(2);
   });
 
-  it("refuses a PATIENT import without changing its state or writing a record", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const fixture = setup({ entity: "PATIENT", outcomes: accepted([1]) });
+  it("commits a PATIENT file: the patient AND its primary guardian in one transaction", async () => {
+    const fixture = setup({ ...patientFixture(), outcomes: accepted([1]) });
 
     await fixture.handler.handle({ importJobId: JOB_ID });
 
-    // No column map exists for a patient file yet, and `FAILED` is terminal: a
-    // refusal that wrote it would strand the import the day the map lands.
-    expect(fixture.writes).toEqual([]);
-    expect(fixture.customers).toEqual([]);
-    expect(fixture.outcomes.every((row) => row.status === "CREATE")).toBe(true);
-    expect(fixture.job.state).toBe("PREVIEWED");
-    expect(fixture.storageReads).toEqual([]);
-    expect(warn).toHaveBeenCalled();
+    // The same two conditional writes as a customer commit, pinned on the same states.
+    expect(fixture.writes.map((write) => write.where.state)).toEqual(["PREVIEWED", "COMMITTING"]);
+    expect(fixture.job.state).toBe("COMMITTED");
+    expect(fixture.job.createdCount).toBe(1);
+    expect(fixture.job.failedCount).toBe(0);
+
+    // The patient, resolved through the GLOBAL catalog from the file's own words.
+    expect(fixture.patients).toHaveLength(1);
+    const patient = fixture.patients[0];
+    expect(patient.tenantId).toBe(TENANT_ID);
+    expect(patient.name).toBe("Luna");
+    expect(patient.speciesId).toBe(SPECIES_DOG);
+    expect(patient.breedId).toBeNull();
+    expect(patient.sex).toBe("FEMALE");
+    expect(patient.birthDate?.toISOString()).toBe("2021-04-09T12:00:00.000Z");
+    // ACTIVE: the import never takes `isActive` from the file ([[IMP-004]]).
+    expect(patient.isActive).toBe(true);
+
+    // The guardian: ACTIVE, PRIMARY, and the customer the reference resolved to.
+    expect(fixture.patientGuardians).toHaveLength(1);
+    expect(fixture.patientGuardians[0]).toMatchObject({
+      tenantId: TENANT_ID,
+      patientId: "patient-1",
+      customerId: GUARDIAN_ID,
+      isPrimary: true,
+      isActive: true,
+    });
+
+    // Patient, link and both audit rows are written INSIDE one transaction — the one
+    // `createPatient` opened — which is what the deferred
+    // `patient_exactly_one_primary_guardian` trigger requires.
+    const rowWrites = fixture.journal.filter((entry) => entry.depth === 1);
+    expect(rowWrites.length).toBeGreaterThanOrEqual(4);
+    expect(fixture.audits.map((row) => row.action)).toEqual([
+      "import.committing",
+      "patient.created",
+      "patient_guardian.created",
+      "import.committed",
+    ]);
+    expect(fixture.audits[1].actorUserProfileId).toBe(ACTOR_ID);
+  });
+
+  it("resolves a patient's guardian through a CONTACT value when the file names no document", async () => {
+    const fixture = setup({
+      ...patientFixture({ csv: [PATIENT_HEADERS, "Michi,cat,male,,,,0986655443,"].join("\n") }),
+      outcomes: accepted([1]),
+    });
+
+    await fixture.handler.handle({ importJobId: JOB_ID });
+
+    expect(fixture.patients[0].speciesId).toBe(SPECIES_CAT);
+    expect(fixture.patientGuardians[0].customerId).toBe(SECOND_GUARDIAN_ID);
+  });
+
+  it("never reaches the commit for a row whose guardian did not resolve: the preview refused it", async () => {
+    const fixture = setup({
+      ...patientFixture({ csv: PATIENT_MIXED_CSV }),
+      // The preview accepted rows 1 and 3 and refused row 2 (its reference resolved to
+      // nobody), which is what the stored outcomes say.
+      outcomes: [
+        { ...accepted([1])[0] },
+        {
+          tenantId: TENANT_ID,
+          importId: JOB_ID,
+          rowNumber: 2,
+          status: "FAILED",
+          reasonCode: "PATIENT_ROW_GUARDIAN_PHONE_UNRESOLVED",
+          message: 'The "guardian_phone" value matches no customer in this tenant.',
+          suspectedDuplicate: false,
+        },
+        { ...accepted([3])[0] },
+      ],
+    });
+
+    await fixture.handler.handle({ importJobId: JOB_ID });
+
+    // The refused row produced no patient at all — not a half-created one.
+    expect(fixture.patients.map((row) => row.name)).toEqual(["Luna", "Toby"]);
+    expect(fixture.patientGuardians).toHaveLength(2);
+    expect(fixture.job.createdCount).toBe(2);
+    expect(fixture.job.failedCount).toBe(1);
+  });
+
+  it("rolls a patient ROW back when its guardian cannot be linked, and CONTINUES", async () => {
+    const fixture = setup({
+      // The second row's reference resolves to nobody, so `createPatient`'s guardian
+      // guard refuses it AFTER the patient insert inside the same transaction.
+      ...patientFixture({
+        csv: [PATIENT_HEADERS, "Luna,dog,FEMALE,,,DOC-9,,", "Michi,cat,male,,,,NOBODY,"].join("\n"),
+      }),
+      outcomes: accepted([1, 2]),
+    });
+
+    await fixture.handler.handle({ importJobId: JOB_ID });
+
+    // The half-created patient of row 2 is GONE: the transaction that inserted it
+    // rolled back when the guardian link threw.
+    expect(fixture.patients.map((row) => row.name)).toEqual(["Luna"]);
+    expect(fixture.patientGuardians).toHaveLength(1);
+    expect(fixture.job.state).toBe("COMMITTED");
+    expect(fixture.job.createdCount).toBe(1);
+    expect(fixture.job.failedCount).toBe(1);
+    expect(fixture.outcomes.find((row) => row.rowNumber === 2)).toMatchObject({
+      status: "FAILED",
+      reasonCode: "IMPORT_ROW_COMMIT_FAILED",
+    });
+    // Nothing about the failure quotes the record it was writing.
+    expect(JSON.stringify(fixture.outcomes)).not.toContain("Customer was not found");
   });
 
   it("SKIPS a replayed job: a row that is already COMMITTING writes no second record", async () => {

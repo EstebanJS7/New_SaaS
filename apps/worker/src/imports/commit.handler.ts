@@ -4,15 +4,32 @@ import {
   IMPORT_AUDIT_ACTION,
   IMPORT_AUDIT_TARGET_TYPE,
   createCustomerCommitWriter,
-  runCustomerCommit,
+  createPatientCommitWriter,
+  planCustomerCommit,
+  planPatientCommit,
+  runImportCommit,
   type CommitCounts,
   type CommitPersistence,
-  type CommitWriter,
+  type CommitRunOutcome,
   type CustomerAuditAppender,
   type CustomerCreateTransaction,
+  type CustomerContactCreateDelegate,
+  type CustomerCreateDelegate,
+  type CustomerRowReady,
+  type PatientCustomerDelegate,
+  type GuardianLookup,
   type ImportCommitJob,
+  type PatientCatalog,
+  type PatientCatalogLookup,
+  type PatientCreateTransaction,
+  type PatientRowReady,
   type StoredOutcome,
 } from "@newsaas/imports";
+import {
+  loadGuardians,
+  loadPatientCatalog,
+  type ImportPatientReferencePrisma,
+} from "./patient-references.js";
 import { STORAGE_PORT, type StoragePort } from "@newsaas/storage";
 
 /**
@@ -20,11 +37,16 @@ import { STORAGE_PORT, type StoragePort } from "@newsaas/storage";
  *
  * It is `preview.handler.ts`'s shape one phase over. It resolves the row, reads
  * the SAME stored artefact the preview read ([[DEC-072]]), supplies the two narrow
- * interfaces `runCustomerCommit` orchestrates over — persistence and writer — and
- * lets the package decide which rows to write and in what order. It contains no
- * decision of its own about a row: the verdicts are read from
- * `import_row_outcome`, and the only thing this file decides is how a row's
- * records are written.
+ * interfaces `runImportCommit` orchestrates over — persistence, the entity's payload
+ * PLANNER and the entity's WRITER — and lets the package decide which rows to write
+ * and in what order. It contains no decision of its own about a row: the verdicts are
+ * read from `import_row_outcome`, and the only things this file decides are how a
+ * row's records are written and, since [[IMP-004]], WHO writes them.
+ *
+ * **THE ENTITY DECIDES THE WRITER, AND NOTHING ELSE.** `row.entity` selects the
+ * payload planner and the writer ({{@link commitCustomer}}, {{@link commitPatient}});
+ * the claim, the authoritative outcomes, the per-row partial success and the settle
+ * are the package's one implementation for both entities.
  *
  * **THE TENANT COMES FROM THE ROW.** The payload carries the `import_job` id
  * alone; the row is loaded by that id, and every query and every write below is
@@ -61,8 +83,12 @@ type ImportJobState =
 /** The state a commit job is enqueued for; anything else is a stale delivery. */
 const COMMIT_SOURCE_STATE: ImportJobState = "PREVIEWED";
 
-/** The entity this unit can commit. A `PATIENT` file has no column map yet. */
-const COMMITTABLE_ENTITY = "CUSTOMER";
+/**
+ * The entity a job names. Both have a writer since [[IMP-004]]; the LOCAL mirror is
+ * deliberate (the state enum's convention) so a third entity becomes a compile error
+ * rather than a job nobody writes.
+ */
+type ImportJobEntity = "CUSTOMER" | "PATIENT";
 
 /** The stored failure reason's ceiling: `import_job.failure_reason` is VARCHAR(500). */
 const FAILURE_REASON_MAX_LENGTH = 500;
@@ -70,7 +96,7 @@ const FAILURE_REASON_MAX_LENGTH = 500;
 interface ImportJobRecord {
   readonly id: string;
   readonly tenantId: string;
-  readonly entity: "CUSTOMER" | "PATIENT";
+  readonly entity: ImportJobEntity;
   readonly state: ImportJobState;
   readonly storageKey: string;
   readonly createdByMembershipId: string;
@@ -122,11 +148,33 @@ interface ImportRowOutcomeUpdateData {
 
 /**
  * What a settle and its audit row share: the delegates the transaction writes,
- * plus the customer and contact delegates `createCustomer` joins. The transaction
- * is the point — a state change without its trail cannot happen, and a customer
- * without its contacts cannot either.
+ * plus the delegates `createCustomer` and `createPatient` join. The transaction is
+ * the point — a state change without its trail cannot happen, a customer without its
+ * contacts cannot either, and a patient without its primary guardian cannot either
+ * (`patient_exactly_one_primary_guardian` is a DEFERRED constraint trigger, checked at
+ * COMMIT of this very transaction).
+ *
+ * ONE transaction type carries BOTH domains' delegates because the handler serves both
+ * entities and a row writes exactly one of them: widening the handle is how the writer
+ * factories take `db` without the worker declaring a dependency on the owning package.
  */
-export interface ImportCommitTx extends AuditAppendTx, CustomerCreateTransaction {
+export interface ImportCommitTx
+  extends
+    AuditAppendTx,
+    Omit<CustomerCreateTransaction, "customer" | "customerContact">,
+    Omit<PatientCreateTransaction, "customer"> {
+  /**
+   * ONE customer delegate, carrying both domains' shapes: `createCustomer` WRITES a
+   * customer through it and `createPatient`'s guardian link READS one (and the guardian
+   * prefetch reads a page of them). Intersecting the two transactions is not enough —
+   * both declare `customer` and the members do not match — so the merged delegates are
+   * stated here, once.
+   */
+  customer: CustomerCreateDelegate &
+    PatientCustomerDelegate &
+    ImportPatientReferencePrisma["customer"];
+  /** The contacts `createCustomer` writes, and the ones the guardian prefetch reads. */
+  customerContact: CustomerContactCreateDelegate & ImportPatientReferencePrisma["customerContact"];
   importJob: {
     updateMany(args: {
       where: ImportJobWhere;
@@ -158,6 +206,15 @@ export interface ImportCommitTx extends AuditAppendTx, CustomerCreateTransaction
  * lose that attribution for a record a person asked for.
  */
 export interface ImportCommitPrisma extends ImportCommitTx {
+  /**
+   * The GLOBAL taxonomy read, which carries NO tenant predicate (Decision #2211).
+   *
+   * Declared through the shared prefetch module's own delegate type rather than by
+   * re-extending `ImportPatientReferencePrisma`: the customer and contact delegates are
+   * already merged into {@link ImportCommitTx}, and an interface cannot inherit the same
+   * property twice.
+   */
+  species: ImportPatientReferencePrisma["species"];
   importJob: ImportCommitTx["importJob"] & {
     findFirst(args: { where: { id: string } }): Promise<ImportJobRecord | null>;
   };
@@ -173,7 +230,7 @@ export interface ImportCommitPrisma extends ImportCommitTx {
 /** A job this handler refuses to run, and why. Logged, never written to the row. */
 interface RefusalLog {
   readonly importJobId: string;
-  readonly reason: "ROW_MISSING" | "STATE_MOVED" | "ENTITY_UNSUPPORTED" | "CLAIM_LOST";
+  readonly reason: "ROW_MISSING" | "STATE_MOVED" | "CLAIM_LOST";
   readonly state?: ImportJobState;
 }
 
@@ -191,19 +248,14 @@ export class ImportCommitHandler {
    *
    * 1. Load the row — no tenant predicate, no request context; the row is where the
    *    tenant comes from.
-   * 2. Refuse a missing row, a row that is not `PREVIEWED`, and an entity this unit
-   *    cannot commit. Nothing is written for any of them: a `PATIENT` commit is not
-   *    implemented, and moving such a row to `FAILED` would be a terminal state an
-   *    operator could never get out of once the patient map lands.
+   * 2. Refuse a missing row and a row that is not `PREVIEWED`. Nothing is written for
+   *    either: a stale delivery is not work anybody asked for, and `FAILED` is
+   *    terminal.
    * 3. Resolve the ACTOR from the row's uploader. A missing membership is a
    *    consistency error (the row's `RESTRICT` foreign key makes it unreachable),
    *    and it propagates BEFORE the claim, so the row stays `PREVIEWED` and the
    *    queue's retry is honest.
-   * 4. Run. The artefact is read LAZILY, by the runner's own `read()` — unlike the
-   *    preview, which had to read it up front because its duplicate lookup is a
-   *    synchronous prefetch. So a file with no accepted row never costs an
-   *    object-store call, and a read error is settled by the runner's `fail(...)`
-   *    path rather than by a second, parallel one here.
+   * 4. Run the entity's pass ({{@link commitCustomer}} / {{@link commitPatient}}).
    */
   async handle(job: ImportCommitJob): Promise<void> {
     const row = await this.prisma.importJob.findFirst({ where: { id: job.importJobId } });
@@ -216,19 +268,97 @@ export class ImportCommitHandler {
       this.refuse({ importJobId: row.id, reason: "STATE_MOVED", state: row.state });
       return;
     }
-    if (row.entity !== COMMITTABLE_ENTITY) {
-      this.refuse({ importJobId: row.id, reason: "ENTITY_UNSUPPORTED" });
-      return;
-    }
 
     const actorUserProfileId = await this.resolveActor(row);
 
-    const outcome = await runCustomerCommit({
+    switch (row.entity) {
+      case "CUSTOMER":
+        this.refuseSkipped(row, await this.commitCustomer(row, actorUserProfileId));
+        return;
+      case "PATIENT":
+        this.refuseSkipped(row, await this.commitPatient(row, actorUserProfileId));
+        return;
+    }
+  }
+
+  /**
+   * The customer pass: `runImportCommit` over the customer planner and writer.
+   *
+   * The artefact is read LAZILY, by the runner's own `read()`: a customer file with no
+   * accepted row never costs an object-store call, and a read error is settled by the
+   * runner's `fail(...)` path rather than by a second, parallel one here.
+   */
+  private async commitCustomer(
+    row: ImportJobRecord,
+    actorUserProfileId: string
+  ): Promise<CommitRunOutcome> {
+    return runImportCommit<CustomerRowReady>({
       persistence: this.persistence(row),
       artefact: { read: () => this.readArtefact(row) },
-      writer: this.writer(row, actorUserProfileId),
+      plan: (csvText) => planCustomerCommit({ csvText }),
+      writer: createCustomerCommitWriter({
+        db: this.prisma,
+        audit: this.auditAppender(),
+        tenantId: row.tenantId,
+        actorUserProfileId,
+      }),
     });
+  }
 
+  /**
+   * The patient pass: `runImportCommit` over the patient planner and writer.
+   *
+   * ONE DIFFERENCE FROM THE CUSTOMER PASS, stated rather than hidden: the artefact is
+   * read UP FRONT. The patient planner needs the file's guardian references to resolve
+   * them ([[DEC-070]]) and `ImportPayloadPlanner` is a SYNCHRONOUS function of the
+   * text, so the prefetch has to be complete before the runner calls it — which means
+   * the read happens before the runner's "no accepted row" check. A patient import
+   * whose preview accepted nothing therefore costs one object-store read before it
+   * fails; the outcome is identical (`IMPORT_COMMIT_NO_VALID_ROWS`), because the
+   * runner still owns that decision.
+   *
+   * The read's error is CAPTURED and re-thrown by the `PreviewArtefact`, exactly as the
+   * preview handler does, so an unreadable object is still settled by the runner's own
+   * single `fail(...)` path (`IMPORT_COMMIT_FAILED`) and not by a second one here.
+   */
+  private async commitPatient(
+    row: ImportJobRecord,
+    actorUserProfileId: string
+  ): Promise<CommitRunOutcome> {
+    const read = await this.readArtefactResult(row);
+
+    // The taxonomy is global and read whole; the references are the row's tenant's.
+    // Neither is asked for when the artefact could not be read: the pass will settle as
+    // failed before it plans, and the empty lookups below are what that pass is built
+    // with (see {@link NO_PATIENT_CATALOG}).
+    const catalog = read.ok ? await loadPatientCatalog(this.prisma) : undefined;
+    const guardians = read.ok
+      ? await loadGuardians(this.prisma, row.tenantId, read.text)
+      : NO_GUARDIANS;
+
+    return runImportCommit<PatientRowReady>({
+      persistence: this.persistence(row),
+      artefact: {
+        read: () => (read.ok ? Promise.resolve(read.text) : Promise.reject(read.error)),
+      },
+      plan: (csvText) =>
+        planPatientCommit({
+          csvText,
+          catalog: catalog?.lookup ?? NO_PATIENT_CATALOG_LOOKUP,
+          guardians,
+        }),
+      writer: createPatientCommitWriter({
+        db: this.prisma,
+        audit: this.auditAppender(),
+        catalog: catalog?.catalog ?? NO_PATIENT_CATALOG,
+        tenantId: row.tenantId,
+        actorUserProfileId,
+      }),
+    });
+  }
+
+  /** Logs a claim this pass lost. Ids and a stable reason only. */
+  private refuseSkipped(row: ImportJobRecord, outcome: CommitRunOutcome): void {
     if (outcome === "SKIPPED") {
       this.refuse({ importJobId: row.id, reason: "CLAIM_LOST", state: row.state });
     }
@@ -245,22 +375,19 @@ export class ImportCommitHandler {
     };
   }
 
-  /** The writer the runner hands one accepted row at a time. */
-  private writer(row: ImportJobRecord, actorUserProfileId: string): CommitWriter {
-    return createCustomerCommitWriter({
-      db: this.prisma,
-      audit: this.auditAppender(),
-      tenantId: row.tenantId,
-      actorUserProfileId,
-    });
-  }
-
-  /** `appendAuditLog` as the interface `createCustomer` takes, on its transaction. */
+  /**
+   * `appendAuditLog` as the interface `createCustomer` and `createPatient` take, on
+   * their transaction.
+   *
+   * ONE appender for both domains: the two interfaces are structurally identical (the
+   * primitive's own input and transaction types), which is what lets a caller outside a
+   * request supply the same thin writer to either owning service.
+   */
   private auditAppender(): CustomerAuditAppender {
     return {
       // Out of a request: no session, no request id. The transaction is the
-      // caller's, always — a `customer.created` row that could commit apart from
-      // its customer is the failure this interface exists to prevent.
+      // caller's, always — a `customer.created` or `patient.created` row that could
+      // commit apart from its record is the failure this interface exists to prevent.
       append: (input, tx) => appendAuditLog(tx ?? this.prisma, input),
     };
   }
@@ -439,6 +566,22 @@ export class ImportCommitHandler {
     return stored.body.toString("utf8");
   }
 
+  /**
+   * The same read, with its failure CAPTURED instead of thrown.
+   *
+   * The patient planner needs the file's guardian references before it can be built, so
+   * the patient pass reads the artefact itself; capturing keeps that read's error
+   * flowing through the runner's single `fail(...)` path (the rejecting
+   * `PreviewArtefact`) rather than through a second one here.
+   */
+  private async readArtefactResult(row: ImportJobRecord): Promise<ArtefactRead> {
+    try {
+      return { ok: true, text: await this.readArtefact(row) };
+    } catch {
+      return { ok: false, error: new Error("The stored artefact could not be read.") };
+    }
+  }
+
   /** One audit row, in the caller's transaction (DEC-059's SYSTEM-actor path). */
   private async appendAudit(
     tx: ImportCommitTx,
@@ -471,6 +614,41 @@ export class ImportCommitHandler {
     });
   }
 }
+
+/**
+ * What a read of the artefact produced: the text, or a replacement error.
+ *
+ * The driver's own message is never kept (see
+ * {@link ImportCommitHandler.readArtefactResult}), so the failure side carries a
+ * sentence this file wrote.
+ */
+type ArtefactRead =
+  { readonly ok: true; readonly text: string } | { readonly ok: false; readonly error: Error };
+
+/**
+ * The lookups a patient pass is built with when its artefact could not be read.
+ *
+ * They are NEVER USED: the runner reads the artefact BEFORE it plans, that read
+ * rejects, and the runner's own `fail(...)` path settles the job — the same single
+ * failure path a readable pass uses. They exist because `plan` and `writer` are
+ * required arguments, and they are chosen to FAIL CLOSED rather than to shrug: the
+ * empty catalog refuses every species and breed, so a writer that somehow ran would
+ * refuse a patient instead of writing one whose taxonomy was never validated.
+ */
+const NO_PATIENT_CATALOG_LOOKUP: PatientCatalogLookup = {
+  speciesByValue: () => null,
+  breedByValue: () => null,
+};
+
+const NO_PATIENT_CATALOG: PatientCatalog = {
+  species: { findFirst: () => Promise.resolve(null) },
+  breed: { findFirst: () => Promise.resolve(null) },
+};
+
+const NO_GUARDIANS: GuardianLookup = {
+  byDocumentNumber: () => null,
+  byContactValue: () => null,
+};
 
 /** Newline-flattened and bounded: a reason is a coordinate, not a payload. */
 function truncateFailureReason(reason: string): string {

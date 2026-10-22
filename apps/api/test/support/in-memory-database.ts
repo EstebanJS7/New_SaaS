@@ -1045,6 +1045,8 @@ export interface ImportRowOutcomeRow {
 export interface ImportJobWhere {
   id?: string;
   tenantId?: string;
+  /** Narrows the history to one entity ([[IMP-004]]). */
+  entity?: ImportJobRow["entity"];
   state?: ImportJobRow["state"] | { in: readonly ImportJobRow["state"][] };
   /** `null` means "not deleted yet" — the artefact-deletion compare-and-set. */
   artefactDeletedAt?: Date | null;
@@ -3229,6 +3231,10 @@ function orderCashRows<T extends { id: string; createdAt: Date; closedAt?: Date 
 function matchesImportJob(where: ImportJobWhere, candidate: ImportJobRow): boolean {
   if (where.id !== undefined && candidate.id !== where.id) return false;
   if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) return false;
+  // The entity filter ([[IMP-004]]) is implemented in the PREDICATE, not only in
+  // the `where` type: a fake that accepts a filter it ignores would make the HTTP
+  // list test pass while the real query returned everything.
+  if (where.entity !== undefined && candidate.entity !== where.entity) return false;
   if (where.state !== undefined) {
     if (typeof where.state === "string") {
       if (candidate.state !== where.state) return false;

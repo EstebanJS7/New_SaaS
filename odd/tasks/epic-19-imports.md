@@ -61,7 +61,8 @@ Each work unit is one commit carrying its tests and documentation.
       and the outcome persistence.
 - [x] **WU-C — [[IMP-003]] the customer commit and its summary.** _Done: see the
       evidence log._
-- [ ] **WU-D — [[IMP-004]] the patient preview and commit.**
+- [x] **WU-D — [[IMP-004]] the patient preview and commit.** _Done: see the
+      evidence log._
 - [ ] **WU-E — [[IMP-005]] the staff surface and the e2e specs.**
 - [ ] **WU-F — [[IMP-006]] the epic closure and evidence.**
 
@@ -248,3 +249,42 @@ sweep, not by the worker's terminal path (the doc claimed otherwise and was
 corrected); the `CommitWriter` lives in `@newsaas/imports` because the worker
 has no `@newsaas/customers` dependency; the in-memory fake ignores
 `take`/`skip`, so the page bound is proven at the repository query instead.
+
+### WU-D — the patient preview and commit
+
+Commit `WU-D` on `feat/epic-19-imports`.
+
+- **The pipeline was generalised, not duplicated.**
+  `runImportPreview`/`runImportCommit` take an entity planner; a test runs both
+  entities through both functions and then reads the runners' sources to assert
+  they name no entity.
+- The patient contract: `name`/`species`/`sex` required, and **exactly one**
+  guardian reference column — none is an error, two is an ambiguity error.
+  Species and breed resolve from the global catalog by code then name; `sex` IS
+  case-folded (a closed domain vocabulary) while `kind` is NOT (a discriminator
+  the endpoint would reject).
+- `birth_date` is pinned to noon UTC, so the tenant-local date equals the date
+  typed.
+- `createPatient` is called with `primaryGuardianCustomerId`, so the deferred
+  guardian trigger is satisfied by the same transaction a manual entry uses.
+- Gates: imports **85 → 132**, worker **276 → 282**, api **1758 → 1760**;
+  customers and patients UNCHANGED, which is the evidence that generalising was
+  a refactor; live-PG **266/266**; format/lint/typecheck/build green.
+
+**Parent corrections on top of the worker's work:**
+
+- **`GET /imports` gained the `entity` filter** the Story promised and the
+  shipped list refused as an unknown key. The in-memory fake now implements it
+  in the PREDICATE, not only in the `where` type — a fake that accepts a filter
+  it ignores would let the HTTP test pass while the real query returned
+  everything.
+- **The live-PostgreSQL spec needed the producer override too.** It composes
+  `AppModule` itself rather than going through `boot-test-app.ts`, so making the
+  factory throw at boot broke it. It now overrides all four producer tokens,
+  like the harness does.
+- One `async` test callback with no `await`, caught by lint.
+
+**Named, not hidden:** patient rows always report `suspectedDuplicate: false` (a
+pet has no natural key); guardian resolution matches the stored value exactly
+and ignores `isActive` to stay no stricter than `createPatient`; and a patient
+commit reads the artefact before the zero-accepted-rows check.

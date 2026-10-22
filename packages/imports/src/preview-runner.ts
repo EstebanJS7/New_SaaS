@@ -1,17 +1,25 @@
 /**
- * The preview pass over one stored artefact (EPIC-19 [[IMP-002]]).
+ * The preview pass over one stored artefact (EPIC-19 [[IMP-002]], generalised by
+ * [[IMP-004]]).
+ *
+ * ONE PASS, EVERY ENTITY. The file's entity decides only WHICH PLANNER runs
+ * (`plan: ImportPlanner` — the customer planner, the patient planner, or anything
+ * that returns a verdict per row); the claim, the file-refusal handling, the settle
+ * and the failure path below are the same code for all of them. That is deliberate
+ * and it is the whole of [[IMP-004]]'s generalisation: two runners would be two
+ * chances for "claim first" or "a refused file writes no rows" to hold for one
+ * entity and not the other.
  *
  * ORCHESTRATION ONLY. This module knows the ORDER the steps must happen in and
- * nothing about how any of them is done: the database is a `PreviewPersistence`,
- * the object store is a `PreviewArtefact`, and the existing-record questions are
- * the caller's `DuplicateLookup`. So the package still needs neither Prisma, nor
- * storage, nor a queue, and the worker that supplies all three can be tested
- * without a database.
+ * nothing about how any of them is done: the database is a `PreviewPersistence`, the
+ * object store is a `PreviewArtefact`, and the entity's rules are its `ImportPlanner`.
+ * So the package still needs neither Prisma, nor storage, nor a queue, and the worker
+ * that supplies all three can be tested without a database.
  *
  * THE ORDER IS THE CONTRACT, and one line of it matters more than the rest:
  *
  * ```text
- * claim()  →  read artefact  →  plan  →  complete(rows) | fail(reason)
+ * claim()  →  read artefact  →  plan(artefact)  →  complete(rows) | fail(reason)
  * ```
  *
  * `claim()` FIRST, AND NOTHING TOUCHED WHEN IT REFUSES. `UPLOADED → PREVIEWING` is
@@ -41,8 +49,7 @@
  * error's text is exactly the field most likely to quote what it was working on.
  */
 
-import type { DuplicateLookup } from "./duplicates.js";
-import { planCustomerPreview, type CustomerPreviewRow } from "./preview.js";
+import type { ImportPlanner, ImportPreviewRow } from "./plan.js";
 
 /**
  * The ceiling for a failure reason. The column is `VARCHAR(500)` and the writer
@@ -79,7 +86,7 @@ export interface PreviewPersistence {
   claim(): Promise<boolean>;
 
   /** Replaces this job's outcomes and moves it to `PREVIEWED`, with the counters. */
-  complete(rows: readonly CustomerPreviewRow[]): Promise<void>;
+  complete(rows: readonly ImportPreviewRow[]): Promise<void>;
 
   /** Moves it to `FAILED` with a bounded reason. */
   fail(reason: string): Promise<void>;
@@ -91,10 +98,20 @@ export interface PreviewArtefact {
   read(): Promise<string>;
 }
 
-export interface RunCustomerPreviewArgs {
+/**
+ * The three things one preview pass needs.
+ *
+ * `plan` is a FUNCTION rather than a precomputed plan because the plan is a function
+ * of the artefact's text, and the text is read AFTER the claim: a pass that lost the
+ * claim must not have parsed anything, and a planner's prefetched lookups (a
+ * duplicate lookup, a taxonomy, resolved references) are captured in its closure by
+ * the caller. `ImportPlan`/`ImportPlanner` are shared with the commit plan shape, so
+ * both entities' planners and both runners agree on what a plan is.
+ */
+export interface RunImportPreviewArgs {
   readonly persistence: PreviewPersistence;
   readonly artefact: PreviewArtefact;
-  readonly duplicates: DuplicateLookup;
+  readonly plan: ImportPlanner;
 }
 
 /**
@@ -104,27 +121,28 @@ export interface RunCustomerPreviewArgs {
  * one of the three arguments, which is what lets the whole state machine of this
  * pass be tested with three tiny fakes.
  */
-export async function runCustomerPreview({
+export async function runImportPreview({
   persistence,
   artefact,
-  duplicates,
-}: RunCustomerPreviewArgs): Promise<PreviewRunOutcome> {
+  plan,
+}: RunImportPreviewArgs): Promise<PreviewRunOutcome> {
   if (!(await persistence.claim())) {
     return "SKIPPED";
   }
 
   try {
-    const csvText = await artefact.read();
-    const plan = planCustomerPreview({ csvText, duplicates });
+    const planned = plan(await artefact.read());
 
-    if (plan.fileError !== undefined) {
-      // A file-level refusal yields no rows at all (the planner's contract), so
+    if (planned.fileError !== undefined) {
+      // A file-level refusal yields no rows at all (the plan's contract), so
       // there is nothing to persist but the reason it was refused.
-      await persistence.fail(boundReason(`${plan.fileError.code}: ${plan.fileError.message}`));
+      await persistence.fail(
+        boundReason(`${planned.fileError.code}: ${planned.fileError.message}`)
+      );
       return "FAILED";
     }
 
-    await persistence.complete(plan.rows);
+    await persistence.complete(planned.rows);
     return "PREVIEWED";
   } catch {
     // The claim is already committed: settle it, or the row stays `PREVIEWING`

@@ -33,7 +33,7 @@
 import { parseCsv } from "./csv.js";
 import { resolveCustomerColumns } from "./customer-columns.js";
 import { toCustomerRow, type CustomerRowContact } from "./customer-row.js";
-import type { CustomerPreviewFileError } from "./preview.js";
+import type { ImportPayloadPlan, ImportRowPayload } from "./plan.js";
 import type { CreateCustomerInput } from "@newsaas/customers";
 
 /**
@@ -45,21 +45,15 @@ import type { CreateCustomerInput } from "@newsaas/customers";
  * payload never leaves the runner's call frame — it is handed to the writer and
  * to nothing else, and no part of it is stored or logged.
  */
-export interface CustomerRowReady {
-  /** 1-based over DATA rows, the same numbering the preview and the summary use. */
-  readonly rowNumber: number;
+export interface CustomerRowReady extends ImportRowPayload {
   /** Exactly what `createCustomer` takes; validated by the row contract. */
   readonly input: CreateCustomerInput;
   /** Zero, one or two contacts, in the order phone then e-mail. */
   readonly contacts: readonly CustomerRowContact[];
 }
 
-export interface CustomerCommitPlan {
-  /** Present when the FILE is refused; `rows` is then empty. */
-  readonly fileError?: CustomerPreviewFileError;
-  /** One payload per derivable data row, in file order. */
-  readonly rows: readonly CustomerRowReady[];
-}
+/** This entity's plan, in the shape every entity's commit planner returns. */
+export type CustomerCommitPlan = ImportPayloadPlan<CustomerRowReady>;
 
 export interface PlanCustomerCommitArgs {
   /** The artefact's decoded text. */

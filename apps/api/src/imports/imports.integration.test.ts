@@ -14,6 +14,7 @@ import {
 } from "./import-artefact.pipe.js";
 import { IMPORT_JOB_TERMINAL_STATES, isTerminal } from "./imports.repository.js";
 import { IMPORT_LIST_LIMIT_MAX } from "./imports.zod.js";
+import type { ImportJobResponse } from "./imports.dto.js";
 
 /**
  * IMP-001 HTTP boundary suite.
@@ -382,15 +383,50 @@ describe("imports HTTP boundary", () => {
       expect((response.body as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
     });
 
-    it("refuses an unknown query key and an unparseable limit", async () => {
+    it("refuses an unknown query key, an unparseable limit and an unknown entity", async () => {
+      // `entity` IS a known key since IMP-004, so it can no longer stand in for an
+      // unknown one — the example moved to a key nothing declares.
       await supertest(booted.app.getHttpServer())
-        .get("/imports?entity=CUSTOMER")
+        .get("/imports?tenantId=somewhere-else")
         .set("Cookie", runnerCookie)
         .expect(400);
       await supertest(booted.app.getHttpServer())
         .get("/imports?limit=many")
         .set("Cookie", runnerCookie)
         .expect(400);
+      // A known key with an unknown value is refused too, rather than ignored: a
+      // typo must not return the whole list under a filter the caller believes it
+      // applied.
+      await supertest(booted.app.getHttpServer())
+        .get("/imports?entity=INVOICE")
+        .set("Cookie", runnerCookie)
+        .expect(400);
+    });
+
+    it("narrows the history to one entity when asked, and only to the caller's", async () => {
+      const customers = await supertest(booted.app.getHttpServer())
+        .get("/imports?entity=CUSTOMER")
+        .set("Cookie", runnerCookie)
+        .expect(200);
+      const patients = await supertest(booted.app.getHttpServer())
+        .get("/imports?entity=PATIENT")
+        .set("Cookie", runnerCookie)
+        .expect(200);
+
+      const customerBodies = customers.body as ImportJobResponse[];
+      const patientBodies = patients.body as ImportJobResponse[];
+
+      expect(customerBodies.every((row) => row.entity === "CUSTOMER")).toBe(true);
+      expect(patientBodies.every((row) => row.entity === "PATIENT")).toBe(true);
+      // The filter NARROWS: it cannot widen the list past the caller's tenant, and
+      // the two halves partition the unfiltered answer.
+      const all = await supertest(booted.app.getHttpServer())
+        .get("/imports")
+        .set("Cookie", runnerCookie)
+        .expect(200);
+      expect((all.body as ImportJobResponse[]).length).toBe(
+        customerBodies.length + patientBodies.length
+      );
     });
 
     it("serves the reader role and refuses a caller without imports.read", async () => {

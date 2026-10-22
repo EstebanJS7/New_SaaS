@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { CSV_REJECTION_CODES } from "./csv.js";
 import { CUSTOMER_COLUMNS_REJECTION_CODES } from "./customer-columns.js";
 import type { DuplicateLookup } from "./duplicates.js";
-import type { CustomerPreviewRow } from "./preview.js";
+import type { ImportPreviewRow } from "./plan.js";
+import { planCustomerPreview } from "./preview.js";
 import {
   PREVIEW_FAILURE_CODE,
   PREVIEW_FAILURE_MESSAGE,
   PREVIEW_FAILURE_REASON_MAX_LENGTH,
-  runCustomerPreview,
+  runImportPreview,
   type PreviewArtefact,
   type PreviewPersistence,
 } from "./preview-runner.js";
@@ -17,6 +18,15 @@ const NOTHING_EXISTS: DuplicateLookup = {
   existsByContactValue: () => false,
 };
 
+/**
+ * The customer planner as the runner takes it: the lookup is CAPTURED in the
+ * closure, which is what keeps `ImportPlanner` a pure function of the text while the
+ * prefetch lives in the caller.
+ */
+function customerPlanner(duplicates: DuplicateLookup) {
+  return (csvText: string) => planCustomerPreview({ csvText, duplicates });
+}
+
 const VALID_CSV = [
   "display_name,kind,legal_name,tax_id,document_number,phone,email",
   "Ana Pérez,,,,DOC-1,0981123456,ana@example.com",
@@ -25,7 +35,7 @@ const VALID_CSV = [
 
 interface Recorded {
   readonly claims: number;
-  readonly completed: (readonly CustomerPreviewRow[])[];
+  readonly completed: (readonly ImportPreviewRow[])[];
   readonly failures: string[];
 }
 
@@ -46,7 +56,7 @@ function setup(args: {
   readonly duplicates?: DuplicateLookup;
 }): Setup {
   const calls: string[] = [];
-  const completed: (readonly CustomerPreviewRow[])[] = [];
+  const completed: (readonly ImportPreviewRow[])[] = [];
   const failures: string[] = [];
   let claims = 0;
 
@@ -92,14 +102,14 @@ function setup(args: {
   };
 }
 
-describe("runCustomerPreview", () => {
+describe("runImportPreview over the customer planner", () => {
   it("completes the job with one outcome per row and the three counts", async () => {
     const { persistence, artefact, recorded, calls } = setup({});
 
-    const outcome = await runCustomerPreview({
+    const outcome = await runImportPreview({
       persistence,
       artefact,
-      duplicates: NOTHING_EXISTS,
+      plan: customerPlanner(NOTHING_EXISTS),
     });
 
     expect(outcome).toBe("PREVIEWED");
@@ -117,10 +127,10 @@ describe("runCustomerPreview", () => {
   it("writes NOTHING when the claim is refused: a lost race is not a second preview", async () => {
     const { persistence, artefact, recorded, calls } = setup({ claimResult: false });
 
-    const outcome = await runCustomerPreview({
+    const outcome = await runImportPreview({
       persistence,
       artefact,
-      duplicates: NOTHING_EXISTS,
+      plan: customerPlanner(NOTHING_EXISTS),
     });
 
     expect(outcome).toBe("SKIPPED");
@@ -135,10 +145,10 @@ describe("runCustomerPreview", () => {
   it("fails the job with the stable file code when the file itself is refused", async () => {
     const { persistence, artefact, recorded } = setup({ csvText: "" });
 
-    const outcome = await runCustomerPreview({
+    const outcome = await runImportPreview({
       persistence,
       artefact,
-      duplicates: NOTHING_EXISTS,
+      plan: customerPlanner(NOTHING_EXISTS),
     });
 
     expect(outcome).toBe("FAILED");
@@ -154,10 +164,10 @@ describe("runCustomerPreview", () => {
       readError: new Error("object store unreachable for ana@example.com"),
     });
 
-    const outcome = await runCustomerPreview({
+    const outcome = await runImportPreview({
       persistence,
       artefact,
-      duplicates: NOTHING_EXISTS,
+      plan: customerPlanner(NOTHING_EXISTS),
     });
 
     expect(outcome).toBe("FAILED");
@@ -174,10 +184,10 @@ describe("runCustomerPreview", () => {
       completeError: new Error("updateMany timed out for Ana Pérez"),
     });
 
-    const outcome = await runCustomerPreview({
+    const outcome = await runImportPreview({
       persistence,
       artefact,
-      duplicates: NOTHING_EXISTS,
+      plan: customerPlanner(NOTHING_EXISTS),
     });
 
     expect(outcome).toBe("FAILED");
@@ -194,10 +204,10 @@ describe("runCustomerPreview", () => {
       csvText: `display_name,${"x".repeat(500)}\nAna,y\n`,
     });
 
-    const outcome = await runCustomerPreview({
+    const outcome = await runImportPreview({
       persistence,
       artefact,
-      duplicates: NOTHING_EXISTS,
+      plan: customerPlanner(NOTHING_EXISTS),
     });
 
     expect(outcome).toBe("FAILED");
@@ -217,7 +227,7 @@ describe("runCustomerPreview", () => {
     // be written, so the error is the caller's to report rather than a silent
     // `FAILED` that never reached the row.
     await expect(
-      runCustomerPreview({ persistence, artefact, duplicates: NOTHING_EXISTS })
+      runImportPreview({ persistence, artefact, plan: customerPlanner(NOTHING_EXISTS) })
     ).rejects.toThrow("database unreachable");
   });
 });

@@ -4,24 +4,40 @@ import {
   IMPORT_AUDIT_ACTION,
   IMPORT_AUDIT_TARGET_TYPE,
   parseCsv,
+  planCustomerPreview,
+  planPatientPreview,
   resolveCustomerColumns,
-  runCustomerPreview,
-  type CustomerPreviewRow,
+  runImportPreview,
   type DuplicateLookup,
+  type ImportPlanner,
   type ImportPreviewJob,
+  type ImportPreviewRow,
   type PreviewPersistence,
 } from "@newsaas/imports";
+import {
+  loadGuardians,
+  loadPatientCatalog,
+  REFERENCE_LOOKUP_CHUNK_SIZE,
+  type ImportPatientReferencePrisma,
+} from "./patient-references.js";
 import { STORAGE_PORT, type StoragePort } from "@newsaas/storage";
 
 /**
  * The preview handler (EPIC-19 [[IMP-002]]): the worker's half of the pipeline.
  *
  * It resolves the row, reads the stored artefact through the storage port, supplies
- * the three narrow interfaces `runCustomerPreview` orchestrates over — persistence,
- * artefact, duplicate lookup — and lets the package decide every verdict. It
+ * the three narrow interfaces `runImportPreview` orchestrates over — persistence,
+ * artefact and THE ENTITY'S PLANNER — and lets the package decide every verdict. It
  * contains no parsing rule, no validation rule and no count arithmetic of its own;
- * `createdCount` here is a filter over `CustomerPreviewRow`, not a second opinion
- * about what a row means.
+ * `createdCount` here is a filter over `ImportPreviewRow`, not a second opinion about
+ * what a row means.
+ *
+ * **THE ENTITY DECIDES THE PLANNER, AND NOTHING ELSE.** Since [[IMP-004]] the pass is
+ * shared: `row.entity` selects the planner ({{@link planner}}), and the prefetch that
+ * planner needs — the tenant's duplicate candidates for a customer file, the GLOBAL
+ * taxonomy plus the tenant's guardian references for a patient file — is what this
+ * file adds. The claim, the settle, the counters and the file-refusal path are the
+ * package's one implementation for both entities.
  *
  * **THE TENANT COMES FROM THE ROW.** The worker has no request context, so this is
  * the ONE place in the import path where the tenant is not derived from an
@@ -54,19 +70,13 @@ type ImportJobState =
 /** The state a preview job is enqueued for; anything else is a stale delivery. */
 const PREVIEW_SOURCE_STATE: ImportJobState = "UPLOADED";
 
-/** The entity this unit can preview. A `PATIENT` file has no column map yet. */
-const PREVIEWABLE_ENTITY = "CUSTOMER";
-
 /**
- * How wide one duplicate-lookup query goes.
- *
- * The lookup is a PREFETCH, because `DuplicateLookup` is synchronous (see
- * {@link ImportPreviewHandler.loadDuplicates}); a file can carry more candidate
- * values than a single statement should bind, so the values are asked about in
- * bounded batches. Memory stays flat and the parameter count stays far below the
- * driver's limit, at the cost of one round trip per batch.
+ * The entity a job names. Both have a column map since [[IMP-004]]; the LOCAL mirror
+ * is deliberate (the state enum's convention) so this boundary names the vocabulary
+ * without importing the generated client namespace, and so a third entity becomes a
+ * compile error rather than a job nobody plans.
  */
-const DUPLICATE_LOOKUP_CHUNK_SIZE = 500;
+type ImportJobEntity = "CUSTOMER" | "PATIENT";
 
 /** The stored failure reason's ceiling: `import_job.failure_reason` is VARCHAR(500). */
 const FAILURE_REASON_MAX_LENGTH = 500;
@@ -74,7 +84,7 @@ const FAILURE_REASON_MAX_LENGTH = 500;
 interface ImportJobRecord {
   readonly id: string;
   readonly tenantId: string;
-  readonly entity: "CUSTOMER" | "PATIENT";
+  readonly entity: ImportJobEntity;
   readonly state: ImportJobState;
   readonly storageKey: string;
 }
@@ -137,21 +147,9 @@ export interface ImportPreviewTx extends AuditAppendTx {
  * and that is deliberate: the row is what the tenant is read FROM. Everything after
  * it — including the duplicate lookups — carries `row.tenantId` explicitly.
  */
-export interface ImportPreviewPrisma extends ImportPreviewTx {
+export interface ImportPreviewPrisma extends ImportPreviewTx, ImportPatientReferencePrisma {
   importJob: ImportPreviewTx["importJob"] & {
     findFirst(args: { where: { id: string } }): Promise<ImportJobRecord | null>;
-  };
-  customer: {
-    findMany(args: {
-      where: { tenantId: string; documentNumber: { in: string[] } };
-      select: { documentNumber: true };
-    }): Promise<{ documentNumber: string | null }[]>;
-  };
-  customerContact: {
-    findMany(args: {
-      where: { tenantId: string; value: { in: string[] } };
-      select: { kind: true; value: true };
-    }): Promise<{ kind: "PHONE" | "EMAIL"; value: string }[]>;
   };
   $transaction<T>(work: (tx: ImportPreviewTx) => Promise<T>): Promise<T>;
 }
@@ -159,7 +157,7 @@ export interface ImportPreviewPrisma extends ImportPreviewTx {
 /** A `claim` that matched no row did not happen; `complete`/`fail` therefore no-op. */
 interface RefusalLog {
   readonly importJobId: string;
-  readonly reason: "ROW_MISSING" | "STATE_MOVED" | "ENTITY_UNSUPPORTED" | "CLAIM_LOST";
+  readonly reason: "ROW_MISSING" | "STATE_MOVED" | "CLAIM_LOST";
   readonly state?: ImportJobState;
 }
 
@@ -177,16 +175,16 @@ export class ImportPreviewHandler {
    *
    * 1. Load the row — no tenant predicate, no request context; the row is where the
    *    tenant comes from.
-   * 2. Refuse a missing row, a row that is not `UPLOADED`, and an entity this unit
-   *    has no column map for. Nothing is written for any of them: a `PATIENT`
-   *    preview is not implemented yet, and moving such a row to `FAILED` would be
-   *    a terminal state an operator could never get out of once it is.
-   * 3. Read the artefact ONCE — outside the runner, because the duplicate prefetch
-   *    needs the text and the lookup it feeds is synchronous. A read error is
+   * 2. Refuse a missing row and a row that is not `UPLOADED`. Nothing is written for
+   *    either: a stale delivery is not work anybody asked for, and `FAILED` is
+   *    terminal.
+   * 3. Read the artefact ONCE — outside the runner, because BOTH entities' prefetches
+   *    need the text and the lookups they feed are synchronous. A read error is
    *    captured and re-thrown by the `PreviewArtefact` the runner consumes, so the
    *    failure is settled by the runner's own `fail(...)` path rather than by a
    *    second, parallel one here.
-   * 4. Prefetch what the file asks about, and run.
+   * 4. Build the entity's planner ({{@link planner}}) — which is where the prefetch
+   *    happens — and run. The pass itself is the package's single implementation.
    *
    * A prefetch or storage error that is NOT a read failure (an unreachable
    * database while asking about documents) propagates: nothing was claimed yet, so
@@ -203,24 +201,47 @@ export class ImportPreviewHandler {
       this.refuse({ importJobId: row.id, reason: "STATE_MOVED", state: row.state });
       return;
     }
-    if (row.entity !== PREVIEWABLE_ENTITY) {
-      this.refuse({ importJobId: row.id, reason: "ENTITY_UNSUPPORTED" });
-      return;
-    }
 
     const read = await this.readArtefact(row);
-    const duplicates = read.ok ? await this.loadDuplicates(row.tenantId, read.text) : NO_DUPLICATES;
 
-    const outcome = await runCustomerPreview({
+    const outcome = await runImportPreview({
       persistence: this.persistence(row),
       artefact: {
         read: () => (read.ok ? Promise.resolve(read.text) : Promise.reject(read.error)),
       },
-      duplicates,
+      plan: read.ok ? await this.planner(row, read.text) : UNREADABLE_ARTEFACT_PLANNER,
     });
 
     if (outcome === "SKIPPED") {
       this.refuse({ importJobId: row.id, reason: "CLAIM_LOST", state: row.state });
+    }
+  }
+
+  /**
+   * Builds the planner for this row's entity, prefetching what it needs.
+   *
+   * THE PREFETCH LIVES HERE, NOT IN THE PACKAGE, and that is what keeps the planner a
+   * PURE function of the file's text: the lookup it closes over is already answered by
+   * the time planning starts. Each branch prefetches from the SAME text the runner will
+   * hand the planner, which is the text this handler read a moment earlier.
+   *
+   * Every query in the patient branch carries the ROW's tenant except the taxonomy,
+   * which is global by decision (Decision #2211): a guardian reference that belongs to
+   * another tenant therefore resolves to NOTHING, which is the row error [[DEC-070]]
+   * requires and never a cross-tenant link.
+   */
+  private async planner(row: ImportJobRecord, csvText: string): Promise<ImportPlanner> {
+    switch (row.entity) {
+      case "CUSTOMER": {
+        const duplicates = await this.loadDuplicates(row.tenantId, csvText);
+        return (text) => planCustomerPreview({ csvText: text, duplicates });
+      }
+      case "PATIENT": {
+        // The taxonomy is global and read whole; the references are the tenant's.
+        const catalog = await loadPatientCatalog(this.prisma);
+        const guardians = await loadGuardians(this.prisma, row.tenantId, csvText);
+        return (text) => planPatientPreview({ csvText: text, catalog: catalog.lookup, guardians });
+      }
     }
   }
 
@@ -273,7 +294,7 @@ export class ImportPreviewHandler {
    * biconditional admits a failure instant exactly on `FAILED`, and nothing else may
    * carry it. Writing it here would abort the transaction, not just this row.
    */
-  private async complete(row: ImportJobRecord, rows: readonly CustomerPreviewRow[]): Promise<void> {
+  private async complete(row: ImportJobRecord, rows: readonly ImportPreviewRow[]): Promise<void> {
     const createdCount = rows.filter((entry) => entry.status === "CREATE").length;
     const failedCount = rows.filter((entry) => entry.status === "FAILED").length;
     const suspectedDuplicateCount = rows.filter((entry) => entry.suspectedDuplicate).length;
@@ -361,11 +382,7 @@ export class ImportPreviewHandler {
    * single `fail(...)` path; the driver's own message is NOT kept, because it is the
    * text most likely to quote what it was reading.
    */
-  private async readArtefact(
-    row: ImportJobRecord
-  ): Promise<
-    { readonly ok: true; readonly text: string } | { readonly ok: false; readonly error: Error }
-  > {
+  private async readArtefact(row: ImportJobRecord): Promise<ArtefactRead> {
     try {
       const stored = await this.storage.get({ key: row.storageKey });
       return { ok: true, text: stored.body.toString("utf8") };
@@ -399,23 +416,25 @@ export class ImportPreviewHandler {
     const documentNumbers = new Set<string>();
     const contactValues = new Set<string>();
 
-    for (const chunk of chunked(candidates.documentNumbers, DUPLICATE_LOOKUP_CHUNK_SIZE)) {
+    for (const chunk of chunked(candidates.documentNumbers, REFERENCE_LOOKUP_CHUNK_SIZE)) {
       const found = await this.prisma.customer.findMany({
         where: { tenantId, documentNumber: { in: chunk } },
-        select: { documentNumber: true },
+        select: { id: true, documentNumber: true },
+        orderBy: { createdAt: "asc" },
       });
       for (const row of found) {
         if (row.documentNumber !== null) documentNumbers.add(row.documentNumber);
       }
     }
 
-    for (const chunk of chunked(candidates.contactValues, DUPLICATE_LOOKUP_CHUNK_SIZE)) {
+    for (const chunk of chunked(candidates.contactValues, REFERENCE_LOOKUP_CHUNK_SIZE)) {
       // One query per batch, answered by `(kind, value)` below: the rows are read
       // by value and filtered to the exact pair, so a phone number and an e-mail
       // that happen to share a string are still different contacts.
       const found = await this.prisma.customerContact.findMany({
         where: { tenantId, value: { in: chunk } },
-        select: { kind: true, value: true },
+        select: { customerId: true, kind: true, value: true },
+        orderBy: { createdAt: "asc" },
       });
       for (const row of found) {
         contactValues.add(contactKey(row.kind, row.value));
@@ -459,11 +478,25 @@ export class ImportPreviewHandler {
   }
 }
 
-/** The lookup a file with no readable candidates gets: nothing can be suspected. */
-const NO_DUPLICATES: DuplicateLookup = {
-  existsByDocumentNumber: () => false,
-  existsByContactValue: () => false,
-};
+/**
+ * What a read of the artefact produced: the text, or a replacement error.
+ *
+ * The driver's own message is never kept (see {@link ImportPreviewHandler.readArtefact}),
+ * so the failure side carries a sentence this file wrote.
+ */
+type ArtefactRead =
+  { readonly ok: true; readonly text: string } | { readonly ok: false; readonly error: Error };
+
+/**
+ * The planner a preview whose artefact could not be read is given.
+ *
+ * It is NEVER CALLED: the runner reads the artefact BEFORE it plans, that read
+ * rejects, and the runner's own `fail(...)` path settles the job — which is the same
+ * single failure path a customer or patient preview uses. It exists because `plan` is
+ * a required argument and because a planner that threw would be a second failure path
+ * beside the one the runner already owns.
+ */
+const UNREADABLE_ARTEFACT_PLANNER: ImportPlanner = () => ({ rows: [] });
 
 /** A contact's identity is the PAIR: two kinds may carry the same string. */
 function contactKey(kind: "PHONE" | "EMAIL", value: string): string {
