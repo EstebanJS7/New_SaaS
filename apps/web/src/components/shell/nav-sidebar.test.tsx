@@ -3,14 +3,14 @@ import { render, screen, within } from "@testing-library/react";
 import { NavSidebar, visibleNavLinks, NAV_LINKS } from "./nav-sidebar";
 
 describe("NavSidebar", () => {
-  it("renders the Customers, Patients, Catalog, Suppliers, Purchases, POS, Cash, Billing, Fiscal and Agenda links plus labeled placeholder entries", () => {
+  it("renders the Customers, Patients, Catalog, Suppliers, Purchases, POS, Cash, Billing, Fiscal, Reports, Agenda, Notifications, Imports and Branding links plus labeled placeholder entries", () => {
     render(<NavSidebar />);
 
     const sidebar = screen.getByTestId("nav-sidebar");
     expect(within(sidebar).getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
 
     const entries = within(sidebar).getAllByTestId("nav-entry");
-    expect(entries).toHaveLength(16);
+    expect(entries).toHaveLength(17);
 
     const [
       customers,
@@ -25,6 +25,7 @@ describe("NavSidebar", () => {
       reports,
       agenda,
       notifications,
+      imports,
       branding,
     ] = entries;
     expect(customers.tagName).toBe("A");
@@ -77,13 +78,20 @@ describe("NavSidebar", () => {
     expect(notifications.getAttribute("href")).toBe("/app/notifications");
     expect(notifications.textContent).toBe("Notifications");
 
+    // EPIC-19 IMP-005: Imports is a real destination and, by DEC-072, carries no
+    // `requiredFeature` — the third feature code this repository has refused
+    // rather than seeded.
+    expect(imports.tagName).toBe("A");
+    expect(imports.getAttribute("href")).toBe("/app/imports");
+    expect(imports.textContent).toBe("Imports");
+
     // The surface-integrity fence found this page unreachable: a whole settings surface with no way
     // in. This assertion is what keeps it reachable.
     expect(branding.tagName).toBe("A");
     expect(branding.getAttribute("href")).toBe("/app/settings/branding");
     expect(branding.textContent).toBe("Branding");
 
-    for (const entry of entries.slice(13)) {
+    for (const entry of entries.slice(14)) {
       expect(entry.tagName).toBe("BUTTON");
       expect((entry as HTMLButtonElement).type).toBe("button");
       expect(entry.textContent).toMatch(/^Section [a-z]+$/i);
@@ -94,7 +102,7 @@ describe("NavSidebar", () => {
     const { container } = render(<NavSidebar />);
 
     const links = [...container.querySelectorAll("a")];
-    expect(links).toHaveLength(13);
+    expect(links).toHaveLength(14);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/app/customers",
       "/app/patients",
@@ -108,6 +116,7 @@ describe("NavSidebar", () => {
       "/app/reports",
       "/app/agenda",
       "/app/notifications",
+      "/app/imports",
       "/app/settings/branding",
     ]);
     // Billing is a real destination now; the placeholders stay chrome-only and
@@ -138,6 +147,10 @@ describe("NavSidebar", () => {
       "/app/purchases"
     );
     expect(screen.getByRole("link", { name: "Catalog" })).toHaveAttribute("href", "/app/catalog");
+    // Imports is ungated by DECISION (DEC-072), not by omission: a tenant missing
+    // every capability still reaches it, and the API's `imports.*` permissions are
+    // what decide whether it can do anything there.
+    expect(screen.getByRole("link", { name: "Imports" })).toHaveAttribute("href", "/app/imports");
   });
 
   it("shows the Cash entry when the tenant is known to hold the cash capability", () => {

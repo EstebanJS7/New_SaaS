@@ -63,7 +63,8 @@ Each work unit is one commit carrying its tests and documentation.
       evidence log._
 - [x] **WU-D — [[IMP-004]] the patient preview and commit.** _Done: see the
       evidence log._
-- [ ] **WU-E — [[IMP-005]] the staff surface and the e2e specs.**
+- [x] **WU-E — [[IMP-005]] the staff surface and the e2e specs.** _Done: see the
+      evidence log._
 - [ ] **WU-F — [[IMP-006]] the epic closure and evidence.**
 
 ## Review workload
@@ -288,3 +289,35 @@ Commit `WU-D` on `feat/epic-19-imports`.
 pet has no natural key); guardian resolution matches the stored value exactly
 and ignores `isActive` to stay no stricter than `createPatient`; and a patient
 commit reads the artefact before the zero-accepted-rows check.
+
+### WU-E — the staff surface and the e2e specs
+
+Commit `WU-E` on `feat/epic-19-imports`.
+
+- The BFF is a closed `(method, path shape)` allowlist: the multipart upload
+  forwarded as parsed `FormData` (fetch writes its own boundary), the JSON
+  routes buffered as text. Unknown path, wrong method, unknown key, malformed
+  id, portal cookie and no session are all refused LOCALLY with no upstream
+  call.
+- **Polling stops by construction** — `refetchInterval` returns `false` outside
+  `PREVIEWING`/`COMMITTING`, which clears TanStack Query's timer; asserted as
+  "no further reads across six intervals".
+- The row table is bounded and paginated, and an ERROR is distinguishable from a
+  `suspected duplicate` warning **in text**, not only by colour.
+- The summary renders from the STORED outcomes, asserted by re-mounting the
+  detail.
+- `Imports` joins the nav with no `requireFeature` — the third refusal of a
+  thirteenth code.
+- Gates: web **1282 → 1343** (+61); api 1760, imports 132, worker 282;
+  format/lint/ typecheck/build green, and `build` registers `/app/imports`, its
+  detail and the BFF.
+
+**Fixed a spec that would have failed on its first real run:** it made a row
+fail with a malformed e-mail, but the contact contract is length-only (TD-059),
+so that row would have been created and the "find the FAILED row" step would
+have thrown. It now omits `display_name`, which `createCustomerBody` itself
+refuses — the same class of defect as the clinical spec that failed in CI on PR
+#145.
+
+**Not verified:** the `apps/e2e` lane cannot run here. The spec is written,
+statically valid and explicitly unrun.
