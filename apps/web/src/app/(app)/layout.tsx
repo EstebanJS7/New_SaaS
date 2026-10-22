@@ -5,6 +5,7 @@ import { activeProductPreset, resolveBrand, type ResolvedBrand } from "@newsaas/
 import { NavSidebar } from "@/components/shell/nav-sidebar";
 import { Topbar } from "@/components/shell/topbar";
 import { appearanceBootstrapScriptWithTenantDefault } from "@/lib/appearance";
+import { readCspNonce } from "@/lib/csp-nonce";
 import { brandStyleCss } from "@/lib/brand-style";
 
 const DEFAULT_API_URL = "http://localhost:3001";
@@ -77,6 +78,9 @@ export default async function AppShellLayout({
   children: ReactNode;
 }): Promise<JSX.Element> {
   const { brand, unauthenticated } = await fetchResolvedBrand();
+  // Per-request CSP nonce ([[DEC-075]]); see lib/csp.ts for why inline nodes here
+  // cannot be replaced by external stylesheets or scripts.
+  const nonce = await readCspNonce();
   // Called OUTSIDE the fetch's `try`: `redirect` works by throwing, and a catch around it
   // would swallow the redirect and render the shell anyway.
   if (unauthenticated) {
@@ -86,11 +90,12 @@ export default async function AppShellLayout({
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <script
+        nonce={nonce}
         dangerouslySetInnerHTML={{
           __html: appearanceBootstrapScriptWithTenantDefault(brand.defaultAppearance),
         }}
       />
-      <style dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
+      <style nonce={nonce} dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
       <NavSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Identity resolved here on the server; components stay preset-agnostic. */}

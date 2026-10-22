@@ -19,9 +19,10 @@ updated: 2026-10-22
 
 ## Objective
 
-Turn report performance from *unknown* into *measured*, and make the `take: LIMIT + 1`
-cap refusal reachable against real PostgreSQL. Closes [[TD-053]] and
-[[TD-056]]. [[DEC-078]] fixes the dataset, the gate and what the gate means.
+Turn report performance from _unknown_ into _measured_, and make the
+`take: LIMIT + 1` cap refusal reachable against real PostgreSQL. Closes
+[[TD-053]] and [[TD-056]]. [[DEC-078]] fixes the dataset, the gate and what the
+gate means.
 
 Depends on HARD-005, because a performance measurement taken on a lane whose
 timezone depends on the host is a measurement with an asterisk.

@@ -23,14 +23,14 @@ prd_change_required: false
 `ENGINEERING-RULES.md` lists `object-storage` among the MVP deployables. No code
 used it until [[EPIC-19]], and the environment never reflected it:
 `docker-compose.yml` declares `postgres` and `redis` and nothing else, and
-`.github/workflows/ci.yml` gives the browser job a PostgreSQL and a Redis service
-container and no storage.
+`.github/workflows/ci.yml` gives the browser job a PostgreSQL and a Redis
+service container and no storage.
 
-`packages/storage` wires S3 only when `STORAGE_S3_BUCKET` is present and otherwise
-falls back to `InMemoryStorageDriver`, **per process**. That fallback is correct
-for unit tests and actively wrong for an asynchronous flow: the API writes the
-uploaded artefact into its own memory, the worker boots in a different process,
-and the artefact does not exist there.
+`packages/storage` wires S3 only when `STORAGE_S3_BUCKET` is present and
+otherwise falls back to `InMemoryStorageDriver`, **per process**. That fallback
+is correct for unit tests and actively wrong for an asynchronous flow: the API
+writes the uploaded artefact into its own memory, the worker boots in a
+different process, and the artefact does not exist there.
 
 That is [[TD-060]], and it produced a visible consequence at [[EPIC-19]]'s
 closure. The import spec exists, the full flow is written, and it **skips** with
@@ -40,8 +40,8 @@ surface, the queue, the claim and the worker's boot — is proven by a second te
 that observes the state leaving `UPLOADED`.
 
 So the product ships a promise it cannot demonstrate end to end: PRD §32 says
-large imports run asynchronously with a preview and a result summary, and no gate
-in this repository has ever seen the preview produce an outcome.
+large imports run asynchronously with a preview and a result summary, and no
+gate in this repository has ever seen the preview produce an outcome.
 
 ## Question
 
@@ -54,9 +54,9 @@ environments?
 job,** with the bucket created at startup and `STORAGE_S3_*` wired to it. The
 import spec drops its skip and runs the full flow.
 
-**B. MinIO in `docker-compose.yml` only.** Local development gains shared storage;
-CI does not, because the browser job would have to grow a service container and a
-bucket bootstrap step. The skip stays.
+**B. MinIO in `docker-compose.yml` only.** Local development gains shared
+storage; CI does not, because the browser job would have to grow a service
+container and a bucket bootstrap step. The skip stays.
 
 **C. No storage in either.** [[TD-060]] stays open, the skip stays, and the
 asynchronous flow stays unproven end to end.
@@ -69,7 +69,8 @@ asynchronous flow stays unproven end to end.
    bootstrap, matching the shape `postgres` and `redis` already have. It is the
    S3-compatible implementation of a boundary that already exists in
    `packages/storage` (`S3StorageDriver` already accepts an `endpoint` and names
-   MinIO in its own comment), so this is not a new technology entering the stack.
+   MinIO in its own comment), so this is not a new technology entering the
+   stack.
 2. **The CI browser job gets the same service**, with the same bucket, so the
    lane runs the built apps against a storage contract a deployment could
    actually satisfy. A lane that proves a flow against an in-memory driver would

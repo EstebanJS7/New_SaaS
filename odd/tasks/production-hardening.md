@@ -44,8 +44,8 @@ a claim that can be falsified here even though the production backup job cannot.
 
 ## What already satisfies the PRD, and must be recorded not rewritten
 
-Two of PRD §29's bullets were already implemented and have real tests. The epic's
-job there is to **prove and record**, not to re-implement:
+Two of PRD §29's bullets were already implemented and have real tests. The
+epic's job there is to **prove and record**, not to re-implement:
 
 ```text
 controlled CORS            transport-security.integration.test.ts
@@ -56,13 +56,13 @@ Rewriting either would be churn with a regression risk and no gain.
 
 ## Decisions that bind this feature
 
-| Decision    | What it fixes                                                                 |
-| ----------- | ----------------------------------------------------------------------------- |
-| [[DEC-074]] | Which half of the epic is code and which is an operational runbook, and the restore-evidence standard |
-| [[DEC-075]] | CSP with a per-request nonce on `script-src` AND `style-src`, no `unsafe-inline` |
-| [[DEC-076]] | The rate-limit budget moves to Redis as an atomic sliding window, with an explicit degradation mode |
+| Decision    | What it fixes                                                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------------- |
+| [[DEC-074]] | Which half of the epic is code and which is an operational runbook, and the restore-evidence standard     |
+| [[DEC-075]] | CSP with a per-request nonce on `script-src` AND `style-src`, no `unsafe-inline`                          |
+| [[DEC-076]] | The rate-limit budget moves to Redis as an atomic sliding window, with an explicit degradation mode       |
 | [[DEC-077]] | Shared object storage becomes part of the environment contract, so the browser lane can run a full import |
-| [[DEC-078]] | Report performance is a seeded dataset plus a declared p95 budget, enforced as a gate |
+| [[DEC-078]] | Report performance is a seeded dataset plus a declared p95 budget, enforced as a gate                     |
 
 ## Tasks
 
@@ -73,8 +73,8 @@ Rewriting either would be churn with a regression risk and no gain.
         and stamp it on every inline node.
   - [ ] A test asserts the header's exact policy string and that a rendered
         document's inline nodes carry the same nonce the header declares.
-  - [ ] The browser lane passes: no CSP violation in the console, branding
-        still applies its CSS variables on first paint.
+  - [ ] The browser lane passes: no CSP violation in the console, branding still
+        applies its CSS variables on first paint.
   - [ ] Commit.
 
 - [ ] **T2 — HARD-002: shared rate limiting (TD-005).**
@@ -83,14 +83,15 @@ Rewriting either would be churn with a regression risk and no gain.
   - [ ] The four call sites (staff login, staff recovery, portal login, portal
         recovery) move without changing their keys.
   - [ ] A test proves ONE global budget across two independent connections.
-  - [ ] The degradation mode when Redis is unavailable is decided by
-        [[DEC-076]] and covered by a test.
+  - [ ] The degradation mode when Redis is unavailable is decided by [[DEC-076]]
+        and covered by a test.
   - [ ] Commit.
 
-- [ ] **T3 — HARD-003: shared object storage in the environment contract (TD-060).**
+- [ ] **T3 — HARD-003: shared object storage in the environment contract
+      (TD-060).**
   - [ ] MinIO in `docker-compose.yml` with a bucket bootstrap.
-  - [ ] A MinIO service container in the CI browser job, with the
-        `STORAGE_S3_*` variables wired to it.
+  - [ ] A MinIO service container in the CI browser job, with the `STORAGE_S3_*`
+        variables wired to it.
   - [ ] The import spec that skips for TD-060 now runs the full flow.
   - [ ] Commit.
 
@@ -127,10 +128,10 @@ Rewriting either would be churn with a regression risk and no gain.
 
 ## What this epic will NOT do, and why
 
-| Deferred | Why |
-| --- | --- |
-| [[TD-020]] idempotency retention | PRD §41 forbids a purge before an approved retention policy exists. A cleanup here would violate the rule it looks like it satisfies. |
-| [[TD-026]] list pagination | A public response-shape change on every staff list. It needs its own Decision and its own slice; a silent cap would be worse than the status quo. |
-| [[TD-051]] asynchronous CSV export | Trigger-driven by definition: no tenant has hit `REPORTS_EXPORT_TOO_LARGE`. |
-| [[TD-058]] import artefact retention | Same class as TD-020: no approved policy. The 72-hour TTL stays a recorded limitation. |
-| Production backup job, PITR enablement | Belongs to the hosting control plane. [[DEC-074]] records what the repository can and cannot prove. |
+| Deferred                               | Why                                                                                                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [[TD-020]] idempotency retention       | PRD §41 forbids a purge before an approved retention policy exists. A cleanup here would violate the rule it looks like it satisfies.             |
+| [[TD-026]] list pagination             | A public response-shape change on every staff list. It needs its own Decision and its own slice; a silent cap would be worse than the status quo. |
+| [[TD-051]] asynchronous CSV export     | Trigger-driven by definition: no tenant has hit `REPORTS_EXPORT_TOO_LARGE`.                                                                       |
+| [[TD-058]] import artefact retention   | Same class as TD-020: no approved policy. The 72-hour TTL stays a recorded limitation.                                                            |
+| Production backup job, PITR enablement | Belongs to the hosting control plane. [[DEC-074]] records what the repository can and cannot prove.                                               |

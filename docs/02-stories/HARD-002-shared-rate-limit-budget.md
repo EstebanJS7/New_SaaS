@@ -26,8 +26,8 @@ mode.
 ## Context
 
 `LoginRateLimiterService` (`apps/api/src/auth/`) is an in-process sliding window
-of verified failures keyed by `(email, sha256(IP))`, tripping at ≥10 failures per
-15 minutes with `429 RATE_LIMITED`. TD-005 records the single-replica
+of verified failures keyed by `(email, sha256(IP))`, tripping at ≥10 failures
+per 15 minutes with `429 RATE_LIMITED`. TD-005 records the single-replica
 limitation.
 
 The exploration for this story found the limitation is **wider than TD-005
@@ -83,10 +83,10 @@ browser job already provisions, or a local one.
 
 ## Technical Debt / Limitations
 
-- The anti-spray keying question TD-005 raised — a per-account budget independent
-  of the egress IP — is **not** resolved here and remains recorded in TD-005's
-  text: a spray distributed across proxy pools still gets a fresh budget per IP,
-  at any replica count.
+- The anti-spray keying question TD-005 raised — a per-account budget
+  independent of the egress IP — is **not** resolved here and remains recorded
+  in TD-005's text: a spray distributed across proxy pools still gets a fresh
+  budget per IP, at any replica count.
 - During a Redis outage the effective budget narrows to per-replica, which is
   exactly today's behaviour. That is the accepted trade of [[DEC-076]], not a
   hidden regression.

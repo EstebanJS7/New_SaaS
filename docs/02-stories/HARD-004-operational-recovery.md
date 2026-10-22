@@ -28,13 +28,14 @@ evidence.
 
 PRD §30 requires automatic backups, PITR preferred, an initial RPO ≤ 24 h, and
 that "recovery must be tested". None of it exists in any form: a search for
-`backup`, `pitr`, `restore` or `wal_level` across the repository returns nothing.
+`backup`, `pitr`, `restore` or `wal_level` across the repository returns
+nothing.
 
-None of it can be *implemented* here either. A backup schedule lives in a hosting
-control plane, and this repository has no production environment. But "recovery
-must be tested" is falsifiable here: PostgreSQL 16 binaries are available at
-`/usr/lib/postgresql/16/bin`, and a disposable cluster can be created, dumped and
-restored without Docker.
+None of it can be _implemented_ here either. A backup schedule lives in a
+hosting control plane, and this repository has no production environment. But
+"recovery must be tested" is falsifiable here: PostgreSQL 16 binaries are
+available at `/usr/lib/postgresql/16/bin`, and a disposable cluster can be
+created, dumped and restored without Docker.
 
 The distinction is the whole story: the repository owns the contract and the
 rehearsal; the hosting provider owns the schedule.
@@ -57,8 +58,8 @@ rehearsal; the hosting provider owns the schedule.
       in the closure evidence block.
 - [ ] `/health/live` and `/health/ready` are recorded as evidence for PRD §30's
       first half, including the 503 behaviour when a dependency is down.
-- [ ] Structured logging with a request id is recorded as evidence, with the test
-      that proves it named.
+- [ ] Structured logging with a request id is recorded as evidence, with the
+      test that proves it named.
 - [ ] The drill does **not** enter the per-PR gate, and the reason is documented
       rather than implied.
 
@@ -75,5 +76,5 @@ pnpm format-check && pnpm lint && pnpm typecheck
 - The production backup job, its schedule, its retention and the PITR window are
   hosting configuration. The repository states the requirement and rehearses the
   procedure; it cannot prove the provider honours either.
-- The drill is a script that can rot. The runbook names the trigger that forces a
-  re-run; nothing enforces it automatically.
+- The drill is a script that can rot. The runbook names the trigger that forces
+  a re-run; nothing enforces it automatically.

@@ -3,6 +3,7 @@ import { cookies, headers } from "next/headers";
 import { activeProductPreset, resolveBrand, type DefaultAppearance } from "@newsaas/ui/branding";
 import { QueryProvider } from "@/providers/query-provider";
 import { appearanceBootstrapScriptWithTenantDefault } from "@/lib/appearance";
+import { readCspNonce } from "@/lib/csp-nonce";
 import { brandStyleCss } from "@/lib/brand-style";
 import "./globals.css";
 
@@ -101,18 +102,22 @@ async function resolveRootDefaultAppearance(): Promise<DefaultAppearance | undef
  */
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const defaultAppearance = await resolveRootDefaultAppearance();
+  // Per-request CSP nonce ([[DEC-075]]): both inline nodes below are authorized
+  // by the policy middleware emits for this same request, and by nothing else.
+  const nonce = await readCspNonce();
 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="bg-background text-foreground antialiased">
         {/* Tenant-aware pre-paint bootstrap (D6/D8); source owned by lib/appearance.ts. */}
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: appearanceBootstrapScriptWithTenantDefault(defaultAppearance),
           }}
         />
         {/* Static, schema-validated preset CSS variable declarations (D1/D2/D4). */}
-        <style dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
+        <style nonce={nonce} dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
         <QueryProvider>{children}</QueryProvider>
       </body>
     </html>

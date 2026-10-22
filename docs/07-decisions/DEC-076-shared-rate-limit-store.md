@@ -24,9 +24,9 @@ window in one Node process' memory, so the documented contract "≥10 verified
 failures per 15 minutes per `(email, sha256(IP))` ⇒ `429 RATE_LIMITED`" holds
 only while `api` is a single replica.
 
-The exploration for this epic found that the limitation is **wider than
-TD-005 says**: the same service is the failure budget for four authentication
-paths, not one.
+The exploration for this epic found that the limitation is **wider than TD-005
+says**: the same service is the failure budget for four authentication paths,
+not one.
 
 ```text
 apps/api/src/auth/auth.service.ts:50                          staff login
@@ -40,14 +40,14 @@ interface. A shared-store revision therefore fixes all four at once, with no
 per-path work — which is the argument for doing it at the service seam rather
 than at each call site.
 
-Redis is already an approved deployable, already in `docker-compose.yml`, already
-a CI service container for the browser job, and `ioredis` is already a direct
-dependency of `apps/api` (used by `fiscal-submission.producer.ts`,
-`branding-reset-cleanup.producer.ts` and `RedisHealthService`). No new technology
-and no new dependency enters the stack.
+Redis is already an approved deployable, already in `docker-compose.yml`,
+already a CI service container for the browser job, and `ioredis` is already a
+direct dependency of `apps/api` (used by `fiscal-submission.producer.ts`,
+`branding-reset-cleanup.producer.ts` and `RedisHealthService`). No new
+technology and no new dependency enters the stack.
 
-The one question the choice does not answer by itself is what a request should do
-when Redis is unreachable.
+The one question the choice does not answer by itself is what a request should
+do when Redis is unreachable.
 
 ## Question
 
@@ -67,14 +67,15 @@ pruning and the count happening in one atomic step.
 atomic, but a client can make up to twice the threshold of attempts across a
 window boundary (10 at the end of one window plus 10 at the start of the next).
 
-**C. `INCR` with a sliding approximation** (two counters + a weighted read). More
-arithmetic, and the contract stops matching the documented number exactly.
+**C. `INCR` with a sliding approximation** (two counters + a weighted read).
+More arithmetic, and the contract stops matching the documented number exactly.
 
 ### Degradation mode
 
-**D. Fail open to the in-process limiter.** If Redis errors, that request uses the
-local in-process window it already trusts, and the fallback is logged. Brute-force
-protection narrows to per-replica during the outage; authentication keeps working.
+**D. Fail open to the in-process limiter.** If Redis errors, that request uses
+the local in-process window it already trusts, and the fallback is logged.
+Brute-force protection narrows to per-replica during the outage; authentication
+keeps working.
 
 **E. Fail closed.** If Redis errors, every login attempt is rejected with
 `RATE_LIMITED`. Protection is never weakened; availability is.
@@ -102,20 +103,19 @@ Simplest, and the worst of both.
      worse failure than a temporarily narrower brute-force budget.
    - The threat being defended against is credential brute force, and the
      credential layer's own constant-work pattern plus uniform `401`s bound what
-     an attacker learns. The limiter is a cost multiplier, not the authentication
-     decision.
-   The fallback is the existing, tested in-process implementation, so the
-   degradation is "the previous behaviour, per replica" rather than "no limit".
-   Every fallback logs at `error` with the failure, so the condition is visible
-   rather than silent.
+     an attacker learns. The limiter is a cost multiplier, not the
+     authentication decision. The fallback is the existing, tested in-process
+     implementation, so the degradation is "the previous behaviour, per replica"
+     rather than "no limit". Every fallback logs at `error` with the failure, so
+     the condition is visible rather than silent.
 4. **The bounded-memory properties carry over.** The Redis path bounds a key's
    history by timestamp pruning and sets a TTL on the key so an abandoned budget
    cannot live forever; the in-process path keeps its 100-failure and 10,000-key
    ceilings.
 5. **The evidence is one global budget across two independent connections.** The
    test opens two `ioredis` clients to represent two replicas, drives failures
-   through both, and asserts the threshold trips once for the pair — not once per
-   client.
+   through both, and asserts the threshold trips once for the pair — not once
+   per client.
 
 ## Consequences
 

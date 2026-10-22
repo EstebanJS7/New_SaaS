@@ -29,14 +29,14 @@ for the first time. [[DEC-077]] fixes the scope.
 
 `packages/storage` wires `S3StorageDriver` only when `STORAGE_S3_BUCKET` is
 present and otherwise falls back to `InMemoryStorageDriver`, **per process**.
-`docker-compose.yml` declares `postgres` and `redis` only, and the CI browser job
-provisions those two and no storage.
+`docker-compose.yml` declares `postgres` and `redis` only, and the CI browser
+job provisions those two and no storage.
 
-The consequence was visible at [[EPIC-19]]'s closure: the API writes the uploaded
-artefact into its own memory, the worker boots in a different process, the
-artefact is not there, and the import spec **skips** with TD-060 named. PRD §32's
-asynchronous promise — validation, preview, result summary — has never been
-observed end to end by any gate.
+The consequence was visible at [[EPIC-19]]'s closure: the API writes the
+uploaded artefact into its own memory, the worker boots in a different process,
+the artefact is not there, and the import spec **skips** with TD-060 named. PRD
+§32's asynchronous promise — validation, preview, result summary — has never
+been observed end to end by any gate.
 
 The lane's other constraint is already solved by precedent: `webServer` starts
 only the API and the web app, so a spec that needs a queue consumer spawns the
@@ -44,12 +44,13 @@ worker itself, the way `apps/e2e/specs/recovery.spec.ts` does.
 
 ## Acceptance Criteria
 
-- [ ] `docker-compose.yml` gains a MinIO service with a health check and a bucket
-      bootstrap, matching the shape of the `postgres` and `redis` entries.
+- [ ] `docker-compose.yml` gains a MinIO service with a health check and a
+      bucket bootstrap, matching the shape of the `postgres` and `redis`
+      entries.
 - [ ] `.github/workflows/ci.yml` gives the browser job a MinIO service container
       and creates the bucket before the lane runs.
-- [ ] The browser job sets the `STORAGE_S3_*` variables the storage module reads,
-      and `docker-compose.yml` and CI use the **same names**.
+- [ ] The browser job sets the `STORAGE_S3_*` variables the storage module
+      reads, and `docker-compose.yml` and CI use the **same names**.
 - [ ] `apps/e2e/specs/imports.spec.ts` runs the complete flow — upload, preview
       with per-row outcomes, commit, result summary — with no skip for TD-060.
 - [ ] The spec spawns the worker and kills it in `afterAll`, following

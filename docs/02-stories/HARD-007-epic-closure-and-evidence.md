@@ -40,7 +40,8 @@ The closure must therefore say something more precise than either extreme:
 
 - §29 is **proven**: every control has a test in this repository that fails if
   the control is removed.
-- §30's first half is **proven**: health probes and request-id logging have tests.
+- §30's first half is **proven**: health probes and request-id logging have
+  tests.
 - §30's second half is **rehearsed**: the restore drill ran and its output is
   recorded, and the backup schedule, retention and PITR window remain hosting
   obligations that this repository states and cannot verify.
@@ -56,16 +57,16 @@ The closure must therefore say something more precise than either extreme:
 - [ ] The browser lane is executed and its pass/skip counts recorded exactly,
       including whether any skip attributable to [[TD-060]] remains.
 - [ ] The restore drill's real output is in the evidence block.
-- [ ] `docs/10-qa/CI-EVIDENCE.md` gains an EPIC-20 block with the **real** CI run
-      id and each required job's result.
+- [ ] `docs/10-qa/CI-EVIDENCE.md` gains an EPIC-20 block with the **real** CI
+      run id and each required job's result.
 - [ ] The roadmap row moves to `done` with a closure statement that separates
       what was proven from what is an operational contract.
 - [ ] The changelog records the epic.
 - [ ] Module documentation is current: the auth module's rate-limit section, the
       storage module's environment contract, and the new operations area.
 - [ ] Debt triage: each of [[TD-005]], [[TD-060]], [[TD-054]], [[TD-021]],
-      [[TD-015]], [[TD-003]], [[TD-053]], [[TD-056]] is `resolved` with a link to
-      its resolving commit, or explicitly still open with a reason.
+      [[TD-015]], [[TD-003]], [[TD-053]], [[TD-056]] is `resolved` with a link
+      to its resolving commit, or explicitly still open with a reason.
 - [ ] Each of [[TD-020]], [[TD-026]], [[TD-051]], [[TD-058]] carries a recorded
       reason for remaining open and a trigger.
 - [ ] `pnpm format-check && pnpm lint && pnpm typecheck && pnpm build && pnpm test`

@@ -2,6 +2,7 @@ import type { JSX, ReactNode } from "react";
 import { headers } from "next/headers";
 import { appearanceBootstrapScriptWithTenantDefault } from "@/lib/appearance";
 import { brandStyleCss } from "@/lib/brand-style";
+import { readCspNonce } from "@/lib/csp-nonce";
 import { fetchPortalBrand } from "@/lib/portal-branding";
 
 interface PortalLayoutProps {
@@ -37,15 +38,18 @@ export default async function PortalLayout({
   }
 
   const { brand } = await fetchPortalBrand(slug);
+  // Per-request CSP nonce ([[DEC-075]]); see lib/csp.ts.
+  const nonce = await readCspNonce();
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <script
+        nonce={nonce}
         dangerouslySetInnerHTML={{
           __html: appearanceBootstrapScriptWithTenantDefault(brand.defaultAppearance),
         }}
       />
-      <style dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
+      <style nonce={nonce} dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
       {children}
     </div>
   );

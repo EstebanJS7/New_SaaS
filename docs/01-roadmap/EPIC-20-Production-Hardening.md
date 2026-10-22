@@ -104,11 +104,11 @@ Three of those shaped the whole plan:
   complete asynchronous import instead of skipping it. Closes [[TD-060]].
 - **Operational recovery**: `docs/09-operations/BACKUP-RECOVERY.md` with the
   hosting requirements, the RPO target and the PITR preconditions, plus a
-  runnable drill that takes a backup and restores it, **executed**, with the real
-  output recorded as evidence.
-- **Gate determinism**: the live-PG lane stops depending on the cluster
-  timezone ([[TD-054]]), the `DATABASE_URL_TEST` fallback becomes an explicit
-  contract ([[TD-021]]), `packages/database/scripts` enters lint and typecheck
+  runnable drill that takes a backup and restores it, **executed**, with the
+  real output recorded as evidence.
+- **Gate determinism**: the live-PG lane stops depending on the cluster timezone
+  ([[TD-054]]), the `DATABASE_URL_TEST` fallback becomes an explicit contract
+  ([[TD-021]]), `packages/database/scripts` enters lint and typecheck
   ([[TD-015]]), and the worker's shutdown is guarded against repeated signals
   ([[TD-003]]).
 - **Report performance as a measurement**: a deterministic seeded dataset and a
@@ -120,14 +120,14 @@ Three of those shaped the whole plan:
 
 Each of these is a recorded decision, not an oversight.
 
-| Deferred | Why |
-| --- | --- |
-| [[TD-020]] idempotency retention | PRD §41 forbids a destructive purge before an approved retention policy. Shipping one here would violate the rule it appears to satisfy. |
-| [[TD-026]] list pagination | A public response-shape change on every staff list. It needs its own Decision and its own slice; a silent default cap is worse than the current shape, and an envelope breaks every client at once. |
-| [[TD-051]] asynchronous CSV export | Trigger-driven by definition: no tenant has reached `REPORTS_EXPORT_TOO_LARGE`. |
-| [[TD-058]] import artefact retention | Same class as TD-020 — no approved policy. The 72-hour TTL remains a recorded limitation. |
-| The production backup job and PITR enablement | Hosting control plane. [[DEC-074]] records exactly what the repository can and cannot prove about them. |
-| [[TD-018]], [[TD-019]], [[TD-022]], [[TD-055]], [[TD-057]], [[TD-059]] | Domain debt from other epics, not hardening. They remain open with their own triggers. |
+| Deferred                                                               | Why                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [[TD-020]] idempotency retention                                       | PRD §41 forbids a destructive purge before an approved retention policy. Shipping one here would violate the rule it appears to satisfy.                                                            |
+| [[TD-026]] list pagination                                             | A public response-shape change on every staff list. It needs its own Decision and its own slice; a silent default cap is worse than the current shape, and an envelope breaks every client at once. |
+| [[TD-051]] asynchronous CSV export                                     | Trigger-driven by definition: no tenant has reached `REPORTS_EXPORT_TOO_LARGE`.                                                                                                                     |
+| [[TD-058]] import artefact retention                                   | Same class as TD-020 — no approved policy. The 72-hour TTL remains a recorded limitation.                                                                                                           |
+| The production backup job and PITR enablement                          | Hosting control plane. [[DEC-074]] records exactly what the repository can and cannot prove about them.                                                                                             |
+| [[TD-018]], [[TD-019]], [[TD-022]], [[TD-055]], [[TD-057]], [[TD-059]] | Domain debt from other epics, not hardening. They remain open with their own triggers.                                                                                                              |
 
 ## Acceptance Criteria
 
@@ -141,8 +141,8 @@ Each of these is a recorded decision, not an oversight.
       re-implemented.
 - [ ] The login failure budget is a single global budget: a test proves two
       independent connections share it and trip it once.
-- [ ] Both `/health/live` and `/health/ready` exist and are proven; `/health/ready`
-      returns 503 when a primary dependency is down.
+- [ ] Both `/health/live` and `/health/ready` exist and are proven;
+      `/health/ready` returns 503 when a primary dependency is down.
 - [ ] Object storage is part of the environment contract, and the browser lane
       runs a complete asynchronous import with no skipped spec for [[TD-060]].
 - [ ] `docs/09-operations/BACKUP-RECOVERY.md` states the RPO target, the PITR
@@ -163,15 +163,15 @@ Each of these is a recorded decision, not an oversight.
 
 ## Stories
 
-| Story | Title | Status |
-| --- | --- | --- |
-| [[HARD-001]] | Content-Security-Policy with a per-request nonce | planned |
-| [[HARD-002]] | A shared rate-limit budget across replicas | planned |
-| [[HARD-003]] | Shared object storage in the environment contract | planned |
+| Story        | Title                                               | Status  |
+| ------------ | --------------------------------------------------- | ------- |
+| [[HARD-001]] | Content-Security-Policy with a per-request nonce    | planned |
+| [[HARD-002]] | A shared rate-limit budget across replicas          | planned |
+| [[HARD-003]] | Shared object storage in the environment contract   | planned |
 | [[HARD-004]] | Operational recovery: runbook and an executed drill | planned |
-| [[HARD-005]] | Gate determinism | planned |
-| [[HARD-006]] | Report performance budgets | planned |
-| [[HARD-007]] | The epic closure and evidence | planned |
+| [[HARD-005]] | Gate determinism                                    | planned |
+| [[HARD-006]] | Report performance budgets                          | planned |
+| [[HARD-007]] | The epic closure and evidence                       | planned |
 
 ## Dependencies
 
@@ -185,9 +185,9 @@ Each of these is a recorded decision, not an oversight.
 ## Exit Criteria
 
 - [ ] Lint/typecheck/tests/build required for the Epic are green.
-- [ ] Documentation is current: this file, the seven Stories, the five Decisions,
-      the operations runbook, the module docs touched, the changelog and the
-      roadmap row.
+- [ ] Documentation is current: this file, the seven Stories, the five
+      Decisions, the operations runbook, the module docs touched, the changelog
+      and the roadmap row.
 - [ ] Every deferred item is a named Tech Debt record with a trigger, not a
       paragraph.
 - [ ] The closure states exactly how far production readiness was proven and
@@ -197,8 +197,8 @@ Each of these is a recorded decision, not an oversight.
 
 - [[DEC-074]] — Epic scope split: what is code in this repository, what is an
   operational runbook, and the evidence standard for the restore drill.
-- [[DEC-075]] — CSP with a per-request nonce on `script-src` and `style-src`, and
-  no `unsafe-inline`.
+- [[DEC-075]] — CSP with a per-request nonce on `script-src` and `style-src`,
+  and no `unsafe-inline`.
 - [[DEC-076]] — The rate-limit budget moves to Redis as one atomic sliding
   window, with an explicit degradation mode.
 - [[DEC-077]] — Shared object storage becomes part of the environment contract.

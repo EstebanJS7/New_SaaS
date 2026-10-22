@@ -62,28 +62,29 @@ RPO target and the restore steps, and states plainly that the restore was never
 run. A Tech Debt with the trigger "first production environment" carries it.
 
 **C. Code plus a written runbook plus an executed drill.** Same document, plus a
-runnable script that takes a backup from a disposable cluster, restores it into a
-second database, and verifies the restored schema and a known row count. The
-drill is executed during the epic and its real output is pasted into the evidence
-block.
+runnable script that takes a backup from a disposable cluster, restores it into
+a second database, and verifies the restored schema and a known row count. The
+drill is executed during the epic and its real output is pasted into the
+evidence block.
 
-**D. C, but the drill runs once and is not a repeatable gate.** Same deliverable,
-the output recorded, and the drill explicitly not wired into any CI job.
+**D. C, but the drill runs once and is not a repeatable gate.** Same
+deliverable, the output recorded, and the drill explicitly not wired into any CI
+job.
 
 ## Decision
 
 **C.**
 
-1. **PRD §30's first half is code and is already partly delivered.** `/health/live`
-   and `/health/ready` exist with a Redis probe under a 1500 ms per-dependency
-   budget, and structured pino logs already carry a request id, echoed on both
-   success and error responses. The epic verifies and records these; it does not
-   rebuild them.
-2. **PRD §30's second half is a runbook this repository owns.** This repository is
-   where the deployment lives, so it is where the operational contract belongs:
-   an explicit RPO target, the PITR preconditions (WAL archiving, retention
-   window, `restore_command`), and the drill procedure. `docs/09-operations/` is
-   that home.
+1. **PRD §30's first half is code and is already partly delivered.**
+   `/health/live` and `/health/ready` exist with a Redis probe under a 1500 ms
+   per-dependency budget, and structured pino logs already carry a request id,
+   echoed on both success and error responses. The epic verifies and records
+   these; it does not rebuild them.
+2. **PRD §30's second half is a runbook this repository owns.** This repository
+   is where the deployment lives, so it is where the operational contract
+   belongs: an explicit RPO target, the PITR preconditions (WAL archiving,
+   retention window, `restore_command`), and the drill procedure.
+   `docs/09-operations/` is that home.
 3. **The restore is executed, and the evidence is the output.** A runbook step
    that has never run is a hypothesis. `scripts/verify-restore-drill.sh` takes a
    dump from a disposable PostgreSQL 16 cluster, restores it into a second
@@ -92,7 +93,7 @@ the output recorded, and the drill explicitly not wired into any CI job.
    source. The script's real output is recorded in the closure block.
 4. **The drill does not enter the PR gate.** It needs a PostgreSQL cluster and a
    second database, and the CI `Database migrations` job already provisions one
-   for its own purposes; adding a *restore* to the per-PR path would slow every
+   for its own purposes; adding a _restore_ to the per-PR path would slow every
    pull request to re-prove something that changes only when a migration or the
    dump format changes. It runs when claimed, and the claim is recorded with its
    output. This is a deliberate repetition cost, not an unpaid one: the runbook

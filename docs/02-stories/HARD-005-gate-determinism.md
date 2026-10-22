@@ -35,15 +35,16 @@ TD-003  the worker's shutdown is not guarded against repeated signals
 at `America/Asuncion` and 266/266 against one at `UTC`, with no code change
 between them: a zone-less literal cast to `timestamptz` is interpreted in the
 session timezone, so `'2018-04-30'::timestamptz` becomes `2018-04-30 04:00:00Z`
-in Paraguay and violates two constraints at once. PostgreSQL reports whichever it
-evaluates first, and that order is not contractual. CI runs
+in Paraguay and violates two constraints at once. PostgreSQL reports whichever
+it evaluates first, and that order is not contractual. CI runs
 `postgres:16-alpine` (UTC) and never sees it; `America/Asuncion` is
 `TENANT_TIME_ZONE` in `packages/shared/src/platform.ts`, so it is the zone most
 likely to be set on a developer machine in this product's market.
 
-**TD-021**: the suite reads `process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL`,
-so a misconfigured run silently targets whatever `DATABASE_URL` points at —
-including a developer's real database.
+**TD-021**: the suite reads
+`process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL`, so a misconfigured
+run silently targets whatever `DATABASE_URL` points at — including a developer's
+real database.
 
 **TD-015**: `packages/database` lints and typechecks `src/**/*.ts` only, but CI
 executes `scripts/live-migration-verify.ts` and `scripts/ci-seed-counts.mjs` in
@@ -75,8 +76,9 @@ covered.
 - [ ] `packages/database/scripts` enters both the package lint and the package
       typecheck scope.
 - [ ] The root `pnpm lint` and `pnpm typecheck` remain green.
-- [ ] A deliberately broken type in a script fails the package typecheck, proving
-      the coverage is real, and the probe is reverted with its result recorded.
+- [ ] A deliberately broken type in a script fails the package typecheck,
+      proving the coverage is real, and the probe is reverted with its result
+      recorded.
 
 ### TD-003
 

@@ -6,29 +6,29 @@ updated: 2026-10-22
 
 # ROADMAP
 
-| Epic    | Name                               |  Status | Depends on                |
-| ------- | ---------------------------------- | ------: | ------------------------- |
-| EPIC-00 | Foundation                         |    done | —                         |
-| EPIC-01 | Database/Auth/Tenancy              |    done | EPIC-00                   |
-| EPIC-02 | RBAC/Entitlements/Tenant Settings  |    done | EPIC-01                   |
-| EPIC-03 | Staff Shell/Design System/Branding |    done | EPIC-01                   |
-| EPIC-04 | Customers                          |    done | EPIC-02, EPIC-03          |
-| EPIC-05 | Veterinary Patients                |    done | EPIC-04                   |
-| EPIC-06 | Clinical                           |    done | EPIC-05                   |
-| EPIC-07 | Scheduling                         |    done | EPIC-04, EPIC-05          |
-| EPIC-08 | Portal                             |    done | EPIC-04, EPIC-05, EPIC-07 |
-| EPIC-09 | Catalog/Taxes                      |    done | EPIC-02                   |
-| EPIC-10 | Inventory                          |    done | EPIC-09                   |
-| EPIC-11 | Suppliers/Purchases                |    done | EPIC-10                   |
-| EPIC-12 | POS/Payments                       |    done | EPIC-09, EPIC-10          |
-| EPIC-13 | Cash                               |    done | EPIC-12                   |
-| EPIC-14 | Billing                            |    done | EPIC-12                   |
-| EPIC-15 | Fiscal Abstraction                 |    done | EPIC-14                   |
-| EPIC-16 | SIFEN Direct                       |    done | EPIC-15                   |
-| EPIC-17 | Notifications                      |    done | EPIC-07                   |
-| EPIC-18 | Dashboards/Reports                 |    done | prior domains             |
-| EPIC-19 | Imports                            |    done | EPIC-04, EPIC-05          |
-| EPIC-20 | Production Hardening               | in-progress | MVP feature epics     |
+| Epic    | Name                               |      Status | Depends on                |
+| ------- | ---------------------------------- | ----------: | ------------------------- |
+| EPIC-00 | Foundation                         |        done | —                         |
+| EPIC-01 | Database/Auth/Tenancy              |        done | EPIC-00                   |
+| EPIC-02 | RBAC/Entitlements/Tenant Settings  |        done | EPIC-01                   |
+| EPIC-03 | Staff Shell/Design System/Branding |        done | EPIC-01                   |
+| EPIC-04 | Customers                          |        done | EPIC-02, EPIC-03          |
+| EPIC-05 | Veterinary Patients                |        done | EPIC-04                   |
+| EPIC-06 | Clinical                           |        done | EPIC-05                   |
+| EPIC-07 | Scheduling                         |        done | EPIC-04, EPIC-05          |
+| EPIC-08 | Portal                             |        done | EPIC-04, EPIC-05, EPIC-07 |
+| EPIC-09 | Catalog/Taxes                      |        done | EPIC-02                   |
+| EPIC-10 | Inventory                          |        done | EPIC-09                   |
+| EPIC-11 | Suppliers/Purchases                |        done | EPIC-10                   |
+| EPIC-12 | POS/Payments                       |        done | EPIC-09, EPIC-10          |
+| EPIC-13 | Cash                               |        done | EPIC-12                   |
+| EPIC-14 | Billing                            |        done | EPIC-12                   |
+| EPIC-15 | Fiscal Abstraction                 |        done | EPIC-14                   |
+| EPIC-16 | SIFEN Direct                       |        done | EPIC-15                   |
+| EPIC-17 | Notifications                      |        done | EPIC-07                   |
+| EPIC-18 | Dashboards/Reports                 |        done | prior domains             |
+| EPIC-19 | Imports                            |        done | EPIC-04, EPIC-05          |
+| EPIC-20 | Production Hardening               | in-progress | MVP feature epics         |
 
 Update this table when Epic status changes.
 
@@ -283,14 +283,14 @@ than smoothed over.
 [[EPIC-20]] Production Hardening moved to `in-progress` on 2026-10-22. The epic
 existed only as a row in the table above. The kickoff is the epic file, seven
 Stories and five accepted Decisions — [[DEC-074]] (which half of PRD §29/§30 is
-code in this repository and which is an operational runbook, and that the restore
-must be *executed* rather than promised), [[DEC-075]] (CSP with a per-request
-nonce on `script-src` and `style-src`, no `unsafe-inline`), [[DEC-076]] (the rate
-limit budget moves to Redis as one atomic sliding window and degrades open to the
-in-process window when Redis is unavailable), [[DEC-077]] (shared object storage
-joins the environment contract in compose *and* CI) and [[DEC-078]] (report
-performance becomes a seeded dataset plus a declared budget, gated on the query
-plan as well as the clock).
+code in this repository and which is an operational runbook, and that the
+restore must be _executed_ rather than promised), [[DEC-075]] (CSP with a
+per-request nonce on `script-src` and `style-src`, no `unsafe-inline`),
+[[DEC-076]] (the rate limit budget moves to Redis as one atomic sliding window
+and degrades open to the in-process window when Redis is unavailable),
+[[DEC-077]] (shared object storage joins the environment contract in compose
+_and_ CI) and [[DEC-078]] (report performance becomes a seeded dataset plus a
+declared budget, gated on the query plan as well as the clock).
 
 Exploring the code rather than the PRD reshaped the plan twice. **Two of PRD
 §29's bullets were already satisfied** and the epic's job there is to prove and
@@ -303,8 +303,8 @@ rather than the one [[TD-005]] names, which is the argument for fixing it at the
 service seam.
 
 This is a kickoff record, **never** a readiness claim. The epic's closure is the
-first in this chain that can state more than "implementation closure" about
-PRD §29, because every control it adds has a test that fails when the control is
+first in this chain that can state more than "implementation closure" about PRD
+§29, because every control it adds has a test that fails when the control is
 removed; about PRD §30 it will state something narrower, because the backup
 schedule and the PITR window are hosting configuration that this repository can
 only require and rehearse.
