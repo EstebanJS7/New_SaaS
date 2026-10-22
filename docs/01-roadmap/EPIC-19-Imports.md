@@ -2,7 +2,7 @@
 id: EPIC-19
 type: epic
 title: Imports
-status: in-progress
+status: done
 priority: medium
 depends_on:
   - EPIC-04
@@ -97,31 +97,31 @@ Two of those facts shaped the whole design:
 
 ## Acceptance Criteria
 
-- [ ] A customer CSV and a patient CSV can be uploaded, previewed and committed
+- [x] A customer CSV and a patient CSV can be uploaded, previewed and committed
       end to end, asynchronously, through the staff surface.
-- [ ] Every row is validated with the SAME zod schema `POST /customers` and
+- [x] Every row is validated with the SAME zod schema `POST /customers` and
       `POST /patients` use; the import does not carry a second copy of any rule.
-- [ ] A patient row whose guardian reference does not resolve is a row error,
+- [x] A patient row whose guardian reference does not resolve is a row error,
       never a silently created customer.
-- [ ] The commit is partial by design: valid rows land, invalid rows are
+- [x] The commit is partial by design: valid rows land, invalid rows are
       reported with their row number and reason, and the summary states both
       counts.
-- [ ] The commit reads the SAME stored artefact the preview read, so a changed
+- [x] The commit reads the SAME stored artefact the preview read, so a changed
       file cannot be committed under an unchanged preview.
-- [ ] Suspected duplicates are reported as warnings from a documented heuristic,
+- [x] Suspected duplicates are reported as warnings from a documented heuristic,
       never as a guarantee and never as an update.
-- [ ] Every import row creates its own audit trail, so a bulk import is as
+- [x] Every import row creates its own audit trail, so a bulk import is as
       traceable as the equivalent manual entry.
-- [ ] `imports.run` and `imports.read` exist in `PERMISSION_SEEDS`, mapped to
+- [x] `imports.run` and `imports.read` exist in `PERMISSION_SEEDS`, mapped to
       roles, enforced server-side and pinned in the RBAC route-contract probe.
-- [ ] Tenant isolation on every import read and write; a foreign import id is a
+- [x] Tenant isolation on every import read and write; a foreign import id is a
       `404`.
-- [ ] The staff surface renders upload, preview, progress, result summary and
+- [x] The staff surface renders upload, preview, progress, result summary and
       the failure states, using semantic branding tokens only.
-- [ ] Playwright specs cover one import end to end.
-- [ ] Documentation: `docs/05-modules/Imports.md`, the Stories, the Decisions,
+- [x] Playwright specs cover one import end to end.
+- [x] Documentation: `docs/05-modules/Imports.md`, the Stories, the Decisions,
       the tech debt, the changelog and the roadmap row.
-- [ ] Format, lint, typecheck, build and the full test set are green.
+- [x] Format, lint, typecheck, build and the full test set are green.
 
 ## Stories
 
@@ -145,11 +145,47 @@ public service methods — it adds no column to `customer`, `patient` or
 
 ## Exit Criteria
 
-- [ ] Lint/typecheck/tests/build required for the Epic are green.
-- [ ] Documentation is current.
-- [ ] `docs/10-qa/CI-EVIDENCE.md` carries the closure block with the CI run id.
-- [ ] The roadmap row reads `done`, with the evidence-based closure note.
-- [ ] Every deferred item is a named Tech Debt, not a silent gap.
+- [x] Lint/typecheck/tests/build required for the Epic are green.
+- [x] Documentation is current.
+- [x] `docs/10-qa/CI-EVIDENCE.md` carries the closure block with the CI run id.
+- [x] The roadmap row reads `done`, with the evidence-based closure note.
+- [x] Every deferred item is a named Tech Debt, not a silent gap.
+
+## Closure record
+
+Closed on 2026-10-22, merged-ready as **PR #146** with the required checks green
+on run
+[`39774118687`](https://github.com/EstebanJS7/New_SaaS/actions/runs/39774118687):
+
+```text
+Database migrations              pass
+Lint, Typecheck, Test, Build     pass
+DTE XSD validation               pass
+Browser end-to-end               pass   22 passed, 1 skipped
+```
+
+This closure has a **real CI receipt**, unlike [[EPIC-18]]'s local one: the
+epic's own surface had to run in a browser before it could claim anything, and
+getting that lane green took four iterations that each produced a finding rather
+than a selector fix.
+
+```text
+api 1760 | web 1343 | imports 132 | worker 282 | customers 9 | patients 8 | database 550
+turbo 23 -> 29 tasks (three new packages)
+```
+
+**What `done` does not mean**, stated because this epic closes with three named
+gaps:
+
+- **XLSX is not implemented.** PRD §32 says "CSV/XLSX"; the MVP ships CSV and
+  [[DEC-068]] records the deviation rather than editing the PRD ([[TD-057]]).
+- **The artefact's retention has no approved policy behind it** ([[TD-058]]),
+  and the worker's terminal path does not delete the file — the API commands and
+  the TTL sweep do.
+- **The browser lane cannot run an import end to end** ([[TD-060]]): there is no
+  shared object storage, so the full-flow test exists and skips with the reason
+  named while a second test proves the half the lane can reach.
+- [[EPIC-20]] Production Hardening remains.
 
 ## Decisions / ADRs
 
