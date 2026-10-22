@@ -167,59 +167,6 @@ test.describe("the staff imports surface", () => {
   test("uploads a CSV, previews it, commits it and reads the summary's failed row", async ({
     page,
   }, testInfo) => {
-    test("uploads a CSV through the BFF and the worker claims the preview", async ({
-      page,
-    }, testInfo) => {
-      // Everything up to the artefact read, which is as far as this lane can go without
-      // shared storage ([[TD-060]]). It is still worth running where the full flow cannot:
-      // it proves the browser-facing half — the multipart proxy, the surface, the queue —
-      // and it proves the consumer is alive, because a job nobody claims never leaves
-      // UPLOADED.
-      const runId = Date.now();
-      const csvPath = testInfo.outputPath(`lane-import-upload-${String(runId)}.csv`);
-      await writeFile(
-        csvPath,
-        [
-          "display_name,email",
-          `Lane Upload ${String(runId)},lane-upload-${String(runId)}@example.test`,
-          "",
-        ].join("\n"),
-        "utf8"
-      );
-
-      await page.goto("/login");
-      await page.fill("#login-email", DEMO.staffEmail);
-      await page.fill("#login-password", DEMO.staffPassword);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await expect(page).toHaveURL(/\/app$/);
-
-      await page.getByRole("link", { name: "Imports" }).click();
-      await expect(page.getByTestId("imports-index")).toBeVisible();
-
-      await page.getByLabel("Import entity").selectOption("CUSTOMER");
-      await page.getByTestId("import-file").setInputFiles(csvPath);
-      await page.getByRole("button", { name: "Upload" }).click();
-
-      await expect(page.getByTestId("imports-upload-accepted")).toContainText("UPLOADED");
-      const historyRow = page.getByTestId("imports-row").first();
-      await expect(historyRow.getByTestId("imports-row-state")).toHaveText("UPLOADED");
-
-      await page.getByTestId("imports-upload-accepted-link").click();
-      const importId = new URL(page.url()).pathname.split("/").at(-1) ?? "";
-      expect(importId).toMatch(/^[0-9a-f-]{36}$/);
-
-      await page.getByTestId("imports-preview").click();
-      await expect(page.getByTestId("imports-polling")).toContainText("Previewing the file");
-
-      // The assertion that matters here: the state LEAVES UPLOADED. Only a consumer
-      // takes the row out of it, so this is the queue, the claim and the worker's boot
-      // proven from the browser. Whether the phase afterwards is PREVIEWED or FAILED is
-      // [[TD-060]]'s subject, and the full-flow test above owns it.
-      await expect(page.getByTestId("imports-state")).not.toHaveText("UPLOADED", {
-        timeout: PHASE_TIMEOUT_MS,
-      });
-    });
-
     test.skip(
       !canShareArtefact,
       "Needs shared object storage: the API and the worker run in different processes, and " +
@@ -398,5 +345,58 @@ test.describe("the staff imports surface", () => {
     await expect(page.getByTestId("imports-failed")).toHaveText(
       String(requireNumber(committed, "failedCount"))
     );
+  });
+
+  test("uploads a CSV through the BFF and the worker claims the preview", async ({
+    page,
+  }, testInfo) => {
+    // Everything up to the artefact read, which is as far as this lane can go without
+    // shared storage ([[TD-060]]). It is still worth running where the full flow cannot:
+    // it proves the browser-facing half — the multipart proxy, the surface, the queue —
+    // and it proves the consumer is alive, because a job nobody claims never leaves
+    // UPLOADED.
+    const runId = Date.now();
+    const csvPath = testInfo.outputPath(`lane-import-upload-${String(runId)}.csv`);
+    await writeFile(
+      csvPath,
+      [
+        "display_name,email",
+        `Lane Upload ${String(runId)},lane-upload-${String(runId)}@example.test`,
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    await page.goto("/login");
+    await page.fill("#login-email", DEMO.staffEmail);
+    await page.fill("#login-password", DEMO.staffPassword);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page).toHaveURL(/\/app$/);
+
+    await page.getByRole("link", { name: "Imports" }).click();
+    await expect(page.getByTestId("imports-index")).toBeVisible();
+
+    await page.getByLabel("Import entity").selectOption("CUSTOMER");
+    await page.getByTestId("import-file").setInputFiles(csvPath);
+    await page.getByRole("button", { name: "Upload" }).click();
+
+    await expect(page.getByTestId("imports-upload-accepted")).toContainText("UPLOADED");
+    const historyRow = page.getByTestId("imports-row").first();
+    await expect(historyRow.getByTestId("imports-row-state")).toHaveText("UPLOADED");
+
+    await page.getByTestId("imports-upload-accepted-link").click();
+    const importId = new URL(page.url()).pathname.split("/").at(-1) ?? "";
+    expect(importId).toMatch(/^[0-9a-f-]{36}$/);
+
+    await page.getByTestId("imports-preview").click();
+    await expect(page.getByTestId("imports-polling")).toContainText("Previewing the file");
+
+    // The assertion that matters here: the state LEAVES UPLOADED. Only a consumer
+    // takes the row out of it, so this is the queue, the claim and the worker's boot
+    // proven from the browser. Whether the phase afterwards is PREVIEWED or FAILED is
+    // [[TD-060]]'s subject, and the full-flow test above owns it.
+    await expect(page.getByTestId("imports-state")).not.toHaveText("UPLOADED", {
+      timeout: PHASE_TIMEOUT_MS,
+    });
   });
 });
