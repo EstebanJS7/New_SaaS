@@ -4,14 +4,14 @@ type: tech-debt
 title:
   Live-PostgreSQL suite falls back to the Prisma DATABASE_URL when
   DATABASE_URL_TEST is undeclared
-status: open
+status: resolved
 severity: low
 related_epics:
   - EPIC-12
 related_stories:
   - POS-001
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-10-22
 ---
 
 # TD-021 — Live-PostgreSQL suite falls back to the Prisma DATABASE_URL when DATABASE_URL_TEST is undeclared
@@ -127,3 +127,46 @@ to the live-PostgreSQL suite's connection or provisioning helpers.
       step.
 - [ ] The live suite still skips cleanly when no database is configured, with no
       provisioning attempt and no file-level failure.
+
+## Resolution (2026-10-22, [[HARD-005]])
+
+The `DATABASE_URL` fallback is gone.
+
+```text
+before   const livePgDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL;
+after    const livePgDatabaseUrl = process.env.DATABASE_URL_TEST;
+```
+
+Two behaviours now, and neither is silent:
+
+- **The default `pnpm test` lane** still skips the suite when the variable is
+  absent, which is what keeps the suite usable without a PostgreSQL.
+- **The dedicated lane** (`test:live-pg`, now on its own
+  `vitest.live-pg.config.ts`) sets `LIVE_PG_REQUIRED=1`, and a module-level
+  guard turns a missing variable into a FAILURE naming it:
+
+```text
+Error: DATABASE_URL_TEST is required by `pnpm --filter @newsaas/api test:live-pg`.
+  Point it at a disposable PostgreSQL, e.g.
+  DATABASE_URL_TEST=postgresql://postgres@127.0.0.1:55432/postgres?schema=public.
+  It is no longer derived from DATABASE_URL (TD-021).
+```
+
+Verified by running the dedicated lane with the variable unset: it failed with
+that message instead of measuring whatever `DATABASE_URL` happened to point at.
+
+### Why this mattered more than it looked
+
+The work on [[TD-054]] found that `psql` rejects the Prisma-only
+`?schema=public` query parameter. The application's own `DATABASE_URL` carries
+it, so the fallback did not merely risk targeting the wrong database — a local
+run against it failed immediately with a parse error that named neither the
+variable nor the cause. [[HARD-005]] fixed that too, by stripping the parameter
+before handing the URL to `psql`.
+
+### Verification after resolution
+
+- [x] The variable is required by the dedicated lane and named in the failure.
+- [x] No code path derives the suite's base URL from `DATABASE_URL`.
+- [x] `pnpm --filter @newsaas/api test:live-pg` is 266/266 with the variable
+      set.

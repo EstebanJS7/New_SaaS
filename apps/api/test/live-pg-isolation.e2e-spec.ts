@@ -802,17 +802,58 @@ interface RecordingNotificationDeliveryProducer extends NotificationDeliveryProd
   readonly cancelled: string[];
 }
 
+/**
+ * The same server, pointed at the maintenance database, with PRISMA-ONLY query
+ * parameters removed.
+ *
+ * `?schema=public` is a Prisma convention, not a libpq one: `psql` rejects the
+ * whole URI with `invalid URI query parameter: "schema"`. That surfaced while
+ * [[HARD-005]] pinned this suite's timezone, and it is the concrete reason
+ * [[TD-021]]'s fallback to `DATABASE_URL` was dangerous rather than convenient:
+ * the fallback made the suite take its base URL from the application's own
+ * connection string, which carries exactly this parameter, so a local run failed
+ * for a reason that had nothing to do with the product.
+ */
 function adminDatabaseUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
   url.pathname = "/postgres";
+  url.searchParams.delete("schema");
   return url.toString();
 }
 
+/**
+ * Creates the disposable database AND pins its session timezone ([[TD-054]]).
+ *
+ * ## Why the timezone has to be pinned here
+ *
+ * A zone-less literal cast to `timestamptz` is interpreted in the SESSION's
+ * timezone, so the same SQL means different instants on different machines. That
+ * is not hypothetical: this suite reported 265/266 against a cluster at
+ * `America/Asuncion` and 266/266 against one at `UTC`, with no code change between
+ * the runs. The failing case inserted `'2018-04-30'::timestamptz`, which in
+ * Paraguay becomes `2018-04-30 04:00:00Z` and violates TWO constraints at once;
+ * PostgreSQL reports whichever it evaluates first, and that order is not a
+ * contract.
+ *
+ * CI runs `postgres:16-alpine`, whose default is UTC, so CI never saw it — and the
+ * zone that breaks it is `TENANT_TIME_ZONE` in this product's own market, which is
+ * the most likely zone on a contributor's machine.
+ *
+ * `ALTER DATABASE … SET timezone` is the right lever BECAUSE the suite creates its
+ * own database: it applies to every connection to that database, including the
+ * ones `prisma migrate` and the seed spawn, and it does not depend on the cluster's
+ * configuration at all.
+ */
 function createDatabase(baseUrl: string, name: string): void {
-  execSync(`psql "${adminDatabaseUrl(baseUrl)}" -c "CREATE DATABASE ${name};"`, {
-    stdio: "pipe",
-    env: process.env,
-  });
+  execSync(
+    `psql "${adminDatabaseUrl(baseUrl)}" -v ON_ERROR_STOP=1 ` +
+      `-c "CREATE DATABASE ${name};" ` +
+      `-c "ALTER DATABASE ${name} SET timezone TO 'UTC';"`,
+    {
+      stdio: "pipe",
+      env: process.env,
+    }
+  );
 }
 
 function dropDatabase(baseUrl: string, name: string): void {
@@ -1250,7 +1291,31 @@ function normalizeIndexPredicate(predicate: string): string {
   );
 }
 
-const livePgDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL;
+/**
+ * The live-PostgreSQL suite's own connection variable ([[TD-021]] / [[HARD-005]]).
+ *
+ * It deliberately does NOT fall back to `DATABASE_URL`. The fallback made a
+ * misconfigured run target whatever `DATABASE_URL` pointed at — including a
+ * developer's real database — while appearing to work, and the failure mode is
+ * silent: the suite provisions its own database from that base URL, so the damage
+ * would only surface later, in the wrong place.
+ *
+ * Absent, the suite skips, which is what keeps `pnpm test` usable without a
+ * PostgreSQL. The dedicated `test:live-pg` lane REQUIRES it: `vitest.live-pg.config.ts`
+ * sets `LIVE_PG_REQUIRED=1`, and the guard below turns a missing variable into a
+ * failure there rather than a silent skip. A lane that does not measure must not
+ * report green.
+ */
+const livePgDatabaseUrl = process.env.DATABASE_URL_TEST;
+
+if (process.env.LIVE_PG_REQUIRED === "1" && !livePgDatabaseUrl) {
+  throw new Error(
+    "DATABASE_URL_TEST is required by `pnpm --filter @newsaas/api test:live-pg`. " +
+      "Point it at a disposable PostgreSQL, e.g. " +
+      "DATABASE_URL_TEST=postgresql://postgres@127.0.0.1:55432/postgres?schema=public. " +
+      "It is no longer derived from DATABASE_URL (TD-021)."
+  );
+}
 
 /**
  * Live PostgreSQL application-path isolation evidence (TD-006 EPIC-03/EPIC-04
@@ -1339,10 +1404,11 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
   beforeAll(async () => {
     previousDatabaseUrl = process.env.DATABASE_URL;
-    baseDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL ?? "";
+    baseDatabaseUrl = process.env.DATABASE_URL_TEST ?? "";
     if (!baseDatabaseUrl) {
       throw new Error(
-        "DATABASE_URL_TEST or DATABASE_URL is required to provision a disposable isolation database"
+        "DATABASE_URL_TEST is required to provision a disposable isolation database. " +
+          "It is not derived from DATABASE_URL (TD-021)."
       );
     }
 
@@ -16086,28 +16152,32 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           "document_type 2 is not in tiTiDE",
           2,
           "12345678",
-          "2019-09-01",
+          "2019-09-01T00:00:00Z",
           /fiscal_timbrado_range_document_type_tiTiDE/,
         ],
         [
           "an all-zero timbrado number",
           1,
           "00000000",
-          "2019-09-01",
+          "2019-09-01T00:00:00Z",
           /fiscal_timbrado_range_timbrado_number_tdNumTim/,
         ],
+        // TD-054: the literals carry an EXPLICIT zone. A zone-less literal is
+        // interpreted in the session timezone, so `'2018-04-30'` meant
+        // `2018-04-30 04:00:00Z` on a cluster at America/Asuncion and violated two
+        // constraints instead of the one this case is about.
         [
           "a validity start with a time part",
           1,
           "12345678",
-          "2019-09-01 12:00:00",
+          "2019-09-01T12:00:00Z",
           /fiscal_timbrado_range_validity_start_is_a_date/,
         ],
         [
           "a validity start before 2018-05-01",
           1,
           "12345678",
-          "2018-04-30",
+          "2018-04-30T00:00:00Z",
           /fiscal_timbrado_range_validity_start_tdFeIniT/,
         ],
       ] as const;

@@ -20,17 +20,46 @@ export interface BootstrapOptions {
 /**
  * Registers SIGTERM/SIGINT handlers that run the worker shutdown sequence.
  *
- * The sequence runs at most once: both listeners are removed before shutting
- * down, so repeated signals are inert. A clean shutdown exits with status 0;
- * a rejected shutdown is logged and exits with a non-zero status (1).
+ * ## The guard is a flag, not listener removal ([[TD-003]] / [[HARD-005]])
+ *
+ * The previous implementation removed BOTH listeners at the top of the first
+ * handler. That is correct only while the shutdown is instantaneous: removing a
+ * listener restores the operating system's DEFAULT disposition, so a second
+ * SIGTERM arriving while the shutdown promise is still pending hard-killed the
+ * process with a non-zero exit — aborting an in-flight teardown instead of
+ * letting it finish. The unit test could not see this, because an EventEmitter
+ * has no OS default disposition to fall back to.
+ *
+ * The listeners now stay installed for the life of the process and a state flag
+ * makes them inert once shutdown has begun. A repeated signal is absorbed rather
+ * than translated into a kill, which is what makes "exit status remains 0"
+ * true at runtime and not only in a stub.
+ *
+ * A clean shutdown exits with status 0; a rejected shutdown is logged and exits
+ * with a non-zero status (1). Draining work after a failed teardown would keep a
+ * broken consumer alive, so the non-zero exit is deliberate.
+ *
+ * ## The escape hatch that is NOT removed
+ *
+ * An operator whose shutdown is genuinely hung still needs a way out, and this
+ * guard does not take it away: `SIGKILL` cannot be caught by any process, so it
+ * remains available and behaves exactly as before. What changed is that a
+ * *graceful* signal is no longer the same thing as a hard kill by accident.
  */
 export function installSignalShutdown(
   handle: WorkerHandle,
-  proc: Pick<NodeJS.Process, "once" | "off" | "exit"> = process
+  // `on`, not `once`: a one-shot listener is REMOVED the moment it fires, which
+  // reintroduces exactly the window this guard closes.
+  proc: Pick<NodeJS.Process, "on" | "off" | "exit"> = process
 ): void {
+  let shuttingDown = false;
+
   const shutdown = (): void => {
-    proc.off("SIGTERM", shutdown);
-    proc.off("SIGINT", shutdown);
+    if (shuttingDown) {
+      // Absorbed on purpose: the in-flight teardown decides the exit status.
+      return;
+    }
+    shuttingDown = true;
 
     handle
       .shutdown()
@@ -43,8 +72,13 @@ export function installSignalShutdown(
       });
   };
 
-  proc.once("SIGTERM", shutdown);
-  proc.once("SIGINT", shutdown);
+  // PERSISTENT listeners. `once` would be consumed by the first signal and leave
+  // no handler for the second, restoring the OS default disposition — the defect
+  // TD-003 recorded. The flag, not the registration mode, is what makes repeats
+  // inert. `off` stays in the process contract because an operator or a future
+  // caller may legitimately unregister.
+  proc.on("SIGTERM", shutdown);
+  proc.on("SIGINT", shutdown);
 }
 
 export async function bootstrap(options: BootstrapOptions = {}): Promise<WorkerHandle> {

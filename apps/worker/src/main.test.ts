@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { bootstrap, installSignalShutdown } from "./main.js";
 import type { WorkerHandle } from "./main.js";
 
-type SignalProcess = Pick<NodeJS.Process, "once" | "off" | "exit">;
+type SignalProcess = Pick<NodeJS.Process, "on" | "once" | "off" | "exit">;
 
 interface ShutdownHarness {
   proc: SignalProcess;
@@ -20,9 +20,13 @@ function createShutdownHarness(): ShutdownHarness {
   const emitter = new EventEmitter();
   const exit: Mock<(code?: number) => void> = vi.fn<(code?: number) => void>();
 
-  // Adapter cast: EventEmitter covers once/off; exit is spied instead of
+  // Adapter cast: EventEmitter covers on/once/off; exit is spied instead of
   // terminating the test runner.
   const proc = {
+    on: (event: string | symbol, listener: (...args: unknown[]) => void) => {
+      emitter.on(event, listener);
+      return proc;
+    },
     once: (event: string | symbol, listener: (...args: unknown[]) => void) => {
       emitter.once(event, listener);
       return proc;
@@ -63,8 +67,10 @@ describe("installSignalShutdown", () => {
     expect(shutdown).toHaveBeenCalledTimes(1);
     expect(harness.exit).toHaveBeenCalledTimes(1);
     expect(harness.exit).toHaveBeenCalledWith(0);
-    expect(harness.listenerCount("SIGTERM")).toBe(0);
-    expect(harness.listenerCount("SIGINT")).toBe(0);
+    // The listeners STAY INSTALLED ([[TD-003]]): removing them restores the OS
+    // default disposition, so a second signal during an in-flight teardown would
+    // hard-kill the process. The guard is a state flag, not a missing listener.
+    expect(harness.listenerCount("SIGTERM")).toBe(1);
   });
 
   it("runs the shutdown sequence once and exits 0 on SIGINT", async () => {
@@ -79,8 +85,7 @@ describe("installSignalShutdown", () => {
     expect(shutdown).toHaveBeenCalledTimes(1);
     expect(harness.exit).toHaveBeenCalledTimes(1);
     expect(harness.exit).toHaveBeenCalledWith(0);
-    expect(harness.listenerCount("SIGTERM")).toBe(0);
-    expect(harness.listenerCount("SIGINT")).toBe(0);
+    expect(harness.listenerCount("SIGINT")).toBe(1);
   });
 
   it("is inert after the first signal: shutdown never re-runs and exit stays 0", async () => {
@@ -96,6 +101,52 @@ describe("installSignalShutdown", () => {
     await flushAsyncTasks();
 
     expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(harness.exit).toHaveBeenCalledTimes(1);
+    expect(harness.exit).toHaveBeenCalledWith(0);
+  });
+
+  /**
+   * TD-003's evidence gate, verbatim: "a second signal delivered WHILE the shutdown
+   * promise is still pending, asserting final exit status 0, without spawning child
+   * processes".
+   *
+   * This is the case the old implementation could not survive. It removed both
+   * listeners before awaiting the teardown, so on a real process the second SIGTERM
+   * found no handler and the OS default disposition killed the worker mid-teardown.
+   * A pending promise is what makes that window observable in a test at all — the
+   * previous suite only ever signalled after the shutdown had already settled.
+   */
+  it("absorbs a second signal while the shutdown is still pending and still exits 0", async () => {
+    let resolveShutdown: (() => void) | undefined;
+    const shutdown = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveShutdown = resolve;
+        })
+    );
+    const handle: WorkerHandle = { shutdown };
+    const harness = createShutdownHarness();
+
+    installSignalShutdown(handle, harness.proc);
+    harness.emitSignal("SIGTERM");
+    await flushAsyncTasks();
+
+    // Mid-flight: the shutdown started and has NOT settled.
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(harness.exit).not.toHaveBeenCalled();
+
+    // The impatient operator, or the orchestrator's second attempt.
+    harness.emitSignal("SIGTERM");
+    harness.emitSignal("SIGINT");
+    await flushAsyncTasks();
+
+    // Absorbed: no second teardown, and above all no hard kill.
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(harness.exit).not.toHaveBeenCalled();
+
+    resolveShutdown?.();
+    await flushAsyncTasks();
+
     expect(harness.exit).toHaveBeenCalledTimes(1);
     expect(harness.exit).toHaveBeenCalledWith(0);
   });
