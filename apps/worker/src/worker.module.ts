@@ -38,7 +38,8 @@ import {
 import { createNotificationEntitlementReader } from "./notification-delivery/notification-entitlement.read.js";
 import { createNotificationRecipientReader } from "./notification-delivery/notification-recipient.read.js";
 import { ApplicationEventsModule } from "./events/application-events.module.js";
-import { ImportPreviewConsumer } from "./imports/preview.consumer.js";
+import { ImportProcessingConsumer } from "./imports/preview.consumer.js";
+import { ImportCommitHandler } from "./imports/commit.handler.js";
 import { ImportPreviewHandler } from "./imports/preview.handler.js";
 import { RedisHealthService } from "./redis/redis-health.service.js";
 import {
@@ -243,6 +244,13 @@ const contentBuilderProvider: Provider = {
  * through the `@Global` StorageModule and writes the per-row outcomes) and its
  * consumer. Nothing else is needed — the pipeline itself lives in
  * `@newsaas/imports`, and its duplicate lookup is scoped by the row's tenant.
+ *
+ * EPIC-19 IMP-003 adds the commit: a second handler over the same row, the same
+ * artefact and the same storage port, which creates the accepted rows through
+ * `@newsaas/customers` and co-commits the commit phase's audit rows. It shares ONE
+ * consumer with the preview, because a BullMQ worker subscribes to a QUEUE and not
+ * to a job name — a second worker on `import-processing` would receive both kinds
+ * and have to drop half of them.
  */
 @Module({
   imports: [
@@ -272,7 +280,8 @@ const contentBuilderProvider: Provider = {
     NotificationDeliveryConsumer,
     NotificationFiscalNoticeScheduler,
     ImportPreviewHandler,
-    ImportPreviewConsumer,
+    ImportCommitHandler,
+    ImportProcessingConsumer,
   ],
 })
 export class WorkerModule {}

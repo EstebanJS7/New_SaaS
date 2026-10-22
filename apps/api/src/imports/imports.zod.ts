@@ -51,6 +51,24 @@ export const IMPORT_ID_INVALID_MESSAGE = "The import id must be a UUID.";
 export const IMPORT_LIST_QUERY_INVALID_MESSAGE = "Invalid import list filters.";
 
 /**
+ * The summary page's default size, and its ceiling ([[DEC-071]], [[IMP-003]]).
+ *
+ * A summary is the artefact an operator keeps, and its row list can be as long as
+ * the file was — so it is served as a BOUNDED page, and an oversized `limit` is
+ * REFUSED rather than clamped for the same reason the list read refuses one: a
+ * silently shortened page is a page that lies about what exists ([[TD-026]]). The
+ * TOTALS are always the whole import; only the ROWS are paged.
+ *
+ * 100 rows is a page an operator can read on one screen and a failure list an
+ * operator can scan; 500 is the most one response may carry.
+ */
+export const IMPORT_SUMMARY_LIMIT_DEFAULT = 100;
+export const IMPORT_SUMMARY_LIMIT_MAX = 500;
+
+/** Stable `400` for an unreadable summary query. */
+export const IMPORT_SUMMARY_QUERY_INVALID_MESSAGE = "Invalid import summary filters.";
+
+/**
  * The list query, as a CLOSED schema: an unknown key is refused rather than
  * ignored, and `limit` above {@link IMPORT_LIST_LIMIT_MAX} is refused rather
  * than truncated.
@@ -70,3 +88,27 @@ export type ImportListQuery = z.infer<typeof importListQuery>;
 
 /** The `GET /imports/:id` path parameter. */
 export const importIdParam = z.object({ id: z.string().uuid() }).strict();
+
+/**
+ * The summary query: a CLOSED schema like the list's, with the same rule at the
+ * ceiling — an unknown key, a non-integer or an oversized page is refused rather
+ * than ignored or truncated.
+ *
+ * `offset` is bounded below at zero and unbounded above on purpose: an offset past
+ * the last row is a legitimate request that answers an empty page, and inventing a
+ * ceiling for it would refuse a request the caller can answer nothing about. The
+ * page SIZE is what protects the response, which is what a ceiling is for.
+ */
+export const importSummaryQuery = z
+  .object({
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(IMPORT_SUMMARY_LIMIT_MAX, `The limit must be at most ${IMPORT_SUMMARY_LIMIT_MAX}.`)
+      .optional(),
+    offset: z.coerce.number().int().min(0).optional(),
+  })
+  .strict();
+
+export type ImportSummaryQuery = z.infer<typeof importSummaryQuery>;

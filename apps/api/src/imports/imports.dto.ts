@@ -45,6 +45,20 @@ export interface ImportPreviewAcceptedResponse {
 }
 
 /**
+ * The commit trigger's response: the identifier and the phase it was accepted
+ * INTO ([[IMP-003]]).
+ *
+ * Deliberately two fields, exactly like the preview's. `COMMITTING` is a literal
+ * rather than a read of the row for the same reason: the worker's claim performs
+ * the transition, so the caller polls and sees the truth rather than this response
+ * claiming a state the row does not have yet.
+ */
+export interface ImportCommitAcceptedResponse {
+  readonly importId: string;
+  readonly state: "COMMITTING";
+}
+
+/**
  * The upload response: an identifier and the state to poll.
  *
  * Deliberately two fields. The import is asynchronous by decision ([[DEC-072]]),
@@ -110,6 +124,46 @@ export interface ImportRowOutcomeResponse {
   readonly suspectedDuplicate: boolean;
 }
 
+/**
+ * One page of row outcomes, as the summary requested it.
+ *
+ * Echoed back because a paged read that does not say which page it answered forces
+ * the caller to remember — and a page of `rows` with no `offset` is unreadable
+ * alongside the totals it must be reconciled with.
+ */
+export interface ImportSummaryPage {
+  readonly limit: number;
+  readonly offset: number;
+}
+
+/**
+ * The result summary ([[DEC-071]], [[IMP-003]]): the totals for the WHOLE import,
+ * plus a bounded page of its row outcomes.
+ *
+ * This is the epic's deliverable, so two properties are structural rather than
+ * conventional:
+ *
+ * - the TOTALS come from the import row — the counters its commit wrote in the
+ *   same statement that entered the terminal state — so they cannot disagree with
+ *   what the commit actually did;
+ * - the ROWS come from the stored outcomes, which is what makes the summary
+ *   readable after a reload and long after the request that produced it.
+ *
+ * The rows are the redacted projection above: a verdict, a reason and a flag,
+ * never a name, a phone, an e-mail or a document number.
+ */
+export interface ImportSummaryResponse {
+  readonly importId: string;
+  readonly state: ImportJobStateValue;
+  readonly totals: {
+    readonly createdCount: number;
+    readonly failedCount: number;
+    readonly suspectedDuplicateCount: number;
+  };
+  readonly page: ImportSummaryPage;
+  readonly rows: readonly ImportRowOutcomeResponse[];
+}
+
 /** The upload response mapper: two fields, and the identifier is the job's own. */
 export function toImportUploadResponse(row: ImportJobRow): ImportUploadResponse {
   return { importId: row.id, state: row.state };
@@ -124,6 +178,43 @@ export function toImportUploadResponse(row: ImportJobRow): ImportUploadResponse 
  */
 export function toImportPreviewAcceptedResponse(importId: string): ImportPreviewAcceptedResponse {
   return { importId, state: "PREVIEWING" };
+}
+
+/**
+ * The commit trigger's mapper: the id and the phase it was accepted into.
+ *
+ * `COMMITTING` is a literal for the preview mapper's reason: the worker's claim
+ * performs the transition, and reporting the row's current `PREVIEWED` would tell
+ * the caller the commit is not coming.
+ */
+export function toImportCommitAcceptedResponse(importId: string): ImportCommitAcceptedResponse {
+  return { importId, state: "COMMITTING" };
+}
+
+/**
+ * The summary mapper.
+ *
+ * `totals` is projected from the row's own counters and `rows` from the stored
+ * outcomes, so the two halves of the summary have exactly one source each. Nothing
+ * on the row beyond the counters and the state is exposed: the storage key, the
+ * tenant and the uploader stay server-owned.
+ */
+export function toImportSummaryResponse(
+  row: ImportJobRow,
+  rows: readonly ImportRowOutcomeRow[],
+  page: ImportSummaryPage
+): ImportSummaryResponse {
+  return {
+    importId: row.id,
+    state: row.state,
+    totals: {
+      createdCount: row.createdCount,
+      failedCount: row.failedCount,
+      suspectedDuplicateCount: row.suspectedDuplicateCount,
+    },
+    page,
+    rows: rows.map(toImportRowOutcomeResponse),
+  };
 }
 
 /**

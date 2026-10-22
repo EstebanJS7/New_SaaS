@@ -327,8 +327,13 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // a read, so it takes the same owning-roles key the upload does; it is the
   // decision that produces the summary an operator is about to commit.
   "POST /imports/:id/preview",
+  // EPIC-19 IMP-003 — the commit TRIGGER and the result summary. The commit is the
+  // command that turns a preview into RECORDS, so it takes the owning-roles key;
+  // the summary reports what already happened and is a read like the other two.
+  "POST /imports/:id/commit",
   "GET /imports",
   "GET /imports/:id",
+  "GET /imports/:id/summary",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -601,6 +606,11 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  * and returns no row content, but it is the action that decides what an operator
  * is about to commit, so it takes the narrower key and never the read one.
  *
+ * [[IMP-003]] adds the commit and its summary. `POST /imports/:id/commit` is the
+ * command that WRITES the records, so it takes `imports.run` like the two commands
+ * before it; `GET /imports/:id/summary` reports what already happened and creates
+ * nothing, so it takes `imports.read` and every one of the six roles may call it.
+ *
  * There is deliberately NO entry for a state route: the lifecycle is
  * server-owned, and this map fails by name if a `PATCH /imports/:id` or any
  * other status-accepting route ever appears.
@@ -608,8 +618,10 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 const IMPORTS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /imports": IMPORTS_PERMISSIONS.run,
   "POST /imports/:id/preview": IMPORTS_PERMISSIONS.run,
+  "POST /imports/:id/commit": IMPORTS_PERMISSIONS.run,
   "GET /imports": IMPORTS_PERMISSIONS.read,
   "GET /imports/:id": IMPORTS_PERMISSIONS.read,
+  "GET /imports/:id/summary": IMPORTS_PERMISSIONS.read,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -975,11 +987,12 @@ describe("route-contract probe (deny-by-default)", () => {
     }
   });
 
-  it("pins imports.run on the upload and the preview trigger, and imports.read on the two reads", () => {
-    // Two commands on this surface and both take the narrower owning-roles key —
-    // the upload because it creates hundreds of records, the preview trigger
-    // (IMP-002) because it decides what an operator is about to commit. Neither
-    // read may take it: a read carrying `imports.run` would make the narrow grant
+  it("pins imports.run on the upload and both phase triggers, and imports.read on the three reads", () => {
+    // Three commands on this surface and all three take the narrower owning-roles
+    // key — the upload because it creates hundreds of records, the preview trigger
+    // (IMP-002) because it decides what an operator is about to commit, and the
+    // commit trigger (IMP-003) because it is the one that writes them. None of the
+    // reads may take it: a read carrying `imports.run` would make the narrow grant
     // unreachable on its own.
     const actualByRoute = new Map(
       inventory
@@ -1014,6 +1027,7 @@ describe("route-contract probe (deny-by-default)", () => {
     expect(exportsGrant.map(([route]) => route)).toEqual([
       "POST /imports",
       "POST /imports/:id/preview",
+      "POST /imports/:id/commit",
     ]);
   });
 

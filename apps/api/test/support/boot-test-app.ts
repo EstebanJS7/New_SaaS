@@ -82,6 +82,8 @@ export interface RecordingNotificationDeliveryProducer extends NotificationDeliv
  */
 export interface RecordingImportPreviewProducer extends ImportPreviewProducer {
   readonly enqueued: string[];
+  /** The commit jobs the harness recorded ([[IMP-003]]), by import id. */
+  readonly enqueuedCommits: string[];
 }
 
 export interface ScriptableFiscalProvider extends FiscalProviderPort {
@@ -163,10 +165,17 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
 
   const importPreviewProducer: RecordingImportPreviewProducer = {
     enqueued: [],
+    enqueuedCommits: [],
     // Explicit parameter type for the same reason the double above needs one: the
     // initializer references itself and would otherwise lose the contextual type.
     enqueue: (job: { readonly importJobId: string }) => {
       importPreviewProducer.enqueued.push(job.importJobId);
+      return Promise.resolve();
+    },
+    // ONE producer, ONE queue, two job names: the commit is enqueued through the
+    // same port the preview uses.
+    enqueueCommit: (job: { readonly importJobId: string }) => {
+      importPreviewProducer.enqueuedCommits.push(job.importJobId);
       return Promise.resolve();
     },
   };

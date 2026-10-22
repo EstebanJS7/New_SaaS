@@ -5,6 +5,7 @@ import supertest from "supertest";
 import { PrismaModule, PrismaService } from "@newsaas/database";
 import {
   IMPORT_PREVIEW_PRODUCER,
+  type ImportCommitJob,
   type ImportPreviewJob,
   type ImportPreviewProducer,
 } from "@newsaas/imports";
@@ -58,6 +59,8 @@ interface ErrorEnvelope {
 
 interface RecordingProducer extends ImportPreviewProducer {
   readonly enqueued: ImportPreviewJob[];
+  /** The commit jobs this double was asked to enqueue ([[IMP-003]]). */
+  readonly enqueuedCommits: ImportCommitJob[];
   /** Makes the next enqueues reject, the way an unreachable Redis does. */
   scriptFailure(failing: boolean): void;
 }
@@ -75,9 +78,15 @@ async function bootPreviewHarness(): Promise<PreviewFixture> {
   let failing = false;
   const producer: RecordingProducer = {
     enqueued: [],
+    enqueuedCommits: [],
     enqueue: (job: ImportPreviewJob) => {
       if (failing) return Promise.reject(new Error("redis unreachable"));
       producer.enqueued.push(job);
+      return Promise.resolve();
+    },
+    enqueueCommit: (job: ImportCommitJob) => {
+      if (failing) return Promise.reject(new Error("redis unreachable"));
+      producer.enqueuedCommits.push(job);
       return Promise.resolve();
     },
     scriptFailure: (next: boolean) => {
@@ -203,6 +212,7 @@ describe("POST /imports/:id/preview", () => {
   // every case starts with an empty queue recording.
   beforeEach(() => {
     harness.producer.enqueued.length = 0;
+    harness.producer.enqueuedCommits.length = 0;
   });
 
   /** Seeds one import job directly, so a test can start it in ANY state. */

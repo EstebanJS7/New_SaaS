@@ -19,11 +19,15 @@ import { RequestContextService } from "../context/request-context.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import type { ParsedImportArtefact } from "./import-artefact.pipe.js";
 import {
+  toImportCommitAcceptedResponse,
   toImportJobResponse,
   toImportPreviewAcceptedResponse,
+  toImportSummaryResponse,
   toImportUploadResponse,
+  type ImportCommitAcceptedResponse,
   type ImportJobResponse,
   type ImportPreviewAcceptedResponse,
+  type ImportSummaryResponse,
   type ImportUploadResponse,
 } from "./imports.dto.js";
 import { IMPORTS_PERMISSIONS } from "./imports.permissions.js";
@@ -37,12 +41,18 @@ import {
 } from "./imports.repository.js";
 
 /**
- * Stable message when a preview is requested for an entity whose column map does
- * not exist yet. It names the state of the product rather than a validation
- * failure, because the upload itself was valid — the preview simply is not
- * implemented for that entity until [[IMP-004]].
+ * Stable message when a phase is requested for an entity whose column map does not
+ * exist yet. It names the state of the product rather than a validation failure,
+ * because the upload itself was valid — the phase simply is not implemented for
+ * that entity until [[IMP-004]].
+ *
+ * ONE sentence for BOTH commands, deliberately byte for byte. Renamed from
+ * `IMPORT_PREVIEW_ENTITY_UNAVAILABLE_MESSAGE` when [[IMP-003]] added the commit: the
+ * refusal is the same product fact about the same entity, and two near-identical
+ * sentences would let the two commands disagree about why a patient file is
+ * paused. The TEXT is unchanged.
  */
-export const IMPORT_PREVIEW_ENTITY_UNAVAILABLE_MESSAGE =
+export const IMPORT_ENTITY_UNAVAILABLE_MESSAGE =
   "A preview is available for customer imports only. Patient imports arrive with a later release.";
 
 /**
@@ -147,7 +157,7 @@ export class ImportsService {
     private readonly permissionResolver: PermissionResolver,
     private readonly audit: AuditWriter,
     @Inject(STORAGE_PORT) private readonly storage: StoragePort,
-    @Inject(IMPORT_PREVIEW_PRODUCER) private readonly previewProducer: ImportPreviewProducer
+    @Inject(IMPORT_PREVIEW_PRODUCER) private readonly producer: ImportPreviewProducer
   ) {}
 
   /**
@@ -310,10 +320,10 @@ export class ImportsService {
     // patient map lands, and leaving it enqueued would accept an import and then
     // do nothing with it while the operator waited for a preview.
     if (row.entity !== "CUSTOMER") {
-      throw new DomainError("VALIDATION_FAILED", IMPORT_PREVIEW_ENTITY_UNAVAILABLE_MESSAGE);
+      throw new DomainError("VALIDATION_FAILED", IMPORT_ENTITY_UNAVAILABLE_MESSAGE);
     }
 
-    await this.previewProducer.enqueue({ importJobId: row.id });
+    await this.producer.enqueue({ importJobId: row.id });
 
     return toImportPreviewAcceptedResponse(row.id);
   }
@@ -325,7 +335,86 @@ export class ImportsService {
     );
   }
 
-  /** `PREVIEWED → COMMITTING`. The work behind the phase belongs to [[IMP-003]]. */
+  /**
+   * Queues the commit of one PREVIEWED import and answers what to watch
+   * ([[IMP-003]]).
+   *
+   * The preview trigger's order, step for step and for the same reasons:
+   *
+   * 1. The permission is re-asserted behind the route decorator, so a caller without
+   *    `imports.run` reaches no read and no queue call.
+   * 2. The read is tenant-scoped, so an unknown or FOREIGN import is the shared
+   *    byte-equivalent `404` before anything is enqueued.
+   * 3. An import that is not `PREVIEWED` is refused with the aggregate's EXISTING
+   *    stable `409` rather than enqueued: a commit is only meaningful for a preview
+   *    an operator has seen, and work the state machine will certainly reject must
+   *    not occupy the queue and the worker's claim.
+   * 4. Only then is the job enqueued, and a failure PROPAGATES — the row is still
+   *    `PREVIEWED`, so "nothing was queued" is the honest answer rather than an
+   *    accepted commit nobody will run.
+   *
+   * NO STATE CHANGE HERE, and no audit row: the commit phase is entered by the
+   * WORKER's claim, which co-commits `import.committing` with the transition. The
+   * response therefore says `COMMITTING` while the row may still read `PREVIEWED`
+   * for the instant between the enqueue and the claim — [[DEC-072]] made the surface
+   * poll.
+   */
+  async commit(id: string): Promise<ImportCommitAcceptedResponse> {
+    await this.requirePermission(IMPORTS_PERMISSIONS.run);
+
+    const row = await this.repository.findById(id);
+
+    if (row.state !== "PREVIEWED") {
+      throw new DomainError("CONFLICT", IMPORT_TRANSITION_CONFLICT_MESSAGE);
+    }
+
+    // A PATIENT commit has no column map yet ([[IMP-004]]), so it is refused BEFORE
+    // the queue — the same product fact the preview refuses, with the same sentence.
+    if (row.entity !== "CUSTOMER") {
+      throw new DomainError("VALIDATION_FAILED", IMPORT_ENTITY_UNAVAILABLE_MESSAGE);
+    }
+
+    await this.producer.enqueueCommit({ importJobId: row.id });
+
+    return toImportCommitAcceptedResponse(row.id);
+  }
+
+  /**
+   * The result summary: the totals, plus a bounded page of row outcomes
+   * ([[DEC-071]], [[IMP-003]]).
+   *
+   * IT READS NOTHING BACK FROM THE FILE, and that is the whole point: the summary is
+   * served from the two stored places — the counters the commit wrote, and
+   * `import_row_outcome` — so it is readable after a reload, after the artefact is
+   * deleted, and months later.
+   *
+   * It is available in ANY state, deliberately: an import that is still `PREVIEWED`
+   * has outcomes worth reading (that is the preview an operator is about to commit)
+   * and one that failed has the rows it did not write. A state gate here would make
+   * the surface answer `409` to "what happened?", which is the one question it
+   * exists to answer.
+   */
+  async getSummary(
+    id: string,
+    page: { readonly limit: number; readonly offset: number }
+  ): Promise<ImportSummaryResponse> {
+    await this.requirePermission(IMPORTS_PERMISSIONS.read);
+
+    const row = await this.repository.findById(id);
+    const rows = await this.repository.listRowOutcomes(row.id, page);
+
+    return toImportSummaryResponse(row, rows, page);
+  }
+
+  /**
+   * `PREVIEWED → COMMITTING`. Like `startPreview`, it is now unused by the HTTP
+   * surface: [[IMP-003]] made the commit asynchronous, so the trigger ENQUEUES and
+   * the worker's commit runner performs this transition in the same conditional
+   * write that takes the phase. Issuing it here would move the row off `PREVIEWED`
+   * before the worker looked at it, and the worker's claim — which pins `PREVIEWED`
+   * — would then find nothing to claim and every commit would be skipped. It is kept
+   * as the addressed form of the transition, for the same reason `startPreview` is.
+   */
   async startCommit(id: string): Promise<ImportJobResponse> {
     return this.transitionOrConflict(id, IMPORT_COMMITTING_ACTION, (target, tx) =>
       this.repository.startCommit(target, tx)
@@ -335,6 +424,12 @@ export class ImportsService {
   /**
    * `COMMITTING → COMMITTED` with the three counters, then the artefact is
    * deleted: a finished import needs neither its file nor a way back to it.
+   *
+   * Also the addressed form only ([[IMP-003]]): the worker's commit writes the same
+   * transition, counters and audit row from its own runner, because that is where
+   * the work happens. This one remains the operator tool's path, and it is the one
+   * that also stamps the artefact's deletion — the worker settles the state and the
+   * TTL sweep collects the object.
    */
   async completeCommit(id: string, counters: ImportCommitCounters): Promise<ImportJobResponse> {
     return this.transitionOrConflict(
