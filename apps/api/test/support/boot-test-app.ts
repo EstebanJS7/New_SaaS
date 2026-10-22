@@ -39,6 +39,7 @@ import {
   type NotificationDeliveryJob,
   type NotificationDeliveryProducer,
 } from "@newsaas/notifications";
+import { IMPORT_PREVIEW_PRODUCER, type ImportPreviewProducer } from "@newsaas/imports";
 import { createIsolationDatabase, type IsolationDatabase } from "./in-memory-database.js";
 
 /** Test double that records enqueued intent ids instead of touching Redis. */
@@ -70,6 +71,21 @@ export interface RecordingNotificationDeliveryProducer extends NotificationDeliv
   readonly cancelled: string[];
 }
 
+/**
+ * The import preview producer this harness substitutes (EPIC-19 IMP-002).
+ *
+ * Overridden for the same reason as the three above: the real one reads
+ * `REDIS_URL` at construction and throws without it, so a suite that asserts HTTP
+ * behaviour must not require a queue. Recording the enqueued import ids is what
+ * lets a test prove the trigger queued the work and — just as important — that a
+ * refusal queued nothing.
+ */
+export interface RecordingImportPreviewProducer extends ImportPreviewProducer {
+  readonly enqueued: string[];
+  /** The commit jobs the harness recorded ([[IMP-003]]), by import id. */
+  readonly enqueuedCommits: string[];
+}
+
 export interface ScriptableFiscalProvider extends FiscalProviderPort {
   /** Replaces the ordered cancel script; the last element repeats for later calls. */
   scriptCancel(outcomes: readonly FiscalCancelOutcome[]): void;
@@ -98,6 +114,8 @@ export interface BootedTestApp {
   fiscalSubmissionProducer: RecordingFiscalSubmissionProducer;
   /** Records notification enqueues and removals (EPIC-17 NOTIF-003). */
   notificationDeliveryProducer: RecordingNotificationDeliveryProducer;
+  /** Records import preview enqueues (EPIC-19 IMP-002). */
+  importPreviewProducer: RecordingImportPreviewProducer;
   fiscalProvider: ScriptableFiscalProvider;
   /** Serialized pino lines captured during the test (leak scans, debugging). */
   logLines: () => string[];
@@ -141,6 +159,23 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     enqueued: [],
     enqueue: (document) => {
       fiscalSubmissionProducer.enqueued.push(document);
+      return Promise.resolve();
+    },
+  };
+
+  const importPreviewProducer: RecordingImportPreviewProducer = {
+    enqueued: [],
+    enqueuedCommits: [],
+    // Explicit parameter type for the same reason the double above needs one: the
+    // initializer references itself and would otherwise lose the contextual type.
+    enqueue: (job: { readonly importJobId: string }) => {
+      importPreviewProducer.enqueued.push(job.importJobId);
+      return Promise.resolve();
+    },
+    // ONE producer, ONE queue, two job names: the commit is enqueued through the
+    // same port the preview uses.
+    enqueueCommit: (job: { readonly importJobId: string }) => {
+      importPreviewProducer.enqueuedCommits.push(job.importJobId);
       return Promise.resolve();
     },
   };
@@ -227,6 +262,8 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     .useValue(fiscalSubmissionProducer)
     .overrideProvider(NOTIFICATION_DELIVERY_PRODUCER)
     .useValue(notificationDeliveryProducer)
+    .overrideProvider(IMPORT_PREVIEW_PRODUCER)
+    .useValue(importPreviewProducer)
     .overrideProvider(FISCAL_PROVIDER)
     .useValue(fiscalProvider)
     .compile();
@@ -242,6 +279,7 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     db,
     cleanupProducer,
     fiscalSubmissionProducer,
+    importPreviewProducer,
     notificationDeliveryProducer,
     fiscalProvider,
     logLines: (): string[] => captured,

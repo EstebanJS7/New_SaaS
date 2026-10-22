@@ -1,0 +1,36 @@
+{
+  "name": "@newsaas/patients",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NewSaaS veterinary patient boundary \u2014 the create contract the API and the import worker share",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run --config ../../packages/vitest-config/vitest.node.ts"
+  },
+  "dependencies": {
+    "@newsaas/database": "workspace:*",
+    "@newsaas/shared": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@newsaas/eslint-config": "workspace:*",
+    "@newsaas/typescript-config": "workspace:*",
+    "@newsaas/vitest-config": "workspace:*",
+    "@types/node": "^22.14.1",
+    "eslint": "^9.24.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}

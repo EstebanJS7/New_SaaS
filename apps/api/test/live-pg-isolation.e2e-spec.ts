@@ -39,6 +39,7 @@ import {
   type NotificationDeliveryJob,
   type NotificationDeliveryProducer,
 } from "@newsaas/notifications";
+import { IMPORT_PREVIEW_PRODUCER, type ImportPreviewProducer } from "@newsaas/imports";
 import { allocateDocumentNumber, type FiscalSubmissionJob } from "@newsaas/fiscal";
 import {
   createCustomerFiscalReader,
@@ -1292,6 +1293,21 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
   // Recording fake installed via overrideProvider below. Referenced by the
   // token-identity regression pin, so it must be the exact injected instance.
+  // The import preview producer (EPIC-19). Overridden for the same reason as the
+  // three above: its factory reads `REDIS_URL` at construction, and this suite boots
+  // with `REDIS_URL` unset.
+  const importPreviewProducer: ImportPreviewProducer & { readonly enqueued: string[] } = {
+    enqueued: [],
+    enqueue: (job: { readonly importJobId: string }) => {
+      importPreviewProducer.enqueued.push(job.importJobId);
+      return Promise.resolve();
+    },
+    enqueueCommit: (job: { readonly importJobId: string }) => {
+      importPreviewProducer.enqueued.push(job.importJobId);
+      return Promise.resolve();
+    },
+  };
+
   const cleanupProducer: RecordingCleanupProducer = {
     enqueued: [],
     enqueue: (intentId: string) => {
@@ -1357,6 +1373,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       .useValue(fiscalSubmissionProducer)
       .overrideProvider(NOTIFICATION_DELIVERY_PRODUCER)
       .useValue(notificationDeliveryProducer)
+      .overrideProvider(IMPORT_PREVIEW_PRODUCER)
+      .useValue(importPreviewProducer)
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -3917,7 +3935,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
       // The mutation's complete durable side effect is the item row plus that
       // ONE audit row. No catalog event can be durably emitted, because the
-      // public schema carries no event/outbox/queue/job table at all.
+      // public schema carries no event/outbox/queue table at all.
+      //
+      // `import_job` (EPIC-19 IMP-001) is EXCLUDED BY NAME and is not a hole in
+      // this guard: it is a work aggregate for an uploaded file being processed,
+      // not a durable record of an emitted event. The pattern `%job%` was a
+      // heuristic that assumed no aggregate would ever be named that way, and a
+      // third mechanism appearing under that name should be a deliberate edit
+      // here rather than a silent pass.
       expect(await prisma.catalogItem.count({ where: { tenantId: tenantAId } })).toBe(
         itemsBefore + 1
       );
@@ -3928,7 +3953,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         SELECT tablename FROM pg_tables
         WHERE schemaname = 'public'
           AND (tablename LIKE '%event%' OR tablename LIKE '%outbox%'
-               OR tablename LIKE '%queue%' OR tablename LIKE '%job%')
+               OR tablename LIKE '%queue%' OR (tablename LIKE '%job%'
+                   AND tablename <> 'import_job'))
       `;
       expect(eventTables).toEqual([]);
     }, 30_000);

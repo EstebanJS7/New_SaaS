@@ -62,6 +62,9 @@ importers:
       '@newsaas/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@newsaas/customers':
+        specifier: workspace:*
+        version: link:../../packages/customers
       '@newsaas/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -71,9 +74,15 @@ importers:
       '@newsaas/fiscal-persistence':
         specifier: workspace:*
         version: link:../../packages/fiscal-persistence
+      '@newsaas/imports':
+        specifier: workspace:*
+        version: link:../../packages/imports
       '@newsaas/notifications':
         specifier: workspace:*
         version: link:../../packages/notifications
+      '@newsaas/patients':
+        specifier: workspace:*
+        version: link:../../packages/patients
       '@newsaas/secret-store':
         specifier: workspace:*
         version: link:../../packages/secret-store
@@ -271,6 +280,9 @@ importers:
       '@newsaas/fiscal-persistence':
         specifier: workspace:*
         version: link:../../packages/fiscal-persistence
+      '@newsaas/imports':
+        specifier: workspace:*
+        version: link:../../packages/imports
       '@newsaas/notifications':
         specifier: workspace:*
         version: link:../../packages/notifications
@@ -326,6 +338,40 @@ importers:
 
   packages/config:
     dependencies:
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      '@newsaas/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@newsaas/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@newsaas/vitest-config':
+        specifier: workspace:*
+        version: link:../vitest-config
+      '@types/node':
+        specifier: ^22.14.1
+        version: 22.20.1
+      eslint:
+        specifier: ^9.24.0
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(tsx@4.23.12)
+
+  packages/customers:
+    dependencies:
+      '@newsaas/database':
+        specifier: workspace:*
+        version: link:../database
+      '@newsaas/shared':
+        specifier: workspace:*
+        version: link:../shared
       zod:
         specifier: ^3.24.2
         version: 3.25.76
@@ -505,6 +551,43 @@ importers:
         specifier: ^3.1.1
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(tsx@4.23.12)
 
+  packages/imports:
+    dependencies:
+      '@newsaas/customers':
+        specifier: workspace:*
+        version: link:../customers
+      '@newsaas/patients':
+        specifier: workspace:*
+        version: link:../patients
+      bullmq:
+        specifier: ^5.46.1
+        version: 5.81.3
+      ioredis:
+        specifier: ^5.6.0
+        version: 5.11.1
+    devDependencies:
+      '@newsaas/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@newsaas/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@newsaas/vitest-config':
+        specifier: workspace:*
+        version: link:../vitest-config
+      '@types/node':
+        specifier: ^22.14.1
+        version: 22.20.1
+      eslint:
+        specifier: ^9.24.0
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(tsx@4.23.12)
+
   packages/notifications:
     dependencies:
       '@nestjs/common':
@@ -519,6 +602,40 @@ importers:
       nodemailer:
         specifier: ^10.1.2
         version: 10.1.2
+    devDependencies:
+      '@newsaas/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@newsaas/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@newsaas/vitest-config':
+        specifier: workspace:*
+        version: link:../vitest-config
+      '@types/node':
+        specifier: ^22.14.1
+        version: 22.20.1
+      eslint:
+        specifier: ^9.24.0
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(tsx@4.23.12)
+
+  packages/patients:
+    dependencies:
+      '@newsaas/database':
+        specifier: workspace:*
+        version: link:../database
+      '@newsaas/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
     devDependencies:
       '@newsaas/eslint-config':
         specifier: workspace:*

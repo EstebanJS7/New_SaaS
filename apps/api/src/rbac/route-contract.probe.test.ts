@@ -15,6 +15,7 @@ import { CASH_PERMISSIONS } from "../cash/cash.permissions.js";
 import { BILLING_PERMISSIONS } from "../billing/billing.permissions.js";
 import { FISCAL_PERMISSIONS } from "../fiscal/fiscal.permissions.js";
 import { REPORTING_PERMISSIONS } from "../reporting/reporting.permissions.js";
+import { IMPORTS_PERMISSIONS } from "../imports/imports.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -315,6 +316,24 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // a file out of the system are different decisions. Still no command route —
   // building a file from confirmed rows writes nothing.
   "GET /reports/:reportCode/export",
+  // EPIC-19 IMP-001 — the imports surface. ONE multipart upload behind
+  // `imports.run` (the owning-roles key, because an import creates hundreds of
+  // records in one command), the bounded list and the single read behind
+  // `imports.read`. DEC-072 leaves the surface UNGATED by feature code. There is
+  // deliberately no PATCH, PUT or DELETE and no route that accepts a state: the
+  // lifecycle is server-owned.
+  "POST /imports",
+  // EPIC-19 IMP-002 — the preview TRIGGER. A command (it queues work) rather than
+  // a read, so it takes the same owning-roles key the upload does; it is the
+  // decision that produces the summary an operator is about to commit.
+  "POST /imports/:id/preview",
+  // EPIC-19 IMP-003 — the commit TRIGGER and the result summary. The commit is the
+  // command that turns a preview into RECORDS, so it takes the owning-roles key;
+  // the summary reports what already happened and is a read like the other two.
+  "POST /imports/:id/commit",
+  "GET /imports",
+  "GET /imports/:id",
+  "GET /imports/:id/summary",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -573,6 +592,36 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   // rather than a sibling one because the assertion it needs is the same one:
   // exactly one granular `reports.*` key per route, by name.
   "GET /reports/:reportCode/export": REPORTING_PERMISSIONS.export,
+};
+
+/**
+ * EPIC-19 imports surface. The multipart upload MUST declare exactly
+ * `imports.run` — the owning-roles key, because it is the command that creates
+ * hundreds of records — and both reads MUST declare exactly `imports.read`, the
+ * key every one of the six roles holds. Pinning them by name means a route
+ * silently moved onto the wider or the narrower key fails here rather than
+ * shipping, which the permission-less 403 sweep cannot catch.
+ *
+ * [[IMP-002]] added ONE command: `POST /imports/:id/preview`. It writes no record
+ * and returns no row content, but it is the action that decides what an operator
+ * is about to commit, so it takes the narrower key and never the read one.
+ *
+ * [[IMP-003]] adds the commit and its summary. `POST /imports/:id/commit` is the
+ * command that WRITES the records, so it takes `imports.run` like the two commands
+ * before it; `GET /imports/:id/summary` reports what already happened and creates
+ * nothing, so it takes `imports.read` and every one of the six roles may call it.
+ *
+ * There is deliberately NO entry for a state route: the lifecycle is
+ * server-owned, and this map fails by name if a `PATCH /imports/:id` or any
+ * other status-accepting route ever appears.
+ */
+const IMPORTS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "POST /imports": IMPORTS_PERMISSIONS.run,
+  "POST /imports/:id/preview": IMPORTS_PERMISSIONS.run,
+  "POST /imports/:id/commit": IMPORTS_PERMISSIONS.run,
+  "GET /imports": IMPORTS_PERMISSIONS.read,
+  "GET /imports/:id": IMPORTS_PERMISSIONS.read,
+  "GET /imports/:id/summary": IMPORTS_PERMISSIONS.read,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -936,6 +985,50 @@ describe("route-contract probe (deny-by-default)", () => {
       expect([...(entry?.permissions ?? [])], route).toEqual([REPORTING_PERMISSIONS.read]);
       expect(entry?.permissions ?? [], route).not.toContain(REPORTING_PERMISSIONS.export);
     }
+  });
+
+  it("pins imports.run on the upload and both phase triggers, and imports.read on the three reads", () => {
+    // Three commands on this surface and all three take the narrower owning-roles
+    // key — the upload because it creates hundreds of records, the preview trigger
+    // (IMP-002) because it decides what an operator is about to commit, and the
+    // commit trigger (IMP-003) because it is the one that writes them. None of the
+    // reads may take it: a read carrying `imports.run` would make the narrow grant
+    // unreachable on its own.
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path === "/imports" || entry.path.startsWith("/imports/"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(IMPORTS_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING IMPORT ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG IMPORT PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in IMPORTS_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED IMPORT ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+
+    const exportsGrant = Object.entries(IMPORTS_PERMISSION_BY_ROUTE).filter(
+      ([, key]) => key === IMPORTS_PERMISSIONS.run
+    );
+    expect(exportsGrant.map(([route]) => route)).toEqual([
+      "POST /imports",
+      "POST /imports/:id/preview",
+      "POST /imports/:id/commit",
+    ]);
   });
 
   it("buckets EVERY route as public-exempt, portal-surface, or declared — violations are named", () => {

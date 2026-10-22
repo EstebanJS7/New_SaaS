@@ -4,6 +4,18 @@ All notable product changes will be documented here.
 
 ## Unreleased
 
+- **Customer and patient imports from a spreadsheet.** Upload a CSV, see exactly
+  what would happen, commit it, and read a per-row result summary. Importing
+  runs asynchronously on the queue, every valid row commits in its own
+  transaction, and the summary states what landed and why the rest did not — so
+  one bad row never costs the file. A suspected duplicate is a warning on a row
+  that is still created, never an update: `Customer` has no natural unique key,
+  so matching is a heuristic and is labelled as one.
+- **A patient import resolves its owner against an existing customer.** The file
+  names the guardian by document, phone or e-mail — exactly one — and an
+  unresolved reference is a row error that creates nothing, rather than a
+  customer conjured from a patient file.
+
 ### Added
 
 - **Reports, a dashboard, and a CSV export (PRD §31).** Twelve report views over
@@ -19,6 +31,10 @@ All notable product changes will be documented here.
 
 ### Changed
 
+- **The customer and patient create contracts moved into `packages/`** so the
+  import worker validates with exactly the rules the API enforces instead of a
+  second copy. No behaviour, route, permission or DTO shape changed, and the
+  existing suites prove it: they pass with no assertion touched.
 - **`Sale`, `Purchase` and `CashSession` now carry the instant of their terminal
   transition** — `completed_at`, `received_at`, `closed_at`. A period report
   could not distinguish a sale created on Monday from one completed on
@@ -31,6 +47,13 @@ All notable product changes will be documented here.
 
 ### Fixed
 
+- **The notification read surface's leak scan failed intermittently on its own
+  identifiers.** It asserted the response body never matches `/[+]?\d{9,}/`, and
+  nine consecutive decimal digits occur inside a `randomUUID()` by chance —
+  roughly one suite failure in four. Identifiers are now masked before the scan,
+  which keeps the assertion's subject (no phone number, address or payload
+  timestamp reached the projection) and removes the alphabet that could
+  impersonate one.
 - **A vaccination entered for one day could be reported overdue the day
   before.** The date field converted the typed value through the browser's clock
   while the reports classify by calendar date in the tenant's zone, so a staff

@@ -1,0 +1,37 @@
+{
+  "name": "@newsaas/imports",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NewSaaS import pipeline \u2014 the pure CSV reader, the customer column contract, the preview planner and its queue contract (no persistence, no HTTP, no Nest)",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run --config ../../packages/vitest-config/vitest.node.ts"
+  },
+  "dependencies": {
+    "@newsaas/customers": "workspace:*",
+    "@newsaas/patients": "workspace:*",
+    "bullmq": "^5.46.1",
+    "ioredis": "^5.6.0"
+  },
+  "devDependencies": {
+    "@newsaas/eslint-config": "workspace:*",
+    "@newsaas/typescript-config": "workspace:*",
+    "@newsaas/vitest-config": "workspace:*",
+    "@types/node": "^22.14.1",
+    "eslint": "^9.24.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}
