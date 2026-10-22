@@ -1,6 +1,12 @@
+import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { DEMO } from "./fixtures.js";
+
+/** The repository root, so the worker is spawned from a path, not from a shell. */
+const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 /**
  * The staff imports surface ([[IMP-005]]), driven by a real browser: sign in, open
@@ -8,14 +14,13 @@ import { DEMO } from "./fixtures.js";
  * table, commit, and read the summary — including the row that FAILED and the
  * reason it failed.
  *
- * **THIS SPEC IS UNRUN.** It was written in an environment with no Docker, so
- * there are no built apps, no database and no worker for this lane: no `next
- * start`, no API, no seeded tenant, no `import-processing` consumer. It is written
- * against the conventions the other specs in this directory use
- * (`clinical-records.spec.ts`, `reports.spec.ts`) and has been statically checked
- * with this package's `lint` and `typecheck`, but it has never been executed and
- * nothing here claims that it passes. Run it with the lane (see the package
- * README) before treating it as evidence.
+ * **THE WORKER IS THIS SPEC'S OWN RESPONSIBILITY.** Importing is asynchronous
+ * ([[DEC-072]]): the API enqueues and a BullMQ consumer does the work. The lane's
+ * `webServer` starts only the API and the web app, and its `globalSetup` migrates and
+ * seeds — neither starts a consumer, so without one the import sits in `UPLOADED`
+ * forever and this spec could never pass. It therefore spawns the worker itself, the
+ * way `recovery.spec.ts` already does for the notification queue, and kills it in
+ * `afterAll` so a worker cannot outlive the spec and consume the next flow's jobs.
  *
  * **WHY A BROWSER.** Every hop below is one no component test can prove:
  *
@@ -119,6 +124,28 @@ const PHASE_TIMEOUT_MS = 30_000;
 const OMITTED_DISPLAY_NAME = "";
 
 test.describe("the staff imports surface", () => {
+  let worker: ReturnType<typeof spawn> | undefined;
+  let workerOutput = "";
+
+  test.beforeAll(() => {
+    // `node` directly, not `pnpm start`: the wrapper is not the process that consumes,
+    // and killing it would leave the worker alive to take a later spec's jobs.
+    worker = spawn(process.execPath, [join(REPO_ROOT, "apps/worker/dist/main.js")], {
+      cwd: REPO_ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
+    });
+    for (const stream of [worker.stdout, worker.stderr]) {
+      stream?.on("data", (chunk: Buffer) => {
+        workerOutput += chunk.toString();
+      });
+    }
+  });
+
+  test.afterAll(() => {
+    worker?.kill("SIGTERM");
+  });
+
   test("uploads a CSV, previews it, commits it and reads the summary's failed row", async ({
     page,
   }, testInfo) => {
@@ -234,7 +261,12 @@ test.describe("the staff imports surface", () => {
     );
     const storedFailure = summaryRows(previewSummary).find((row) => row.status === "FAILED");
     if (storedFailure === undefined) {
-      throw new Error("The API's own summary reported no FAILED row for this import.");
+      // The worker's own output rides on the failure: "no FAILED row" is what a
+      // consumer that never booted looks like, and the reason it did not is in
+      // those lines rather than in this assertion.
+      throw new Error(
+        `The API's own summary reported no FAILED row for this import.\n\nWorker output:\n${workerOutput || "(nothing)"}`
+      );
     }
     await expect(failedRow.getByTestId("imports-outcome-reason")).toHaveText(
       requireString(storedFailure, "reasonCode")
