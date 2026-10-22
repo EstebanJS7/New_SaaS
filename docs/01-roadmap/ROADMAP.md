@@ -28,7 +28,7 @@ updated: 2026-10-22
 | EPIC-17 | Notifications                      |    done | EPIC-07                   |
 | EPIC-18 | Dashboards/Reports                 |    done | prior domains             |
 | EPIC-19 | Imports                            |    done | EPIC-04, EPIC-05          |
-| EPIC-20 | Production Hardening               | planned | MVP feature epics         |
+| EPIC-20 | Production Hardening               | in-progress | MVP feature epics     |
 
 Update this table when Epic status changes.
 
@@ -279,3 +279,32 @@ proves the half the lane can reach — the multipart proxy, the surface, the
 queue, the claim and the worker's boot. Four iterations of that lane each
 produced a real finding rather than a selector fix, which is recorded rather
 than smoothed over.
+
+[[EPIC-20]] Production Hardening moved to `in-progress` on 2026-10-22. The epic
+existed only as a row in the table above. The kickoff is the epic file, seven
+Stories and five accepted Decisions — [[DEC-074]] (which half of PRD §29/§30 is
+code in this repository and which is an operational runbook, and that the restore
+must be *executed* rather than promised), [[DEC-075]] (CSP with a per-request
+nonce on `script-src` and `style-src`, no `unsafe-inline`), [[DEC-076]] (the rate
+limit budget moves to Redis as one atomic sliding window and degrades open to the
+in-process window when Redis is unavailable), [[DEC-077]] (shared object storage
+joins the environment contract in compose *and* CI) and [[DEC-078]] (report
+performance becomes a seeded dataset plus a declared budget, gated on the query
+plan as well as the clock).
+
+Exploring the code rather than the PRD reshaped the plan twice. **Two of PRD
+§29's bullets were already satisfied** and the epic's job there is to prove and
+record them, not to rewrite them: CORS is an exact-match allowlist with
+deny-by-default `403` and a real integration test, and the global exception
+filter returns a generic message for every 5xx so no stack trace can reach a
+client. And the login failure budget turned out to cover **four** paths — staff
+login, staff password recovery, portal login and portal password recovery —
+rather than the one [[TD-005]] names, which is the argument for fixing it at the
+service seam.
+
+This is a kickoff record, **never** a readiness claim. The epic's closure is the
+first in this chain that can state more than "implementation closure" about
+PRD §29, because every control it adds has a test that fails when the control is
+removed; about PRD §30 it will state something narrower, because the backup
+schedule and the PITR window are hosting configuration that this repository can
+only require and rehearse.
