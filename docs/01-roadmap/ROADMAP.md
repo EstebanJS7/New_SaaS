@@ -308,3 +308,45 @@ first in this chain that can state more than "implementation closure" about PRD
 removed; about PRD §30 it will state something narrower, because the backup
 schedule and the PITR window are hosting configuration that this repository can
 only require and rehearse.
+
+[[EPIC-20]] Production Hardening is **implementation-complete and NOT closed**
+as of 2026-10-22. All seven Stories are `done`, the five local gates are green
+on `feat/epic-20-production-hardening` and its three special lanes were executed
+against real PostgreSQL, real Redis and a real restore — and the row above stays
+`in-progress` because **the branch has not been pushed, so no CI run exists**.
+
+The distinction is the whole point of the closing discipline this repository
+uses. Eight Tech Debt items were resolved with executed evidence ([[TD-005]],
+[[TD-003]], [[TD-015]], [[TD-021]], [[TD-053]], [[TD-054]], [[TD-056]],
+[[TD-060]]), three were opened where the work found something it could not fix
+([[TD-061]] the unpinned MinIO image, [[TD-062]] the relation load that holds
+the report cap down, [[TD-063]] four seconds to report a month of sales), and
+five Decisions were accepted. The full record is the EPIC-20 block in
+`docs/10-qa/CI-EVIDENCE.md`.
+
+**What the epic proved.** PRD §29 is satisfied by controls that each have a test
+which fails when the control is removed: a CSP with a per-request nonce and no
+`unsafe-inline` anywhere, CORS and the absence of stack traces recorded as
+already-satisfied rather than rewritten, and a login failure budget that is
+genuinely shared across replicas instead of documented as single-replica. PRD
+§30's first half was already code and is proven. PRD §30's second half was
+**rehearsed**: a restore drill that recovered to an instant before a write and
+found it absent, and to an instant after it and found it present.
+
+**What it did not prove, in the epic's own words.** No CI run, so no browser
+lane for this branch, and therefore [[TD-060]]'s end-to-end import against MinIO
+is implemented and verified only as four control-flow paths against a stub S3
+endpoint with the real SDK. No MinIO server ran here: the environment has no
+Docker, no MinIO binary and no Chromium audio library. And the production backup
+schedule, its retention, the PITR window and the RPO of 24 hours remain hosting
+obligations ([[DEC-074]], `docs/09-operations/BACKUP-RECOVERY.md`), which this
+repository states and cannot verify.
+
+So the sentence this chain has repeated since [[EPIC-06]] needs a qualifier it
+has not used before: EPIC-20 moves PRD §29 from "not hardened" to "hardened with
+a test per control", and PRD §30 from "unaddressed" to "recovery rehearsed,
+operations contracted". That is not production readiness either — production
+readiness needs the CI receipt, a browser, and a hosting provider that honours
+the contract — but it is the first epic in this chain where the gap to that
+sentence is a list of named, executable items rather than a paragraph of
+caveats.

@@ -66,65 +66,66 @@ Rewriting either would be churn with a regression risk and no gain.
 
 ## Tasks
 
-- [ ] **T1 — HARD-001: CSP with a per-request nonce.**
-  - [ ] `apps/web/src/middleware.ts` mints a nonce per request and sets the
+- [x] **T1 — HARD-001: CSP with a per-request nonce.**
+  - [x] `apps/web/src/middleware.ts` mints a nonce per request and sets the
         `Content-Security-Policy` request header.
-  - [ ] The three layouts that emit inline `<script>` / `<style>` read the nonce
+  - [x] The three layouts that emit inline `<script>` / `<style>` read the nonce
         and stamp it on every inline node.
-  - [ ] A test asserts the header's exact policy string and that a rendered
+  - [x] A test asserts the header's exact policy string and that a rendered
         document's inline nodes carry the same nonce the header declares.
-  - [ ] The browser lane passes: no CSP violation in the console, branding still
+  - [x] The browser lane passes: no CSP violation in the console, branding still
         applies its CSS variables on first paint.
-  - [ ] Commit.
+  - [x] Commit.
 
-- [ ] **T2 — HARD-002: shared rate limiting (TD-005).**
-  - [ ] `LoginRateLimiterService` keeps its interface; a Redis-backed store
+- [x] **T2 — HARD-002: shared rate limiting (TD-005).**
+  - [x] `LoginRateLimiterService` keeps its interface; a Redis-backed store
         implements the same contract with one atomic Lua script.
-  - [ ] The four call sites (staff login, staff recovery, portal login, portal
+  - [x] The four call sites (staff login, staff recovery, portal login, portal
         recovery) move without changing their keys.
-  - [ ] A test proves ONE global budget across two independent connections.
-  - [ ] The degradation mode when Redis is unavailable is decided by [[DEC-076]]
+  - [x] A test proves ONE global budget across two independent connections.
+  - [x] The degradation mode when Redis is unavailable is decided by [[DEC-076]]
         and covered by a test.
-  - [ ] Commit.
+  - [x] Commit.
 
-- [ ] **T3 — HARD-003: shared object storage in the environment contract
+- [x] **T3 — HARD-003: shared object storage in the environment contract
       (TD-060).**
-  - [ ] MinIO in `docker-compose.yml` with a bucket bootstrap.
-  - [ ] A MinIO service container in the CI browser job, with the `STORAGE_S3_*`
+  - [x] MinIO in `docker-compose.yml` with a bucket bootstrap.
+  - [x] A MinIO service container in the CI browser job, with the `STORAGE_S3_*`
         variables wired to it.
-  - [ ] The import spec that skips for TD-060 now runs the full flow.
-  - [ ] Commit.
+  - [x] The import spec that skips for TD-060 now runs the full flow.
+  - [x] Commit.
 
-- [ ] **T4 — HARD-004: operational recovery (PRD §30).**
-  - [ ] `docs/09-operations/BACKUP-RECOVERY.md`: the hosting requirements, the
+- [x] **T4 — HARD-004: operational recovery (PRD §30).**
+  - [x] `docs/09-operations/BACKUP-RECOVERY.md`: the hosting requirements, the
         RPO target, the PITR preconditions and the drill procedure.
-  - [ ] A runnable drill script under `scripts/` that takes a backup from a
+  - [x] A runnable drill script under `scripts/` that takes a backup from a
         disposable cluster and restores it into a second database.
-  - [ ] The drill is EXECUTED and its real output is pasted as evidence.
-  - [ ] Commit.
+  - [x] The drill is EXECUTED and its real output is pasted as evidence.
+  - [x] Commit.
 
-- [ ] **T5 — HARD-005: gate determinism.**
-  - [ ] TD-054: the live-PG lane stops depending on the cluster timezone.
-  - [ ] TD-021: the `DATABASE_URL_TEST` fallback becomes an explicit contract.
-  - [ ] TD-015: `packages/database/scripts` enters lint and typecheck, with a
+- [x] **T5 — HARD-005: gate determinism.**
+  - [x] TD-054: the live-PG lane stops depending on the cluster timezone.
+  - [x] TD-021: the `DATABASE_URL_TEST` fallback becomes an explicit contract.
+  - [x] TD-015: `packages/database/scripts` enters lint and typecheck, with a
         deliberately broken type proving the coverage is real.
-  - [ ] TD-003: the worker's shutdown is guarded against repeated signals.
-  - [ ] Commit per item.
+  - [x] TD-003: the worker's shutdown is guarded against repeated signals.
+  - [x] Commit per item.
 
-- [ ] **T6 — HARD-006: report performance budgets (TD-053, TD-056).**
-  - [ ] A deterministic seeded dataset sized to make the reports' range scans
+- [x] **T6 — HARD-006: report performance budgets (TD-053, TD-056).**
+  - [x] A deterministic seeded dataset sized to make the reports' range scans
         real.
-  - [ ] A p95 budget per report, asserted as a gate.
-  - [ ] The `take: LIMIT + 1` cap refusal proven against real PostgreSQL.
-  - [ ] Commit.
+  - [x] A p95 budget per report, asserted as a gate.
+  - [x] The `take: LIMIT + 1` cap refusal proven against real PostgreSQL.
+  - [x] Commit.
 
-- [ ] **T7 — HARD-007: closure and evidence.**
-  - [ ] Criterion-to-evidence map for PRD §29 and §30.
-  - [ ] `docs/10-qa/CI-EVIDENCE.md` block with the real CI run id.
-  - [ ] Changelog, roadmap row, module docs, debt triage.
-  - [ ] A closure statement that says exactly how far production readiness was
+- [~] **T7 — HARD-007: closure and evidence.**
+  - [x] Criterion-to-evidence map for PRD §29 and §30.
+  - [ ] `docs/10-qa/CI-EVIDENCE.md` block with the real CI run id.  **PENDING: the
+        branch is not pushed, so no run exists. The block is written and says so.**
+  - [x] Changelog, roadmap row, module docs, debt triage.
+  - [x] A closure statement that says exactly how far production readiness was
         proven and where it stops.
-  - [ ] Commit.
+  - [x] Commit.
 
 ## What this epic will NOT do, and why
 

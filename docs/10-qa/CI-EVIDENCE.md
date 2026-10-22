@@ -2282,3 +2282,137 @@ sentences must be read precisely:
   ([[TD-058]]). The 72-hour TTL is defensible, not correct, and the worker's
   terminal path does not delete the file — the API commands and the TTL sweep
   do.
+
+## EPIC-20 Production Hardening — local gates, CI receipt PENDING (2026-10-22)
+
+[[EPIC-20]] hardening work is complete on `feat/epic-20-production-hardening`
+and **not yet pushed**, so **there is no CI run to cite.** That sentence is the
+headline of this block, not a footnote: every epic before this one that claimed
+a CI receipt had one, and the one that did not ([[EPIC-18]]) said so explicitly.
+
+What exists is what ran here. What does not exist is `Database migrations`,
+`Lint, Typecheck, Test, Build`, `DTE XSD validation` and `Browser end-to-end`
+passing on a GitHub runner for this branch.
+
+```text
+branch     feat/epic-20-production-hardening
+base       main @ feaa53e  (EPIC-19 merged as PR #147)
+CI run     NONE YET — the branch has not been pushed
+```
+
+### The full local gate run, on the closing tree
+
+`pnpm format-check && pnpm lint && pnpm typecheck && pnpm build && pnpm test`,
+all five, all green. Run because the previous two epics were corrected for
+running suites only and discovering typecheck and lint failures at the end.
+
+```text
+format-check   PASS
+lint           PASS       29/29 turbo tasks
+typecheck      PASS       29/29 turbo tasks
+build          PASS       16/16 turbo tasks
+test           PASS       29/29 turbo tasks
+```
+
+### Test totals, after minus before
+
+```text
+suite                  files                      tests
+api                    120 (+1 skipped) | 121     1760 passed | 266 skipped   (unchanged)
+web                    124 (+2)                   1366 passed                 (was 1343)
+worker                  20                        283 passed                 (was 282)
+database                30                        550 passed                 (unchanged)
+imports                 13                        132 passed                 (unchanged)
+fiscal                  36                        788 passed                 (unchanged)
+fiscal-persistence      10                        100 passed                 (unchanged)
+notifications           11                         84 passed                 (unchanged)
+secret-store             5                         50 passed                 (unchanged)
+ui                       6                         36 passed                 (unchanged)
+shared                   4                         23 passed                 (unchanged)
+customers                1                          9 passed                 (unchanged)
+patients                 1                          8 passed                 (unchanged)
+typescript-config        1                          1 passed                 (unchanged)
+preflight                2                          6 passed                 (unchanged)
+```
+
+Turbo: **29 tasks**, unchanged. Migrations: **51**, unchanged — this epic adds
+none. Permissions: **66**, unchanged — this epic adds none.
+
+### The three lanes that are not part of `pnpm test`, executed here
+
+These need a real PostgreSQL, a real Redis or a real cluster, so none of them is
+in the default test task. All three were run.
+
+**Live PostgreSQL — 266/266, twice, in two different cluster timezones.** This
+is [[TD-054]]'s proof. The same suite, the same tree, two clusters:
+
+```text
+cluster at America/Asuncion   ->  266 passed (266)      <- the zone that used to fail
+cluster at UTC                ->  266 passed (266)
+```
+
+Before the fix those two runs produced 265/266 and 266/266.
+
+**Reporting performance and cap enforcement — 6/6.** Seeded dataset, not a
+fixture:
+
+```text
+seed            50,000 completed sales inside the window (100,000 lines)
+                 5,000 outside it, so a dropped range predicate is observable
+plan            no Seq Scan on "sale", asserted from the SQL Prisma actually emitted
+p95              ~137 sales / 1 day   ->    39 ms
+               ~4,100 sales / 30 days -> 4,081 ms      (budget raised to 8,000 ms
+                                                         as a tripwire; the real
+                                                         defect is TD-063)
+cap             50,000 refused with the report's own DomainError
+                ~137 accepted, with its lines
+```
+
+**Shared rate-limit store — 12/12, against a real Redis 7.** One global budget
+across two independent connections, the window's slide, the reset's reach across
+replicas, the TTL, the per-key ceiling, the fail-open read, the fail-open
+write-if-still-limiting path, and the single diagnostic line per minute.
+
+### The restore drill, EXECUTED
+
+`bash scripts/verify-restore-drill.sh` — exit 0, both drills PASS. The full
+output is in [[HARD-004]]. The parts that matter:
+
+```text
+DRILL A  pg_dump -> pg_restore into a SECOND cluster
+         73 tables, 51 applied migrations, 66 permissions and a drill marker survived
+DRILL B  pg_basebackup + archived WAL, recovered to a target instant
+         BEFORE a write -> that write ABSENT
+         AFTER  a write -> both rows present, padding excluded
+```
+
+### What this block does NOT establish, stated precisely
+
+- **No CI run.** Nothing on a GitHub runner, so the browser lane's result for
+  this branch is unknown. [[TD-060]]'s end-to-end import against MinIO is the
+  item that most needs it: the bucket bootstrap's four control-flow paths were
+  verified here with the real AWS SDK, but **no MinIO server ran in this
+  environment** (no Docker, no MinIO binary).
+- **No browser lane run at all.** Chromium needs `libasound.so.2`, which this
+  environment does not have. The CSP work has a partial substitute recorded in
+  [[HARD-001]] — a `next start` of the production build, with the served
+  document's 16 script tags and 1 style tag all carrying the nonce the header
+  declared — but that is not a browser.
+- **No production readiness claim.** PRD §30's backup schedule, retention, PITR
+  window and RPO are hosting obligations. [[DEC-074]] and
+  `docs/09-operations/BACKUP-RECOVERY.md` say which half was proven and which
+  half is a contract.
+
+### The gate additions this epic makes to CI
+
+Two, both declared in `.github/workflows/ci.yml` and both **unexecuted** until
+the branch is pushed:
+
+```text
+quality job   + a redis:7-alpine service container
+              + step "Shared rate-limit store (real Redis)"
+                pnpm --filter @newsaas/api test:redis
+browser job   + step "Start object storage" (minio, polled on /minio/health/live,
+                printing container logs on failure)
+              + STORAGE_S3_* and AWS_* variables on the lane run
+```
