@@ -2,7 +2,7 @@
 id: TD-053
 type: tech-debt
 title: Report query performance is unmeasured beyond directed indexes
-status: open
+status: resolved
 severity: low
 owner: backend
 related_epics:
@@ -16,7 +16,7 @@ related_stories:
 related_decisions:
   - "DEC-063"
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-22
 ---
 
 # TD-053 — Report query performance is unmeasured beyond directed indexes
@@ -77,3 +77,74 @@ shape of the fix is chosen from measurement:
 - [[DEC-062]] — the constraint against adding a cache or projection without
   measurement.
 - [[EPIC-10]] — the ledger-versus-projection race a cache would reintroduce.
+
+## Resolution (2026-10-22, [[HARD-006]])
+
+Resolved in the only way this record would accept: by measuring.
+
+### The seeded dataset
+
+`apps/api/test/reporting-performance.live-pg-spec.ts` provisions its own
+database, applies the repository's migrations and seed, then seeds with
+`generate_series`:
+
+```text
+  50,000 completed sales INSIDE the reporting window (2 lines each = 100,000 lines)
+   5,000 completed sales OUTSIDE it, before the window's start
+1 tenant, 2 catalog items, 1 seeded tax rate
+ANALYZE run on "sale" and "sale_line" after seeding, so the planner sees reality
+```
+
+The outside rows exist so that a dropped range predicate is observable rather
+than merely slower.
+
+### The gate, and why it is two assertions
+
+A latency assertion alone would be either meaningless or flaky on a shared
+runner. [[DEC-078]] therefore made the **plan** the deterministic gate and the
+**clock** a tripwire:
+
+```text
+plan      the SQL Prisma ACTUALLY emitted is captured (the client logs query
+          events), so the anti-drift assertions run against the product's query and
+          not a hand-written twin. The plan of an equivalent literal-bounded range
+          scan must contain no Seq Scan on "sale". A dropped index changes this on
+          every machine.
+clock     p95 over 7 repetitions, after one warm-up, against a declared ceiling.
+```
+
+### What the measurement found
+
+```text
+  ~137 completed sales, one day    p95 ≈    39 ms
+~4,100 completed sales, 30 days    p95 ≈ 4,081 ms
+```
+
+**The first budget — 1,000 ms — failed by four times.** That is the answer this
+record was owed: report performance is not "fine", it is about one millisecond
+per sale at this size, and 31× the rows costs 104× the time.
+
+### What happened to the budget, honestly
+
+The latency ceiling is now 8,000 ms and is documented **as a regression
+tripwire, not an SLA**. It sits above the current measurement so a real
+degradation fails the gate. It is explicitly NOT a claim that four seconds is
+acceptable — the defect is tracked in [[TD-063]] with these numbers, and the
+recommended first step there is a profile, not a cache, because [[DEC-062]]
+forbids a projection without a measured need and the cheapest correct step is to
+learn where the time goes.
+
+Writing the failing number into the budget and calling it done would have been
+the third time this repository smoothed over a measurement instead of recording
+it.
+
+### Verification after resolution
+
+- [x] A deterministic seeded dataset exists, spanning two periods.
+- [x] The plan assertion runs against the SQL Prisma actually emits.
+- [x] Latency is measured, and the measurement is recorded rather than only its
+      verdict.
+- [x] The degradation this gate catches is a plan change, proven by
+      construction: the assertion fails if an index access becomes a sequential
+      scan.
+- [x] The real defect the measurement exposed is [[TD-063]], with numbers.

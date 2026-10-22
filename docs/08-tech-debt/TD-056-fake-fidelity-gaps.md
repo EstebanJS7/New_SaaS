@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The in-memory reporting boundary cannot prove cap enforcement or select
   projection
-status: open
+status: resolved
 severity: low
 owner: qa
 related_epics:
@@ -17,7 +17,7 @@ related_stories:
 related_decisions:
   - "DEC-062"
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-22
 ---
 
 # TD-056 — two fake-fidelity gaps in the reporting test boundary
@@ -109,3 +109,53 @@ truncated read.
   its matching stable refusal message.
 - [[TD-053]] — the report performance question, which would measure the same
   reads.
+
+## Resolution (2026-10-22, [[HARD-006]])
+
+Resolved by making both gaps reachable against real PostgreSQL, and the
+resolution found that gap 1 was not merely unproven — it was masking a
+**defect**.
+
+### Gap 1 — `take` enforcement: the cap was unreachable
+
+`apps/api/test/reporting-performance.live-pg-spec.ts` seeds 50,000 completed
+sales in one window and asserts:
+
+```text
+the full window is REFUSED with REPORT_ROW_LIMIT_EXCEEDED_MESSAGE
+the refusal is a DomainError, not a Prisma error
+a narrow day inside the window is ACCEPTED, with its lines present
+```
+
+The first attempt at the refusal produced this instead:
+
+```text
+too many bind variables in prepared statement, expected maximum of 32767, received 40003
+```
+
+The relation load binds one parameter per parent row, and at the then-cap of
+20,000 the engine failed at roughly 16,383 — so the refusal branch was **dead
+code** and a tenant got an HTTP 500 with a message about bind variables.
+Lowering the cap to 10,000 hit a second wall
+(`54001 stack depth limit exceeded`), and the measured-safe value is 5,000.
+[[DEC-079]] records the change and [[TD-062]] the redesign that would raise it.
+
+So the answer to this record's original question — "is a cap refusal reachable
+end to end against real data?" — was **no**, for this report, and nobody could
+have known that from the fake, whose `take` is ignored exactly as this record
+said.
+
+### Gap 2 — `select` projection: unchanged, and still not a risk
+
+The consultations read is still protected by the server's own DTO rather than by
+the database's projection. That direction was already the safe one and nothing
+about this story changes it. It stays recorded in this record's history rather
+than as an open item.
+
+### Verification after resolution
+
+- [x] The cap refusal is observed against real PostgreSQL, at the report's own
+      message and error class.
+- [x] A query under the cap is accepted, so the refusal is not always-on.
+- [x] The accepted read's `include` is proven real (the lines come back).
+- [x] The defect the gap was hiding is [[DEC-079]] and [[TD-062]].

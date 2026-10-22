@@ -28,7 +28,14 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["test/live-pg-isolation.e2e-spec.ts"],
+    include: [
+      "test/live-pg-isolation.e2e-spec.ts",
+      // HARD-006: the reporting performance budgets and the cap enforcement that
+      // the in-memory boundary cannot prove (TD-053, TD-056, DEC-078). It shares
+      // this lane because it needs the same thing: a real PostgreSQL and
+      // DATABASE_URL_TEST.
+      "test/reporting-performance.live-pg-spec.ts",
+    ],
     fileParallelism: false,
     // Booting a real AppModule, provisioning a database and running 266 cases.
     hookTimeout: 180_000,

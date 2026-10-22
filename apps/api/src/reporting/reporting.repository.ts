@@ -433,12 +433,50 @@ export interface ReportingReadPrisma {
  * A report aggregates in TypeScript, so an unbounded read is a memory liability
  * and — worse — a silently truncated aggregate would look exactly like a correct
  * one. The cap makes the failure honest: a period that would need more rows
- * REFUSES with a stable message instead of returning a partial total. Twenty
- * thousand completed sales is far past any single veterinary tenant's period, so
- * the bound never refuses a real question; it refuses a pathological one, and
- * [[TD-053]] owns the eventual pushdown that would make the cap unnecessary.
+ * REFUSES with a stable message instead of returning a partial total.
+ *
+ * ## Why 10,000 and not the 20,000 this used to say ([[DEC-079]])
+ *
+ * 20,000 was UNREACHABLE. The completed-sales read loads its `lines` relation with
+ * `include`, and Prisma issues that load as a separate statement binding one
+ * parameter per parent row. At 20,001 parents PostgreSQL refused with
+ *
+ * ```text
+ * too many bind variables in prepared statement, expected maximum of 32767,
+ * received 40003
+ * ```
+ *
+ * which surfaced as a raw Prisma error — an HTTP 500 — at roughly 16,383 sales.
+ * So the refusal below, which every reporting read depends on, was DEAD CODE for
+ * this report: the engine always failed first, and a tenant between 16,383 and
+ * 20,000 sales got an internal error instead of the sentence telling it to narrow
+ * the period.
+ *
+ * ## And why 5,000, not 10,000
+ *
+ * Measured on PostgreSQL 16.13, `include`-loading the lines for N parent sales:
+ *
+ * ```text
+ * take=1000  OK      take=2500  OK      take=4000  OK
+ * take=5000  OK      take=6000  OK
+ * take=8000  FAILED  take=10000 FAILED
+ * ```
+ *
+ * The 8,000 failure is not the bind limit but `54001 stack depth limit exceeded`:
+ * the planner exhausts `max_stack_depth` (2 MB by default) evaluating an `IN` list
+ * of that size. So the ceiling is a planner limit that is neither documented as a
+ * contract nor visible from the code — the second reason not to aim near it.
+ *
+ * 5,000 is the furthest measured-safe point with real margin, and it matches
+ * `REPORT_PURCHASE_ROW_LIMIT`, which loads the same relation shape. It does mean a
+ * busy tenant narrows the period sooner than the old number suggested; [[TD-062]]
+ * records the chunked-load redesign that raises the ceiling properly instead of
+ * guessing at it again.
+ *
+ * This was found by running the read against real PostgreSQL with 55,000 seeded
+ * sales; every constant and every branch was individually correct before that.
  */
-export const REPORT_SALE_ROW_LIMIT = 20_000;
+export const REPORT_SALE_ROW_LIMIT = 5_000;
 
 /** Stable message when a period needs more rows than the cap allows. */
 export const REPORT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_SALE_ROW_LIMIT} completed sales. Narrow the period and try again.`;
