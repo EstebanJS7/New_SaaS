@@ -489,6 +489,133 @@ decision, so the honest answer to an upload is "accepted, here is what to watch"
 `?limit=` is REFUSED above the ceiling rather than truncated ([[TD-026]]): a
 silently shortened page is a page that lies about what exists.
 
+## The staff surface
+
+[[IMP-005]] ships the only browser-reachable part of this module: `/app/imports`
+(the upload and the tenant's history) and `/app/imports/<id>` (one import,
+watched while it runs and read after it ends). The API is unchanged by it; what
+it adds is a BFF proxy and the two screens.
+
+### The BFF proxy
+
+`apps/web/src/app/api/imports/` is a CLOSED allowlist of `(method, path)` pairs,
+not a catch-all tunnel:
+
+```text
+GET  /api/imports               -> GET  /imports                 (?entity=, ?limit=)
+POST /api/imports               -> POST /imports                 (multipart upload)
+GET  /api/imports/:id           -> GET  /imports/:id
+GET  /api/imports/:id/summary   -> GET  /imports/:id/summary     (?limit=, ?offset=)
+POST /api/imports/:id/preview   -> POST /imports/:id/preview
+POST /api/imports/:id/commit    -> POST /imports/:id/commit
+```
+
+Every refusal happens BEFORE any upstream call, and the first three before a
+credential is even read:
+
+- **`404`** for a path outside the table. An `:id` slot that is not a canonical
+  UUID is one of those paths — a malformed id can never fill a UUID slot, the
+  convention the sales and scheduling proxies already state — so a non-UUID
+  never costs the API a request.
+- **`405`** for a known path reached with a verb it does not support. `PUT`,
+  `PATCH` and `DELETE` are not exported at all: the lifecycle is server-owned
+  and a re-run is a new import with a new artefact.
+- **`400`** for a malformed segment (an empty one, `.`, `..`, a percent escape)
+  or for a query key the shape does not accept. The key set is a second
+  allowlist — `entity`/`limit` on the list, `limit`/`offset` on the summary —
+  which is what makes `?tenantId=` structurally unable to leave the browser. The
+  VALUES are not interpreted: the two ceilings and `offset >= 0` are the API's
+  own `imports.zod.ts` contract, and a second bound here would be a second bound
+  to keep in sync.
+- **`401`** for a request carrying no staff session. Only `ns_staff_session`
+  crosses, read server-side by name; a portal cookie is not a staff credential.
+
+The upload is the ONE shape with a body, and it is forwarded as
+`await request.formData()` with no hand-written `content-type`, so `fetch`
+writes its own multipart boundary — the branding-asset precedent applied
+unchanged. A body that is not multipart at all is refused with the contract's
+own sentence instead of surfacing as a `500`. Every answer — a list, one import,
+a page of outcomes, and every error envelope — is buffered as TEXT and
+re-emitted with the upstream status and `content-type`, so a refusal reaches the
+operator verbatim and no value is re-serialized on the way.
+
+### The polling contract
+
+[[DEC-072]] made every import asynchronous, so a trigger answers with the phase
+it QUEUED and the row reaches that phase only when the worker claims it. The
+detail screen therefore watches instead of blocking:
+
+```text
+state PREVIEWING or COMMITTING -> poll GET /imports/:id every 2 s
+any other state                -> STOP (the timer is cleared)
+```
+
+The interval is `IMPORT_POLL_INTERVAL_MS` in `imports-api.ts`, exported and
+documented because a test asserts both halves of the rule — that the poll
+happens, and that it STOPS — without waiting two seconds an interval. The stop
+is `pollIntervalForState` returning `false`, which is what clears TanStack
+Query's timer; `PREVIEWED` is deliberately NOT polled even though it is not
+terminal, because it is waiting for an operator rather than for a worker.
+
+Two consequences of the same decision shape the screen:
+
+- **The accepted phase is seeded.** A read issued immediately after a trigger
+  can still answer the PREVIOUS state (the worker has not claimed the row yet),
+  which would stop the poll before it started. So the trigger's own `{ state }`
+  answer is written into the job it was accepted for, and the next poll replaces
+  the seed with the row's truth. Nothing is invented: both values are the API's.
+- **The summary is keyed by the state.** The stored outcomes change when the
+  import moves, so the page re-reads when the state changes instead of leaving a
+  pre-transition page on screen: a commit that fails rows shows them without a
+  reload.
+
+### What the screens render
+
+- **The history** lists entity, state, the three counters and the upload
+  instant, offers the next action each state allows (`Preview` on `UPLOADED`,
+  `Commit` on `PREVIEWED`, nothing on a terminal state), and filters by entity
+  through the API's own `?entity=`. The list asks for no `limit`: it stays
+  bounded by the contract's default (50) rather than by a size the browser
+  invents.
+- **One import** shows the state, the counters, the failure reason when there is
+  one, when the artefact stops existing, and a BOUNDED page of stored row
+  outcomes. The page is `IMPORT_SUMMARY_PAGE_SIZE` (the API's default of 100,
+  well inside its 500 ceiling) and the pager moves by `offset`, so a 5 000-row
+  file renders 100 rows and a pager rather than 5 000 rows.
+- **A row is a verdict, in words.** The status is the API's own token (`CREATE`
+  or `FAILED`), the reason code and message say why a failed row failed, and a
+  `suspectedDuplicate` row says "Suspected duplicate (warning)" in its own
+  column. An error and a warning are therefore distinguishable in TEXT, not only
+  by colour: a flagged row reads as `CREATE` plus the warning, and a failed one
+  as `FAILED` plus its reason.
+- **Every read renders loading, empty, error, permission-denied and success.**
+  An error prints the API's own message, and an upload refusal prints the
+  server's sentence verbatim — the spreadsheet refusal, the content-type refusal
+  and the size refusal are all the API's, so the file picker carries no `accept`
+  filter and the browser holds no copy of the rule.
+
+The `imports.run` gate HIDES the upload and the two commands, and `imports.read`
+hides the history and the detail. Both are UX only: the API refuses either
+action regardless, and both surfaces take `permissions` as an OPTIONAL prop that
+defaults to "shown". No page supplies the caller's claims today — the reports
+workspace has the same gap — so the default is what ships, and the backend
+remains the only authority.
+
+The nav gains an `Imports` destination with NO `requiredFeature` ([[DEC-072]]):
+importing is a staff action over data the tenant already owns, and the
+`imports.*` permission family is the whole guard.
+
+### What the surface does not do
+
+- **It computes no verdict.** Every state, count, reason and message is the
+  API's, printed as given.
+- **It never re-uploads the file.** Preview and commit are commands against the
+  stored artefact ([[DEC-072]]).
+- **It renders no payload from the outcomes.** They carry row numbers and
+  reasons, not personal data ([[DEC-071]]).
+- **It offers no download of the uploaded file.** There is no route for it, by
+  decision.
+
 ## What this slice does not do
 
 - **Creating a customer from a patient row** — [[DEC-070]] refused it: the two
@@ -504,12 +631,18 @@ silently shortened page is a page that lies about what exists.
 - **Updating an existing customer** — [[DEC-069]]: imports create only, and a
   suspected duplicate is a warning.
 - **XLSX** — refused by name ([[DEC-068]], [[TD-057]]).
-- **Any UI** — [[IMP-005]] owns the polling surface.
 - **A platform-wide TTL scheduler** — the sweep method and its batch bound are
   here; the driver is a worker concern.
 
 ## Known limitations
 
+- **A trigger can be replayed in a narrow window.** The surface seeds the phase
+  the API accepted, and the accepted phase is what it polls for; if the operator
+  reloads in the few milliseconds between the enqueue and the worker's claim,
+  the read still answers the PREVIOUS state, so nothing is polled until the next
+  reload. The command is idempotent upstream (a replayed `202`, or the stable
+  `409` once the worker has claimed the row), so the cost is a confusing screen
+  for an instant, not a second import.
 - The artifact's retention has no approved policy behind it yet ([[TD-058]]);
   the deletion rule above is the interim.
 - The TTL sweep is tenant-scoped and unscheduled, so an idle tenant's artefacts

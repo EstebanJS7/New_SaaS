@@ -16,8 +16,8 @@ export interface NavLink {
  * Real staff destinations shipped so far. Business entries land with their
  * epics (Customers in EPIC-04, Patients in EPIC-05, Agenda in EPIC-07, Catalog
  * in EPIC-09, Suppliers and Purchases in EPIC-11, the POS in EPIC-12, Cash in
- * EPIC-13, Billing in EPIC-14); the placeholder labels below remain chrome-only
- * until a later epic supplies a real surface.
+ * EPIC-13, Billing in EPIC-14, Imports in EPIC-19); the placeholder labels below
+ * remain chrome-only until a later epic supplies a real surface.
  *
  * The POS, Cash and Billing entries are the ones with a capability requirement:
  * DEC-026 gates the sale surface on the seeded `sales` feature code, DEC-037
@@ -46,6 +46,14 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/reports", label: "Reports" },
   { href: "/app/agenda", label: "Agenda" },
   { href: "/app/notifications", label: "Notifications" },
+  // Imports declares NO `requiredFeature`, and that is the THIRD time this
+  // repository has refused a thirteenth feature code ([[DEC-072]], after
+  // [[DEC-058]] and [[DEC-062]]): importing is a staff action over data the tenant
+  // already owns, so the `imports.*` permission family is the whole guard and the
+  // nav has nothing to gate on. It sits after the data it feeds — customers and
+  // patients — and before the settings entries, which are chrome rather than
+  // operations.
+  { href: "/app/imports", label: "Imports" },
   // The branding settings page had NO way in until the surface-integrity fence looked for orphans:
   // the page, its upload and its live preview all existed, and nothing linked to them. It is not
   // gated by `requiredFeature` because branding is a Platform capability every tenant has a
@@ -101,10 +109,10 @@ interface NavSidebarProps {
  * Plain `<aside>` composition per design D8; entries are semantic links or
  * inert buttons styled exclusively with semantic tokens. Customers (EPIC-04),
  * Patients (EPIC-05), Catalog (EPIC-09), Suppliers and Purchases (EPIC-11), the
- * POS (EPIC-12), Cash (EPIC-13) and Agenda (EPIC-07) are real `next/link`
- * destinations declared with no client-side permission gate, because the API is
- * the only authorization authority and answers `403` on its own. The POS, Cash
- * and Billing entries additionally declare their `sales`/`cash`/`billing`
+ * POS (EPIC-12), Cash (EPIC-13), Imports (EPIC-19) and Agenda (EPIC-07) are real
+ * `next/link` destinations declared with no client-side permission gate, because
+ * the API is the only authorization authority and answers `403` on its own. The
+ * POS, Cash and Billing entries additionally declare their `sales`/`cash`/`billing`
  * capability so the shell can hide them when it knows the tenant lacks them.
  */
 export function NavSidebar({ entitlements }: NavSidebarProps = {}): JSX.Element {
