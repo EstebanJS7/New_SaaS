@@ -2197,3 +2197,88 @@ veterinary due reports depend on. It is **not** a production-readiness
 statement. The browser lane has never executed, no tenant has run a report
 against real volume, and [[EPIC-19]] Imports and [[EPIC-20]] Production
 Hardening remain.
+
+## EPIC-19 Closure Baseline (CI) (2026-10-22)
+
+[[EPIC-19]] Imports closed on `feat/epic-19-imports`, merged-ready as PR #146
+with the required checks green. Unlike [[EPIC-18]]'s local closure, this one has
+a **real CI receipt**, because the epic's own browser lane had to run before the
+closure could claim anything.
+
+```text
+PR #146   run 39774118687
+  Database migrations              pass
+  Lint, Typecheck, Test, Build     pass
+  DTE XSD validation               pass
+  Browser end-to-end               pass   22 passed, 1 skipped (16.6s)
+```
+
+### Test totals on the closing tree
+
+```text
+suite                     files            tests
+api                       120 + 1 skipped  1760 passed | 266 skipped
+web                       122              1343 passed
+imports                    13               132 passed   (new package)
+worker                     20               282 passed
+customers                   1                 9 passed   (new package)
+patients                    1                 8 passed   (new package)
+database                   30               550 passed
+```
+
+The api figure moved from **1349 at the EPIC-18 kickoff to 1760**, and this epic
+added three packages (`@newsaas/customers`, `@newsaas/patients`,
+`@newsaas/imports`) which took turbo from 23 to **29 tasks**.
+
+### Release risks and decisions
+
+```text
+import-without-shared-storage   TD-060  the browser lane has no object storage
+XLSX                            TD-057  deferred by DEC-068; PRD §32 partially shipped
+artefact retention              TD-058  no approved policy behind the TTL
+contact format validation       TD-059  length only, product-wide
+fake take enforcement           TD-056  inherited from EPIC-18
+```
+
+### What the browser lane proved, and what it could not
+
+The lane ran the imports surface for the first time, and getting it green took
+four iterations — each one a real finding rather than a selector fix:
+
+1. **Nothing consumed the queue.** The lane's `webServer` starts only the API
+   and the web app, and its `globalSetup` migrates and seeds, so an asynchronous
+   flow has no consumer unless a spec starts one. The import sat in `UPLOADED`
+   forever. Fixed by having the spec spawn the worker, the way
+   `recovery.spec.ts` already does.
+2. **The worker could not read the artefact.** `StorageModule` wires S3 only
+   when `STORAGE_S3_BUCKET` is present and otherwise uses a per-process
+   in-memory driver, so a file the API wrote exists only in the API's memory.
+   That is [[TD-060]], and it is a runtime dependency of an asynchronous import
+   rather than a testing inconvenience.
+3. **A `test()` was nested inside another `test()`**, which Playwright reports
+   as "did not expect test() to be called here" — a structural error, not a
+   product one.
+4. **A click was read before its navigation resolved**, so the URL captured the
+   index route and the id assertion failed on an empty segment.
+
+**What the lane proves today**: the multipart upload through the BFF, the row
+appearing in the history, the API accepting the preview, and the state LEAVING
+`UPLOADED` — which only a live consumer can cause. That is the proxy, the
+surface, the queue, the claim and the worker's boot, from a browser. **What it
+cannot**: the preview's outcomes, because that needs the artefact, which needs
+shared storage. The full-flow test exists and skips with [[TD-060]] named, so it
+runs unchanged the day storage is shared.
+
+### What `done` does not mean
+
+`done` on this epic means implementation closure against PRD §32's intents:
+customer and patient imports, asynchronous, with validation, preview and a
+per-row result summary. It is **not** production readiness, and two of its own
+sentences must be read precisely:
+
+- **XLSX is not implemented.** PRD §32 says "CSV/XLSX"; the MVP ships CSV, and
+  [[DEC-068]] records the deviation rather than editing the PRD.
+- **The uploaded artefact's retention has no approved policy behind it**
+  ([[TD-058]]). The 72-hour TTL is defensible, not correct, and the worker's
+  terminal path does not delete the file — the API commands and the TTL sweep
+  do.

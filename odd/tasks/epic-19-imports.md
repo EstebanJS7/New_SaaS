@@ -65,7 +65,7 @@ Each work unit is one commit carrying its tests and documentation.
       evidence log._
 - [x] **WU-E — [[IMP-005]] the staff surface and the e2e specs.** _Done: see the
       evidence log._
-- [ ] **WU-F — [[IMP-006]] the epic closure and evidence.**
+- [x] **WU-F — [[IMP-006]] the epic closure and evidence.** _Done._
 
 ## Review workload
 
@@ -321,3 +321,30 @@ refuses — the same class of defect as the clinical spec that failed in CI on P
 
 **Not verified:** the `apps/e2e` lane cannot run here. The spec is written,
 statically valid and explicitly unrun.
+
+### WU-F — the epic closure and evidence
+
+Commit `WU-F` on `feat/epic-19-imports`.
+
+- Criterion→evidence map in the epic file; `CI-EVIDENCE.md` gained the EPIC-19
+  block with the REAL run id and counts; the changelog records what shipped and
+  the two defects fixed along the way; the roadmap row moved to `done`.
+- **The browser lane's first runs are the epic's most useful evidence**, because
+  each iteration produced a finding and not one of them was a selector tweak:
+  1. nothing consumed the queue — the lane's `webServer` starts only the API and
+     the web app, so an async flow has no consumer unless a spec starts one (the
+     spec now spawns the worker, like `recovery.spec.ts` already did);
+  2. the worker could not read the artefact — `StorageModule` falls back to a
+     per-process in-memory driver without `STORAGE_S3_BUCKET`, which is
+     [[TD-060]] and a runtime dependency of an async import, not a test
+     inconvenience;
+  3. a `test()` was nested inside another `test()` — a structural error;
+  4. a click was read before its navigation resolved.
+- Final CI: **22 passed, 1 skipped** in the browser lane; the full-flow import
+  test skips with [[TD-060]] named.
+- Debt preserved: TD-056…TD-060.
+
+**Named at closure, not hidden:** XLSX is not implemented (DEC-068/TD-057); the
+artefact's retention has no policy behind it (TD-058) and the worker's terminal
+path does not delete it; contact values have no format validation anywhere
+(TD-059); and the lane cannot run an import end to end (TD-060).
