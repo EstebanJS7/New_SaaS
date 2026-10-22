@@ -385,6 +385,9 @@ test.describe("the staff imports surface", () => {
     await expect(historyRow.getByTestId("imports-row-state")).toHaveText("UPLOADED");
 
     await page.getByTestId("imports-upload-accepted-link").click();
+    // The navigation is awaited BEFORE the id is read: a click resolves as soon as the
+    // event is dispatched, and reading the URL first captures the index page's.
+    await expect(page).toHaveURL(/\/app\/imports\/[0-9a-f-]{36}$/);
     const importId = new URL(page.url()).pathname.split("/").at(-1) ?? "";
     expect(importId).toMatch(/^[0-9a-f-]{36}$/);
 
