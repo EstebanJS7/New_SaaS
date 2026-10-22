@@ -173,3 +173,37 @@ bucket control flow                     4/4 paths as listed above
 docker-compose.yml                      parses
 .github/workflows/ci.yml                parses, 9 steps in the browser job
 ```
+
+## Post-merge finding: the image did not exist
+
+The first CI run of this epic's pull request (run `39797636546`) failed the
+browser job on this story's own work:
+
+```text
+docker: Error response from daemon: pull access denied for minio/minio,
+  repository does not exist or may require 'docker login'
+```
+
+`minio/minio` is **no longer a public repository on Docker Hub** — the 404 on
+the registry API settles it — so no tag of it would have worked, and the
+"unpinned tag" concern [[TD-061]] recorded was the smaller half of the problem.
+
+The implementation above was corrected on the same branch:
+
+```text
+image          bitnamilegacy/minio:latest, in compose AND in CI (registry verified 200)
+CI form        a `minio` SERVICE CONTAINER, because Bitnami's image runs
+               `minio server` by default and therefore needs no command override —
+               the constraint that had forced a `docker run` step
+readiness      `ensureBucketWhenReady` polls for up to 60s and then fails naming the
+               deadline, so a starting container is tolerated and a missing one is
+               reported as what it is
+health check   removed from CI on purpose: a health command depends on a binary in an
+               image that is not this repository's contract, and its absence hangs the
+               job rather than explaining it
+```
+
+The four bucket control-flow paths were re-verified after the change, and the
+strategy decision it reverses is recorded rather than quietly overwritten: this
+story's original "why a step and not a service" reasoning was correct for
+`minio/minio` and is wrong for the image that actually exists.

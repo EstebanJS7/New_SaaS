@@ -66,6 +66,12 @@ export function createBucketClient(config: StorageBucketConfig): S3Client {
   });
 }
 
+/** How long the bootstrap waits for a store that is still starting. */
+const READY_TIMEOUT_MS = 60_000;
+
+/** Delay between readiness probes while waiting for a starting store. */
+const READY_POLL_INTERVAL_MS = 1_000;
+
 export type EnsureBucketOutcome = "absent" | "created" | "existing";
 
 /**
@@ -82,6 +88,39 @@ export async function ensureBucket(client: S3Client, bucket: string): Promise<En
   }
   await client.send(new CreateBucketCommand({ Bucket: bucket }));
   return "created";
+}
+
+/**
+ * Waits for the store to answer, then ensures the bucket.
+ *
+ * The wait is not defensive padding: in CI the object store is a SERVICE
+ * CONTAINER, and GitHub starts a job's steps without waiting for a service unless a
+ * health check is declared. A bootstrap that probed once would race the container's
+ * startup and fail the lane for a reason with nothing to do with the product — and
+ * the failure would read as a storage defect.
+ *
+ * Only a store that never answers is an error, and the error names the deadline.
+ */
+export async function ensureBucketWhenReady(
+  client: S3Client,
+  bucket: string,
+  timeoutMs: number = READY_TIMEOUT_MS
+): Promise<EnsureBucketOutcome> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+
+  while (Date.now() < deadline) {
+    try {
+      return await ensureBucket(client, bucket);
+    } catch (error: unknown) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`object storage did not answer within ${String(timeoutMs)}ms`);
 }
 
 async function bucketExists(client: S3Client, bucket: string): Promise<boolean> {
@@ -122,7 +161,7 @@ export async function ensureStorageBucket(env: NodeJS.ProcessEnv = process.env):
   }
 
   try {
-    const outcome = await ensureBucket(createBucketClient(config), config.bucket);
+    const outcome = await ensureBucketWhenReady(createBucketClient(config), config.bucket);
     return `object storage ready: bucket "${config.bucket}" ${outcome === "created" ? "created" : "already present"} at ${config.endpoint ?? "the default AWS endpoint"}`;
   } catch (error: unknown) {
     throw new Error(

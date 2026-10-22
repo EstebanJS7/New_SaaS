@@ -184,6 +184,32 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # HARD-003 / TD-060 / DEC-077. `packages/storage` wires the S3 driver only when
+      # STORAGE_S3_BUCKET is set and otherwise falls back to a PER-PROCESS in-memory
+      # driver, so without an object store the API's uploaded artefact exists only in
+      # the API's memory and the worker cannot read it — the reason the full import
+      # flow used to skip.
+      #
+      # It is the Bitnami packaging because `minio/minio` is NO LONGER PULLABLE: Docker
+      # Hub answers `object not found` for the repository, which failed this job on the
+      # first run of this PR. `bitnamilegacy/minio` is the archive Bitnami moved its
+      # free images to, and it runs `minio server` by default, so a service container
+      # needs no command override — which is the other reason the earlier
+      # `docker run`-as-a-step approach was replaced.
+      #
+      # No `--health-cmd`: Bitnami's image content is not this repository's contract and
+      # a missing binary would make the service hang. Readiness is the lane's job
+      # instead — `globalSetup` polls until the store answers (60s) before ensuring the
+      # bucket, so a slow start is tolerated and a store that never arrives fails
+      # naming the deadline.
+      minio:
+        image: bitnamilegacy/minio:latest
+        env:
+          MINIO_ROOT_USER: newsaas
+          MINIO_ROOT_PASSWORD: newsaas-minio-secret
+          MINIO_DEFAULT_BUCKETS: newsaas-imports
+        ports:
+          - 9000:9000
 
     steps:
       - name: Checkout
@@ -202,34 +228,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Start object storage
-        # HARD-003 / TD-060 / DEC-077. `packages/storage` wires the S3 driver only when
-        # STORAGE_S3_BUCKET is set and otherwise falls back to a PER-PROCESS in-memory
-        # driver, so without this the API's uploaded artefact exists only in the API's
-        # memory and the worker cannot read it — the reason the full import flow used to
-        # skip. MinIO speaks S3, so `S3StorageDriver` is used unchanged.
-        #
-        # It is a STEP rather than a `services:` entry because a service container cannot
-        # override the image's command, and the official image needs `server /data` to
-        # serve. The bucket itself is created by the lane's `globalSetup`, which also
-        # refuses to fall back to the in-memory driver when this step did not come up.
-        run: |
-          docker run -d --name newsaas-minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=newsaas \
-            -e MINIO_ROOT_PASSWORD=newsaas-minio-secret \
-            minio/minio:latest server /data
-          for attempt in $(seq 1 30); do
-            if curl -fsS http://localhost:9000/minio/health/live; then
-              echo "object storage is live"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "object storage did not become live; container logs follow"
-          docker logs newsaas-minio
-          exit 1
 
       - name: Install the browser
         # `--with-deps` installs the system libraries Chromium needs. It is the reason this job cannot

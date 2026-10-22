@@ -2283,7 +2283,58 @@ sentences must be read precisely:
   terminal path does not delete the file — the API commands and the TTL sweep
   do.
 
-## EPIC-20 Production Hardening — local gates, CI receipt PENDING (2026-10-22)
+## EPIC-20 Production Hardening — first CI run: 2 of 4 jobs FAILED (2026-10-22)
+
+The pull request is **#148**, and CI ran. Both failures below are real findings,
+not flakes, and both are fixed on the same branch.
+
+```text
+PR #148   run 39797636546
+  DTE XSD validation               pass    48s
+  Database migrations              pass    2m42s
+  Lint, Typecheck, Test, Build     FAIL    2m15s
+  Browser end-to-end               FAIL       42s
+```
+
+### Failure 1 — `minio/minio` is no longer pullable
+
+```text
+Unable to find image 'minio/minio:latest' locally
+docker: Error response from daemon: pull access denied for minio/minio,
+  repository does not exist or may require 'docker login'
+```
+
+A direct registry query confirmed the repository itself is gone (Docker Hub
+`404`, registry manifest `401`), while `bitnamilegacy/minio:latest` answers
+`200`. This is the risk [[TD-061]] recorded, materialized in a form the record
+had not predicted: the problem was never the floating tag, it was the image's
+existence. Fixed by switching both declarations to `bitnamilegacy/minio`, moving
+from a `docker run` step to a service container (that image needs no command
+override), and moving readiness into the lane via `ensureBucketWhenReady`, which
+polls for 60 seconds and fails naming the deadline. [[TD-061]] is `resolved`
+with the registry evidence.
+
+### Failure 2 — the author's own process error, on a documentation file
+
+```text
+[warn] odd/tasks/production-hardening.md
+[warn] Code style issues found in the above file.
+```
+
+The format gate caught it, which is what the gate is for: `odd/tasks` was edited
+**after** the last `pnpm format` run and before the commit. No product code was
+involved. Fixed by re-running `pnpm format` and re-running all five gates.
+
+### What the green jobs did prove
+
+The `Database migrations` job passed with **266/266** on the live-PostgreSQL
+suite, which is [[TD-054]]'s proof executed on a GitHub runner as well as
+locally: the suite pins its own session timezone, so a CI runner at UTC and a
+developer cluster at `America/Asuncion` now agree.
+
+---
+
+## EPIC-20 Production Hardening — the local gates that preceded the first run
 
 [[EPIC-20]] hardening work is complete on `feat/epic-20-production-hardening`
 and **not yet pushed**, so **there is no CI run to cite.** That sentence is the

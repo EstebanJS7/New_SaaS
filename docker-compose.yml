@@ -42,23 +42,29 @@ services:
   # MinIO speaks the S3 protocol, so `S3StorageDriver` is used unchanged; no new
   # client, boundary or technology enters the application.
   #
-  # NOTE (recorded debt, not a decision): `latest` is unpinned. MinIO publishes
-  # release-stamped tags only, so pinning needs a tag chosen against the registry at
-  # the time of the change. Recorded in HARD-003 rather than guessed here.
+  # The image is the Bitnami packaging because `minio/minio` is NO LONGER PULLABLE:
+  # Docker Hub answers `object not found` for that repository. This is not a
+  # preference — it failed the browser job on the first CI run of HARD-003, and it is
+  # why [[TD-061]] exists in the form it does.
+  #
+  # Bitnami's image runs `minio server` by default, so there is no command override,
+  # and `MINIO_DEFAULT_BUCKETS` creates the bucket at startup. The lane's
+  # `globalSetup` still ensures the bucket itself, so a store that pre-creates it and
+  # one that does not both work.
   minio:
-    image: minio/minio:latest
+    image: bitnamilegacy/minio:latest
     container_name: newsaas-minio
-    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${STORAGE_S3_ACCESS_KEY_ID:-newsaas}
       MINIO_ROOT_PASSWORD: ${STORAGE_S3_SECRET_ACCESS_KEY:-newsaas-minio-secret}
+      MINIO_DEFAULT_BUCKETS: ${STORAGE_S3_BUCKET:-newsaas-imports}
     ports:
       - "${MINIO_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - newsaas-minio-data:/data
+      - newsaas-minio-data:/bitnami/minio/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10

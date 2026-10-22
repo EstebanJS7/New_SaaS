@@ -120,8 +120,9 @@ Rewriting either would be churn with a regression risk and no gain.
 
 - [~] **T7 — HARD-007: closure and evidence.**
   - [x] Criterion-to-evidence map for PRD §29 and §30.
-  - [ ] `docs/10-qa/CI-EVIDENCE.md` block with the real CI run id.  **PENDING: the
-        branch is not pushed, so no run exists. The block is written and says so.**
+  - [ ] `docs/10-qa/CI-EVIDENCE.md` block with the real CI run id. **PENDING:
+        the branch is not pushed, so no run exists. The block is written and
+        says so.**
   - [x] Changelog, roadmap row, module docs, debt triage.
   - [x] A closure statement that says exactly how far production readiness was
         proven and where it stops.
