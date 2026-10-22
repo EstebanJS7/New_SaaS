@@ -2285,15 +2285,29 @@ sentences must be read precisely:
 
 ## EPIC-20 Production Hardening — closure (CI) (2026-10-22)
 
-[[EPIC-20]] closes on **PR #148** with all four required checks green on run
-[`39804810183`](https://github.com/EstebanJS7/New_SaaS/actions/runs/39804810183):
+[[EPIC-20]] closes on **PR #148** with all four required checks green. Two runs
+are cited because the closing tree and the certified implementation tree are
+different commits, and collapsing them into one would be the kind of shorthand
+this block exists to avoid:
 
 ```text
-Database migrations              pass   2m35s
-Lint, Typecheck, Test, Build     pass   6m29s
-DTE XSD validation               pass   0m48s
-Browser end-to-end               pass   3m17s
+implementation tree  84d393a   run 39804810183   green
+closing tree         6b9dd5d   run 39810914243   green   <- the receipt below
 ```
+
+The two differ **only in documentation**. What follows is the closing tree's
+run:
+
+```text
+Database migrations              pass   2m33s
+Lint, Typecheck, Test, Build     pass   5m18s
+DTE XSD validation               pass   0m33s
+Browser end-to-end               pass   3m41s
+```
+
+Earlier in this same pull request, run `39797636546` failed two jobs —
+`minio/minio` was not pullable and one documentation file was unformatted. Both
+findings and both fixes are recorded below rather than re-run into invisibility.
 
 This is the first epic in this chain whose closure rests on a **green browser
 lane**, and that is what makes two of its claims real rather than implemented:
