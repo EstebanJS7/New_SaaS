@@ -59,7 +59,8 @@ Each work unit is one commit carrying its tests and documentation.
       the worker. _Done: see the evidence log._ commits: **WU-B1** (done) the
       pure pipeline; **WU-B2** (pending) the queue trigger, the worker consumer
       and the outcome persistence.
-- [ ] **WU-C — [[IMP-003]] the customer commit and its summary.**
+- [x] **WU-C — [[IMP-003]] the customer commit and its summary.** _Done: see the
+      evidence log._
 - [ ] **WU-D — [[IMP-004]] the patient preview and commit.**
 - [ ] **WU-E — [[IMP-005]] the staff surface and the e2e specs.**
 - [ ] **WU-F — [[IMP-006]] the epic closure and evidence.**
@@ -216,3 +217,34 @@ Commit `WU-B2` on `feat/epic-19-imports`.
 planner is synchronous; a preview killed mid-run leaves the row `PREVIEWING`
 with no writer; and the preview HTTP suite still composes its own module graph,
 which is now a cheap cleanup since the harness can override the producer.
+
+### WU-C — the customer commit and its summary
+
+Commit `WU-C` on `feat/epic-19-imports`.
+
+- **`createCustomer` gained optional contacts in the same transaction**
+  (additive; the endpoint does not pass them). Without it an imported customer
+  could have existed without the phone number that made it useful.
+- **Preview-authoritative commit**: it reads the stored outcomes and creates
+  only the rows the preview marked `CREATE`. Nothing is re-validated into a
+  different answer.
+- **Claim first**, one transaction per row, partial success that CONTINUES after
+  a row failure, and a zero-accepted-rows file that commits nothing and fails
+  with a reason.
+- One consumer, two job names, dispatched by name — no second queue.
+- Gates: customers **7 → 9**, imports **65 → 85**, worker **261 → 276**, api
+  **1738 → 1758**; format/lint/typecheck/build green.
+
+**Parent corrections on top of the worker's work:**
+
+- **The contact create mapping existed twice** (package + `CustomersService`).
+  The zod rule had one home; the mapping did not, and nothing asserted they
+  agreed. Exported from `@newsaas/customers` and the API now delegates — `grep`
+  shows exactly one definition.
+- Two unnecessary type assertions in the consumer, which `lint` caught.
+
+**Named, not hidden:** the artefact is deleted by the API commands and the TTL
+sweep, not by the worker's terminal path (the doc claimed otherwise and was
+corrected); the `CommitWriter` lives in `@newsaas/imports` because the worker
+has no `@newsaas/customers` dependency; the in-memory fake ignores
+`take`/`skip`, so the page bound is proven at the repository query instead.

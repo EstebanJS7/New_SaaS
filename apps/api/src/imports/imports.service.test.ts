@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { InMemoryStorageDriver, StoragePort } from "@newsaas/storage";
-import type { ImportPreviewJob, ImportPreviewProducer } from "@newsaas/imports";
+import type { ImportCommitJob, ImportPreviewJob, ImportPreviewProducer } from "@newsaas/imports";
 import {
   createIsolationDatabase,
   type ImportJobRow,
@@ -92,7 +92,10 @@ describe("ImportsService", () => {
   let permissionResolver: PermissionResolver;
   let service: ImportsService;
   let storage: RecordingStorage;
-  let previewProducer: ImportPreviewProducer & { readonly enqueued: ImportPreviewJob[] };
+  let previewProducer: ImportPreviewProducer & {
+    readonly enqueued: ImportPreviewJob[];
+    readonly enqueuedCommits: ImportCommitJob[];
+  };
   let granted: Set<string>;
   let membershipId: string;
   let userProfileId: string;
@@ -170,10 +173,17 @@ describe("ImportsService", () => {
     tenantIds = { a: tenantA.id, b: tenantB.id };
 
     const enqueued: ImportPreviewJob[] = [];
+    const enqueuedCommits: ImportCommitJob[] = [];
     previewProducer = {
       enqueued,
+      enqueuedCommits,
       enqueue: (job: ImportPreviewJob) => {
         enqueued.push(job);
+        return Promise.resolve();
+      },
+      // The same port produces BOTH phases ([[IMP-003]]): one queue, two job names.
+      enqueueCommit: (job: ImportCommitJob) => {
+        enqueuedCommits.push(job);
         return Promise.resolve();
       },
     };

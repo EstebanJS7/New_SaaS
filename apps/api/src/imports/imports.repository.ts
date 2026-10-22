@@ -254,9 +254,19 @@ export interface ImportJobDelegate {
  * aggregate's own tests need it, and because the schema promises the shape.
  */
 export interface ImportRowOutcomeDelegate {
+  /**
+   * The row outcomes of ONE import, in row order, as a bounded page.
+   *
+   * Rows are ordered by `rowNumber` ascending — the file's own order — because the
+   * summary is read alongside the file: page 1 of "the rows that failed" must start
+   * where the file starts. The page is bounded by the REQUEST contract, so this
+   * method never invents a default that could disagree with the DTO's.
+   */
   findMany: (args: {
     where: { tenantId: string; importId: string };
     orderBy?: readonly { rowNumber?: "asc" | "desc" }[];
+    take?: number;
+    skip?: number;
   }) => Promise<ImportRowOutcomeRow[]>;
   create: (args: {
     data: Omit<ImportRowOutcomeRow, "id" | "createdAt"> & { createdAt?: Date };
@@ -525,6 +535,34 @@ export class ImportRepository {
       data: { artefactDeletedAt: new Date() },
     });
     return result.count > 0;
+  }
+
+  /**
+   * The tenant's row outcomes for one import, in file order, as a bounded page.
+   *
+   * `tenantId` comes from the request context like every other query here, so this
+   * read cannot cross a tenant boundary even for an import id the caller guessed.
+   * The caller has already resolved the import itself (the shared `404`), so a
+   * missing or foreign job never reaches this query; repeating the predicate here
+   * is what keeps that true for the OUTCOMES rather than only for the job.
+   *
+   * The bound is `take`/`skip` at the DATABASE, not a slice in memory: an import of
+   * 100 000 rows must cost one page, and a page that was read whole and then cut
+   * would be the same unbounded read with extra steps ([[TD-026]]).
+   */
+  async listRowOutcomes(
+    importId: string,
+    page: { readonly limit: number; readonly offset: number },
+    tx?: ImportTx
+  ): Promise<ImportRowOutcomeRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.importRowOutcome.findMany({
+      where: { tenantId, importId },
+      orderBy: [{ rowNumber: "asc" }],
+      take: page.limit,
+      skip: page.offset,
+    });
   }
 
   /**

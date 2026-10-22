@@ -1,4 +1,6 @@
 import type { AuditAppendInput, AuditAppendTx } from "@newsaas/database";
+import { CONTACT_DTO_SCHEMA_VERSION } from "./customer-contact.zod.js";
+import type { CreateCustomerContactInput } from "./customer-contact.zod.js";
 import { CUSTOMER_DTO_SCHEMA_VERSION } from "./customer.zod.js";
 import type { CreateCustomerInput, CustomerKind } from "./customer.zod.js";
 import type { CustomerResponse } from "./customer.dto.js";
@@ -57,12 +59,54 @@ export interface CustomerCreateDelegate {
 }
 
 /**
+ * Exactly the columns one contact create writes, mirroring
+ * `CustomersService.createContact`'s payload field for field.
+ *
+ * THAT MAPPING NOW EXISTS TWICE, and the duplication is deliberate rather than
+ * overlooked: the API's endpoint builds the same six values from the same
+ * contract, and [[IMP-003]] needs them here because the import creates contacts
+ * without a request. Collapsing the two would mean `POST /customers/:id/contacts`
+ * delegating to this module, which is a change to a surface this Story does not
+ * own — so the RULE lives in `customer-contact.zod.ts` (one home, one copy) and
+ * the two mappings over it are each covered by their own suite. NOTHING ASSERTS
+ * THE TWO MAPPINGS AGREE; a change to one is a change the reviewer must mirror in
+ * the other, or an imported contact stops being indistinguishable from a
+ * hand-added one.
+ */
+export interface CustomerContactCreateData {
+  readonly tenantId: string;
+  readonly customerId: string;
+  readonly kind: "EMAIL" | "PHONE";
+  readonly label?: string | null;
+  readonly value: string;
+  readonly isPrimary?: boolean;
+}
+
+/**
+ * The ONE statement a contact create issues. Narrow for the same reason as
+ * {@link CustomerCreateDelegate}: a caller outside a request has to be able to
+ * satisfy it with its own client, and a test with a plain object.
+ *
+ * Only the id is read back, because only the id is needed: the contact's audit
+ * row names it and the created columns are already what the caller passed.
+ */
+export interface CustomerContactCreateDelegate {
+  create: (args: { data: CustomerContactCreateData }) => Promise<{ id: string }>;
+}
+
+/**
  * The transaction this function opens. `auditLog` is present because the audit
  * appender joins the caller's transaction through it — the create path itself
  * never writes an audit row by hand; it hands this handle to the appender.
+ *
+ * `customerContact` is part of the transaction, and not optional, because a
+ * customer's contacts are written by the SAME atomicity guarantee as the
+ * customer: a record imported with a phone number must not be able to exist
+ * without it.
  */
 export interface CustomerCreateTransaction {
   customer: CustomerCreateDelegate;
+  customerContact: CustomerContactCreateDelegate;
   auditLog: AuditAppendTx["auditLog"];
 }
 
@@ -99,6 +143,20 @@ export interface CreateCustomerArgs {
   tenantId: string;
   actorUserProfileId: string;
   input: CreateCustomerInput;
+  /**
+   * Contacts to create WITH the customer, in ONE transaction ([[IMP-003]]).
+   *
+   * Additive and optional: `POST /customers` passes nothing and keeps behaving
+   * exactly as before — a customer created there has no contact, and the two
+   * endpoints keep their own shapes. An import row, which carries phone and
+   * e-mail cells, passes them here so the record cannot land without them.
+   *
+   * Each contact is created with the SAME payload
+   * (`CustomerContactCreateData`) and the SAME audit action
+   * (`customer_contact.created`) `POST /customers/:id/contacts` writes, so an
+   * imported contact is indistinguishable from one added by hand.
+   */
+  contacts?: readonly CreateCustomerContactInput[];
 }
 
 /** Maps a stored row to the allowlisted response. CONFIDENTIAL values stay in the DTO. */
@@ -145,6 +203,34 @@ function buildCreateData(tenantId: string, input: CreateCustomerInput): Customer
   };
 }
 
+/**
+ * The contact create payload, byte for byte what `CustomersService.createContact`
+ * builds: a blank cell is ABSENT upstream (never `""`), so `label` and
+ * `isPrimary` fall back here and nowhere else.
+ */
+export function buildContactCreateData(
+  tenantId: string,
+  customerId: string,
+  input: CreateCustomerContactInput
+): CustomerContactCreateData {
+  return {
+    tenantId,
+    customerId,
+    kind: input.kind,
+    label: input.label ?? null,
+    value: input.value,
+    isPrimary: input.isPrimary ?? false,
+  };
+}
+
+/** The changed-field list of the contact create, in the endpoint's order. */
+export function changedFieldsForContactCreate(input: CreateCustomerContactInput): string[] {
+  const fields: string[] = ["kind", "value"];
+  if (input.label !== undefined) fields.push("label");
+  if (input.isPrimary !== undefined) fields.push("isPrimary");
+  return fields;
+}
+
 function changedFieldsForCreate(input: CreateCustomerInput): string[] {
   const fields: string[] = ["kind", "displayName"];
   if (input.kind === "INDIVIDUAL") {
@@ -158,11 +244,19 @@ function changedFieldsForCreate(input: CreateCustomerInput): string[] {
 }
 
 /**
- * Creates one Customer and its `customer.created` audit row in ONE transaction,
- * so a Customer can never be committed without its trail.
+ * Creates one Customer, its contacts and their audit rows in ONE transaction,
+ * so a Customer can never be committed without its trail or without the
+ * contacts it was created with.
  *
  * The transaction stays INSIDE this function: a worker that opened its own would
- * be a second, differently-shaped atomicity guarantee for the same write.
+ * be a second, differently-shaped atomicity guarantee for the same write — and
+ * a contact written in a second transaction could survive a customer that never
+ * committed, or vanish from one that did.
+ *
+ * The order is customer, then its audit row, then contacts in the order the
+ * caller supplied them (`phone` then `e-mail` for an import row), each with its
+ * own audit row. Every row is written inside the same transaction handle, so a
+ * failure anywhere leaves nothing at all.
  */
 export function createCustomer({
   db,
@@ -170,6 +264,7 @@ export function createCustomer({
   tenantId,
   actorUserProfileId,
   input,
+  contacts = [],
 }: CreateCustomerArgs): Promise<CustomerRow> {
   return db.$transaction(async (tx) => {
     const created = await tx.customer.create({
@@ -190,6 +285,28 @@ export function createCustomer({
       },
       tx
     );
+
+    for (const contact of contacts) {
+      const createdContact = await tx.customerContact.create({
+        data: buildContactCreateData(tenantId, created.id, contact),
+      });
+
+      await audit.append(
+        {
+          action: "customer_contact.created",
+          tenantId,
+          actorUserProfileId,
+          targetType: "customer_contact",
+          targetId: createdContact.id,
+          metadata: {
+            schemaVersion: CONTACT_DTO_SCHEMA_VERSION,
+            changedFields: changedFieldsForContactCreate(contact),
+            customerId: created.id,
+          },
+        },
+        tx
+      );
+    }
 
     return created;
   });

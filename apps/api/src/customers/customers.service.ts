@@ -1,7 +1,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
-import { createCustomer, toCustomerResponse } from "@newsaas/customers";
+import {
+  buildContactCreateData,
+  changedFieldsForContactCreate,
+  createCustomer,
+  toCustomerResponse,
+} from "@newsaas/customers";
 import type { CustomerCreateData, CustomerRow } from "@newsaas/customers";
 import { AuditAppendTx, AuditWriter } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
@@ -248,21 +253,6 @@ function toCustomerContactResponse(row: CustomerContactRow): CustomerContactResp
   };
 }
 
-function buildContactCreateData(
-  tenantId: string,
-  customerId: string,
-  input: CreateCustomerContactInput
-): CustomerContactCreateData {
-  return {
-    tenantId,
-    customerId,
-    kind: input.kind,
-    label: input.label ?? null,
-    value: input.value,
-    isPrimary: input.isPrimary ?? false,
-  };
-}
-
 function buildContactUpdateData(input: UpdateCustomerContactInput): CustomerContactUpdateData {
   const data: CustomerContactUpdateData = {};
   if (input.kind !== undefined) data.kind = input.kind;
@@ -270,13 +260,6 @@ function buildContactUpdateData(input: UpdateCustomerContactInput): CustomerCont
   if (input.value !== undefined) data.value = input.value;
   if (input.isPrimary !== undefined) data.isPrimary = input.isPrimary;
   return data;
-}
-
-function changedFieldsForContactCreate(input: CreateCustomerContactInput): string[] {
-  const fields: string[] = ["kind", "value"];
-  if (input.label !== undefined) fields.push("label");
-  if (input.isPrimary !== undefined) fields.push("isPrimary");
-  return fields;
 }
 
 /**

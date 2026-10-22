@@ -3,6 +3,7 @@ import type { AuditAppendInput, AuditAppendTx } from "@newsaas/database";
 import { createCustomer, toCustomerResponse } from "./customer.create.js";
 import type {
   CustomerAuditAppender,
+  CustomerContactCreateData,
   CustomerCreateDb,
   CustomerCreateTransaction,
   CustomerRow,
@@ -26,6 +27,7 @@ interface RecordedAppend {
 function makeHarness(appenderError?: Error) {
   const rows: CustomerRow[] = [];
   const appends: RecordedAppend[] = [];
+  const contacts: ({ id: string } & CustomerContactCreateData)[] = [];
 
   const tx: CustomerCreateTransaction = {
     customer: {
@@ -48,6 +50,13 @@ function makeHarness(appenderError?: Error) {
         return Promise.resolve(created);
       },
     },
+    customerContact: {
+      create: ({ data }) => {
+        const created = { id: `contact-${contacts.length + 1}`, ...data };
+        contacts.push(created);
+        return Promise.resolve(created);
+      },
+    },
     auditLog: { create: () => Promise.resolve({ id: "audit-1" }) },
   };
 
@@ -64,7 +73,7 @@ function makeHarness(appenderError?: Error) {
     },
   };
 
-  return { rows, appends, tx, db, audit };
+  return { rows, appends, contacts, tx, db, audit };
 }
 
 describe("createCustomer", () => {
@@ -165,6 +174,92 @@ describe("createCustomer", () => {
         input: { kind: "INDIVIDUAL", displayName: "Ana" },
       })
     ).rejects.toThrow("audit unavailable");
+  });
+
+  it("creates the customer's contacts in the SAME transaction, each with its own audit row", async () => {
+    const { rows, appends, contacts, tx, db, audit } = makeHarness();
+
+    const created = await createCustomer({
+      db,
+      audit,
+      tenantId: TENANT_ID,
+      actorUserProfileId: ACTOR_ID,
+      input: { kind: "INDIVIDUAL", displayName: "Ana García" },
+      contacts: [
+        { kind: "PHONE", value: "0981123456", isPrimary: true },
+        { kind: "EMAIL", value: "ana@example.com", isPrimary: true },
+      ],
+    });
+
+    // IMP-003: a customer imported with a phone number must not be able to exist
+    // without it, so the contact rows are written inside the customer's own
+    // transaction — the SAME handle the audit appender receives.
+    expect(rows).toHaveLength(1);
+    expect(contacts).toEqual([
+      {
+        id: "contact-1",
+        tenantId: TENANT_ID,
+        customerId: created.id,
+        kind: "PHONE",
+        label: null,
+        value: "0981123456",
+        isPrimary: true,
+      },
+      {
+        id: "contact-2",
+        tenantId: TENANT_ID,
+        customerId: created.id,
+        kind: "EMAIL",
+        label: null,
+        value: "ana@example.com",
+        isPrimary: true,
+      },
+    ]);
+
+    // The audit trail names the customer first and then each contact, with the
+    // endpoint's own action, target type and changed-field list.
+    expect(appends.map((entry) => entry.input.action)).toEqual([
+      "customer.created",
+      "customer_contact.created",
+      "customer_contact.created",
+    ]);
+    expect(appends[1]?.input).toMatchObject({
+      tenantId: TENANT_ID,
+      actorUserProfileId: ACTOR_ID,
+      targetType: "customer_contact",
+      targetId: "contact-1",
+      metadata: {
+        schemaVersion: 1,
+        changedFields: ["kind", "value", "isPrimary"],
+        customerId: created.id,
+      },
+    });
+    expect(appends[2]?.input.targetId).toBe("contact-2");
+    for (const append of appends) {
+      expect(append.tx).toBe(tx);
+    }
+    // No contact value reaches an audit row: the metadata names fields only.
+    expect(JSON.stringify(appends.map((entry) => entry.input))).not.toContain("0981123456");
+    expect(JSON.stringify(appends.map((entry) => entry.input))).not.toContain("ana@example.com");
+  });
+
+  it("behaves exactly as before when no contacts are given", async () => {
+    const { appends, contacts, db, audit } = makeHarness();
+
+    const created = await createCustomer({
+      db,
+      audit,
+      tenantId: TENANT_ID,
+      actorUserProfileId: ACTOR_ID,
+      input: { kind: "INDIVIDUAL", displayName: "Ana" },
+    });
+
+    // `POST /customers` passes nothing here, and its one audit row is the only
+    // difference it can observe.
+    expect(created.displayName).toBe("Ana");
+    expect(contacts).toEqual([]);
+    expect(appends).toHaveLength(1);
+    expect(appends[0]?.input.action).toBe("customer.created");
   });
 
   it("maps a stored row to the allowlisted response", () => {

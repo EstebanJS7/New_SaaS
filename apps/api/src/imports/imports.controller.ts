@@ -5,8 +5,10 @@ import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
 import { ImportArtefactPipe } from "./import-artefact.pipe.js";
 import type {
+  ImportCommitAcceptedResponse,
   ImportJobResponse,
   ImportPreviewAcceptedResponse,
+  ImportSummaryResponse,
   ImportUploadResponse,
 } from "./imports.dto.js";
 import { IMPORTS_PERMISSIONS } from "./imports.permissions.js";
@@ -15,21 +17,25 @@ import {
   IMPORT_ID_INVALID_MESSAGE,
   IMPORT_LIST_LIMIT_DEFAULT,
   IMPORT_LIST_QUERY_INVALID_MESSAGE,
+  IMPORT_SUMMARY_LIMIT_DEFAULT,
+  IMPORT_SUMMARY_QUERY_INVALID_MESSAGE,
   importIdParam,
   importListQuery,
+  importSummaryQuery,
 } from "./imports.zod.js";
 
 /**
  * Private tenant-scoped imports surface (EPIC-19 IMP-001).
  *
  * Routes are unprefixed (`/imports`, not `/api/v1/imports`) per DEC-002, and the
- * surface is EXACTLY four routes: the multipart upload, the preview trigger, the
- * bounded list and the single read. There is deliberately NO `PATCH`, no `PUT` and
+ * surface is EXACTLY six routes: the multipart upload, the two phase triggers (the
+ * preview of [[IMP-002]] and the commit of [[IMP-003]]), the bounded list, the
+ * single read and the result summary. There is deliberately NO `PATCH`, no `PUT` and
  * no `DELETE`, and no route that accepts a state: the lifecycle is server-owned and
- * every transition is an explicit command ([[IMP-002]]'s preview is a command that
- * queues work, never a write of the state it queues for). The `imports.*`
- * permission is the whole guard — [[DEC-072]] refused a feature code for this
- * surface — and the service re-asserts it as defense in depth.
+ * every transition is an explicit command (a trigger queues work; it never writes
+ * the state it queues for). The `imports.*` permission is the whole guard —
+ * [[DEC-072]] refused a feature code for this surface — and the service re-asserts
+ * it as defense in depth.
  *
  * The upload reads the multipart request through {@link ImportArtefactPipe}, so
  * the size cap, the CSV allowlist and the by-name refusal of a spreadsheet all
@@ -94,6 +100,25 @@ export class ImportsController {
   }
 
   /**
+   * Queues the commit of one previewed import: `202` with
+   * `{ importId, state: "COMMITTING" }` ([[IMP-003]]).
+   *
+   * `imports.run` for the preview's reason and a stronger one: this is the command
+   * that decides a file of customers becomes RECORDS, so it takes the owning-roles
+   * key and never the read one. The service refuses a non-`PREVIEWED` import with
+   * the aggregate's stable `409` before the enqueue, a foreign or unknown id with
+   * the shared `404`, and a `PATIENT` file with the same "not available for this
+   * entity yet" refusal the preview gives.
+   */
+  @Post(":id/commit")
+  @HttpCode(202)
+  @RequirePermissions(IMPORTS_PERMISSIONS.run)
+  async commit(@Param() params: unknown): Promise<ImportCommitAcceptedResponse> {
+    const { id } = parseInput(importIdParam, params, IMPORT_ID_INVALID_MESSAGE);
+    return this.imports.commit(id);
+  }
+
+  /**
    * One import with its counters. A foreign import id is the shared byte-equivalent
    * `404`: the tenant predicate rides in the same query, so the answer for another
    * tenant's import and for an id that never existed is the same body.
@@ -103,6 +128,28 @@ export class ImportsController {
   async getById(@Param() params: unknown): Promise<ImportJobResponse> {
     const { id } = parseInput(importIdParam, params, IMPORT_ID_INVALID_MESSAGE);
     return this.imports.getById(id);
+  }
+
+  /**
+   * One import's result summary: the totals and a bounded page of row outcomes
+   * ([[DEC-071]], [[IMP-003]]).
+   *
+   * `imports.read` and not `imports.run`: the summary reports what already happened,
+   * it creates nothing, and every one of the six roles may read an import the tenant
+   * already ran. A foreign id is the byte-equivalent `404`; an oversized `?limit=` is
+   * REFUSED rather than truncated, because the page size is the only bound this
+   * response has.
+   */
+  @Get(":id/summary")
+  @RequirePermissions(IMPORTS_PERMISSIONS.read)
+  async summary(@Param() params: unknown, @Query() query: unknown): Promise<ImportSummaryResponse> {
+    const { id } = parseInput(importIdParam, params, IMPORT_ID_INVALID_MESSAGE);
+    const parsed = parseInput(importSummaryQuery, query, IMPORT_SUMMARY_QUERY_INVALID_MESSAGE);
+
+    return this.imports.getSummary(id, {
+      limit: parsed.limit ?? IMPORT_SUMMARY_LIMIT_DEFAULT,
+      offset: parsed.offset ?? 0,
+    });
   }
 }
 

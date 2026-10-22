@@ -1,5 +1,11 @@
 /**
- * The import preview producer (EPIC-19 [[IMP-002]]).
+ * The import queue's producer (EPIC-19 [[IMP-002]], extended by [[IMP-003]]).
+ *
+ * It produces BOTH jobs of the import backlog — `preview` and `commit` — over one
+ * queue and one connection. The type and token keep the `preview` name they were
+ * introduced with: the transport, the lifecycle and the connection are unchanged,
+ * and the interface's own methods (`enqueue`, `enqueueCommit`) say what each call
+ * starts.
  *
  * The notifications producer's shape one domain over: a port the caller depends on
  * rather than BullMQ directly, a fail-fast Redis configuration, a deadline on the
@@ -24,9 +30,12 @@
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import {
+  IMPORT_COMMIT_JOB,
   IMPORT_PREVIEW_JOB,
   IMPORT_PROCESSING_QUEUE,
+  importCommitJobOptions,
   importPreviewJobOptions,
+  type ImportCommitJob,
   type ImportPreviewJob,
 } from "./queue.js";
 
@@ -64,6 +73,21 @@ export interface ImportPreviewProducer {
    * accepted and is never previewed.
    */
   enqueue(job: ImportPreviewJob): Promise<void>;
+
+  /**
+   * Enqueues one commit pass ([[IMP-003]]) on the SAME queue.
+   *
+   * A second method rather than a second producer or a second queue: the import
+   * has one backlog and one connection, and the two phases are distinguished by
+   * job NAME. The port and its token keep IMP-002's `preview` name — the queue, its
+   * connection and its lifecycle are unchanged, and renaming them would churn
+   * every surface IMP-002 introduced for a word — so the doc says what the name
+   * does not: this is the import queue's producer, and it produces both jobs.
+   *
+   * A rejection propagates for the same reason as above: the row is still
+   * `PREVIEWED`, and "nothing was queued" is the honest answer.
+   */
+  enqueueCommit(job: ImportCommitJob): Promise<void>;
 }
 
 /** Resolves with `work`, or rejects once `timeoutMs` elapses first. */
@@ -104,6 +128,13 @@ export class BullMqImportPreviewProducer implements ImportPreviewProducer {
   async enqueue(job: ImportPreviewJob): Promise<void> {
     await withDeadline(
       this.queue.add(IMPORT_PREVIEW_JOB, job, importPreviewJobOptions(job.importJobId)),
+      IMPORT_PREVIEW_ENQUEUE_TIMEOUT_MS
+    );
+  }
+
+  async enqueueCommit(job: ImportCommitJob): Promise<void> {
+    await withDeadline(
+      this.queue.add(IMPORT_COMMIT_JOB, job, importCommitJobOptions(job.importJobId)),
       IMPORT_PREVIEW_ENQUEUE_TIMEOUT_MS
     );
   }

@@ -3,8 +3,8 @@
  *
  * It owns what a Customer IS when one is created: the discriminated create
  * schema and its rules, the allowlisted response shape and its mapper, and one
- * `createCustomer` function that writes the row and its `customer.created` audit
- * row in a single transaction. It also owns the CustomerContact CREATE contract
+ * `createCustomer` function that writes the row, its contacts and their audit
+ * rows in a single transaction. It also owns the CustomerContact CREATE contract
  * (`customer-contact.zod.ts`) for the same reason: an imported row validates its
  * phone/e-mail with the rule the endpoint enforces, not with a copy of it.
  *
@@ -35,10 +35,17 @@ export {
 } from "./customer-contact.zod.js";
 export type { CreateCustomerContactInput, CustomerContactKind } from "./customer-contact.zod.js";
 export type { CustomerResponse } from "./customer.dto.js";
-export { createCustomer, toCustomerResponse } from "./customer.create.js";
+export {
+  buildContactCreateData,
+  changedFieldsForContactCreate,
+  createCustomer,
+  toCustomerResponse,
+} from "./customer.create.js";
 export type {
   CreateCustomerArgs,
   CustomerAuditAppender,
+  CustomerContactCreateData,
+  CustomerContactCreateDelegate,
   CustomerCreateData,
   CustomerCreateDb,
   CustomerCreateDelegate,

@@ -24,14 +24,40 @@
 /** BullMQ queue shared by the API producer and the worker consumer. */
 export const IMPORT_PROCESSING_QUEUE = "import-processing";
 
-/** Job name for one preview pass. */
+/**
+ * Job name for one preview pass.
+ *
+ * TWO JOB NAMES, ONE QUEUE ([[IMP-003]]). The queue is the import's backlog, not
+ * its record, and a commit is the second phase of the same import — so it is a
+ * second NAME on this queue rather than a second queue: the connection, the
+ * retry policy's shape and the worker's capacity are the same, and a second
+ * queue would double all three to separate two jobs that never race (the state
+ * machine already forbids a commit before a preview).
+ */
 export const IMPORT_PREVIEW_JOB = "preview";
+
+/** Job name for one commit pass over a previewed artefact ([[IMP-003]]). */
+export const IMPORT_COMMIT_JOB = "commit";
 
 /** Bounded retry budget for one preview. */
 export const IMPORT_PREVIEW_MAX_ATTEMPTS = 3;
 
 /** Exponential backoff base delay in milliseconds. */
 export const IMPORT_PREVIEW_BACKOFF_DELAY_MS = 5_000;
+
+/**
+ * Bounded retry budget for one commit.
+ *
+ * The same shape as the preview's budget, and for the same reason: the
+ * interesting failures are deterministic and are settled on the FIRST attempt by
+ * `fail(...)` or per row, so a retry could only re-fail. What the budget covers
+ * is an infrastructure failure BEFORE the claim — an unreachable database or
+ * object store — where nothing was written and a retry is honest.
+ */
+export const IMPORT_COMMIT_MAX_ATTEMPTS = 3;
+
+/** Exponential backoff base delay for one commit, in milliseconds. */
+export const IMPORT_COMMIT_BACKOFF_DELAY_MS = 5_000;
 
 /**
  * The payload: the job's own id and nothing else.
@@ -41,6 +67,18 @@ export const IMPORT_PREVIEW_BACKOFF_DELAY_MS = 5_000;
  * make a job payload able to disagree with the row it names.
  */
 export interface ImportPreviewJob {
+  readonly importJobId: string;
+}
+
+/**
+ * The commit payload: the job's own id and nothing else.
+ *
+ * Its own type rather than an alias of {@link ImportPreviewJob} because the two
+ * are separate messages with separate job names, and a producer that could pass
+ * one where the other belongs would be a compile-time silence about the phase
+ * being requested. The tenant is absent here for exactly the same reason.
+ */
+export interface ImportCommitJob {
   readonly importJobId: string;
 }
 
@@ -65,6 +103,23 @@ export function importPreviewJobId(importJobId: string): string {
 }
 
 /**
+ * The deterministic BullMQ identity for one import's commit ([[IMP-003]]).
+ *
+ * Distinct from the preview's identity, so the two phases never collide on one
+ * queue entry, and deterministic for the same reason: a replay must address the
+ * SAME entry rather than occupying a second one for an import that has one row
+ * and one summary.
+ *
+ * The separator is a HYPHEN for the reason recorded on
+ * {@link importPreviewJobId} — BullMQ refuses a custom id containing `:` — and
+ * `queue.test.ts` asserts the shape directly, because a stubbed queue cannot
+ * reproduce the throw.
+ */
+export function importCommitJobId(importJobId: string): string {
+  return `import-commit-${importJobId}`;
+}
+
+/**
  * Job options for one preview.
  *
  * `attempts` is small on purpose: the interesting failures are deterministic (a
@@ -86,6 +141,32 @@ export function importPreviewJobOptions(importJobId: string) {
     backoff: {
       type: "exponential" as const,
       delay: IMPORT_PREVIEW_BACKOFF_DELAY_MS,
+    },
+    removeOnComplete: true,
+    removeOnFail: false,
+  };
+}
+
+/**
+ * Job options for one commit ([[IMP-003]]).
+ *
+ * The preview's options one phase over, and each choice carries the same reason:
+ * `removeOnComplete` because the summary is durable in `import_row_outcome` and
+ * in the counters, and `removeOnFail` false because a commit that could not even
+ * be settled is exactly the entry a human should find in the queue's failed set
+ * before reading the row's own `failure_reason`.
+ *
+ * A commit is the phase that WRITES business records, so a retry is only ever
+ * honest BEFORE the claim: once claimed, the runner settles the row itself and
+ * the queue's retry has nothing to re-drive (its claim is pinned on `PREVIEWED`).
+ */
+export function importCommitJobOptions(importJobId: string) {
+  return {
+    jobId: importCommitJobId(importJobId),
+    attempts: IMPORT_COMMIT_MAX_ATTEMPTS,
+    backoff: {
+      type: "exponential" as const,
+      delay: IMPORT_COMMIT_BACKOFF_DELAY_MS,
     },
     removeOnComplete: true,
     removeOnFail: false,
