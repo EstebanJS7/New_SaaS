@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "test": "vitest run --config vitest.config.ts",
-    "test:live-pg": "vitest run --config vitest.config.ts test/live-pg-isolation.e2e-spec.ts"
+    "test:live-pg": "vitest run --config vitest.config.ts test/live-pg-isolation.e2e-spec.ts",
+    "test:redis": "vitest run --config vitest.redis.config.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",

@@ -64,11 +64,33 @@ once from NULL and can neither be rewritten nor cleared, and
 
 ## Rate Limits
 
-In-process sliding window per (email, IP-hash): ≥10 failed logins in 15 min ⇒
-`429 RATE_LIMITED` envelope; success resets the counter. Single-replica scope:
-[[TD-005]] tracks the distributed revision before horizontal scaling. Blocked
-attempts are rejected before any database/crypto work and are NOT audited (flood
-defense).
+Sliding window per (email, IP-hash): ≥10 failed logins in 15 min ⇒
+`429 RATE_LIMITED` envelope; success resets the counter. Blocked attempts are
+rejected before any database/crypto work and are NOT audited (flood defense).
+
+**The budget is SHARED, not per process** ([[HARD-002]], [[DEC-076]]). When
+`REDIS_URL` is configured the window lives in Redis as one atomic sliding window
+(prune + count in a single server-side evaluation), so the documented threshold
+does NOT multiply by `api` replica count. One interface — `isBlocked`,
+`recordFailure`, `reset` — serves all four paths that carry a failure budget:
+staff login, staff password recovery, portal login and portal password recovery,
+each with its own key namespace.
+
+**Degradation is fail-OPEN and deliberately so.** The in-process window is
+written on EVERY recorded failure even while the shared store is healthy, so it
+reflects recent traffic at the moment a fallback is needed. When Redis is
+unreachable the request proceeds on that local budget instead of being rejected:
+locking every user of every tenant out of every surface because a cache tier is
+down would turn a degraded dependency into a total-availability incident. During
+the outage the effective budget is per replica — exactly the pre-revision
+behaviour — and the store logs one diagnostic per minute rather than one per
+request, because an outage that floods logs is the same failure wearing a
+different hat.
+
+Residual limitation, stated rather than hidden: keying by `(email, IP-hash)`
+gives an attacker who distributes attempts across proxy pools a fresh budget per
+egress IP, at any replica count. [[TD-005]] records the per-account budget that
+would close it.
 
 **Recovery has its own budget**, namespaced away from login's and keyed by
 address AND client IP. Namespaced because the person asking for a reset is

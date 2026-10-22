@@ -39,7 +39,14 @@ import { SessionService } from "./session.service.js";
   providers: [
     CredentialService,
     SessionService,
-    LoginRateLimiterService,
+    // HARD-002 / DEC-076: the failure budget moves to the SHARED store when
+    // REDIS_URL is configured, so the documented threshold stops multiplying by
+    // api replica count. The URL is read here rather than inside the service to
+    // keep unit tests deterministic.
+    {
+      provide: LoginRateLimiterService,
+      useFactory: (): LoginRateLimiterService => new LoginRateLimiterService(process.env.REDIS_URL),
+    },
     PasswordResetTokenService,
     PasswordRecoveryService,
     PasswordResetService,

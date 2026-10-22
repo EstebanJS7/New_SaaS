@@ -4,6 +4,7 @@ import type { DestinationStream } from "pino";
 import type { Type } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
 import { AUTH_CONFIG, readAuthConfig, type AuthConfig } from "../../src/auth/auth.config.js";
+import { LoginRateLimiterService } from "../../src/auth/login-rate-limiter.service.js";
 import { createApiLogger } from "../../src/common/http/api-logger.factory.js";
 import { createFastifyAdapter } from "../../src/common/http/fastify-adapter.factory.js";
 import { STORAGE_PORT } from "@newsaas/storage";
@@ -264,6 +265,14 @@ export async function bootTestApp(options: BootTestAppOptions = {}): Promise<Boo
     .useValue(notificationDeliveryProducer)
     .overrideProvider(IMPORT_PREVIEW_PRODUCER)
     .useValue(importPreviewProducer)
+    // Same reasoning as the producers above, for the failure budget: the real
+    // provider reads REDIS_URL, so a suite asserting HTTP behaviour must not
+    // depend on a queue. Constructing the limiter WITHOUT a URL pins it to the
+    // in-process window (HARD-002 / DEC-076), which is also its degradation path,
+    // so this harness exercises the same code a Redis outage would. The shared
+    // store has its own suite: test/rate-limit-shared.e2e-spec.ts.
+    .overrideProvider(LoginRateLimiterService)
+    .useValue(new LoginRateLimiterService())
     .overrideProvider(FISCAL_PROVIDER)
     .useValue(fiscalProvider)
     .compile();
