@@ -2,7 +2,7 @@
 id: EPIC-20
 type: epic
 title: Production Hardening
-status: in-progress
+status: done
 priority: high
 depends_on:
   - EPIC-00

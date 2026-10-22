@@ -2283,6 +2283,91 @@ sentences must be read precisely:
   terminal path does not delete the file — the API commands and the TTL sweep
   do.
 
+## EPIC-20 Production Hardening — closure (CI) (2026-10-22)
+
+[[EPIC-20]] closes on **PR #148** with all four required checks green on run
+[`39804810183`](https://github.com/EstebanJS7/New_SaaS/actions/runs/39804810183):
+
+```text
+Database migrations              pass   2m35s
+Lint, Typecheck, Test, Build     pass   6m29s
+DTE XSD validation               pass   0m48s
+Browser end-to-end               pass   3m17s
+```
+
+This is the first epic in this chain whose closure rests on a **green browser
+lane**, and that is what makes two of its claims real rather than implemented:
+
+```text
+imports.spec.ts:176  "uploads a CSV, previews it, commits it and reads the
+                      summary's failed row"                        PASSED in 6.4s
+lane summary                                                    23 passed, 0 SKIPPED
+```
+
+At [[EPIC-19]]'s closure that same test **skipped** (22 passed / 1 skipped)
+because the API and the worker could not share an artefact. It ran here because
+object storage is part of the environment contract — [[TD-060]] closed by
+execution, not by wiring.
+
+### What the CI run proves, item by item
+
+```text
+live-PostgreSQL suite      266 tests passed        apps/api/test/live-pg-isolation.e2e-spec.ts
+reporting performance        6 tests passed        apps/api/test/reporting-performance.live-pg-spec.ts
+shared rate-limit store     12 tests passed        apps/api/test/rate-limit-shared.redis-spec.ts
+object storage             "bucket newsaas-imports already present at http://localhost:9000"
+                           then the full import crossed from the API's process to the worker's
+browser lane               23 passed, 0 skipped
+```
+
+The `Database migrations` job ran the 266-case isolation suite on a GitHub
+runner at UTC and passed, which is [[TD-054]]'s proof executed in CI as well as
+locally. The `quality` job ran the shared-store suite against the
+`redis:7-alpine` service container it now provisions — the fail-open diagnostic
+appears three times in that log, so the degradation path ran too.
+
+### Test totals on the closing tree, from CI
+
+```text
+suite        files                       tests
+api          120 + 1 skipped (121)       1760 passed | 266 skipped
+web          124                         1366 passed
+database      30                          550 passed
+worker        20                          283 passed
+fiscal        34 + 2 skipped (36)
+```
+
+The 266 skipped inside the `api` unit job are the live-PostgreSQL cases, which
+the `Database migrations` job runs for real.
+
+### The two failures that preceded this, kept as history
+
+Neither was a flake and both are fixed on the same branch:
+
+1. **`minio/minio` is not pullable.** Docker Hub answers `object not found` for
+   the repository, so no tag of it would ever have worked. [[TD-061]] had
+   recorded "unpinned tag"; the real defect was the image's existence. Fixed
+   with `bitnamilegacy/minio`, a service container instead of a `docker run`
+   step, and a readiness poll in the lane.
+2. **A documentation file was not formatted.**
+   `odd/tasks/production-hardening.md` was edited after the last `pnpm format`
+   and before the commit. The gate caught it, which is what the gate is for.
+
+### What this closure still does NOT say
+
+- **Production readiness.** PRD §30's backup schedule, retention, PITR window
+  and RPO are hosting obligations. `docs/09-operations/BACKUP-RECOVERY.md`
+  states them and [[DEC-074]] records the split. The restore drill ran; whether
+  a provider honours an RPO is not knowable from here.
+- **A user-facing latency promise.** Report latency is measured at ~4,081 ms for
+  30 days of ~4,100 sales. That is a recorded defect ([[TD-063]]), not a target
+  met.
+- **A raised report cap.** The completed-sales cap fell from 20,000 to 5,000
+  because 20,000 was unreachable ([[DEC-079]]). [[TD-062]] is the change that
+  raises it properly.
+
+---
+
 ## EPIC-20 Production Hardening — first CI run: 2 of 4 jobs FAILED (2026-10-22)
 
 The pull request is **#148**, and CI ran. Both failures below are real findings,

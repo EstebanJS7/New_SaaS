@@ -118,7 +118,7 @@ Rewriting either would be churn with a regression risk and no gain.
   - [x] The `take: LIMIT + 1` cap refusal proven against real PostgreSQL.
   - [x] Commit.
 
-- [~] **T7 — HARD-007: closure and evidence.**
+- [x] **T7 — HARD-007: closure and evidence.**
   - [x] Criterion-to-evidence map for PRD §29 and §30.
   - [ ] `docs/10-qa/CI-EVIDENCE.md` block with the real CI run id. **PENDING:
         the branch is not pushed, so no run exists. The block is written and

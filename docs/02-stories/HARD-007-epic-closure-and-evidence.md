@@ -3,7 +3,7 @@ id: HARD-007
 type: story
 title: The epic closure and evidence
 epic: EPIC-20
-status: in-progress
+status: done
 priority: high
 depends_on:
   - HARD-001
