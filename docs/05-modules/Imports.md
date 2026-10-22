@@ -152,10 +152,22 @@ finishes. The TTL only governs the import that never does.
 holds the key. The preview and the commit run in the worker, which resolves the
 row and reads the key there — exactly as the fiscal handler resolves its own
 document — so the key crosses a boundary between two deployables and never a
-network boundary to a browser. There is deliberately **no public, signed or
-proxy route** for the artefact: [[DEC-072]] says the surface never downloads it
-back, and having no route is what keeps that true. The runtime suite asserts
-that no such route exists.
+network boundary to a browser.
+
+**The storage must be SHARED, and the environment now guarantees it**
+([[HARD-003]], [[DEC-077]]). `StorageModule` wires the S3 driver only when
+`STORAGE_S3_BUCKET` is present and otherwise falls back to a **per-process**
+in-memory driver. The fallback is honest for unit tests and useless here: the
+API would keep the artefact in its own memory and the worker, being another
+process, would read nothing. Every environment that runs more than one process
+therefore sets the bucket, and `docker-compose.yml` plus the CI browser job
+provide a MinIO that satisfies it. The lane's `globalSetup` creates the bucket
+and **refuses to fall back** when the variable is set but the store is
+unreachable, because a silent fallback would report green while proving only the
+half the lane could reach — which is exactly what [[TD-060]] recorded. There is
+deliberately **no public, signed or proxy route** for the artefact: [[DEC-072]]
+says the surface never downloads it back, and having no route is what keeps that
+true. The runtime suite asserts that no such route exists.
 
 **Why the TTL sweep is tenant-scoped.** Every query in this module carries the
 tenant predicate implicitly, so the sweep drains one tenant at a time. A

@@ -29,8 +29,44 @@ services:
       timeout: 5s
       retries: 5
 
+  # The `object-storage` deployable ENGINEERING-RULES.md already listed and no code
+  # used until HARD-003 (TD-060, DEC-077).
+  #
+  # Why it is here: `packages/storage` wires the S3 driver only when
+  # STORAGE_S3_BUCKET is present and otherwise falls back to a PER-PROCESS
+  # in-memory driver. With the fallback the API writes an uploaded import artefact
+  # into its own memory and the worker — a different process — cannot read it, so
+  # the asynchronous import cannot complete. That is TD-060, and this service is
+  # what closes it: one bucket both processes can reach.
+  #
+  # MinIO speaks the S3 protocol, so `S3StorageDriver` is used unchanged; no new
+  # client, boundary or technology enters the application.
+  #
+  # NOTE (recorded debt, not a decision): `latest` is unpinned. MinIO publishes
+  # release-stamped tags only, so pinning needs a tag chosen against the registry at
+  # the time of the change. Recorded in HARD-003 rather than guessed here.
+  minio:
+    image: minio/minio:latest
+    container_name: newsaas-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_S3_ACCESS_KEY_ID:-newsaas}
+      MINIO_ROOT_PASSWORD: ${STORAGE_S3_SECRET_ACCESS_KEY:-newsaas-minio-secret}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - newsaas-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   newsaas-postgres-data:
     name: newsaas-postgres-data
   newsaas-redis-data:
     name: newsaas-redis-data
+  newsaas-minio-data:
+    name: newsaas-minio-data

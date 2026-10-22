@@ -14,15 +14,19 @@ const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
  * table, commit, and read the summary — including the row that FAILED and the
  * reason it failed.
  *
- * **THE FULL FLOW NEEDS SHARED OBJECT STORAGE, AND THE LANE HAS NONE** ([[TD-060]]).
- * The API writes the uploaded CSV through `StorageModule`, which wires S3 only when
- * `STORAGE_S3_BUCKET` is present and otherwise falls back to a per-process in-memory
- * driver. With the fallback, the API stores the file in its own memory and the worker —
- * a different process — finds nothing, so the preview fails on an artefact it cannot
- * read. That is why the full-flow test below is CONDITIONAL rather than aspirational:
- * it runs wherever storage is shared and names the reason it skips where it is not. The
- * second test proves the half the lane can prove today, which is everything up to the
- * artefact read.
+ * **THE FULL FLOW NEEDS SHARED OBJECT STORAGE, AND THE LANE NOW HAS IT** ([[TD-060]]
+ * closed by [[DEC-077]] / [[HARD-003]]). The API writes the uploaded CSV through
+ * `StorageModule`, which wires S3 only when `STORAGE_S3_BUCKET` is present and otherwise
+ * falls back to a per-process in-memory driver. With the fallback the API stores the file
+ * in its own memory and the worker — a different process — finds nothing, so the preview
+ * fails on an artefact it cannot read.
+ *
+ * CI now starts MinIO and sets the storage variables, and `globalSetup` creates the
+ * bucket; so the full-flow test below RUNS there rather than skipping. The guard is
+ * kept, deliberately: a lane started without object storage genuinely cannot run this
+ * flow, and it should say so with the variable's name instead of failing on a preview
+ * that reads an artefact from another process' memory. The second test still proves the
+ * half a storage-less lane can reach, which is everything up to the artefact read.
  *
  * **THE WORKER IS THIS SPEC'S OWN RESPONSIBILITY.** Importing is asynchronous
  * ([[DEC-072]]): the API enqueues and a BullMQ consumer does the work. The lane's
@@ -135,11 +139,16 @@ const OMITTED_DISPLAY_NAME = "";
 
 test.describe("the staff imports surface", () => {
   /**
-   * Whether this environment can run an import end to end ([[TD-060]]).
+   * Whether this environment can run an import end to end.
    *
    * `STORAGE_S3_BUCKET` is what makes `StorageModule` choose the S3 driver, which is the
    * only way the worker can see a file the API wrote. Without it the driver is
    * per-process and the preview fails on a file that exists only in the API's memory.
+   *
+   * Since [[HARD-003]] CI and `docker compose up` both configure it, so this is false only
+   * in an environment that deliberately has no object storage. `globalSetup` refuses to
+   * fall back when the variable is set but the store is unreachable — this guard covers
+   * the opposite case, where it is not set at all.
    */
   const canShareArtefact = (process.env.STORAGE_S3_BUCKET ?? "") !== "";
   let worker: ReturnType<typeof spawn> | undefined;
@@ -170,7 +179,8 @@ test.describe("the staff imports surface", () => {
     test.skip(
       !canShareArtefact,
       "Needs shared object storage: the API and the worker run in different processes, and " +
-        "STORAGE_S3_BUCKET is unset, so the worker cannot read the file the API uploaded (TD-060)."
+        "STORAGE_S3_BUCKET is unset, so the worker cannot read the file the API uploaded. " +
+        "CI and `docker compose up` both provide it (DEC-077 / HARD-003)."
     );
 
     // The customer records this run creates must be findable and never collide with
@@ -350,11 +360,11 @@ test.describe("the staff imports surface", () => {
   test("uploads a CSV through the BFF and the worker claims the preview", async ({
     page,
   }, testInfo) => {
-    // Everything up to the artefact read, which is as far as this lane can go without
-    // shared storage ([[TD-060]]). It is still worth running where the full flow cannot:
-    // it proves the browser-facing half — the multipart proxy, the surface, the queue —
-    // and it proves the consumer is alive, because a job nobody claims never leaves
-    // UPLOADED.
+    // Everything up to the artefact read. It matters even where the full flow DOES run,
+    // because it is the only assertion that the work is asynchronous at all: it proves
+    // the browser-facing half — the multipart proxy, the surface, the queue — and it
+    // proves the consumer is alive, because a job nobody claims never leaves UPLOADED.
+    // The full-flow test above proves the artefact read; this one proves the claim.
     const runId = Date.now();
     const csvPath = testInfo.outputPath(`lane-import-upload-${String(runId)}.csv`);
     await writeFile(
@@ -397,7 +407,7 @@ test.describe("the staff imports surface", () => {
     // The assertion that matters here: the state LEAVES UPLOADED. Only a consumer
     // takes the row out of it, so this is the queue, the claim and the worker's boot
     // proven from the browser. Whether the phase afterwards is PREVIEWED or FAILED is
-    // [[TD-060]]'s subject, and the full-flow test above owns it.
+    // the full-flow test above owns that half.
     await expect(page.getByTestId("imports-state")).not.toHaveText("UPLOADED", {
       timeout: PHASE_TIMEOUT_MS,
     });

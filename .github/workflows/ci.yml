@@ -203,6 +203,34 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Start object storage
+        # HARD-003 / TD-060 / DEC-077. `packages/storage` wires the S3 driver only when
+        # STORAGE_S3_BUCKET is set and otherwise falls back to a PER-PROCESS in-memory
+        # driver, so without this the API's uploaded artefact exists only in the API's
+        # memory and the worker cannot read it — the reason the full import flow used to
+        # skip. MinIO speaks S3, so `S3StorageDriver` is used unchanged.
+        #
+        # It is a STEP rather than a `services:` entry because a service container cannot
+        # override the image's command, and the official image needs `server /data` to
+        # serve. The bucket itself is created by the lane's `globalSetup`, which also
+        # refuses to fall back to the in-memory driver when this step did not come up.
+        run: |
+          docker run -d --name newsaas-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=newsaas \
+            -e MINIO_ROOT_PASSWORD=newsaas-minio-secret \
+            minio/minio:latest server /data
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/live; then
+              echo "object storage is live"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "object storage did not become live; container logs follow"
+          docker logs newsaas-minio
+          exit 1
+
       - name: Install the browser
         # `--with-deps` installs the system libraries Chromium needs. It is the reason this job cannot
         # simply run the lane's npm script: the browser is a deployment-time concern of the runner.
@@ -215,6 +243,17 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
           REDIS_URL: redis://localhost:6379
+          # HARD-003: the same variable NAMES docker-compose.yml uses, so the two
+          # declarations of the same service cannot drift in a way that silently
+          # re-enables the per-process in-memory driver.
+          STORAGE_S3_BUCKET: newsaas-imports
+          STORAGE_S3_ENDPOINT: http://localhost:9000
+          STORAGE_S3_REGION: us-east-1
+          # Credentials use the SDK's OWN names, not STORAGE_S3_*: `S3StorageDriver`
+          # resolves them through the AWS default chain (environment, instance
+          # profile, …) so a secret never lives in tenant settings or a record.
+          AWS_ACCESS_KEY_ID: newsaas
+          AWS_SECRET_ACCESS_KEY: newsaas-minio-secret
         run: pnpm --filter @newsaas/e2e e2e
 
       - name: Upload the report and traces
