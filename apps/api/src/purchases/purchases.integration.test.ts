@@ -48,6 +48,7 @@ interface PurchaseDto {
   supplierId: string;
   status: string;
   lines: PurchaseLineDto[];
+  receivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -63,6 +64,7 @@ const PURCHASE_RESPONSE_KEYS: readonly string[] = [
   "supplierId",
   "status",
   "lines",
+  "receivedAt",
   "createdAt",
   "updatedAt",
 ];
@@ -652,6 +654,10 @@ describe("Purchases HTTP boundary (EPIC-11 PUR-001)", () => {
     expect(body.id).toBe(purchaseId);
     expect(body.status).toBe("CANCELLED");
     expect(body.lines).toHaveLength(1);
+    // A cancelled purchase was never received, so it carries no business
+    // instant and can never be counted as a receipt retroactively (DEC-064).
+    expect(body.receivedAt).toBeNull();
+    expect(booted.db.tables.purchases.get(purchaseId)?.receivedAt).toBeNull();
 
     const rows = auditsForTarget(booted, purchaseId);
     expect(rows.map((row) => row.action)).toEqual(["purchase.created", "purchase.cancelled"]);
@@ -1057,6 +1063,46 @@ describe("Purchases HTTP boundary (EPIC-11 PUR-001)", () => {
     expect([...booted.db.tables.stockBalances.values()]).toEqual(balancesAfterFirst);
     expect(booted.db.tables.audits.size).toBe(auditsAfterFirst);
     expect(auditsForTarget(booted, purchase.id)).toHaveLength(1);
+  });
+
+  it("stamps receivedAt exactly once and never rewrites it on a rejected receive", async () => {
+    const item = fixture.createItem(fixture.a);
+    const purchase = fixture.seedPurchase(fixture.a, {
+      lines: [{ catalogItemId: item.id, quantity: "3.250" }],
+    });
+
+    // A draft carries no receipt instant: `null` on the stored row and on the
+    // read projection.
+    expect(booted.db.tables.purchases.get(purchase.id)?.receivedAt).toBeNull();
+    const draft = await supertest(booted.app.getHttpServer())
+      .get(`/purchases/${purchase.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect((draft.body as PurchaseDto).receivedAt).toBeNull();
+
+    const received = await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(201);
+
+    // Written by the receive transaction and projected as an ISO instant.
+    const receivedAt = (received.body as PurchaseDto).receivedAt;
+    expect(typeof receivedAt).toBe("string");
+    expect(Number.isNaN(Date.parse(receivedAt ?? ""))).toBe(false);
+    const stored = booted.db.tables.purchases.get(purchase.id)?.receivedAt;
+    expect(stored).toBeInstanceOf(Date);
+    expect(stored?.toISOString()).toBe(receivedAt);
+
+    // Written ONCE: the second receive is refused after the clock has moved on,
+    // so the original instant surviving proves it was never restamped.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const replay = await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(409);
+    expect((replay.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect(booted.db.tables.purchases.get(purchase.id)?.receivedAt?.toISOString()).toBe(receivedAt);
   });
 
   it("rejects a CANCELLED and an already-RECEIVED purchase with 409 and persists nothing", async () => {

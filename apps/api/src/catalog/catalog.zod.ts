@@ -80,6 +80,39 @@ const catalogReferencePriceAmount = z
   );
 
 /**
+ * Opt-in low-stock threshold as an exact decimal TEXT capped at the
+ * `Decimal(10, 3)` column: up to 7 integer digits and 3 decimals — the same
+ * quantity scale the stock ledger stores `stock_balance.quantity` on, so a
+ * threshold and the balance it is compared against are one kind of number
+ * (DEC-065). Same boundary rule as `catalogReferencePriceAmount` above: a
+ * quantity never travels as a JavaScript number, so a float cannot enter the
+ * boundary and no rounding is implied. The pattern alone rejects negatives and
+ * any malformed spelling; the `refine` rejects the remaining non-positive
+ * spellings (`"0"`, `"0.00"`, `"0.000"`), because a zero threshold would mark
+ * every item as low stock forever while a negative one can never be reached.
+ * The `Number` call is safe precisely because the pattern already caps the value
+ * at three decimals and at 7 integer digits, so it compares an exact value
+ * rather than approximating one.
+ *
+ * A syntactically valid but non-positive value is `400 VALIDATION_FAILED`, the
+ * same as any other rejected field.
+ *
+ * This field is INDEPENDENT of the reference-price pair: it is never part of
+ * `assertReferencePricePair`, so a threshold may be set, changed or cleared on
+ * an item that has no price at all.
+ */
+const catalogLowStockThreshold = z
+  .string()
+  .regex(
+    /^\d{1,7}(\.\d{1,3})?$/,
+    "Low-stock threshold must be an exact decimal string (max 10 digits, 3 decimals)."
+  )
+  .refine(
+    (value) => Number(value) > 0,
+    "Low-stock threshold must be greater than zero when supplied."
+  );
+
+/**
  * The reference price is ONE pair (DEC-010 boundary 2): amount and currency are
  * both present or both absent. Applied to create and update alike.
  *
@@ -132,6 +165,10 @@ function assertReferencePricePair(value: ReferencePricePairInput, ctx: z.Refinem
  * rule the service applies, and only a caller-supplied value overrides it. The
  * column is `NOT NULL` with a database default, so the service always writes an
  * explicit value rather than letting the database fallback decide.
+ *
+ * `lowStockThreshold` is OPTIONAL and NULLABLE (DEC-065): omitting it or sending
+ * `null` both mean "not monitored", which is the only state an existing item can
+ * start in now that no threshold is backfilled.
  */
 const createCatalogItemPayload = z
   .object({
@@ -141,6 +178,7 @@ const createCatalogItemPayload = z
     referencePriceAmount: catalogReferencePriceAmount.nullable().optional(),
     referencePriceCurrency: catalogReferencePriceCurrency.nullable().optional(),
     tracksStock: z.boolean().optional(),
+    lowStockThreshold: catalogLowStockThreshold.nullable().optional(),
   })
   .strict();
 
@@ -165,6 +203,12 @@ export type CreateCatalogItemInput = z.infer<typeof createCatalogItemPayload>;
  * flag untouched, a present boolean changes it (the EPIC-10 staff-editable
  * override), and an explicit `null` fails the boolean check with `400` because
  * there is no third "unset" state — the column is `NOT NULL`.
+ *
+ * `lowStockThreshold` is optional and NULLABLE (DEC-065) and follows the
+ * reference-price "absent leaves untouched / `null` clears" convention: a
+ * supplied value sets the threshold, an explicit `null` means "stop monitoring"
+ * (the report then skips the item), and an omitted key leaves the stored value
+ * exactly as it was. It is independent of the price pair.
  */
 const updateCatalogItemPayload = z
   .object({
@@ -174,6 +218,7 @@ const updateCatalogItemPayload = z
     referencePriceAmount: catalogReferencePriceAmount.nullable().optional(),
     referencePriceCurrency: catalogReferencePriceCurrency.nullable().optional(),
     tracksStock: z.boolean().optional(),
+    lowStockThreshold: catalogLowStockThreshold.nullable().optional(),
   })
   .strict();
 

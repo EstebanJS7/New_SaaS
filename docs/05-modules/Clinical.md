@@ -2,7 +2,7 @@
 type: module
 module: clinical
 status: implemented
-updated: 2026-09-13
+updated: 2026-10-19
 ---
 
 # Module — Clinical
@@ -28,6 +28,8 @@ records (treatments, vaccinations, deworming, studies, weights).
 - Create/list/update for the five subdomain record kinds (no delete).
 - A staff HTTP surface behind granular permissions and the `veterinary`
   entitlement, plus an authenticated web proxy and staff workspace.
+- A staff ENTRY surface for vaccinations and deworming, including the
+  staff-entered `nextDueAt` a report reads ([[REP-010]]).
 
 ## Main Entities
 
@@ -53,6 +55,46 @@ A CLOSED encounter is immutable; the original is never mutated.
 - The service re-applies the `veterinary` entitlement
   (`403 FEATURE_NOT_ENTITLED`) and the granular permission (`403 FORBIDDEN`) as
   defense in depth.
+
+## Staff surface (web)
+
+One page, `apps/web/src/app/(app)/app/patients/[id]/`, rendered inside the staff
+`(app)` shell through the authenticated `/api/clinical` proxy:
+
+- **Clinical records** — the encounter card: create, version-guarded autosave,
+  close, amend.
+- **Vaccinations and deworming** — the specialized-record card
+  (`clinical-records.tsx`): list, create, correct, and **clear the due date**.
+
+Both cards are per-patient and independent. The second one is the only staff
+path that fills `next_due_at`, the nullable column [[DEC-065]] added for PRD
+§31's "upcoming/overdue vaccines" and "upcoming deworming" reports; [[DEC-067]]
+scoped that entry path to these two record kinds and to nothing else.
+
+What the surface guarantees, all of it UX-only — the API re-asserts every gate:
+
+- An empty due date renders the explicit "No due date recorded" state, never a
+  blank or a placeholder date. `null` means "not monitored", and the reports
+  omit the row instead of deriving one.
+- A wrong due date is REMOVABLE, not only replaceable: the correction form sends
+  an explicit `nextDueAt: null`, which is the contract `PUT …/:id` already
+  accepted. A create with no due date OMITS the key, because the create schema
+  treats an absent key as "no due date" and rejects `null` there.
+- Entry and display use `<input type="datetime-local">`, and the typed
+  wall-clock value is converted to an ISO instant in the browser before it
+  leaves, so the reports bucket the row to the local day staff chose.
+- The create and correct affordances are hidden when the shell supplies
+  permissions without `vet.clinical.create` / `vet.clinical.update`; when the
+  shell supplies none (`undefined` = unknown), they stay visible and the API's
+  `403 FORBIDDEN` remains the authority.
+- Loading, empty, error, success and permission-denied states exist for both
+  lists, styled with semantic branding tokens only.
+
+**Remaining gap.** Treatments, studies and weights have routes, validation and
+permissions but **no staff UI** — they are API-only, so a staff member cannot
+record them through the product. That is [[TD-055]], narrowed from five kinds to
+three by [[DEC-067]] and still open. There is also no cross-patient "all
+vaccinations" view: the due reports are that view, aggregated.
 
 ## API
 
@@ -106,6 +148,18 @@ A CLOSED encounter is immutable; the original is never mutated.
 ## Related Stories
 
 - [[VET-004 Clinical Encounter]]
+- [[REP-010]] — the vaccination/deworming entry surface and the due date it
+  fills
+
+## Related Decisions
+
+- [[DEC-065]] — `next_due_at` on both tables, entered by staff, NULL = not
+  monitored
+- [[DEC-067]] — this entry path is scoped to vaccinations and deworming
+
+## Technical Debt
+
+- [[TD-055]] — treatments, studies and weights stay API-only (open)
 
 ## Related ADRs
 

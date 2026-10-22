@@ -361,6 +361,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "cash.read",
       "billing.read",
       "fiscal.read",
+      "reports.read",
     ]);
     for (const roleCode of ["CASHIER", "INVENTORY_MANAGER"] as const) {
       for (const key of [
@@ -700,6 +701,47 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     expect(FEATURE_CODE_SEEDS).toContain("cash");
   });
 
+  it("seeds the reports permissions and decided matrix (EPIC-18 REP-002)", () => {
+    const seededKeys = PERMISSION_SEEDS.map((permission) => permission.key);
+    for (const key of ["reports.read", "reports.export"] as const) {
+      expect(seededKeys).toContain(key);
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+    }
+
+    // DEC-062: reports are NOT gated by a feature code, so the family is guarded
+    // by permissions alone. `reports.read` follows the read-wide shape every
+    // other `*.read` key has: all six roles see the tenant's own aggregates.
+    for (const roleCode of [
+      "OWNER",
+      "ADMIN",
+      "VETERINARIAN",
+      "RECEPTIONIST",
+      "CASHIER",
+      "INVENTORY_MANAGER",
+    ] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("reports.read");
+    }
+
+    // `reports.export` is EXACTLY the two owning roles: reading an aggregate on
+    // screen and taking a file out of the system are different decisions, and a
+    // CSV leaves the tenant's boundary.
+    for (const roleCode of ["OWNER", "ADMIN"] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).toContain("reports.export");
+    }
+    for (const roleCode of [
+      "VETERINARIAN",
+      "RECEPTIONIST",
+      "CASHIER",
+      "INVENTORY_MANAGER",
+    ] as const) {
+      expect(ROLE_PERMISSION_MATRIX[roleCode]).not.toContain("reports.export");
+    }
+
+    // DEC-062 leaves `advanced_reports` unspent and adds NO thirteenth code.
+    expect(FEATURE_CODE_SEEDS).toHaveLength(12);
+    expect(FEATURE_CODE_SEEDS).toContain("advanced_reports");
+  });
+
   it("seeds the global Species/Breed taxonomy without tenant scoping (Decision #2211)", () => {
     expect(SPECIES_SEEDS.map((species) => species.code)).toEqual([
       "dog",
@@ -775,12 +817,15 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // 60 -> 61: the reminder's policy is tenant configuration like every other
       // namespace's, and DEC-058 keeps it off the feature catalog. NOTIF-004 adds
       // `notifications.delivery.read` for ALL SIX roles -- the same reach every
-      // other `*.read` key has -- moving 61 -> 62.
+      // other `*.read` key has -- moving 61 -> 62. EPIC-18 REP-002 adds the
+      // two-key `reports` family (DEC-062): `reports.read` is read-wide like
+      // every other `*.read` key and `reports.export` is held by the two owning
+      // roles only, moving 62 -> 64.
       // DAT-007: the platform tenant owns identity-scoped messages (a staff
       // password-recovery email), because the delivery aggregate's tenant_id is
       // NOT NULL and the reset belongs to an IDENTITY rather than to a customer.
       tenants: 1,
-      permissions: 62,
+      permissions: 64,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

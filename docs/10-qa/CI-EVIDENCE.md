@@ -2053,3 +2053,147 @@ What the repository side already is:
 **Nothing in this epic should be read as if a real message had been delivered.**
 `done` on its Stories means implementation closure, and the coverage is the
 fake's.
+
+## EPIC-18 Local Closure Evidence (2026-10-19)
+
+[[EPIC-18]] Dashboards/Reports closed on `feat/epic-18-dashboards-reports`. **No
+branch of this epic was ever pushed**, so it has no CI receipt: `/ci.yml`
+triggers on pushes to `main` and on pull requests targeting it, so a
+feature-branch push produces no run at all. The receipt arrives with the first
+pull request. What follows is the local gate run plus the live-PostgreSQL
+evidence, and it is recorded as local rather than presented as CI.
+
+### Executed checks, on the closing tree
+
+```text
+pnpm format-check   PASS
+pnpm lint           PASS   23/23 turbo tasks (includes apps/e2e specs)
+pnpm typecheck      PASS   23/23
+pnpm build          PASS   13/13
+pnpm test           PASS   23/23
+```
+
+### Test totals
+
+```text
+suite                     files            tests
+api                       114 + 1 skipped  1634 passed | 266 skipped
+web                       118              1282 passed
+database                   30               549 passed
+worker                     17               245 passed
+notifications              11                84 passed
+fiscal                     36               788 passed
+fiscal-persistence         10               100 passed
+secret-store                5                50 passed
+ui                          6                36 passed
+shared                      4                23 passed
+preflight                   2                 6 passed
+```
+
+The api figure moved from **1349 at kickoff to 1634** (+285) and web from **1160
+to 1282** (+122). The 266 skipped are the live-PostgreSQL spec, which runs
+below.
+
+### Live PostgreSQL
+
+```text
+DATABASE_URL_TEST=… pnpm --filter @newsaas/api test:live-pg
+  → 266 passed (266)
+```
+
+Run against a disposable PostgreSQL 16 cluster initialised locally (Docker is
+unavailable in the environment this epic was built in), with all **50
+migrations** applied and the reference seed. The applied catalog is **64
+permissions**; the kickoff figure was 62, and the two added are `reports.read`
+and `reports.export`.
+
+### Evidence beyond the suites
+
+Five claims in this epic are not provable from a green suite, so each was proven
+separately against real PostgreSQL and is recorded here rather than asserted:
+
+1. **The report queries run on the real planner.** The route suites execute on
+   an in-memory boundary, so each report's query was additionally run through
+   the real Prisma client: `[2026-06-01T03:00Z, 2026-06-11T03:00Z)` included a
+   sale at `02:00Z` and excluded one at exactly `03:00Z`, `include` resolved,
+   and the total came out as the string `"2001.10"`.
+2. **The cross-report invariant holds on real rows.** For one seeded period all
+   three commercial reports produced `2430.00` — `sales-by-period.totalGross`,
+   `payment-methods.totalGross`, the sum of per-tender amounts and the sum of
+   per-item grosses — from a sale paid with two tenders and an amount whose
+   float representation is inexact.
+3. **The snapshot and the flow are different numbers.** One stock item read
+   `quantity 10.000` with `inbound 20.000`, `outbound 8.000`, `net 12.000`, and
+   its balance equalled its all-time ledger sum.
+4. **The due-date boundary is where the decision put it.** With `asOfDate`
+   `2026-10-19`, a due date of `10-18` classified overdue, `10-19` classified
+   **upcoming** (due today is not overdue), `11-18` — exactly the horizon end —
+   was included, and `+31 days` and a NULL due date never arrived.
+5. **The CSV round-trips exactly.** `2569.00` survived verbatim and an item
+   named `Gasa "sterile", 10cm` rendered as `"Gasa ""sterile"", 10cm"`.
+
+### Known warnings and open limitations
+
+- **The `apps/e2e` lane could not run while this epic was built, and its first
+  real execution found a defect in the epic's own spec.** The build environment
+  has no Docker, so four specs were written and only statically checked
+  (`apps/e2e` typecheck and lint exit 0). The lane runs in CI, and PR #145 was
+  its first execution:
+
+  ```text
+  Browser end-to-end   run 39533715413   → 20 passed, 1 failed
+  ```
+
+  **`reports.spec.ts` passed on its first run** — the dashboard, a report opened
+  from its card, a period change and the CSV download, in a real Chromium
+  against the built app and a seeded database. **`clinical-records.spec.ts`
+  failed**, timing out on a `fill` at line 78, because it drove the surface as
+  it existed BEFORE the browser-zone defect was fixed: the date fields had
+  become `<input type="date">` and the row renderer a plain calendar date, while
+  the spec still drove a `datetime-local` control and expected a wall-clock
+  time. It was written against source, and no static check could have caught it.
+  It is corrected and the lane is re-run on the same PR.
+
+  The lesson is the one this epic keeps paying for: a spec that has never
+  executed is a hypothesis, not coverage, and it can be wrong in the same
+  direction as the code it guards.
+
+- **No native RDD review verdict exists for this epic.** The receipt-driven
+  review facade projects working-tree changes, and this epic's discipline
+  commits every work unit, so a clean tree is the normal state and the facade
+  offers no committed-range route: `inspect` reports an empty candidate and
+  `start` requires a lineage that is never created. Nothing was fabricated to
+  work around it. Two independent adversarial verifications stand in its place,
+  and they found two blocking defects the gates were green on (see below).
+- **Five defects were found after their units were reported green**, and all are
+  fixed: the `Date.UTC` two-digit-year hole in the period resolver, the
+  `datetime-local` browser-zone bug in the clinical surface, the stock read
+  order, a `thresholdsConfigured` flag derived from the wrong table, and a
+  nested `<main>` on three surfaces. Two of them came from independent
+  verification and three from self-review during later units. Their value here
+  is the evidence that green suites do not close this epic on their own.
+- **The in-memory boundary cannot prove `take` enforcement** ([[TD-056]]), so
+  every report cap is proven at service level against a stub, not against the
+  engine.
+- No tenant exists with production-sized data, so performance is **unknown**,
+  not fine ([[TD-053]]).
+
+### Debt preserved at closure
+
+```text
+TD-051  open      asynchronous export above the row cap, with its trigger
+TD-052  accepted  the branch dimension no finance ledger carries
+TD-053  open      report query performance unmeasured beyond directed indexes
+TD-054  open      the live-PostgreSQL lane is not timezone-independent
+TD-055  open      three clinical record kinds still API-only (narrowed by DEC-067)
+TD-056  open      the fake cannot prove take enforcement or select projection
+```
+
+### What `done` does not mean
+
+`done` on this epic means **implementation closure against PRD §31**: twelve
+report views, a CSV export, a dashboard, and the clinical entry surface the
+veterinary due reports depend on. It is **not** a production-readiness
+statement. The browser lane has never executed, no tenant has run a report
+against real volume, and [[EPIC-19]] Imports and [[EPIC-20]] Production
+Hardening remain.

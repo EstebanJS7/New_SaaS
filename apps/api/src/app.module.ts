@@ -19,6 +19,7 @@ import { PatientsModule } from "./patients/patients.module.js";
 import { PortalModule } from "./portal/portal.module.js";
 import { PurchasesModule } from "./purchases/purchases.module.js";
 import { RbacModule } from "./rbac/rbac.module.js";
+import { ReportingModule } from "./reporting/reporting.module.js";
 import { SalesModule } from "./sales/sales.module.js";
 import { SchedulingModule } from "./scheduling/scheduling.module.js";
 import { NotificationsModule } from "./notifications/notifications.module.js";
@@ -114,6 +115,12 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // EPIC-15 Fiscal provider composition root; no APP_GUARD, so it does not
     // affect guard order. Keep before PortalModule, which must stay last.
     FiscalModule,
+    // EPIC-18 REP-002 reporting: read-only aggregates over the domains above, and
+    // the one surface DEC-062 leaves UNGATED by feature code — it imports no
+    // EntitlementsModule on purpose. No APP_GUARD either, so its position is free
+    // — kept after Fiscal so the dependency direction reads top-down, and before
+    // PortalModule, which must stay last.
+    ReportingModule,
     // Portal boundary LAST: its global PortalAuthGuard must run after the staff
     // chain (Auth < Tenancy < Rbac < Portal) so it only ever sees requests the
     // staff guards have already skipped for the /portal/* surface.

@@ -4,7 +4,50 @@ All notable product changes will be documented here.
 
 ## Unreleased
 
+### Added
+
+- **Reports, a dashboard, and a CSV export (PRD §31).** Twelve report views over
+  the tenant's own operational record — sales by period, payment methods, sales
+  by product/service, cash session closes, cash movements, purchases, stock, low
+  stock, consultations, new patients, vaccines due and deworming due — plus a
+  dashboard at `/app` that summarises the day's money and a CSV export of any of
+  them. Everything reads a ledger or an immutable row, never a mutable balance.
+- **Staff can now record a vaccination and a deworming treatment**, with their
+  booster due dates, and can correct or remove one. The API, the proxy and the
+  permissions already existed; no screen did, so the two veterinary due reports
+  had no way to be populated.
+
+### Changed
+
+- **`Sale`, `Purchase` and `CashSession` now carry the instant of their terminal
+  transition** — `completed_at`, `received_at`, `closed_at`. A period report
+  could not distinguish a sale created on Monday from one completed on
+  Wednesday, because the schema only ever recorded the former.
+- **`CatalogItem` can carry a low-stock threshold** and **clinical vaccinations
+  and deworming treatments carry a due date.** Both are opt-in and nullable: no
+  history was backfilled, because the facts were never recorded and inventing
+  them would be worse than an empty report.
+- A `Reports` destination joins the staff navigation, ungated by feature code.
+
 ### Fixed
+
+- **A vaccination entered for one day could be reported overdue the day
+  before.** The date field converted the typed value through the browser's clock
+  while the reports classify by calendar date in the tenant's zone, so a staff
+  member working anywhere but Paraguay shifted every due date by a day. Both
+  date fields are now date-only and pinned to noon UTC, which leaves twelve
+  hours of margin either side of the tenant's day.
+- **The report period resolver accepted a date with a two-digit year.**
+  `Date.UTC` reads `0099` as 1999, so a "0099-01-01 to 1999-01-01" request
+  validated as one day, passed the span bound, and answered a 1999 report while
+  echoing year 0099.
+- **The stock report could refuse valid data.** It read balances before
+  movements, so a purchase of a previously unstocked item had its movement seen
+  and its balance not, and the report answered with an internal error for a
+  perfectly valid receipt.
+- **The low-stock report told the one tenant who had configured a threshold that
+  nobody had configured one**, when the threshold sat on an item that had never
+  moved.
 
 - **Pressing Enter now submits every sign-in and recovery form.** None of the
   six was a `<form>`: the fields sat in a plain container and the button was

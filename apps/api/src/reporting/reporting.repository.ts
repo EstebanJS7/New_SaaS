@@ -1,0 +1,1204 @@
+import { Inject, Injectable } from "@nestjs/common";
+import type { Prisma } from "@newsaas/database";
+// Value import (not `import type`): `PrismaService` is the DI token.
+import { PrismaService } from "@newsaas/database";
+import { DomainError } from "@newsaas/shared";
+import type { CashMovementDirectionValue, CashMovementTypeValue } from "../cash/cash.repository.js";
+import { RequestContextService } from "../context/request-context.service.js";
+
+/**
+ * Persistence row for one COMPLETED sale line as the reporting boundary reads it
+ * (the same projection `SaleRepository` uses). The three money amounts are exact
+ * `Decimal(14, 2)` and `quantity` is the ledger's `Decimal(10, 3)` — `Prisma.Decimal`
+ * against PostgreSQL, a plain exact string in the in-memory boundary — and are
+ * NEVER coerced to a JavaScript float here or anywhere downstream.
+ */
+export interface ReportSaleLineRow {
+  readonly catalogItemId: string;
+  readonly quantity: Prisma.Decimal | string;
+  readonly lineTotal: Prisma.Decimal | string;
+  readonly taxableBase: Prisma.Decimal | string;
+  readonly taxAmount: Prisma.Decimal | string;
+}
+
+/**
+ * Persistence row for one payment of a COMPLETED sale, as the payment-method
+ * report reads it: the PRD §19 `method` and the exact `Decimal(14, 2)` amount.
+ * There is deliberately no tender, change or refund column — none exists.
+ */
+export interface ReportSalePaymentRow {
+  readonly method: string;
+  readonly amount: Prisma.Decimal | string;
+}
+
+/** The header projection every completed-sale report reads. No customer, patient or clinical reference. */
+export interface ReportSaleHeaderRow {
+  readonly id: string;
+  readonly currency: string;
+  /**
+   * The business instant of the `DRAFT` → `COMPLETED` transition ([[DEC-064]]).
+   * Typed nullable because the column is: a `COMPLETED` row always carries one
+   * (the completion transaction writes both together) and the mapper skips any
+   * row that somehow does not, rather than inventing a day for it.
+   */
+  readonly completedAt: Date | null;
+}
+
+/**
+ * The row the shared completed-sale read returns: the header plus WHICHEVER
+ * relation the query asked to `include`. Both relations are optional because
+ * Prisma returns only what the query named — a `payments` read genuinely carries
+ * no `lines` — and each public repository method narrows the one it requested.
+ */
+export interface ReportSaleReadRow extends ReportSaleHeaderRow {
+  readonly lines?: readonly ReportSaleLineRow[];
+  readonly payments?: readonly ReportSalePaymentRow[];
+}
+
+/** A completed sale WITH its line set (`listCompletedSales`). */
+export interface ReportSaleRow extends ReportSaleHeaderRow {
+  readonly lines: readonly ReportSaleLineRow[];
+}
+
+/** A completed sale WITH its payment set (`listCompletedSalesWithPayments`). */
+export interface ReportSaleWithPaymentsRow extends ReportSaleHeaderRow {
+  readonly payments: readonly ReportSalePaymentRow[];
+}
+
+/**
+ * The catalog projection every item-resolving report needs: identity, display
+ * name, the `kind` that is a FACT about the item (never re-derived from
+ * `tracksStock`) and the two columns the inventory reports filter on.
+ *
+ * `tracksStock` and `lowStockThreshold` are REQUIRED, not optional, and they are
+ * read from the SAME batched query that resolves the name. An optional field
+ * here would let "the query did not select it" masquerade as "the column is
+ * NULL", and NULL has a specific meaning in this domain: not monitored
+ * ([[DEC-065]]). A missing threshold is therefore not representable.
+ */
+export interface ReportCatalogItemRow {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: string;
+  /** Whether the item participates in the stock ledger (EPIC-10). */
+  readonly tracksStock: boolean;
+  /** The opt-in low-stock threshold; `null` means NOT MONITORED ([[DEC-065]]). */
+  readonly lowStockThreshold: Prisma.Decimal | string | null;
+}
+
+/**
+ * The narrow read contracts this repository needs, declared with Prisma's OWN arg
+ * types so the real client fits by construction and a unit suite can pass a stub
+ * (the `NotificationDeliveryReadPrisma` precedent). They carry reads only: a
+ * report reads and never writes, and there is no aggregate/groupBy seam here
+ * because the aggregation is TypeScript `Decimal` arithmetic over these rows.
+ */
+export interface ReportingSaleDelegate {
+  findMany(args: Prisma.SaleFindManyArgs): Promise<ReportSaleReadRow[]>;
+}
+
+export interface ReportingCatalogItemDelegate {
+  findMany(args: Prisma.CatalogItemFindManyArgs): Promise<ReportCatalogItemRow[]>;
+  /**
+   * Existence probe for `countsAsConfigured` on the low-stock report: does the
+   * caller's tenant monitor AT LEAST ONE tracked item?
+   *
+   * It cannot be answered from the balances plus a catalog read of the BALANCED
+   * items: a tenant that sets a threshold on an item which has never moved has no
+   * balance row, so the item is invisible to that read and the report would say
+   * "nobody configured anything" to the one tenant who did. One indexed existence
+   * check answers it exactly.
+   */
+  findFirst(args: Prisma.CatalogItemFindFirstArgs): Promise<ReportCatalogItemRow | null>;
+}
+
+/**
+ * Persistence row for one CLOSED cash session as the cash report reads it
+ * ([[REP-004]]). The close result columns are nullable because the `cash_session`
+ * columns are: `CLOSED` is terminal and the close command writes `closedAt` and
+ * the three amounts in the SAME statement ([[DEC-031]], [[DEC-036]],
+ * [[DEC-064]]), so a null on a closed row is unreachable — and asserted in
+ * {@link ReportRepository.listClosedCashSessions} rather than papered over with a
+ * zero.
+ */
+export interface ReportCashSessionReadRow {
+  readonly id: string;
+  readonly registerId: string;
+  readonly openedAt: Date;
+  readonly closedAt: Date | null;
+  readonly openingAmount: Prisma.Decimal | string;
+  readonly expectedAmount: Prisma.Decimal | string | null;
+  readonly countedAmount: Prisma.Decimal | string | null;
+  readonly differenceAmount: Prisma.Decimal | string | null;
+}
+
+/** A closed cash session whose close result and close instant are present. */
+export interface ReportCashSessionRow {
+  readonly id: string;
+  readonly registerId: string;
+  readonly openedAt: Date;
+  readonly closedAt: Date;
+  readonly openingAmount: Prisma.Decimal | string;
+  readonly expectedAmount: Prisma.Decimal | string;
+  readonly countedAmount: Prisma.Decimal | string;
+  readonly differenceAmount: Prisma.Decimal | string;
+}
+
+/**
+ * Persistence row for one immutable cash movement as the cash report reads it
+ * ([[REP-004]]): the kind, the `ADJUSTMENT`-only direction and the exact positive
+ * `Decimal(14, 2)` amount. The sign is owned by the kind ([[DEC-030]]) and is
+ * resolved by the service through `cashMovementSign`, never here.
+ */
+export interface ReportCashMovementRow {
+  readonly type: CashMovementTypeValue;
+  readonly direction: CashMovementDirectionValue | null;
+  readonly amount: Prisma.Decimal | string;
+}
+
+/** The single purchase-line column the receive report sums: the `Decimal(10, 3)` quantity. */
+export interface ReportPurchaseLineRow {
+  readonly quantity: Prisma.Decimal | string;
+}
+
+/**
+ * Persistence row for one received purchase with its line set. `receivedAt` is
+ * typed nullable because the column is: the receive command writes it in the
+ * same transition that sets `RECEIVED` ([[DEC-064]]), so it is asserted in
+ * {@link ReportRepository.listReceivedPurchases}. There is deliberately no money
+ * field — the aggregate owns no total (`Purchases.md`).
+ */
+export interface ReportPurchaseReadRow {
+  readonly id: string;
+  readonly supplierId: string;
+  readonly receivedAt: Date | null;
+  readonly lines: readonly ReportPurchaseLineRow[];
+}
+
+/** A received purchase whose business instant is present. */
+export interface ReportPurchaseRow {
+  readonly id: string;
+  readonly supplierId: string;
+  readonly receivedAt: Date;
+  readonly lines: readonly ReportPurchaseLineRow[];
+}
+
+/** The supplier identity the receive report resolves in one batched read. */
+export interface ReportSupplierRow {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * One row of the stock PROJECTION as the inventory reports read it ([[REP-005]]):
+ * the item and its CURRENT quantity.
+ *
+ * `stock_balance` is a transactional projection with exactly one row per
+ * `(tenant, item)` and no history at all, so `quantity` is a SNAPSHOT — the
+ * balance as of now. It is deliberately NOT a period figure and it is not
+ * derivable from the period-bounded ledger read, which is why the two are
+ * carried as separate facts all the way to the response.
+ */
+export interface ReportStockBalanceRow {
+  readonly catalogItemId: string;
+  readonly quantity: Prisma.Decimal | string;
+}
+
+/**
+ * One immutable ledger row as the stock report's flow read returns it
+ * ([[REP-005]]).
+ *
+ * `quantity` is already SIGNED on the ledger — positive is an input, negative an
+ * output, and the database rejects zero — and no movement type owns that sign
+ * (unlike cash, where the kind does: [[DEC-030]]). The report therefore reads the
+ * stored sign and never resolves one from the type.
+ */
+export interface ReportStockMovementRow {
+  readonly catalogItemId: string;
+  readonly quantity: Prisma.Decimal | string;
+}
+
+/**
+ * Persistence row for one CLOSED encounter as the consultation report reads it
+ * ([[REP-006]]) — and deliberately NOTHING else.
+ *
+ * The `select` on this read is mandatory and minimal, and that is the contract:
+ * a `clinical_encounter` row also carries `reasonForVisit`, `anamnesis`,
+ * `diagnosis`, `treatmentPlan`, the CONFIDENTIAL `clientSummary` and the
+ * RESTRICTED `internalNotes` (PRD §41), and a staff-only aggregate of how many
+ * consultations the practice closed has no business touching any of them. The
+ * three columns below are the whole projection, so a later edit that swapped
+ * `select` for a full row would have to change this type first.
+ *
+ * `closedAt` is typed nullable because the COLUMN is; the read below asserts it
+ * rather than inventing a day for a closed row that somehow has no instant.
+ */
+export interface ReportClosedEncounterReadRow {
+  readonly id: string;
+  readonly closedAt: Date | null;
+  /**
+   * Non-NULL exactly for an AMENDMENT: a NEW closed row correcting an earlier
+   * one, which the amendment command links here and never mutates in place.
+   * `null` is therefore the whole difference between a consultation and a
+   * correction of one.
+   */
+  readonly amendsEncounterId: string | null;
+}
+
+/** A closed encounter whose business instant is present. */
+export interface ReportClosedEncounterRow {
+  readonly id: string;
+  readonly closedAt: Date;
+  readonly amendsEncounterId: string | null;
+}
+
+/**
+ * Persistence row for one patient created in the period ([[REP-006]]).
+ *
+ * `select`-minimal again, and for a stronger reason than the encounter read:
+ * `Patient.name` and `Patient.birthDate` are CONFIDENTIAL (PRD §41), and a count
+ * of how many patients the practice gained needs neither — not even to bucket
+ * them. `createdAt` is the patient's business instant and the ONLY date this
+ * read uses.
+ */
+export interface ReportPatientCreatedRow {
+  readonly id: string;
+  readonly createdAt: Date;
+}
+
+/**
+ * Persistence row for one patient the DUE reports NAME ([[REP-006]] part 2).
+ *
+ * `Patient.name` is CONFIDENTIAL (PRD §41) and is carried only because a due
+ * vaccination or deworming list has to say which animal to call. The projection
+ * is `id` + `name` and NOTHING else: no birth date, no species, no guardian, no
+ * clinical field. A patient name here is the minimum needed to act, not a
+ * widening of what the report reads.
+ */
+export interface ReportPatientNameRow {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * What ONE `patient.findMany` may return: whichever of the two minimal
+ * projections its call site selected.
+ *
+ * A UNION and not one row with optional fields, because "the read did not select
+ * it" must not be able to look like "the column is NULL": `created_at` and
+ * `name` are both NOT NULL, so an optional field would invent a third state
+ * neither column has. Each call site's `select` is pinned by its own assertion,
+ * so the narrowing its repository method performs is a PROJECTION assertion
+ * (the `reportRelationNotLoadedMessage` discipline), never a nullability guess.
+ */
+export type ReportPatientReadRow = ReportPatientCreatedRow | ReportPatientNameRow;
+
+/**
+ * Persistence row for one vaccination the due report reads ([[REP-006]] part 2).
+ *
+ * `nextDueAt` is typed NULLABLE because the COLUMN is ([[DEC-065]]): the read
+ * filters `not: null`, so a null cannot arrive, and
+ * {@link ReportRepository.listDueVaccinations} asserts it rather than inventing a
+ * due date for a row that has none — the same discipline as a closed encounter
+ * with no close instant.
+ */
+export interface ReportDueVaccinationReadRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly vaccine: string;
+  readonly administeredAt: Date;
+  readonly nextDueAt: Date | null;
+}
+
+/** A due vaccination whose staff-entered due date is present. */
+export interface ReportDueVaccinationRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly vaccine: string;
+  readonly administeredAt: Date;
+  readonly nextDueAt: Date;
+}
+
+/** The same two rows over `clinical_deworming`, whose free-text field is `product` ([[DEC-065]]). */
+export interface ReportDueDewormingReadRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly product: string;
+  readonly administeredAt: Date;
+  readonly nextDueAt: Date | null;
+}
+
+/** A due deworming treatment whose staff-entered due date is present. */
+export interface ReportDueDewormingRow {
+  readonly id: string;
+  readonly patientId: string;
+  readonly product: string;
+  readonly administeredAt: Date;
+  readonly nextDueAt: Date;
+}
+
+/**
+ * The cash and purchase reads of [[REP-004]], in the same shape as the sale and
+ * catalog delegates above: Prisma's own arg types, a promise of narrow rows, reads
+ * only. Each one is a single `findMany` so the predicate and the order live in ONE
+ * place — the repository method that owns the report's contract.
+ */
+export interface ReportingCashSessionDelegate {
+  findMany(args: Prisma.CashSessionFindManyArgs): Promise<ReportCashSessionReadRow[]>;
+}
+
+export interface ReportingCashMovementDelegate {
+  findMany(args: Prisma.CashMovementFindManyArgs): Promise<ReportCashMovementRow[]>;
+}
+
+export interface ReportingPurchaseDelegate {
+  findMany(args: Prisma.PurchaseFindManyArgs): Promise<ReportPurchaseReadRow[]>;
+}
+
+export interface ReportingSupplierDelegate {
+  findMany(args: Prisma.SupplierFindManyArgs): Promise<ReportSupplierRow[]>;
+}
+
+/**
+ * The two inventory reads of [[REP-005]]: the projection (a capped snapshot) and
+ * the ledger (a capped, period-bounded flow). Same shape as every delegate above
+ * — Prisma's own arg types, a promise of narrow rows, reads only.
+ */
+export interface ReportingStockBalanceDelegate {
+  findMany(args: Prisma.StockBalanceFindManyArgs): Promise<ReportStockBalanceRow[]>;
+}
+
+export interface ReportingStockMovementDelegate {
+  findMany(args: Prisma.StockMovementFindManyArgs): Promise<ReportStockMovementRow[]>;
+}
+
+/**
+ * The two period-shaped veterinary reads of [[REP-006]]: the practitioner's
+ * closed encounters and the patients the practice gained. Same shape as every
+ * delegate above — Prisma's own arg types, a promise of narrow rows, reads only.
+ *
+ * Two delegates and not one, because they read two different aggregates of two
+ * different domains: `Clinical` owns the encounter and `Patients` owns the
+ * patient, and neither repository is imported here — a report reads the columns
+ * it needs through its own predicated query, exactly as it does for sales, cash
+ * and the stock ledger.
+ *
+ * The `patient` delegate answers BOTH minimal patient projections this module
+ * needs (a registration instant and a name), which is why its row type is the
+ * union {@link ReportPatientReadRow} rather than one shape with optional fields.
+ */
+export interface ReportingClinicalEncounterDelegate {
+  findMany(args: Prisma.ClinicalEncounterFindManyArgs): Promise<ReportClosedEncounterReadRow[]>;
+}
+
+export interface ReportingPatientDelegate {
+  findMany(args: Prisma.PatientFindManyArgs): Promise<ReportPatientReadRow[]>;
+}
+
+/**
+ * The two DUE reads of [[REP-006]] part 2 — one per clinical record table.
+ *
+ * Two delegates and not one: `clinical_vaccination` and `clinical_deworming` are
+ * two tables of the same vertical, and a report that read them through a shared
+ * abstraction would have to unify `vaccine` with `product`, which are different
+ * facts. Same discipline as every delegate above: Prisma's own arg types, a
+ * promise of narrow rows, reads only.
+ */
+export interface ReportingClinicalVaccinationDelegate {
+  findMany(args: Prisma.ClinicalVaccinationFindManyArgs): Promise<ReportDueVaccinationReadRow[]>;
+}
+
+export interface ReportingClinicalDewormingDelegate {
+  findMany(args: Prisma.ClinicalDewormingFindManyArgs): Promise<ReportDueDewormingReadRow[]>;
+}
+
+export interface ReportingReadPrisma {
+  readonly sale: ReportingSaleDelegate;
+  readonly catalogItem: ReportingCatalogItemDelegate;
+  readonly cashSession: ReportingCashSessionDelegate;
+  readonly cashMovement: ReportingCashMovementDelegate;
+  readonly purchase: ReportingPurchaseDelegate;
+  readonly supplier: ReportingSupplierDelegate;
+  readonly stockBalance: ReportingStockBalanceDelegate;
+  readonly stockMovement: ReportingStockMovementDelegate;
+  readonly clinicalEncounter: ReportingClinicalEncounterDelegate;
+  readonly clinicalVaccination: ReportingClinicalVaccinationDelegate;
+  readonly clinicalDeworming: ReportingClinicalDewormingDelegate;
+  readonly patient: ReportingPatientDelegate;
+}
+
+/**
+ * Hard cap on the number of sale rows ONE report may read.
+ *
+ * A report aggregates in TypeScript, so an unbounded read is a memory liability
+ * and — worse — a silently truncated aggregate would look exactly like a correct
+ * one. The cap makes the failure honest: a period that would need more rows
+ * REFUSES with a stable message instead of returning a partial total. Twenty
+ * thousand completed sales is far past any single veterinary tenant's period, so
+ * the bound never refuses a real question; it refuses a pathological one, and
+ * [[TD-053]] owns the eventual pushdown that would make the cap unnecessary.
+ */
+export const REPORT_SALE_ROW_LIMIT = 20_000;
+
+/** Stable message when a period needs more rows than the cap allows. */
+export const REPORT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_SALE_ROW_LIMIT} completed sales. Narrow the period and try again.`;
+
+/**
+ * Hard cap on the number of CLOSED cash sessions the close report may read, and
+ * on the number of received purchases the receive report may read.
+ *
+ * The same discipline as {@link REPORT_SALE_ROW_LIMIT}, chosen per read: a drawer
+ * closes once a day per register, and a tenant receives a handful of purchases a
+ * day, so five thousand rows is far past any real period for either. The caps
+ * differ from the movement cap because a movement ledger is the dense one — a
+ * busy register records many movements per session.
+ */
+export const REPORT_CASH_SESSION_ROW_LIMIT = 5_000;
+
+/** Hard cap on the number of cash MOVEMENT rows the movement report may read. */
+export const REPORT_CASH_MOVEMENT_ROW_LIMIT = 20_000;
+
+/** Hard cap on the number of received PURCHASE rows the receive report may read. */
+export const REPORT_PURCHASE_ROW_LIMIT = 5_000;
+
+/** Stable message when a period needs more closed sessions than the cap allows. */
+export const REPORT_CASH_SESSION_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_CASH_SESSION_ROW_LIMIT} closed cash sessions. Narrow the period and try again.`;
+
+/** Stable message when a period needs more movements than the cap allows. */
+export const REPORT_CASH_MOVEMENT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_CASH_MOVEMENT_ROW_LIMIT} cash movements. Narrow the period and try again.`;
+
+/** Stable message when a period needs more received purchases than the cap allows. */
+export const REPORT_PURCHASE_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_PURCHASE_ROW_LIMIT} received purchases. Narrow the period and try again.`;
+
+/**
+ * Hard cap on the number of stock BALANCES one inventory report may read.
+ *
+ * One row per tracked item, so this bounds a CATALOG rather than a period: five
+ * thousand items is far past any veterinary tenant. Both inventory reports (the
+ * snapshot and the low-stock view) share it, because both read the projection.
+ */
+export const REPORT_STOCK_BALANCE_ROW_LIMIT = 5_000;
+
+/** Hard cap on the number of stock MOVEMENT rows the stock report's flow may read. */
+export const REPORT_STOCK_MOVEMENT_ROW_LIMIT = 20_000;
+
+/**
+ * Stable message when a tenant holds more balances than the cap allows. There is
+ * no period to narrow here — the projection has no date — so the message names
+ * the tenant's own inventory size instead of suggesting an impossible fix.
+ */
+export const REPORT_STOCK_BALANCE_ROW_LIMIT_EXCEEDED_MESSAGE = `The tenant has more than ${REPORT_STOCK_BALANCE_ROW_LIMIT} stock balances. The inventory report cannot aggregate them in one response.`;
+
+/** Stable message when a period needs more stock movements than the cap allows. */
+export const REPORT_STOCK_MOVEMENT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_STOCK_MOVEMENT_ROW_LIMIT} stock movements. Narrow the period and try again.`;
+
+/**
+ * Hard cap on the number of CLOSED encounter rows the consultation report may
+ * read ([[REP-006]]), AMENDMENTS INCLUDED — they are part of the same read, and
+ * a cap that counted only consultations would bound the read by a number the
+ * query does not filter on.
+ *
+ * A consultation is the dense clinical read: a practice closes several a day,
+ * every working day, so twenty thousand is far past a year of them in any
+ * veterinary tenant. The same discipline as every cap above: the extra row
+ * makes an over-limit period REFUSE rather than return a partial count that
+ * would look exactly like a correct one ([[TD-053]] owns the eventual
+ * pushdown).
+ */
+export const REPORT_CLOSED_ENCOUNTER_ROW_LIMIT = 20_000;
+
+/**
+ * Hard cap on the number of PATIENT rows the new-patients report may read
+ * ([[REP-006]]).
+ *
+ * Sparser than the consultation read by an order of magnitude — a patient is
+ * registered once and comes back for every later consultation — but the period
+ * can span a full year (366 days), so ten thousand is still the point past which
+ * a period is pathological rather than busy.
+ */
+export const REPORT_NEW_PATIENT_ROW_LIMIT = 10_000;
+
+/** Stable message when a period needs more closed encounters than the cap allows. */
+export const REPORT_CLOSED_ENCOUNTER_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_CLOSED_ENCOUNTER_ROW_LIMIT} closed consultations. Narrow the period and try again.`;
+
+/** Stable message when a period needs more new patients than the cap allows. */
+export const REPORT_NEW_PATIENT_ROW_LIMIT_EXCEEDED_MESSAGE = `The report period contains more than ${REPORT_NEW_PATIENT_ROW_LIMIT} new patients. Narrow the period and try again.`;
+
+/**
+ * Hard cap on the number of vaccination rows the vaccines-due report may read
+ * ([[REP-006]] part 2).
+ *
+ * This cap bounds the tenant's WHOLE due-date history, not a window: the read
+ * deliberately has no lower bound, because an overdue vaccination is overdue
+ * however old it is. Ten thousand rows is far past a practice's working list — a
+ * clinic that reached it would be reading a data-cleanup task, not a list of
+ * animals to call — and the cap refuses rather than truncating, exactly as every
+ * cap above does ([[TD-053]] owns the eventual pushdown).
+ */
+export const REPORT_DUE_VACCINATION_ROW_LIMIT = 10_000;
+
+/** The same cap over `clinical_deworming`, applied to that read alone. */
+export const REPORT_DUE_DEWORMING_ROW_LIMIT = 10_000;
+
+/** Stable message when the vaccines-due read would need more rows than the cap allows. */
+export const REPORT_DUE_VACCINATION_ROW_LIMIT_EXCEEDED_MESSAGE = `The report read more than ${REPORT_DUE_VACCINATION_ROW_LIMIT} vaccinations with a due date. Narrow the horizon and try again.`;
+
+/** Stable message when the deworming-due read would need more rows than the cap allows. */
+export const REPORT_DUE_DEWORMING_ROW_LIMIT_EXCEEDED_MESSAGE = `The report read more than ${REPORT_DUE_DEWORMING_ROW_LIMIT} deworming treatments with a due date. Narrow the horizon and try again.`;
+
+/**
+ * Stable message when a required relation is absent from a completed-sale read.
+ * The call site always names its `include`, so this is unreachable; it is
+ * asserted rather than assumed for the same reason the missing-catalog-item
+ * refusal is: a report that silently treated an unloaded relation as empty would
+ * print a confidently wrong zero.
+ */
+export function reportRelationNotLoadedMessage(relation: string): string {
+  return `The report sale read did not load the ${relation} relation.`;
+}
+
+/**
+ * Stable message when a `CLOSED` session read carries no close result.
+ *
+ * `CLOSED` is terminal and the close command writes `closedAt` and the three
+ * amounts in ONE statement ([[DEC-031]], [[DEC-036]], [[DEC-064]]), so this is
+ * UNREACHABLE. It is asserted rather than assumed because the alternative —
+ * treating a missing amount as `0.00` — would report a drawer that closed short
+ * by everything it ever held, and look exactly like a correct row.
+ */
+export function reportCashSessionCloseResultMissingMessage(sessionId: string): string {
+  return `The report read a closed cash session without its close result: ${sessionId}`;
+}
+
+/**
+ * Stable message when a `RECEIVED` purchase read carries no receive instant. The
+ * receive command writes `received_at` in the same transition that sets
+ * `RECEIVED` ([[DEC-064]]), so this is UNREACHABLE; it is asserted for the same
+ * reason as {@link reportCashSessionCloseResultMissingMessage} — a purchase
+ * silently dropped from a received report is a receipt nobody can see.
+ */
+export function reportPurchaseReceivedInstantMissingMessage(purchaseId: string): string {
+  return `The report read a received purchase without its receive instant: ${purchaseId}`;
+}
+
+/**
+ * Stable message when a `CLOSED` encounter read carries no close instant.
+ *
+ * The close command writes `closed_at` in the same transition that sets `CLOSED`
+ * and a closed encounter is immutable (`Clinical.md`), so this is UNREACHABLE. It
+ * is asserted rather than assumed because the alternative — bucketing the row by
+ * some other instant, or skipping it — would either invent a day the practice
+ * never closed anything on or hide a consultation it did close.
+ */
+export function reportClosedEncounterMissingClosedAtMessage(encounterId: string): string {
+  return `The report read a closed encounter without its close instant: ${encounterId}`;
+}
+
+/**
+ * Stable message when a DUE read returns a row whose `next_due_at` is NULL.
+ *
+ * The read filters `nextDueAt: { not: null }`, so this is UNREACHABLE. It is
+ * asserted rather than assumed because both alternatives are wrong: silently
+ * dropping the row would hide a record the predicate selected, and treating a
+ * missing due date as "today" would put an animal on a call list on a date
+ * nobody entered ([[DEC-065]] — the due date is staff-entered, never derived).
+ */
+export function reportDueInstantMissingMessage(recordId: string): string {
+  return `The report read a due record without its due date: ${recordId}`;
+}
+
+/**
+ * Stable message when a patient read did not return the column its call site
+ * selected.
+ *
+ * Each projection is pinned by its own `select`, so this is UNREACHABLE: it is a
+ * PROJECTION assertion, the same shape as
+ * {@link reportRelationNotLoadedMessage}. Without it a name-less row would be
+ * rendered as `"undefined"` beside a real date, and a consultation count would
+ * silently lose a registration the read had matched.
+ */
+export function reportPatientProjectionMissingMessage(patientId: string): string {
+  return `The report patient read did not return the selected patient fields: ${patientId}`;
+}
+
+/**
+ * Tenant-safe read access for the reporting module (EPIC-18 REP-002).
+ *
+ * Contract: the tenant predicate is IMPLICIT via
+ * `requestContext.requireTenantId()` — it is never a parameter and never a query
+ * string, so a caller cannot widen the report to another tenant. When no tenant
+ * authority was resolved server-side, `requireTenantId()` throws FORBIDDEN before
+ * any database call happens.
+ *
+ * The query filter is the Story's domain invariant: a report counts revenue only
+ * from rows that are `COMPLETED` **and** carry a `completedAt` inside the range.
+ * `createdAt` is never a substitute — a draft created last month and completed
+ * today is today's revenue, and a draft is never revenue at all.
+ */
+@Injectable()
+export class ReportRepository {
+  constructor(
+    // Explicit @Inject token keeps DI resolution token-based while the PARAM
+    // type stays the narrow read contract this boundary actually needs.
+    @Inject(PrismaService) private readonly prisma: ReportingReadPrisma,
+    @Inject(RequestContextService) private readonly requestContext: RequestContextService
+  ) {}
+
+  /**
+   * The caller tenant's completed sales whose business instant falls in the
+   * HALF-OPEN range `[fromInstant, toInstant)`, with their lines and in
+   * deterministic chronological order.
+   *
+   * `take` asks for one row past the cap: the extra row is how the call proves
+   * the period is over the limit without loading a second one. Nothing is
+   * truncated — an over-limit period throws before any caller sees a row.
+   */
+  async listCompletedSales(fromInstant: Date, toInstant: Date): Promise<ReportSaleRow[]> {
+    const rows = await this.readCompletedSales(fromInstant, toInstant, { lines: true });
+    return rows.map((row) => ({
+      id: row.id,
+      currency: row.currency,
+      completedAt: row.completedAt,
+      lines: requireLoaded(row.lines, "lines"),
+    }));
+  }
+
+  /**
+   * The SAME completed sales, with their payments instead of their lines.
+   *
+   * The predicate is the sale's `completedAt` and never `Payment.createdAt`: a
+   * payment row is written only by the `CompleteSale` transaction ([[DEC-029]]),
+   * so its own timestamp is an implementation detail of that same commit. Cutting
+   * the payment report on the payment's timestamp would let it disagree with
+   * `sales-by-period` about one revenue — which is exactly the invariant
+   * [[REP-003]] asserts instead of assuming.
+   *
+   * `lines` is deliberately NOT included: this report never reads a line, and an
+   * unread relation on a bounded read is pure memory.
+   */
+  async listCompletedSalesWithPayments(
+    fromInstant: Date,
+    toInstant: Date
+  ): Promise<ReportSaleWithPaymentsRow[]> {
+    const rows = await this.readCompletedSales(fromInstant, toInstant, { payments: true });
+    return rows.map((row) => ({
+      id: row.id,
+      currency: row.currency,
+      completedAt: row.completedAt,
+      payments: requireLoaded(row.payments, "payments"),
+    }));
+  }
+
+  /**
+   * The caller tenant's catalog items for the given ids, in one predicated read
+   * (no N+1). The tenant predicate is applied HERE, so an id from another tenant
+   * resolves to nothing rather than to that tenant's item.
+   *
+   * An EMPTY id set skips the query entirely: `in: []` is a question with a
+   * known answer and a round trip that cannot return a row.
+   */
+  async listCatalogItemsByIds(ids: readonly string[]): Promise<ReportCatalogItemRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const tenantId = this.requestContext.requireTenantId();
+    return this.prisma.catalogItem.findMany({
+      where: { tenantId, id: { in: [...ids] } },
+    });
+  }
+
+  /**
+   * The ONE completed-sale query both reports run. Factored so the predicate, the
+   * deterministic order and the row cap cannot drift apart between them: two
+   * hand-written copies of this filter would be two chances to disagree about
+   * which sale is revenue.
+   */
+  private async readCompletedSales(
+    fromInstant: Date,
+    toInstant: Date,
+    include: { lines: true } | { payments: true }
+  ): Promise<ReportSaleReadRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.sale.findMany({
+      where: {
+        tenantId,
+        status: "COMPLETED",
+        completedAt: { gte: fromInstant, lt: toInstant },
+      },
+      include,
+      orderBy: [{ completedAt: "asc" }, { id: "asc" }],
+      take: REPORT_SALE_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_SALE_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows;
+  }
+
+  /**
+   * The caller tenant's CLOSED cash sessions whose `closedAt` falls in the
+   * HALF-OPEN range `[fromInstant, toInstant)`.
+   *
+   * `closedAt` is the period predicate, never `openedAt` and never `createdAt`: a
+   * session opened yesterday and closed today is today's close, and a session
+   * opened today and closed next week belongs to next week's report. `OPEN` is
+   * excluded by the status predicate — an open drawer has no close amounts and no
+   * close instant, so including it would report NULLs as zeros.
+   *
+   * The close result is asserted present here rather than defaulted, because a
+   * silent `0.00` would be indistinguishable from a drawer that really closed
+   * empty (`reportCashSessionCloseResultMissingMessage`).
+   */
+  /**
+   * True when the caller's tenant monitors at least one tracked item, i.e. has a
+   * non-NULL `low_stock_threshold` on something that actually holds stock.
+   *
+   * The low-stock report needs this to tell its TWO empty answers apart: "nobody
+   * has opted in yet" and "thresholds exist and everything is above them". See
+   * {@link ReportingCatalogItemDelegate.findFirst} for why the batched catalog
+   * read cannot answer it.
+   */
+  async hasAnyLowStockThreshold(): Promise<boolean> {
+    const tenantId = this.requestContext.requireTenantId();
+    const found = await this.prisma.catalogItem.findFirst({
+      where: { tenantId, tracksStock: true, lowStockThreshold: { not: null } },
+      select: { id: true, name: true, kind: true },
+    });
+    return found !== null;
+  }
+
+  async listClosedCashSessions(
+    fromInstant: Date,
+    toInstant: Date
+  ): Promise<ReportCashSessionRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.cashSession.findMany({
+      where: {
+        tenantId,
+        status: "CLOSED",
+        closedAt: { gte: fromInstant, lt: toInstant },
+      },
+      orderBy: [{ closedAt: "asc" }, { id: "asc" }],
+      take: REPORT_CASH_SESSION_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_CASH_SESSION_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_CASH_SESSION_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows.map((row) => requireCloseResult(row));
+  }
+
+  /**
+   * The caller tenant's cash movements whose own `createdAt` falls in the
+   * HALF-OPEN range `[fromInstant, toInstant)`.
+   *
+   * `cash_movement` is append-only with no `updated_at`, so its creation instant
+   * IS the movement's business instant. The SESSION a movement belongs to is a
+   * different fact and never dates it: a movement recorded at 23:59 belongs to
+   * that day even if its drawer closes the next morning.
+   */
+  async listCashMovements(fromInstant: Date, toInstant: Date): Promise<ReportCashMovementRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.cashMovement.findMany({
+      where: { tenantId, createdAt: { gte: fromInstant, lt: toInstant } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: REPORT_CASH_MOVEMENT_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_CASH_MOVEMENT_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_CASH_MOVEMENT_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows;
+  }
+
+  /**
+   * The caller tenant's RECEIVED purchases whose `receivedAt` falls in the
+   * HALF-OPEN range `[fromInstant, toInstant)`, with their lines.
+   *
+   * `status: "RECEIVED"` is part of the predicate, not a later filter: a `DRAFT`
+   * was never received and a `CANCELLED` one was never stock. `receivedAt` is the
+   * business instant of the receive transition ([[DEC-064]]), so `createdAt` is
+   * never a substitute for it.
+   */
+  async listReceivedPurchases(fromInstant: Date, toInstant: Date): Promise<ReportPurchaseRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.purchase.findMany({
+      where: {
+        tenantId,
+        status: "RECEIVED",
+        receivedAt: { gte: fromInstant, lt: toInstant },
+      },
+      include: { lines: true },
+      orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
+      take: REPORT_PURCHASE_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_PURCHASE_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_PURCHASE_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows.map((row) => requireReceivedInstant(row));
+  }
+
+  /**
+   * The caller tenant's suppliers for the given ids, in ONE batched read (no
+   * N+1) and with the tenant predicate applied HERE, so an id from another tenant
+   * resolves to nothing rather than to that tenant's supplier.
+   *
+   * An EMPTY id set skips the query entirely, exactly as
+   * {@link listCatalogItemsByIds} does: `in: []` is a question with a known
+   * answer.
+   */
+  async listSuppliersByIds(ids: readonly string[]): Promise<ReportSupplierRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const tenantId = this.requestContext.requireTenantId();
+    return this.prisma.supplier.findMany({
+      where: { tenantId, id: { in: [...ids] } },
+    });
+  }
+
+  /**
+   * The caller tenant's stock PROJECTION ([[REP-005]]): one row per tracked item
+   * at its CURRENT quantity, in `catalogItemId` order.
+   *
+   * There is deliberately no date predicate and no ordering by anything else: a
+   * balance row has no business instant, so asking this read for a period would
+   * be asking a snapshot to remember history. The period applies to the LEDGER
+   * read below, which is a different question with a different answer.
+   *
+   * `take` asks for one row past the cap, exactly as every read above does: an
+   * inventory that would need more rows REFUSES rather than returning a partial
+   * snapshot that looks complete.
+   */
+  async listStockBalances(): Promise<ReportStockBalanceRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.stockBalance.findMany({
+      where: { tenantId },
+      orderBy: [{ catalogItemId: "asc" }],
+      take: REPORT_STOCK_BALANCE_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_STOCK_BALANCE_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_STOCK_BALANCE_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows;
+  }
+
+  /**
+   * The caller tenant's stock movements whose own `createdAt` falls in the
+   * HALF-OPEN range `[fromInstant, toInstant)` ([[REP-005]]).
+   *
+   * `stock_movement` is append-only and immutable, so its creation instant IS the
+   * movement's business instant. The period boundary is resolved by
+   * `resolveReportPeriod` and nowhere else, and the range is half-open so two
+   * consecutive periods partition without counting a boundary row twice.
+   */
+  async listStockMovements(fromInstant: Date, toInstant: Date): Promise<ReportStockMovementRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.stockMovement.findMany({
+      where: { tenantId, createdAt: { gte: fromInstant, lt: toInstant } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: REPORT_STOCK_MOVEMENT_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_STOCK_MOVEMENT_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_STOCK_MOVEMENT_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows;
+  }
+
+  /**
+   * The caller tenant's CLOSED encounters whose `closedAt` falls in the
+   * HALF-OPEN range `[fromInstant, toInstant)` ([[REP-006]]).
+   *
+   * `closedAt` is the period predicate, never `createdAt`: the clinical event is
+   * the CLOSE, so an encounter drafted in March and closed in April is APRIL's
+   * consultation. `status: "CLOSED"` is part of the predicate and not a later
+   * filter — a `DRAFT` was never a consultation, whatever its `createdAt` says.
+   *
+   * Amendments are READ here and separated by the CALLER, deliberately: both
+   * figures the report publishes are period-scoped by the same instant, so one
+   * read bounded by `closed_at` answers both, and splitting it in SQL would mean
+   * two reads that could disagree about the boundary.
+   *
+   * The projection is the three columns of
+   * {@link ReportClosedEncounterReadRow} — id, business instant and the
+   * correction link. No clinical free text, no patient identity: this read never
+   * loads `internalNotes`, `diagnosis`, `anamnesis`, `reasonForVisit`,
+   * `treatmentPlan` or `clientSummary`, which is a data-classification boundary
+   * (PRD §41) rather than an optimization.
+   */
+  async listClosedEncounters(
+    fromInstant: Date,
+    toInstant: Date
+  ): Promise<ReportClosedEncounterRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.clinicalEncounter.findMany({
+      where: {
+        tenantId,
+        status: "CLOSED",
+        closedAt: { gte: fromInstant, lt: toInstant },
+      },
+      select: { id: true, closedAt: true, amendsEncounterId: true },
+      orderBy: [{ closedAt: "asc" }, { id: "asc" }],
+      take: REPORT_CLOSED_ENCOUNTER_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_CLOSED_ENCOUNTER_ROW_LIMIT) {
+      throw new DomainError(
+        "VALIDATION_FAILED",
+        REPORT_CLOSED_ENCOUNTER_ROW_LIMIT_EXCEEDED_MESSAGE
+      );
+    }
+    return rows.map((row) => requireClosedInstant(row));
+  }
+
+  /**
+   * The caller tenant's patients created in the HALF-OPEN range
+   * `[fromInstant, toInstant)` ([[REP-006]]).
+   *
+   * `createdAt` is the business instant: registering a patient IS the event the
+   * report counts, and `Patient` has no separate one. There is deliberately NO
+   * `isActive` predicate — deactivation is SOFT and it does not unfact the
+   * registration, so a patient created in the period and deactivated since was
+   * still new then (`Patients.md`).
+   */
+  async listPatientsCreated(
+    fromInstant: Date,
+    toInstant: Date
+  ): Promise<ReportPatientCreatedRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.patient.findMany({
+      where: { tenantId, createdAt: { gte: fromInstant, lt: toInstant } },
+      select: { id: true, createdAt: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: REPORT_NEW_PATIENT_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_NEW_PATIENT_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_NEW_PATIENT_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows.map(requirePatientCreatedAt);
+  }
+
+  /**
+   * The caller tenant's patient NAMES for the given ids, in ONE batched,
+   * tenant-predicated read (no N+1) — the due reports' name lookup ([[REP-006]]
+   * part 2).
+   *
+   * The tenant predicate is applied HERE, so an id from another tenant resolves
+   * to nothing rather than to that tenant's patient. An EMPTY id set skips the
+   * query entirely, exactly as {@link listCatalogItemsByIds} does: `in: []` is a
+   * question with a known answer.
+   *
+   * The projection is `id` + `name`. `Patient.name` is CONFIDENTIAL (PRD §41)
+   * and is read because the report names the animal a practice has to call; the
+   * birth date, the species, the guardian and every clinical field stay
+   * unread.
+   */
+  async listPatientNamesByIds(ids: readonly string[]): Promise<ReportPatientNameRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.patient.findMany({
+      where: { tenantId, id: { in: [...ids] } },
+      select: { id: true, name: true },
+    });
+    return rows.map(requirePatientName);
+  }
+
+  /**
+   * The caller tenant's vaccinations whose staff-entered due date is before the
+   * EXCLUSIVE `horizonEndInstant` ([[REP-006]] part 2, [[DEC-065]]).
+   *
+   * **There is deliberately NO lower bound.** An overdue vaccination is overdue
+   * however old it is, and a practice that asks "what is due?" is asking about
+   * its whole history, not about a window: a booster that came due two years ago
+   * is MORE urgent than one due next week, so bounding the past would hide
+   * exactly the rows that matter most. The row cap is what keeps that honest.
+   *
+   * `nextDueAt: { not: null }` is a SKIP, not a bound: a vaccination whose due
+   * date was never recorded is in neither the overdue nor the upcoming set
+   * ([[DEC-065]] — no date is invented from a protocol). The `lt` is half-open on
+   * purpose: it is the first instant of the day AFTER the last horizon day, so a
+   * due date exactly on that last day is INCLUDED.
+   *
+   * The order is `nextDueAt` ascending, then `id` ascending, so the longest
+   * overdue row is first and the soonest upcoming rows follow — the order a
+   * practice works through.
+   */
+  async listDueVaccinations(horizonEndInstant: Date): Promise<ReportDueVaccinationRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.clinicalVaccination.findMany({
+      where: { tenantId, nextDueAt: { not: null, lt: horizonEndInstant } },
+      select: {
+        id: true,
+        patientId: true,
+        vaccine: true,
+        administeredAt: true,
+        nextDueAt: true,
+      },
+      orderBy: [{ nextDueAt: "asc" }, { id: "asc" }],
+      take: REPORT_DUE_VACCINATION_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_DUE_VACCINATION_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_DUE_VACCINATION_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows.map(requireNextDueAt);
+  }
+
+  /**
+   * The same read over `clinical_deworming` ([[REP-006]] part 2): the
+   * caller tenant's treatments whose due date is before the EXCLUSIVE
+   * `horizonEndInstant`, in `nextDueAt`/`id` order, with no lower bound.
+   *
+   * A separate method and a separate cap rather than a shared one, because the
+   * two reports read two tables and each read must be able to refuse on its own
+   * subject — `product` is not `vaccine` and a merged read would have to pretend
+   * it was.
+   */
+  async listDueDewormings(horizonEndInstant: Date): Promise<ReportDueDewormingRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.clinicalDeworming.findMany({
+      where: { tenantId, nextDueAt: { not: null, lt: horizonEndInstant } },
+      select: {
+        id: true,
+        patientId: true,
+        product: true,
+        administeredAt: true,
+        nextDueAt: true,
+      },
+      orderBy: [{ nextDueAt: "asc" }, { id: "asc" }],
+      take: REPORT_DUE_DEWORMING_ROW_LIMIT + 1,
+    });
+
+    if (rows.length > REPORT_DUE_DEWORMING_ROW_LIMIT) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_DUE_DEWORMING_ROW_LIMIT_EXCEEDED_MESSAGE);
+    }
+    return rows.map(requireNextDueAt);
+  }
+}
+
+/**
+ * The requested relation of an included read. A missing one is a programming
+ * defect, so it fails loudly instead of aggregating an empty set: `[]` would be
+ * indistinguishable from "no rows" in the response.
+ */
+function requireLoaded<T>(value: T | undefined, relation: string): T {
+  if (value === undefined) {
+    throw new DomainError("INTERNAL", reportRelationNotLoadedMessage(relation));
+  }
+  return value;
+}
+
+/**
+ * Asserts the close result of a `CLOSED` session is present, and narrows the row
+ * to the non-null shape the report consumes. A missing column on a closed row
+ * cannot happen (`CLOSED` is terminal and the close command writes all four
+ * columns together), so it fails loudly instead of being read as `"0.00"`.
+ */
+function requireCloseResult(row: ReportCashSessionReadRow): ReportCashSessionRow {
+  const { closedAt, expectedAmount, countedAmount, differenceAmount } = row;
+  if (
+    closedAt === null ||
+    expectedAmount === null ||
+    countedAmount === null ||
+    differenceAmount === null
+  ) {
+    throw new DomainError("INTERNAL", reportCashSessionCloseResultMissingMessage(row.id));
+  }
+  return {
+    id: row.id,
+    registerId: row.registerId,
+    openedAt: row.openedAt,
+    closedAt,
+    openingAmount: row.openingAmount,
+    expectedAmount,
+    countedAmount,
+    differenceAmount,
+  };
+}
+
+/**
+ * Asserts the close instant of a `CLOSED` encounter is present, and narrows the
+ * row to the non-null shape the report consumes.
+ *
+ * The close command writes both columns together and a closed encounter is
+ * immutable, so this is UNREACHABLE; it is asserted rather than papered over
+ * because the alternatives are both wrong — inventing a day for a row that has
+ * none, or dropping a consultation the practice really closed.
+ */
+function requireClosedInstant(row: ReportClosedEncounterReadRow): ReportClosedEncounterRow {
+  if (row.closedAt === null) {
+    throw new DomainError("INTERNAL", reportClosedEncounterMissingClosedAtMessage(row.id));
+  }
+  return { id: row.id, closedAt: row.closedAt, amendsEncounterId: row.amendsEncounterId };
+}
+
+/**
+ * Asserts the receive instant of a `RECEIVED` purchase is present, and narrows
+ * the row to the non-null shape the report consumes.
+ */
+function requireReceivedInstant(row: ReportPurchaseReadRow): ReportPurchaseRow {
+  if (row.receivedAt === null) {
+    throw new DomainError("INTERNAL", reportPurchaseReceivedInstantMissingMessage(row.id));
+  }
+  return {
+    id: row.id,
+    supplierId: row.supplierId,
+    receivedAt: row.receivedAt,
+    lines: row.lines,
+  };
+}
+
+/**
+ * Asserts a patient read returned the `createdAt` its call site selected, and
+ * narrows the row to the shape the new-patients report consumes.
+ *
+ * A projection assertion, not a nullability one: `created_at` is NOT NULL, and
+ * the read names it, so this is UNREACHABLE. Without it the union
+ * {@link ReportPatientReadRow} would have to be trusted, and a name-only row
+ * reaching the count would bucket a registration under `Invalid Date`.
+ */
+function requirePatientCreatedAt(row: ReportPatientReadRow): ReportPatientCreatedRow {
+  if (!("createdAt" in row)) {
+    throw new DomainError("INTERNAL", reportPatientProjectionMissingMessage(row.id));
+  }
+  return { id: row.id, createdAt: row.createdAt };
+}
+
+/**
+ * The same assertion for the due reports' name projection. `Patient.name` is
+ * NOT NULL and the read selects it, so a row without it cannot arrive; a
+ * nameless due row would be a list entry a practice cannot act on, which is why
+ * it refuses by id rather than rendering `"undefined"`.
+ */
+function requirePatientName(row: ReportPatientReadRow): ReportPatientNameRow {
+  if (!("name" in row)) {
+    throw new DomainError("INTERNAL", reportPatientProjectionMissingMessage(row.id));
+  }
+  return { id: row.id, name: row.name };
+}
+
+/**
+ * Asserts a DUE row carries the `next_due_at` the read filtered on, and narrows
+ * the row to the non-null shape the due reports consume.
+ *
+ * The read applies `nextDueAt: { not: null }`, so a null cannot arrive; it is
+ * asserted rather than assumed because a silent `null` would either drop a row
+ * the predicate matched or place it on a call list at a date nobody entered
+ * ([[DEC-065]]). Generic over the two record shapes because the assertion — not
+ * the field set — is what the two reports share.
+ */
+function requireNextDueAt<TRow extends { readonly id: string; readonly nextDueAt: Date | null }>(
+  row: TRow
+): TRow & { readonly nextDueAt: Date } {
+  if (row.nextDueAt === null) {
+    throw new DomainError("INTERNAL", reportDueInstantMissingMessage(row.id));
+  }
+  return { ...row, nextDueAt: row.nextDueAt };
+}

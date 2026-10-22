@@ -40,6 +40,12 @@ export interface PurchaseRow {
   tenantId: string;
   supplierId: string;
   status: PurchaseStatusValue;
+  /**
+   * The business instant the purchase was RECEIVED (DEC-064), written exactly
+   * once by the receive transaction and `null` while `DRAFT` and for
+   * `CANCELLED`.
+   */
+  receivedAt: Date | null;
   lines: PurchaseLineRow[];
   createdAt: Date;
   updatedAt: Date;
@@ -120,7 +126,7 @@ export interface PurchaseDelegate {
   }) => Promise<PurchaseRow>;
   updateMany: (args: {
     where: PurchaseWhere;
-    data: { supplierId?: string; status?: PurchaseStatusValue };
+    data: { supplierId?: string; status?: PurchaseStatusValue; receivedAt?: Date | null };
   }) => Promise<{ count: number }>;
 }
 
@@ -446,13 +452,19 @@ export class PurchaseRepository {
    * purchase. It never deletes the purchase, never touches its lines and never
    * touches stock; the movements and the balance projections of a receive are
    * written separately through the ledger seam, INSIDE the same transaction.
+   *
+   * The business instant `receivedAt` is written in that SAME statement
+   * (DEC-064), so the purchase and the moment it was received cannot disagree.
+   * Because the `where` pins `status = DRAFT`, the assignment happens exactly
+   * once: a replayed or lost-race receive matches zero rows and therefore can
+   * never rewrite the original instant.
    */
   async receive(id: string, tx?: PurchaseTx): Promise<boolean> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
     const result = await client.purchase.updateMany({
       where: { id, tenantId, status: "DRAFT" },
-      data: { status: "RECEIVED" },
+      data: { status: "RECEIVED", receivedAt: new Date() },
     });
     return result.count > 0;
   }

@@ -165,6 +165,13 @@ function mockWorkflow(overrides: WorkflowOverrides = {}): ReturnType<typeof vi.f
     if (url.endsWith("/api/customers")) {
       return Promise.resolve(overrides.customers?.() ?? jsonResponse(CUSTOMERS));
     }
+    // Patient detail now also mounts the vaccination/deworming section
+    // (EPIC-18 REP-010). These lists are unrelated to the detail workflow, so
+    // they answer empty instead of falling through to the 404 below — which
+    // would make "Clinical record not found." ambiguous for the encounter test.
+    if (url.endsWith("/vaccinations") || url.endsWith("/deworming")) {
+      return Promise.resolve(jsonResponse([]));
+    }
     return Promise.resolve(
       jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404)
     );

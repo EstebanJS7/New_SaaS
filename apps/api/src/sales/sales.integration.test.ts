@@ -61,6 +61,7 @@ interface SaleDto {
   status: string;
   lines: SaleLineDto[];
   total: string;
+  completedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -78,6 +79,7 @@ const SALE_RESPONSE_KEYS: readonly string[] = [
   "status",
   "lines",
   "total",
+  "completedAt",
   "createdAt",
   "updatedAt",
 ];
@@ -735,6 +737,10 @@ describe("Sales HTTP boundary (EPIC-12 POS-001)", () => {
     const readBody = read.body as SaleDto;
     expect(readBody.status).toBe("CANCELLED");
     expect(readBody.lines).toHaveLength(1);
+    // A cancelled sale never completed, so it carries no business instant and
+    // can never be counted as revenue retroactively (DEC-064).
+    expect(readBody.completedAt).toBeNull();
+    expect(booted.db.tables.sales.get(sale.id)?.completedAt).toBeNull();
 
     expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
     const rows = auditsForTarget(booted, sale.id);
@@ -1307,6 +1313,62 @@ describe("Sales HTTP boundary (EPIC-12 POS-001)", () => {
         (row) => row.tenantId === owner.tenant.id && row.type === "SALE"
       )
     ).toHaveLength(1);
+  });
+
+  it("stamps completedAt exactly once and never rewrites it on a replay", async () => {
+    const owner = createCompletionActor(booted.db, "completed-at");
+    const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+    seedBalance(booted.db, owner.tenant.id, item.id, "5.000");
+    const sale = fixture.seedSale(owner, {
+      lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+    });
+    const body = completionBody([payment("CARD", "1000.00")]);
+
+    // A draft is not revenue: the instant is `null` on the stored row AND on the
+    // read projection.
+    expect(booted.db.tables.sales.get(sale.id)?.completedAt).toBeNull();
+    const draft = await supertest(booted.app.getHttpServer())
+      .get(`/sales/${sale.id}`)
+      .set("Cookie", owner.actor.cookie)
+      .expect(200);
+    expect((draft.body as SaleDto).completedAt).toBeNull();
+
+    const first = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .set("Idempotency-Key", "completed-at-1")
+      .send(body)
+      .expect(201);
+
+    // Written by the completion transaction and projected as an ISO instant.
+    const completedAt = (first.body as CompletedSaleDto).completedAt;
+    expect(typeof completedAt).toBe("string");
+    expect(Number.isNaN(Date.parse(completedAt ?? ""))).toBe(false);
+    const stored = booted.db.tables.sales.get(sale.id)?.completedAt;
+    expect(stored).toBeInstanceOf(Date);
+    expect(stored?.toISOString()).toBe(completedAt);
+
+    // Written ONCE. Both replays happen after the clock has moved on, so a
+    // rewrite would produce a different instant: the keyed replay returns the
+    // stored sale unchanged and the keyless one is the stable 409, and neither
+    // touches the original value.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const keyed = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .set("Idempotency-Key", "completed-at-1")
+      .send(body)
+      .expect(200);
+    expect((keyed.body as CompletedSaleDto).completedAt).toBe(completedAt);
+
+    const keyless = await supertest(booted.app.getHttpServer())
+      .post(`/sales/${sale.id}/complete`)
+      .set("Cookie", owner.actor.cookie)
+      .send(body)
+      .expect(409);
+    expect((keyless.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect(booted.db.tables.sales.get(sale.id)?.completedAt?.toISOString()).toBe(completedAt);
   });
 
   it("rejects a keyless replay with the DRAFT-only 409 and persists nothing", async () => {

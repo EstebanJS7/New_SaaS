@@ -1,7 +1,7 @@
 ---
 type: roadmap
 status: active
-updated: 2026-10-17
+updated: 2026-10-19
 ---
 
 # ROADMAP
@@ -26,7 +26,7 @@ updated: 2026-10-17
 | EPIC-15 | Fiscal Abstraction                 |    done | EPIC-14                   |
 | EPIC-16 | SIFEN Direct                       |    done | EPIC-15                   |
 | EPIC-17 | Notifications                      |    done | EPIC-07                   |
-| EPIC-18 | Dashboards/Reports                 | planned | prior domains             |
+| EPIC-18 | Dashboards/Reports                 |    done | prior domains             |
 | EPIC-19 | Imports                            | planned | EPIC-04, EPIC-05          |
 | EPIC-20 | Production Hardening               | planned | MVP feature epics         |
 
@@ -207,3 +207,52 @@ implementation closure only: it is **not** a production-readiness statement. The
 open debt ([[TD-016]], [[TD-017]], [[TD-018]], [[TD-019]], [[TD-020]],
 [[TD-021]]) and [[EPIC-20]] Production Hardening remain, and a completed sale
 still cannot be reversed or refunded until the slice [[TD-018]] tracks lands.
+
+[[EPIC-18]] Dashboards/Reports moved to `done` on 2026-10-19, by evidence-based
+closure against a **local** gate run rather than CI: the branch was never
+pushed, and `.github/workflows/ci.yml` triggers on pushes to `main` and on pull
+requests targeting it, so a feature branch produces no run. The receipt arrives
+with the first pull request. The closure evidence is the block in
+`docs/10-qa/CI-EVIDENCE.md`: format, lint, typecheck, build and the full test
+set green (api **1634**, web **1282**, database 549, worker 245, notifications
+84, fiscal 788, shared 23 and the rest), the live-PostgreSQL lane at **266/266**
+over **50 migrations**, and the applied catalog at **64 permissions**.
+
+`done` means epic implementation closure only: twelve report views over PRD §31,
+a CSV export, a dashboard, and the clinical entry surface the veterinary due
+reports depend on. It is **never** production readiness. **No spec in `apps/e2e`
+has ever executed** — the environment has no Docker, so four specs are written,
+statically valid and unrun, and that is the epic's largest unproven surface. No
+native review verdict exists either: the receipt-driven review facade projects
+working-tree changes and this epic commits every work unit, so `start` requires
+a lineage that is never created (recorded in `CI-EVIDENCE.md`, and not worked
+around). Two independent adversarial verifications stand in its place, and they
+found **two blocking defects the gates were green on** — the `Date.UTC`
+two-digit-year hole and the browser-zone date conversion — plus three more found
+by self-review. [[TD-051]] through [[TD-056]] remain open or accepted, and
+[[EPIC-19]] Imports and [[EPIC-20]] Production Hardening are untouched.
+
+The kickoff record, retained as history:
+
+[[EPIC-18]] Dashboards/Reports moved to `in-progress` on 2026-10-19. The epic
+existed only as a row in the table above: no epic file, no Stories, and no
+reporting code, permission, route or CSV path anywhere in the repository. The
+kickoff is the epic file, nine Stories and five accepted Decisions — [[DEC-062]]
+(no feature-code gate, a `reports.read`/`reports.export` family, and one
+aggregation path shared by the dashboard and the reports), [[DEC-063]] (periods
+resolved in `TENANT_TIME_ZONE` with five presets and a 366-day bounded range),
+[[DEC-064]] (`sale.completed_at`, `purchase.received_at` and
+`cash_session.closed_at` become the reporting truth), [[DEC-065]] (a per-item
+`catalog_item.low_stock_threshold` and a staff-entered clinical `next_due_at`)
+and [[DEC-066]] (CSV is synchronous and bounded, not queued).
+
+Exploring the schema rather than the PRD is what shaped the kickoff: PRD §31
+asks for eleven reports and **three of them had no data source**. `sale`,
+`purchase` and `cash_session` carried a terminal status and no instant, so
+"sales by period" could not distinguish a draft from revenue; no table anywhere
+held a low-stock threshold; and `clinical_vaccination` and `clinical_deworming`
+stored only `administered_at`, making "upcoming" and "overdue" incomputable.
+[[REP-001]] is therefore the epic's first Story, and it touches five
+already-`done` epics' write paths — [[DEC-064]] and [[DEC-065]] declare those
+crossings instead of smuggling them in as report plumbing. This is a kickoff
+record, **never** a readiness claim.

@@ -33,6 +33,8 @@ function row(
     // EPIC-10 stock dimension: the column is NOT NULL with a database default,
     // so every persisted row literal carries it.
     tracksStock: true,
+    // EPIC-18 REP-001 opt-in threshold: NULL is the "not monitored" state.
+    lowStockThreshold: null,
     createdAt: new Date("2026-09-25T00:00:00Z"),
     updatedAt: new Date("2026-09-25T00:00:00Z"),
     ...overrides,
@@ -112,6 +114,11 @@ function makeFakePrisma(seedRows: CatalogItemRow[]) {
           isActive: true,
           // Mirrors the column default, so an omitted flag still lands true.
           tracksStock: args.data.tracksStock ?? true,
+          // Mirrors the nullable opt-in column: no threshold means not monitored.
+          lowStockThreshold:
+            typeof args.data.lowStockThreshold === "string"
+              ? new Prisma.Decimal(args.data.lowStockThreshold)
+              : (args.data.lowStockThreshold ?? null),
           createdAt: new Date("2026-09-25T00:00:00Z"),
           updatedAt: new Date("2026-09-25T00:00:00Z"),
         };

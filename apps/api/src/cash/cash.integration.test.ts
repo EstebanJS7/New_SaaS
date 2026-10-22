@@ -61,6 +61,7 @@ const CASH_SESSION_RESPONSE_KEYS: readonly string[] = [
   "expectedAmount",
   "countedAmount",
   "differenceAmount",
+  "closedAt",
   "createdAt",
   "updatedAt",
 ];
@@ -1644,6 +1645,47 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
     expect(body.countedAmount).toBe("0.00");
     expect(body.expectedAmount).toBe("10.00");
     expect(body.differenceAmount).toBe("-10.00");
+  });
+
+  it("stamps closedAt exactly once and never rewrites it on a rejected close", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const session = fixture.openSession(fixture.a, register.id, { openingAmount: "100.00" });
+
+    // An OPEN session has no close instant: `null` on the stored row and on the
+    // read projection it was opened with.
+    expect(booted.db.tables.cashSessions.get(session.id)?.closedAt).toBeNull();
+    const opened = await supertest(booted.app.getHttpServer())
+      .get("/cash/sessions?status=OPEN")
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    const openRow = (opened.body as CashSessionResponse[]).find((row) => row.id === session.id);
+    expect(openRow?.closedAt).toBeNull();
+
+    const closed = await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("100.00"))
+      .expect(201);
+
+    // Written by the close statement itself and projected as an ISO instant.
+    const closedAt = (closed.body as CashSessionResponse).closedAt;
+    expect(typeof closedAt).toBe("string");
+    expect(Number.isNaN(Date.parse(closedAt ?? ""))).toBe(false);
+    const stored = booted.db.tables.cashSessions.get(session.id)?.closedAt;
+    expect(stored).toBeInstanceOf(Date);
+    expect(stored?.toISOString()).toBe(closedAt);
+
+    // Written ONCE: the second close is refused after the clock has moved on, so
+    // the original instant surviving proves it was never restamped.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const second = await supertest(booted.app.getHttpServer())
+      .post(`/cash/sessions/${session.id}/close`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(closeBody("999.00"))
+      .expect(409);
+    expect((second.body as ErrorDto).error.code).toBe("CONFLICT");
+    expect(booted.db.tables.cashSessions.get(session.id)?.closedAt?.toISOString()).toBe(closedAt);
   });
 
   it("rejects a second close as the stable 409 and persists nothing", async () => {

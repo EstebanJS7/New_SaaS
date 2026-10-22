@@ -229,6 +229,9 @@ function toSaleResponse(row: SaleRow): SaleResponse {
     // There is no total column (DEC-021): the total is always derived from the
     // frozen line snapshots.
     total: sumLineTotals(row.lines, SALE_MONEY_SCALE).toFixed(SALE_MONEY_SCALE),
+    // The business instant the sale became revenue (DEC-064), projected the same
+    // way `createdAt` is: an ISO string, or `null` while not terminal.
+    completedAt: row.completedAt === null ? null : row.completedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

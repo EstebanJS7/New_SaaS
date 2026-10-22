@@ -14,6 +14,7 @@ import { SALES_PERMISSIONS } from "../sales/sales.permissions.js";
 import { CASH_PERMISSIONS } from "../cash/cash.permissions.js";
 import { BILLING_PERMISSIONS } from "../billing/billing.permissions.js";
 import { FISCAL_PERMISSIONS } from "../fiscal/fiscal.permissions.js";
+import { REPORTING_PERMISSIONS } from "../reporting/reporting.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -275,6 +276,45 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /portal/profile",
   "POST /customers/:customerId/portal-access",
   "POST /customers/:customerId/portal-access/revoke",
+  // EPIC-18 REP-002 — the reporting foundation. ONE read route behind
+  // `reports.read`; there is deliberately no command, no PATCH and no DELETE,
+  // because a report aggregates and never writes. DEC-062 leaves the whole
+  // surface UNGATED by feature code, so no entitlement sits in front of it.
+  "GET /reports/sales-by-period",
+  // EPIC-18 REP-003 — the two commercial cuts over the same completed sales,
+  // behind the same key. Still no command route: they aggregate, they do not write.
+  "GET /reports/payment-methods",
+  "GET /reports/sales-by-product-service",
+  // EPIC-18 REP-004 — the cash ledger and the receipts. Still reads behind the
+  // same `reports.read` key: a report never writes, and no cash or purchase
+  // command is reachable from this surface.
+  "GET /reports/cash-sessions",
+  "GET /reports/cash-movements",
+  "GET /reports/purchases",
+  // EPIC-18 REP-005 — the inventory reports. `stock` is period-shaped (the
+  // projection's current quantity plus the period's ledger flow); `low-stock`
+  // takes NO query at all, because it is a current-state view.
+  "GET /reports/stock",
+  "GET /reports/low-stock",
+  // EPIC-18 REP-006 — the two veterinary reports that need no due date: the
+  // consultations CLOSED in the period (amendments counted separately, never as
+  // extra consultations) and the patients REGISTERED in the period. Still reads
+  // behind `reports.read`, still no command route: they aggregate clinical and
+  // patient facts, they never write one.
+  "GET /reports/consultations",
+  "GET /reports/new-patients",
+  // EPIC-18 REP-006 part 2 — the two DUE reports. They take no period (they
+  // answer "what is due", not "what happened"), only a bounded `horizonDays`, and
+  // they are still reads behind the same key: recording the due date is the
+  // clinical module's command, not this surface's.
+  "GET /reports/vaccines-due",
+  "GET /reports/deworming-due",
+  // EPIC-18 REP-007 — the CSV export. ONE route for the twelve reports, keyed by
+  // a closed report code, and the ONE report-surface route behind the separate
+  // `reports.export` key ([[DEC-062]]): reading an aggregate on screen and taking
+  // a file out of the system are different decisions. Still no command route —
+  // building a file from confirmed rows writes nothing.
+  "GET /reports/:reportCode/export",
 ];
 
 function isDeclared(entry: RouteContractEntry): boolean {
@@ -497,6 +537,42 @@ const BILLING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "POST /invoices": BILLING_PERMISSIONS.create,
   "POST /invoices/:id/confirm": BILLING_PERMISSIONS.confirm,
   "POST /invoices/:id/cancel": BILLING_PERMISSIONS.cancel,
+};
+
+/**
+ * EPIC-18 REP-002/REP-003/REP-004/REP-005/REP-006 reporting surface. Every report
+ * route MUST declare exactly `reports.read` — the key DEC-062 maps to all six
+ * roles — and NEVER `reports.export`, which is the narrower owning-roles key the
+ * CSV path of REP-007 consumes. Pinning them by name means a route silently moved
+ * onto the export key (or onto no key at all) fails here rather than shipping.
+ */
+const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /reports/sales-by-period": REPORTING_PERMISSIONS.read,
+  "GET /reports/payment-methods": REPORTING_PERMISSIONS.read,
+  "GET /reports/sales-by-product-service": REPORTING_PERMISSIONS.read,
+  "GET /reports/cash-sessions": REPORTING_PERMISSIONS.read,
+  "GET /reports/cash-movements": REPORTING_PERMISSIONS.read,
+  "GET /reports/purchases": REPORTING_PERMISSIONS.read,
+  "GET /reports/stock": REPORTING_PERMISSIONS.read,
+  "GET /reports/low-stock": REPORTING_PERMISSIONS.read,
+  // REP-006: the two period-shaped veterinary reports and the two DUE reports.
+  // The due reports take a `horizonDays` instead of a period, and the permission
+  // contract is identical — an aggregate of the tenant's own clinical records is
+  // a read, not a new grant.
+  "GET /reports/consultations": REPORTING_PERMISSIONS.read,
+  "GET /reports/new-patients": REPORTING_PERMISSIONS.read,
+  "GET /reports/vaccines-due": REPORTING_PERMISSIONS.read,
+  "GET /reports/deworming-due": REPORTING_PERMISSIONS.read,
+  // REP-007 — the CSV export, and the ONLY entry here that is not `read`.
+  //
+  // WHY THE KEY DIFFERS ([[DEC-062]]): a report renders rows the tenant already
+  // owns, so every READ route takes the read-wide key all six roles hold. A file
+  // is a different act — it leaves the tenant boundary, outlives the session that
+  // produced it and is trivially forwarded — so the export takes the narrower
+  // owning-roles key and the two are never interchangeable. It lives in THIS map
+  // rather than a sibling one because the assertion it needs is the same one:
+  // exactly one granular `reports.*` key per route, by name.
+  "GET /reports/:reportCode/export": REPORTING_PERMISSIONS.export,
 };
 
 describe("route-contract probe (deny-by-default)", () => {
@@ -805,6 +881,61 @@ describe("route-contract probe (deny-by-default)", () => {
       }
     }
     expect(report).toEqual([]);
+  });
+
+  it("maps EVERY report route to its single intended granular reports.* permission", () => {
+    const actualByRoute = new Map(
+      inventory
+        .filter((entry) => entry.path.startsWith("/reports"))
+        .map((entry) => [
+          `${entry.method} ${entry.path}`,
+          entry.permissions === undefined ? [] : [...entry.permissions],
+        ])
+    );
+    const report: string[] = [];
+    for (const [route, expected] of Object.entries(REPORTING_PERMISSION_BY_ROUTE)) {
+      const actual = actualByRoute.get(route);
+      if (!actual) {
+        report.push(`MISSING REPORT ROUTE: ${route}`);
+      } else if (actual.length !== 1 || actual[0] !== expected) {
+        report.push(
+          `WRONG REPORT PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+        );
+      }
+    }
+    for (const route of actualByRoute.keys()) {
+      if (!(route in REPORTING_PERMISSION_BY_ROUTE)) {
+        report.push(`UNDECLARED REPORT ROUTE: ${route}`);
+      }
+    }
+    expect(report).toEqual([]);
+  });
+
+  it("declares reports.export — and NOT reports.read — on the one CSV export route (REP-007)", () => {
+    // The export key is the narrower grant of [[DEC-062]], so it must appear on
+    // exactly one route and the read key must appear on exactly the others. Both
+    // halves are asserted: an export route that also demanded `reports.read`
+    // would make the narrow grant unreachable on its own, and an export route
+    // that dropped to `reports.read` would let any reader take the file out.
+    const exportRoute = "GET /reports/:reportCode/export";
+    const exported = inventory.find((entry) => `${entry.method} ${entry.path}` === exportRoute);
+    expect(exported).toBeDefined();
+    expect([...(exported?.permissions ?? [])]).toEqual([REPORTING_PERMISSIONS.export]);
+    expect(exported?.permissions ?? []).not.toContain(REPORTING_PERMISSIONS.read);
+
+    const readRoutes = Object.keys(REPORTING_PERMISSION_BY_ROUTE).filter(
+      (route) => route !== exportRoute
+    );
+    // Twelve reports, twelve read routes: the export is the thirteenth route on
+    // this surface and the only one that is not a read.
+    expect(readRoutes).toHaveLength(12);
+    for (const route of readRoutes) {
+      const entry = inventory.find(
+        (candidate) => `${candidate.method} ${candidate.path}` === route
+      );
+      expect([...(entry?.permissions ?? [])], route).toEqual([REPORTING_PERMISSIONS.read]);
+      expect(entry?.permissions ?? [], route).not.toContain(REPORTING_PERMISSIONS.export);
+    }
   });
 
   it("buckets EVERY route as public-exempt, portal-surface, or declared — violations are named", () => {

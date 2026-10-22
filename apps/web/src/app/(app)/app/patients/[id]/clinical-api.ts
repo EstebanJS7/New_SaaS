@@ -70,6 +70,88 @@ export interface AmendEncounterInput {
 }
 
 /**
+ * Staff vaccination record (EPIC-18 REP-010), mirrored from the API DTO.
+ *
+ * Data classification: CONFIDENTIAL clinical data. The vaccine name and both
+ * instants describe a patient's care, so this row is rendered only inside the
+ * authenticated staff workspace and never reaches a Portal projection.
+ */
+export interface ClinicalVaccination {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly patientId: string;
+  readonly vaccine: string;
+  readonly administeredAt: string;
+  /**
+   * Staff-entered booster due date as an ISO instant (DEC-065), or `null` when
+   * none was recorded. `null` means "no due date recorded", never "due now":
+   * the upcoming/overdue reports omit the row instead of deriving a date the
+   * veterinarian never entered.
+   */
+  readonly nextDueAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/**
+ * Staff deworming record (EPIC-18 REP-010). The same shape as
+ * {@link ClinicalVaccination} with `product` in place of `vaccine`, and the same
+ * CONFIDENTIAL classification and `nextDueAt` null semantics.
+ */
+export interface ClinicalDeworming {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly patientId: string;
+  readonly product: string;
+  readonly administeredAt: string;
+  readonly nextDueAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/**
+ * CREATE body for a vaccination: the vaccine name and the administered instant
+ * are required by the API, and `nextDueAt` is optional.
+ *
+ * An absent `nextDueAt` means "no due date recorded". It is deliberately NOT
+ * nullable here: the API's create schema accepts an absent key and rejects an
+ * explicit `null` (only an UPDATE accepts `null`, because that is how a wrong
+ * due date is removed).
+ */
+export interface CreateVaccinationInput {
+  readonly vaccine: string;
+  readonly administeredAt: string;
+  readonly nextDueAt?: string;
+}
+
+/**
+ * UPDATE body for a vaccination: any subset, because a correction may touch only
+ * the name, only the administered instant, or only the due date.
+ *
+ * `nextDueAt` accepts an explicit `null`, which is the documented way to CLEAR a
+ * wrong due date. An absent key leaves the stored value untouched.
+ */
+export interface UpdateVaccinationInput {
+  readonly vaccine?: string;
+  readonly administeredAt?: string;
+  readonly nextDueAt?: string | null;
+}
+
+/** CREATE body for a deworming treatment (see {@link CreateVaccinationInput}). */
+export interface CreateDewormingInput {
+  readonly product: string;
+  readonly administeredAt: string;
+  readonly nextDueAt?: string;
+}
+
+/** UPDATE body for a deworming treatment (see {@link UpdateVaccinationInput}). */
+export interface UpdateDewormingInput {
+  readonly product?: string;
+  readonly administeredAt?: string;
+  readonly nextDueAt?: string | null;
+}
+
+/**
  * Carries the stable API error code so the UI branches on the contract instead
  * of fragile message matching. `message` remains the server-provided text.
  */
@@ -234,6 +316,71 @@ export async function amendEncounter(
 ): Promise<ClinicalEncounter> {
   return postJson<ClinicalEncounter>(
     `${encounterBase(patientId)}/${encodeIdentifier(id, "encounter id")}/amendments`,
+    input
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vaccinations and deworming (EPIC-18 REP-010)
+//
+// The route shapes, the permissions and the validation already existed; these
+// functions are the staff client for them. Every call is patient-anchored and
+// tenant-free: the proxy forwards the session cookie and the API resolves the
+// tenant server-side, so no identifier here is taken from anything a user typed.
+// ---------------------------------------------------------------------------
+
+function vaccinationBase(patientId: string): string {
+  return `/${encodeIdentifier(patientId, "patient id")}/vaccinations`;
+}
+
+function dewormingBase(patientId: string): string {
+  return `/${encodeIdentifier(patientId, "patient id")}/deworming`;
+}
+
+/** Lists a patient's vaccinations, most recent server order preserved. */
+export async function listVaccinations(patientId: string): Promise<ClinicalVaccination[]> {
+  return getJson<ClinicalVaccination[]>(vaccinationBase(patientId));
+}
+
+export async function createVaccination(
+  patientId: string,
+  input: CreateVaccinationInput
+): Promise<ClinicalVaccination> {
+  return postJson<ClinicalVaccination>(vaccinationBase(patientId), input);
+}
+
+/** Corrects a vaccination. `nextDueAt: null` removes the due date. */
+export async function updateVaccination(
+  patientId: string,
+  id: string,
+  input: UpdateVaccinationInput
+): Promise<ClinicalVaccination> {
+  return putJson<ClinicalVaccination>(
+    `${vaccinationBase(patientId)}/${encodeIdentifier(id, "vaccination id")}`,
+    input
+  );
+}
+
+/** Lists a patient's deworming treatments. */
+export async function listDeworming(patientId: string): Promise<ClinicalDeworming[]> {
+  return getJson<ClinicalDeworming[]>(dewormingBase(patientId));
+}
+
+export async function createDeworming(
+  patientId: string,
+  input: CreateDewormingInput
+): Promise<ClinicalDeworming> {
+  return postJson<ClinicalDeworming>(dewormingBase(patientId), input);
+}
+
+/** Corrects a deworming treatment. `nextDueAt: null` removes the due date. */
+export async function updateDeworming(
+  patientId: string,
+  id: string,
+  input: UpdateDewormingInput
+): Promise<ClinicalDeworming> {
+  return putJson<ClinicalDeworming>(
+    `${dewormingBase(patientId)}/${encodeIdentifier(id, "deworming id")}`,
     input
   );
 }

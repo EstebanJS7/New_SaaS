@@ -256,12 +256,30 @@ const RECORD_CREATE_CASES: readonly RecordCase[] = [
   {
     kind: "vaccinations",
     body: { vaccine: "Rabies", administeredAt: ISO },
-    keys: ["id", "tenantId", "patientId", "vaccine", "administeredAt", "createdAt", "updatedAt"],
+    keys: [
+      "id",
+      "tenantId",
+      "patientId",
+      "vaccine",
+      "administeredAt",
+      "nextDueAt",
+      "createdAt",
+      "updatedAt",
+    ],
   },
   {
     kind: "deworming",
     body: { product: "Praziquantel", administeredAt: ISO },
-    keys: ["id", "tenantId", "patientId", "product", "administeredAt", "createdAt", "updatedAt"],
+    keys: [
+      "id",
+      "tenantId",
+      "patientId",
+      "product",
+      "administeredAt",
+      "nextDueAt",
+      "createdAt",
+      "updatedAt",
+    ],
   },
   {
     kind: "studies",

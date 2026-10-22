@@ -341,6 +341,9 @@ function toCashSessionResponse(row: CashSessionRow): CashSessionResponse {
     expectedAmount: nullableDecimalToScaleString(row.expectedAmount, CASH_MONEY_SCALE),
     countedAmount: nullableDecimalToScaleString(row.countedAmount, CASH_MONEY_SCALE),
     differenceAmount: nullableDecimalToScaleString(row.differenceAmount, CASH_MONEY_SCALE),
+    // The business instant the close command wrote (DEC-064), projected the same
+    // way `openedAt` is: an ISO string, or `null` while the session is `OPEN`.
+    closedAt: row.closedAt === null ? null : row.closedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

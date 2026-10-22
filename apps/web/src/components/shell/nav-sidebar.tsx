@@ -36,6 +36,14 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/cash", label: "Cash", requiredFeature: "cash" },
   { href: "/app/billing", label: "Billing", requiredFeature: "billing" },
   { href: "/app/fiscal", label: "Fiscal", requiredFeature: "fiscal" },
+  // Reports declares NO `requiredFeature`, and that is a decision rather than an
+  // omission ([[DEC-062]]): reports are not gated by a feature code —
+  // `advanced_reports` stays unspent — and a tenant that can see its sales and its
+  // cash must not lose the reports derived from them. Access is guarded the way
+  // every other read is: the `reports.read` permission, enforced by the API on
+  // every report and export route. It sits after the finance destinations it
+  // reports on and before the operational ones.
+  { href: "/app/reports", label: "Reports" },
   { href: "/app/agenda", label: "Agenda" },
   { href: "/app/notifications", label: "Notifications" },
   // The branding settings page had NO way in until the surface-integrity fence looked for orphans:

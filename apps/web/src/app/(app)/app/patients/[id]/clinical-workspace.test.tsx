@@ -117,6 +117,12 @@ function mockClinical(overrides: WorkflowOverrides = {}): ReturnType<typeof vi.f
     if (url.endsWith("/encounters")) {
       return Promise.resolve(overrides.list?.() ?? jsonResponse(state));
     }
+    // The workspace now also mounts the vaccination/deworming section
+    // (EPIC-18 REP-010). An empty list keeps these encounter tests focused; the
+    // section's own contract is covered in clinical-records.test.tsx.
+    if (url.endsWith("/vaccinations") || url.endsWith("/deworming")) {
+      return Promise.resolve(jsonResponse([]));
+    }
     return Promise.resolve(
       jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404)
     );
@@ -190,6 +196,19 @@ describe("ClinicalWorkspace", () => {
 
     expect(await screen.findByText("Limping")).toBeInTheDocument();
     expect(screen.getByText("Draft")).toBeInTheDocument();
+  });
+
+  it("mounts the vaccination and deworming section beside the encounter section", async () => {
+    mockClinical();
+
+    renderWorkspace();
+
+    // Both entry surfaces coexist: the encounter card is unchanged and the
+    // records section is an additional card in the same workspace.
+    expect(await screen.findByTestId("vaccination-records")).toBeInTheDocument();
+    expect(screen.getByTestId("deworming-records")).toBeInTheDocument();
+    expect(screen.getByText("Vaccinations and deworming")).toBeInTheDocument();
+    expect(screen.getByText("Clinical records")).toBeInTheDocument();
   });
 
   it("surfaces a generic API error state", async () => {

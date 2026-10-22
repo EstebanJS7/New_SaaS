@@ -28,6 +28,7 @@ const SESSION: CashSession = {
   expectedAmount: null,
   countedAmount: null,
   differenceAmount: null,
+  closedAt: null,
   createdAt: "2026-09-27T08:00:00.000Z",
   updatedAt: "2026-09-27T08:00:00.000Z",
 };

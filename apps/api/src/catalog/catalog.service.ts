@@ -92,6 +92,7 @@ const CATALOG_UPDATE_FIELD_ORDER = [
   "referencePriceAmount",
   "referencePriceCurrency",
   "tracksStock",
+  "lowStockThreshold",
 ] as const;
 
 /**
@@ -110,14 +111,23 @@ function defaultTracksStockForKind(kind: CatalogItemKindDto): boolean {
 }
 
 /**
- * Fixed scale of every decimal this boundary projects, in digits after the
- * point. Both catalog decimal columns store two decimals (`tax_rate.rate` is
- * `DECIMAL(5,2)` and `catalog_item.reference_price_amount` is `DECIMAL(14,2)`,
- * the scale EPIC-09 fixed for every currency) and the write contract caps a
- * submitted amount at two decimals, so the stored scale never exceeds it and
- * the projection below can PAD but never round.
+ * Fixed scale of every money/informational-amount decimal this boundary
+ * projects, in digits after the point. Both catalog amount columns store two
+ * decimals (`tax_rate.rate` is `DECIMAL(5,2)` and
+ * `catalog_item.reference_price_amount` is `DECIMAL(14,2)`, the scale EPIC-09
+ * fixed for every currency) and the write contract caps a submitted amount at two
+ * decimals, so the stored scale never exceeds it and the projection below can
+ * PAD but never round.
  */
 const CATALOG_DECIMAL_SCALE = 2;
+
+/**
+ * Fixed scale of the EPIC-18 REP-001 low-stock threshold, which is a QUANTITY,
+ * not an amount: `catalog_item.low_stock_threshold` is `DECIMAL(10,3)`, the same
+ * scale `stock_balance.quantity` uses, and the write contract caps a submitted
+ * threshold at three decimals.
+ */
+const CATALOG_QUANTITY_SCALE = 3;
 
 /**
  * Exact `Decimal` → fixed-scale string projection (the `ClinicalWeight.quantity`
@@ -130,9 +140,18 @@ const CATALOG_DECIMAL_SCALE = 2;
  * verbatim. Padding both to the column's declared scale gives the API ONE
  * canonical spelling, so a client sees the identical exact value from either
  * environment without the server ever rounding a stored digit.
+ *
+ * `scale` is the CALLER's column scale, because this boundary projects two
+ * different kinds of decimal: the money/informational amounts at
+ * {@link CATALOG_DECIMAL_SCALE} (2) and the low-stock threshold quantity at
+ * {@link CATALOG_QUANTITY_SCALE} (3). Pinning it per column — never deriving it
+ * from the value — is what keeps the padding lossless.
  */
-function decimalToFixedScaleString(value: Prisma.Decimal | string): string {
-  return new Prisma.Decimal(value).toFixed(CATALOG_DECIMAL_SCALE);
+function decimalToFixedScaleString(
+  value: Prisma.Decimal | string,
+  scale: number = CATALOG_DECIMAL_SCALE
+): string {
+  return new Prisma.Decimal(value).toFixed(scale);
 }
 
 function toTaxRateResponse(row: CatalogTaxRateRow): TaxRateResponse {
@@ -173,16 +192,21 @@ function toCatalogItemResponse(
     referencePriceCurrency: row.referencePriceCurrency,
     isActive: row.isActive,
     tracksStock: row.tracksStock,
+    lowStockThreshold:
+      row.lowStockThreshold === null
+        ? null
+        : decimalToFixedScaleString(row.lowStockThreshold, CATALOG_QUANTITY_SCALE),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
 /**
- * Create payload: an absent reference-price pair is written as NULL/NULL, and
- * an absent `tracksStock` is written as the by-kind default. The caller's
- * explicit value always wins, so staff can create a non-tracking `PRODUCT` or a
- * stock-tracking `SERVICE` when the business case calls for it.
+ * Create payload: an absent reference-price pair is written as NULL/NULL, an
+ * absent `lowStockThreshold` as NULL ("not monitored"), and an absent
+ * `tracksStock` is written as the by-kind default. The caller's explicit value
+ * always wins, so staff can create a non-tracking `PRODUCT` or a stock-tracking
+ * `SERVICE` when the business case calls for it.
  */
 function buildCreateData(input: CreateCatalogItemInput): CatalogItemCreateData {
   return {
@@ -192,6 +216,7 @@ function buildCreateData(input: CreateCatalogItemInput): CatalogItemCreateData {
     referencePriceAmount: input.referencePriceAmount ?? null,
     referencePriceCurrency: input.referencePriceCurrency ?? null,
     tracksStock: input.tracksStock ?? defaultTracksStockForKind(input.kind),
+    lowStockThreshold: input.lowStockThreshold ?? null,
   };
 }
 
@@ -214,15 +239,21 @@ function buildUpdateData(input: UpdateCatalogItemInput): CatalogItemUpdateData {
   // Only a SUPPLIED flag is copied, so an omitted `tracksStock` leaves the
   // stored value exactly as it was (that is what omitting it means).
   if (input.tracksStock !== undefined) data.tracksStock = input.tracksStock;
+  // Same for the opt-in threshold: absent leaves it, `null` clears it.
+  if (input.lowStockThreshold !== undefined) {
+    data.lowStockThreshold = input.lowStockThreshold;
+  }
   return data;
 }
 
 /**
  * Audit diff for a create: the field NAMES the caller actually set — never a
  * name, an amount or any other value. The reference-price pair is named only
- * when it carries a value (a create has nothing to clear), and `tracksStock` is
- * named only when the caller supplied it: the by-kind default is fully
- * determined by `kind`, which every create already records.
+ * when it carries a value (a create has nothing to clear), `tracksStock` is
+ * named only when the caller supplied it (the by-kind default is fully
+ * determined by `kind`, which every create already records), and
+ * `lowStockThreshold` is named only when it carries a value (an omitted or null
+ * threshold means "not monitored", which is the column default).
  */
 function createChangedFields(input: CreateCatalogItemInput): string[] {
   const fields = ["kind", "name", "taxRateId"];
@@ -231,6 +262,9 @@ function createChangedFields(input: CreateCatalogItemInput): string[] {
   }
   if (input.tracksStock !== undefined) {
     fields.push("tracksStock");
+  }
+  if (input.lowStockThreshold !== undefined && input.lowStockThreshold !== null) {
+    fields.push("lowStockThreshold");
   }
   return fields;
 }

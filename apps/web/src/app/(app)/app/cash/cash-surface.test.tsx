@@ -22,6 +22,7 @@ const OPEN_SESSION: CashSession = {
   expectedAmount: null,
   countedAmount: null,
   differenceAmount: null,
+  closedAt: null,
   createdAt: "2026-09-27T08:00:00.000Z",
   updatedAt: "2026-09-27T08:00:00.000Z",
 };
@@ -32,6 +33,7 @@ const CLOSED_SESSION: CashSession = {
   expectedAmount: "500000.00",
   countedAmount: "498500.00",
   differenceAmount: "-1500.00",
+  closedAt: "2026-09-27T18:30:00.000Z",
 };
 
 const MOVEMENT: CashMovement = {

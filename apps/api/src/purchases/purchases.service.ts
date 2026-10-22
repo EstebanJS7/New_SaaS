@@ -135,6 +135,9 @@ function toPurchaseResponse(row: PurchaseRow): PurchaseResponse {
     supplierId: row.supplierId,
     status: row.status,
     lines: row.lines.map(toPurchaseLineResponse),
+    // The business instant the purchase was received (DEC-064), projected the
+    // same way `createdAt` is: an ISO string, or `null` while not terminal.
+    receivedAt: row.receivedAt === null ? null : row.receivedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

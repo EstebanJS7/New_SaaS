@@ -24,6 +24,7 @@ import {
   type ClinicalEncounterContent,
   type ClinicalEncounterStatus,
 } from "./clinical-api";
+import { ClinicalRecordsSection } from "./clinical-records";
 
 /**
  * Debounce window for the on-change versioned draft autosave. The version guard,
@@ -570,13 +571,20 @@ function AmendmentForm({
  * entitlement are enforced by the API; the denied/conflict states below are
  * UX-only. All styling consumes semantic tokens so the surface stays
  * brand-agnostic, and this component is never rendered inside the Portal.
+ *
+ * The encounter card is the original surface and is unchanged. The second card
+ * is the vaccination/deworming entry path (EPIC-18 REP-010), which is the only
+ * place staff can fill the due date the reports read.
  */
 export function ClinicalWorkspace({
   patientId,
   autosaveDelayMs = CLINICAL_AUTOSAVE_DELAY_MS,
+  permissions,
 }: {
   readonly patientId: string;
   readonly autosaveDelayMs?: number;
+  /** Caller permissions when the shell knows them; `undefined` means unknown. */
+  readonly permissions?: readonly string[];
 }): JSX.Element {
   const queryClient = useQueryClient();
   const listQueryKey = ["clinical", patientId, "encounters"] as const;
@@ -603,91 +611,94 @@ export function ClinicalWorkspace({
   const selectedIsClosed = selected?.status === "CLOSED";
 
   return (
-    <SectionCard
-      title="Clinical records"
-      description="Draft, close and amend this patient's clinical encounters."
-    >
-      {createMutation.error &&
-        (createDenied ? (
-          <PermissionDeniedAlert message={userFacingClinicalError(createMutation.error)} />
-        ) : (
-          <ErrorAlert message={userFacingClinicalError(createMutation.error)} />
-        ))}
-      {notice && (
-        <p role="status" aria-live="polite" className="text-sm text-status-success">
-          {notice}
-        </p>
-      )}
-
-      {encounters.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading clinical records...</p>
-      ) : encounters.error ? (
-        isClinicalPermissionDenied(encounters.error) ? (
-          <PermissionDeniedAlert message={userFacingClinicalError(encounters.error)} />
-        ) : (
-          <ErrorAlert message={userFacingClinicalError(encounters.error)} />
-        )
-      ) : (
-        <>
-          <Button
-            type="button"
-            onClick={() => createMutation.mutate()}
-            disabled={createMutation.isPending || createDenied}
-          >
-            {createMutation.isPending ? "Creating..." : "New encounter"}
-          </Button>
-
-          {data && data.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No clinical encounters yet.</p>
+    <>
+      <SectionCard
+        title="Clinical records"
+        description="Draft, close and amend this patient's clinical encounters."
+      >
+        {createMutation.error &&
+          (createDenied ? (
+            <PermissionDeniedAlert message={userFacingClinicalError(createMutation.error)} />
           ) : (
-            <ul className="space-y-2">
-              {data?.map((encounter) => {
-                const isSelected = encounter.id === selectedId;
-                return (
-                  <li key={encounter.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(encounter.id)}
-                      aria-current={isSelected ? "true" : undefined}
-                      className={`flex w-full items-center justify-between gap-3 rounded-md border bg-card p-3 text-left text-sm hover:bg-secondary ${
-                        isSelected ? "border-primary" : "border-input"
-                      }`}
-                    >
-                      <span className="min-w-0 truncate">
-                        {encounter.reasonForVisit?.trim()
-                          ? encounter.reasonForVisit.trim()
-                          : "Untitled encounter"}
-                      </span>
-                      <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                        <span>{formatRecordedDate(encounter.updatedAt)}</span>
-                        <EncounterStatusBadge status={encounter.status} />
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+            <ErrorAlert message={userFacingClinicalError(createMutation.error)} />
+          ))}
+        {notice && (
+          <p role="status" aria-live="polite" className="text-sm text-status-success">
+            {notice}
+          </p>
+        )}
 
-          {selected && selectedIsDraft && (
-            <EncounterEditor
-              key={selected.id}
-              patientId={patientId}
-              encounter={selected}
-              autosaveDelayMs={autosaveDelayMs}
-              onNotice={setNotice}
-            />
-          )}
-          {selected && selectedIsClosed && (
-            <AmendmentForm
-              key={selected.id}
-              patientId={patientId}
-              encounter={selected}
-              onNotice={setNotice}
-            />
-          )}
-        </>
-      )}
-    </SectionCard>
+        {encounters.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading clinical records...</p>
+        ) : encounters.error ? (
+          isClinicalPermissionDenied(encounters.error) ? (
+            <PermissionDeniedAlert message={userFacingClinicalError(encounters.error)} />
+          ) : (
+            <ErrorAlert message={userFacingClinicalError(encounters.error)} />
+          )
+        ) : (
+          <>
+            <Button
+              type="button"
+              onClick={() => createMutation.mutate()}
+              disabled={createMutation.isPending || createDenied}
+            >
+              {createMutation.isPending ? "Creating..." : "New encounter"}
+            </Button>
+
+            {data && data.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No clinical encounters yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {data?.map((encounter) => {
+                  const isSelected = encounter.id === selectedId;
+                  return (
+                    <li key={encounter.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedId(encounter.id)}
+                        aria-current={isSelected ? "true" : undefined}
+                        className={`flex w-full items-center justify-between gap-3 rounded-md border bg-card p-3 text-left text-sm hover:bg-secondary ${
+                          isSelected ? "border-primary" : "border-input"
+                        }`}
+                      >
+                        <span className="min-w-0 truncate">
+                          {encounter.reasonForVisit?.trim()
+                            ? encounter.reasonForVisit.trim()
+                            : "Untitled encounter"}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                          <span>{formatRecordedDate(encounter.updatedAt)}</span>
+                          <EncounterStatusBadge status={encounter.status} />
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            {selected && selectedIsDraft && (
+              <EncounterEditor
+                key={selected.id}
+                patientId={patientId}
+                encounter={selected}
+                autosaveDelayMs={autosaveDelayMs}
+                onNotice={setNotice}
+              />
+            )}
+            {selected && selectedIsClosed && (
+              <AmendmentForm
+                key={selected.id}
+                patientId={patientId}
+                encounter={selected}
+                onNotice={setNotice}
+              />
+            )}
+          </>
+        )}
+      </SectionCard>
+      <ClinicalRecordsSection patientId={patientId} permissions={permissions} />
+    </>
   );
 }

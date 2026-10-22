@@ -20,11 +20,30 @@ const redirect = vi.fn((path: string) => {
 });
 vi.mock("next/navigation", () => ({ redirect: (path: string) => redirect(path) }));
 
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import AppHomePage from "./app/page";
 import AppShellLayout from "./layout";
+import { QueryProvider } from "@/providers/query-provider";
 import { activeProductPreset, resolveBrand } from "@newsaas/ui/branding";
+
+/**
+ * The shell home, as the running app composes it.
+ *
+ * The home page is a live surface now ([[REP-008]]), not a static card: its four
+ * cards read the reporting API through TanStack Query. The ROOT layout supplies
+ * the client in production (`QueryProvider` wraps every route), and this suite
+ * renders the layout WITHOUT that root layout — so the provider is supplied here,
+ * exactly where the root layout would supply it.
+ */
+function homePage(): ReactElement {
+  return (
+    <QueryProvider>
+      <AppHomePage />
+    </QueryProvider>
+  );
+}
 
 /** The bounded content region is contracted by its `data-shell-content` attribute. */
 function getContentRegion(): HTMLElement {
@@ -84,7 +103,7 @@ describe("AppShellLayout", () => {
   });
 
   it("wraps a direct visit to the shell home with sidebar and topbar", async () => {
-    const element = await AppShellLayout({ children: <AppHomePage /> });
+    const element = await AppShellLayout({ children: homePage() });
     render(element);
 
     expect(screen.getByTestId("nav-sidebar")).toBeInTheDocument();
@@ -92,8 +111,12 @@ describe("AppShellLayout", () => {
 
     const region = getContentRegion();
     expect(region.tagName).toBe("MAIN");
-    expect(within(region).getByTestId("sample-card")).toBeInTheDocument();
-    expect(within(region).getByText("Staff workspace")).toBeInTheDocument();
+    // The dashboard is what the shell home renders now, and it renders INSIDE the
+    // bounded region rather than beside it.
+    expect(within(region).getByTestId("app-dashboard")).toBeInTheDocument();
+    expect(
+      within(region).getByRole("heading", { level: 1, name: "Dashboard" })
+    ).toBeInTheDocument();
   });
 
   it("keeps the shell around the content of a deep-linked sub-route", async () => {
@@ -114,25 +137,29 @@ describe("AppShellLayout", () => {
     expect(within(region).getByTestId("sub-route-content")).toBeInTheDocument();
   });
 
-  it("hosts the sample card in the bounded region consuming tokens only", async () => {
-    const element = await AppShellLayout({ children: <AppHomePage /> });
+  it("hosts the dashboard in the bounded region consuming tokens only", async () => {
+    const element = await AppShellLayout({ children: homePage() });
     render(element);
 
-    const card = screen.getByTestId("sample-card");
-    // Semantic-token classes from the shared Card primitive (no literals).
-    expect(card.className).toContain("bg-card");
-    expect(card.className).toContain("text-card-foreground");
+    // The property is the CONTENT's, and it did not change when the placeholder
+    // became a live surface: the dashboard is a token surface, so a tenant brand
+    // re-themes it without touching a component. Asserting it on the placeholder's
+    // `sample-card` would have silently stopped proving anything once that card
+    // was replaced, which is exactly what happened.
+    const dashboard = screen.getByTestId("app-dashboard");
+    expect(dashboard.className).toContain("bg-card");
+    expect(dashboard.className).toContain("text-card-foreground");
 
     // Chrome carries token classes too and never inline color styles.
     const sidebar = screen.getByTestId("nav-sidebar");
     expect(sidebar.className).toContain("bg-card");
-    for (const node of [sidebar, screen.getByTestId("topbar"), card]) {
+    for (const node of [sidebar, screen.getByTestId("topbar"), dashboard]) {
       expect(node.getAttribute("style")).toBeNull();
     }
   });
 
   it("emits the brand style bridge server-side", async () => {
-    const element = await AppShellLayout({ children: <AppHomePage /> });
+    const element = await AppShellLayout({ children: homePage() });
     const { container } = render(element);
 
     const style = container.querySelector("style");
@@ -159,10 +186,17 @@ describe("AppShellLayout", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const element = await AppShellLayout({ children: <AppHomePage /> });
+    const element = await AppShellLayout({ children: homePage() });
     const { container } = render(element);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Branding is resolved EXACTLY ONCE, and this counts branding calls rather
+    // than all calls: the dashboard inside the shell reads its four reports
+    // through the same `fetch`, so a total count would be measuring the content's
+    // reads, not the shell's one resolution of the tenant brand.
+    const brandingCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).includes("/branding/current")
+    );
+    expect(brandingCalls).toHaveLength(1);
 
     const style = container.querySelector("style");
     expect(style).toBeTruthy();
@@ -179,7 +213,7 @@ describe("AppShellLayout", () => {
   });
 
   it("emits the tenant-aware appearance bootstrap before paint-affecting shell content", async () => {
-    const element = await AppShellLayout({ children: <AppHomePage /> });
+    const element = await AppShellLayout({ children: homePage() });
     const { container } = render(element);
 
     const script = container.querySelector("script");
@@ -213,7 +247,7 @@ describe("AppShellLayout", () => {
       })
     );
 
-    const element = await AppShellLayout({ children: <AppHomePage /> });
+    const element = await AppShellLayout({ children: homePage() });
     const { container } = render(element);
 
     const script = container.querySelector("script");

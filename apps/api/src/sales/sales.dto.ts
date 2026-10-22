@@ -56,6 +56,12 @@ export interface SaleResponse {
   readonly lines: SaleLineResponse[];
   /** Sum of the line totals, exact fixed-scale (2 decimals). */
   readonly total: string;
+  /**
+   * ISO 8601 instant the sale was COMPLETED (DEC-064); `null` while `DRAFT` and
+   * for `CANCELLED`. `createdAt` answers a different question and is never a
+   * substitute for it.
+   */
+  readonly completedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

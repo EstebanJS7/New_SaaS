@@ -324,6 +324,12 @@ export interface CatalogItemRow {
   isActive: boolean;
   /** EPIC-10 stock dimension. Mirrors the schema default (`true`) when omitted. */
   tracksStock: boolean;
+  /**
+   * EPIC-18 REP-001 opt-in low-stock threshold (DEC-065), stored as an exact
+   * decimal STRING like `referencePriceAmount` — never a JavaScript float.
+   * `null` means "not monitored".
+   */
+  lowStockThreshold: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -364,6 +370,23 @@ export interface StockBalanceRow {
 }
 
 /**
+ * Predicate fields the in-memory stock-ledger reads are allowed to build. Named
+ * (rather than inline at the delegate) from EPIC-18 REP-005, because the stock
+ * report's flow read adds the `createdAt` range and an inline shape would have to
+ * be widened in two places.
+ */
+export interface StockMovementWhere {
+  tenantId: string;
+  catalogItemId?: string;
+  /**
+   * Report-dated movement range (EPIC-18 REP-005): HALF-OPEN `[gte, lt)` on the
+   * movement's own `createdAt`. `stock_movement` is append-only and immutable, so
+   * its creation instant IS its business instant.
+   */
+  createdAt?: { gte?: Date; lt?: Date };
+}
+
+/**
  * Tenant-scoped supplier identity row (EPIC-11 W2). Data classification
  * (DEC-011): `name` is INTERNAL and the five optional identity/contact fields
  * are CONFIDENTIAL. This fake does NOT enforce the per-tenant `taxId` partial
@@ -384,6 +407,18 @@ export interface SupplierRow {
   updatedAt: Date;
 }
 
+/** Predicate fields the in-memory supplier reads/writes are allowed to build. */
+export interface SupplierWhere {
+  tenantId: string;
+  isActive?: boolean;
+  /**
+   * Batched identity resolution (EPIC-18 REP-004): `id IN (...)`. The tenant
+   * predicate stays mandatory, so an id from another tenant resolves to nothing
+   * rather than to that tenant's supplier.
+   */
+  id?: { in: string[] };
+}
+
 /** Lifecycle values pinned by schema enum `purchase_status` (PRD §17). */
 export type PurchaseStatusRow = "DRAFT" | "RECEIVED" | "CANCELLED";
 
@@ -399,6 +434,8 @@ export interface PurchaseHeaderRow {
   tenantId: string;
   supplierId: string;
   status: PurchaseStatusRow;
+  /** Business instant of the DRAFT -> RECEIVED transition; `null` until then. */
+  receivedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -429,11 +466,19 @@ export interface PurchaseWhere {
   id?: string;
   tenantId?: string;
   status?: PurchaseStatusRow;
+  /**
+   * Report-dated receive range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on the
+   * business instant `receivedAt`. A `null` instant matches no bound, exactly as
+   * PostgreSQL's NULL semantics do.
+   */
+  receivedAt?: { gte?: Date; lt?: Date };
 }
 
 /** Ordering clauses the in-memory purchase list accepts. */
 export interface PurchaseOrderBy {
   createdAt?: "asc" | "desc";
+  /** REP-004 reads the receive report in `receivedAt` order; NULLs sort last on `asc`. */
+  receivedAt?: "asc" | "desc";
   id?: "asc" | "desc";
 }
 
@@ -466,6 +511,8 @@ export interface SaleHeaderRow {
   customerId: string | null;
   currency: string;
   status: SaleStatusRow;
+  /** Business instant of the DRAFT -> COMPLETED transition; `null` until then. */
+  completedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -491,9 +538,15 @@ export interface SaleLineRow {
   updatedAt: Date;
 }
 
-/** Sale read model WITH its line set (the `include: { lines: true }` shape). */
+/**
+ * Sale read model with its line set (the `include: { lines: true }` shape) and,
+ * when the read asked for it, its payment set (`include: { payments: true }`,
+ * EPIC-18 REP-003). `payments` is OPTIONAL because Prisma only returns a
+ * relation the query named: a lines-only read carries no `payments` key at all.
+ */
 export interface SaleRow extends SaleHeaderRow {
   lines: SaleLineRow[];
+  payments?: PaymentRow[];
 }
 
 /** Predicate fields the in-memory sale reads/writes are allowed to build. */
@@ -501,6 +554,13 @@ export interface SaleWhere {
   id?: string;
   tenantId?: string;
   status?: SaleStatusRow;
+  /**
+   * Half-open business-instant window (EPIC-18 REP-002): `completedAt >= gte`
+   * AND `completedAt < lt`. A row whose `completedAt` is `null` (a draft) is
+   * excluded by any bound, exactly as PostgreSQL excludes a NULL from a range
+   * comparison rather than treating it as the epoch.
+   */
+  completedAt?: { gte?: Date; lt?: Date };
 }
 
 /** Ordering clauses the in-memory sale list accepts. */
@@ -866,6 +926,8 @@ export interface CashSessionRow {
   countedAmount: string | null;
   /** `countedAmount - expectedAmount`, may be negative; `null` while `OPEN` (DEC-031). */
   differenceAmount: string | null;
+  /** Business instant of the OPEN -> CLOSED transition; `null` while `OPEN` (DEC-064). */
+  closedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -903,11 +965,38 @@ export interface CashSessionWhere {
   id?: string;
   tenantId?: string;
   status?: CashSessionRow["status"];
+  /**
+   * Report-dated close range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on `closedAt`,
+   * the business instant of the `OPEN` → `CLOSED` transition. A `null` `closedAt`
+   * (an open session) matches no bound, which is what PostgreSQL's NULL semantics
+   * already do and NOT what "treat null as the epoch" would.
+   */
+  closedAt?: { gte?: Date; lt?: Date };
+}
+
+/**
+ * Predicate fields the in-memory cash-movement reads are allowed to build. Named
+ * (rather than inline at the delegate) from EPIC-18 REP-004, because the report
+ * read adds the `createdAt` range and an inline shape would have to be widened in
+ * two places.
+ */
+export interface CashMovementWhere {
+  tenantId: string;
+  registerId?: string;
+  sessionId?: string;
+  /**
+   * Report-dated movement range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on the
+   * movement's own `createdAt`. `cash_movement` is append-only with no
+   * `updated_at`, so its creation instant IS its business instant.
+   */
+  createdAt?: { gte?: Date; lt?: Date };
 }
 
 /** Ordering clauses the in-memory cash lists accept. */
 export interface CashOrderBy {
   createdAt?: "asc" | "desc";
+  /** REP-004 reads the close report in `closedAt` order; NULLs sort last on `asc`. */
+  closedAt?: "asc" | "desc";
   id?: "asc" | "desc";
 }
 
@@ -995,6 +1084,12 @@ export interface ClinicalEncounterRow {
   clientSummary: string | null;
   internalNotes: string | null;
   closedAt: Date | null;
+  /**
+   * Non-NULL exactly for an AMENDMENT: the original encounter this row corrects
+   * (EPIC-18 REP-006 reads it to keep a correction out of the consultation
+   * count). The real column is nullable and so is this one.
+   */
+  amendsEncounterId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1006,6 +1101,29 @@ export interface ClinicalVaccinationRow {
   patientId: string;
   vaccine: string;
   administeredAt: Date;
+  /** EPIC-18 REP-001 staff-entered due date (DEC-065); null mirrors "not recorded". */
+  nextDueAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Tenant-scoped ClinicalDeworming row (EPIC-06), mirroring the real table.
+ *
+ * Modelled from EPIC-18 REP-006 part 2 rather than earlier because the deworming
+ * due report is the first reader the in-memory boundary needed: the clinical HTTP
+ * suite drives deworming through the module but never asserted against a stored
+ * row, so the table was absent. `nextDueAt` is the staff-entered due date of
+ * DEC-065, nullable for the same reason the column is.
+ */
+export interface ClinicalDewormingRow {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  product: string;
+  administeredAt: Date;
+  /** EPIC-18 REP-001 staff-entered due date (DEC-065); null mirrors "not recorded". */
+  nextDueAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1438,7 +1556,16 @@ export interface IsolationDatabase {
         };
         orderBy?: readonly { name?: "asc" | "desc"; id?: "asc" | "desc" }[];
       }) => CatalogItemRow[];
-      findFirst: (args: { where: { id: string; tenantId: string } }) => CatalogItemRow | null;
+      findFirst: (args: {
+        where: {
+          id?: string;
+          tenantId: string;
+          tracksStock?: boolean;
+          /** Existence probe for "does this tenant monitor anything?" (REP-005). */
+          lowStockThreshold?: { not: null };
+        };
+        select?: { id?: true; name?: true; kind?: true };
+      }) => CatalogItemRow | null;
       create: (args: {
         data: {
           tenantId: string;
@@ -1450,6 +1577,8 @@ export interface IsolationDatabase {
           isActive?: boolean;
           /** EPIC-10 stock dimension; omitted mirrors the schema default `true`. */
           tracksStock?: boolean;
+          /** EPIC-18 REP-001 opt-in threshold; omitted/null means not monitored. */
+          lowStockThreshold?: string | { toString(): string } | null;
         };
       }) => CatalogItemRow;
       updateMany: (args: {
@@ -1462,12 +1591,14 @@ export interface IsolationDatabase {
           referencePriceCurrency?: string | null;
           isActive?: boolean;
           tracksStock?: boolean;
+          /** EPIC-18 REP-001: absent leaves it, null clears it, a value sets it. */
+          lowStockThreshold?: string | { toString(): string } | null;
         };
       }) => { count: number };
     };
     supplier: {
       findMany: (args: {
-        where: { tenantId: string; isActive?: boolean };
+        where: SupplierWhere;
         orderBy?: readonly { name?: "asc" | "desc"; id?: "asc" | "desc" }[];
       }) => SupplierRow[];
       findFirst: (args: { where: { id: string; tenantId: string } }) => SupplierRow | null;
@@ -1515,7 +1646,7 @@ export interface IsolationDatabase {
       }) => PurchaseRow;
       updateMany: (args: {
         where: PurchaseWhere;
-        data: { supplierId?: string; status?: PurchaseStatusRow };
+        data: { supplierId?: string; status?: PurchaseStatusRow; receivedAt?: Date | null };
       }) => { count: number };
     };
     purchaseLine: {
@@ -1538,11 +1669,18 @@ export interface IsolationDatabase {
       }) => PurchaseLineRow;
     };
     sale: {
-      /** Reads assemble the line set, mirroring `include: { lines: true }`. */
-      findFirst: (args: { where: SaleWhere; include?: { lines?: true } }) => SaleRow | null;
+      /**
+       * Reads assemble the relations the caller named, mirroring Prisma's
+       * `include`: `lines` is always present (empty when not requested, the
+       * pre-existing shape) and `payments` is present exactly when requested.
+       */
+      findFirst: (args: {
+        where: SaleWhere;
+        include?: { lines?: true; payments?: true };
+      }) => SaleRow | null;
       findMany: (args: {
         where: SaleWhere;
-        include?: { lines?: true };
+        include?: { lines?: true; payments?: true };
         orderBy?: readonly SaleOrderBy[];
       }) => SaleRow[];
       /** Nested line create; the fake fills tenant/sale ids from the header. */
@@ -1557,7 +1695,7 @@ export interface IsolationDatabase {
       }) => SaleRow;
       updateMany: (args: {
         where: SaleWhere;
-        data: { customerId?: string | null; status?: SaleStatusRow };
+        data: { customerId?: string | null; status?: SaleStatusRow; completedAt?: Date | null };
       }) => { count: number };
     };
     saleLine: {
@@ -1809,13 +1947,15 @@ export interface IsolationDatabase {
       create: (args: { data: CashSessionCreateData & { tenantId: string } }) => CashSessionRow;
       /**
        * Conditional close write (EPIC-13 CASH-003): matches the STORED `status`
-       * in `where`, writes `CLOSED` plus the three close amounts and reports how
-       * many rows it touched, so the service's lost-race `409` is exercisable.
+       * in `where`, writes `CLOSED` plus the three close amounts and the close
+       * instant, and reports how many rows it touched, so the service's
+       * lost-race `409` is exercisable.
        */
       updateMany: (args: {
         where: CashSessionWhere;
         data: {
           status?: CashSessionRow["status"];
+          closedAt?: Date | null;
           expectedAmount?: string | { toString(): string };
           countedAmount?: string | { toString(): string };
           differenceAmount?: string | { toString(): string };
@@ -1843,7 +1983,7 @@ export interface IsolationDatabase {
       }) => CashMovementRow;
       findUnique: (args: { where: { id: string } }) => CashMovementRow | null;
       findMany: (args: {
-        where: { tenantId: string; registerId?: string; sessionId?: string };
+        where: CashMovementWhere;
         orderBy?: readonly CashOrderBy[];
       }) => CashMovementRow[];
     };
@@ -1863,7 +2003,7 @@ export interface IsolationDatabase {
         };
       }) => StockMovementRow;
       findMany: (args: {
-        where: { tenantId: string; catalogItemId?: string };
+        where: StockMovementWhere;
         orderBy?: readonly {
           createdAt?: "asc" | "desc";
           id?: "asc" | "desc";
@@ -1892,7 +2032,17 @@ export interface IsolationDatabase {
     patient: {
       findMany: (args: {
         // `id.in` mirrors the portal read's holder-owned pet id set.
-        where: { tenantId: string; isActive?: boolean; id?: { in: string[] } };
+        where: {
+          tenantId: string;
+          isActive?: boolean;
+          id?: { in: string[] };
+          /**
+           * Report-dated registration range (EPIC-18 REP-006): HALF-OPEN
+           * `[gte, lt)` on the patient's own `createdAt`. Registering a patient
+           * IS the business event, and `Patient` has no second date to use.
+           */
+          createdAt?: { gte?: Date; lt?: Date };
+        };
         orderBy?: { name?: "asc" | "desc" };
       }) => PatientRow[];
       findFirst: (args: { where: { id: string; tenantId: string } }) => PatientRow | null;
@@ -1950,11 +2100,32 @@ export interface IsolationDatabase {
           clientSummary?: string | null;
           internalNotes?: string | null;
           closedAt?: Date | null;
+          /**
+           * The explicit correction link (EPIC-18 REP-006). An amendment is a NEW
+           * closed row carrying the original's id; the original is never mutated.
+           * Omitted mirrors the nullable column, i.e. an ordinary encounter.
+           */
+          amendsEncounterId?: string | null;
         };
       }) => ClinicalEncounterRow;
       /** `select` is accepted but NOT enforced: the caller's projection is under test. */
       findMany: (args: {
-        where: { tenantId: string; patientId: string };
+        where: {
+          tenantId: string;
+          /**
+           * OPTIONAL since EPIC-18 REP-006: the patient-anchored clinical reads
+           * still pass it, and the consultation report reads a TENANT's closed
+           * encounters without naming a patient.
+           */
+          patientId?: string;
+          status?: "DRAFT" | "CLOSED";
+          /**
+           * Report-dated close range (EPIC-18 REP-006): HALF-OPEN `[gte, lt)` on
+           * `closedAt`. A row with a NULL close instant satisfies NO bound, which
+           * is PostgreSQL's NULL semantics — a draft is never "in the period".
+           */
+          closedAt?: { gte?: Date; lt?: Date };
+        };
         select?: unknown;
       }) => ClinicalEncounterRow[];
     };
@@ -1965,12 +2136,51 @@ export interface IsolationDatabase {
           patientId: string;
           vaccine: string;
           administeredAt: Date;
+          /** EPIC-18 REP-001 due date; omitted mirrors the nullable column. */
+          nextDueAt?: Date | null;
         };
       }) => ClinicalVaccinationRow;
       findMany: (args: {
-        where: { tenantId: string; patientId: string };
+        where: {
+          tenantId: string;
+          /**
+           * OPTIONAL since EPIC-18 REP-006 part 2: the patient-anchored clinical
+           * reads still pass it, while the due report reads the TENANT's
+           * vaccinations without naming a patient.
+           */
+          patientId?: string;
+          /**
+           * The due-date predicate of the due report: `{ not: null }` skips rows
+           * with no recorded due date, and the optional `lt` is the half-open
+           * upper bound of the horizon (NULL satisfies neither).
+           */
+          nextDueAt?: { not: null; lt?: Date };
+        };
+        /** The due read's `[{ nextDueAt: "asc" }, { id: "asc" }]`; see {@link orderDueRows}. */
+        orderBy?: readonly Record<string, "asc" | "desc">[] | { createdAt?: "asc" | "desc" };
         select?: unknown;
       }) => ClinicalVaccinationRow[];
+    };
+    clinicalDeworming: {
+      create: (args: {
+        data: {
+          tenantId: string;
+          patientId: string;
+          product: string;
+          administeredAt: Date;
+          /** EPIC-18 REP-001 due date; omitted mirrors the nullable column. */
+          nextDueAt?: Date | null;
+        };
+      }) => ClinicalDewormingRow;
+      findMany: (args: {
+        where: {
+          tenantId: string;
+          patientId?: string;
+          nextDueAt?: { not: null; lt?: Date };
+        };
+        orderBy?: readonly Record<string, "asc" | "desc">[];
+        select?: unknown;
+      }) => ClinicalDewormingRow[];
     };
     branch: {
       create: (args: { data: { tenantId: string; name: string } }) => BranchRow;
@@ -2269,6 +2479,7 @@ export interface IsolationDatabase {
     patientGuardians: Map<string, PatientGuardianRow>;
     clinicalEncounters: Map<string, ClinicalEncounterRow>;
     clinicalVaccinations: Map<string, ClinicalVaccinationRow>;
+    clinicalDewormings: Map<string, ClinicalDewormingRow>;
     branches: Map<string, BranchRow>;
     appointments: Map<string, AppointmentRow>;
     portalBookingRequests: Map<string, PortalBookingRequestRow>;
@@ -2558,7 +2769,7 @@ function orderStockBalances(
 /**
  * Ordering for the purchase list: `createdAt` (newest first on the shipped
  * query) with `id` as the stable tie-break, mirroring the repository's declared
- * deterministic order.
+ * deterministic order. `receivedAt` is the EPIC-18 REP-004 receive-report order.
  */
 function orderPurchases(
   rows: PurchaseHeaderRow[],
@@ -2570,6 +2781,10 @@ function orderPurchases(
       if (clause.createdAt !== undefined) {
         const compared = left.createdAt.getTime() - right.createdAt.getTime();
         if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.receivedAt !== undefined) {
+        const compared = compareNullableInstants(left.receivedAt, right.receivedAt);
+        if (compared !== 0) return clause.receivedAt === "asc" ? compared : -compared;
       }
       if (clause.id !== undefined) {
         const compared = left.id.localeCompare(right.id);
@@ -2596,6 +2811,99 @@ function linesForPurchase(
       if (byCreated !== 0) return byCreated;
       return left.id.localeCompare(right.id);
     });
+}
+
+/**
+ * Half-open business-instant predicate shared by every report-dated read
+ * (`completedAt`, `closedAt`, `createdAt`, `receivedAt`):
+ * `instant >= gte` AND `instant < lt`. A `null` instant satisfies NO bound,
+ * which is what PostgreSQL's NULL semantics already do and NOT what "treat null
+ * as the epoch" would.
+ *
+ * One implementation, because this is exactly where a fake silently disagrees
+ * with PostgreSQL: four hand-written copies of the same three comparisons are
+ * four chances to get an edge wrong, and the report would then be "tested"
+ * against a boundary the database does not have.
+ */
+function matchesHalfOpenInstant(
+  instant: Date | null,
+  filter: { gte?: Date; lt?: Date } | undefined
+): boolean {
+  if (filter === undefined) return true;
+  if (instant === null) return false;
+  const at = instant.getTime();
+  if (filter.gte !== undefined && at < filter.gte.getTime()) return false;
+  if (filter.lt !== undefined && at >= filter.lt.getTime()) return false;
+  return true;
+}
+
+/**
+ * The due-date predicate of the due reports (EPIC-18 REP-006 part 2).
+ *
+ * `{ not: null }` is applied as a SKIP and not as a comparison: a record whose
+ * due date was never entered satisfies no predicate at all (DEC-065), so it is
+ * in neither the overdue nor the upcoming set. The optional `lt` upper bound
+ * delegates to {@link matchesHalfOpenInstant}, which already returns `false` for a
+ * NULL instant — so NULL keeps satisfying no bound, exactly as PostgreSQL's NULL
+ * semantics do, and there is no second copy of the boundary comparison.
+ */
+function matchesNullableDueDate(
+  dueAt: Date | null,
+  filter: { not: null; lt?: Date } | undefined
+): boolean {
+  if (filter === undefined) return true;
+  if (dueAt === null) return false;
+  return matchesHalfOpenInstant(dueAt, filter);
+}
+
+/**
+ * The order the DUE reads pass, applied to the in-memory clinical tables
+ * (EPIC-18 REP-006 part 2): `nextDueAt` ascending with NULL last, then `id`
+ * ascending.
+ *
+ * A fake that returned INSERTION order would let a broken `orderBy` pass — the
+ * report's row order is part of its response contract (overdue first, then the
+ * soonest upcoming), so the assertion has to be able to disagree with the order
+ * the rows were seeded in. Only the ARRAY shape the due read builds is handled:
+ * every other `orderBy` these two delegates receive (the patient-anchored
+ * clinical and portal reads pass a plain object or nothing) is left exactly as
+ * it was, so no existing suite's behaviour changes.
+ */
+function orderDueRows<TRow extends { id: string; nextDueAt: Date | null }>(
+  rows: TRow[],
+  orderBy: unknown
+): TRow[] {
+  if (!Array.isArray(orderBy)) return rows;
+  const orders = orderBy as readonly Record<string, "asc" | "desc">[];
+  if (!orders.some((entry) => entry.nextDueAt === "asc")) return rows;
+  return [...rows].sort((left, right) => {
+    const byDue = compareNullableInstants(left.nextDueAt, right.nextDueAt);
+    return byDue !== 0 ? byDue : left.id.localeCompare(right.id);
+  });
+}
+
+/**
+ * Total order over nullable instants: `null` sorts LAST on `asc` (mirroring
+ * PostgreSQL's `NULLS LAST` default for ASC) and therefore first on `desc`.
+ */
+function compareNullableInstants(left: Date | null, right: Date | null): number {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return left.getTime() - right.getTime();
+}
+
+/**
+ * Half-open business-instant predicate for the sale reads (EPIC-18 REP-002):
+ * `completedAt >= gte` AND `completedAt < lt`. Delegates to
+ * {@link matchesHalfOpenInstant} so every report-dated read applies the SAME
+ * boundary and NULL rule.
+ */
+function matchesCompletedAt(
+  candidate: SaleHeaderRow,
+  filter: { gte?: Date; lt?: Date } | undefined
+): boolean {
+  return matchesHalfOpenInstant(candidate.completedAt, filter);
 }
 
 /**
@@ -2630,6 +2938,22 @@ function orderSales(
 function linesForSale(saleLineTable: Map<string, SaleLineRow>, saleId: string): SaleLineRow[] {
   return [...saleLineTable.values()]
     .filter((line) => line.saleId === saleId)
+    .sort((left, right) => {
+      const byCreated = left.createdAt.getTime() - right.createdAt.getTime();
+      if (byCreated !== 0) return byCreated;
+      return left.id.localeCompare(right.id);
+    });
+}
+
+/**
+ * A sale's payments in insertion order, `id` as the tie-break. The reporting
+ * payment-method aggregate groups them and never depends on their order, and the
+ * real `include` declares no `orderBy` either — the shape is assembled so it is
+ * present, not to imply a reading order that does not exist.
+ */
+function paymentsForSale(paymentTable: Map<string, PaymentRow>, saleId: string): PaymentRow[] {
+  return [...paymentTable.values()]
+    .filter((payment) => payment.saleId === saleId)
     .sort((left, right) => {
       const byCreated = left.createdAt.getTime() - right.createdAt.getTime();
       if (byCreated !== 0) return byCreated;
@@ -2738,9 +3062,11 @@ function linesForInvoice(
 /**
  * Ordering for the cash register/session/movement lists: `createdAt` (newest
  * first on the shipped queries) with `id` as the stable tie-break, mirroring the
- * repository's declared deterministic order.
+ * repository's declared deterministic order. `closedAt` is the EPIC-18 REP-004
+ * close-report order; a session that is still `OPEN` has no close instant and
+ * sorts last on `asc`, like PostgreSQL.
  */
-function orderCashRows<T extends { id: string; createdAt: Date }>(
+function orderCashRows<T extends { id: string; createdAt: Date; closedAt?: Date | null }>(
   rows: T[],
   orderBy: readonly CashOrderBy[] | undefined
 ): T[] {
@@ -2750,6 +3076,10 @@ function orderCashRows<T extends { id: string; createdAt: Date }>(
       if (clause.createdAt !== undefined) {
         const compared = left.createdAt.getTime() - right.createdAt.getTime();
         if (compared !== 0) return clause.createdAt === "asc" ? compared : -compared;
+      }
+      if (clause.closedAt !== undefined) {
+        const compared = compareNullableInstants(left.closedAt ?? null, right.closedAt ?? null);
+        if (compared !== 0) return clause.closedAt === "asc" ? compared : -compared;
       }
       if (clause.id !== undefined) {
         const compared = left.id.localeCompare(right.id);
@@ -2834,6 +3164,7 @@ export function createIsolationDatabase(): IsolationDatabase {
   const patientGuardianTable = new Map<string, PatientGuardianRow>();
   const clinicalEncounterTable = new Map<string, ClinicalEncounterRow>();
   const clinicalVaccinationTable = new Map<string, ClinicalVaccinationRow>();
+  const clinicalDewormingTable = new Map<string, ClinicalDewormingRow>();
   const branchTable = new Map<string, BranchRow>();
   const appointmentTable = new Map<string, AppointmentRow>();
   const portalBookingRequestTable = new Map<string, PortalBookingRequestRow>();
@@ -2892,6 +3223,7 @@ export function createIsolationDatabase(): IsolationDatabase {
     patientGuardians: patientGuardianTable,
     clinicalEncounters: clinicalEncounterTable,
     clinicalVaccinations: clinicalVaccinationTable,
+    clinicalDewormings: clinicalDewormingTable,
     branches: branchTable,
     appointments: appointmentTable,
     portalBookingRequests: portalBookingRequestTable,
@@ -3610,9 +3942,19 @@ export function createIsolationDatabase(): IsolationDatabase {
         return rows;
       },
       findFirst: ({ where }) =>
-        [...catalogItemTable.values()].find(
-          (candidate) => candidate.id === where.id && candidate.tenantId === where.tenantId
-        ) ?? null,
+        [...catalogItemTable.values()].find((candidate) => {
+          if (candidate.tenantId !== where.tenantId) return false;
+          if (where.id !== undefined && candidate.id !== where.id) return false;
+          if (where.tracksStock !== undefined && candidate.tracksStock !== where.tracksStock) {
+            return false;
+          }
+          // `{ not: null }` is the only shape the report asks for: the item is
+          // MONITORED. A NULL threshold means "not monitored" (DEC-065).
+          if (where.lowStockThreshold !== undefined && candidate.lowStockThreshold === null) {
+            return false;
+          }
+          return true;
+        }) ?? null,
       create: ({ data }) => {
         const now = new Date();
         const created: CatalogItemRow = {
@@ -3627,6 +3969,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           isActive: data.isActive ?? true,
           // Mirrors the schema default so an omitted flag still tracks stock.
           tracksStock: data.tracksStock ?? true,
+          // Mirrors the nullable opt-in column: no threshold means not monitored.
+          lowStockThreshold: toDecimalStringOrNull(data.lowStockThreshold),
           createdAt: now,
           updatedAt: now,
         };
@@ -3649,6 +3993,9 @@ export function createIsolationDatabase(): IsolationDatabase {
           }
           if (data.isActive !== undefined) candidate.isActive = data.isActive;
           if (data.tracksStock !== undefined) candidate.tracksStock = data.tracksStock;
+          if (data.lowStockThreshold !== undefined) {
+            candidate.lowStockThreshold = toDecimalStringOrNull(data.lowStockThreshold);
+          }
           candidate.updatedAt = new Date();
           count += 1;
         }
@@ -3660,7 +4007,8 @@ export function createIsolationDatabase(): IsolationDatabase {
         let rows = [...supplierTable.values()].filter(
           (candidate) =>
             candidate.tenantId === where.tenantId &&
-            (where.isActive === undefined || candidate.isActive === where.isActive)
+            (where.isActive === undefined || candidate.isActive === where.isActive) &&
+            (where.id === undefined || where.id.in.includes(candidate.id))
         );
         if (orderBy) {
           rows = rows.sort((left, right) => {
@@ -3727,7 +4075,8 @@ export function createIsolationDatabase(): IsolationDatabase {
             (candidate) =>
               (where.id === undefined || candidate.id === where.id) &&
               (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-              (where.status === undefined || candidate.status === where.status)
+              (where.status === undefined || candidate.status === where.status) &&
+              matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)
           ) ?? null;
         if (!header) return null;
         return include?.lines
@@ -3739,7 +4088,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where.status === undefined || candidate.status === where.status)
+            (where.status === undefined || candidate.status === where.status) &&
+            matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)
         );
         const ordered = orderBy === undefined ? headers : orderPurchases(headers, orderBy);
         return ordered.map((header) =>
@@ -3756,6 +4106,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           supplierId: data.supplierId,
           // Mirrors the schema default so an omitted status still lands DRAFT.
           status: data.status ?? "DRAFT",
+          // Written ONLY by the receive command (DEC-064).
+          receivedAt: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -3784,8 +4136,10 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (where.id !== undefined && candidate.id !== where.id) continue;
           if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) continue;
           if (where.status !== undefined && candidate.status !== where.status) continue;
+          if (!matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)) continue;
           if (data.supplierId !== undefined) candidate.supplierId = data.supplierId;
           if (data.status !== undefined) candidate.status = data.status;
+          if (data.receivedAt !== undefined) candidate.receivedAt = data.receivedAt;
           candidate.updatedAt = new Date();
           count += 1;
         }
@@ -3840,26 +4194,30 @@ export function createIsolationDatabase(): IsolationDatabase {
             (candidate) =>
               (where.id === undefined || candidate.id === where.id) &&
               (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-              (where.status === undefined || candidate.status === where.status)
+              (where.status === undefined || candidate.status === where.status) &&
+              matchesCompletedAt(candidate, where.completedAt)
           ) ?? null;
         if (!header) return null;
-        return include?.lines
-          ? { ...header, lines: linesForSale(saleLineTable, header.id) }
-          : { ...header, lines: [] };
+        const lines = include?.lines ? linesForSale(saleLineTable, header.id) : [];
+        return include?.payments
+          ? { ...header, lines, payments: paymentsForSale(paymentTable, header.id) }
+          : { ...header, lines };
       },
       findMany: ({ where, include, orderBy }) => {
         const headers = [...saleTable.values()].filter(
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where.status === undefined || candidate.status === where.status)
+            (where.status === undefined || candidate.status === where.status) &&
+            matchesCompletedAt(candidate, where.completedAt)
         );
         const ordered = orderBy === undefined ? headers : orderSales(headers, orderBy);
-        return ordered.map((header) =>
-          include?.lines
-            ? { ...header, lines: linesForSale(saleLineTable, header.id) }
-            : { ...header, lines: [] }
-        );
+        return ordered.map((header) => {
+          const lines = include?.lines ? linesForSale(saleLineTable, header.id) : [];
+          return include?.payments
+            ? { ...header, lines, payments: paymentsForSale(paymentTable, header.id) }
+            : { ...header, lines };
+        });
       },
       create: ({ data }) => {
         const now = new Date();
@@ -3870,6 +4228,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           currency: data.currency,
           // Mirrors the schema default so an omitted status still lands DRAFT.
           status: data.status ?? "DRAFT",
+          // Written ONLY by the completion transaction (DEC-064).
+          completedAt: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -3902,8 +4262,12 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (where.id !== undefined && candidate.id !== where.id) continue;
           if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) continue;
           if (where.status !== undefined && candidate.status !== where.status) continue;
+          // Same predicate as the reads: the where type is shared, so a filter the
+          // fake accepts but ignores would silently update the wrong rows.
+          if (!matchesCompletedAt(candidate, where.completedAt)) continue;
           if (data.customerId !== undefined) candidate.customerId = data.customerId;
           if (data.status !== undefined) candidate.status = data.status;
+          if (data.completedAt !== undefined) candidate.completedAt = data.completedAt;
           candidate.updatedAt = new Date();
           count += 1;
         }
@@ -4505,14 +4869,16 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where.status === undefined || candidate.status === where.status)
+            (where.status === undefined || candidate.status === where.status) &&
+            matchesHalfOpenInstant(candidate.closedAt, where.closedAt)
         ) ?? null,
       findMany: ({ where, orderBy }) => {
         const rows = [...cashSessionTable.values()].filter(
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
-            (where.status === undefined || candidate.status === where.status)
+            (where.status === undefined || candidate.status === where.status) &&
+            matchesHalfOpenInstant(candidate.closedAt, where.closedAt)
         );
         return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
       },
@@ -4527,10 +4893,12 @@ export function createIsolationDatabase(): IsolationDatabase {
           openedAt: now,
           openedByMembershipId: data.openedByMembershipId,
           openingAmount: toDecimalString(data.openingAmount),
-          // Close results are written only by the close command (DEC-031).
+          // Close results and the close instant are written only by the close
+          // command (DEC-031, DEC-064).
           expectedAmount: null,
           countedAmount: null,
           differenceAmount: null,
+          closedAt: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -4543,7 +4911,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (
             (where.id === undefined || row.id === where.id) &&
             (where.tenantId === undefined || row.tenantId === where.tenantId) &&
-            (where.status === undefined || row.status === where.status)
+            (where.status === undefined || row.status === where.status) &&
+            matchesHalfOpenInstant(row.closedAt, where.closedAt)
           ) {
             if (data.status !== undefined) row.status = data.status;
             if (data.expectedAmount !== undefined) {
@@ -4555,6 +4924,7 @@ export function createIsolationDatabase(): IsolationDatabase {
             if (data.differenceAmount !== undefined) {
               row.differenceAmount = toDecimalString(data.differenceAmount);
             }
+            if (data.closedAt !== undefined) row.closedAt = data.closedAt;
             row.updatedAt = new Date();
             count += 1;
           }
@@ -4585,7 +4955,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             candidate.tenantId === where.tenantId &&
             (where.registerId === undefined || candidate.registerId === where.registerId) &&
-            (where.sessionId === undefined || candidate.sessionId === where.sessionId)
+            (where.sessionId === undefined || candidate.sessionId === where.sessionId) &&
+            matchesHalfOpenInstant(candidate.createdAt, where.createdAt)
         );
         return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
       },
@@ -4612,7 +4983,11 @@ export function createIsolationDatabase(): IsolationDatabase {
         const rows = [...stockMovementTable.values()].filter(
           (candidate) =>
             candidate.tenantId === where.tenantId &&
-            (where.catalogItemId === undefined || candidate.catalogItemId === where.catalogItemId)
+            (where.catalogItemId === undefined ||
+              candidate.catalogItemId === where.catalogItemId) &&
+            // REP-005: the period's flow. One shared half-open predicate, so the
+            // fake cannot disagree with PostgreSQL about a boundary.
+            matchesHalfOpenInstant(candidate.createdAt, where.createdAt)
         );
         return orderBy === undefined ? rows : orderStockMovements(rows, orderBy);
       },
@@ -4659,7 +5034,11 @@ export function createIsolationDatabase(): IsolationDatabase {
           (candidate) =>
             candidate.tenantId === where.tenantId &&
             (where.isActive === undefined || candidate.isActive === where.isActive) &&
-            (where.id === undefined || where.id.in.includes(candidate.id))
+            (where.id === undefined || where.id.in.includes(candidate.id)) &&
+            // EPIC-18 REP-006: the SAME half-open predicate every other
+            // report-dated read uses, so the fake cannot disagree with
+            // PostgreSQL about a boundary row.
+            matchesHalfOpenInstant(candidate.createdAt, where.createdAt)
         );
         if (orderBy?.name) {
           rows = rows.sort((left, right) => left.name.localeCompare(right.name));
@@ -4763,6 +5142,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           clientSummary: data.clientSummary ?? null,
           internalNotes: data.internalNotes ?? null,
           closedAt: data.closedAt ?? null,
+          // Mirrors the nullable column: an ordinary encounter carries no link.
+          amendsEncounterId: data.amendsEncounterId ?? null,
           createdAt: now,
           updatedAt: now,
         };
@@ -4774,7 +5155,14 @@ export function createIsolationDatabase(): IsolationDatabase {
       findMany: ({ where }) =>
         [...clinicalEncounterTable.values()].filter(
           (candidate) =>
-            candidate.tenantId === where.tenantId && candidate.patientId === where.patientId
+            candidate.tenantId === where.tenantId &&
+            // OPTIONAL since EPIC-18 REP-006: the clinical suites anchor on a
+            // patient, while the consultation report reads the whole tenant.
+            (where.patientId === undefined || candidate.patientId === where.patientId) &&
+            (where.status === undefined || candidate.status === where.status) &&
+            // A NULL `closedAt` satisfies NO bound, exactly as PostgreSQL's NULL
+            // semantics do: an unclosed draft is never inside a period.
+            matchesHalfOpenInstant(candidate.closedAt, where.closedAt)
         ),
     },
     clinicalVaccination: {
@@ -4786,16 +5174,53 @@ export function createIsolationDatabase(): IsolationDatabase {
           patientId: data.patientId,
           vaccine: data.vaccine,
           administeredAt: data.administeredAt,
+          // Mirrors the nullable column: an omitted due date stays unrecorded.
+          nextDueAt: data.nextDueAt ?? null,
           createdAt: now,
           updatedAt: now,
         };
         clinicalVaccinationTable.set(created.id, created);
         return created;
       },
-      findMany: ({ where }) =>
-        [...clinicalVaccinationTable.values()].filter(
-          (candidate) =>
-            candidate.tenantId === where.tenantId && candidate.patientId === where.patientId
+      findMany: ({ where, orderBy }) =>
+        orderDueRows(
+          [...clinicalVaccinationTable.values()].filter(
+            (candidate) =>
+              candidate.tenantId === where.tenantId &&
+              // OPTIONAL since EPIC-18 REP-006 part 2: the clinical suites anchor on
+              // a patient, while the due report reads the whole tenant.
+              (where.patientId === undefined || candidate.patientId === where.patientId) &&
+              matchesNullableDueDate(candidate.nextDueAt, where.nextDueAt)
+          ),
+          orderBy
+        ),
+    },
+    clinicalDeworming: {
+      create: ({ data }) => {
+        const now = new Date();
+        const created: ClinicalDewormingRow = {
+          id: randomUUID(),
+          tenantId: data.tenantId,
+          patientId: data.patientId,
+          product: data.product,
+          administeredAt: data.administeredAt,
+          // Mirrors the nullable column: an omitted due date stays unrecorded.
+          nextDueAt: data.nextDueAt ?? null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        clinicalDewormingTable.set(created.id, created);
+        return created;
+      },
+      findMany: ({ where, orderBy }) =>
+        orderDueRows(
+          [...clinicalDewormingTable.values()].filter(
+            (candidate) =>
+              candidate.tenantId === where.tenantId &&
+              (where.patientId === undefined || candidate.patientId === where.patientId) &&
+              matchesNullableDueDate(candidate.nextDueAt, where.nextDueAt)
+          ),
+          orderBy
         ),
     },
     branch: {
@@ -5492,6 +5917,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       patientGuardians: patientGuardianTable,
       clinicalEncounters: clinicalEncounterTable,
       clinicalVaccinations: clinicalVaccinationTable,
+      clinicalDewormings: clinicalDewormingTable,
       branches: branchTable,
       appointments: appointmentTable,
       portalBookingRequests: portalBookingRequestTable,

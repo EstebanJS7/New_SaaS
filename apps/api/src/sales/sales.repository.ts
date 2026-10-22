@@ -46,6 +46,11 @@ export interface SaleRow {
   customerId: string | null;
   currency: string;
   status: SaleStatusValue;
+  /**
+   * The business instant the sale was COMPLETED (DEC-064), written exactly once
+   * by the completion transaction and `null` while `DRAFT` and for `CANCELLED`.
+   */
+  completedAt: Date | null;
   lines: SaleLineRow[];
   createdAt: Date;
   updatedAt: Date;
@@ -131,7 +136,7 @@ export interface SaleDelegate {
   }) => Promise<SaleRow>;
   updateMany: (args: {
     where: SaleWhere;
-    data: { customerId?: string | null; status?: SaleStatusValue };
+    data: { customerId?: string | null; status?: SaleStatusValue; completedAt?: Date | null };
   }) => Promise<{ count: number }>;
 }
 
@@ -670,13 +675,20 @@ export class SaleRepository {
    * not `DRAFT` the statement affects zero rows and returns `false`, which the
    * service maps to the same stable `409 CONFLICT` as any other non-`DRAFT`
    * sale. `COMPLETED` is the ONLY status this method can produce.
+   *
+   * The business instant `completedAt` is written in that SAME statement
+   * (DEC-064), so the sale and the moment it became revenue cannot disagree: a
+   * completion is atomic with its own timestamp. Because the `where` pins
+   * `status = DRAFT`, the assignment happens exactly once — a second call
+   * matches zero rows and therefore cannot rewrite the original instant, which
+   * is what the replayed-completion path relies on.
    */
   async complete(id: string, tx?: SaleTx): Promise<boolean> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
     const result = await client.sale.updateMany({
       where: { id, tenantId, status: "DRAFT" },
-      data: { status: "COMPLETED" },
+      data: { status: "COMPLETED", completedAt: new Date() },
     });
     return result.count > 0;
   }
