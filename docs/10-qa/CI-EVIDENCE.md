@@ -2309,6 +2309,20 @@ Earlier in this same pull request, run `39797636546` failed two jobs —
 `minio/minio` was not pullable and one documentation file was unformatted. Both
 findings and both fixes are recorded below rather than re-run into invisibility.
 
+**Documentation-only successors.** Every push re-runs the same four required
+checks. The runs observed while this block was written, each green:
+
+```text
+run 39804810183   84d393a   the implementation tree
+run 39810914243   6b9dd5d   the roadmap and closure documents
+run 39825694974   8e5bf2f   the receipt citations themselves
+```
+
+Any later commit that touches only documentation is covered by the run the pull
+request shows for its own head, and by the four checks this block names. That
+sentence is stable on purpose: an evidence block that cites only its own head
+turns every later documentation edit into a claim nobody can check.
+
 This is the first epic in this chain whose closure rests on a **green browser
 lane**, and that is what makes two of its claims real rather than implemented:
 
@@ -2366,6 +2380,28 @@ Neither was a flake and both are fixed on the same branch:
 2. **A documentation file was not formatted.**
    `odd/tasks/production-hardening.md` was edited after the last `pnpm format`
    and before the commit. The gate caught it, which is what the gate is for.
+
+### The native review disposition, recorded rather than worked around
+
+`gentle_review` `inspect` returns **`blocked`**, `applicability: unrelated`,
+with an **empty candidate** — `paths: []`, and `current_candidate_tree` equal to
+`base_tree`. Its offered transition is `collect` /
+`empty_candidate_base_ref_required`, which asks for a base ref rather than for a
+reviewer.
+
+That is neither a malfunction nor new: [[EPIC-18]] recorded the same shape. The
+facade projects **working-tree** changes, and this epic — like every epic in
+this chain — commits each work unit, so the worktree is clean and there is
+nothing to project. Producing a candidate would mean naming a **committed
+range**, which is a scope decision (one work-unit commit or a PR slice, never
+the accumulated feature branch) and therefore not one to invent here.
+
+So: **no native review verdict exists for this epic**, and none is fabricated.
+What stands in its place is the ordinary review process — the pull request —
+plus the five local gates and the three real-infrastructure lanes recorded
+above. The browser lane is the strongest of them: it is the only gate that
+observed the product doing the thing this epic claimed, and it did so with zero
+skips.
 
 ### What this closure still does NOT say
 
