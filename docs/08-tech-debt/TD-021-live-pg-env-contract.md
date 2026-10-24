@@ -8,6 +8,7 @@ status: resolved
 severity: low
 related_epics:
   - EPIC-12
+  - EPIC-20
 related_stories:
   - POS-001
 created: 2026-09-27

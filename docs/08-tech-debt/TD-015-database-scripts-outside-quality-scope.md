@@ -6,6 +6,7 @@ status: resolved
 severity: low
 related_epics:
   - EPIC-09
+  - EPIC-20
 related_stories:
   - CAT-001
 created: 2026-09-25

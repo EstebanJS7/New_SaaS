@@ -48,28 +48,30 @@ The closure must therefore say something more precise than either extreme:
 
 ## Acceptance Criteria
 
-- [ ] A criterion-to-evidence map covers every bullet of PRD §29 and both halves
+- [x] A criterion-to-evidence map covers every bullet of PRD §29 and both halves
       of PRD §30, naming the test or artifact that proves each one.
-- [ ] Two PRD §29 bullets are recorded as **already satisfied before this epic**
+- [x] Two PRD §29 bullets are recorded as **already satisfied before this epic**
       (CORS, no stack traces), with their evidence, rather than claimed as new
       work.
-- [ ] The live-PostgreSQL lane is executed and its case count recorded.
-- [ ] The browser lane is executed and its pass/skip counts recorded exactly,
+- [x] The live-PostgreSQL lane is executed and its case count recorded.
+- [x] The browser lane is executed and its pass/skip counts recorded exactly,
       including whether any skip attributable to [[TD-060]] remains.
-- [ ] The restore drill's real output is in the evidence block.
-- [ ] `docs/10-qa/CI-EVIDENCE.md` gains an EPIC-20 block with the **real** CI
+- [x] The restore drill's real output is in the evidence block.
+- [x] `docs/10-qa/CI-EVIDENCE.md` gains an EPIC-20 block with the **real** CI
       run id and each required job's result.
-- [ ] The roadmap row moves to `done` with a closure statement that separates
+- [x] The roadmap row moves to `done` with a closure statement that separates
       what was proven from what is an operational contract.
-- [ ] The changelog records the epic.
-- [ ] Module documentation is current: the auth module's rate-limit section, the
+- [x] The changelog records the epic.
+- [x] Module documentation is current: the auth module's rate-limit section, the
       storage module's environment contract, and the new operations area.
-- [ ] Debt triage: each of [[TD-005]], [[TD-060]], [[TD-054]], [[TD-021]],
-      [[TD-015]], [[TD-003]], [[TD-053]], [[TD-056]] is `resolved` with a link
-      to its resolving commit, or explicitly still open with a reason.
-- [ ] Each of [[TD-020]], [[TD-026]], [[TD-051]], [[TD-058]] carries a recorded
+- [x] Debt triage: each of [[TD-005]], [[TD-060]], [[TD-054]], [[TD-021]],
+      [[TD-015]], [[TD-003]], [[TD-053]], [[TD-056]] — and [[TD-061]], opened
+      and then resolved by the CI fix — is `resolved` with a link to its
+      resolving commit. That is nine, not the eight this criterion listed when
+      it was written.
+- [x] Each of [[TD-020]], [[TD-026]], [[TD-051]], [[TD-058]] carries a recorded
       reason for remaining open and a trigger.
-- [ ] `pnpm format-check && pnpm lint && pnpm typecheck && pnpm build && pnpm test`
+- [x] `pnpm format-check && pnpm lint && pnpm typecheck && pnpm build && pnpm test`
       green on the closing tree, with the totals recorded.
 
 ## Verification

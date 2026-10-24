@@ -6,6 +6,7 @@ status: resolved
 severity: medium
 related_epics:
   - EPIC-00
+  - EPIC-20
 related_stories:
   - FOUND-006
 created: 2026-08-23
