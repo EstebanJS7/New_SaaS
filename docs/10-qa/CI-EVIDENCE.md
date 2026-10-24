@@ -2285,18 +2285,22 @@ sentences must be read precisely:
 
 ## EPIC-20 Production Hardening — closure (CI) (2026-10-22)
 
-[[EPIC-20]] closes on **PR #148** with all four required checks green. Two runs
-are cited because the closing tree and the certified implementation tree are
-different commits, and collapsing them into one would be the kind of shorthand
-this block exists to avoid:
+[[EPIC-20]] closed on **PR #148** and was **merged to `main` as merge commit
+`182c64b`**. Four receipts, because the question "did the merge keep `main`
+green?" is a different question from "was the pull request green?", and
+collapsing them would be the kind of shorthand this block exists to avoid:
 
 ```text
-implementation tree  84d393a   run 39804810183   green
-closing tree         6b9dd5d   run 39810914243   green   <- the receipt below
+pull request, implementation tree   84d393a   run 39804810183   green
+pull request, closing tree          6b9dd5d   run 39810914243   green
+pull request, current head          0c9d7ad   run 40045373468   green
+MAIN after the merge                182c64b   run 40046359303   green   <- the receipt
 ```
 
-The two differ **only in documentation**. What follows is the closing tree's
-run:
+Everything after the implementation tree differs only in documentation, so the
+interesting row is the last one: `main` itself, **7m47s, all four jobs**,
+including the browser lane at 23 passed / 0 skipped. What follows is the pull
+request's closing-tree run:
 
 ```text
 Database migrations              pass   2m33s
@@ -2402,6 +2406,27 @@ plus the five local gates and the three real-infrastructure lanes recorded
 above. The browser lane is the strongest of them: it is the only gate that
 observed the product doing the thing this epic claimed, and it did so with zero
 skips.
+
+### `main` had one red run before this epic, and it was not this epic
+
+`gh run list --branch main` shows a single historical failure on a push to
+`main`: run `39779392102`, the merge of [[EPIC-18]] as PR #145, where
+`Lint, Typecheck, Test, Build` failed in the notification read surface's leak
+scan.
+
+That was the flake [[EPIC-18]] recorded: `/[+]?\d{9,}/` matched nine consecutive
+decimal digits occurring inside a `randomUUID()` by chance, roughly one suite
+failure in four. It was fixed by masking identifiers before the scan, which
+landed in **`feaa53e` (PR #147)**, one merge later. So `main`'s most recent
+pushes are green:
+
+```text
+39782006372   feaa53e   EPIC-19   success
+40046359303   182c64b   EPIC-20   success
+```
+
+It is recorded here because a reader checking `main`'s history will find a red
+run and should not have to guess whose it was or whether it is still live.
 
 ### What this closure still does NOT say
 

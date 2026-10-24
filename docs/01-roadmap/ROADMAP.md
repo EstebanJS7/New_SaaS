@@ -309,12 +309,14 @@ removed; about PRD §30 it will state something narrower, because the backup
 schedule and the PITR window are hosting configuration that this repository can
 only require and rehearse.
 
-[[EPIC-20]] Production Hardening moved to `done` on 2026-10-22, merged-ready as
-PR #148 with all four required checks green on run
-[`39804810183`](https://github.com/EstebanJS7/New_SaaS/actions/runs/39804810183):
+[[EPIC-20]] Production Hardening moved to `done` on 2026-10-22 and was **merged
+as PR #148** (merge commit `182c64b`) with all four required checks green on the
+pull request and again on `main` after the merge, run
+[`40046359303`](https://github.com/EstebanJS7/New_SaaS/actions/runs/40046359303):
 `Database migrations`, `Lint, Typecheck, Test, Build`, `DTE XSD validation` and
-the **browser lane at 23 passed / 0 skipped**. The full record is the EPIC-20
-block in `docs/10-qa/CI-EVIDENCE.md`.
+the **browser lane at 23 passed / 0 skipped**. The pull-request receipt was run
+[`39804810183`](https://github.com/EstebanJS7/New_SaaS/actions/runs/39804810183).
+The full record is the EPIC-20 block in `docs/10-qa/CI-EVIDENCE.md`.
 
 Six stories, six Decisions ([[DEC-074]] through [[DEC-079]]) and eight Tech Debt
 items resolved with executed evidence. The epic is the first in this chain whose
