@@ -184,13 +184,13 @@ Each of these is a recorded decision, not an oversight.
 
 ## Exit Criteria
 
-- [ ] Lint/typecheck/tests/build required for the Epic are green.
-- [ ] Documentation is current: this file, the seven Stories, the five
-      Decisions, the operations runbook, the module docs touched, the changelog
-      and the roadmap row.
-- [ ] Every deferred item is a named Tech Debt record with a trigger, not a
+- [x] Lint/typecheck/tests/build required for the Epic are green.
+- [x] Documentation is current: this file, the seven Stories, the six Decisions,
+      the operations runbook, the module docs touched, the changelog and the
+      roadmap row.
+- [x] Every deferred item is a named Tech Debt record with a trigger, not a
       paragraph.
-- [ ] The closure states exactly how far production readiness was proven and
+- [x] The closure states exactly how far production readiness was proven and
       where the claim stops.
 
 ## Decisions / ADRs
@@ -204,6 +204,10 @@ Each of these is a recorded decision, not an oversight.
 - [[DEC-077]] — Shared object storage becomes part of the environment contract.
 - [[DEC-078]] — Report performance is a seeded dataset plus a declared p95
   budget, enforced as a gate.
+- [[DEC-079]] — The completed-sales cap drops from 20,000 to 5,000, because
+  20,000 was unreachable: the engine refused the query around 16,383 rows, so
+  the documented refusal was dead code. Accepted after the measurement this epic
+  introduced exposed it.
 
 No ADR: nothing here changes the architecture baseline. The object storage
 deployable is already in `ENGINEERING-RULES.md`, and MinIO is an S3-compatible
@@ -222,6 +226,14 @@ TD-015  database scripts outside the quality scope     resolved by HARD-005
 TD-003  worker shutdown repeated-signal guard         resolved by HARD-005
 TD-053  report query performance unmeasured           resolved by HARD-006
 TD-056  fake cannot prove take or select              resolved by HARD-006
+```
+
+Opened BY this epic, because the work found what it could not fix here:
+
+```text
+TD-061  the MinIO image is not pullable        resolved: switched to a pullable image
+TD-062  the relation load holds the cap down    open: a redesign of a shared read
+TD-063  a month of sales takes ~4 s             open: needs a profile before a cache
 ```
 
 Owned and deliberately not addressed, with the reason recorded in Out of Scope:

@@ -7,6 +7,7 @@ severity: low
 owner: backend
 related_epics:
   - EPIC-18
+  - EPIC-20
 related_stories:
   - REP-002
   - REP-003

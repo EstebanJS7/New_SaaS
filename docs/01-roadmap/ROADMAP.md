@@ -318,10 +318,10 @@ the **browser lane at 23 passed / 0 skipped**. The pull-request receipt was run
 [`39804810183`](https://github.com/EstebanJS7/New_SaaS/actions/runs/39804810183).
 The full record is the EPIC-20 block in `docs/10-qa/CI-EVIDENCE.md`.
 
-Six stories, six Decisions ([[DEC-074]] through [[DEC-079]]) and eight Tech Debt
-items resolved with executed evidence. The epic is the first in this chain whose
-closure rests on a green browser lane, and that is exactly what turned two of
-its claims from implemented into proven: the import that **skipped** at
+Seven Stories, six Decisions ([[DEC-074]] through [[DEC-079]]) and nine Tech
+Debt items resolved with executed evidence. The epic is the first in this chain
+whose closure rests on a green browser lane, and that is exactly what turned two
+of its claims from implemented into proven: the import that **skipped** at
 [[EPIC-19]]'s closure ran here (`imports.spec.ts:176`, 6.4s) because object
 storage became part of the environment contract, and the live-PostgreSQL suite
 passed **266/266** on a CI runner at UTC while the same suite passes at
