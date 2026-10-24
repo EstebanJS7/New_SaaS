@@ -29,8 +29,50 @@ services:
       timeout: 5s
       retries: 5
 
+  # The `object-storage` deployable ENGINEERING-RULES.md already listed and no code
+  # used until HARD-003 (TD-060, DEC-077).
+  #
+  # Why it is here: `packages/storage` wires the S3 driver only when
+  # STORAGE_S3_BUCKET is present and otherwise falls back to a PER-PROCESS
+  # in-memory driver. With the fallback the API writes an uploaded import artefact
+  # into its own memory and the worker — a different process — cannot read it, so
+  # the asynchronous import cannot complete. That is TD-060, and this service is
+  # what closes it: one bucket both processes can reach.
+  #
+  # MinIO speaks the S3 protocol, so `S3StorageDriver` is used unchanged; no new
+  # client, boundary or technology enters the application.
+  #
+  # The image is the Bitnami packaging because `minio/minio` is NO LONGER PULLABLE:
+  # Docker Hub answers `object not found` for that repository. This is not a
+  # preference — it failed the browser job on the first CI run of HARD-003, and it is
+  # why [[TD-061]] exists in the form it does.
+  #
+  # Bitnami's image runs `minio server` by default, so there is no command override,
+  # and `MINIO_DEFAULT_BUCKETS` creates the bucket at startup. The lane's
+  # `globalSetup` still ensures the bucket itself, so a store that pre-creates it and
+  # one that does not both work.
+  minio:
+    image: bitnamilegacy/minio:latest
+    container_name: newsaas-minio
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_S3_ACCESS_KEY_ID:-newsaas}
+      MINIO_ROOT_PASSWORD: ${STORAGE_S3_SECRET_ACCESS_KEY:-newsaas-minio-secret}
+      MINIO_DEFAULT_BUCKETS: ${STORAGE_S3_BUCKET:-newsaas-imports}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - newsaas-minio-data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   newsaas-postgres-data:
     name: newsaas-postgres-data
   newsaas-redis-data:
     name: newsaas-redis-data
+  newsaas-minio-data:
+    name: newsaas-minio-data

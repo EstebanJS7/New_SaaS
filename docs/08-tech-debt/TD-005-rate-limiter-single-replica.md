@@ -3,14 +3,17 @@ id: TD-005
 type: tech-debt
 title:
   Login rate limiter is single-replica; shared-store revision before scaling
-status: open
+status: resolved
 severity: medium
 related_epics:
   - EPIC-01
+  - EPIC-20
+related_decisions:
+  - "DEC-076"
 related_stories:
   - DAT-003
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-10-22
 ---
 
 # TD-005 — Login rate limiter is single-replica; shared-store revision before scaling
@@ -90,7 +93,101 @@ today because no such work is planned in the MVP chain.
 
 ## Verification After Resolution
 
-- [ ] One global budget proven across simulated concurrent replicas.
-- [ ] Window/ceiling behavior preserved on the new backing store.
-- [ ] Deployment invariant documented; single-replica limitation removed.
-- [ ] This record closed with a link to the resolving commit.
+- [x] One global budget proven across simulated concurrent replicas.
+- [x] Window/ceiling behavior preserved on the new backing store.
+- [x] Deployment invariant documented; single-replica limitation removed.
+- [x] This record closed with a link to the resolving commit.
+
+## Resolution (2026-10-22, [[HARD-002]])
+
+Resolved by moving the failure budget to Redis behind the existing service seam,
+following [[DEC-076]].
+
+### What changed
+
+```text
+apps/api/src/auth/rate-limit-store.port.ts          the contract + the four bounds
+apps/api/src/auth/in-process-rate-limit.store.ts    the pre-revision window, extracted
+apps/api/src/auth/redis-rate-limit.store.ts         one atomic sliding window (Lua)
+apps/api/src/auth/login-rate-limiter.service.ts     the seam: shared store + degradation
+apps/api/src/auth/auth.module.ts                    a factory reading REDIS_URL
+```
+
+Two round trips, each a single server-side script evaluation:
+
+```text
+isBlocked     ZREMRANGEBYSCORE (-inf .. now-window) ; ZCARD ; DEL if empty ; PEXPIRE
+recordFailure ZREMRANGEBYSCORE ; ZPOPMIN if at the per-key cap ; ZADD ; PEXPIRE ; ZCARD
+```
+
+Pruning and counting in one evaluation is what makes the count agree across
+replicas about what has expired.
+
+### Scope was wider than this record said
+
+This record described a staff-login limiter. The exploration found the same
+service is the failure budget for **four** authentication paths:
+
+```text
+apps/api/src/auth/auth.service.ts:50                          staff login
+apps/api/src/auth/password-recovery.service.ts:96             staff password recovery
+apps/api/src/portal/portal-auth.service.ts:107                portal login
+apps/api/src/portal/portal-password-recovery.service.ts:102   portal password recovery
+```
+
+All four use `isBlocked` / `recordFailure` / `reset` with their own key
+namespaces, so the seam fix covered all four with no per-path work. The methods
+became asynchronous — the only signature change the revision forced.
+
+### The evidence gate, item by item
+
+**A shared-store implementation behind the same interface, atomic
+check-and-record.** `RedisRateLimitStore` implements `RateLimitStore`; the four
+call sites are untouched apart from `await`. Prune, count and record are each
+one Lua evaluation.
+
+**Automated tests proving ONE global budget across simulated replicas.**
+`apps/api/test/rate-limit-shared.redis-spec.ts` opens two independent `ioredis`
+connections — what a second API replica is from Redis' point of view — and
+drives `LOGIN_FAILURE_THRESHOLD` failures split between them. Both then report
+blocked. The split is asserted to be below the threshold on each side, so a
+per-process budget could not have tripped: that is what makes the test decisive
+rather than decorative.
+
+**Bounded-memory properties carried over.** The per-key member count is capped
+inside the write script at `MAX_RECORDED_FAILURES` (100, asserted by count), and
+the TTL is re-armed on every touch so an abandoned key expires instead of living
+forever (asserted `0 < PTTL <= window`). The in-process ceiling of 10,000 keys
+is unchanged, and its five existing bound tests still pass.
+
+**Deployment invariant documented; the single-replica limitation removed.**
+`docs/05-modules/Identity-Sessions.md` now states that the budget is shared,
+names the four paths, and documents the fail-open degradation instead of the old
+single-replica sentence.
+
+**Record closed with a link to the resolving commit.** This section; the commit
+is `feat(HARD-002)` on `feat/epic-20-production-hardening`.
+
+### Two things the resolution deliberately did NOT fix
+
+1. **Anti-spray keying.** A spray distributed across proxy pools still receives
+   a fresh budget per egress IP, at any replica count. A per-account budget
+   independent of IP is the change that closes it, and it is a product decision
+   about lockout risk rather than a store swap. Recorded here as still open in
+   substance, though this record closes on its own stated gate.
+2. **Fail-closed was rejected.** See [[DEC-076]]: rejecting every login because
+   Redis is down would convert a cache outage into a total-availability
+   incident. The reserve of the decision is that during an outage the budget is
+   per replica — the pre-revision behaviour.
+
+### Verification
+
+```text
+pnpm --filter @newsaas/api test        120 files / 1760 passed | 266 skipped  (unchanged)
+pnpm --filter @newsaas/api test:redis  1 file / 12 passed, against a real Redis 7
+pnpm --filter @newsaas/api typecheck   pass
+```
+
+The cross-replica suite runs in CI's `quality` job, which now provisions a
+`redis:7-alpine` service container. A double would have proven nothing here: a
+fake that returns the same numbers agrees with the code by construction.

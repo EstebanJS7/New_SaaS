@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { buildContentSecurityPolicy, createNonce, originOf, CSP_NONCE_HEADER } from "@/lib/csp";
 
 /**
  * Portal tenant-slug edge resolution.
@@ -64,7 +65,27 @@ export function resolveTrustedTenantSlug(pathname: string): string {
 export function middleware(request: NextRequest): NextResponse {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-tenant-slug", resolveTrustedTenantSlug(request.nextUrl.pathname));
-  return NextResponse.next({ request: { headers: requestHeaders } });
+
+  // Content-Security-Policy ([[DEC-075]] / [[HARD-001]]).
+  //
+  // One nonce per request, published on BOTH sides:
+  // - request header `x-nonce`, which the layouts read to stamp every inline
+  //   <script>/<style>;
+  // - request AND response `content-security-policy`, because Next.js reads the
+  //   policy off the request to apply the same nonce to its own hydration and
+  //   streaming scripts, while the response header is what the browser enforces.
+  const nonce = createNonce();
+  const contentSecurityPolicy = buildContentSecurityPolicy({
+    nonce,
+    apiOrigin: originOf(process.env.NEXT_PUBLIC_API_URL),
+    isDevelopment: process.env.NODE_ENV === "development",
+  });
+  requestHeaders.set(CSP_NONCE_HEADER, nonce);
+  requestHeaders.set("content-security-policy", contentSecurityPolicy);
+
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set("content-security-policy", contentSecurityPolicy);
+  return response;
 }
 
 export const config = {

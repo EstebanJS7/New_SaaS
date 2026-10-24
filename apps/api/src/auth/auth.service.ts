@@ -52,7 +52,7 @@ export class AuthService {
     // Blocked traffic is rejected before any DB or crypto work happens — and
     // BEFORE any audit append, so a flood of blocked attempts cannot be
     // weaponized into an audit-table storage DoS (documented limitation).
-    if (this.rateLimiter.isBlocked(limiterKey)) {
+    if (await this.rateLimiter.isBlocked(limiterKey)) {
       throw new DomainError("RATE_LIMITED", "Too many failed login attempts. Try again later.");
     }
 
@@ -71,7 +71,7 @@ export class AuthService {
     const passwordMatches = await this.credentials.verify(input.password, storedHash);
 
     if (!profile?.credential || !passwordMatches) {
-      this.rateLimiter.recordFailure(limiterKey);
+      await this.rateLimiter.recordFailure(limiterKey);
       // Audit-or-nothing: the failure is recorded before the client sees it;
       // if the append itself fails, the 401 is replaced by a 5xx rather than
       // issuing untracked auth events. Attribution: STAFF when the attempted
@@ -87,7 +87,7 @@ export class AuthService {
       throw new DomainError("UNAUTHENTICATED", INVALID_CREDENTIALS_MESSAGE);
     }
 
-    this.rateLimiter.reset(limiterKey);
+    await this.rateLimiter.reset(limiterKey);
 
     const { token } = await this.sessions.issue(profile.id);
     await this.audit.append({

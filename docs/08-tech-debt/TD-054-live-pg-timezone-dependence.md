@@ -4,7 +4,7 @@ type: tech-debt
 title:
   The live-PostgreSQL lane is not timezone-independent, and the tenant zone is
   the one that breaks it
-status: open
+status: resolved
 severity: medium
 owner: qa
 related_epics:
@@ -14,7 +14,7 @@ related_epics:
 related_stories:
   - REP-001
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-22
 ---
 
 # TD-054 — the live-PostgreSQL lane depends on the database server's timezone
@@ -105,3 +105,58 @@ pinning environment determinism.
 - `packages/database/src/schema-fiscal-timbrado.test.ts:108` — the DDL guard
   that already got this right.
 - `packages/shared/src/platform.ts` — `TENANT_TIME_ZONE`.
+
+## Resolution (2026-10-22, [[HARD-005]])
+
+Resolved in two layers, because the record named two causes.
+
+### The fixture literals now carry an explicit zone
+
+The failing case inserted `'2018-04-30'::timestamptz`. It now inserts
+`'2018-04-30T00:00:00Z'`, and the sibling case `'2019-09-01 12:00:00'` became
+`'2019-09-01T12:00:00Z'`. The intent is stated in the SQL rather than inherited
+from the session, which is the fix this record recommended first.
+
+A sweep of the other `::timestamptz` literals in the suite found the remaining
+string literals already zone-qualified (`+00`) or bound as `Date` objects, which
+Prisma serializes with a zone. No other zone-less fixture literal remains.
+
+### The suite pins its own session timezone
+
+`createDatabase()` now issues `ALTER DATABASE <name> SET timezone TO 'UTC'` in
+the same `psql` call that creates the database. That is the right lever
+**because the suite creates its own database**: the setting applies to every
+connection to it — including the ones `prisma migrate deploy` and the seed spawn
+— and it does not depend on the cluster's configuration at all.
+
+### The two-directional proof
+
+The record's claim was "265/266 at `America/Asuncion`, 266/266 at `UTC`, no code
+change between runs". The same two runs were repeated after the fix:
+
+```text
+cluster timezone   America/Asuncion   ->  266 passed (266)
+cluster timezone   UTC                ->  266 passed (266)
+```
+
+Both executed against a disposable PostgreSQL 16.13 cluster on 2026-10-22,
+before and after `ALTER SYSTEM SET timezone TO 'UTC'` with a reload between
+them.
+
+### A separate defect the work exposed
+
+`psql` rejected the base URL with `invalid URI query parameter: "schema"`.
+`?schema=public` is a Prisma convention, not a libpq one, and
+`adminDatabaseUrl()` passed it straight through. This is the concrete reason
+[[TD-021]]'s fallback to `DATABASE_URL` was dangerous rather than convenient:
+the fallback took the base URL from the application's own connection string,
+which carries exactly that parameter, so a local run failed for a reason
+unrelated to the product. `adminDatabaseUrl()` now deletes it.
+
+### Verification after resolution
+
+- [x] The suite's result does not depend on the cluster's timezone (both zones
+      run).
+- [x] Zone-less fixture literals are gone; the remaining ones are explicit or
+      bound.
+- [x] `pnpm --filter @newsaas/api test:live-pg` is 266/266 on both zones.

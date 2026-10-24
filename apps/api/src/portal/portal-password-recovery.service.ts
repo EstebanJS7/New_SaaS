@@ -100,10 +100,10 @@ export class PortalPasswordRecoveryService {
     const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
     const slug = typeof tenantSlug === "string" ? tenantSlug.trim() : "";
     const limiterKey = portalRecoveryRateLimitKey(`${slug}:${email}`, clientIp);
-    if (this.limiter.isBlocked(limiterKey, now)) {
+    if (await this.limiter.isBlocked(limiterKey, now)) {
       throw new DomainError("RATE_LIMITED", PORTAL_TOO_MANY_RECOVERY_REQUESTS_MESSAGE);
     }
-    this.limiter.recordFailure(limiterKey, now);
+    await this.limiter.recordFailure(limiterKey, now);
 
     if (email.length === 0 || slug.length === 0) return;
 

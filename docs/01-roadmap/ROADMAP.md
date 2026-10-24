@@ -6,29 +6,29 @@ updated: 2026-10-22
 
 # ROADMAP
 
-| Epic    | Name                               |  Status | Depends on                |
-| ------- | ---------------------------------- | ------: | ------------------------- |
-| EPIC-00 | Foundation                         |    done | —                         |
-| EPIC-01 | Database/Auth/Tenancy              |    done | EPIC-00                   |
-| EPIC-02 | RBAC/Entitlements/Tenant Settings  |    done | EPIC-01                   |
-| EPIC-03 | Staff Shell/Design System/Branding |    done | EPIC-01                   |
-| EPIC-04 | Customers                          |    done | EPIC-02, EPIC-03          |
-| EPIC-05 | Veterinary Patients                |    done | EPIC-04                   |
-| EPIC-06 | Clinical                           |    done | EPIC-05                   |
-| EPIC-07 | Scheduling                         |    done | EPIC-04, EPIC-05          |
-| EPIC-08 | Portal                             |    done | EPIC-04, EPIC-05, EPIC-07 |
-| EPIC-09 | Catalog/Taxes                      |    done | EPIC-02                   |
-| EPIC-10 | Inventory                          |    done | EPIC-09                   |
-| EPIC-11 | Suppliers/Purchases                |    done | EPIC-10                   |
-| EPIC-12 | POS/Payments                       |    done | EPIC-09, EPIC-10          |
-| EPIC-13 | Cash                               |    done | EPIC-12                   |
-| EPIC-14 | Billing                            |    done | EPIC-12                   |
-| EPIC-15 | Fiscal Abstraction                 |    done | EPIC-14                   |
-| EPIC-16 | SIFEN Direct                       |    done | EPIC-15                   |
-| EPIC-17 | Notifications                      |    done | EPIC-07                   |
-| EPIC-18 | Dashboards/Reports                 |    done | prior domains             |
-| EPIC-19 | Imports                            |    done | EPIC-04, EPIC-05          |
-| EPIC-20 | Production Hardening               | planned | MVP feature epics         |
+| Epic    | Name                               | Status | Depends on                |
+| ------- | ---------------------------------- | -----: | ------------------------- |
+| EPIC-00 | Foundation                         |   done | —                         |
+| EPIC-01 | Database/Auth/Tenancy              |   done | EPIC-00                   |
+| EPIC-02 | RBAC/Entitlements/Tenant Settings  |   done | EPIC-01                   |
+| EPIC-03 | Staff Shell/Design System/Branding |   done | EPIC-01                   |
+| EPIC-04 | Customers                          |   done | EPIC-02, EPIC-03          |
+| EPIC-05 | Veterinary Patients                |   done | EPIC-04                   |
+| EPIC-06 | Clinical                           |   done | EPIC-05                   |
+| EPIC-07 | Scheduling                         |   done | EPIC-04, EPIC-05          |
+| EPIC-08 | Portal                             |   done | EPIC-04, EPIC-05, EPIC-07 |
+| EPIC-09 | Catalog/Taxes                      |   done | EPIC-02                   |
+| EPIC-10 | Inventory                          |   done | EPIC-09                   |
+| EPIC-11 | Suppliers/Purchases                |   done | EPIC-10                   |
+| EPIC-12 | POS/Payments                       |   done | EPIC-09, EPIC-10          |
+| EPIC-13 | Cash                               |   done | EPIC-12                   |
+| EPIC-14 | Billing                            |   done | EPIC-12                   |
+| EPIC-15 | Fiscal Abstraction                 |   done | EPIC-14                   |
+| EPIC-16 | SIFEN Direct                       |   done | EPIC-15                   |
+| EPIC-17 | Notifications                      |   done | EPIC-07                   |
+| EPIC-18 | Dashboards/Reports                 |   done | prior domains             |
+| EPIC-19 | Imports                            |   done | EPIC-04, EPIC-05          |
+| EPIC-20 | Production Hardening               |   done | MVP feature epics         |
 
 Update this table when Epic status changes.
 
@@ -279,3 +279,83 @@ proves the half the lane can reach — the multipart proxy, the surface, the
 queue, the claim and the worker's boot. Four iterations of that lane each
 produced a real finding rather than a selector fix, which is recorded rather
 than smoothed over.
+
+[[EPIC-20]] Production Hardening moved to `in-progress` on 2026-10-22. The epic
+existed only as a row in the table above. The kickoff is the epic file, seven
+Stories and five accepted Decisions — [[DEC-074]] (which half of PRD §29/§30 is
+code in this repository and which is an operational runbook, and that the
+restore must be _executed_ rather than promised), [[DEC-075]] (CSP with a
+per-request nonce on `script-src` and `style-src`, no `unsafe-inline`),
+[[DEC-076]] (the rate limit budget moves to Redis as one atomic sliding window
+and degrades open to the in-process window when Redis is unavailable),
+[[DEC-077]] (shared object storage joins the environment contract in compose
+_and_ CI) and [[DEC-078]] (report performance becomes a seeded dataset plus a
+declared budget, gated on the query plan as well as the clock).
+
+Exploring the code rather than the PRD reshaped the plan twice. **Two of PRD
+§29's bullets were already satisfied** and the epic's job there is to prove and
+record them, not to rewrite them: CORS is an exact-match allowlist with
+deny-by-default `403` and a real integration test, and the global exception
+filter returns a generic message for every 5xx so no stack trace can reach a
+client. And the login failure budget turned out to cover **four** paths — staff
+login, staff password recovery, portal login and portal password recovery —
+rather than the one [[TD-005]] names, which is the argument for fixing it at the
+service seam.
+
+This is a kickoff record, **never** a readiness claim. The epic's closure is the
+first in this chain that can state more than "implementation closure" about PRD
+§29, because every control it adds has a test that fails when the control is
+removed; about PRD §30 it will state something narrower, because the backup
+schedule and the PITR window are hosting configuration that this repository can
+only require and rehearse.
+
+[[EPIC-20]] Production Hardening moved to `done` on 2026-10-22, merged-ready as
+PR #148 with all four required checks green on run
+[`39804810183`](https://github.com/EstebanJS7/New_SaaS/actions/runs/39804810183):
+`Database migrations`, `Lint, Typecheck, Test, Build`, `DTE XSD validation` and
+the **browser lane at 23 passed / 0 skipped**. The full record is the EPIC-20
+block in `docs/10-qa/CI-EVIDENCE.md`.
+
+Six stories, six Decisions ([[DEC-074]] through [[DEC-079]]) and eight Tech Debt
+items resolved with executed evidence. The epic is the first in this chain whose
+closure rests on a green browser lane, and that is exactly what turned two of
+its claims from implemented into proven: the import that **skipped** at
+[[EPIC-19]]'s closure ran here (`imports.spec.ts:176`, 6.4s) because object
+storage became part of the environment contract, and the live-PostgreSQL suite
+passed **266/266** on a CI runner at UTC while the same suite passes at
+`America/Asuncion` locally.
+
+`done` means epic implementation closure: PRD §29 is satisfied by controls that
+each have a test which fails when the control is removed — a CSP with a
+per-request nonce and no `unsafe-inline` anywhere, CORS and the absence of stack
+traces recorded as already-satisfied rather than rewritten, and a login failure
+budget that is genuinely shared across replicas instead of documented as
+single-replica. PRD §30's first half was already code and is proven; its second
+half was **rehearsed**, not promised: a restore drill that recovered to an
+instant before a write and found it absent, and to an instant after it and found
+it present.
+
+It is **not** a production-readiness statement, and this epic is where that
+sentence finally has a shorter gap behind it. Production readiness needs three
+things this repository cannot supply from here: a hosting provider that honours
+the backup schedule, retention, PITR window and RPO the runbook specifies
+([[DEC-074]]); a user-facing latency target for reports, which does not exist in
+the PRD and whose measured value today is ~4,081 ms for a month of sales
+([[TD-063]]); and a report cap that is not held down by a driver's statement
+shape ([[TD-062]], [[DEC-079]]).
+
+Three defects are worth naming because they were invisible to a green suite and
+only a real engine could show them. The completed-sales cap of 20,000 was
+**unreachable**: the relation load binds one parameter per parent row, so
+PostgreSQL refused at about 16,383 and the documented refusal was dead code — a
+large period returned an HTTP 500 instead of the sentence telling the user to
+narrow it. Report latency had never been measured and is four times the budget
+it was first measured against. And the MinIO image the epic added **does not
+exist** on Docker Hub any more, which failed the browser job on the first CI run
+of this very pull request.
+
+The open debt remains open with its trigger intact: [[TD-020]] and [[TD-058]]
+need an approved retention policy before any destructive cleanup, [[TD-026]] is
+a public response-shape change that needs its own Decision, [[TD-051]] is
+trigger-driven, and [[TD-061]], [[TD-062]] and [[TD-063]] are the three this
+epic created.

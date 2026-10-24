@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { ensureStorageBucket } from "./support/storage-bucket.js";
 
 /**
  * Everything the lane needs that is not an HTTP server: a migrated database and the demo fixtures.
@@ -8,7 +9,7 @@ import { fileURLToPath } from "node:url";
  * rather than being assumed: a lane that trusts a database it did not build is a lane that passes on a
  * developer's machine and fails in CI for reasons that are not about the product.
  */
-export default function globalSetup(): void {
+export default async function globalSetup(): Promise<void> {
   const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
   if (process.env.DATABASE_URL === undefined) {
@@ -29,6 +30,17 @@ export default function globalSetup(): void {
       NODE_ENV: "development",
     }
   );
+
+  // Object storage is the third thing that is not an HTTP server, and it is here
+  // for the same reason as the two above: a `webServer` entry needs a URL to poll
+  // and a bucket has none ([[DEC-077]] / [[HARD-003]]). Leaving it to a manual step
+  // would make the full import flow skip for an environment reason that looks like
+  // a product defect — which is precisely what [[TD-060]] recorded.
+  //
+  // With STORAGE_S3_BUCKET unset this is a no-op and the spec skips with its
+  // reason; with it set and the store unreachable, this throws instead of letting
+  // the lane fall back to a per-process driver and report green.
+  process.stdout.write(`${await ensureStorageBucket()}\n`);
 }
 
 function run(

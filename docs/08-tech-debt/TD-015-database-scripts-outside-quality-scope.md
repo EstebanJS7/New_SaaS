@@ -2,14 +2,14 @@
 id: TD-015
 type: tech-debt
 title: Database scripts sit outside the package lint and typecheck scope
-status: open
+status: resolved
 severity: low
 related_epics:
   - EPIC-09
 related_stories:
   - CAT-001
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-10-22
 ---
 
 # TD-015 — Database scripts sit outside the package lint and typecheck scope
@@ -106,3 +106,60 @@ script is added there.
       scope.
 - [ ] A deliberately broken type in a script makes the package typecheck fail,
       proving the coverage is real.
+
+## Resolution (2026-10-22, [[HARD-005]])
+
+### Scope
+
+```text
+packages/database/tsconfig.scripts.json   new: noEmit, rootDir ".", includes scripts/**/*.ts
+package.json typecheck                    tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json
+package.json lint                         eslint "src/**/*.ts" "scripts/**/*.ts" "scripts/**/*.mjs"
+```
+
+The scripts could NOT join `tsconfig.json`: it pins `rootDir: ./src`, and a file
+outside it fails with `TS6059`. Moving that rootDir would relocate every emitted
+path and break `main: ./dist/index.js` for every consumer of the package. A
+second project with `noEmit` is the change that fits.
+
+Lint needed two more fixes, both real:
+
+1. The shared config set `parserOptions.project`, so `scripts/**/*.ts` had to be
+   in a project the parser could find — hence
+   `project: ["./tsconfig.json", "./tsconfig.scripts.json"]` in this package's
+   own config, applied only to entries that already had a project.
+2. `.mjs` files are in NO tsconfig, so the shared config now disables
+   type-checked rules for them explicitly with `project: null`. Disabling only
+   the RULES is not enough: `languageOptions` merge across flat-config entries,
+   so the parser still receives a `project` and fails with "The file was not
+   found in any of the provided project(s)".
+
+### What the new scope found immediately
+
+Ten lint errors that no gate had ever seen, eight of them auto-fixable
+(`@typescript-eslint/array-type`: `Array<T>` → `T[]`, `ReadonlyArray<T>` →
+`readonly T[]`). Eleven `no-console` warnings remain, which the repository's own
+rule allows.
+
+### The coverage is real, and it was proven the hard way
+
+A deliberate `const drillTypeProbe: number = "this is a string, not a number";`
+was inserted into `scripts/live-migration-verify.ts`:
+
+```text
+$ pnpm --filter @newsaas/database typecheck
+scripts/live-migration-verify.ts(21,7): error TS2322: Type 'string' is not
+  assignable to type 'number'.
+```
+
+The probe was then reverted and the gate re-run green. Without that step the
+resolution would be a configuration change asserting its own effectiveness.
+
+### Verification after resolution
+
+- [x] `pnpm --filter @newsaas/database typecheck` covers `scripts/**/*.ts`.
+- [x] `pnpm --filter @newsaas/database lint` covers `scripts/**/*.ts` and
+      `scripts/**/*.mjs`.
+- [x] A deliberately broken type fails the package typecheck; the probe was
+      reverted.
+- [x] `pnpm --filter @newsaas/database test` remains 550 passed.

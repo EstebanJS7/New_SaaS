@@ -94,12 +94,12 @@ export class PasswordRecoveryService {
   async requestReset(rawEmail: unknown, clientIp: string, now: Date = new Date()): Promise<void> {
     const email = normalizeEmail(rawEmail);
     const limiterKey = recoveryRateLimitKey(email, clientIp);
-    if (this.limiter.isBlocked(limiterKey, now)) {
+    if (await this.limiter.isBlocked(limiterKey, now)) {
       throw new DomainError("RATE_LIMITED", TOO_MANY_RECOVERY_REQUESTS_MESSAGE);
     }
     // Recorded BEFORE the account lookup, so a flood of probes against addresses
     // that do not exist is limited by the same budget as one that does.
-    this.limiter.recordFailure(limiterKey, now);
+    await this.limiter.recordFailure(limiterKey, now);
 
     if (email.length === 0) return;
 

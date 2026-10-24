@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   try {
     // Verify expected tables exist by querying them.
     const tableNames = (
-      await prisma.$queryRawUnsafe<Array<{ tablename: string }>>(
+      await prisma.$queryRawUnsafe<{ tablename: string }[]>(
         `SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`
       )
     ).map((row) => row.tablename);
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     }
 
     // Verify PatientGuardian is activated: BOTH patient_id and customer_id FKs.
-    const guardianForeignKeys = await prisma.$queryRawUnsafe<Array<{ column_name: string }>>(
+    const guardianForeignKeys = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
       `
       SELECT kcu.column_name
       FROM information_schema.table_constraints tc
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
     // Verify the global reference catalogs are not tenant-scoped and the
     // tenant-scoped catalog item aggregate is (Decisions #2210/#2211, EPIC-09).
     const globalTableColumns = await prisma.$queryRawUnsafe<
-      Array<{ table_name: string; column_name: string }>
+      { table_name: string; column_name: string }[]
     >(
       `
       SELECT table_name, column_name FROM information_schema.columns
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
       throw new Error("species/breed/tax_rate must be global: no tenant_id column");
     }
 
-    const catalogItemColumns = await prisma.$queryRawUnsafe<Array<{ column_name: string }>>(
+    const catalogItemColumns = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
       `
       SELECT column_name FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'catalog_item'
@@ -114,7 +114,7 @@ async function main(): Promise<void> {
       throw new Error("catalog_item must be tenant-scoped: tenant_id column is required");
     }
 
-    const primaryIndexes = await prisma.$queryRawUnsafe<Array<{ indexname: string }>>(
+    const primaryIndexes = await prisma.$queryRawUnsafe<{ indexname: string }[]>(
       `
       SELECT indexname FROM pg_indexes
       WHERE schemaname = 'public'
@@ -231,7 +231,7 @@ async function main(): Promise<void> {
     // --- EPIC-05 Patient lifecycle invariant (Decision #2210) -------------
     // Both deferred constraint triggers must exist: the guardian-side half and
     // the Patient-side half that closes the lone-active-Patient gap.
-    const constraintTriggers = await prisma.$queryRawUnsafe<Array<{ tgname: string }>>(
+    const constraintTriggers = await prisma.$queryRawUnsafe<{ tgname: string }[]>(
       `
       SELECT tgname FROM pg_trigger
       WHERE tgname IN (
@@ -729,7 +729,7 @@ async function main(): Promise<void> {
       ["scheduled_at", `"scheduled_at"=now() + interval '1 day', "updated_at"=now()`],
       ["source_id", `"source_id"='${randomUUID()}'::uuid, "updated_at"=now()`],
       ["recipient_id", `"recipient_id"='${randomUUID()}'::uuid, "updated_at"=now()`],
-    ] as ReadonlyArray<readonly [string, string]>) {
+    ] as readonly (readonly [string, string])[]) {
       await expectRejected(`the delivery's ${label} is immutable`, () =>
         moveDelivery(identityId, sql)
       );
@@ -742,7 +742,7 @@ async function main(): Promise<void> {
         );
       })
     );
-    const surviving = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    const surviving = await prisma.$queryRawUnsafe<{ id: string }[]>(
       `SELECT "id" FROM "notification_delivery" WHERE "id"=$1::uuid`,
       identityId
     );

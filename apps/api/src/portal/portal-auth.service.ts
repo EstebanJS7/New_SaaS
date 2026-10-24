@@ -105,7 +105,7 @@ export class PortalAuthService {
     // Namespaced limiter key keeps the portal failure budget isolated from the
     // staff budget even though both share the in-process limiter (TD-005).
     const limiterKey = this.rateLimiter.key(`portal:${input.email}`, meta.ip);
-    if (this.rateLimiter.isBlocked(limiterKey)) {
+    if (await this.rateLimiter.isBlocked(limiterKey)) {
       throw new DomainError("RATE_LIMITED", "Too many failed login attempts. Try again later.");
     }
 
@@ -150,7 +150,7 @@ export class PortalAuthService {
     const passwordMatches = await this.credentials.verify(input.password, storedHash);
 
     if (ambiguous || !access?.credential || !passwordMatches) {
-      this.rateLimiter.recordFailure(limiterKey);
+      await this.rateLimiter.recordFailure(limiterKey);
       // Audit-or-nothing, exactly like the staff login. A resolved holder is
       // PORTAL-attributed; an unmatched OR ambiguous attempt is SYSTEM (no
       // single holder identity exists to attribute). metadata.email is
@@ -168,7 +168,7 @@ export class PortalAuthService {
       throw new DomainError("UNAUTHENTICATED", INVALID_PORTAL_CREDENTIALS_MESSAGE);
     }
 
-    this.rateLimiter.reset(limiterKey);
+    await this.rateLimiter.reset(limiterKey);
 
     // Entitlement is re-checked on the login path too (the only @Public portal
     // route) so a tenant that lost its `portal` grant cannot open NEW sessions;

@@ -156,6 +156,9 @@ importers:
 
   apps/e2e:
     devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.758.0
+        version: 3.1127.0
       '@newsaas/eslint-config':
         specifier: workspace:*
         version: link:../../packages/eslint-config

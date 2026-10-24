@@ -48,8 +48,21 @@ export const config = tseslint.config(
     },
   },
   {
-    files: ["**/*.js", "**/*.cjs"],
+    // Plain JavaScript has no types for the type-aware rules to check, and `.mjs`
+    // belongs to the same family. It is included because TD-015 brought
+    // `packages/database/scripts/*.mjs` into a lint scope, and before that they
+    // were covered by nothing.
+    //
+    // `project: null` is required, not cosmetic: `languageOptions` are MERGED
+    // across flat-config entries, so merely disabling the type-aware RULES leaves
+    // `parserOptions.project` set, and the parser then fails with "The file was not
+    // found in any of the provided project(s)" because a .mjs file is in no
+    // tsconfig.
+    files: ["**/*.js", "**/*.cjs", "**/*.mjs"],
     extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      parserOptions: { project: null },
+    },
   },
   {
     ignores: [

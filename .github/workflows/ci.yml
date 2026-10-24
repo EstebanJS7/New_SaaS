@@ -97,6 +97,21 @@ jobs:
     name: Lint, Typecheck, Test, Build
     runs-on: ubuntu-latest
 
+    # HARD-002: the login failure budget is shared through Redis, and the suite
+    # that proves ONE global budget across two connections cannot be faked — a
+    # double that returns the same numbers would agree with the code by
+    # construction. So the gate that runs the test suite also provides the store.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -126,6 +141,11 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Shared rate-limit store (real Redis)
+        run: pnpm --filter @newsaas/api test:redis
+        env:
+          REDIS_URL_TEST: redis://127.0.0.1:6379
 
       - name: Build
         run: pnpm build
@@ -164,6 +184,32 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # HARD-003 / TD-060 / DEC-077. `packages/storage` wires the S3 driver only when
+      # STORAGE_S3_BUCKET is set and otherwise falls back to a PER-PROCESS in-memory
+      # driver, so without an object store the API's uploaded artefact exists only in
+      # the API's memory and the worker cannot read it — the reason the full import
+      # flow used to skip.
+      #
+      # It is the Bitnami packaging because `minio/minio` is NO LONGER PULLABLE: Docker
+      # Hub answers `object not found` for the repository, which failed this job on the
+      # first run of this PR. `bitnamilegacy/minio` is the archive Bitnami moved its
+      # free images to, and it runs `minio server` by default, so a service container
+      # needs no command override — which is the other reason the earlier
+      # `docker run`-as-a-step approach was replaced.
+      #
+      # No `--health-cmd`: Bitnami's image content is not this repository's contract and
+      # a missing binary would make the service hang. Readiness is the lane's job
+      # instead — `globalSetup` polls until the store answers (60s) before ensuring the
+      # bucket, so a slow start is tolerated and a store that never arrives fails
+      # naming the deadline.
+      minio:
+        image: bitnamilegacy/minio:latest
+        env:
+          MINIO_ROOT_USER: newsaas
+          MINIO_ROOT_PASSWORD: newsaas-minio-secret
+          MINIO_DEFAULT_BUCKETS: newsaas-imports
+        ports:
+          - 9000:9000
 
     steps:
       - name: Checkout
@@ -195,6 +241,17 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
           REDIS_URL: redis://localhost:6379
+          # HARD-003: the same variable NAMES docker-compose.yml uses, so the two
+          # declarations of the same service cannot drift in a way that silently
+          # re-enables the per-process in-memory driver.
+          STORAGE_S3_BUCKET: newsaas-imports
+          STORAGE_S3_ENDPOINT: http://localhost:9000
+          STORAGE_S3_REGION: us-east-1
+          # Credentials use the SDK's OWN names, not STORAGE_S3_*: `S3StorageDriver`
+          # resolves them through the AWS default chain (environment, instance
+          # profile, …) so a secret never lives in tenant settings or a record.
+          AWS_ACCESS_KEY_ID: newsaas
+          AWS_SECRET_ACCESS_KEY: newsaas-minio-secret
         run: pnpm --filter @newsaas/e2e e2e
 
       - name: Upload the report and traces

@@ -18,6 +18,19 @@ All notable product changes will be documented here.
 
 ### Added
 
+- **A Content-Security-Policy with a per-request nonce.** Every web response now
+  carries one, and every inline `<script>` and `<style>` in the three layouts —
+  the pre-paint appearance bootstrap, the product brand preset and the tenant
+  overrides — carries the same nonce the policy declares. There is no
+  `unsafe-inline` anywhere and no `unsafe-eval` outside development. A test
+  asserts the policy string verbatim, so a weakened directive fails a test
+  rather than a review.
+- **An operations guide for backup and recovery**, with an executed restore
+  drill. The guide states what a hosting provider must do — backup frequency,
+  retention, off-site and encryption requirements, an RPO of 24 hours, the four
+  PITR settings — and then names, in its own section, what this repository
+  cannot verify about any of them.
+
 - **Reports, a dashboard, and a CSV export (PRD §31).** Twelve report views over
   the tenant's own operational record — sales by period, payment methods, sales
   by product/service, cash session closes, cash movements, purchases, stock, low
@@ -30,6 +43,24 @@ All notable product changes will be documented here.
   had no way to be populated.
 
 ### Changed
+
+- **The login failure budget is shared, not per process.** It lives in Redis as
+  one atomic sliding window, so the documented threshold stops multiplying by
+  `api` replica count. It covers four paths at once — staff login, staff
+  password recovery, portal login and portal password recovery — because they
+  already shared one service. When Redis is unreachable the request proceeds on
+  the in-process window instead of being refused: locking every user of every
+  tenant out because a cache tier is down would be a worse failure than a
+  temporarily narrower budget.
+- **Object storage is part of the environment contract**, in
+  `docker-compose.yml` and in the CI browser job. The asynchronous import writes
+  its artefact where a worker in another process can read it, which is what that
+  flow needed to run end to end.
+- **The completed-sales report cap is 5,000, not 20,000.** The old number was
+  unreachable: the read loads its lines with one parameter per parent row, so
+  PostgreSQL refused at about 16,383 rows and a large period returned an
+  internal error instead of the sentence telling the user to narrow it. 5,000 is
+  the furthest measured-safe value.
 
 - **The customer and patient create contracts moved into `packages/`** so the
   import worker validates with exactly the rules the API enforces instead of a
@@ -46,6 +77,21 @@ All notable product changes will be documented here.
 - A `Reports` destination joins the staff navigation, ungated by feature code.
 
 ### Fixed
+
+- **A large reporting period returned an HTTP 500 instead of a bounded
+  refusal.** Two reports shared a read whose cap sat above a hard engine limit,
+  so the refusal branch never ran. The cap moved; the redesign that raises it
+  again is recorded.
+- **The live-PostgreSQL suite's result depended on the database server's
+  timezone.** It passed at UTC and failed at `America/Asuncion` — the zone most
+  likely on a developer's machine in this product's market, and the one CI never
+  runs. Fixture literals now carry an explicit zone and the suite pins its own
+  session timezone.
+- **The worker could be hard-killed mid-teardown by a second signal.** The
+  handlers removed themselves before awaiting the shutdown, restoring the
+  operating system's default disposition, and a one-shot listener registration
+  had the same defect a second way. The guard is a state flag over persistent
+  listeners.
 
 - **The notification read surface's leak scan failed intermittently on its own
   identifiers.** It asserted the response body never matches `/[+]?\d{9,}/`, and
