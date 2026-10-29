@@ -68,6 +68,7 @@ async function proxyPatientRequest(
 
   const responseHeaders: Record<string, string> = {
     "content-type": response.headers.get("content-type") ?? "application/json",
+    "cache-control": "private, no-store",
   };
 
   const responseRequestId = response.headers.get("x-request-id");

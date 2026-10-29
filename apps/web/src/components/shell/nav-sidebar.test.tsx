@@ -1,200 +1,95 @@
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+const state = vi.hoisted(() => ({ pathname: "/app" }));
+vi.mock("next/navigation", () => ({ usePathname: () => state.pathname }));
 import { NavSidebar, visibleNavLinks, NAV_LINKS } from "./nav-sidebar";
 
+afterEach(() => {
+  state.pathname = "/app";
+  vi.restoreAllMocks();
+});
+
 describe("NavSidebar", () => {
-  it("renders the Customers, Patients, Catalog, Suppliers, Purchases, POS, Cash, Billing, Fiscal, Reports, Agenda, Notifications, Imports and Branding links plus labeled placeholder entries", () => {
-    render(<NavSidebar />);
-
-    const sidebar = screen.getByTestId("nav-sidebar");
-    expect(within(sidebar).getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
-
-    const entries = within(sidebar).getAllByTestId("nav-entry");
-    expect(entries).toHaveLength(17);
-
-    const [
-      customers,
-      patients,
-      catalog,
-      suppliers,
-      purchases,
-      pos,
-      cash,
-      billing,
-      fiscal,
-      reports,
-      agenda,
-      notifications,
-      imports,
-      branding,
-    ] = entries;
-    expect(customers.tagName).toBe("A");
-    expect(customers.getAttribute("href")).toBe("/app/customers");
-    expect(customers.textContent).toBe("Customers");
-
-    expect(patients.tagName).toBe("A");
-    expect(patients.getAttribute("href")).toBe("/app/patients");
-    expect(patients.textContent).toBe("Patients");
-
-    expect(catalog.tagName).toBe("A");
-    expect(catalog.getAttribute("href")).toBe("/app/catalog");
-    expect(catalog.textContent).toBe("Catalog");
-
-    expect(suppliers.tagName).toBe("A");
-    expect(suppliers.getAttribute("href")).toBe("/app/suppliers");
-    expect(suppliers.textContent).toBe("Suppliers");
-
-    expect(purchases.tagName).toBe("A");
-    expect(purchases.getAttribute("href")).toBe("/app/purchases");
-    expect(purchases.textContent).toBe("Purchases");
-
-    expect(pos.tagName).toBe("A");
-    expect(pos.getAttribute("href")).toBe("/app/sales");
-    expect(pos.textContent).toBe("POS");
-
-    expect(cash.tagName).toBe("A");
-    expect(cash.getAttribute("href")).toBe("/app/cash");
-    expect(cash.textContent).toBe("Cash");
-
-    expect(billing.tagName).toBe("A");
-    expect(billing.getAttribute("href")).toBe("/app/billing");
-    expect(billing.textContent).toBe("Billing");
-
-    expect(fiscal.tagName).toBe("A");
-    expect(fiscal.getAttribute("href")).toBe("/app/fiscal");
-    expect(fiscal.textContent).toBe("Fiscal");
-
-    // EPIC-18 REP-008: Reports is a real destination and, by DEC-062, carries no
-    // `requiredFeature` — reports are ungated by feature code.
-    expect(reports.tagName).toBe("A");
-    expect(reports.getAttribute("href")).toBe("/app/reports");
-    expect(reports.textContent).toBe("Reports");
-
-    expect(agenda.tagName).toBe("A");
-    expect(agenda.getAttribute("href")).toBe("/app/agenda");
-    expect(agenda.textContent).toBe("Agenda");
-
-    expect(notifications.tagName).toBe("A");
-    expect(notifications.getAttribute("href")).toBe("/app/notifications");
-    expect(notifications.textContent).toBe("Notifications");
-
-    // EPIC-19 IMP-005: Imports is a real destination and, by DEC-072, carries no
-    // `requiredFeature` — the third feature code this repository has refused
-    // rather than seeded.
-    expect(imports.tagName).toBe("A");
-    expect(imports.getAttribute("href")).toBe("/app/imports");
-    expect(imports.textContent).toBe("Imports");
-
-    // The surface-integrity fence found this page unreachable: a whole settings surface with no way
-    // in. This assertion is what keeps it reachable.
-    expect(branding.tagName).toBe("A");
-    expect(branding.getAttribute("href")).toBe("/app/settings/branding");
-    expect(branding.textContent).toBe("Branding");
-
-    for (const entry of entries.slice(14)) {
-      expect(entry.tagName).toBe("BUTTON");
-      expect((entry as HTMLButtonElement).type).toBe("button");
-      expect(entry.textContent).toMatch(/^Section [a-z]+$/i);
+  it("groups implemented destinations without inactive placeholder controls", () => {
+    render(<NavSidebar productName="Example workspace" />);
+    const nav = within(screen.getByTestId("nav-sidebar")).getByRole("navigation", {
+      name: "Primary",
+    });
+    for (const label of [
+      "Overview",
+      "Agenda",
+      "Customers",
+      "Patients",
+      "Catalog",
+      "Suppliers",
+      "Purchases",
+      "POS",
+      "Cash",
+      "Billing",
+      "Fiscal",
+      "Reports",
+      "Notifications",
+      "Imports",
+      "Branding",
+    ]) {
+      expect(within(nav).getByRole("link", { name: label })).toBeInTheDocument();
     }
+    expect(within(nav).getAllByRole("link")).toHaveLength(15);
+    expect(within(nav).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Section one|Section two|Section three/)).not.toBeInTheDocument();
+    expect(screen.getByText("Example workspace")).toBeInTheDocument();
   });
 
-  it("ships only the real business destinations with placeholder sections", () => {
-    const { container } = render(<NavSidebar />);
-
-    const links = [...container.querySelectorAll("a")];
-    expect(links).toHaveLength(14);
-    expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "/app/customers",
-      "/app/patients",
-      "/app/catalog",
-      "/app/suppliers",
-      "/app/purchases",
-      "/app/sales",
-      "/app/cash",
-      "/app/billing",
-      "/app/fiscal",
-      "/app/reports",
-      "/app/agenda",
-      "/app/notifications",
-      "/app/imports",
-      "/app/settings/branding",
-    ]);
-    // Billing is a real destination now; the placeholders stay chrome-only and
-    // no appointment, invoice or schedule surface exists behind this chrome.
-    expect(container.textContent).toContain("Billing");
-    expect(container.textContent).not.toMatch(/appointment|invoice|schedule/i);
-  });
-
-  it("shows every entry when the entitled capability set is unknown", () => {
+  it("keeps a detail's parent section active and does not activate Overview", () => {
+    state.pathname = "/app/customers/example/edit";
     render(<NavSidebar />);
-
-    expect(screen.getByRole("link", { name: "POS" })).toHaveAttribute("href", "/app/sales");
-    expect(screen.getByRole("link", { name: "Cash" })).toHaveAttribute("href", "/app/cash");
-    expect(screen.getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/app/billing");
-    expect(screen.getByRole("link", { name: "Fiscal" })).toHaveAttribute("href", "/app/fiscal");
+    expect(screen.getByRole("link", { name: "Customers" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Overview" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Patients" })).not.toHaveAttribute("aria-current");
   });
 
-  it("hides the gated POS, Cash and Billing entries when the tenant is known to lack every capability", () => {
+  it("does not hide destinations when entitlements are unknown", () => {
+    expect(visibleNavLinks(NAV_LINKS)).toEqual(NAV_LINKS);
+  });
+
+  it("retains ungated modules while hiding known unentitled destinations", () => {
     render(<NavSidebar entitlements={[]} />);
+    for (const label of ["POS", "Cash", "Billing", "Fiscal"])
+      expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
+    for (const label of ["Customers", "Patients", "Catalog", "Purchases", "Reports", "Imports"])
+      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+  });
 
-    expect(screen.queryByRole("link", { name: "POS" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Cash" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Fiscal" })).not.toBeInTheDocument();
-    // The ungated destinations are untouched by the gate.
-    expect(screen.getByRole("link", { name: "Purchases" })).toHaveAttribute(
-      "href",
-      "/app/purchases"
+  it.each([
+    ["sales", "POS"],
+    ["cash", "Cash"],
+    ["billing", "Billing"],
+    ["fiscal", "Fiscal"],
+  ])("keeps the %s feature gate independent", (feature, label) => {
+    render(<NavSidebar entitlements={[feature]} />);
+    expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+    expect(
+      visibleNavLinks(NAV_LINKS, [feature])
+        .filter((link) => link.requiredFeature)
+        .map((link) => link.requiredFeature)
+    ).toEqual([feature]);
+  });
+
+  it("notifies the mobile shell after a navigation choice", () => {
+    const onNavigate = vi.fn();
+    render(<NavSidebar mobile onNavigate={onNavigate} />);
+    fireEvent.click(screen.getByRole("link", { name: "Customers" }));
+    expect(onNavigate).toHaveBeenCalledOnce();
+  });
+
+  it("does not pretend sign-out succeeded when the server is unavailable", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 503 }));
+    render(<NavSidebar />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("couldn't sign you out")
     );
-    expect(screen.getByRole("link", { name: "Catalog" })).toHaveAttribute("href", "/app/catalog");
-    // Imports is ungated by DECISION (DEC-072), not by omission: a tenant missing
-    // every capability still reaches it, and the API's `imports.*` permissions are
-    // what decide whether it can do anything there.
-    expect(screen.getByRole("link", { name: "Imports" })).toHaveAttribute("href", "/app/imports");
-  });
-
-  it("shows the Cash entry when the tenant is known to hold the cash capability", () => {
-    render(<NavSidebar entitlements={["cash"]} />);
-
-    expect(screen.getByRole("link", { name: "Cash" })).toHaveAttribute("href", "/app/cash");
-    // The POS and Billing gates are independent: holding `cash` reveals neither.
-    expect(screen.queryByRole("link", { name: "POS" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
-  });
-
-  it("shows the POS entry when the tenant is known to hold the sales capability", () => {
-    render(<NavSidebar entitlements={["sales", "cash"]} />);
-
-    expect(screen.getByRole("link", { name: "POS" })).toHaveAttribute("href", "/app/sales");
-    expect(screen.getByRole("link", { name: "Cash" })).toHaveAttribute("href", "/app/cash");
-    // The Billing gate is independent of the sales and cash capabilities.
-    expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
-  });
-
-  it("shows the Billing entry when the tenant is known to hold the billing capability", () => {
-    render(<NavSidebar entitlements={["billing"]} />);
-
-    expect(screen.getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/app/billing");
-    // The POS and Cash gates are independent: holding `billing` reveals neither.
-    expect(screen.queryByRole("link", { name: "POS" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Cash" })).not.toBeInTheDocument();
-  });
-
-  it("shows the Fiscal entry when the tenant is known to hold the fiscal capability", () => {
-    render(<NavSidebar entitlements={["fiscal"]} />);
-
-    expect(screen.getByRole("link", { name: "Fiscal" })).toHaveAttribute("href", "/app/fiscal");
-    expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
-  });
-
-  it("gates only entries that declare a capability requirement", () => {
-    const gated = visibleNavLinks(NAV_LINKS, ["veterinary"]);
-    const hrefs = gated.map((link) => link.href);
-
-    expect(hrefs).not.toContain("/app/sales");
-    expect(hrefs).not.toContain("/app/cash");
-    expect(hrefs).not.toContain("/app/billing");
-    expect(hrefs).not.toContain("/app/fiscal");
-    expect(hrefs).toContain("/app/purchases");
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+    expect(global.fetch).toHaveBeenCalledWith("/api/session/logout", { method: "POST" });
   });
 });

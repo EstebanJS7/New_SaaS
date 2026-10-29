@@ -118,6 +118,12 @@ const COMPLETE_BODY = JSON.stringify({ payments: [{ method: "CASH", amount: "300
  * no `DELETE`, and no close-style nested command.
  */
 const SERVED_ROUTES = [
+  {
+    method: "POST",
+    pathname: "/api/sales/search",
+    upstream: "/sales/search",
+    body: JSON.stringify({ q: "Synthetic customer", page: 2, status: "DRAFT", sort: "oldest" }),
+  },
   { method: "GET", pathname: "/api/sales", upstream: "/sales", body: "" },
   {
     method: "GET",
@@ -174,6 +180,50 @@ describe("/api/sales proxy", () => {
       expect(fetchInit().method).toBe(route.method);
       expect(fetchInit().headers.cookie).toBe(`${STAFF_SESSION_COOKIE}=token-123`);
     }
+  });
+
+  it("keeps confidential search in its body, forwards exact bytes and disables response caching", async () => {
+    fetchMock.mockResolvedValue(upstreamOk({ items: [] }));
+    const body = '{ "q": "Confidential search", "page": 2 }';
+    const response = await dispatch(
+      "POST",
+      mockNextRequest({ pathname: "/api/sales/search", body })
+    );
+    expect(fetchUrl()).toBe("http://localhost:3001/sales/search");
+    expect(fetchInit()).toMatchObject({ method: "POST", body, cache: "no-store" });
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
+  it("refuses search on GET, query text and tenant authority before forwarding", async () => {
+    expect((await dispatch("GET", mockNextRequest({ pathname: "/api/sales/search" }))).status).toBe(
+      405
+    );
+    expect(
+      (
+        await dispatch(
+          "POST",
+          mockNextRequest({ pathname: "/api/sales/search", search: "?q=Private" })
+        )
+      ).status
+    ).toBe(404);
+    expect(
+      (
+        await dispatch(
+          "POST",
+          mockNextRequest({ pathname: "/api/sales/search", body: '{"tenantId":"foreign"}' })
+        )
+      ).status
+    ).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("does not accept a portal-only session for sales search", async () => {
+    cookiesMock.mockResolvedValue(
+      cookieStore({ name: PORTAL_SESSION_COOKIE, value: "portal-token" })
+    );
+    expect(
+      (await dispatch("POST", mockNextRequest({ pathname: "/api/sales/search", body: "{}" })))
+        .status
+    ).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("forwards the status list filter from the allowlist", async () => {

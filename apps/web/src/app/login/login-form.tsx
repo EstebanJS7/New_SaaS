@@ -3,8 +3,9 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { navigateAfterSignIn } from "./navigation";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { Input } from "@newsaas/ui/components/ui/input";
 import {
   Card,
   CardContent,
@@ -12,15 +13,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
-import { ApiRequestError, signIn } from "./login-api";
+import { userFacingSignInError, signIn } from "./login-api";
 
 /**
  * The sign-in form ([[SHEL-001]]).
  *
  * Two things about it are decisions rather than styling.
  *
- * **The failure the user sees is the API's, verbatim.** Unknown address and wrong password
- * produce ONE message from the API, and this form does not add a second distinction: a UI
+ * **Failures are translated by stable code.** Unknown address and wrong password
+ * produce ONE translated message, and this form does not add a second distinction: a UI
  * that guessed which was which would be a louder account-existence oracle than the API it
  * fronts.
  *
@@ -28,8 +29,10 @@ import { ApiRequestError, signIn } from "./login-api";
  * not in the URL, not in storage, and not in the error message — and the failure branch sets
  * only the message, so an error object cannot carry it by accident.
  */
-export function LoginForm(): JSX.Element {
-  const router = useRouter();
+export function LoginForm({
+  returnTo,
+  expired = false,
+}: { returnTo?: string; expired?: boolean } = {}): JSX.Element {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -42,34 +45,40 @@ export function LoginForm(): JSX.Element {
     setSubmitting(true);
     try {
       await signIn({ email, password });
-      // The session cookie is set by the API and relayed by the BFF; this page cannot see
-      // it and does not need to. A full navigation (`refresh`) re-runs the shell's layout
-      // with the new cookie, which a client-side push would not.
-      router.replace("/app");
-      router.refresh();
+      // The BFF establishes the HttpOnly session. A full document navigation
+      // re-runs tenant branding with a fresh CSP nonce; an SPA refresh can leave
+      // newly streamed theme styles incompatible with the original policy.
+      navigateAfterSignIn(returnTo);
     } catch (error) {
       setSubmitting(false);
       setPassword("");
-      setProblem(
-        error instanceof ApiRequestError ? error.message : "Something went wrong. Try again."
-      );
+      setProblem(userFacingSignInError(error));
     }
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Sign in</CardTitle>
-        <CardDescription>Use your staff account.</CardDescription>
+    <Card className="border-0 bg-transparent shadow-none">
+      <CardHeader className="px-0 pb-8 pt-0">
+        <CardTitle className="text-3xl font-semibold tracking-tight">
+          <h2>Iniciar sesión</h2>
+        </CardTitle>
+        <CardDescription>Ingresá para continuar con el trabajo de tu equipo.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 px-0">
         {/*
           A real `<form>`, and the reason is a defect this lane found: with the inputs in a plain
           container and the button as `type="button"`, pressing Enter did NOTHING. Every user's muscle
           memory — and every password manager — submits a sign-in by keyboard, and the page looked and
           behaved correctly right up to that moment.
         */}
+        {expired && (
+          <p role="status" className="rounded-md border border-border bg-muted p-3 text-sm">
+            Tu sesión terminó. Ingresá para volver al registro guardado. Los cambios sin guardar no
+            se restaurarán.
+          </p>
+        )}
         <form
+          aria-busy={submitting}
           className="space-y-4"
           onSubmit={(event) => {
             event.preventDefault();
@@ -78,12 +87,16 @@ export function LoginForm(): JSX.Element {
         >
           <div className="space-y-2">
             <label htmlFor="login-email" className="text-sm font-medium">
-              Email
+              Correo electrónico
             </label>
-            <input
+            <Input
               id="login-email"
               type="email"
               autoComplete="username"
+              aria-describedby={problem ? "login-problem" : undefined}
+              required
+              disabled={submitting}
+              placeholder="tu@organizacion.com"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -91,25 +104,34 @@ export function LoginForm(): JSX.Element {
           </div>
           <div className="space-y-2">
             <label htmlFor="login-password" className="text-sm font-medium">
-              Password
+              Contraseña
             </label>
-            <input
+            <Input
               id="login-password"
               type="password"
               autoComplete="current-password"
+              aria-describedby={problem ? "login-problem" : undefined}
+              required
+              disabled={submitting}
+              placeholder="Ingresá tu contraseña"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           {problem === null ? null : (
-            <p data-testid="login-problem" className="text-sm text-destructive">
+            <p
+              role="alert"
+              data-testid="login-problem"
+              id="login-problem"
+              className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"
+            >
               {problem}
             </p>
           )}
-          <div className="flex items-center justify-between gap-4">
-            <Button type="submit" disabled={!canSubmit}>
-              {submitting ? "Signing in..." : "Sign in"}
+          <div className="flex flex-col gap-4 pt-2">
+            <Button type="submit" disabled={!canSubmit} loading={submitting} className="w-full">
+              {submitting ? "Iniciando sesión…" : "Iniciar sesión"}
             </Button>
             {/*
             The recovery entry point ([[DAT-007]]). Until this link existed, a user could
@@ -118,9 +140,9 @@ export function LoginForm(): JSX.Element {
             <Link
               href="/forgot-password"
               data-testid="login-forgot-password"
-              className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+              className="text-center text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             >
-              Forgot your password?
+              ¿Olvidaste tu contraseña?
             </Link>
           </div>
         </form>

@@ -1,50 +1,35 @@
 "use client";
 
 import type { JSX } from "react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import { Input } from "@newsaas/ui/components/ui/input";
+import { Icon } from "@newsaas/ui/components/ui/icon";
+import { Badge } from "@newsaas/ui/components/ui/badge";
+import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@newsaas/ui/components/ui/card";
-import {
+  ApiRequestError,
   deactivatePatient,
-  getCatalog,
-  listPatients,
+  searchPatients,
   userFacingPatientError,
-  type Patient,
-  type SpeciesCatalogEntry,
+  type PatientSearchRow,
 } from "./patients-api";
+import { usePatientsListState } from "./patients-list-state";
 
-const inputClassName =
-  "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
-
-function speciesName(catalog: readonly SpeciesCatalogEntry[] | undefined, id: string): string {
-  return catalog?.find((species) => species.id === id)?.name ?? "Unknown species";
-}
-
-function breedName(
-  catalog: readonly SpeciesCatalogEntry[] | undefined,
-  speciesId: string,
-  breedId: string
-): string {
-  return (
-    catalog
-      ?.find((species) => species.id === speciesId)
-      ?.breeds.find((breed) => breed.id === breedId)?.name ?? "Unknown breed"
-  );
-}
-
-function PatientCard({ patient }: { readonly patient: Patient }): JSX.Element {
+function PatientCard({
+  patient,
+  canReadGuardians,
+}: {
+  readonly patient: PatientSearchRow;
+  readonly canReadGuardians: boolean;
+}): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const catalog = useQuery({ queryKey: ["patients", "catalog"], queryFn: getCatalog });
+  const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: () => deactivatePatient(patient.id),
     onSuccess: () => {
@@ -52,30 +37,39 @@ function PatientCard({ patient }: { readonly patient: Patient }): JSX.Element {
     },
   });
 
-  function handleDeactivate(): void {
-    if (!window.confirm("Deactivate this patient?")) return;
-    mutation.mutate();
-  }
-
   return (
-    <div className="flex items-start justify-between rounded-lg border bg-card p-4 text-card-foreground shadow-sm">
+    <div className="record-row">
       <div className="min-w-0 space-y-1">
-        <Link
-          href={`/app/patients/${patient.id}`}
-          className="truncate font-medium text-primary hover:underline"
-        >
-          {patient.name}
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="flex size-9 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
+            <Icon name="activity" className="size-5" />
+          </span>
+          <Link
+            href={`/app/patients/${patient.id}`}
+            className="truncate font-semibold text-foreground hover:text-primary hover:underline"
+          >
+            {patient.name}
+          </Link>
+          <Badge variant={patient.isActive ? "success" : "outline"}>
+            {patient.isActive ? "Activo" : "Inactivo"}
+          </Badge>
+        </div>
         <p className="text-sm text-muted-foreground">
-          {speciesName(catalog.data, patient.speciesId)}
-          {patient.breedId
-            ? ` · ${breedName(catalog.data, patient.speciesId, patient.breedId)}`
-            : ""}
+          {patient.speciesName}
+          {patient.breedName ? ` · ${patient.breedName}` : ""}
         </p>
         <p className="text-xs text-muted-foreground">
-          {patient.sex === "UNKNOWN" ? "Sex not recorded" : patient.sex}
-          {patient.isActive ? "" : " · Inactive"}
+          {patient.sex === "UNKNOWN"
+            ? "Sexo sin registrar"
+            : patient.sex === "MALE"
+              ? "Macho"
+              : "Hembra"}
         </p>
+        {canReadGuardians && (
+          <p className="text-sm text-muted-foreground">
+            Responsable principal: {patient.primaryGuardianName ?? "Sin responsable activo"}
+          </p>
+        )}
         {mutation.error && (
           <p role="alert" className="text-xs text-destructive">
             {userFacingPatientError(mutation.error)}
@@ -89,110 +83,230 @@ function PatientCard({ patient }: { readonly patient: Patient }): JSX.Element {
           size="sm"
           onClick={() => router.push(`/app/patients/${patient.id}/edit`)}
         >
-          Edit
+          Editar
         </Button>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          onClick={handleDeactivate}
+          onClick={() => setConfirmDeactivateOpen(true)}
           disabled={mutation.isPending || !patient.isActive}
+          loading={mutation.isPending}
         >
-          {mutation.isPending ? "Deactivating..." : "Deactivate"}
+          {mutation.isPending ? "Desactivando…" : "Desactivar"}
         </Button>
       </div>
+      <ConfirmActionDialog
+        open={confirmDeactivateOpen}
+        onOpenChange={(open) => {
+          if (!open && !mutation.isPending) setConfirmDeactivateOpen(false);
+        }}
+        title="Desactivar paciente"
+        description="El paciente dejará de estar disponible para nuevas operaciones. Sus fichas y registros clínicos se conservarán."
+        confirmLabel="Desactivar paciente"
+        pendingLabel="Desactivando…"
+        pending={mutation.isPending}
+        errorMessage={mutation.error ? userFacingPatientError(mutation.error) : undefined}
+        onConfirm={() => mutation.mutateAsync()}
+      />
     </div>
   );
 }
 
-/**
- * Staff patient list with loading, empty, error, search, and deactivate states.
- *
- * Search is client-side over the tenant's active Patients because the WU3 read
- * surface exposes no search parameter; it never changes the API contract.
- * Permission checks are UX-only; the backend enforces the actual gates and
- * returns 403 when the staff role does not hold the required permission.
- */
 export function PatientsList(): JSX.Element {
-  const [search, setSearch] = useState("");
+  const [state, setState] = usePatientsListState();
+  const [search, setSearch] = useState(state.q);
+  const [validation, setValidation] = useState<string>();
   const query = useQuery({
-    queryKey: ["patients"],
-    queryFn: listPatients,
+    queryKey: ["patients", "search", state],
+    queryFn: ({ signal }) => searchPatients(state, signal),
+    staleTime: 0,
   });
-
-  const term = search.trim().toLowerCase();
-  const filtered = useMemo(
-    () => (query.data ?? []).filter((patient) => patient.name.toLowerCase().includes(term)),
-    [query.data, term]
-  );
-
+  const result = query.data;
+  const reset = () => {
+    setSearch("");
+    setValidation(undefined);
+    setState({ q: "", page: 1, status: "active", sort: "name" });
+  };
+  const count = (value: number) => value.toLocaleString("es-PY");
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="page-heading">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Patients</h1>
+          <p className="page-eyebrow">Espacio de trabajo / Fichas</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Pacientes</h1>
           <p className="text-sm text-muted-foreground">
-            Manage patient identity and their customer guardians.
+            Encontrá al paciente y continuá con su atención.
           </p>
         </div>
         <Button type="button" asChild>
-          <Link href="/app/patients/new">New patient</Link>
+          <Link href="/app/patients/new">
+            <Icon name="plus" />
+            Nuevo paciente
+          </Link>
         </Button>
       </div>
 
-      <div className="space-y-2">
+      <form
+        className="space-y-3 rounded-lg border border-border bg-card p-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const q = search.trim();
+          if ((q.length > 0 && q.length < 2) || q.length > 80) {
+            setValidation("Ingresá entre 2 y 80 caracteres o dejá la búsqueda vacía.");
+            return;
+          }
+          setValidation(undefined);
+          setState({ ...state, q, page: 1 });
+        }}
+      >
         <label htmlFor="patient-search" className="text-sm font-medium">
-          Search patients
+          Buscar pacientes
         </label>
-        <input
-          id="patient-search"
-          type="search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Filter by name"
-          className={inputClassName}
-        />
-      </div>
-
-      {query.isLoading ? (
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Loading patients...</p>
-          </CardContent>
-        </Card>
-      ) : query.error ? (
-        <div
-          role="alert"
-          className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
-        >
-          {userFacingPatientError(query.error)}
+        <div className="flex flex-wrap items-start gap-2">
+          <div className="relative min-w-0 flex-1 sm:min-w-64">
+            <Icon
+              name="search"
+              className="pointer-events-none absolute left-3 top-3 text-muted-foreground"
+            />
+            <Input
+              id="patient-search"
+              type="search"
+              maxLength={80}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={
+                result?.canReadGuardians
+                  ? "Nombre del paciente o responsable principal"
+                  : "Nombre del paciente"
+              }
+              aria-invalid={Boolean(validation)}
+              aria-describedby={
+                validation ? "patient-search-help patient-search-error" : "patient-search-help"
+              }
+              className="pl-10"
+            />
+          </div>
+          <Button type="submit" disabled={query.isFetching}>
+            Buscar
+          </Button>
+          <Button type="button" variant="outline" onClick={reset}>
+            Limpiar filtros
+          </Button>
         </div>
-      ) : query.data?.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>No patients yet</CardTitle>
-            <CardDescription>
-              Get started by creating the first patient for this tenant.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button type="button" asChild>
-              <Link href="/app/patients/new">Create patient</Link>
-            </Button>
-          </CardContent>
-        </Card>
-      ) : filtered.length === 0 ? (
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">No patients match “{search}”.</p>
-          </CardContent>
-        </Card>
+        <p id="patient-search-help" className="text-xs text-muted-foreground">
+          {result?.canReadGuardians === false
+            ? "Buscá por nombre del paciente. No tenés acceso a nombres de responsables."
+            : "Buscá por nombre del paciente o de su responsable principal activo. Mínimo 2 caracteres."}
+        </p>
+        {validation && (
+          <p id="patient-search-error" role="alert" className="text-sm text-destructive">
+            {validation}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-4">
+          <label className="space-y-1 text-sm">
+            <span className="block">Estado</span>
+            <select
+              className="min-h-10 rounded-md border border-input bg-background px-3"
+              value={state.status}
+              onChange={(e) => {
+                const status = e.target.value;
+                if (status === "active" || status === "inactive" || status === "all")
+                  setState({ ...state, status, page: 1 });
+              }}
+            >
+              <option value="active">Activos</option>
+              <option value="inactive">Inactivos</option>
+              <option value="all">Todos</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block">Ordenar por</span>
+            <select
+              className="min-h-10 rounded-md border border-input bg-background px-3"
+              value={state.sort}
+              onChange={(e) => {
+                const sort = e.target.value;
+                if (sort === "name" || sort === "recent") setState({ ...state, sort, page: 1 });
+              }}
+            >
+              <option value="name">Nombre, A–Z</option>
+              <option value="recent">Más recientes</option>
+            </select>
+          </label>
+        </div>
+      </form>
+
+      {query.isFetching ? (
+        <ListSkeleton label="Buscando pacientes…" />
+      ) : query.error ? (
+        <ErrorState
+          title="No pudimos cargar los pacientes"
+          retryLabel="Reintentar"
+          message={
+            query.error instanceof ApiRequestError &&
+            ["UNAUTHENTICATED", "FORBIDDEN", "FEATURE_NOT_ENTITLED"].includes(query.error.code)
+              ? userFacingPatientError(query.error)
+              : "No pudimos completar la búsqueda. Revisá la conexión o los filtros y volvé a intentar."
+          }
+          onRetry={() => {
+            void query.refetch();
+          }}
+        />
+      ) : result?.items.length === 0 ? (
+        <EmptyState
+          icon="activity"
+          title="No encontramos pacientes"
+          description="Probá con otro nombre o estado, o limpiá los filtros."
+        >
+          <Button type="button" asChild>
+            <Link href="/app/patients/new">Crear paciente</Link>
+          </Button>
+        </EmptyState>
       ) : (
-        <div className="space-y-3">
-          {filtered.map((patient) => (
-            <PatientCard key={patient.id} patient={patient} />
+        <div className="space-y-3" aria-label="Resultados de pacientes">
+          {result?.items.map((patient) => (
+            <PatientCard
+              key={patient.id}
+              patient={patient}
+              canReadGuardians={result.canReadGuardians}
+            />
           ))}
         </div>
+      )}
+      {!query.isFetching && !query.error && result && (
+        <nav
+          aria-label="Páginas de pacientes"
+          className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"
+        >
+          <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+            {result.total === 0
+              ? "0 pacientes"
+              : `Mostrando ${count((result.page - 1) * result.pageSize + 1)}–${count(Math.min(result.page * result.pageSize, result.total))} de ${count(result.total)}`}
+          </p>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={result.page <= 1}
+              onClick={() => setState({ ...state, page: result.page - 1 })}
+            >
+              Anterior
+            </Button>
+            <span className="text-sm">
+              Página {count(result.page)} de {count(Math.max(1, result.totalPages))}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={result.page >= result.totalPages}
+              onClick={() => setState({ ...state, page: result.page + 1 })}
+            >
+              Siguiente
+            </Button>
+          </div>
+        </nav>
       )}
     </div>
   );

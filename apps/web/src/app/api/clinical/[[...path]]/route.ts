@@ -30,9 +30,13 @@ interface ClinicalRouteShape {
  * percent-encoded byte, or any unknown route — can never reach the upstream URL.
  */
 const CLINICAL_ROUTE_SHAPES: readonly ClinicalRouteShape[] = [
+  { segments: ["appointments", ID_SLOT, "encounters"], methods: ["GET"] },
   { segments: ["encounters"], methods: ["GET", "POST"] },
   { segments: ["encounters", ID_SLOT], methods: ["GET", "PUT"] },
   { segments: ["encounters", ID_SLOT, "close"], methods: ["POST"] },
+  { segments: ["encounters", ID_SLOT, "links"], methods: ["GET"] },
+  { segments: ["encounters", ID_SLOT, "links", "appointment"], methods: ["POST"] },
+  { segments: ["encounters", ID_SLOT, "links", "sale"], methods: ["POST"] },
   { segments: ["encounters", ID_SLOT, "amendments"], methods: ["POST"] },
   { segments: ["treatments"], methods: ["GET", "POST"] },
   { segments: ["treatments", ID_SLOT], methods: ["PUT"] },

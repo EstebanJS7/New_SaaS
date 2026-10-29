@@ -37,10 +37,10 @@ describe("cartLineFromItem", () => {
       "cart-0"
     );
 
-    expect(line.unitPrice).toBe("1500.00");
+    expect(line.unitPrice).toBe("1500,00");
     expect(line.referencePriceAmount).toBe("1500.00");
     expect(line.referencePriceCurrency).toBe("PYG");
-    expect(line.quantity).toBe("1.000");
+    expect(line.quantity).toBe("1");
   });
 
   it("leaves the applied price empty for an item with no reference price", () => {
@@ -62,7 +62,7 @@ describe("buildSaleLines", () => {
         }),
         "cart-0"
       ),
-      quantity: "2.000",
+      quantity: "2,000",
     };
 
     expect(buildSaleLines([line])).toEqual([
@@ -90,7 +90,7 @@ describe("buildSaleLines", () => {
     const [submitted] = buildSaleLines([line]);
     expect(submitted).toEqual({
       catalogItemId: "33333333-3333-4333-8333-333333333333",
-      quantity: "1.000",
+      quantity: "1",
     });
     expect(submitted).not.toHaveProperty("unitPrice");
     expect(submitted).not.toHaveProperty("status");
@@ -109,7 +109,7 @@ describe("cartValidationError", () => {
   );
 
   it("requires at least one line", () => {
-    expect(cartValidationError([])).toBe("Add at least one line before checking out.");
+    expect(cartValidationError([])).toBe("Agregá al menos un artículo antes de continuar.");
   });
 
   it("accepts a valid line", () => {
@@ -117,22 +117,40 @@ describe("cartValidationError", () => {
   });
 
   it("rejects a zero or malformed quantity", () => {
-    expect(cartValidationError([{ ...priced, quantity: "0.000" }])).toContain("positive quantity");
-    expect(cartValidationError([{ ...priced, quantity: "abc" }])).toContain("positive quantity");
+    expect(cartValidationError([{ ...priced, quantity: "0,000" }])).toContain(
+      "cantidad mayor que cero"
+    );
+    expect(cartValidationError([{ ...priced, quantity: "abc" }])).toContain(
+      "cantidad mayor que cero"
+    );
   });
 
   it("requires the operator to enter a price for an item with no reference price", () => {
     const unpriced = cartLineFromItem(catalogItem({ name: "Service" }), "cart-0");
     expect(cartValidationError([unpriced])).toContain(
-      "Service has no reference price; enter the applied price."
+      "Agregá el precio de Service; no tiene un precio de referencia."
     );
-    expect(cartValidationError([{ ...unpriced, unitPrice: "0.00" }])).toBeNull();
+    expect(cartValidationError([{ ...unpriced, unitPrice: "0,00" }])).toBeNull();
   });
 
   it("rejects a malformed applied price", () => {
-    expect(cartValidationError([{ ...priced, unitPrice: "15.999" }])).toContain(
-      "applied price with at most two decimals"
+    expect(cartValidationError([{ ...priced, unitPrice: "15,999" }])).toContain(
+      "precio aplicado con hasta dos decimales"
     );
+  });
+
+  it("preserves grouped prices and fractional quantities in the submitted payload", () => {
+    expect(
+      buildSaleLines([{ ...priced, quantity: "1,500", unitPrice: "120.000" }])[0]
+    ).toMatchObject({
+      quantity: "1.500",
+      unitPrice: "120000",
+    });
+  });
+
+  it("refuses a malformed cart before constructing a sale payload", () => {
+    expect(() => buildSaleLines([{ ...priced, unitPrice: "1.23" }])).toThrow("precio aplicado");
+    expect(() => buildSaleLines([])).toThrow("Agregá al menos un artículo");
   });
 });
 

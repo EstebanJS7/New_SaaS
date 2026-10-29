@@ -13,6 +13,7 @@
  */
 
 import type { CatalogItem } from "../catalog/catalog-api";
+import { formatEsPyDecimalInput, normalizeEsPyDecimalInput } from "@/lib/es-py-format";
 import { isWireQuantity, isWireUnitPrice, type SaleLineInput } from "./sales-api";
 
 /**
@@ -29,7 +30,7 @@ export interface CartLine {
   readonly name: string;
   readonly referencePriceAmount: string | null;
   readonly referencePriceCurrency: string | null;
-  /** Exact fixed-scale (3 decimals) positive literal the operator will submit. */
+  /** Local es-PY text, normalized to an exact API decimal at checkout. */
   readonly quantity: string;
   /** Applied price literal, pre-filled from the reference price when one exists. */
   readonly unitPrice: string;
@@ -48,8 +49,9 @@ export function cartLineFromItem(item: CatalogItem, key: string): CartLine {
     name: item.name,
     referencePriceAmount: item.referencePriceAmount,
     referencePriceCurrency: item.referencePriceCurrency,
-    quantity: "1.000",
-    unitPrice: item.referencePriceAmount ?? "",
+    quantity: "1",
+    unitPrice:
+      item.referencePriceAmount === null ? "" : formatEsPyDecimalInput(item.referencePriceAmount),
   };
 }
 
@@ -57,19 +59,23 @@ export function cartLineFromItem(item: CatalogItem, key: string): CartLine {
  * Maps the local cart onto the create payload's line set. The optional
  * `unitPrice` is sent only when the operator has a value for it, so an accepted
  * reference price is never re-encoded into a caller-owned number and a cleared
- * override is a deliberate "use the reference price". The quantity is sent as
- * the exact string the operator typed.
+ * override is a deliberate "use the reference price". Local separators are
+ * normalized by string operations without changing magnitude or using Number.
  */
 export function buildSaleLines(lines: readonly CartLine[]): SaleLineInput[] {
+  const error = cartValidationError(lines);
+  if (error !== null) throw new Error(error);
   return lines.map((line) => {
-    const unitPrice = line.unitPrice.trim();
-    return unitPrice.length > 0
+    const unitPrice = normalizeEsPyDecimalInput(line.unitPrice);
+    const quantity = normalizeEsPyDecimalInput(line.quantity);
+    if (quantity === null) throw new Error("Revisá la cantidad antes de continuar.");
+    return unitPrice !== null
       ? {
           catalogItemId: line.catalogItemId,
-          quantity: line.quantity.trim(),
+          quantity,
           unitPrice,
         }
-      : { catalogItemId: line.catalogItemId, quantity: line.quantity.trim() };
+      : { catalogItemId: line.catalogItemId, quantity };
   });
 }
 
@@ -83,21 +89,22 @@ export function buildSaleLines(lines: readonly CartLine[]): SaleLineInput[] {
  */
 export function cartValidationError(lines: readonly CartLine[]): string | null {
   if (lines.length === 0) {
-    return "Add at least one line before checking out.";
+    return "Agregá al menos un artículo antes de continuar.";
   }
   for (const line of lines) {
-    if (!isWireQuantity(line.quantity.trim())) {
-      return `Enter a positive quantity with at most three decimals for ${line.name}.`;
+    const quantity = normalizeEsPyDecimalInput(line.quantity);
+    if (quantity === null || !isWireQuantity(quantity)) {
+      return `Ingresá una cantidad mayor que cero, con hasta tres decimales, para ${line.name}.`;
     }
-    const unitPrice = line.unitPrice.trim();
-    if (unitPrice.length === 0) {
+    const unitPrice = normalizeEsPyDecimalInput(line.unitPrice);
+    if (unitPrice === null && line.unitPrice.trim() === "") {
       if (line.referencePriceAmount === null) {
-        return `${line.name} has no reference price; enter the applied price.`;
+        return `Agregá el precio de ${line.name}; no tiene un precio de referencia.`;
       }
       continue;
     }
-    if (!isWireUnitPrice(unitPrice)) {
-      return `Enter an applied price with at most two decimals for ${line.name}.`;
+    if (unitPrice === null || !isWireUnitPrice(unitPrice)) {
+      return `Ingresá un precio aplicado con hasta dos decimales para ${line.name}.`;
     }
   }
   return null;

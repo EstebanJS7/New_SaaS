@@ -35,7 +35,9 @@ export function ForgotPasswordForm(): JSX.Element {
       setSent(true);
     } catch (error) {
       setProblem(
-        error instanceof ApiRequestError ? error.message : "Something went wrong. Try again."
+        error instanceof ApiRequestError && error.code === "RATE_LIMITED"
+          ? "Hubo demasiadas solicitudes. Esperá unos minutos y volvé a intentar."
+          : "No se pudo solicitar el enlace. Intentá nuevamente."
       );
     } finally {
       setSubmitting(false);
@@ -46,18 +48,20 @@ export function ForgotPasswordForm(): JSX.Element {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Check your email</CardTitle>
+          <CardTitle>
+            <h1>Revisá tu correo</h1>
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <p data-testid="forgot-sent" className="text-sm text-muted-foreground">
-            If that address has an account, a recovery message is on its way. The link in it works
-            for thirty minutes.
+          <p role="status" data-testid="forgot-sent" className="text-sm text-muted-foreground">
+            Si ese correo tiene una cuenta, recibirá un mensaje de recuperación. El enlace es válido
+            durante treinta minutos.
           </p>
           <Link
             href="/login"
             className="text-sm text-muted-foreground underline-offset-4 hover:underline"
           >
-            Back to sign in
+            Volver al inicio de sesión
           </Link>
         </CardContent>
       </Card>
@@ -67,8 +71,10 @@ export function ForgotPasswordForm(): JSX.Element {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recover your password</CardTitle>
-        <CardDescription>We will send you a link to choose a new one.</CardDescription>
+        <CardTitle>
+          <h1>Recuperá tu contraseña</h1>
+        </CardTitle>
+        <CardDescription>Solicitá un enlace para elegir una nueva contraseña.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/*
@@ -77,6 +83,7 @@ export function ForgotPasswordForm(): JSX.Element {
           nothing — and a recovery form is exactly where a password manager fills and submits.
         */}
         <form
+          aria-busy={submitting}
           className="space-y-4"
           onSubmit={(event) => {
             event.preventDefault();
@@ -85,31 +92,39 @@ export function ForgotPasswordForm(): JSX.Element {
         >
           <div className="space-y-2">
             <label htmlFor="forgot-email" className="text-sm font-medium">
-              Email
+              Correo electrónico
             </label>
             <input
               id="forgot-email"
               type="email"
               autoComplete="username"
+              required
+              disabled={submitting}
+              aria-describedby={problem ? "forgot-problem" : undefined}
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           {problem === null ? null : (
-            <p data-testid="forgot-problem" className="text-sm text-destructive">
+            <p
+              role="alert"
+              id="forgot-problem"
+              data-testid="forgot-problem"
+              className="text-sm text-destructive"
+            >
               {problem}
             </p>
           )}
           <div className="flex items-center justify-between gap-4">
             <Button type="submit" disabled={email.trim().length === 0 || submitting}>
-              {submitting ? "Sending..." : "Send the link"}
+              {submitting ? "Enviando…" : "Enviar enlace"}
             </Button>
             <Link
               href="/login"
               className="text-sm text-muted-foreground underline-offset-4 hover:underline"
             >
-              Back to sign in
+              Volver al inicio de sesión
             </Link>
           </div>
         </form>

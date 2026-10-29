@@ -24,7 +24,7 @@ type SaleMethod = "GET" | "POST" | "PUT";
  * apart is what lets a known path reached with a wrong method answer with a
  * method refusal instead of being conflated with an unknown path.
  */
-type SalePathShape = "list" | "item" | "cancel" | "complete";
+type SalePathShape = "list" | "item" | "cancel" | "complete" | "search";
 
 /**
  * Method-aware allowlist for the sale proxy (EPIC-12 POS-004).
@@ -50,7 +50,7 @@ type SalePathShape = "list" | "item" | "cancel" | "complete";
  */
 const ALLOWED_SALE_ROUTES: Readonly<Record<SaleMethod, ReadonlySet<SalePathShape>>> = {
   GET: new Set<SalePathShape>(["list", "item"]),
-  POST: new Set<SalePathShape>(["list", "cancel", "complete"]),
+  POST: new Set<SalePathShape>(["list", "cancel", "complete", "search"]),
   PUT: new Set<SalePathShape>(["item"]),
 };
 
@@ -87,6 +87,7 @@ const SALE_LIST_QUERY_KEYS = ["status"] as const;
  * known to be in contract.
  */
 const SALE_BODY_KEYS: Readonly<Record<SalePathShape, readonly string[]>> = {
+  search: ["q", "page", "status", "sort"],
   list: ["customerId", "lines"],
   item: ["customerId", "lines"],
   cancel: [],
@@ -102,6 +103,7 @@ const SALE_BODY_KEYS: Readonly<Record<SalePathShape, readonly string[]>> = {
  * the contract does not define.
  */
 const SALE_BODY_MESSAGES: Readonly<Record<SalePathShape, string>> = {
+  search: "Invalid sale search input.",
   list: "Invalid sale create body.",
   item: "Invalid sale update body.",
   cancel: "Invalid sale cancel body.",
@@ -197,6 +199,7 @@ function salePathShape(segments: readonly string[]): SalePathShape | null {
   }
   if (segments.length === 1) {
     const [first] = segments;
+    if (first === "search") return "search";
     if (first === undefined) {
       return null;
     }
@@ -443,6 +446,7 @@ async function proxySaleRequest(request: NextRequest, method: SaleMethod): Promi
   });
 
   const responseHeaders: Record<string, string> = {
+    "cache-control": "private, no-store",
     "content-type": response.headers.get("content-type") ?? "application/json",
   };
 

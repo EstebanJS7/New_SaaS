@@ -93,6 +93,28 @@ function fetchInit(callIndex = 0): FetchInit {
 }
 
 describe("/api/patients proxy", () => {
+  it("forwards a bounded identity read as an unchanged POST body with private no-store response", async () => {
+    cookiesMock.mockResolvedValue({ toString: () => "session=lookup-session" });
+    fetchMock.mockResolvedValue(new Response("[]", { status: 200 }));
+    const payload = '{ "q": "Ana García" }';
+    const request = mockNextRequest({
+      pathname: "/api/patients/lookup",
+      method: "POST",
+      body: byteStream([payload]),
+    });
+    const response = await POST(request as unknown as Parameters<typeof POST>[0]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3001/patients/lookup",
+      expect.objectContaining({
+        method: "POST",
+        body: payload,
+        headers: { cookie: "session=lookup-session", "content-type": "application/json" },
+        cache: "no-store",
+      })
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
   beforeEach(() => {
     cookiesMock.mockReset();
     fetchMock.mockReset();
@@ -295,5 +317,26 @@ describe("/api/patients proxy", () => {
     expect(response.status).toBe(403);
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("FEATURE_NOT_ENTITLED");
+  });
+  it("forwards paged search as a private read-only POST without putting names in the URL", async () => {
+    cookiesMock.mockResolvedValue({ toString: () => "session=synthetic" });
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 })
+    );
+    const text = JSON.stringify({
+      q: "Synthetic guardian",
+      page: 2,
+      status: "all",
+      sort: "recent",
+    });
+    const request = mockNextRequest({
+      pathname: "/api/patients/search",
+      method: "POST",
+      body: byteStream([text]),
+    });
+    const response = await POST(request as unknown as Parameters<typeof POST>[0]);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:3001/patients/search");
+    expect(fetchInit()).toMatchObject({ method: "POST", body: text, cache: "no-store" });
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
   });
 });

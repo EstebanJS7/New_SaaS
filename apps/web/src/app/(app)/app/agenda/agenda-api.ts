@@ -93,7 +93,10 @@ export interface Appointment {
 /** Agenda filter options: tenant branches plus assignable VETERINARIAN memberships. */
 export interface AppointmentOptions {
   readonly branches: readonly { readonly id: string; readonly name: string }[];
-  readonly professionals: readonly { readonly membershipId: string }[];
+  readonly professionals: readonly {
+    readonly membershipId: string;
+    readonly displayName?: string | null;
+  }[];
 }
 
 /**
@@ -547,12 +550,12 @@ export function userFacingAgendaError(error: Error): string {
   const code = error instanceof ApiRequestError ? error.code : "";
   switch (code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to view the agenda.";
+      return "Iniciá sesión para ver la agenda.";
     case "FORBIDDEN":
       // Reached by the read AND the write paths: a write 403 is the granular
       // `scheduling.appointment.manage`/`transition` permission, which a staffer
       // can lack while still holding read, so the copy names no specific one.
-      return "You do not have permission to perform this action.";
+      return "No tenés permiso para realizar esta acción.";
     case "FEATURE_NOT_ENTITLED":
       // The scheduling capability has NO feature-code gate: SchedulingModule
       // imports no EntitlementsModule, `schedulingSettingsDefinition` declares
@@ -560,16 +563,16 @@ export function userFacingAgendaError(error: Error): string {
       // therefore unreachable for this client and is kept only as a defensive
       // mapping for the shared registry. The copy names the tenant's entitlement
       // rather than inventing a gate that scheduling does not have.
-      return "The requested feature is not enabled for this tenant.";
+      return "La función solicitada no está habilitada para esta organización.";
     case "NOT_FOUND":
       // The read/write routes 404 on the appointment, but CREATE also 404s on a
       // foreign or unknown branch, patient or professional, so the copy must not
       // assert which anchor is missing.
-      return "The appointment, or the branch, patient or professional you selected, could not be found.";
+      return "No encontramos el turno o alguno de los datos seleccionados. Revisá la sucursal, el paciente y el profesional.";
     case "CONFLICT":
-      return "The appointment could not be changed because it conflicts with its current state. The latest details are being refreshed; review them and try again.";
+      return "No se pudo cambiar el turno porque su estado pudo haber cambiado. Actualizamos los datos; revisalos antes de volver a intentar.";
     case "VALIDATION_FAILED":
-      return "Check the appointment details and try again.";
+      return "Revisá los datos del turno e intentá de nuevo.";
     default:
       return error.message;
   }
@@ -594,22 +597,22 @@ export function userFacingBookingRequestError(error: Error): string {
   const code = error instanceof ApiRequestError ? error.code : "";
   switch (code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to decide booking requests.";
+      return "Iniciá sesión para resolver las solicitudes de turno.";
     case "FORBIDDEN":
-      return "You do not have permission to decide booking requests.";
+      return "No tenés permiso para resolver solicitudes de turno.";
     case "FEATURE_NOT_ENTITLED":
       // Same as the agenda mapping: the booking-request decision route lives in
       // SchedulingModule, which has no feature-code gate, so this cannot be
       // reached by this client. Kept defensively with copy that invents no gate.
-      return "The requested feature is not enabled for this tenant.";
+      return "La función solicitada no está habilitada para esta organización.";
     case "NOT_FOUND":
       // The API masks a foreign or non-visible branch or professional with the
       // same status, so this must not claim the request itself is missing.
-      return "The booking request, or the branch or professional you selected, could not be found.";
+      return "No encontramos la solicitud o alguno de los datos seleccionados. Revisá la sucursal y el profesional.";
     case "CONFLICT":
-      return "The request could not be decided as it stands: the slot may no longer be free, or the request may already have been decided. The latest state is being refreshed.";
+      return "No se pudo resolver la solicitud: el horario podría estar ocupado o alguien pudo haberla resuelto antes. Actualizamos el estado.";
     case "VALIDATION_FAILED":
-      return "Check the branch, professional and slot and try again.";
+      return "Revisá la sucursal, el profesional y el horario e intentá de nuevo.";
     default:
       return error.message;
   }

@@ -22,8 +22,10 @@ function installFetch(handler: (url: string, init?: RequestInit) => Response): v
 }
 
 function fill(password: string, confirmation = password): void {
-  fireEvent.change(screen.getByLabelText("New password"), { target: { value: password } });
-  fireEvent.change(screen.getByLabelText("Repeat it"), { target: { value: confirmation } });
+  fireEvent.change(screen.getByLabelText("Nueva contraseña"), { target: { value: password } });
+  fireEvent.change(screen.getByLabelText("Repetí la contraseña"), {
+    target: { value: confirmation },
+  });
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -32,12 +34,12 @@ describe("the reset form", () => {
   it("asks for the link when there is no token, and offers no field", () => {
     render(<ResetPasswordForm token="" />);
     expect(screen.getByTestId("reset-no-token")).toBeInTheDocument();
-    expect(screen.queryByLabelText("New password")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Nueva contraseña")).not.toBeInTheDocument();
   });
 
   it("mirrors the policy's minimum length before submitting", () => {
     render(<ResetPasswordForm token={TOKEN} />);
-    const submit = screen.getByRole("button", { name: "Change password" });
+    const submit = screen.getByRole("button", { name: "Actualizar contraseña" });
     expect(submit).toBeDisabled();
 
     fill("x".repeat(MIN_PASSWORD_LENGTH - 1));
@@ -55,7 +57,11 @@ describe("the reset form", () => {
     // compare it with.
     fill("a-long-enough-password", "a-different-one");
     expect(screen.getByTestId("reset-mismatch")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Change password" })).toBeDisabled();
+    expect(screen.getByLabelText("Repetí la contraseña")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Repetí la contraseña")).toHaveAccessibleDescription(
+      "Las contraseñas no coinciden."
+    );
+    expect(screen.getByRole("button", { name: "Actualizar contraseña" })).toBeDisabled();
   });
 
   it("posts the token and the password, then says every session ended", async () => {
@@ -68,12 +74,12 @@ describe("the reset form", () => {
     });
     render(<ResetPasswordForm token={TOKEN} />);
     fill("a-long-enough-password");
-    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar contraseña" }));
 
     expect(await screen.findByTestId("reset-done")).toBeInTheDocument();
     // The message says what actually happened: the reset ends EVERY session, so a user
     // who is signed in elsewhere is told rather than surprised.
-    expect(screen.getByTestId("reset-done").textContent).toContain("every session");
+    expect(screen.getByTestId("reset-done").textContent).toContain("todas las sesiones");
     expect(calls[0]?.url).toBe("/api/auth/password-reset");
     expect(calls[0]?.body).toContain(TOKEN);
   });
@@ -92,10 +98,10 @@ describe("the reset form", () => {
     );
     render(<ResetPasswordForm token={TOKEN} />);
     fill("a-long-enough-password");
-    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar contraseña" }));
 
     const problem = await screen.findByTestId("reset-problem");
-    expect(problem.textContent).toBe("This password reset link is not valid. Request a new one.");
+    expect(problem.textContent).toBe("El enlace no es válido. Solicitá uno nuevo.");
     // No second, louder oracle: the UI does not guess whether the link was unknown, spent
     // or expired, because the API deliberately does not distinguish them either.
     expect(problem.textContent).not.toMatch(/expired|already used|unknown/i);
@@ -105,34 +111,34 @@ describe("the reset form", () => {
     installFetch(() => jsonResponse({ error: { code: "UNAUTHENTICATED", message: "no" } }, 401));
     render(<ResetPasswordForm token={TOKEN} />);
     fill("a-long-enough-password");
-    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar contraseña" }));
 
     await screen.findByTestId("reset-problem");
     expect(screen.queryByTestId("reset-done")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("New password")).toBeInTheDocument();
+    expect(screen.getByLabelText("Nueva contraseña")).toBeInTheDocument();
   });
 
   it("clears the password from state once it is sent", async () => {
     installFetch(() => jsonResponse({ status: "reset" }));
     render(<ResetPasswordForm token={TOKEN} />);
     fill("a-long-enough-password");
-    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar contraseña" }));
 
     await screen.findByTestId("reset-done");
     // The success view holds no password: a form that keeps one is a form that can leak
     // one, and it has no further use for it.
-    expect(screen.queryByLabelText("New password")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Nueva contraseña")).not.toBeInTheDocument();
   });
 
   it("shows a generic failure for a non-API error, never the error object", async () => {
     global.fetch = vi.fn(() => Promise.reject(new Error("network down")));
     render(<ResetPasswordForm token={TOKEN} />);
     fill("a-long-enough-password");
-    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar contraseña" }));
 
     await waitFor(() =>
       expect(screen.getByTestId("reset-problem").textContent).toBe(
-        "Something went wrong. Try the link again."
+        "No se pudo actualizar la contraseña. Intentá nuevamente."
       )
     );
     expect(screen.getByTestId("reset-problem").textContent).not.toContain("network down");

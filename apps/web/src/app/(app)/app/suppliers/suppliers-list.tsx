@@ -5,6 +5,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import {
   Card,
   CardContent,
@@ -27,17 +28,13 @@ function taxIdentifierLabel(supplier: Supplier): string {
 
 function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Element {
   const queryClient = useQueryClient();
+  const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: () => deactivateSupplier(supplier.id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["suppliers"] });
     },
   });
-
-  function handleDeactivate(): void {
-    if (!window.confirm("Deactivate this supplier?")) return;
-    mutation.mutate();
-  }
 
   return (
     <div className="flex items-start justify-between rounded-lg border bg-card p-4 text-card-foreground shadow-sm">
@@ -73,12 +70,23 @@ function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Elemen
           type="button"
           variant="outline"
           size="sm"
-          onClick={handleDeactivate}
+          onClick={() => setConfirmDeactivateOpen(true)}
           disabled={mutation.isPending || !supplier.isActive}
         >
-          {mutation.isPending ? "Deactivating..." : "Deactivate"}
+          {mutation.isPending ? "Desactivando…" : "Desactivar"}
         </Button>
       </div>
+      <ConfirmActionDialog
+        open={confirmDeactivateOpen}
+        onOpenChange={(open) => { if (!open && !mutation.isPending) setConfirmDeactivateOpen(false); }}
+        title="Desactivar proveedor"
+        description="El proveedor dejará de estar disponible para nuevas operaciones. Sus compras y registros se conservarán."
+        confirmLabel="Desactivar proveedor"
+        pendingLabel="Desactivando…"
+        pending={mutation.isPending}
+        errorMessage={mutation.error ? userFacingSupplierError(mutation.error) : undefined}
+        onConfirm={() => mutation.mutateAsync()}
+      />
     </div>
   );
 }

@@ -33,14 +33,14 @@ export interface CompletionOutcomeCopy {
 export function completedOutcomeCopy(replayed: boolean): CompletionOutcomeCopy {
   return replayed
     ? {
-        title: "Sale already completed",
+        title: "La venta ya estaba completada",
         description:
-          "The API recognised an identical replay and returned the existing completed sale. No second completion happened and no stock or cash effect was applied twice.",
+          "El sistema reconoció una repetición idéntica y devolvió la venta completada. No se volvió a completar ni se duplicaron los movimientos de stock o caja.",
       }
     : {
-        title: "Sale completed",
+        title: "Venta completada",
         description:
-          "The API confirmed the completed sale. Its stock and cash effects are written and the sale is now COMPLETED.",
+          "El sistema confirmó la venta. Sus movimientos de stock y caja quedaron registrados.",
       };
 }
 
@@ -53,86 +53,94 @@ export function completionFailureCopy(failure: SaleCompletionFailure): Completio
   switch (failure) {
     case "permission-denied":
       return {
-        title: "Permission denied",
-        description: "You do not have permission to complete sales. The sale was not completed.",
+        title: "Sin permiso",
+        description: "No tenés permiso para completar ventas. La venta no se completó.",
       };
     case "not-entitled":
       return {
-        title: "Sales are not enabled for this tenant",
+        title: "Ventas no habilitadas",
         description:
-          "The tenant does not have the sales capability, so the sale was not completed.",
+          "Esta organización no tiene habilitada la función de ventas. La venta no se completó.",
       };
     case "not-found":
       return {
-        title: "Sale not found",
-        description:
-          "The sale does not exist for this tenant — an unknown id and a foreign one are the same answer. Nothing was completed.",
+        title: "No encontramos la venta",
+        description: "La venta no existe en esta organización. No se completó ninguna operación.",
       };
     case "not-editable":
       return {
-        title: "This sale is no longer a draft",
+        title: "La venta ya no es un borrador",
         description:
-          "The sale already moved on, so this completion was not applied. It is a terminal condition, not a transient failure to retry.",
+          "El estado de la venta cambió y no se aplicó esta operación. Consultá su estado actual antes de continuar.",
       };
     case "payment-total-mismatch":
       return {
-        title: "The payments do not sum to the sale total",
+        title: "Los pagos no coinciden con el total",
         description:
-          "The API refused the payment set and persisted nothing. Adjust the payments so they sum exactly to the total and submit again.",
+          "El sistema rechazó los pagos y no guardó la operación. Ajustá los importes para que coincidan exactamente con el total.",
       };
     case "missing-cash-session":
       return {
-        title: "A cash payment needs an open cash session",
+        title: "Se necesita una sesión de caja abierta",
         description:
-          "No open session was found for a cash payment, so the sale was not completed. Open a cash session before retrying.",
+          "No hay una sesión de caja abierta para el pago en efectivo. Abrí una sesión antes de volver a intentar.",
       };
     case "ambiguous-cash-session":
       return {
-        title: "More than one cash session is open",
+        title: "Hay más de una sesión de caja abierta",
         description:
-          "A cash payment could not be attributed to a single drawer, so the sale was not completed. Close the extra sessions before retrying.",
+          "El pago en efectivo no puede asociarse a una sola caja. Cerrá las sesiones adicionales antes de volver a intentar.",
       };
     case "insufficient-stock":
       return {
-        title: "Not enough stock",
+        title: "Stock insuficiente",
         description:
-          "The stock policy refused the completion. Nothing was completed and no stock moved.",
+          "La política de stock rechazó la operación. La venta no se completó y el stock no cambió.",
       };
     case "inactive-item":
       return {
-        title: "A line's catalog item is inactive",
+        title: "Un artículo de la venta está inactivo",
         description:
-          "An inactive item cannot take part in a sale, so the completion was refused. Nothing was completed.",
+          "No se puede vender un artículo inactivo. La operación se rechazó y no se completó la venta.",
       };
     case "idempotency-conflict":
       return {
-        title: "This completion was already used for a different request",
+        title: "La operación ya se usó con otros datos",
         description:
-          "The idempotency key was reused with different content, so the API refused it. Nothing was completed; start a new completion.",
+          "La clave de idempotencia se reutilizó con otro contenido. El sistema rechazó la operación; consultá el estado de la venta antes de seguir.",
       };
     case "conflict":
       return {
-        title: "The API refused the completion",
+        title: "No se pudo completar la venta",
         description:
-          "A conflicting state prevented the completion and nothing was persisted. Reload the sale to see its current status.",
+          "Un cambio de estado impidió completar la venta. Actualizá la página para consultar su estado actual.",
       };
     case "validation":
       return {
-        title: "The completion was rejected",
-        description: "The API rejected the completion request as invalid and persisted nothing.",
+        title: "La operación fue rechazada",
+        description: "La solicitud no era válida y no se guardó ningún cambio.",
       };
     case "transport":
       return {
-        title: "Could not reach the server",
+        title: "No se pudo conectar con el servidor",
         description:
-          "The request did not reach the API, so whether the sale completed is unknown. Reload the sale and check its real status before retrying.",
+          "No se recibió una respuesta, así que todavía no sabemos si la venta se completó. Actualizá la venta y verificá el estado antes de volver a intentar.",
       };
     default:
       return {
-        title: "Completion failed",
-        description: "The API refused the completion. Nothing was completed.",
+        title: "No pudimos confirmar el resultado",
+        description:
+          "La respuesta no permite determinar el estado final. Consultá el estado actual de la venta antes de volver a intentar.",
       };
   }
+}
+
+/** Outcomes that require an authoritative read before another command. */
+export function completionNeedsStateCheck(failure: SaleCompletionFailure | null): boolean {
+  return (
+    failure !== null &&
+    ["transport", "unknown", "not-editable", "conflict", "idempotency-conflict"].includes(failure)
+  );
 }
 
 interface CompletionOutcomeAlertProps {

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import {
   Card,
   CardContent,
@@ -291,6 +292,7 @@ function AddressItem({
   readonly customerId: string;
 }): JSX.Element {
   const queryClient = useQueryClient();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: () => deactivateAddress(customerId, address.id),
     onSuccess: () => {
@@ -314,10 +316,21 @@ function AddressItem({
         variant="outline"
         size="sm"
         disabled={mutation.isPending || !address.isActive}
-        onClick={() => mutation.mutate()}
+        onClick={() => setConfirmOpen(true)}
       >
-        {mutation.isPending ? "Deactivating..." : "Deactivate"}
+        {mutation.isPending ? "Desactivando…" : "Desactivar dirección"}
       </Button>
+      <ConfirmActionDialog
+        open={confirmOpen}
+        onOpenChange={(open) => { if (!open && !mutation.isPending) setConfirmOpen(false); }}
+        title="Desactivar dirección"
+        description="La dirección dejará de aparecer como activa en la ficha del cliente."
+        confirmLabel="Desactivar dirección"
+        pendingLabel="Desactivando…"
+        pending={mutation.isPending}
+        errorMessage={mutation.error?.message}
+        onConfirm={() => mutation.mutateAsync()}
+      />
     </div>
   );
 }
@@ -330,6 +343,7 @@ function ContactItem({
   readonly customerId: string;
 }): JSX.Element {
   const queryClient = useQueryClient();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: () => deactivateContact(customerId, contact.id),
     onSuccess: () => {
@@ -355,10 +369,21 @@ function ContactItem({
         variant="outline"
         size="sm"
         disabled={mutation.isPending || !contact.isActive}
-        onClick={() => mutation.mutate()}
+        onClick={() => setConfirmOpen(true)}
       >
-        {mutation.isPending ? "Deactivating..." : "Deactivate"}
+        {mutation.isPending ? "Desactivando…" : "Desactivar contacto"}
       </Button>
+      <ConfirmActionDialog
+        open={confirmOpen}
+        onOpenChange={(open) => { if (!open && !mutation.isPending) setConfirmOpen(false); }}
+        title="Desactivar contacto"
+        description="El correo o teléfono dejará de aparecer como activo en la ficha del cliente."
+        confirmLabel="Desactivar contacto"
+        pendingLabel="Desactivando…"
+        pending={mutation.isPending}
+        errorMessage={mutation.error?.message}
+        onConfirm={() => mutation.mutateAsync()}
+      />
     </div>
   );
 }
@@ -366,6 +391,7 @@ function ContactItem({
 function CustomerHeader({ customerId }: { readonly customerId: string }): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
   const query = useQuery({
     queryKey: ["customers", customerId],
     queryFn: () => getCustomer(customerId),
@@ -378,11 +404,6 @@ function CustomerHeader({ customerId }: { readonly customerId: string }): JSX.El
       void queryClient.invalidateQueries({ queryKey: ["customers", customerId] });
     },
   });
-
-  function handleDeactivate(): void {
-    if (!window.confirm("Deactivate this customer?")) return;
-    deactivateMutation.mutate();
-  }
 
   if (query.isLoading) {
     return <p className="text-sm text-muted-foreground">Loading customer...</p>;
@@ -429,12 +450,23 @@ function CustomerHeader({ customerId }: { readonly customerId: string }): JSX.El
               type="button"
               variant="outline"
               disabled={deactivateMutation.isPending || !customer.isActive}
-              onClick={handleDeactivate}
+              onClick={() => setConfirmDeactivateOpen(true)}
             >
-              {deactivateMutation.isPending ? "Deactivating..." : "Deactivate"}
+              {deactivateMutation.isPending ? "Desactivando…" : "Desactivar cliente"}
             </Button>
           </div>
         </div>
+        <ConfirmActionDialog
+          open={confirmDeactivateOpen}
+          onOpenChange={(open) => { if (!open && !deactivateMutation.isPending) setConfirmDeactivateOpen(false); }}
+          title="Desactivar cliente"
+          description="El cliente dejará de estar disponible para nuevas operaciones. Sus registros se conservarán."
+          confirmLabel="Desactivar cliente"
+          pendingLabel="Desactivando…"
+          pending={deactivateMutation.isPending}
+          errorMessage={deactivateMutation.error?.message}
+          onConfirm={() => deactivateMutation.mutateAsync()}
+        />
       </CardContent>
     </Card>
   );

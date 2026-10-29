@@ -1,3 +1,4 @@
+import { safeStaffReturnPath } from "@/lib/staff-return-path";
 import { NextResponse, type NextRequest } from "next/server";
 import { buildContentSecurityPolicy, createNonce, originOf, CSP_NONCE_HEADER } from "@/lib/csp";
 
@@ -65,6 +66,11 @@ export function resolveTrustedTenantSlug(pathname: string): string {
 export function middleware(request: NextRequest): NextResponse {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-tenant-slug", resolveTrustedTenantSlug(request.nextUrl.pathname));
+
+  requestHeaders.set(
+    "x-staff-return-path",
+    safeStaffReturnPath(request.nextUrl.pathname + request.nextUrl.search)
+  );
 
   // Content-Security-Policy ([[DEC-075]] / [[HARD-001]]).
   //

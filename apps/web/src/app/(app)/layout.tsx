@@ -1,9 +1,10 @@
 import type { JSX, ReactNode } from "react";
-import { cookies } from "next/headers";
+import { staffSignInPath } from "@/lib/staff-return-path";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { activeProductPreset, resolveBrand, type ResolvedBrand } from "@newsaas/ui/branding";
-import { NavSidebar } from "@/components/shell/nav-sidebar";
-import { Topbar } from "@/components/shell/topbar";
+import { WorkspaceShell } from "@/components/shell/workspace-shell";
+import { BrandStyle } from "@/providers/document-nonce";
 import { appearanceBootstrapScriptWithTenantDefault } from "@/lib/appearance";
 import { readCspNonce } from "@/lib/csp-nonce";
 import { brandStyleCss } from "@/lib/brand-style";
@@ -84,30 +85,25 @@ export default async function AppShellLayout({
   // Called OUTSIDE the fetch's `try`: `redirect` works by throwing, and a catch around it
   // would swallow the redirect and render the shell anyway.
   if (unauthenticated) {
-    redirect("/login");
+    redirect(staffSignInPath((await headers()).get("x-staff-return-path")));
   }
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div>
       <script
         nonce={nonce}
         dangerouslySetInnerHTML={{
           __html: appearanceBootstrapScriptWithTenantDefault(brand.defaultAppearance),
         }}
       />
-      <style nonce={nonce} dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
-      <NavSidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Identity resolved here on the server; components stay preset-agnostic. */}
-        <Topbar
-          productName={activeProductPreset.productName}
-          productLogoUrl={brand.assets?.logoLightUrl}
-          defaultAppearance={brand.defaultAppearance}
-        />
-        <main data-shell-content className="min-w-0 flex-1 p-6">
-          {children}
-        </main>
-      </div>
+      <BrandStyle nonce={nonce} css={brandStyleCss(brand)} />
+      <WorkspaceShell
+        productName={activeProductPreset.productName}
+        productLogoUrl={brand.assets?.logoLightUrl}
+        defaultAppearance={brand.defaultAppearance}
+      >
+        {children}
+      </WorkspaceShell>
     </div>
   );
 }

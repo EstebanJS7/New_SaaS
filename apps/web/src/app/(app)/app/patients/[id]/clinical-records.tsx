@@ -4,6 +4,7 @@ import type { JSX, ReactNode } from "react";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { formatEsPyDateOnly } from "@/lib/es-py-format";
 import {
   Card,
   CardContent,
@@ -135,7 +136,7 @@ export function fromDateInput(value: string): string | null {
 
 /** Renders a stored instant for reading: the calendar date staff chose. */
 export function formatRecordedDate(iso: string): string {
-  return toDateInput(iso);
+  return formatEsPyDateOnly(toDateInput(iso));
 }
 
 /** The fields both record kinds share; the adapters below name their own. */
@@ -200,6 +201,11 @@ function toVaccinationView(record: ClinicalVaccination): ClinicalRecordView {
   };
 }
 
+/** Shared cache projection for the records panel and patient overview. */
+export async function listVaccinationViews(patientId: string): Promise<ClinicalRecordView[]> {
+  return (await listVaccinations(patientId)).map(toVaccinationView);
+}
+
 function toDewormingView(record: ClinicalDeworming): ClinicalRecordView {
   return {
     id: record.id,
@@ -211,20 +217,20 @@ function toDewormingView(record: ClinicalDeworming): ClinicalRecordView {
 
 const VACCINATION_KIND: ClinicalRecordKind = {
   slug: "vaccination",
-  title: "Vaccinations",
-  description: "Each dose, when it was administered, and when the next one is due.",
-  nameLabel: "Vaccine",
-  dueLabel: "Next dose due (optional)",
-  createLabel: "Record vaccination",
-  createTitle: "New vaccination",
-  saveLabel: "Save vaccination",
-  correctTitle: "Correct vaccination",
-  loadingMessage: "Loading vaccinations...",
-  emptyMessage: "No vaccinations recorded for this patient yet.",
-  createdNotice: "Vaccination recorded.",
-  correctedNotice: "Vaccination corrected.",
+  title: "Vacunas",
+  description: "Dosis aplicadas, fecha de aplicación y próxima fecha indicada.",
+  nameLabel: "Vacuna",
+  dueLabel: "Próxima dosis (opcional)",
+  createLabel: "Registrar vacuna",
+  createTitle: "Nueva vacuna",
+  saveLabel: "Guardar vacuna",
+  correctTitle: "Corregir vacuna",
+  loadingMessage: "Cargando vacunas…",
+  emptyMessage: "Este paciente todavía no tiene vacunas registradas.",
+  createdNotice: "Vacuna registrada.",
+  correctedNotice: "Vacuna corregida.",
   queryKey: (patientId) => ["clinical", patientId, "vaccinations"] as const,
-  list: async (patientId) => (await listVaccinations(patientId)).map(toVaccinationView),
+  list: listVaccinationViews,
   create: async (patientId, draft) => {
     const body: CreateVaccinationInput = {
       vaccine: draft.name,
@@ -245,18 +251,18 @@ const VACCINATION_KIND: ClinicalRecordKind = {
 
 const DEWORMING_KIND: ClinicalRecordKind = {
   slug: "deworming",
-  title: "Deworming treatments",
-  description: "Each treatment, when it was administered, and when the next one is due.",
-  nameLabel: "Product",
-  dueLabel: "Next treatment due (optional)",
-  createLabel: "Record deworming",
-  createTitle: "New deworming treatment",
-  saveLabel: "Save deworming",
-  correctTitle: "Correct deworming treatment",
-  loadingMessage: "Loading deworming treatments...",
-  emptyMessage: "No deworming treatments recorded for this patient yet.",
-  createdNotice: "Deworming treatment recorded.",
-  correctedNotice: "Deworming treatment corrected.",
+  title: "Desparasitaciones",
+  description: "Tratamientos aplicados, fecha de aplicación y próxima fecha indicada.",
+  nameLabel: "Producto",
+  dueLabel: "Próxima desparasitación (opcional)",
+  createLabel: "Registrar desparasitación",
+  createTitle: "Nueva desparasitación",
+  saveLabel: "Guardar desparasitación",
+  correctTitle: "Corregir desparasitación",
+  loadingMessage: "Cargando desparasitaciones…",
+  emptyMessage: "Este paciente todavía no tiene desparasitaciones registradas.",
+  createdNotice: "Desparasitación registrada.",
+  correctedNotice: "Desparasitación corregida.",
   queryKey: (patientId) => ["clinical", patientId, "deworming"] as const,
   list: async (patientId) => (await listDeworming(patientId)).map(toDewormingView),
   create: async (patientId, draft) => {
@@ -426,16 +432,16 @@ function RecordCreateForm({
           className={fieldClassName}
         />
         <p className="text-xs text-muted-foreground">
-          Leave empty when no due date was recorded. The due reports only read the dates staff
-          enter.
+          Dejá vacío si no se indicó una próxima fecha. Los informes muestran únicamente las fechas
+          registradas por el equipo.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={pending || !canSubmit}>
-          {pending ? "Saving..." : kind.saveLabel}
+          {pending ? "Guardando…" : kind.saveLabel}
         </Button>
         <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>
-          Cancel
+          Cancelar
         </Button>
       </div>
     </form>
@@ -506,7 +512,7 @@ function RecordCorrectionForm({
       </div>
       <div className="space-y-2">
         <label htmlFor={`${kind.slug}-correct-administered-at`} className="text-sm font-medium">
-          Administered on
+          Fecha de aplicación
         </label>
         <input
           id={`${kind.slug}-correct-administered-at`}
@@ -532,15 +538,15 @@ function RecordCorrectionForm({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={pending || !canSubmit}>
-          {pending ? "Saving..." : "Save changes"}
+          {pending ? "Guardando…" : "Guardar cambios"}
         </Button>
         {record.nextDueAt !== null && (
           <Button type="button" variant="outline" onClick={onClearDueDate} disabled={pending}>
-            Clear due date
+            Quitar próxima fecha
           </Button>
         )}
         <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
-          Cancel
+          Cancelar
         </Button>
       </div>
     </form>
@@ -593,7 +599,7 @@ function RecordKindPanel({
     mutationFn: (id: string) => kind.correct(patientId, id, { nextDueAt: null }),
     onSuccess: () => {
       setCorrectingId(null);
-      setNotice("Due date removed.");
+      setNotice("Próxima fecha quitada.");
       invalidate();
     },
   });
@@ -658,20 +664,20 @@ function RecordKindPanel({
                         size="sm"
                         onClick={() => setCorrectingId(record.id)}
                       >
-                        Correct
+                        Corregir
                       </Button>
                     )}
                   </div>
                   <dl className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
                     <div className="flex gap-1">
-                      <dt className="font-medium">Administered</dt>
+                      <dt className="font-medium">Aplicada</dt>
                       <dd>{formatRecordedDate(record.administeredAt)}</dd>
                     </div>
                     <div className="flex gap-1">
-                      <dt className="font-medium">Next due</dt>
+                      <dt className="font-medium">Próxima fecha</dt>
                       <dd>
                         {record.nextDueAt === null
-                          ? "No due date recorded"
+                          ? "Sin fecha indicada"
                           : formatRecordedDate(record.nextDueAt)}
                       </dd>
                     </div>
@@ -723,8 +729,8 @@ export function ClinicalRecordsSection({
 }): JSX.Element {
   return (
     <SectionCard
-      title="Vaccinations and deworming"
-      description="Record a dose or a treatment and the date it is next due. A due date can be corrected, and can be removed when it was recorded by mistake."
+      title="Vacunas y desparasitaciones"
+      description="Registrá la aplicación o el tratamiento y, si corresponde, la próxima fecha. También podés corregirla o quitarla si fue ingresada por error."
     >
       <RecordKindPanel patientId={patientId} kind={VACCINATION_KIND} permissions={permissions} />
       <RecordKindPanel patientId={patientId} kind={DEWORMING_KIND} permissions={permissions} />

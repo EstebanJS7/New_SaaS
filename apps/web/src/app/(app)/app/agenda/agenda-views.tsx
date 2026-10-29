@@ -6,6 +6,7 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
+import agendaTimeZonePlugin from "./agenda-timezone-plugin";
 import type {
   DateSelectArg,
   EventClickArg,
@@ -13,6 +14,7 @@ import type {
   EventDropArg,
   EventInput,
 } from "@fullcalendar/core";
+import esLocale from "@fullcalendar/core/locales/es";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import { AGENDA_TIME_ZONE, dateKeyOf, formatDayHeading, formatTimeRange } from "./agenda-time";
 import type { Appointment, AppointmentStatus, BookingRequest } from "./agenda-api";
@@ -29,6 +31,10 @@ import {
 
 export type { AgendaView, CalendarView } from "./agenda-calendar";
 
+function defaultPatientLabel(): string {
+  return "Paciente";
+}
+
 /** Semantic-token status styling; no literal brand colors. */
 const STATUS_CLASSES: Record<AppointmentStatus, string> = {
   SCHEDULED: "border-border bg-secondary text-secondary-foreground",
@@ -38,6 +44,16 @@ const STATUS_CLASSES: Record<AppointmentStatus, string> = {
   COMPLETED: "border-status-success bg-status-success/10 text-foreground",
   CANCELLED: "border-destructive bg-destructive/10 text-destructive",
   NO_SHOW: "border-muted-foreground bg-muted text-muted-foreground",
+};
+
+const STATUS_LABELS: Record<AppointmentStatus, string> = {
+  SCHEDULED: "Programado",
+  CONFIRMED: "Confirmado",
+  ARRIVED: "Llegó",
+  IN_PROGRESS: "En atención",
+  COMPLETED: "Completado",
+  CANCELLED: "Cancelado",
+  NO_SHOW: "No asistió",
 };
 
 /**
@@ -80,6 +96,8 @@ export interface AgendaViewsProps {
   readonly appointments: readonly Appointment[];
   readonly requests: readonly BookingRequest[];
   readonly branchLabel: (branchId: string) => string;
+  readonly professionalLabel?: (membershipId: string) => string;
+  readonly patientLabel?: (patientId: string) => string;
   /** Availability/block shading for a selected pair; absent for list and month. */
   readonly overlay?: AvailabilityOverlay;
   readonly onOpen: (appointment: Appointment) => void;
@@ -93,7 +111,7 @@ function StatusBadge({ status }: { readonly status: AppointmentStatus }): JSX.El
     <span
       className={`inline-flex items-center rounded-sm border px-1.5 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide ${STATUS_CLASSES[status]}`}
     >
-      {status.replace("_", " ")}
+      {STATUS_LABELS[status]}
     </span>
   );
 }
@@ -105,7 +123,7 @@ function RequestBadge(): JSX.Element {
       data-testid="request-badge"
       className={`inline-flex items-center rounded-sm px-1.5 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide ${REQUEST_CLASSES}`}
     >
-      Request
+      Solicitud
     </span>
   );
 }
@@ -115,6 +133,7 @@ interface AgendaCalendarProps {
   readonly anchor: string;
   readonly appointments: readonly Appointment[];
   readonly requests: readonly BookingRequest[];
+  readonly patientLabel?: (patientId: string) => string;
   readonly overlay?: AvailabilityOverlay;
   readonly onOpen: (appointment: Appointment) => void;
   readonly onOpenRequest: (request: BookingRequest) => void;
@@ -137,6 +156,7 @@ function AgendaCalendar({
   anchor,
   appointments,
   requests,
+  patientLabel = defaultPatientLabel,
   overlay,
   onOpen,
   onOpenRequest,
@@ -154,11 +174,17 @@ function AgendaCalendar({
   );
   const events = useMemo<EventInput[]>(
     () => [
-      ...appointments.map(appointmentToEvent),
-      ...requests.map(bookingRequestToEvent),
+      ...appointments.map((appointment) => ({
+        ...appointmentToEvent(appointment),
+        title: `${patientLabel(appointment.patientId)} · ${STATUS_LABELS[appointment.status]}`,
+      })),
+      ...requests.map((request) => ({
+        ...bookingRequestToEvent(request),
+        title: `${patientLabel(request.patientId)} · Solicitud`,
+      })),
       ...(overlay?.blockEvents ?? []),
     ],
-    [appointments, requests, overlay]
+    [appointments, requests, overlay, patientLabel]
   );
 
   useEffect(() => {
@@ -171,11 +197,15 @@ function AgendaCalendar({
 
   function renderEventContent(arg: EventContentArg): JSX.Element {
     if (requestByEventId.has(arg.event.id)) {
+      const request = requestByEventId.get(arg.event.id);
       return (
         <div className={`h-full w-full overflow-hidden rounded-sm px-1 py-0.5 ${REQUEST_CLASSES}`}>
           <span className="block truncate text-[0.7rem] font-semibold">{arg.timeText}</span>
+          <span className="block truncate text-xs font-medium">
+            {request !== undefined ? patientLabel(request.patientId) : "Paciente"}
+          </span>
           <span className="block truncate text-[0.6rem] font-medium uppercase tracking-wide">
-            Request
+            Solicitud
           </span>
         </div>
       );
@@ -188,8 +218,11 @@ function AgendaCalendar({
         className={`h-full w-full overflow-hidden rounded-sm border px-1 py-0.5 ${STATUS_CLASSES[status]}`}
       >
         <span className="block truncate text-[0.7rem] font-semibold">{arg.timeText}</span>
+        <span className="block truncate text-xs font-medium">
+          {appointment !== undefined ? patientLabel(appointment.patientId) : "Paciente"}
+        </span>
         <span className="block truncate text-[0.6rem] font-medium uppercase tracking-wide">
-          {status.replace("_", " ")}
+          {STATUS_LABELS[status]}
         </span>
         {/*
           The linked service's NAME only. The agenda deliberately renders no
@@ -268,7 +301,8 @@ function AgendaCalendar({
       */}
       <FullCalendar
         ref={calendarRef}
-        plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+        locale={esLocale}
+        plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, agendaTimeZonePlugin]}
         initialView={FULL_CALENDAR_VIEW[view]}
         headerToolbar={{ left: "", center: "title", right: "" }}
         firstDay={1}
@@ -297,12 +331,16 @@ function ListView({
   appointments,
   requests,
   branchLabel,
+  professionalLabel = (id) => `Profesional (ID) ${id.slice(0, 8)}`,
+  patientLabel = defaultPatientLabel,
   onOpen,
   onOpenRequest,
 }: {
   readonly appointments: readonly Appointment[];
   readonly requests: readonly BookingRequest[];
   readonly branchLabel: (branchId: string) => string;
+  readonly professionalLabel?: (membershipId: string) => string;
+  readonly patientLabel?: (patientId: string) => string;
   readonly onOpen: (appointment: Appointment) => void;
   readonly onOpenRequest: (request: BookingRequest) => void;
 }): JSX.Element {
@@ -313,8 +351,8 @@ function ListView({
   return (
     <div className="space-y-4">
       {orderedRequests.length > 0 && (
-        <section aria-label="Pending booking requests" className="space-y-2">
-          <h2 className="text-sm font-semibold">Pending requests</h2>
+        <section aria-label="Solicitudes de turno pendientes" className="space-y-2">
+          <h2 className="text-sm font-semibold">Solicitudes pendientes</h2>
           <ul className="space-y-2">
             {orderedRequests.map((request) => (
               <li
@@ -327,7 +365,9 @@ function ListView({
                     {formatDayHeading(dateKeyOf(request.startAt))} ·{" "}
                     {formatTimeRange(request.startAt, request.endAt)}
                   </p>
-                  <p className="text-xs opacity-80">Requested · Patient {request.patientId}</p>
+                  <p className="text-xs opacity-80">
+                    Solicitado · {patientLabel(request.patientId)}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <RequestBadge />
@@ -336,7 +376,7 @@ function ListView({
                     onClick={() => onOpenRequest(request)}
                     className="rounded-md border border-input px-2 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
-                    Review
+                    Revisar
                   </button>
                 </div>
               </li>
@@ -351,18 +391,19 @@ function ListView({
             className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 text-card-foreground"
           >
             <div className="min-w-0 space-y-1">
+              <p className="text-sm font-semibold">{patientLabel(appointment.patientId)}</p>
               <p className="text-sm font-medium">
                 {formatDayHeading(dateKeyOf(appointment.startAt))} ·{" "}
                 {formatTimeRange(appointment.startAt, appointment.endAt)}
               </p>
               <p className="text-xs text-muted-foreground">
-                {branchLabel(appointment.branchId)} · Professional{" "}
-                {appointment.professionalMembershipId.slice(0, 8)}
+                {branchLabel(appointment.branchId)} ·{" "}
+                {professionalLabel(appointment.professionalMembershipId)}
                 {/* Name only: no price, tax, rate or currency on the agenda. */}
                 {appointment.service !== null && (
                   <span data-testid="appointment-service">
                     {" "}
-                    · Service {appointment.service.name}
+                    · Servicio {appointment.service.name}
                   </span>
                 )}
               </p>
@@ -374,7 +415,7 @@ function ListView({
                 onClick={() => onOpen(appointment)}
                 className="rounded-md border border-input px-2 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
-                Manage
+                Gestionar
               </button>
             </div>
           </li>
@@ -392,6 +433,10 @@ export function AgendaViews(props: AgendaViewsProps): JSX.Element {
         appointments={props.appointments}
         requests={props.requests}
         branchLabel={props.branchLabel}
+        {...(props.professionalLabel !== undefined && {
+          professionalLabel: props.professionalLabel,
+        })}
+        {...(props.patientLabel !== undefined && { patientLabel: props.patientLabel })}
         onOpen={props.onOpen}
         onOpenRequest={props.onOpenRequest}
       />
@@ -403,6 +448,7 @@ export function AgendaViews(props: AgendaViewsProps): JSX.Element {
       anchor={props.anchor}
       appointments={props.appointments}
       requests={props.requests}
+      {...(props.patientLabel !== undefined && { patientLabel: props.patientLabel })}
       {...(props.overlay !== undefined && { overlay: props.overlay })}
       onOpen={props.onOpen}
       onOpenRequest={props.onOpenRequest}

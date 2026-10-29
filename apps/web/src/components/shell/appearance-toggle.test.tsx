@@ -8,6 +8,8 @@ import { QueryProvider } from "@/providers/query-provider";
 import { activeProductPreset, resolveBrand } from "@newsaas/ui/branding";
 import { AppearanceToggle } from "./appearance-toggle";
 
+vi.mock("@/components/shell/route-feedback", () => ({ RouteFeedback: () => null }));
+
 /**
  * The shell home is a live surface now ([[REP-008]]): its cards read the reporting
  * API through TanStack Query. The root layout owns the QueryClient in production
@@ -184,13 +186,13 @@ describe("AppearanceToggle", () => {
     // now — keeping the `sample-card` testid here would have proved nothing once
     // the placeholder was replaced.
     const dashboard = screen.getByTestId("app-dashboard");
-    expect(dashboard.className).toContain("bg-card");
+    expect(dashboard.className).toContain("text-foreground");
 
     fireEvent.click(screen.getByTestId("appearance-toggle"));
     expect(document.documentElement.classList.contains(DARK_CLASS)).toBe(true);
 
     // The element itself never changes — the cascade re-themes it.
-    expect(dashboard.className).toContain("text-card-foreground");
+    expect(dashboard.className).toContain("text-foreground");
     expect(dashboard.getAttribute("style")).toBeNull();
 
     fireEvent.click(screen.getByTestId("appearance-toggle"));

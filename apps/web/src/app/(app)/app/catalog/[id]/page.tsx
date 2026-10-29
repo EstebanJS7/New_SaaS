@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { JSX } from "react";
 import { CatalogItemDetail } from "./catalog-item-detail";
 
@@ -10,7 +11,10 @@ import { CatalogItemDetail } from "./catalog-item-detail";
  */
 export default function CatalogItemDetailPage(): JSX.Element {
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-4xl space-y-4">
+      <Link href="/app/catalog" className="text-sm text-primary hover:underline">
+        Volver al catálogo
+      </Link>
       <CatalogItemDetail />
     </div>
   );

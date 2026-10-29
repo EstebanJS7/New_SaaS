@@ -22,9 +22,18 @@ export const FULL_CALENDAR_VIEW: Record<CalendarView, string> = {
 
 /** Maps an allowlisted appointment to the event object FullCalendar renders. */
 export function appointmentToEvent(appointment: Appointment): EventInput {
+  const statusLabel: Record<Appointment["status"], string> = {
+    SCHEDULED: "Programado",
+    CONFIRMED: "Confirmado",
+    ARRIVED: "Llegó",
+    IN_PROGRESS: "En atención",
+    COMPLETED: "Completado",
+    CANCELLED: "Cancelado",
+    NO_SHOW: "No asistió",
+  };
   return {
     id: appointment.id,
-    title: appointment.status,
+    title: statusLabel[appointment.status],
     start: appointment.startAt,
     end: appointment.endAt,
     allDay: false,
@@ -52,7 +61,7 @@ export function bookingRequestEventId(id: string): string {
 export function bookingRequestToEvent(request: BookingRequest): EventInput {
   return {
     id: bookingRequestEventId(request.id),
-    title: "REQUEST",
+    title: "Solicitud",
     start: request.startAt,
     end: request.endAt,
     allDay: false,

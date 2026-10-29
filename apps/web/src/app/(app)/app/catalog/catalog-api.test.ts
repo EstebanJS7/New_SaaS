@@ -169,11 +169,11 @@ describe("catalog-api transport contract", () => {
 
   it("maps permission and not-found codes to staff-facing copy", () => {
     expect(userFacingCatalogError(new ApiRequestError("FORBIDDEN", "Access denied.", 403))).toBe(
-      "You do not have permission to manage catalog items."
+      "No tenés permiso para gestionar artículos del catálogo."
     );
     expect(
       userFacingCatalogError(new ApiRequestError("NOT_FOUND", "Resource was not found.", 404))
-    ).toBe("Catalog item not found.");
+    ).toBe("No encontramos el artículo del catálogo.");
     // An unmapped code keeps the server message instead of inventing a cause.
     expect(userFacingCatalogError(new ApiRequestError("VALIDATION_FAILED", "Bad rate.", 400))).toBe(
       "Bad rate."

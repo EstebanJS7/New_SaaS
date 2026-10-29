@@ -647,17 +647,17 @@ export function classifySaleCompletionError(error: Error): SaleCompletionFailure
  */
 export function userFacingSaleError(error: Error): string {
   if (!(error instanceof ApiRequestError)) {
-    return "The request could not reach the server. Check your connection and try again.";
+    return "No se pudo conectar con el servidor. Revisá tu conexión e intentá de nuevo.";
   }
   switch (error.code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to use the counter.";
+      return "Iniciá sesión para usar el punto de venta.";
     case "FORBIDDEN":
-      return "You do not have permission to manage sales.";
+      return "No tenés permiso para gestionar ventas.";
     case "FEATURE_NOT_ENTITLED":
-      return "Sales features are not enabled for this tenant.";
+      return "La función de ventas no está habilitada para esta organización.";
     case "NOT_FOUND":
-      return "Sale not found.";
+      return "No encontramos la venta.";
     default:
       return error.message;
   }

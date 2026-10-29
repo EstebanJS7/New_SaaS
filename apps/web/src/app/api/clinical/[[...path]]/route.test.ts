@@ -373,3 +373,37 @@ describe("/api/clinical proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("clinical association proxy", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    cookiesMock.mockResolvedValue({ toString: () => "session=token-123" });
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ linked: true }), { status: 200 }))
+    );
+  });
+  it.each([`encounters/${ENCOUNTER_ID}/links`, `appointments/${ENCOUNTER_ID}/encounters`])(
+    "forwards the authorized association read %s",
+    async (suffix) => {
+      const request = mockNextRequest({ pathname: `/api/clinical/${PATIENT_ID}/${suffix}` });
+      expect((await GET(request as unknown as Parameters<typeof GET>[0])).status).toBe(200);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        `http://localhost:3001/patients/${PATIENT_ID}/clinical/${suffix}`
+      );
+    }
+  );
+  it.each(["appointment", "sale"])("allows only explicit POST association %s", async (kind) => {
+    const path = `/api/clinical/${PATIENT_ID}/encounters/${ENCOUNTER_ID}/links/${kind}`;
+    const request = mockNextRequest({
+      pathname: path,
+      body: byteStream([
+        JSON.stringify(
+          kind === "appointment" ? { appointmentId: ENCOUNTER_ID } : { saleId: ENCOUNTER_ID }
+        ),
+      ]),
+    });
+    expect((await POST(request as unknown as Parameters<typeof POST>[0])).status).toBe(200);
+    const put = mockNextRequest({ pathname: path });
+    expect((await PUT(put as unknown as Parameters<typeof PUT>[0])).status).toBe(404);
+  });
+});

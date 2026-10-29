@@ -207,13 +207,13 @@ export function userFacingCatalogError(error: Error): string {
   const code = error instanceof ApiRequestError ? error.code : "";
   switch (code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to view the catalog.";
+      return "Iniciá sesión para ver el catálogo.";
     case "FORBIDDEN":
-      return "You do not have permission to manage catalog items.";
+      return "No tenés permiso para gestionar artículos del catálogo.";
     case "FEATURE_NOT_ENTITLED":
-      return "The catalog is not enabled for this tenant.";
+      return "El catálogo no está habilitado para esta organización.";
     case "NOT_FOUND":
-      return "Catalog item not found.";
+      return "No encontramos el artículo del catálogo.";
     default:
       return error.message;
   }

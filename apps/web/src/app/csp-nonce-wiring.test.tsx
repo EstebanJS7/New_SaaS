@@ -4,6 +4,9 @@ vi.mock("next/headers", () => ({
   cookies: vi.fn(),
 }));
 
+vi.mock("next/navigation", () => ({ usePathname: () => "/app" }));
+vi.mock("@/components/shell/route-feedback", () => ({ RouteFeedback: () => null }));
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
 import { cookies, headers } from "next/headers";

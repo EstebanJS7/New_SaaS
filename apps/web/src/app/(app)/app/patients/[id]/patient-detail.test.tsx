@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PatientDetail } from "./patient-detail";
@@ -168,7 +168,7 @@ function mockWorkflow(overrides: WorkflowOverrides = {}): ReturnType<typeof vi.f
     // Patient detail now also mounts the vaccination/deworming section
     // (EPIC-18 REP-010). These lists are unrelated to the detail workflow, so
     // they answer empty instead of falling through to the 404 below — which
-    // would make "Clinical record not found." ambiguous for the encounter test.
+    // would make "No encontramos la ficha clínica." ambiguous for the encounter test.
     if (url.endsWith("/vaccinations") || url.endsWith("/deworming")) {
       return Promise.resolve(jsonResponse([]));
     }
@@ -186,14 +186,25 @@ function mockWorkflow(overrides: WorkflowOverrides = {}): ReturnType<typeof vi.f
  * instead of the whole document.
  */
 function guardianRow(displayName: string): HTMLElement {
-  const row = screen.getByText(displayName).closest("div.flex.items-start");
-  if (!row) {
-    throw new Error(`Guardian row not found for ${displayName}`);
-  }
-  return row as HTMLElement;
+  return screen.getByRole("group", { name: `Responsable ${displayName}` });
 }
 
 describe("PatientDetail", () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      },
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.removeAttribute("open");
+      },
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -208,10 +219,10 @@ describe("PatientDetail", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Rex" })).toBeInTheDocument();
-    expect(await screen.findByText("Ana Gomez")).toBeInTheDocument();
-    expect(screen.getByText("Primary")).toBeInTheDocument();
+    expect(await screen.findAllByText("Ana Gomez")).toHaveLength(2);
+    expect(screen.getByText("Principal")).toBeInTheDocument();
 
-    const makePrimary = screen.getByRole("button", { name: "Make primary" });
+    const makePrimary = screen.getByRole("button", { name: "Marcar principal" });
     expect(makePrimary).toBeDisabled();
   });
 
@@ -228,8 +239,8 @@ describe("PatientDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("Loading patient...")).toBeInTheDocument();
-    expect(screen.getByText("Loading guardians...")).toBeInTheDocument();
+    expect(await screen.findByText("Cargando paciente…")).toBeInTheDocument();
+    expect(screen.getByText("Cargando responsables…")).toBeInTheDocument();
   });
 
   it("renders the empty guardian state for a patient with no links", async () => {
@@ -241,7 +252,7 @@ describe("PatientDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("No guardians yet.")).toBeInTheDocument();
+    expect(await screen.findByText("Todavía no hay responsables vinculados.")).toBeInTheDocument();
   });
 
   it("surfaces the guardian list error state", async () => {
@@ -256,9 +267,7 @@ describe("PatientDetail", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("You do not have permission to manage patients.")
-      ).toBeInTheDocument();
+      expect(screen.getByText("No tenés permiso para gestionar pacientes.")).toBeInTheDocument();
     });
   });
 
@@ -271,12 +280,12 @@ describe("PatientDetail", () => {
       </TestWrapper>
     );
 
-    await screen.findByText("No guardians yet.");
+    await screen.findByText("Todavía no hay responsables vinculados.");
     fireEvent.change(await screen.findByRole("combobox"), { target: { value: "customer-2" } });
-    fireEvent.click(screen.getByRole("button", { name: "Link guardian" }));
+    fireEvent.click(screen.getByRole("button", { name: "Vincular responsable" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Guardian linked.")).toBeInTheDocument();
+      expect(screen.getByText("Responsable vinculado.")).toBeInTheDocument();
     });
 
     const createCall = fetchMock.mock.calls.find(
@@ -323,8 +332,8 @@ describe("PatientDetail", () => {
 
     await screen.findByText("Beto Diaz");
     const initialRow = guardianRow("Beto Diaz");
-    expect(within(initialRow).queryByText("Primary")).not.toBeInTheDocument();
-    const betoPromote = within(initialRow).getByRole("button", { name: "Make primary" });
+    expect(within(initialRow).queryByText("Principal")).not.toBeInTheDocument();
+    const betoPromote = within(initialRow).getByRole("button", { name: "Marcar principal" });
     expect(betoPromote).toBeEnabled();
     const getCallsBefore = guardiansGetCalls;
 
@@ -346,13 +355,13 @@ describe("PatientDetail", () => {
     // button disabled, while the demoted guardian becomes promotable.
     await waitFor(() => {
       const promotedRow = guardianRow("Beto Diaz");
-      expect(within(promotedRow).getByText("Primary")).toBeInTheDocument();
-      expect(within(promotedRow).getByRole("button", { name: "Make primary" })).toBeDisabled();
+      expect(within(promotedRow).getByText("Principal")).toBeInTheDocument();
+      expect(within(promotedRow).getByRole("button", { name: "Marcar principal" })).toBeDisabled();
     });
 
     const demotedRow = guardianRow("Ana Gomez");
-    expect(within(demotedRow).queryByText("Primary")).not.toBeInTheDocument();
-    expect(within(demotedRow).getByRole("button", { name: "Make primary" })).toBeEnabled();
+    expect(within(demotedRow).queryByText("Principal")).not.toBeInTheDocument();
+    expect(within(demotedRow).getByRole("button", { name: "Marcar principal" })).toBeEnabled();
   });
 
   it("deactivates the patient after confirmation and reflects the inactive state", async () => {
@@ -365,7 +374,6 @@ describe("PatientDetail", () => {
         return jsonResponse({ ...PATIENT, isActive: false });
       },
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(
       <TestWrapper>
@@ -373,8 +381,11 @@ describe("PatientDetail", () => {
       </TestWrapper>
     );
 
-    const deactivate = await screen.findByRole("button", { name: "Deactivate" });
+    const deactivate = await screen.findByRole("button", { name: "Desactivar paciente" });
     fireEvent.click(deactivate);
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Desactivar paciente" })
+    );
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -382,7 +393,7 @@ describe("PatientDetail", () => {
         expect.objectContaining({ method: "POST" })
       );
     });
-    expect(await screen.findByText("Inactive")).toBeInTheDocument();
+    expect(await screen.findByText("Inactivo")).toBeInTheDocument();
   });
 
   it("maps a 403 to the permission UX copy", async () => {
@@ -397,9 +408,7 @@ describe("PatientDetail", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("You do not have permission to manage patients.")
-      ).toBeInTheDocument();
+      expect(screen.getByText("No tenés permiso para gestionar pacientes.")).toBeInTheDocument();
     });
   });
 
@@ -417,7 +426,7 @@ describe("PatientDetail", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("The veterinary module is not enabled for this tenant.")
+        screen.getByText("El módulo veterinario no está habilitado para esta organización.")
       ).toBeInTheDocument();
     });
   });
@@ -434,7 +443,7 @@ describe("PatientDetail", () => {
     // A canonical UUID satisfies the clinical client identifier guard, so the
     // encounter list request reaches the proxy and settles on the stubbed API
     // error instead of the INVALID_IDENTIFIER ("Invalid patient id.") UX.
-    expect(await screen.findByText("Clinical record not found.")).toBeInTheDocument();
+    expect(await screen.findByText("No encontramos la ficha clínica.")).toBeInTheDocument();
     expect(screen.queryByText("Invalid patient id.")).not.toBeInTheDocument();
     expect(
       fetchMock.mock.calls.some(([input]) =>

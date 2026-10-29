@@ -1,10 +1,12 @@
 "use client";
 
 import type { FormEvent, JSX } from "react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { Card, CardContent } from "@newsaas/ui/components/ui/card";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import Link from "next/link";
 import {
   APPOINTMENT_STATUSES,
   allowedTransitions,
@@ -31,6 +33,9 @@ import {
 } from "./agenda-api";
 import { listCatalogItems } from "../catalog/catalog-api";
 import { AgendaViews, type AgendaView } from "./agenda-views";
+import { PatientSelector } from "./patient-selector";
+import { patientLookupError, usePatientIdentities } from "./patient-lookup";
+import type { PatientIdentity } from "../patients/patients-api";
 import { buildAvailabilityOverlay, type AvailabilityOverlay } from "./agenda-availability";
 import {
   addDaysToKey,
@@ -42,18 +47,77 @@ import {
   tryLocalInputToIso,
 } from "./agenda-time";
 
+function professionalDisplayLabel(membershipId: string, displayName?: string | null): string {
+  const name = displayName?.trim();
+  return name !== undefined && name.length > 0
+    ? name
+    : `Profesional (ID) ${membershipId.slice(0, 8)}`;
+}
+
 const VIEWS: readonly { readonly id: AgendaView; readonly label: string }[] = [
-  { id: "day", label: "Day" },
-  { id: "week", label: "Week" },
-  { id: "month", label: "Month" },
-  { id: "list", label: "List" },
+  { id: "day", label: "Día" },
+  { id: "week", label: "Semana" },
+  { id: "month", label: "Mes" },
+  { id: "list", label: "Lista" },
 ];
+
+const TRANSITION_LABELS: Readonly<Record<TransitionCommand, string>> = {
+  confirm: "Confirmar turno",
+  arrive: "Marcar llegada",
+  start: "Iniciar atención",
+  complete: "Completar atención",
+  cancel: "Cancelar turno",
+  "no-show": "Marcar inasistencia",
+};
+
+const APPOINTMENT_STATUS_LABELS: Readonly<Record<AppointmentStatus, string>> = {
+  SCHEDULED: "Programado",
+  CONFIRMED: "Confirmado",
+  ARRIVED: "Llegó",
+  IN_PROGRESS: "En atención",
+  COMPLETED: "Completado",
+  CANCELLED: "Cancelado",
+  NO_SHOW: "No asistió",
+};
+
+const TRANSITION_CONFIRMATIONS: Readonly<
+  Record<TransitionCommand, { readonly title: string; readonly description: string }>
+> = {
+  confirm: {
+    title: "Confirmar este turno",
+    description: "El turno quedará confirmado para la agenda.",
+  },
+  arrive: {
+    title: "Registrar llegada",
+    description: "Se actualizará el estado del turno para indicar que el paciente llegó.",
+  },
+  start: {
+    title: "Iniciar la atención",
+    description: "El turno pasará al estado de atención en curso.",
+  },
+  complete: {
+    title: "Completar la atención",
+    description: "El turno quedará registrado como completado.",
+  },
+  cancel: {
+    title: "Cancelar este turno",
+    description: "El turno quedará cancelado. Esta acción se registra en la agenda.",
+  },
+  "no-show": {
+    title: "Registrar inasistencia",
+    description: "El turno quedará marcado como inasistencia.",
+  },
+};
 
 const controlClassName =
   "h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 const fieldClassName =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+
+function isInvalidLocalDateTime(value: string): boolean {
+  return tryLocalInputToIso(value) === null;
+}
 
 /**
  * The agenda's own narrow view of a catalog SERVICE item: id and name only.
@@ -74,7 +138,7 @@ interface ServiceOption {
  * working. The client is never the authorization authority.
  */
 const SERVICE_OPTIONS_UNAVAILABLE =
-  "The service list could not be loaded, so no service can be selected right now. You can still save the appointment without one.";
+  "No se pudo cargar la lista de servicios. Podés guardar el turno sin asociar uno.";
 
 /**
  * Offers the linked service even when it is absent from the active list.
@@ -104,9 +168,9 @@ function serviceOptionsFor(
  * unrestricted pair the write path actually accepts.
  */
 const AVAILABILITY_HINT =
-  "Select a branch and a professional to shade the times outside their working hours, plus their one-off blocks.";
+  "Elegí una sucursal y un profesional para ver sus horarios y bloqueos en el calendario.";
 const AVAILABILITY_UNAVAILABLE =
-  "Availability for this professional and branch could not be loaded, so nothing is shaded. The calendar may show times outside their working hours.";
+  "No se pudo cargar la disponibilidad. El calendario podría mostrar horarios fuera de la jornada del profesional.";
 
 type EditorState =
   | { readonly kind: "create"; readonly startAt?: string; readonly endAt?: string }
@@ -127,7 +191,10 @@ function CreateAppointmentForm({
   onClose,
 }: {
   readonly branches: readonly { readonly id: string; readonly name: string }[];
-  readonly professionals: readonly { readonly membershipId: string }[];
+  readonly professionals: readonly {
+    readonly membershipId: string;
+    readonly displayName?: string | null;
+  }[];
   readonly services: readonly ServiceOption[];
   readonly isPending: boolean;
   readonly error: Error | null;
@@ -140,7 +207,7 @@ function CreateAppointmentForm({
   const [professionalMembershipId, setProfessionalMembershipId] = useState(
     professionals[0]?.membershipId ?? ""
   );
-  const [patientId, setPatientId] = useState("");
+  const [patient, setPatient] = useState<PatientIdentity | null>(null);
   const [serviceId, setServiceId] = useState("");
   const [startAt, setStartAt] = useState(() =>
     initialStartAt !== undefined ? isoToLocalInput(initialStartAt) : ""
@@ -154,18 +221,28 @@ function CreateAppointmentForm({
     event.preventDefault();
     const startIso = tryLocalInputToIso(startAt);
     const endIso = tryLocalInputToIso(endAt);
-    if (branchId === "" || professionalMembershipId === "" || patientId.trim() === "") {
-      setValidation("Select a branch and professional and enter a patient id.");
+    if (branchId === "" || professionalMembershipId === "" || patient === null) {
+      setValidation(
+        "Elegí una sucursal, un profesional y un paciente de los resultados de búsqueda."
+      );
+      const form = event.currentTarget;
+      requestAnimationFrame(() =>
+        form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
+      );
       return;
     }
     if (startIso === null || endIso === null || Date.parse(endIso) <= Date.parse(startIso)) {
-      setValidation("Enter a valid range where the end is after the start.");
+      setValidation("Revisá la fecha y la hora: el final debe ser posterior al inicio.");
+      const form = event.currentTarget;
+      requestAnimationFrame(() =>
+        form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
+      );
       return;
     }
     setValidation(null);
     onSubmit({
       branchId,
-      patientId: patientId.trim(),
+      patientId: patient.id,
       professionalMembershipId,
       startAt: startIso,
       endAt: endIso,
@@ -180,20 +257,28 @@ function CreateAppointmentForm({
     <Card>
       <CardContent className="space-y-4 p-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">New appointment</h2>
+          <h2 className="text-sm font-semibold">Nuevo turno</h2>
           <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            Cancel
+            Cancelar
           </Button>
         </div>
-        <form className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit}>
+        <form noValidate className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit}>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Branch</span>
+            <span className="font-medium">
+              Sucursal <span aria-hidden="true">*</span>
+            </span>
             <select
-              aria-label="Branch"
+              aria-label="Sucursal"
+              required
+              aria-invalid={validation !== null && branchId === ""}
+              aria-describedby={
+                validation !== null && branchId === "" ? "appointment-validation" : undefined
+              }
               className={fieldClassName}
               value={branchId}
               onChange={(event) => setBranchId(event.target.value)}
             >
+              <option value="">Elegí una sucursal</option>
               {branches.map((branch) => (
                 <option key={branch.id} value={branch.id}>
                   {branch.name}
@@ -202,39 +287,45 @@ function CreateAppointmentForm({
             </select>
           </label>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Professional</span>
+            <span className="font-medium">
+              Profesional <span aria-hidden="true">*</span>
+            </span>
             <select
-              aria-label="Professional"
+              aria-label="Profesional"
+              required
+              aria-invalid={validation !== null && professionalMembershipId === ""}
+              aria-describedby={
+                validation !== null && professionalMembershipId === ""
+                  ? "appointment-validation"
+                  : undefined
+              }
               className={fieldClassName}
               value={professionalMembershipId}
               onChange={(event) => setProfessionalMembershipId(event.target.value)}
             >
+              <option value="">Elegí un profesional</option>
               {professionals.map((professional) => (
                 <option key={professional.membershipId} value={professional.membershipId}>
-                  {professional.membershipId.slice(0, 8)}
+                  {professionalDisplayLabel(professional.membershipId, professional.displayName)}
                 </option>
               ))}
             </select>
           </label>
+          <PatientSelector
+            value={patient}
+            onChange={setPatient}
+            disabled={isPending}
+            invalid={validation !== null && patient === null}
+          />
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Patient id</span>
-            <input
-              aria-label="Patient id"
-              className={fieldClassName}
-              value={patientId}
-              onChange={(event) => setPatientId(event.target.value)}
-              placeholder="Patient UUID"
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium">Service (optional)</span>
+            <span className="font-medium">Servicio (opcional)</span>
             <select
-              aria-label="Service"
+              aria-label="Servicio"
               className={fieldClassName}
               value={serviceId}
               onChange={(event) => setServiceId(event.target.value)}
             >
-              <option value="">No service</option>
+              <option value="">Sin servicio</option>
               {services.map((service) => (
                 <option key={service.id} value={service.id}>
                   {service.name}
@@ -243,28 +334,43 @@ function CreateAppointmentForm({
             </select>
           </label>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Start</span>
+            <span className="font-medium">
+              Inicio <span aria-hidden="true">*</span>
+            </span>
             <input
               type="datetime-local"
-              aria-label="Start"
+              aria-label="Inicio"
               className={fieldClassName}
               value={startAt}
               onChange={(event) => setStartAt(event.target.value)}
+              required
+              aria-invalid={
+                validation !== null && (isInvalidLocalDateTime(startAt) || startAt === "")
+              }
+              aria-describedby={validation !== null ? "appointment-validation" : undefined}
             />
           </label>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">End</span>
+            <span className="font-medium">
+              Fin <span aria-hidden="true">*</span>
+            </span>
             <input
               type="datetime-local"
-              aria-label="End"
+              aria-label="Fin"
               className={fieldClassName}
               value={endAt}
               onChange={(event) => setEndAt(event.target.value)}
+              required
+              aria-invalid={
+                validation !== null &&
+                (isInvalidLocalDateTime(endAt) || endAt === "" || startAt === "")
+              }
+              aria-describedby={validation !== null ? "appointment-validation" : undefined}
             />
           </label>
           <div className="sm:col-span-2">
             {validation !== null && (
-              <p role="alert" className="mb-2 text-sm text-destructive">
+              <p id="appointment-validation" role="alert" className="mb-2 text-sm text-destructive">
                 {validation}
               </p>
             )}
@@ -274,7 +380,7 @@ function CreateAppointmentForm({
               </p>
             )}
             <Button type="submit" disabled={isPending}>
-              {isPending ? "Creating..." : "Create appointment"}
+              {isPending ? "Guardando turno…" : "Crear turno"}
             </Button>
           </div>
         </form>
@@ -286,6 +392,7 @@ function CreateAppointmentForm({
 /** Manage panel: version-guarded reschedule plus the legal lifecycle commands. */
 function ManageAppointmentForm({
   appointment,
+  patientName,
   services,
   isPending,
   error,
@@ -294,24 +401,30 @@ function ManageAppointmentForm({
   onClose,
 }: {
   readonly appointment: Appointment;
+  readonly patientName: string;
   readonly services: readonly ServiceOption[];
   readonly isPending: boolean;
   readonly error: Error | null;
   readonly onReschedule: (startIso: string, endIso: string, serviceId: string | null) => void;
-  readonly onTransition: (command: TransitionCommand) => void;
+  readonly onTransition: (command: TransitionCommand) => void | Promise<void>;
   readonly onClose: () => void;
 }): JSX.Element {
   const [startAt, setStartAt] = useState(() => isoToLocalInput(appointment.startAt));
   const [endAt, setEndAt] = useState(() => isoToLocalInput(appointment.endAt));
   const [serviceId, setServiceId] = useState(() => appointment.serviceId ?? "");
   const [validation, setValidation] = useState<string | null>(null);
+  const [transitionToConfirm, setTransitionToConfirm] = useState<TransitionCommand | null>(null);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const startIso = tryLocalInputToIso(startAt);
     const endIso = tryLocalInputToIso(endAt);
     if (startIso === null || endIso === null || Date.parse(endIso) <= Date.parse(startIso)) {
-      setValidation("Enter a valid range where the end is after the start.");
+      setValidation("Revisá la fecha y la hora: el final debe ser posterior al inicio.");
+      const form = event.currentTarget;
+      requestAnimationFrame(() =>
+        form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
+      );
       return;
     }
     setValidation(null);
@@ -329,7 +442,7 @@ function ManageAppointmentForm({
       <CardContent className="space-y-4 p-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold">Manage appointment</h2>
+            <h2 className="text-sm font-semibold">Gestionar turno</h2>
             <p className="text-xs text-muted-foreground">
               {formatDayHeading(dateKeyOf(appointment.startAt))} ·{" "}
               {formatTimeRange(appointment.startAt, appointment.endAt)}
@@ -337,45 +450,56 @@ function ManageAppointmentForm({
               {appointment.service !== null && (
                 <span data-testid="manage-appointment-service">
                   {" "}
-                  · Service {appointment.service.name}
+                  · Servicio: {appointment.service.name}
                 </span>
               )}
             </p>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            Close
+            Cerrar
           </Button>
         </div>
-        <form className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit}>
+        <form noValidate className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit}>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Start</span>
+            <span className="font-medium">Inicio</span>
             <input
               type="datetime-local"
-              aria-label="Start"
+              aria-label="Inicio"
               className={fieldClassName}
               value={startAt}
               onChange={(event) => setStartAt(event.target.value)}
+              required
+              aria-invalid={
+                validation !== null && (startAt === "" || isInvalidLocalDateTime(startAt))
+              }
+              aria-describedby={validation !== null ? "reschedule-validation" : undefined}
             />
           </label>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">End</span>
+            <span className="font-medium">Fin</span>
             <input
               type="datetime-local"
-              aria-label="End"
+              aria-label="Fin"
               className={fieldClassName}
               value={endAt}
               onChange={(event) => setEndAt(event.target.value)}
+              required
+              aria-invalid={
+                validation !== null &&
+                (endAt === "" || isInvalidLocalDateTime(endAt) || startAt === "")
+              }
+              aria-describedby={validation !== null ? "reschedule-validation" : undefined}
             />
           </label>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Service (optional)</span>
+            <span className="font-medium">Servicio (opcional)</span>
             <select
-              aria-label="Service"
+              aria-label="Servicio"
               className={fieldClassName}
               value={serviceId}
               onChange={(event) => setServiceId(event.target.value)}
             >
-              <option value="">No service</option>
+              <option value="">Sin servicio</option>
               {serviceOptions.map((service) => (
                 <option key={service.id} value={service.id}>
                   {service.name}
@@ -386,23 +510,23 @@ function ManageAppointmentForm({
           <div aria-hidden className="hidden sm:block" />
           <div className="sm:col-span-2">
             {validation !== null && (
-              <p role="alert" className="mb-2 text-sm text-destructive">
+              <p id="reschedule-validation" role="alert" className="mb-2 text-sm text-destructive">
                 {validation}
               </p>
             )}
-            {error !== null && (
+            {error !== null && transitionToConfirm === null && (
               <p role="alert" className="mb-2 text-sm text-destructive">
                 {userFacingAgendaError(error)}
               </p>
             )}
             <Button type="submit" disabled={isPending}>
-              {isPending ? "Saving..." : "Save reschedule"}
+              {isPending ? "Guardando…" : "Guardar cambios"}
             </Button>
           </div>
         </form>
         {transitions.length > 0 && (
           <div className="space-y-2 border-t pt-3">
-            <p className="text-xs font-medium text-muted-foreground">Lifecycle</p>
+            <p className="text-xs font-medium text-muted-foreground">Estado del turno</p>
             <div className="flex flex-wrap gap-2">
               {transitions.map((command) => (
                 <Button
@@ -411,15 +535,54 @@ function ManageAppointmentForm({
                   variant="outline"
                   size="sm"
                   disabled={isPending}
-                  onClick={() => onTransition(command)}
+                  onClick={() => setTransitionToConfirm(command)}
                 >
-                  {command.replace("-", " ")}
+                  {TRANSITION_LABELS[command]}
                 </Button>
               ))}
             </div>
           </div>
         )}
+        <p className="text-sm">
+          <Link
+            className="text-primary underline-offset-4 hover:underline"
+            href={`/app/patients/${appointment.patientId}?appointment=${appointment.id}#patient-clinical`}
+          >
+            Abrir ficha de {patientName}
+          </Link>
+        </p>
       </CardContent>
+      <ConfirmActionDialog
+        open={transitionToConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setTransitionToConfirm(null);
+        }}
+        title={
+          transitionToConfirm === null
+            ? "Actualizar turno"
+            : TRANSITION_CONFIRMATIONS[transitionToConfirm].title
+        }
+        description={
+          transitionToConfirm === null
+            ? ""
+            : TRANSITION_CONFIRMATIONS[transitionToConfirm].description
+        }
+        confirmLabel={
+          transitionToConfirm === null ? "Confirmar" : TRANSITION_LABELS[transitionToConfirm]
+        }
+        confirmVariant={
+          transitionToConfirm === "cancel" || transitionToConfirm === "no-show"
+            ? "destructive"
+            : "default"
+        }
+        pending={isPending}
+        pendingLabel="Actualizando…"
+        errorMessage={error === null ? undefined : userFacingAgendaError(error)}
+        onConfirm={async () => {
+          if (transitionToConfirm === null) return;
+          await onTransition(transitionToConfirm);
+        }}
+      />
     </Card>
   );
 }
@@ -435,6 +598,7 @@ function ManageAppointmentForm({
  */
 function BookingRequestDecisionForm({
   request,
+  patientName,
   branches,
   professionals,
   isPending,
@@ -444,12 +608,16 @@ function BookingRequestDecisionForm({
   onClose,
 }: {
   readonly request: BookingRequest;
+  readonly patientName: string;
   readonly branches: readonly { readonly id: string; readonly name: string }[];
-  readonly professionals: readonly { readonly membershipId: string }[];
+  readonly professionals: readonly {
+    readonly membershipId: string;
+    readonly displayName?: string | null;
+  }[];
   readonly isPending: boolean;
   readonly error: Error | null;
-  readonly onApprove: (input: ApproveBookingRequestInput) => void;
-  readonly onReject: () => void;
+  readonly onApprove: (input: ApproveBookingRequestInput) => void | Promise<void>;
+  readonly onReject: () => void | Promise<void>;
   readonly onClose: () => void;
 }): JSX.Element {
   const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
@@ -459,31 +627,33 @@ function BookingRequestDecisionForm({
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
+  const [decision, setDecision] = useState<"approve" | "reject" | null>(null);
+  const overrideValidation = validation?.includes("horario") ?? false;
 
   function handleApprove(): void {
     if (branchId === "" || professionalMembershipId === "") {
-      setValidation("Select a branch and professional to approve this request.");
+      setValidation("Elegí una sucursal y un profesional para aprobar la solicitud.");
       return;
     }
     const hasStart = startAt !== "";
     const hasEnd = endAt !== "";
     if (hasStart !== hasEnd) {
-      setValidation("Enter both override times or leave them empty.");
+      setValidation("Ingresá los dos horarios alternativos o dejalos vacíos.");
       return;
     }
     if (hasStart && hasEnd) {
       const startIso = tryLocalInputToIso(startAt);
       const endIso = tryLocalInputToIso(endAt);
       if (startIso === null || endIso === null || Date.parse(endIso) <= Date.parse(startIso)) {
-        setValidation("Enter a valid override where the end is after the start.");
+        setValidation("Revisá los horarios: el final debe ser posterior al inicio.");
         return;
       }
       setValidation(null);
-      onApprove({ branchId, professionalMembershipId, startAt: startIso, endAt: endIso });
+      setDecision("approve");
       return;
     }
     setValidation(null);
-    onApprove({ branchId, professionalMembershipId });
+    setDecision("approve");
   }
 
   return (
@@ -491,29 +661,46 @@ function BookingRequestDecisionForm({
       <CardContent className="space-y-4 p-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold">Pending booking request</h2>
+            <h2 className="text-sm font-semibold">Solicitud de turno pendiente</h2>
             <p className="text-xs text-muted-foreground">
               {formatDayHeading(dateKeyOf(request.startAt))} ·{" "}
-              {formatTimeRange(request.startAt, request.endAt)} · Patient {request.patientId}
+              {formatTimeRange(request.startAt, request.endAt)} · {patientName}
             </p>
+            <Link
+              className="text-xs text-primary underline-offset-4 hover:underline"
+              href={`/app/patients/${request.patientId}`}
+            >
+              Abrir ficha del paciente
+            </Link>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            Close
+            Cerrar
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          The request does not reserve the slot. Approval creates the appointment; a pending request
-          stays visible until it is approved or rejected.
+          La solicitud no reserva el horario. Al aprobarla se crea el turno; seguirá pendiente hasta
+          que la apruebes o la rechaces.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Branch</span>
+            <span className="font-medium">
+              Sucursal <span aria-hidden="true">*</span>
+            </span>
             <select
-              aria-label="Request branch"
+              aria-label="Sucursal de la solicitud"
+              required
+              aria-invalid={validation !== null && branchId === ""}
+              aria-describedby={
+                validation !== null && branchId === "" ? "request-approval-validation" : undefined
+              }
               className={fieldClassName}
               value={branchId}
-              onChange={(event) => setBranchId(event.target.value)}
+              onChange={(event) => {
+                setBranchId(event.target.value);
+                setValidation(null);
+              }}
             >
+              <option value="">Elegí una sucursal</option>
               {branches.map((branch) => (
                 <option key={branch.id} value={branch.id}>
                   {branch.name}
@@ -522,62 +709,130 @@ function BookingRequestDecisionForm({
             </select>
           </label>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Professional</span>
+            <span className="font-medium">
+              Profesional <span aria-hidden="true">*</span>
+            </span>
             <select
-              aria-label="Request professional"
+              aria-label="Profesional asignado"
+              required
+              aria-invalid={validation !== null && professionalMembershipId === ""}
+              aria-describedby={
+                validation !== null && professionalMembershipId === ""
+                  ? "request-approval-validation"
+                  : undefined
+              }
               className={fieldClassName}
               value={professionalMembershipId}
-              onChange={(event) => setProfessionalMembershipId(event.target.value)}
+              onChange={(event) => {
+                setProfessionalMembershipId(event.target.value);
+                setValidation(null);
+              }}
             >
+              <option value="">Elegí un profesional</option>
               {professionals.map((professional) => (
                 <option key={professional.membershipId} value={professional.membershipId}>
-                  {professional.membershipId.slice(0, 8)}
+                  {professionalDisplayLabel(professional.membershipId, professional.displayName)}
                 </option>
               ))}
             </select>
           </label>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Override start (optional)</span>
+            <span className="font-medium">Nuevo inicio (opcional)</span>
             <input
               type="datetime-local"
-              aria-label="Override start"
+              aria-label="Nuevo horario de inicio"
               className={fieldClassName}
               value={startAt}
-              onChange={(event) => setStartAt(event.target.value)}
+              aria-invalid={
+                overrideValidation && (startAt === "" || isInvalidLocalDateTime(startAt))
+              }
+              aria-describedby={overrideValidation ? "request-approval-validation" : undefined}
+              onChange={(event) => {
+                setStartAt(event.target.value);
+                setValidation(null);
+              }}
             />
           </label>
           <label className="space-y-1 text-sm">
-            <span className="font-medium">Override end (optional)</span>
+            <span className="font-medium">Nuevo fin (opcional)</span>
             <input
               type="datetime-local"
-              aria-label="Override end"
+              aria-label="Nuevo horario de fin"
               className={fieldClassName}
               value={endAt}
-              onChange={(event) => setEndAt(event.target.value)}
+              aria-invalid={overrideValidation && (endAt === "" || isInvalidLocalDateTime(endAt))}
+              aria-describedby={overrideValidation ? "request-approval-validation" : undefined}
+              onChange={(event) => {
+                setEndAt(event.target.value);
+                setValidation(null);
+              }}
             />
           </label>
         </div>
         <div className="space-y-2">
           {validation !== null && (
-            <p role="alert" className="text-sm text-destructive">
+            <p id="request-approval-validation" role="alert" className="text-sm text-destructive">
               {validation}
             </p>
           )}
-          {error !== null && (
+          {error !== null && decision === null && (
             <p role="alert" className="text-sm text-destructive">
               {userFacingBookingRequestError(error)}
             </p>
           )}
           <div className="flex flex-wrap gap-2">
             <Button type="button" disabled={isPending} onClick={handleApprove}>
-              {isPending ? "Working..." : "Approve request"}
+              {isPending ? "Procesando…" : "Aprobar solicitud"}
             </Button>
-            <Button type="button" variant="outline" disabled={isPending} onClick={onReject}>
-              Reject request
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isPending}
+              onClick={() => setDecision("reject")}
+            >
+              Rechazar solicitud
             </Button>
           </div>
         </div>
       </CardContent>
+      <ConfirmActionDialog
+        open={decision !== null}
+        onOpenChange={(open) => {
+          if (!open && !isPending) setDecision(null);
+        }}
+        title={decision === "approve" ? "Aprobar esta solicitud" : "Rechazar esta solicitud"}
+        description={
+          decision === "approve"
+            ? "Se creará un turno con la sucursal, el profesional y el horario seleccionados."
+            : "La solicitud dejará de aparecer como pendiente en la agenda."
+        }
+        confirmLabel={decision === "approve" ? "Aprobar solicitud" : "Rechazar solicitud"}
+        confirmVariant={decision === "reject" ? "destructive" : "default"}
+        pending={isPending}
+        pendingLabel="Procesando…"
+        errorMessage={error === null ? undefined : userFacingBookingRequestError(error)}
+        onConfirm={async () => {
+          if (decision === "reject") {
+            await onReject();
+            return;
+          }
+          if (decision !== "approve") return;
+          if (startAt !== "" && endAt !== "") {
+            const startIso = tryLocalInputToIso(startAt);
+            const endIso = tryLocalInputToIso(endAt);
+            if (startIso === null || endIso === null)
+              throw new Error("Revisá los horarios antes de confirmar.");
+            await onApprove({
+              branchId,
+              professionalMembershipId,
+              startAt: startIso,
+              endAt: endIso,
+            });
+            return;
+          }
+          await onApprove({ branchId, professionalMembershipId });
+        }}
+      />
     </Card>
   );
 }
@@ -681,7 +936,7 @@ export function Agenda(): JSX.Element {
       setEditor((current) =>
         current?.kind === "request" && current.request.id === requestId ? null : current
       );
-      setNotice("This booking request was already decided. The pending layer was refreshed.");
+      setNotice("Otra persona ya resolvió esta solicitud. Actualizamos la agenda.");
     }
   }
 
@@ -695,7 +950,7 @@ export function Agenda(): JSX.Element {
     mutationFn: createAppointment,
     onSuccess: () => {
       setEditor(null);
-      setNotice("Appointment created.");
+      setNotice("Turno creado.");
       invalidateAppointments();
     },
     // Any failed write leaves the calendar showing server truth.
@@ -722,7 +977,7 @@ export function Agenda(): JSX.Element {
     onSuccess: () => {
       setStaleConflict(null);
       setEditor(null);
-      setNotice("Appointment rescheduled.");
+      setNotice("Turno reprogramado.");
       invalidateAppointments();
     },
     onError: (error, input) => {
@@ -741,7 +996,7 @@ export function Agenda(): JSX.Element {
     onSuccess: () => {
       setStaleConflict(null);
       setEditor(null);
-      setNotice("Appointment updated.");
+      setNotice("Estado del turno actualizado.");
       invalidateAppointments();
     },
     onError: () => {
@@ -757,7 +1012,7 @@ export function Agenda(): JSX.Element {
       // appointment appears. Closing the panel is what marks the request decided.
       setStaleConflict(null);
       setEditor(null);
-      setNotice("Booking request approved.");
+      setNotice("Solicitud aprobada; se creó el turno.");
       invalidateRequests();
       invalidateAppointments();
     },
@@ -777,7 +1032,7 @@ export function Agenda(): JSX.Element {
     onSuccess: () => {
       setStaleConflict(null);
       setEditor(null);
-      setNotice("Booking request rejected.");
+      setNotice("Solicitud rechazada.");
       invalidateRequests();
     },
     onError: (error, id) => {
@@ -811,7 +1066,13 @@ export function Agenda(): JSX.Element {
   const branches = optionsQuery.data?.branches ?? [];
   const professionals = optionsQuery.data?.professionals ?? [];
   const branchLabel = (branchId: string): string =>
-    branches.find((branch) => branch.id === branchId)?.name ?? "Branch";
+    branches.find((branch) => branch.id === branchId)?.name ?? "Sucursal";
+
+  const professionalLabel = (membershipId: string): string =>
+    professionalDisplayLabel(
+      membershipId,
+      professionals.find((item) => item.membershipId === membershipId)?.displayName
+    );
 
   // Projected to id + name so no catalog price, tax, rate or currency can reach
   // the selector or the filter. A failed read yields an empty list, which the
@@ -852,6 +1113,24 @@ export function Agenda(): JSX.Element {
   const pendingRequests = (requestsQuery.data ?? []).filter(
     (request) => request.status === "PENDING"
   );
+  const identities = usePatientIdentities([
+    ...(appointmentsQuery.data ?? []).map((appointment) => appointment.patientId),
+    ...pendingRequests.map((request) => request.patientId),
+  ]);
+  const patientNames = useMemo(
+    () =>
+      new Map(
+        (identities.isError ? [] : (identities.data ?? [])).map((patient) => [
+          patient.id,
+          patient.name,
+        ])
+      ),
+    [identities.data, identities.isError]
+  );
+  const patientLabel = useCallback(
+    (id: string) => patientNames.get(id) ?? "Paciente (nombre no disponible)",
+    [patientNames]
+  );
   const requestsDenied =
     requestsQuery.error !== null && isAgendaPermissionDenied(requestsQuery.error);
   const requestMutationPending =
@@ -882,16 +1161,16 @@ export function Agenda(): JSX.Element {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Agenda</h1>
           <p className="text-sm text-muted-foreground">
-            Schedule branch-scoped appointments for veterinarians.
+            Organizá turnos por sucursal y profesional.
           </p>
         </div>
         <Button type="button" onClick={() => setEditorClearingConflict({ kind: "create" })}>
-          New appointment
+          Nuevo turno
         </Button>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Agenda view">
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Vista de agenda">
           {VIEWS.map((entry) => (
             <Button
               key={entry.id}
@@ -907,7 +1186,7 @@ export function Agenda(): JSX.Element {
         </div>
         <div className="flex items-center gap-1">
           <Button type="button" variant="outline" size="sm" onClick={() => step(-1)}>
-            Previous
+            Anterior
           </Button>
           <Button
             type="button"
@@ -915,24 +1194,24 @@ export function Agenda(): JSX.Element {
             size="sm"
             onClick={() => setAnchor(dateKeyOf(new Date().toISOString()))}
           >
-            Today
+            Hoy
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => step(1)}>
-            Next
+            Siguiente
           </Button>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="space-y-1 text-sm">
-          <span className="font-medium">Branch filter</span>
+          <span className="font-medium">Sucursal</span>
           <select
-            aria-label="Branch filter"
+            aria-label="Filtrar por sucursal"
             className={`${controlClassName} w-full`}
             value={branchFilter}
             onChange={(event) => setBranchFilter(event.target.value)}
           >
-            <option value="">All branches</option>
+            <option value="">Todas las sucursales</option>
             {branches.map((branch) => (
               <option key={branch.id} value={branch.id}>
                 {branch.name}
@@ -941,46 +1220,46 @@ export function Agenda(): JSX.Element {
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="font-medium">Professional filter</span>
+          <span className="font-medium">Profesional</span>
           <select
-            aria-label="Professional filter"
+            aria-label="Filtrar por profesional"
             className={`${controlClassName} w-full`}
             value={professionalFilter}
             onChange={(event) => setProfessionalFilter(event.target.value)}
           >
-            <option value="">All professionals</option>
+            <option value="">Todos los profesionales</option>
             {professionals.map((professional) => (
               <option key={professional.membershipId} value={professional.membershipId}>
-                {professional.membershipId.slice(0, 8)}
+                {professionalDisplayLabel(professional.membershipId, professional.displayName)}
               </option>
             ))}
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="font-medium">Status filter</span>
+          <span className="font-medium">Estado</span>
           <select
-            aria-label="Status filter"
+            aria-label="Filtrar por estado"
             className={`${controlClassName} w-full`}
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as "" | AppointmentStatus)}
           >
-            <option value="">All statuses</option>
+            <option value="">Todos los estados</option>
             {APPOINTMENT_STATUSES.map((status) => (
               <option key={status} value={status}>
-                {status.replace("_", " ")}
+                {APPOINTMENT_STATUS_LABELS[status]}
               </option>
             ))}
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="font-medium">Service filter</span>
+          <span className="font-medium">Servicio</span>
           <select
-            aria-label="Service filter"
+            aria-label="Filtrar por servicio"
             className={`${controlClassName} w-full`}
             value={serviceFilter}
             onChange={(event) => setServiceFilter(event.target.value)}
           >
-            <option value="">All services</option>
+            <option value="">Todos los servicios</option>
             {serviceOptions.map((service) => (
               <option key={service.id} value={service.id}>
                 {service.name}
@@ -1034,9 +1313,9 @@ export function Agenda(): JSX.Element {
        * region only surfaces the loading/empty/error/denied states so "no pending
        * requests" reads as the normal state, never as an error.
        */}
-      <section aria-label="Pending booking requests" className="space-y-2">
+      <section aria-label="Solicitudes de turno pendientes" className="space-y-2">
         {requestsQuery.isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading pending requests...</p>
+          <p className="text-sm text-muted-foreground">Cargando solicitudes pendientes…</p>
         ) : requestsQuery.error ? (
           <div
             role="alert"
@@ -1047,16 +1326,31 @@ export function Agenda(): JSX.Element {
             {userFacingBookingRequestError(requestsQuery.error)}
           </div>
         ) : pendingRequests.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No pending booking requests.</p>
+          <p className="text-sm text-muted-foreground">No hay solicitudes de turno pendientes.</p>
         ) : (
           <p role="status" className="text-sm text-muted-foreground">
             {pendingRequests.length === 1
-              ? "1 pending booking request is shown on the calendar and in the list."
-              : `${pendingRequests.length} pending booking requests are shown on the calendar and in the list.`}
+              ? "Hay 1 solicitud pendiente en el calendario y la lista."
+              : `Hay ${pendingRequests.length} solicitudes pendientes en el calendario y la lista.`}
           </p>
         )}
       </section>
 
+      {identities.error && (
+        <div role="status" className="space-y-2 rounded-lg border bg-muted p-3 text-sm">
+          <p>{patientLookupError(identities.error)} Podés seguir gestionando los turnos.</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void identities.refetch();
+            }}
+          >
+            Reintentar nombres
+          </Button>
+        </div>
+      )}
       {editor?.kind === "create" && (
         <CreateAppointmentForm
           branches={branches}
@@ -1076,14 +1370,15 @@ export function Agenda(): JSX.Element {
           data-testid="stale-version-alert"
           className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive"
         >
-          This appointment was changed by another staff member. The latest details are shown below;
-          review them and try again.
+          Otra persona modificó este turno. Revisá los datos actualizados antes de volver a
+          intentarlo.
         </div>
       )}
       {editor?.kind === "manage" && (
         <ManageAppointmentForm
           key={`${editor.appointment.id}:${editor.appointment.version}`}
           appointment={editor.appointment}
+          patientName={patientLabel(editor.appointment.patientId)}
           services={serviceOptions}
           isPending={mutationPending}
           error={staleConflict !== null ? null : mutationError}
@@ -1097,9 +1392,9 @@ export function Agenda(): JSX.Element {
               serviceId,
             })
           }
-          onTransition={(command) =>
-            transitionMutation.mutate({ id: editor.appointment.id, command })
-          }
+          onTransition={async (command) => {
+            await transitionMutation.mutateAsync({ id: editor.appointment.id, command });
+          }}
         />
       )}
 
@@ -1107,14 +1402,17 @@ export function Agenda(): JSX.Element {
         <BookingRequestDecisionForm
           key={editor.request.id}
           request={editor.request}
+          patientName={patientLabel(editor.request.patientId)}
           branches={branches}
           professionals={professionals}
           isPending={requestMutationPending}
           error={requestMutationError}
-          onApprove={(input) =>
-            approveRequestMutation.mutate({ id: editor.request.id, body: input })
-          }
-          onReject={() => rejectRequestMutation.mutate(editor.request.id)}
+          onApprove={async (input) => {
+            await approveRequestMutation.mutateAsync({ id: editor.request.id, body: input });
+          }}
+          onReject={async () => {
+            await rejectRequestMutation.mutateAsync(editor.request.id);
+          }}
           onClose={() => setEditorClearingConflict(null)}
         />
       )}
@@ -1122,7 +1420,7 @@ export function Agenda(): JSX.Element {
       {appointmentsQuery.isLoading ? (
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Loading agenda...</p>
+            <p className="text-sm text-muted-foreground">Cargando agenda…</p>
           </CardContent>
         </Card>
       ) : denied ? (
@@ -1142,9 +1440,9 @@ export function Agenda(): JSX.Element {
       ) : appointmentsQuery.data?.length === 0 && pendingRequests.length === 0 ? (
         <Card>
           <CardContent className="p-6">
-            <h2 className="text-sm font-semibold">No appointments</h2>
+            <h2 className="text-sm font-semibold">Todavía no hay turnos</h2>
             <p className="text-sm text-muted-foreground">
-              There are no appointments for the selected filters.
+              No encontramos turnos con los filtros seleccionados.
             </p>
           </CardContent>
         </Card>
@@ -1155,6 +1453,8 @@ export function Agenda(): JSX.Element {
           appointments={appointmentsQuery.data ?? []}
           requests={pendingRequests}
           branchLabel={branchLabel}
+          professionalLabel={professionalLabel}
+          patientLabel={patientLabel}
           {...(showsHourOverlay &&
             availabilityOverlay !== undefined && { overlay: availabilityOverlay })}
           onOpen={(appointment) => setEditorClearingConflict({ kind: "manage", appointment })}

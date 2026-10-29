@@ -7,6 +7,16 @@ import { PatientDetail } from "./patient-detail";
  * The interactive shell is a client component so loading, empty, error, and
  * mutation states remain explicit and reactive.
  */
-export default function PatientDetailPage(): JSX.Element {
-  return <PatientDetail />;
+export default async function PatientDetailPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ appointment?: string | string[]; encounter?: string | string[] }>;
+}): Promise<JSX.Element> {
+  const params = await searchParams;
+  return (
+    <PatientDetail
+      initialEncounterId={typeof params.encounter === "string" ? params.encounter : undefined}
+      appointmentId={typeof params.appointment === "string" ? params.appointment : undefined}
+    />
+  );
 }

@@ -284,7 +284,7 @@ export function formatTimeRange(
 /** Human day heading, e.g. `Mon, 14 Sep`. */
 export function formatDayHeading(key: string): string {
   const { year, month, day } = parseDateKey(key);
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("es-PY", {
     timeZone: "UTC",
     weekday: "short",
     day: "numeric",
@@ -295,7 +295,7 @@ export function formatDayHeading(key: string): string {
 /** Human month heading, e.g. `September 2026`. */
 export function formatMonthHeading(key: string): string {
   const { year, month } = parseDateKey(key);
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("es-PY", {
     timeZone: "UTC",
     month: "long",
     year: "numeric",

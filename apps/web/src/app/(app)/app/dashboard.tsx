@@ -3,6 +3,9 @@
 import type { JSX, ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
+import { Button } from "@newsaas/ui/components/ui/button";
+import { Icon } from "@newsaas/ui/components/ui/icon";
+import { Skeleton } from "@newsaas/ui/components/ui/skeleton";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
   Card,
@@ -12,6 +15,7 @@ import {
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
 import type { ReportCode } from "@/app/api/reports/report-codes";
+import { formatEsPyDecimal, formatStaffMoney } from "@/lib/es-py-format";
 import {
   fetchReport,
   isReportAccessDenied,
@@ -42,12 +46,10 @@ import {
  * - the query KEY is `["reports", code, reportQueryString(code, selection)]`, the
  *   exact key the report view uses, so the dashboard's card and the report it
  *   links to share one cache entry as well as one request;
- * - the card shows the report's own field verbatim. `totalGross` is a
- *   fixed-scale decimal STRING and is printed as it arrived; `saleCount` is a
- *   number and is printed as one; `totals.difference` is a string that may be
- *   negative and keeps its sign. Nothing is summed, divided, rounded or
- *   re-formatted on this surface, because a client-side total would be the second
- *   aggregation path the decision refuses.
+ * - the card displays the report's own fields, using exact-string es-PY
+ *   punctuation for money and decimals ([[DEC-080]]). The API remains the only
+ *   aggregation path: no amount is summed, divided or rounded here, and the
+ *   signed cash difference preserves every nonzero fractional digit.
  *
  * ## One card is not period-scoped, and says so
  *
@@ -78,7 +80,7 @@ import {
 const controlClassName =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-const valueClassName = "text-2xl font-semibold tracking-tight text-foreground";
+const valueClassName = "text-3xl font-semibold tracking-tight tabular-nums text-foreground";
 
 /**
  * What a card renders when the response is not the report it asked for.
@@ -134,18 +136,27 @@ function DashboardCard({
   renderValue,
 }: DashboardCardProps): JSX.Element {
   return (
-    <Card data-testid={testId} className="flex flex-col">
-      <CardHeader>
-        <CardTitle>
-          <Link
-            data-testid={`${testId}-link`}
-            href={`/app/reports/${code}`}
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            {title}
-          </Link>
-        </CardTitle>
-        <CardDescription>{description}</CardDescription>
+    <Card data-testid={testId} className="flex flex-col transition-colors hover:border-primary/30">
+      <CardHeader className="flex-row items-start justify-between gap-3 space-y-0 pb-4">
+        <div className="space-y-2">
+          <CardTitle className="text-sm font-medium">
+            <Link
+              data-testid={`${testId}-link`}
+              href={`/app/reports/${code}`}
+              className="text-foreground underline-offset-4 hover:text-primary hover:underline"
+            >
+              {title}
+            </Link>
+          </CardTitle>
+          <CardDescription className="min-h-10 text-xs leading-relaxed">
+            {description}
+          </CardDescription>
+        </div>
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
+          <Icon
+            name={code === "low-stock" ? "box" : code === "cash-sessions" ? "wallet" : "chart"}
+          />
+        </span>
       </CardHeader>
       <CardContent className="flex-1">
         <CardState testId={testId} query={query} renderValue={renderValue} />
@@ -164,9 +175,11 @@ function CardState({
 
   if (query.isLoading) {
     return (
-      <p data-testid={`${testId}-loading`} className="text-sm text-muted-foreground">
-        Loading...
-      </p>
+      <div data-testid={`${testId}-loading`} role="status" className="space-y-3">
+        <span className="sr-only">Cargando…</span>
+        <Skeleton className="h-9 w-28" />
+        <Skeleton className="h-3 w-40" />
+      </div>
     );
   }
 
@@ -179,7 +192,7 @@ function CardState({
         className="rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
       >
         <p className="font-medium">
-          {denied ? "Not available to this account" : "This figure could not be loaded"}
+          {denied ? "No disponible para esta cuenta" : "No se pudo cargar este valor"}
         </p>
         {/* The API's own sentence, verbatim: the same rule the report view keeps,
             because a period the API refused explains itself. */}
@@ -218,21 +231,19 @@ export function Dashboard(): JSX.Element {
   const lowStock = useDashboardReport("low-stock", { kind: "none" });
 
   return (
-    <div
-      data-testid="app-dashboard"
-      className="mx-auto max-w-5xl space-y-6 rounded-xl bg-card p-6 text-card-foreground"
-    >
+    <div data-testid="app-dashboard" className="space-y-8 text-foreground">
       <header className="flex flex-wrap items-end justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Dashboard</h1>
+        <div className="space-y-2">
+          <p className="page-eyebrow">Resumen del espacio de trabajo</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Panel</h1>
           <p className="text-sm text-muted-foreground">
-            Four figures, each one a report this tenant can open in full. Nothing is computed here:
-            every value is the reporting API&apos;s own answer for the period below.
+            Una vista clara de tus ventas, caja e inventario. Elegí un período para revisar los
+            resultados.
           </p>
         </div>
         <div className="space-y-2">
           <label htmlFor="dashboard-period" className="text-sm font-medium">
-            Period
+            Período
           </label>
           <select
             id="dashboard-period"
@@ -258,19 +269,18 @@ export function Dashboard(): JSX.Element {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <DashboardCard
           testId="dashboard-card-gross"
-          title="Gross sales"
+          title="Ventas brutas"
           code="sales-by-period"
-          description="The period's gross total from the sales-by-period report."
+          description="Ingresos de ventas completadas."
           query={sales}
           renderValue={(response) =>
             response.report === "sales-by-period" ? (
               <>
-                {/* A fixed-scale decimal STRING, printed exactly as it arrived:
-                    `"1234.50"` renders as `1234.50` and never as `1234.5`. */}
-                <p className={valueClassName}>{response.totalGross}</p>
-                <p className="text-xs text-muted-foreground">
-                  {response.currency} · the report&apos;s own total, never recomputed here.
+                {/* Localized for reading only; the exact API decimal remains the source of truth. */}
+                <p className={valueClassName}>
+                  {formatStaffMoney(response.totalGross, response.currency)}
                 </p>
+                <p className="text-xs text-muted-foreground">Ventas completadas</p>
               </>
             ) : (
               NO_VALUE
@@ -280,17 +290,17 @@ export function Dashboard(): JSX.Element {
 
         <DashboardCard
           testId="dashboard-card-sales"
-          title="Sales"
+          title="Ventas"
           code="sales-by-period"
-          description="How many sales completed in the period."
+          description="Cantidad de ventas completadas en el período."
           query={sales}
           renderValue={(response) =>
             response.report === "sales-by-period" ? (
               <>
-                {/* A COUNT: a number in the DTO, printed as one. */}
+                {/* A count from the API; the frontend does not recompute it. */}
                 <p className={valueClassName}>{response.saleCount}</p>
                 <p className="text-xs text-muted-foreground">
-                  Completed sales in the period, counted by the report.
+                  Ventas completadas en el período seleccionado.
                 </p>
               </>
             ) : (
@@ -301,19 +311,19 @@ export function Dashboard(): JSX.Element {
 
         <DashboardCard
           testId="dashboard-card-cash-difference"
-          title="Cash difference"
+          title="Diferencia de caja"
           code="cash-sessions"
-          description="Counted minus expected across the drawers that closed in the period."
+          description="Diferencia entre el monto contado y el esperado en cajas cerradas."
           query={cashSessions}
           renderValue={(response) =>
             response.report === "cash-sessions" ? (
               <>
                 {/* May be negative, and the sign IS the information: a drawer
                     that was short must not read like one that was over. */}
-                <p className={valueClassName}>{response.totals.difference}</p>
+                <p className={valueClassName}>{formatEsPyDecimal(response.totals.difference)}</p>
                 <p className="text-xs text-muted-foreground">
-                  Across {response.rows.length} closed{" "}
-                  {response.rows.length === 1 ? "drawer" : "drawers"} in the period.
+                  En {response.rows.length} caja{response.rows.length === 1 ? "" : "s"} cerrada
+                  {response.rows.length === 1 ? "" : "s"} durante el período.
                 </p>
               </>
             ) : (
@@ -324,9 +334,9 @@ export function Dashboard(): JSX.Element {
 
         <DashboardCard
           testId="dashboard-card-low-stock"
-          title="Low stock"
+          title="Stock bajo"
           code="low-stock"
-          description="A current state, not a period: this report takes no period, so this card does not follow the selector."
+          description="Alertas actuales de stock, sin depender del período."
           query={lowStock}
           renderValue={(response) =>
             response.report === "low-stock" ? (
@@ -334,8 +344,8 @@ export function Dashboard(): JSX.Element {
                 <>
                   <p className={valueClassName}>{response.rows.length}</p>
                   <p className="text-xs text-muted-foreground">
-                    {response.rows.length === 1 ? "item is" : "items are"} at or below their own
-                    threshold.
+                    {response.rows.length === 1 ? "Artículo en" : "Artículos en"} su umbral mínimo o
+                    por debajo.
                   </p>
                 </>
               ) : (
@@ -349,17 +359,17 @@ export function Dashboard(): JSX.Element {
                     data-testid="dashboard-card-low-stock-not-configured"
                     className="text-sm font-medium text-foreground"
                   >
-                    No item has a low-stock threshold yet
+                    Aún no hay artículos con umbral de stock bajo
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Nothing is monitored until a threshold is set, so there is nothing to count.
+                    No se supervisa el stock hasta que se configure un umbral.
                   </p>
                   <Link
                     data-testid="dashboard-card-low-stock-configure"
                     href="/app/catalog"
                     className="inline-flex text-xs font-medium text-primary underline-offset-4 hover:underline"
                   >
-                    Set a threshold in the catalog
+                    Configurar un umbral en el catálogo
                   </Link>
                 </>
               )
@@ -369,6 +379,75 @@ export function Dashboard(): JSX.Element {
           }
         />
       </div>
+      <section aria-label="Accesos rápidos" className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">¿Por dónde querés empezar?</CardTitle>
+            <CardDescription>Tené a mano las tareas de todos los días.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-3">
+            {(
+              [
+                {
+                  href: "/app/agenda",
+                  title: "Abrir agenda",
+                  description: "Turnos y disponibilidad",
+                  icon: "calendar",
+                },
+                {
+                  href: "/app/patients",
+                  title: "Buscar un paciente",
+                  description: "Ficha e historial clínico",
+                  icon: "activity",
+                },
+                {
+                  href: "/app/sales",
+                  title: "Abrir punto de venta",
+                  description: "Productos, servicios y cobros",
+                  icon: "receipt",
+                },
+              ] as const
+            ).map((action) => (
+              <Link
+                key={action.href}
+                href={action.href}
+                className="group rounded-lg border bg-background/50 p-4 transition-colors hover:border-primary/40 hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <div className="mb-5 flex items-center justify-between text-primary">
+                  <Icon name={action.icon} className="size-5" />
+                  <Icon
+                    name="arrow"
+                    className="size-4 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 motion-reduce:transform-none"
+                  />
+                </div>
+                <p className="text-sm font-semibold">{action.title}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {action.description}
+                </p>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+        <Card className="bg-secondary/40">
+          <CardHeader>
+            <div className="mb-3 flex size-10 items-center justify-center rounded-lg border bg-card text-primary">
+              <Icon name="chart" className="size-5" />
+            </div>
+            <CardTitle className="text-base">Revisá más en detalle</CardTitle>
+            <CardDescription>
+              Consultá con más detalle los informes de ventas, stock y operaciones.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline" className="w-full justify-between">
+              <Link href="/app/reports">
+                Ver informes
+                <Icon name="arrow" />
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }

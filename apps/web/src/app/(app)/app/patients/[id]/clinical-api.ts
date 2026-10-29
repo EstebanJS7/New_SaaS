@@ -410,14 +410,58 @@ export function userFacingClinicalError(error: Error): string {
   const code = error instanceof ApiRequestError ? error.code : "";
   switch (code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to view clinical records.";
+      return "Iniciá sesión para ver las fichas clínicas.";
     case "FORBIDDEN":
-      return "You do not have permission to manage clinical records.";
+      return "No tenés permiso para gestionar fichas clínicas.";
     case "FEATURE_NOT_ENTITLED":
-      return "The veterinary module is not enabled for this tenant.";
+      return "El módulo veterinario no está habilitado para esta organización.";
     case "NOT_FOUND":
-      return "Clinical record not found.";
+      return "No encontramos la ficha clínica.";
     default:
       return error.message;
   }
+}
+
+/** CONFIDENTIAL Veterinary association IDs; staff only, no clinical payload copied. */
+export interface ClinicalLinks {
+  appointmentId: string | null;
+  sales: { id: string; status: string }[];
+  canReadAppointments: boolean;
+  canReadSales: boolean;
+}
+export function getClinicalLinks(patientId: string, encounterId: string): Promise<ClinicalLinks> {
+  return getJson<ClinicalLinks>(
+    `${encounterBase(patientId)}/${encodeIdentifier(encounterId, "encounter id")}/links`
+  );
+}
+export function linkClinicalRecord(
+  patientId: string,
+  encounterId: string,
+  target: { appointmentId: string } | { saleId: string }
+): Promise<{ linked: true }> {
+  const kind = "appointmentId" in target ? "appointment" : "sale";
+  return postJson(
+    `${encounterBase(patientId)}/${encodeIdentifier(encounterId, "encounter id")}/links/${kind}`,
+    target
+  );
+}
+
+export async function getAppointmentEncounters(
+  patientId: string,
+  appointmentId: string
+): Promise<{ encounterIds: string[] }> {
+  const result = await getJson<{ encounterIds: unknown }>(
+    `/${encodeIdentifier(patientId, "patient id")}/appointments/${encodeIdentifier(appointmentId, "appointment id")}/encounters`
+  );
+  if (
+    !result ||
+    !Array.isArray(result.encounterIds) ||
+    !result.encounterIds.every((id: unknown) => typeof id === "string" && UUID_PATTERN.test(id))
+  )
+    throw new ApiRequestError(
+      "INVALID_RESPONSE",
+      "No se pudieron verificar las consultas vinculadas.",
+      502
+    );
+  return { encounterIds: result.encounterIds as string[] };
 }

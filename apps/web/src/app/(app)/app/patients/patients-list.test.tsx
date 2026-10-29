@@ -1,175 +1,226 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PatientsList } from "./patients-list";
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-  useParams: () => ({ id: "patient-1" }),
-}));
-
-function TestWrapper({ children }: { readonly children: React.ReactNode }) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+import { PATIENT_LIST_CONTEXT_MS } from "./patients-list-state";
+import type { PatientSearchInput, PatientSearchResult } from "./patients-api";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const ID = "11111111-1111-4111-8111-111111111111";
+const item = {
+  id: ID,
+  name: "Rex",
+  speciesName: "Canine",
+  breedName: null,
+  sex: "MALE" as const,
+  isActive: true,
+  primaryGuardianName: "Synthetic guardian",
+};
+function page(input: Partial<PatientSearchResult> = {}): PatientSearchResult {
+  return {
+    items: [item],
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    totalPages: 1,
+    canReadGuardians: true,
+    ...input,
+  };
 }
-
-function jsonResponse(body: unknown, status = 200): Response {
+function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
   });
 }
-
-function mockFetchByUrl(handlers: { patients?: () => Response; catalog?: () => Response }): void {
-  global.fetch = vi.fn((input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url.endsWith("/api/patients/catalog")) {
-      return Promise.resolve(handlers.catalog?.() ?? jsonResponse([]));
-    }
-    if (url.endsWith("/api/patients")) {
-      return Promise.resolve(handlers.patients?.() ?? jsonResponse([]));
-    }
-    return Promise.resolve(
-      jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404)
-    );
+function install(
+  handler: (body: PatientSearchInput) => Response | Promise<Response> = () => json(page())
+) {
+  const requests: PatientSearchInput[] = [];
+  const fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
+    expect(url).toBe("/api/patients/search");
+    expect(init?.method).toBe("POST");
+    if (typeof init?.body !== "string") throw new Error("JSON body expected");
+    const body = JSON.parse(init.body) as PatientSearchInput;
+    requests.push(body);
+    return Promise.resolve(handler(body));
   });
+  vi.stubGlobal("fetch", fetch);
+  return { fetch, requests };
 }
-
-const SPECIES = [
-  {
-    id: "species-1",
-    code: "DOG",
-    name: "Dog",
-    breeds: [{ id: "breed-1", code: "LAB", name: "Labrador" }],
-  },
-];
-
-describe("PatientsList", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("renders a permission-denied UX message when the API returns 403", async () => {
-    mockFetchByUrl({
-      patients: () => jsonResponse({ error: { code: "FORBIDDEN", message: "Access denied" } }, 403),
-    });
-
-    render(
-      <TestWrapper>
+function mount(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  return {
+    client,
+    ...render(
+      <QueryClientProvider client={client}>
         <PatientsList />
-      </TestWrapper>
+      </QueryClientProvider>
+    ),
+  };
+}
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+describe("Patient server list", () => {
+  it("offers a Spanish retry after a failed read without exposing internal errors", async () => {
+    let failed = true;
+    install(() =>
+      failed
+        ? json({ error: { code: "INTERNAL", message: "Private database detail" } }, 500)
+        : json(page())
     );
-
-    await waitFor(() => {
-      expect(
-        screen.getByText("You do not have permission to manage patients.")
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("renders an unauthenticated UX message when the API returns 401", async () => {
-    mockFetchByUrl({
-      patients: () =>
-        jsonResponse(
-          { error: { code: "UNAUTHENTICATED", message: "Authentication required" } },
-          401
-        ),
-    });
-
-    render(
-      <TestWrapper>
-        <PatientsList />
-      </TestWrapper>
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("You must be signed in to view patients.")).toBeInTheDocument();
-    });
-  });
-
-  it("renders the veterinary entitlement UX message when the API returns 403 FEATURE_NOT_ENTITLED", async () => {
-    mockFetchByUrl({
-      patients: () =>
-        jsonResponse({ error: { code: "FEATURE_NOT_ENTITLED", message: "Not entitled" } }, 403),
-    });
-
-    render(
-      <TestWrapper>
-        <PatientsList />
-      </TestWrapper>
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.getByText("The veterinary module is not enabled for this tenant.")
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("renders the empty state when the tenant has no patients", async () => {
-    mockFetchByUrl({ patients: () => jsonResponse([]) });
-
-    render(
-      <TestWrapper>
-        <PatientsList />
-      </TestWrapper>
-    );
-
-    expect(await screen.findByText("No patients yet")).toBeInTheDocument();
-  });
-
-  it("lists patients and filters them client-side by name", async () => {
-    mockFetchByUrl({
-      patients: () =>
-        jsonResponse([
-          {
-            id: "patient-1",
-            tenantId: "tenant-a",
-            name: "Rex",
-            speciesId: "species-1",
-            breedId: "breed-1",
-            sex: "MALE",
-            birthDate: null,
-            isActive: true,
-            createdAt: "2026-09-11T00:00:00.000Z",
-            updatedAt: "2026-09-11T00:00:00.000Z",
-          },
-          {
-            id: "patient-2",
-            tenantId: "tenant-a",
-            name: "Milo",
-            speciesId: "species-1",
-            breedId: null,
-            sex: "FEMALE",
-            birthDate: null,
-            isActive: true,
-            createdAt: "2026-09-11T00:00:00.000Z",
-            updatedAt: "2026-09-11T00:00:00.000Z",
-          },
-        ]),
-      catalog: () => jsonResponse(SPECIES),
-    });
-
-    render(
-      <TestWrapper>
-        <PatientsList />
-      </TestWrapper>
-    );
-
+    mount();
+    await screen.findByRole("alert");
+    expect(screen.queryByText("Private database detail")).not.toBeInTheDocument();
+    failed = false;
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
     expect(await screen.findByText("Rex")).toBeInTheDocument();
-    expect(screen.getByText("Milo")).toBeInTheDocument();
-    // Species resolved from the global catalog once its query resolves.
-    await waitFor(() => {
-      expect(screen.getAllByText(/Dog/).length).toBeGreaterThan(0);
+  });
+  it.each([
+    [401, "UNAUTHENTICATED"],
+    [403, "FORBIDDEN"],
+    [403, "FEATURE_NOT_ENTITLED"],
+  ])("keeps %s %s errors explicit", async (status, code) => {
+    install(() => json({ error: { code, message: "Denied" } }, Number(status)));
+    mount();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("No encontramos pacientes")).not.toBeInTheDocument();
+  });
+  it("searches only on submit using POST and renders server results rather than filtering locally", async () => {
+    const { requests } = install((body) =>
+      json(page({ items: [{ ...item, name: body.q ? "Michi" : "Rex" }] }))
+    );
+    mount();
+    await screen.findByText("Rex");
+    fireEvent.change(screen.getByLabelText("Buscar pacientes"), {
+      target: { value: "Synthetic guardian" },
     });
-
-    fireEvent.change(screen.getByLabelText("Search patients"), { target: { value: "rex" } });
-
-    await waitFor(() => {
-      expect(screen.queryByText("Milo")).not.toBeInTheDocument();
+    expect(requests).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    expect(await screen.findByText("Michi")).toBeInTheDocument();
+    expect(requests[1]).toMatchObject({ q: "Synthetic guardian", page: 1 });
+    expect(window.location.search).not.toContain("Synthetic");
+  });
+  it("uses server page metadata and disables boundary navigation", async () => {
+    const { requests } = install((body) =>
+      json(
+        page({
+          page: body.page,
+          total: 21,
+          totalPages: 2,
+          items: [{ ...item, name: body.page === 1 ? "Rex" : "Michi" }],
+        })
+      )
+    );
+    mount();
+    await screen.findByText("Rex");
+    expect(screen.getByRole("button", { name: "Anterior" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByText("Michi");
+    expect(requests.at(-1)?.page).toBe(2);
+    expect(screen.getByRole("button", { name: "Siguiente" })).toBeDisabled();
+    expect(screen.getByText("Mostrando 21–21 de 21")).toBeInTheDocument();
+  });
+  it("resets the page when lifecycle or order changes", async () => {
+    const { requests } = install((body) =>
+      json(page({ page: body.page, total: 21, totalPages: 2 }))
+    );
+    mount();
+    await screen.findByText("Rex");
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByText("Página 2 de 2");
+    fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "inactive" } });
+    await waitFor(() => expect(requests.at(-1)).toMatchObject({ status: "inactive", page: 1 }));
+    fireEvent.change(screen.getByLabelText("Ordenar por"), { target: { value: "recent" } });
+    await waitFor(() => expect(requests.at(-1)).toMatchObject({ sort: "recent", page: 1 }));
+  });
+  it("restores search and page after opening a record and returning in the same document", async () => {
+    const { requests } = install((body) =>
+      json(page({ page: body.page, total: 21, totalPages: 2 }))
+    );
+    const first = mount();
+    await screen.findByText("Rex");
+    fireEvent.change(screen.getByLabelText("Buscar pacientes"), {
+      target: { value: "Responsible" },
     });
-    expect(screen.getByText("Rex")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    await screen.findByText("Rex");
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByText("Página 2 de 2");
+    expect(screen.getByRole("link", { name: "Rex" })).toHaveAttribute(
+      "href",
+      `/app/patients/${ID}`
+    );
+    first.unmount();
+    mount(first.client);
+    expect(screen.getByLabelText("Buscar pacientes")).toHaveValue("Responsible");
+    await screen.findByText("Rex");
+    expect(requests.at(-1)).toMatchObject({ q: "Responsible", page: 2 });
+  });
+  it("expires same-document context and does not reuse it with a new query client", async () => {
+    const { requests } = install();
+    const first = mount();
+    await screen.findByText("Rex");
+    fireEvent.change(screen.getByLabelText("Buscar pacientes"), {
+      target: { value: "Responsible" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    await screen.findByText("Rex");
+    first.unmount();
+    const time = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(time + PATIENT_LIST_CONTEXT_MS + 1);
+    const second = mount(first.client);
+    await screen.findByText("Rex");
+    expect(screen.getByLabelText("Buscar pacientes")).toHaveValue("");
+    expect(requests.at(-1)?.q).toBe("");
+    second.unmount();
+    mount();
+    await screen.findByText("Rex");
+    expect(screen.getByLabelText("Buscar pacientes")).toHaveValue("");
+  });
+  it("does not disclose guardian names when the server denies their read", async () => {
+    install(() =>
+      json(page({ canReadGuardians: false, items: [{ ...item, primaryGuardianName: null }] }))
+    );
+    mount();
+    await screen.findByText("Rex");
+    expect(screen.getByText(/No tenés acceso a nombres de responsables/)).toBeInTheDocument();
+    expect(screen.queryByText(/Responsable principal:/)).not.toBeInTheDocument();
+  });
+  it("validates a short input and shows an empty state with clear filters", async () => {
+    const { requests } = install((body) =>
+      json(page({ items: body.q ? [] : [item], total: body.q ? 0 : 1, totalPages: body.q ? 0 : 1 }))
+    );
+    mount();
+    await screen.findByText("Rex");
+    fireEvent.change(screen.getByLabelText("Buscar pacientes"), { target: { value: "a" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(requests).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Buscar pacientes"), { target: { value: "Absent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    await screen.findByText("No encontramos pacientes");
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+    await screen.findByText("Rex");
+    expect(screen.getByLabelText("Buscar pacientes")).toHaveValue("");
+  });
+  it("keeps late responses from replacing a newer filter result", async () => {
+    let resolve: (value: Response) => void = () => undefined;
+    install((body) =>
+      body.status === "active"
+        ? new Promise<Response>((r) => {
+            resolve = r;
+          })
+        : json(page({ items: [{ ...item, name: "Inactive result", isActive: false }] }))
+    );
+    mount();
+    expect(screen.getByText("Buscando pacientes…")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "inactive" } });
+    await screen.findByText("Inactive result");
+    await act(async () => {
+      resolve(json(page()));
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Rex")).not.toBeInTheDocument();
   });
 });

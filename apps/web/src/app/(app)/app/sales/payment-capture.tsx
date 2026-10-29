@@ -3,9 +3,14 @@
 import type { JSX } from "react";
 import { useRef, useState } from "react";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import {
+  formatEsPyDecimalInput,
+  formatStaffMoney,
+  normalizeEsPyDecimalInput,
+} from "@/lib/es-py-format";
 import {
   PAYMENT_METHODS,
-  formatWireAmount,
   isWirePaymentAmount,
   type PaymentMethod,
   type SalePaymentInput,
@@ -28,8 +33,9 @@ interface PaymentCaptureProps {
   readonly total: string;
   /** The sale's currency, rendered as its own field and never converted. */
   readonly currency: string;
-  readonly onSubmit: (payments: SalePaymentInput[]) => void;
+  readonly onSubmit: (payments: SalePaymentInput[]) => void | Promise<unknown>;
   readonly isPending: boolean;
+  readonly errorMessage?: string;
   readonly disabled?: boolean;
 }
 
@@ -53,18 +59,22 @@ export function PaymentCapture({
   currency,
   onSubmit,
   isPending,
+  errorMessage,
   disabled = false,
 }: PaymentCaptureProps): JSX.Element {
   const nextKeyRef = useRef(1);
   const [payments, setPayments] = useState<PaymentDraft[]>([
-    { key: "payment-0", method: "CASH", amount: total },
+    { key: "payment-0", method: "CASH", amount: formatEsPyDecimalInput(total) },
   ]);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
-  const amounts = payments.map((payment) => payment.amount);
-  const everyAmountValid =
-    payments.length > 0 && payments.every((payment) => isWirePaymentAmount(payment.amount.trim()));
-  const exact = everyAmountValid && paymentsSumExactly(amounts, total);
-  const sum = addWireDecimals(amounts);
+  const normalizedAmounts = payments.map((payment) => normalizeEsPyDecimalInput(payment.amount));
+  const exactAmounts = normalizedAmounts.filter(
+    (amount): amount is string => amount !== null && isWirePaymentAmount(amount)
+  );
+  const everyAmountValid = payments.length > 0 && exactAmounts.length === payments.length;
+  const exact = everyAmountValid && paymentsSumExactly(exactAmounts, total);
+  const sum = everyAmountValid ? addWireDecimals(exactAmounts) : null;
   const isLocked = disabled || isPending;
 
   function setPayment(key: string, patch: Partial<Omit<PaymentDraft, "key">>): void {
@@ -87,15 +97,10 @@ export function PaymentCapture({
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    if (!exact) {
+    if (!exact || isLocked) {
       return;
     }
-    onSubmit(
-      payments.map((payment) => ({
-        method: payment.method,
-        amount: payment.amount.trim(),
-      }))
-    );
+    setReviewOpen(true);
   }
 
   return (
@@ -108,7 +113,7 @@ export function PaymentCapture({
           >
             <div className="space-y-2">
               <label htmlFor={`${payment.key}-method`} className="text-sm font-medium">
-                {`Payment ${index + 1} method`}
+                {`Medio de pago ${index + 1}`}
               </label>
               <select
                 id={`${payment.key}-method`}
@@ -128,7 +133,7 @@ export function PaymentCapture({
             </div>
             <div className="space-y-2">
               <label htmlFor={`${payment.key}-amount`} className="text-sm font-medium">
-                {`Payment ${index + 1} amount`}
+                {`Importe del pago ${index + 1}`}
               </label>
               <input
                 id={`${payment.key}-amount`}
@@ -137,9 +142,26 @@ export function PaymentCapture({
                 value={payment.amount}
                 onChange={(event) => setPayment(payment.key, { amount: event.target.value })}
                 disabled={isLocked}
-                placeholder="0.00"
+                placeholder="0"
+                aria-invalid={
+                  normalizeEsPyDecimalInput(payment.amount) === null ||
+                  !isWirePaymentAmount(normalizeEsPyDecimalInput(payment.amount) ?? "")
+                }
+                aria-describedby={
+                  normalizeEsPyDecimalInput(payment.amount) === null ||
+                  !isWirePaymentAmount(normalizeEsPyDecimalInput(payment.amount) ?? "")
+                    ? `${payment.key}-amount-hint payment-exact-sum-help`
+                    : "payment-exact-sum-help"
+                }
                 className={inputClassName}
               />
+              {(normalizeEsPyDecimalInput(payment.amount) === null ||
+                !isWirePaymentAmount(normalizeEsPyDecimalInput(payment.amount) ?? "")) && (
+                <p id={`${payment.key}-amount-hint`} className="text-xs text-destructive">
+                  Ingresá un importe positivo con hasta dos decimales. Usá coma para los decimales y
+                  punto para los miles.
+                </p>
+              )}
             </div>
             <div className="flex justify-end sm:col-span-2">
               <Button
@@ -149,7 +171,7 @@ export function PaymentCapture({
                 onClick={() => removePayment(payment.key)}
                 disabled={isLocked || payments.length === 1}
               >
-                Remove payment
+                Quitar pago
               </Button>
             </div>
           </div>
@@ -158,29 +180,88 @@ export function PaymentCapture({
 
       <div className="flex items-center justify-between">
         <Button type="button" variant="outline" size="sm" onClick={addPayment} disabled={isLocked}>
-          Add payment
+          Agregar medio de pago
         </Button>
-        <p className="text-sm text-muted-foreground">
-          {`Total ${formatWireAmount(total)} ${currency}`}
+        <p className="text-sm text-muted-foreground" aria-label="Total de la venta">
+          {`Total de la venta: ${formatStaffMoney(total, currency)}`}
         </p>
       </div>
 
       <p
+        role="status"
+        aria-live="polite"
         className={exact ? "text-sm text-foreground" : "text-sm text-destructive"}
         data-testid="payment-sum"
       >
-        {`Payments sum ${sum === null ? "unknown" : formatWireAmount(sum)} ${currency}.`}
+        {`Suma de pagos: ${sum === null ? "no disponible" : formatStaffMoney(sum, currency)}.`}
       </p>
 
-      {!exact && (
-        <p className="text-xs text-destructive">
-          The payments must sum exactly to the sale total before the sale can be completed.
-        </p>
-      )}
+      <p
+        id="payment-exact-sum-help"
+        className={exact ? "text-xs text-muted-foreground" : "text-xs text-destructive"}
+      >
+        Los importes deben sumar exactamente el total de la venta. No se calcula vuelto ni se acepta
+        saldo a crédito.
+      </p>
 
       <Button type="submit" disabled={!exact || isLocked}>
-        {isPending ? "Completing..." : "Complete sale"}
+        {isPending ? "Confirmando venta…" : "Revisar venta"}
       </Button>
+      <ConfirmActionDialog
+        open={reviewOpen}
+        onOpenChange={(open) => {
+          if (!open && !isPending) setReviewOpen(false);
+        }}
+        title="Revisar y confirmar venta"
+        description="Verificá el total calculado por el sistema y cómo se distribuye el pago. La venta solo se completa si el servidor confirma la operación."
+        confirmLabel="Confirmar venta"
+        confirmVariant="default"
+        pending={isPending}
+        confirmDisabled={disabled || !exact}
+        pendingLabel="Confirmando venta…"
+        errorMessage={errorMessage}
+        onConfirm={async () => {
+          if (isLocked) throw new Error("Consultá el estado de la venta antes de continuar.");
+          if (!exact) throw new Error("Los pagos ya no coinciden con el total.");
+          await onSubmit(
+            payments.map((payment) => ({
+              method: payment.method,
+              amount: normalizeEsPyDecimalInput(payment.amount) ?? payment.amount.trim(),
+            }))
+          );
+        }}
+      >
+        <div className="mt-4 space-y-3">
+          <dl className="space-y-3 rounded-lg border border-border p-4 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">Total de la venta</dt>
+              <dd className="font-semibold tabular-nums">{formatStaffMoney(total, currency)}</dd>
+            </div>
+            {payments.map((payment, index) => (
+              <div key={payment.key} className="flex items-center justify-between gap-4">
+                <dt>
+                  {PAYMENT_METHOD_LABELS[payment.method]} · pago {index + 1}
+                </dt>
+                <dd className="tabular-nums">
+                  {formatStaffMoney(
+                    normalizeEsPyDecimalInput(payment.amount) ?? payment.amount.trim(),
+                    currency
+                  )}
+                </dd>
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-4 border-t border-border pt-3 font-medium">
+              <dt>Suma de pagos</dt>
+              <dd className="tabular-nums">
+                {sum === null ? "No disponible" : formatStaffMoney(sum, currency)}
+              </dd>
+            </div>
+          </dl>
+          <p className="text-xs text-muted-foreground">
+            El importe debe coincidir exactamente. No se calcula vuelto ni se registra crédito.
+          </p>
+        </div>
+      </ConfirmActionDialog>
     </form>
   );
 }

@@ -20,8 +20,8 @@ function installFetch(handler: (url: string) => Response): ReturnType<typeof vi.
 }
 
 function submit(email = "staff@clinic.test"): void {
-  fireEvent.change(screen.getByLabelText("Email"), { target: { value: email } });
-  fireEvent.click(screen.getByRole("button", { name: "Send the link" }));
+  fireEvent.change(screen.getByLabelText("Correo electrónico"), { target: { value: email } });
+  fireEvent.click(screen.getByRole("button", { name: "Enviar enlace" }));
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -47,7 +47,7 @@ describe("the recovery request form", () => {
     // The API answers 202 identically for an address that exists and one that does not, so a
     // form saying "we sent it" would be the account-existence oracle the API is built to
     // avoid — with the UI doing the leaking.
-    expect(sent.textContent).toContain("If that address has an account");
+    expect(sent.textContent).toContain("Si ese correo tiene una cuenta");
     expect(sent.textContent).not.toMatch(/has been sent|we sent|check your inbox/i);
   });
 
@@ -64,7 +64,7 @@ describe("the recovery request form", () => {
     submit();
 
     expect((await screen.findByTestId("forgot-problem")).textContent).toContain(
-      "Too many recovery requests"
+      "Hubo demasiadas solicitudes"
     );
   });
 
@@ -75,26 +75,34 @@ describe("the recovery request form", () => {
 
     await screen.findByTestId("forgot-problem");
     expect(screen.queryByTestId("forgot-sent")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Email")).toBeInTheDocument();
+    expect(screen.getByLabelText("Correo electrónico")).toBeInTheDocument();
   });
 
   it("links back to sign in from both states", async () => {
     installFetch(() => jsonResponse({ status: "accepted" }, 202));
     render(<ForgotPasswordForm />);
-    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
+    expect(screen.getByRole("link", { name: "Volver al inicio de sesión" })).toHaveAttribute(
+      "href",
+      "/login"
+    );
 
     submit();
     await screen.findByTestId("forgot-sent");
     // The success state offers the way back too: the user's next move is signing in with the
     // password the message will let them set.
-    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
+    expect(screen.getByRole("link", { name: "Volver al inicio de sesión" })).toHaveAttribute(
+      "href",
+      "/login"
+    );
   });
 
   it("cannot submit an empty address", () => {
     installFetch(() => jsonResponse({ status: "accepted" }, 202));
     render(<ForgotPasswordForm />);
-    expect(screen.getByRole("button", { name: "Send the link" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@b.test" } });
-    expect(screen.getByRole("button", { name: "Send the link" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Enviar enlace" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Correo electrónico"), {
+      target: { value: "a@b.test" },
+    });
+    expect(screen.getByRole("button", { name: "Enviar enlace" })).toBeEnabled();
   });
 });

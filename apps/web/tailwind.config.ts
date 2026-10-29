@@ -33,6 +33,9 @@ const config: Config = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        "sidebar-background": "hsl(var(--sidebar-background))",
+        "sidebar-foreground": "hsl(var(--sidebar-foreground))",
+        "sidebar-muted": "hsl(var(--sidebar-muted))",
       },
       borderRadius: {
         lg: "var(--radius)",

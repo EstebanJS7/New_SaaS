@@ -1,10 +1,12 @@
 "use client";
 
 import type { JSX } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import {
   Card,
   CardContent,
@@ -98,6 +100,7 @@ export function PurchaseDetail(): JSX.Element {
   const queryClient = useQueryClient();
   const supplierNames = useSupplierNames();
   const catalogItemNames = useCatalogItemNames();
+  const [confirmAction, setConfirmAction] = useState<"cancel" | "receive" | null>(null);
 
   const query = useQuery({
     queryKey: ["purchases", "detail", purchaseId],
@@ -150,27 +153,9 @@ export function PurchaseDetail(): JSX.Element {
 
   const isDraft = purchase.status === "DRAFT";
 
-  function handleReceive(): void {
-    if (
-      !window.confirm(
-        "Receive this purchase? This writes the purchase into stock and cannot be undone by editing."
-      )
-    ) {
-      return;
-    }
-    receiveMutation.mutate();
-  }
-
-  function handleCancel(): void {
-    if (
-      !window.confirm(
-        "Cancel this draft purchase? It stays readable and can no longer be received."
-      )
-    ) {
-      return;
-    }
-    cancelMutation.mutate();
-  }
+  const transitionPending = receiveMutation.isPending || cancelMutation.isPending;
+  const transitionError =
+    confirmAction === "receive" ? receiveMutation.error : cancelMutation.error;
 
   return (
     <div className="space-y-6">
@@ -194,14 +179,14 @@ export function PurchaseDetail(): JSX.Element {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={handleCancel}
+                    onClick={() => setConfirmAction("cancel")}
                     disabled={cancelMutation.isPending || receiveMutation.isPending}
                   >
                     {cancelMutation.isPending ? "Cancelling..." : "Cancel purchase"}
                   </Button>
                   <Button
                     type="button"
-                    onClick={handleReceive}
+                    onClick={() => setConfirmAction("receive")}
                     disabled={receiveMutation.isPending || cancelMutation.isPending}
                   >
                     {receiveMutation.isPending ? "Receiving..." : "Receive purchase"}
@@ -213,13 +198,33 @@ export function PurchaseDetail(): JSX.Element {
 
           {isDraft && (
             <p className="mt-4 text-xs text-muted-foreground">
-              Receiving writes stock for every line and cannot be undone by editing; a received
-              purchase is corrected only by a deliberate, audited reversal. Cancelling keeps the
-              draft readable but removes it from the receiving path.
+              Recibir la compra registra los movimientos de stock y no se corrige editando; una
+              corrección posterior requiere una reversión auditada. Cancelar conserva la lectura del
+              borrador y quita la opción de recibirlo.
             </p>
           )}
         </CardContent>
       </Card>
+
+      <ConfirmActionDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => { if (!open && !transitionPending) setConfirmAction(null); }}
+        title={confirmAction === "receive" ? "Recibir compra" : "Cancelar borrador de compra"}
+        description={
+          confirmAction === "receive"
+            ? "Se registrará el ingreso de stock de todos los artículos. La compra recibida no se puede modificar; cualquier corrección posterior debe hacerse con una reversión auditada."
+            : "La compra seguirá disponible para consulta, pero dejará de poder recibirse."
+        }
+        confirmLabel={confirmAction === "receive" ? "Recibir compra" : "Cancelar compra"}
+        confirmVariant={confirmAction === "receive" ? "default" : "destructive"}
+        pending={transitionPending}
+        pendingLabel="Procesando…"
+        errorMessage={transitionError === null ? undefined : userFacingPurchaseError(transitionError)}
+        onConfirm={async () => {
+          if (confirmAction === "receive") await receiveMutation.mutateAsync();
+          if (confirmAction === "cancel") await cancelMutation.mutateAsync();
+        }}
+      />
 
       {receiveMutation.isSuccess && (
         <div

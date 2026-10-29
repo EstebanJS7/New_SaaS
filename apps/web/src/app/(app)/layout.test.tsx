@@ -1,5 +1,7 @@
 vi.mock("next/headers", () => ({
   __esModule: true,
+  headers: () =>
+    Promise.resolve(new Headers({ "x-staff-return-path": globalThis.location.pathname })),
   cookies: vi.fn().mockResolvedValue({
     toString: () => "",
     get: () => undefined,
@@ -18,7 +20,11 @@ const redirect = vi.fn((path: string) => {
   // wrong thing.
   throw new Error(`NEXT_REDIRECT:${path}`);
 });
-vi.mock("next/navigation", () => ({ redirect: (path: string) => redirect(path) }));
+vi.mock("next/navigation", () => ({
+  redirect: (path: string) => redirect(path),
+  usePathname: () => "/app",
+}));
+vi.mock("@/components/shell/route-feedback", () => ({ RouteFeedback: () => null }));
 
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,6 +78,22 @@ describe("AppShellLayout", () => {
     expect(redirect).toHaveBeenCalledWith("/login");
   });
 
+  it("preserves an authorized resource destination through the sign-in gate", async () => {
+    const target = "/app/sales/11111111-1111-4111-8111-111111111111";
+    window.history.replaceState(null, "", target);
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+    try {
+      await expect(AppShellLayout({ children: null })).rejects.toThrow(
+        "NEXT_REDIRECT:/login?returnTo="
+      );
+      expect(redirect).toHaveBeenLastCalledWith(
+        `/login?returnTo=${encodeURIComponent(target)}&reason=session-expired`
+      );
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("does NOT send a signed-in visitor anywhere when branding is merely broken", async () => {
     redirect.mockClear();
     // A 500, a timeout or an unparseable body is an OUTAGE. Treating it as "signed out" would
@@ -114,9 +136,7 @@ describe("AppShellLayout", () => {
     // The dashboard is what the shell home renders now, and it renders INSIDE the
     // bounded region rather than beside it.
     expect(within(region).getByTestId("app-dashboard")).toBeInTheDocument();
-    expect(
-      within(region).getByRole("heading", { level: 1, name: "Dashboard" })
-    ).toBeInTheDocument();
+    expect(within(region).getByRole("heading", { level: 1, name: "Panel" })).toBeInTheDocument();
   });
 
   it("keeps the shell around the content of a deep-linked sub-route", async () => {
@@ -147,12 +167,11 @@ describe("AppShellLayout", () => {
     // `sample-card` would have silently stopped proving anything once that card
     // was replaced, which is exactly what happened.
     const dashboard = screen.getByTestId("app-dashboard");
-    expect(dashboard.className).toContain("bg-card");
-    expect(dashboard.className).toContain("text-card-foreground");
+    expect(dashboard.className).toContain("text-foreground");
 
     // Chrome carries token classes too and never inline color styles.
     const sidebar = screen.getByTestId("nav-sidebar");
-    expect(sidebar.className).toContain("bg-card");
+    expect(sidebar.className).toContain("workspace-sidebar");
     for (const node of [sidebar, screen.getByTestId("topbar"), dashboard]) {
       expect(node.getAttribute("style")).toBeNull();
     }

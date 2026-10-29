@@ -4,6 +4,21 @@ All notable product changes will be documented here.
 
 ## Unreleased
 
+- **UX-011: búsqueda y paginación del catálogo desde el servidor.** Consulta por
+  nombre, filtros por los cuatro tipos y estado, orden estable y contexto
+  temporal al volver del detalle. Listado en español y precios es-PY, sin
+  cambios al contrato del POS, valores de precios, impuestos o stock.
+
+- **UX-010: búsqueda y paginación de clientes desde el servidor.** Nombre, razón
+  social, documento o RUC; filtros por estado/tipo, orden estable y contexto
+  temporal al volver del detalle. Listado en español/es-PY. GET, CRUD,
+  contactos, direcciones y consumidores existentes conservados.
+
+- **UX-009: listado de ventas con búsqueda y paginación de servidor.** Consulta
+  por UUID o cliente autorizado, filtro por estado real, orden estable y
+  contexto temporal al volver del detalle; POS y contratos anteriores
+  conservados.
+
 - **Customer and patient imports from a spreadsheet.** Upload a CSV, see exactly
   what would happen, commit it, and read a per-row result summary. Importing
   runs asynchronously on the queue, every valid row commits in its own

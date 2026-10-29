@@ -28,9 +28,7 @@ describe("CustomersList", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("You do not have permission to manage customers.")
-      ).toBeInTheDocument();
+      expect(screen.getByText("No tenés permiso para ver los clientes.")).toBeInTheDocument();
     });
   });
 
@@ -51,7 +49,7 @@ describe("CustomersList", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("You must be signed in to view customers.")).toBeInTheDocument();
+      expect(screen.getByText("Iniciá sesión para ver los clientes.")).toBeInTheDocument();
     });
   });
 });

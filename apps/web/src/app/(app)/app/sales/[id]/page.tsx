@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { JSX } from "react";
 import { SaleDetail } from "./sale-detail";
 
@@ -9,5 +10,12 @@ import { SaleDetail } from "./sale-detail";
  * and reactive.
  */
 export default function SaleDetailPage(): JSX.Element {
-  return <SaleDetail />;
+  return (
+    <div className="space-y-4">
+      <Link href="/app/sales/history" className="text-sm text-primary hover:underline">
+        Volver al listado de ventas
+      </Link>
+      <SaleDetail />
+    </div>
+  );
 }

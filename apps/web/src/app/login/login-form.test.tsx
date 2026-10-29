@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const replace = vi.fn();
-const refresh = vi.fn();
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace, refresh }),
+const navigate = vi.fn();
+vi.mock("./navigation", () => ({
+  navigateAfterSignIn: (target?: string): void => {
+    navigate(target);
+  },
 }));
 
 import { LoginForm } from "./login-form";
@@ -32,14 +33,13 @@ function installFetch(
 }
 
 function fill(email = "staff@clinic.test", password = "a-password"): void {
-  fireEvent.change(screen.getByLabelText("Email"), { target: { value: email } });
-  fireEvent.change(screen.getByLabelText("Password"), { target: { value: password } });
+  fireEvent.change(screen.getByLabelText("Correo electrónico"), { target: { value: email } });
+  fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: password } });
 }
 
 afterEach(() => {
   vi.restoreAllMocks();
-  replace.mockClear();
-  refresh.mockClear();
+  navigate.mockClear();
 });
 
 describe("the sign-in form", () => {
@@ -51,17 +51,15 @@ describe("the sign-in form", () => {
     });
     render(<LoginForm />);
     fill();
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/app"));
-    // `refresh` as well as `replace`: the session cookie is new, and the shell's layout has to
-    // re-run on the SERVER with it rather than keep the render it made without one.
-    expect(refresh).toHaveBeenCalled();
+    // Full document navigation re-establishes both the session and CSP/brand styles.
+    await waitFor(() => expect(navigate).toHaveBeenCalledOnce());
     expect(calls[0]?.url).toBe("/api/auth/login");
     expect(calls[0]?.body).toContain("a-password");
   });
 
-  it("shows the API's OWN message for bad credentials, adding no distinction", async () => {
+  it("translates bad credentials without distinguishing account existence", async () => {
     installFetch(() =>
       jsonResponse(
         { error: { code: "UNAUTHENTICATED", message: "Invalid email or password." } },
@@ -70,14 +68,21 @@ describe("the sign-in form", () => {
     );
     render(<LoginForm />);
     fill("nobody@clinic.test", "wrong");
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
 
     const problem = await screen.findByTestId("login-problem");
-    expect(problem.textContent).toBe("Invalid email or password.");
+    expect(problem.textContent).toBe("El correo o la contraseña no son correctos.");
+    expect(problem).toHaveAttribute("role", "alert");
+    expect(screen.getByLabelText("Correo electrónico")).toHaveAccessibleDescription(
+      problem.textContent ?? ""
+    );
+    expect(screen.getByLabelText("Contraseña")).toHaveAccessibleDescription(
+      problem.textContent ?? ""
+    );
     // The API answers ONE message for an unknown address and a wrong password; a form that
     // guessed which was which would be a louder oracle than the API it fronts.
     expect(problem.textContent).not.toMatch(/unknown|no such|not found/i);
-    expect(replace).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("surfaces the rate limit as its own answer", async () => {
@@ -94,10 +99,10 @@ describe("the sign-in form", () => {
     );
     render(<LoginForm />);
     fill();
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
 
     expect((await screen.findByTestId("login-problem")).textContent).toContain(
-      "Too many failed login attempts"
+      "Hubo demasiados intentos"
     );
   });
 
@@ -105,15 +110,17 @@ describe("the sign-in form", () => {
     installFetch(() => jsonResponse({ error: { code: "UNAUTHENTICATED", message: "no" } }, 401));
     render(<LoginForm />);
     fill("staff@clinic.test", "a-secret-password");
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
 
     const problem = await screen.findByTestId("login-problem");
     // `getByLabelText<HTMLInputElement>`: the generic is what makes `.value` readable
     // without a cast the lint rejects.
     // A password left in the field after a refusal is a password on a shared screen.
-    expect(screen.getByLabelText<HTMLInputElement>("Password").value).toBe("");
+    expect(screen.getByLabelText<HTMLInputElement>("Contraseña").value).toBe("");
     // And the email survives, which is the half the user would have to retype.
-    expect(screen.getByLabelText<HTMLInputElement>("Email").value).toBe("staff@clinic.test");
+    expect(screen.getByLabelText<HTMLInputElement>("Correo electrónico").value).toBe(
+      "staff@clinic.test"
+    );
     expect(problem.textContent).not.toContain("a-secret-password");
   });
 
@@ -121,10 +128,10 @@ describe("the sign-in form", () => {
     global.fetch = vi.fn(() => Promise.reject(new Error("network down")));
     render(<LoginForm />);
     fill();
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
 
     const problem = await screen.findByTestId("login-problem");
-    expect(problem.textContent).toBe("Something went wrong. Try again.");
+    expect(problem.textContent).toBe("No se pudo iniciar sesión. Intentá de nuevo.");
     expect(problem.textContent).not.toContain("network down");
   });
 
@@ -137,7 +144,7 @@ describe("the sign-in form", () => {
 
   it("cannot submit without both fields", () => {
     render(<LoginForm />);
-    const submit = screen.getByRole("button", { name: "Sign in" });
+    const submit = screen.getByRole("button", { name: "Iniciar sesión" });
     expect(submit).toBeDisabled();
     fill("staff@clinic.test", "");
     expect(submit).toBeDisabled();
@@ -145,5 +152,15 @@ describe("the sign-in form", () => {
     expect(submit).toBeDisabled();
     fill();
     expect(submit).toBeEnabled();
+  });
+  it("explains expiry and passes the saved destination only after successful authentication", async () => {
+    navigate.mockClear();
+    installFetch(() => jsonResponse({}));
+    render(<LoginForm returnTo="/app/agenda" expired />);
+    expect(screen.getByRole("status")).toHaveTextContent("Los cambios sin guardar");
+    expect(navigate).not.toHaveBeenCalled();
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/app/agenda"));
   });
 });

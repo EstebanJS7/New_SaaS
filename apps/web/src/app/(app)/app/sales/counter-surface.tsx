@@ -1,8 +1,12 @@
 "use client";
 
+import { useStaffResumeTarget } from "@/providers/staff-resume-target";
 import type { JSX } from "react";
+import { formatEsPyDecimal } from "@/lib/es-py-format";
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { ClinicalAssociations } from "@/components/veterinary/clinical-associations";
+import { AppointmentJourney } from "@/components/veterinary/appointment-journey";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import {
@@ -13,7 +17,11 @@ import {
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
 import { listCatalogItems, userFacingCatalogError, type CatalogItem } from "../catalog/catalog-api";
-import { CompletionOutcomeAlert } from "./completion-outcome";
+import {
+  CompletionOutcomeAlert,
+  completionFailureCopy,
+  completionNeedsStateCheck,
+} from "./completion-outcome";
 import {
   buildSaleLines,
   cartLineFromItem,
@@ -28,7 +36,6 @@ import {
   classifySaleCompletionError,
   completeSale,
   createSale,
-  formatWireAmount,
   isSaleNotEntitled,
   isSalePermissionDenied,
   userFacingSaleError,
@@ -61,7 +68,11 @@ const inputClassName =
  * customer is optional and non-blocking (DEC-028). Permission and entitlement
  * branches are UX only — the backend enforces every gate.
  */
-export function CounterSurface(): JSX.Element {
+export function CounterSurface({
+  appointmentId,
+  patientId,
+  encounterId,
+}: { appointmentId?: string; patientId?: string; encounterId?: string } = {}): JSX.Element {
   const queryClient = useQueryClient();
   const catalogNames = useCatalogItemNames();
   const nextKeyRef = useRef(0);
@@ -71,6 +82,7 @@ export function CounterSurface(): JSX.Element {
   const [customerId, setCustomerId] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [createdSale, setCreatedSale] = useState<Sale | null>(null);
+  useStaffResumeTarget(createdSale ? `/app/sales/${createdSale.id}` : undefined);
   const [completed, setCompleted] = useState<CompleteSaleResult | null>(null);
 
   const itemsQuery = useQuery({
@@ -139,11 +151,11 @@ export function CounterSurface(): JSX.Element {
     });
   }
 
-  function handleComplete(payments: SalePaymentInput[]): void {
+  function handleComplete(payments: SalePaymentInput[]): Promise<CompleteSaleResult> {
     if (createdSale === null) {
-      return;
+      return Promise.reject(new Error("No hay una venta abierta para completar."));
     }
-    completeMutation.mutate({ id: createdSale.id, payments });
+    return completeMutation.mutateAsync({ id: createdSale.id, payments });
   }
 
   function startNewSale(): void {
@@ -164,18 +176,21 @@ export function CounterSurface(): JSX.Element {
     return (
       <div className="mx-auto max-w-3xl space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Counter</h1>
-          <p className="text-sm text-muted-foreground">Point of sale for this tenant.</p>
+          <Link href="/app/sales/history" className="text-sm text-primary hover:underline">
+            Listado de ventas
+          </Link>
+          <h1 className="text-2xl font-semibold tracking-tight">Punto de venta</h1>
+          <p className="text-sm text-muted-foreground">Ventas de esta organización.</p>
         </div>
         <div
           role="alert"
           data-testid="entitlement-denied"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">Sales are not enabled for this tenant</p>
+          <p className="font-medium">Ventas no habilitadas</p>
           <p>
-            The tenant does not have the sales capability, so the counter is not available. The API
-            enforces this gate; this message is only what the browser shows.
+            Esta organización no tiene habilitada la función de ventas, por lo que el punto de venta
+            no está disponible.
           </p>
         </div>
       </div>
@@ -187,18 +202,49 @@ export function CounterSurface(): JSX.Element {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Counter</h1>
+        <Link href="/app/sales/history" className="text-sm text-primary hover:underline">
+          Listado de ventas
+        </Link>
+        <h1 className="text-2xl font-semibold tracking-tight">Punto de venta</h1>
         <p className="text-sm text-muted-foreground">
-          Search an item by name, build the sale, then take the payment. The API computes tax and
-          the total.
+          Buscá artículos por nombre, armá la venta y registrá los medios de pago. El sistema
+          calcula los impuestos y el total.
         </p>
       </div>
 
+      {appointmentId !== undefined && (
+        <AppointmentJourney
+          key={appointmentId}
+          appointmentId={appointmentId}
+          onAddService={
+            locked || itemsQuery.isPending || itemsQuery.isError
+              ? undefined
+              : (serviceId) => {
+                  const item = items.find((value) => value.id === serviceId);
+                  if (item) addItem(item);
+                  else
+                    setLocalError(
+                      "El servicio de la cita no está disponible en el catálogo activo. Elegí otro artículo o revisá el catálogo."
+                    );
+                }
+          }
+        />
+      )}
+      {patientId && encounterId && (
+        <ClinicalAssociations
+          key={`${patientId}-${encounterId}`}
+          patientId={patientId}
+          encounterId={encounterId}
+          appointmentId={appointmentId}
+          currentSaleId={createdSale?.id}
+          inPOS
+        />
+      )}
       <CompletionOutcomeAlert completed={completed} />
 
       {completed !== null && (
         <Button type="button" onClick={startNewSale}>
-          Start a new sale
+          Iniciar otra venta
         </Button>
       )}
 
@@ -217,22 +263,22 @@ export function CounterSurface(): JSX.Element {
           data-testid="create-error"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          {permissionDenied && <p className="font-medium">Permission denied</p>}
+          {permissionDenied && <p className="font-medium">Sin permiso</p>}
           <p>{userFacingSaleError(createMutation.error)}</p>
         </div>
       )}
 
       <Card>
         <CardHeader>
-          <CardTitle>Find an item</CardTitle>
+          <CardTitle>Buscar artículos</CardTitle>
           <CardDescription>
-            Search the tenant catalog by name. A keyboard, a tablet keypad or a scanner typing into
-            this field all behave identically; barcode scanning is not supported yet (TD-019).
+            Buscá en el catálogo por nombre. Podés escribir con teclado o pantalla táctil; todavía
+            no está disponible la lectura de códigos de barras.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <label htmlFor="pos-item-search" className="text-sm font-medium">
-            Item name
+            Nombre del artículo
           </label>
           <input
             id="pos-item-search"
@@ -241,19 +287,19 @@ export function CounterSurface(): JSX.Element {
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             disabled={locked}
-            placeholder="Type part of the item name"
+            placeholder="Escribí parte del nombre"
             className={inputClassName}
           />
 
           {itemsQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading catalog items...</p>
+            <p className="text-sm text-muted-foreground">Cargando artículos…</p>
           ) : itemsQuery.error ? (
             <p role="alert" className="text-sm text-destructive">
               {userFacingCatalogError(itemsQuery.error)}
             </p>
           ) : matches.length === 0 ? (
             <p data-testid="catalog-empty" className="text-sm text-muted-foreground">
-              No catalog items match this search.
+              No encontramos artículos con esa búsqueda.
             </p>
           ) : (
             <ul className="space-y-2">
@@ -266,8 +312,8 @@ export function CounterSurface(): JSX.Element {
                     <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
                     <p className="text-xs text-muted-foreground">
                       {item.referencePriceAmount === null
-                        ? "No reference price"
-                        : `Reference ${item.referencePriceAmount} ${item.referencePriceCurrency ?? ""}`.trim()}
+                        ? "Sin precio de referencia"
+                        : `Referencia: ${formatAmount(item.referencePriceAmount, item.referencePriceCurrency)}`}
                     </p>
                   </div>
                   <Button
@@ -277,7 +323,7 @@ export function CounterSurface(): JSX.Element {
                     onClick={() => addItem(item)}
                     disabled={locked}
                   >
-                    Add to sale
+                    Agregar a la venta
                   </Button>
                 </li>
               ))}
@@ -288,15 +334,15 @@ export function CounterSurface(): JSX.Element {
 
       <Card>
         <CardHeader>
-          <CardTitle>Sale</CardTitle>
+          <CardTitle>Venta</CardTitle>
           <CardDescription>
-            {`${cart.length} ${cart.length === 1 ? "line" : "lines"}. Prices are what the operator applies; the API computes the line totals, tax and sale total at checkout.`}
+            {`${cart.length} ${cart.length === 1 ? "artículo" : "artículos"}. El sistema calcula los subtotales, impuestos y total al continuar.`}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {cart.length === 0 ? (
             <p data-testid="cart-empty" className="text-sm text-muted-foreground">
-              No lines yet. Search for an item and add it to the sale.
+              Todavía no agregaste artículos. Buscá un artículo para comenzar.
             </p>
           ) : (
             <div className="space-y-3">
@@ -315,16 +361,16 @@ export function CounterSurface(): JSX.Element {
           <CustomerSelector customerId={customerId} onChange={setCustomerId} disabled={locked} />
 
           <div className="flex items-center justify-between border-t border-border pt-4 text-sm">
-            <span className="text-muted-foreground">{`Lines ${cart.length}`}</span>
+            <span className="text-muted-foreground">{`Artículos: ${cart.length}`}</span>
             <span data-testid="sale-total" className="font-medium text-foreground">
               {createdSale === null
-                ? "Sale total computed by the API at checkout"
-                : `Sale total ${formatAmount(createdSale.total, createdSale.currency)}`}
+                ? "El total se calculará al continuar"
+                : `Total: ${formatAmount(createdSale.total, createdSale.currency)}`}
             </span>
           </div>
 
           <Button type="button" onClick={handleCheckout} disabled={locked || cart.length === 0}>
-            {createMutation.isPending ? "Creating sale..." : "Checkout"}
+            {createMutation.isPending ? "Creando venta…" : "Continuar al pago"}
           </Button>
         </CardContent>
       </Card>
@@ -332,9 +378,9 @@ export function CounterSurface(): JSX.Element {
       {createdSale !== null && completed === null && (
         <Card>
           <CardHeader>
-            <CardTitle>Payment</CardTitle>
+            <CardTitle>Pago</CardTitle>
             <CardDescription>
-              {`Draft #${shortId(createdSale.id)} created with the API's total ${formatAmount(createdSale.total, createdSale.currency)}. Enter payments that sum exactly to it.`}
+              {`Borrador #${shortId(createdSale.id)} creado. El total calculado es ${formatAmount(createdSale.total, createdSale.currency)}. Ingresá pagos que coincidan exactamente.`}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -347,9 +393,9 @@ export function CounterSurface(): JSX.Element {
                   <span className="min-w-0 truncate text-foreground">
                     {catalogNames.nameFor(line.catalogItemId)}
                   </span>
-                  <span className="text-muted-foreground">{`Qty ${line.quantity}`}</span>
+                  <span className="text-muted-foreground">{`Cant. ${formatEsPyDecimal(line.quantity)}`}</span>
                   <span className="text-right text-foreground">
-                    {`${formatWireAmount(line.lineTotal)} · tax ${formatWireAmount(line.taxAmount)}`}
+                    {`${formatAmount(line.lineTotal, createdSale.currency)} · impuesto ${formatAmount(line.taxAmount, createdSale.currency)}`}
                   </span>
                 </li>
               ))}
@@ -359,12 +405,14 @@ export function CounterSurface(): JSX.Element {
 
             {completeMutation.error !== null && (
               <p className="text-sm text-muted-foreground">
-                {`A real DRAFT sale (#${shortId(createdSale.id)}) was created and remains open; the completion did not change it. `}
+                {completionNeedsStateCheck(completionFailure)
+                  ? `Consultá el estado actual de la venta #${shortId(createdSale.id)} antes de volver a cobrar. `
+                  : `La finalización de la venta #${shortId(createdSale.id)} fue rechazada. Revisá el motivo antes de continuar. `}
                 <Link
                   href={`/app/sales/${createdSale.id}`}
                   className="text-primary hover:underline"
                 >
-                  Open the draft
+                  Consultar venta
                 </Link>
                 .
               </p>
@@ -375,6 +423,12 @@ export function CounterSurface(): JSX.Element {
               currency={createdSale.currency}
               onSubmit={handleComplete}
               isPending={completeMutation.isPending}
+              disabled={completionNeedsStateCheck(completionFailure)}
+              errorMessage={
+                completionFailure === null
+                  ? undefined
+                  : `${completionFailureCopy(completionFailure).title}. ${completionFailureCopy(completionFailure).description}`
+              }
             />
           </CardContent>
         </Card>

@@ -110,7 +110,7 @@ export function AppearanceToggle({
     persistAppearance(next);
   }
 
-  const label = mode === "light" ? "Light" : mode === "dark" ? "Dark" : "System";
+  const label = mode === "light" ? "Claro" : mode === "dark" ? "Oscuro" : "Sistema";
 
   return (
     <Button
@@ -119,7 +119,7 @@ export function AppearanceToggle({
       size="sm"
       onClick={cycleAppearance}
       data-testid="appearance-toggle"
-      aria-label={`Appearance: ${label}`}
+      aria-label={`Apariencia: ${label}`}
     >
       {label}
     </Button>

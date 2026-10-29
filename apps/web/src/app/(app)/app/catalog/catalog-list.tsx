@@ -2,50 +2,52 @@
 
 import type { JSX } from "react";
 import { useState } from "react";
+import { Input } from "@newsaas/ui/components/ui/input";
+import { Icon } from "@newsaas/ui/components/ui/icon";
+import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@newsaas/ui/components/ui/card";
+  searchCatalog,
+  userFacingCatalogSearchError,
+  type CatalogSearchRow,
+  type CatalogSearchInput,
+} from "./catalog-search-api";
 import {
   ApiRequestError,
   CATALOG_ITEM_KINDS,
   deactivateCatalogItem,
-  listCatalogItems,
   userFacingCatalogError,
-  type CatalogItem,
   type CatalogItemKind,
 } from "./catalog-api";
+import { formatStaffMoney } from "@/lib/es-py-format";
+import { useCatalogListState } from "./catalog-list-state";
 
-const selectClassName =
-  "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
-
+function catalogActionError(error: Error): string {
+  return error instanceof ApiRequestError &&
+    ["UNAUTHENTICATED", "FORBIDDEN", "FEATURE_NOT_ENTITLED", "NOT_FOUND"].includes(error.code)
+    ? userFacingCatalogError(error)
+    : "No pudimos actualizar el artículo. Revisá la conexión y volvé a intentar.";
+}
 const KIND_LABELS: Record<CatalogItemKind, string> = {
-  PRODUCT: "Product",
-  SERVICE: "Service",
-  MEDICATION: "Medication",
-  SUPPLY: "Supply",
+  PRODUCT: "Producto",
+  SERVICE: "Servicio",
+  MEDICATION: "Medicamento",
+  SUPPLY: "Insumo",
 };
 
-/** 403 FORBIDDEN is the permission gate; other 403s (entitlement) keep their own copy. */
-function isPermissionDenied(error: Error): boolean {
-  return error instanceof ApiRequestError && error.code === "FORBIDDEN";
-}
-
-function referencePriceLabel(item: CatalogItem): string | null {
+function referencePriceLabel(item: CatalogSearchRow): string | null {
   if (item.referencePriceAmount === null || item.referencePriceCurrency === null) {
     return null;
   }
-  return `${item.referencePriceAmount} ${item.referencePriceCurrency}`;
+  return formatStaffMoney(item.referencePriceAmount, item.referencePriceCurrency);
 }
 
-function CatalogItemCard({ item }: { readonly item: CatalogItem }): JSX.Element {
+function CatalogItemCard({ item }: { readonly item: CatalogSearchRow }): JSX.Element {
   const queryClient = useQueryClient();
+  const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: () => deactivateCatalogItem(item.id),
     onSuccess: () => {
@@ -53,178 +55,265 @@ function CatalogItemCard({ item }: { readonly item: CatalogItem }): JSX.Element 
     },
   });
 
-  function handleDeactivate(): void {
-    if (!window.confirm("Deactivate this catalog item?")) return;
-    mutation.mutate();
-  }
-
   const price = referencePriceLabel(item);
 
   return (
-    <div className="flex items-start justify-between rounded-lg border bg-card p-4 text-card-foreground shadow-sm">
+    <div className="record-row">
       <div className="min-w-0 space-y-1">
         <div className="flex items-center gap-2">
           <Link
             href={`/app/catalog/${item.id}`}
-            className="truncate font-medium text-primary hover:underline"
+            className="truncate font-semibold text-foreground hover:text-primary hover:underline"
           >
             {item.name}
           </Link>
           {!item.isActive && (
             <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-              Inactive
+              Inactivo
             </span>
           )}
         </div>
         <p className="text-sm text-muted-foreground">
-          {KIND_LABELS[item.kind]} · {item.taxRate.name}
+          {KIND_LABELS[item.kind]} · {item.taxRateName}
           {price ? ` · ${price}` : ""}
         </p>
         {mutation.error && (
           <p role="alert" className="text-xs text-destructive">
-            {userFacingCatalogError(mutation.error)}
+            {catalogActionError(mutation.error)}
           </p>
         )}
       </div>
       <div className="flex shrink-0 gap-2">
         <Button type="button" variant="outline" size="sm" asChild>
-          <Link href={`/app/catalog/${item.id}/edit`}>Edit</Link>
+          <Link href={`/app/catalog/${item.id}/edit`}>Editar</Link>
         </Button>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          onClick={handleDeactivate}
+          onClick={() => setConfirmDeactivateOpen(true)}
           disabled={mutation.isPending || !item.isActive}
+          loading={mutation.isPending}
         >
-          {mutation.isPending ? "Deactivating..." : "Deactivate"}
+          {mutation.isPending ? "Desactivando…" : "Desactivar"}
         </Button>
       </div>
+      <ConfirmActionDialog
+        open={confirmDeactivateOpen}
+        onOpenChange={(open) => {
+          if (!open && !mutation.isPending) setConfirmDeactivateOpen(false);
+        }}
+        title="Desactivar artículo"
+        description="El artículo dejará de estar disponible para nuevas operaciones. Sus movimientos y registros se conservarán."
+        confirmLabel="Desactivar artículo"
+        pendingLabel="Desactivando…"
+        pending={mutation.isPending}
+        errorMessage={mutation.error ? catalogActionError(mutation.error) : undefined}
+        onConfirm={() => mutation.mutateAsync()}
+      />
     </div>
   );
 }
 
-/**
- * Staff catalog list with kind and status filters and the loading, empty,
- * error and permission-denied states.
- *
- * The status filter defaults to ACTIVE items: an unfiltered list would mix
- * retired items into daily work, so the caller must opt in to see deactivated
- * ones. That default is a presentation choice mapped onto the API's one
- * `isActive` key; the server remains the filter authority.
- *
- * The item name opens the READ-ONLY detail route so a role that only holds
- * `catalog.read` is never dropped straight into a form it cannot submit; Edit
- * stays a separate, explicit destination because the API, not this list,
- * decides whether the write is allowed.
- *
- * Permission checks are UX-only; the backend enforces the real gates and
- * answers 403 when the staff role does not hold `catalog.read`.
- */
 export function CatalogList(): JSX.Element {
-  const [kind, setKind] = useState<CatalogItemKind | "">("");
-  const [includeInactive, setIncludeInactive] = useState(false);
-
+  const [state, setState] = useCatalogListState();
+  const [search, setSearch] = useState(state.q);
+  const [validation, setValidation] = useState<string>();
   const query = useQuery({
-    queryKey: ["catalog", kind, includeInactive],
-    queryFn: () =>
-      listCatalogItems({
-        kind: kind === "" ? undefined : kind,
-        // Default to active only; including deactivated drops the filter entirely.
-        isActive: includeInactive ? undefined : true,
-      }),
+    queryKey: ["catalog", "search", state],
+    queryFn: ({ signal }) => searchCatalog(state, signal),
+    staleTime: 0,
   });
-
-  const emptyTitle =
-    kind !== ""
-      ? "No items match these filters"
-      : includeInactive
-        ? "No catalog items yet"
-        : "No active catalog items";
-  const emptyDescription =
-    kind !== ""
-      ? "Try a different kind or include deactivated items."
-      : includeInactive
-        ? "Get started by creating the first catalog item for this tenant."
-        : "Every catalog item for this tenant is deactivated. Include deactivated items to review them.";
-
+  const result = query.data;
+  const reset = () => {
+    setSearch("");
+    setValidation(undefined);
+    setState({ q: "", page: 1, status: "active", kind: "all", sort: "name" });
+  };
+  const count = (value: number) => value.toLocaleString("es-PY");
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="page-heading">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Catalog</h1>
+          <p className="page-eyebrow">Comercio / Catálogo</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Catálogo</h1>
           <p className="text-sm text-muted-foreground">
-            Manage tenant products, services, medications and supplies.
+            Encontrá productos, servicios, medicamentos e insumos.
           </p>
         </div>
         <Button type="button" asChild>
-          <Link href="/app/catalog/new">New item</Link>
+          <Link href="/app/catalog/new">
+            <Icon name="plus" />
+            Nuevo artículo
+          </Link>
         </Button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <label htmlFor="catalog-kind-filter" className="text-sm font-medium">
-            Kind
-          </label>
-          <select
-            id="catalog-kind-filter"
-            value={kind}
-            onChange={(event) => setKind(event.target.value as CatalogItemKind | "")}
-            className={selectClassName}
-          >
-            <option value="">All kinds</option>
-            {CATALOG_ITEM_KINDS.map((itemKind) => (
-              <option key={itemKind} value={itemKind}>
-                {KIND_LABELS[itemKind]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <label className="flex items-end gap-2 pb-2 text-sm">
-          <input
-            type="checkbox"
-            checked={includeInactive}
-            onChange={(event) => setIncludeInactive(event.target.checked)}
-            className="h-4 w-4 rounded border-input"
-          />
-          Include deactivated items
+      <form
+        className="space-y-3 rounded-lg border border-border bg-card p-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const q = search.trim();
+          if ((q.length > 0 && q.length < 2) || q.length > 80) {
+            setValidation("Ingresá entre 2 y 80 caracteres o dejá la búsqueda vacía.");
+            return;
+          }
+          setValidation(undefined);
+          setState({ ...state, q, page: 1 });
+        }}
+      >
+        <label htmlFor="catalog-search" className="text-sm font-medium">
+          Buscar en el catálogo
         </label>
-      </div>
-
-      {query.isLoading ? (
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Loading catalog items...</p>
-          </CardContent>
-        </Card>
-      ) : query.error ? (
-        <div
-          role="alert"
-          className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
-        >
-          {isPermissionDenied(query.error) && <p className="font-medium">Permission denied</p>}
-          <p>{userFacingCatalogError(query.error)}</p>
+        <div className="flex flex-wrap items-start gap-2">
+          <div className="relative min-w-0 flex-1 sm:min-w-64">
+            <Icon
+              name="search"
+              className="pointer-events-none absolute left-3 top-3 text-muted-foreground"
+            />
+            <Input
+              id="catalog-search"
+              type="search"
+              autoComplete="off"
+              maxLength={80}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Nombre del artículo o servicio"
+              aria-invalid={Boolean(validation)}
+              aria-describedby={
+                validation ? "catalog-search-help catalog-search-error" : "catalog-search-help"
+              }
+              className="pl-10"
+            />
+          </div>
+          <Button type="submit" disabled={query.isFetching}>
+            Buscar
+          </Button>
+          <Button type="button" variant="outline" onClick={reset}>
+            Limpiar filtros
+          </Button>
         </div>
-      ) : query.data?.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>{emptyTitle}</CardTitle>
-            <CardDescription>{emptyDescription}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button type="button" asChild>
-              <Link href="/app/catalog/new">Create item</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <p id="catalog-search-help" className="text-xs text-muted-foreground">
+          Buscá por nombre del artículo o servicio. Mínimo 2 caracteres.
+        </p>
+        {validation && (
+          <p id="catalog-search-error" role="alert" className="text-sm text-destructive">
+            {validation}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-4">
+          <label className="space-y-1 text-sm">
+            <span className="block">Estado</span>
+            <select
+              className="min-h-10 rounded-md border border-input bg-background px-3"
+              value={state.status}
+              onChange={(e) => {
+                const status = e.target.value;
+                if (status === "active" || status === "inactive" || status === "all")
+                  setState({ ...state, status, page: 1 });
+              }}
+            >
+              <option value="active">Activos</option>
+              <option value="inactive">Inactivos</option>
+              <option value="all">Todos</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block">Tipo de artículo</span>
+            <select
+              className="min-h-10 rounded-md border border-input bg-background px-3"
+              value={state.kind}
+              onChange={(event) => {
+                const kind = event.target.value;
+                if (kind === "all" || CATALOG_ITEM_KINDS.some((value) => value === kind))
+                  setState({ ...state, kind: kind as CatalogSearchInput["kind"], page: 1 });
+              }}
+            >
+              <option value="all">Todos los tipos</option>
+              {CATALOG_ITEM_KINDS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {KIND_LABELS[kind]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="block">Ordenar por</span>
+            <select
+              className="min-h-10 rounded-md border border-input bg-background px-3"
+              value={state.sort}
+              onChange={(e) => {
+                const sort = e.target.value;
+                if (sort === "name" || sort === "recent") setState({ ...state, sort, page: 1 });
+              }}
+            >
+              <option value="name">Nombre, A–Z</option>
+              <option value="recent">Más recientes</option>
+            </select>
+          </label>
+        </div>
+      </form>
+
+      {query.isFetching ? (
+        <ListSkeleton label="Buscando artículos…" />
+      ) : query.error ? (
+        <ErrorState
+          title="No pudimos cargar el catálogo"
+          retryLabel="Reintentar"
+          message={userFacingCatalogSearchError(query.error)}
+          onRetry={() => {
+            void query.refetch();
+          }}
+        />
+      ) : result?.items.length === 0 ? (
+        <EmptyState
+          icon="box"
+          title="No encontramos artículos"
+          description="Probá con otro nombre o cambiá los filtros."
+        >
+          <Button type="button" asChild>
+            <Link href="/app/catalog/new">Crear artículo</Link>
+          </Button>
+        </EmptyState>
       ) : (
-        <div className="space-y-3">
-          {query.data?.map((item) => (
+        <div className="space-y-3" aria-label="Resultados del catálogo">
+          {result?.items.map((item) => (
             <CatalogItemCard key={item.id} item={item} />
           ))}
         </div>
+      )}
+      {!query.isFetching && !query.error && result && (
+        <nav
+          aria-label="Páginas del catálogo"
+          className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"
+        >
+          <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+            {result.total === 0
+              ? "0 artículos"
+              : `Mostrando ${count((result.page - 1) * result.pageSize + 1)}–${count(Math.min(result.page * result.pageSize, result.total))} de ${count(result.total)}`}
+          </p>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={result.page <= 1}
+              onClick={() => setState({ ...state, page: result.page - 1 })}
+            >
+              Anterior
+            </Button>
+            <span className="text-sm">
+              Página {count(result.page)} de {count(Math.max(1, result.totalPages))}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={result.page >= result.totalPages}
+              onClick={() => setState({ ...state, page: result.page + 1 })}
+            >
+              Siguiente
+            </Button>
+          </div>
+        </nav>
       )}
     </div>
   );

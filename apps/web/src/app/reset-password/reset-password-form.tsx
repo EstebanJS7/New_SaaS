@@ -2,6 +2,7 @@
 
 import type { JSX } from "react";
 import { useState } from "react";
+import Link from "next/link";
 import { Button } from "@newsaas/ui/components/ui/button";
 import {
   Card,
@@ -15,7 +16,7 @@ import { ApiRequestError, resetPassword } from "./reset-password-api";
 /**
  * The reset form ([[TD-048]]).
  *
- * The API's own refusal is what the user sees for an unusable link: one message for
+ * The stable API code maps to one translated refusal for an unusable link: one message for
  * unknown, spent and expired alike, because the API deliberately does not distinguish
  * them and a UI that invented a distinction would be a **louder oracle** than the API it
  * fronts. So there is no "this link expired" branch — there is "this link is not valid",
@@ -57,9 +58,9 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
     } catch (error) {
       setStatus("idle");
       setProblem(
-        error instanceof ApiRequestError
-          ? error.message
-          : "Something went wrong. Try the link again."
+        error instanceof ApiRequestError && error.code === "UNAUTHENTICATED"
+          ? "El enlace no es válido. Solicitá uno nuevo."
+          : "No se pudo actualizar la contraseña. Intentá nuevamente."
       );
     }
   }
@@ -68,14 +69,18 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Reset your password</CardTitle>
-          <CardDescription>This page needs a link from your email.</CardDescription>
+          <CardTitle>
+            <h1>Restablecé tu contraseña</h1>
+          </CardTitle>
+          <CardDescription>Necesitás el enlace que recibiste por correo.</CardDescription>
         </CardHeader>
         <CardContent>
           <p data-testid="reset-no-token" className="text-sm text-muted-foreground">
-            Open the link from the recovery message you received. If it has expired, ask for a new
-            one.
+            Abrí el enlace del mensaje de recuperación. Si ya no es válido, solicitá uno nuevo.
           </p>
+          <Link href="/login" className="text-sm underline underline-offset-4">
+            Volver al inicio de sesión
+          </Link>
         </CardContent>
       </Card>
     );
@@ -85,13 +90,18 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Password changed</CardTitle>
+          <CardTitle>
+            <h1>Contraseña actualizada</h1>
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <p data-testid="reset-done" className="text-sm text-muted-foreground">
-            Your password was changed and every session was ended, on every device. Sign in again
-            with your new password.
+          <p role="status" data-testid="reset-done" className="text-sm text-muted-foreground">
+            Tu contraseña se actualizó y se cerraron todas las sesiones en tus dispositivos. Ingresá
+            nuevamente con tu nueva contraseña.
           </p>
+          <Link href="/login" className="text-sm underline underline-offset-4">
+            Volver al inicio de sesión
+          </Link>
         </CardContent>
       </Card>
     );
@@ -100,8 +110,10 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Reset your password</CardTitle>
-        <CardDescription>Choose a new password for your account.</CardDescription>
+        <CardTitle>
+          <h1>Restablecé tu contraseña</h1>
+        </CardTitle>
+        <CardDescription>Elegí una nueva contraseña para tu cuenta.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/*
@@ -110,6 +122,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
           nothing — and a recovery form is exactly where a password manager fills and submits.
         */}
         <form
+          aria-busy={status === "submitting"}
           className="space-y-4"
           onSubmit={(event) => {
             event.preventDefault();
@@ -118,10 +131,13 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
         >
           <div className="space-y-2">
             <label htmlFor="reset-password" className="text-sm font-medium">
-              New password
+              Nueva contraseña
             </label>
             <input
               id="reset-password"
+              aria-invalid={tooShort}
+              aria-describedby={tooShort ? "reset-too-short" : undefined}
+              disabled={status === "submitting"}
               type="password"
               autoComplete="new-password"
               value={password}
@@ -129,17 +145,24 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
               className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             {tooShort ? (
-              <p data-testid="reset-too-short" className="text-sm text-destructive">
-                {`Use at least ${MIN_PASSWORD_LENGTH} characters.`}
+              <p
+                id="reset-too-short"
+                data-testid="reset-too-short"
+                className="text-sm text-destructive"
+              >
+                {`Usá al menos ${MIN_PASSWORD_LENGTH} caracteres.`}
               </p>
             ) : null}
           </div>
           <div className="space-y-2">
             <label htmlFor="reset-confirmation" className="text-sm font-medium">
-              Repeat it
+              Repetí la contraseña
             </label>
             <input
               id="reset-confirmation"
+              aria-invalid={mismatch}
+              aria-describedby={mismatch ? "reset-mismatch" : undefined}
+              disabled={status === "submitting"}
               type="password"
               autoComplete="new-password"
               value={confirmation}
@@ -147,18 +170,27 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
               className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             {mismatch ? (
-              <p data-testid="reset-mismatch" className="text-sm text-destructive">
-                The two passwords do not match.
+              <p
+                id="reset-mismatch"
+                data-testid="reset-mismatch"
+                className="text-sm text-destructive"
+              >
+                Las contraseñas no coinciden.
               </p>
             ) : null}
           </div>
           {problem === null ? null : (
-            <p data-testid="reset-problem" className="text-sm text-destructive">
+            <p
+              role="alert"
+              id="reset-problem"
+              data-testid="reset-problem"
+              className="text-sm text-destructive"
+            >
               {problem}
             </p>
           )}
           <Button type="submit" disabled={!canSubmit || status === "submitting"}>
-            {status === "submitting" ? "Changing..." : "Change password"}
+            {status === "submitting" ? "Actualizando…" : "Actualizar contraseña"}
           </Button>
         </form>
       </CardContent>

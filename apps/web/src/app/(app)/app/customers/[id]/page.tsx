@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { JSX } from "react";
 import { CustomerDetail } from "./customer-detail";
 
@@ -8,5 +9,12 @@ import { CustomerDetail } from "./customer-detail";
  * mutation states remain explicit and reactive.
  */
 export default function CustomerDetailPage(): JSX.Element {
-  return <CustomerDetail />;
+  return (
+    <div className="space-y-4">
+      <Link href="/app/customers" className="text-sm text-primary hover:underline">
+        Volver al listado de clientes
+      </Link>
+      <CustomerDetail />
+    </div>
+  );
 }

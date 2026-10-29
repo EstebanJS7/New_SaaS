@@ -58,11 +58,11 @@ export type ReportPeriodPreset = (typeof REPORT_PERIOD_PRESETS)[number];
 
 /** Human labels for the five presets. Presentation only; never sent. */
 export const REPORT_PERIOD_PRESET_LABELS: Readonly<Record<ReportPeriodPreset, string>> = {
-  today: "Today",
-  last7Days: "Last 7 days",
-  last30Days: "Last 30 days",
-  thisMonth: "This month",
-  lastMonth: "Last month",
+  today: "Hoy",
+  last7Days: "Últimos 7 días",
+  last30Days: "Últimos 30 días",
+  thisMonth: "Este mes",
+  lastMonth: "Mes anterior",
 };
 
 /**

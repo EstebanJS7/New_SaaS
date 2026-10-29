@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { cookies, headers } from "next/headers";
 import { activeProductPreset, resolveBrand, type DefaultAppearance } from "@newsaas/ui/branding";
 import { QueryProvider } from "@/providers/query-provider";
+import { BrandStyle, DocumentNonceProvider } from "@/providers/document-nonce";
 import { appearanceBootstrapScriptWithTenantDefault } from "@/lib/appearance";
 import { readCspNonce } from "@/lib/csp-nonce";
 import { brandStyleCss } from "@/lib/brand-style";
@@ -109,16 +110,18 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="bg-background text-foreground antialiased">
-        {/* Tenant-aware pre-paint bootstrap (D6/D8); source owned by lib/appearance.ts. */}
-        <script
-          nonce={nonce}
-          dangerouslySetInnerHTML={{
-            __html: appearanceBootstrapScriptWithTenantDefault(defaultAppearance),
-          }}
-        />
-        {/* Static, schema-validated preset CSS variable declarations (D1/D2/D4). */}
-        <style nonce={nonce} dangerouslySetInnerHTML={{ __html: brandStyleCss(brand) }} />
-        <QueryProvider>{children}</QueryProvider>
+        <DocumentNonceProvider nonce={nonce}>
+          {/* Tenant-aware pre-paint bootstrap (D6/D8); source owned by lib/appearance.ts. */}
+          <script
+            nonce={nonce}
+            dangerouslySetInnerHTML={{
+              __html: appearanceBootstrapScriptWithTenantDefault(defaultAppearance),
+            }}
+          />
+          {/* Static, schema-validated preset CSS variable declarations (D1/D2/D4). */}
+          <BrandStyle nonce={nonce} css={brandStyleCss(brand)} />
+          <QueryProvider>{children}</QueryProvider>
+        </DocumentNonceProvider>
       </body>
     </html>
   );

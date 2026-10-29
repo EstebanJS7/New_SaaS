@@ -13,11 +13,12 @@ describe("Topbar", () => {
     );
   });
 
-  it("stays inert placeholder chrome: no links, token-only classes", () => {
+  it("replaces the inert account placeholder with real appearance controls", () => {
     const { container } = render(<Topbar productName="Clinical Precision" />);
 
     // Inert placeholder entry — chrome-only gate.
-    expect(screen.getByTestId("topbar-entry").tagName).toBe("BUTTON");
+    expect(screen.queryByTestId("topbar-entry")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Appearance:/ })).toBeInTheDocument();
     expect(container.querySelectorAll("a")).toHaveLength(0);
     expect(container.textContent).not.toMatch(/appointment|patient|invoice|schedule|billing/i);
   });

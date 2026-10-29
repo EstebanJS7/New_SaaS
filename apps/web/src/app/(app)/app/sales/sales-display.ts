@@ -4,7 +4,8 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { listCatalogItems } from "../catalog/catalog-api";
 import { listCustomers } from "../customers/customers-api";
-import { formatWireAmount, type PaymentMethod, type SaleStatus } from "./sales-api";
+import { type PaymentMethod, type SaleStatus } from "./sales-api";
+import { formatEsPyDecimal, formatEsPyInstant, formatStaffMoney } from "@/lib/es-py-format";
 
 /**
  * Display identity for the POS surface (EPIC-12 POS-004).
@@ -28,24 +29,24 @@ export function shortId(id: string): string {
 
 /** The API's `createdAt`/`updatedAt` are ISO timestamps; show the UTC date only. */
 export function formatDate(iso: string): string {
-  return iso.slice(0, 10);
+  return formatEsPyInstant(iso);
 }
 
 /** Staff-facing label for each pinned lifecycle value. */
 export const SALE_STATUS_LABELS: Record<SaleStatus, string> = {
-  DRAFT: "Draft",
-  COMPLETED: "Completed",
-  CANCELLED: "Cancelled",
+  DRAFT: "Borrador",
+  COMPLETED: "Completada",
+  CANCELLED: "Cancelada",
 };
 
 /** Staff-facing label for each pinned PRD §19 payment method. */
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  CASH: "Cash",
-  CARD: "Card",
-  BANK_TRANSFER: "Bank transfer",
+  CASH: "Efectivo",
+  CARD: "Tarjeta",
+  BANK_TRANSFER: "Transferencia bancaria",
   QR: "QR",
-  CHECK: "Check",
-  OTHER: "Other",
+  CHECK: "Cheque",
+  OTHER: "Otro",
 };
 
 /**
@@ -53,8 +54,8 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
  * {@link formatWireAmount} groups the digits textually and this helper only
  * appends the sale's own currency field.
  */
-export function formatAmount(value: string, currency: string): string {
-  return `${formatWireAmount(value)} ${currency}`;
+export function formatAmount(value: string, currency: string | null): string {
+  return currency === null ? formatEsPyDecimal(value) : formatStaffMoney(value, currency);
 }
 
 /** Resolves an id to a display name, falling back to a short id fragment. */

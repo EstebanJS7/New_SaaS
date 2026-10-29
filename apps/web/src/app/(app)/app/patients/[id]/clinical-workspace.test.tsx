@@ -1,8 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ClinicalWorkspace } from "./clinical-workspace";
 import type { ClinicalEncounter } from "./clinical-api";
+import {
+  CLINICAL_RECOVERY_MS,
+  clearClinicalRecovery,
+  readClinicalRecovery,
+  retainClinicalRecovery,
+} from "./clinical-draft-recovery";
 
 /**
  * The WU4A clinical client validates every patient and encounter id as a
@@ -167,7 +174,274 @@ async function selectEncounter(): Promise<void> {
   fireEvent.click(await screen.findByRole("button", { name: /Limping/ }));
 }
 
+async function confirmClosure(): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: "Cerrar ficha clínica" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Guardar y cerrar" })
+  );
+}
+
 describe("ClinicalWorkspace", () => {
+  it("reopens a saved consultation from return context without creating or saving it", async () => {
+    const fetch = mockClinical();
+    render(
+      <TestWrapper>
+        <ClinicalWorkspace patientId={PATIENT_ID} initialEncounterId={ENCOUNTER_ID} />
+      </TestWrapper>
+    );
+    expect(await screen.findByDisplayValue(DRAFT.reasonForVisit!)).toBeInTheDocument();
+    expect(
+      fetch.mock.calls.every(
+        (call) => ((call[1] as RequestInit | undefined)?.method ?? "GET") === "GET"
+      )
+    ).toBe(true);
+  });
+  it("does not open a consultation absent from the authorized fresh list", async () => {
+    mockClinical();
+    render(
+      <TestWrapper>
+        <ClinicalWorkspace patientId={PATIENT_ID} initialEncounterId={AMENDMENT_ID} />
+      </TestWrapper>
+    );
+    await screen.findByText(DRAFT.reasonForVisit!);
+    expect(screen.getByText(/No encontramos la consulta de retorno/)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(DRAFT.reasonForVisit!)).not.toBeInTheDocument();
+  });
+
+  it("offers a navigation-only POS continuation for a closed consultation with appointment context", async () => {
+    const fetch = mockClinical({ list: () => jsonResponse([CLOSED]) });
+    render(
+      <TestWrapper>
+        <ClinicalWorkspace patientId={PATIENT_ID} appointmentId={AMENDMENT_ID} />
+      </TestWrapper>
+    );
+    await selectEncounter();
+    expect(screen.getByRole("link", { name: "Ir al punto de venta" })).toHaveAttribute(
+      "href",
+      `/app/sales?patient=${PATIENT_ID}&encounter=${ENCOUNTER_ID}&appointment=${AMENDMENT_ID}`
+    );
+    expect(
+      screen.getByText(/Esto no completa el turno ni crea una venta automáticamente/)
+    ).toBeInTheDocument();
+    expect(
+      fetch.mock.calls.every(([, init]) => {
+        const request = init as RequestInit | undefined;
+        return request?.method === undefined || request.method === "GET";
+      })
+    ).toBe(true);
+  });
+
+  it("preserves spaces during typing and saves the complete text in StrictMode", async () => {
+    const fetchMock = mockClinical();
+    render(
+      <StrictMode>
+        <TestWrapper>
+          <ClinicalWorkspace patientId={PATIENT_ID} autosaveDelayMs={AUTOSAVE_MS} />
+        </TestWrapper>
+      </StrictMode>
+    );
+    await selectEncounter();
+    const field = screen.getByLabelText("Motivo de consulta");
+    fireEvent.change(field, { target: { value: "Control " } });
+    expect(field).toHaveValue("Control ");
+    fireEvent.change(field, { target: { value: "Control de seguimiento" } });
+    await flushAutosave();
+    await waitFor(() => expect(saveCalls(fetchMock)).toHaveLength(1));
+    const init = saveCalls(fetchMock)[0]?.[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      reasonForVisit: "Control de seguimiento",
+    });
+    expect(await screen.findByText("Todos los cambios están guardados")).toBeInTheDocument();
+  });
+
+  it("links an oversized field error and prevents autosave and closure without truncation", async () => {
+    const fetchMock = mockClinical();
+    renderWorkspace();
+    await selectEncounter();
+    const field = screen.getByLabelText("Diagnóstico");
+    fireEvent.change(field, { target: { value: "a".repeat(10_001) } });
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAttribute("aria-describedby", "diagnosis-help diagnosis-error");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Diagnóstico: el máximo es de 10.000 caracteres"
+    );
+    await flushAutosave();
+    expect(saveCalls(fetchMock)).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Guardar borrador" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cerrar ficha clínica" })).toBeDisabled();
+    expect(field).toHaveValue("a".repeat(10_001));
+    fireEvent.change(field, { target: { value: "Corregido" } });
+    await flushAutosave();
+    await waitFor(() => expect(saveCalls(fetchMock)).toHaveLength(1));
+    expect(field).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("stops automatic retries after a failed save and offers an explicit successful retry", async () => {
+    let attempt = 0;
+    const save = vi.fn(() =>
+      ++attempt === 1
+        ? jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Failed" } }, 500)
+        : jsonResponse({ ...DRAFT, version: 2, diagnosis: "Nuevo" })
+    );
+    mockClinical({ save });
+    renderWorkspace();
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Nuevo" } });
+    await flushAutosave();
+    expect(await screen.findByText(/usá Guardar borrador para reintentar/)).toBeInTheDocument();
+    await flushAutosave();
+    expect(save).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Todos los cambios están guardados")).toBeInTheDocument();
+  });
+
+  it("protects pending content on route exit or encounter switch while allowing section anchors", async () => {
+    mockClinical({
+      list: () =>
+        jsonResponse([DRAFT, { ...DRAFT, id: AMENDMENT_ID, reasonForVisit: "Otra consulta" }]),
+    });
+    renderWorkspace({ autosaveDelayMs: 60000 });
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Sin guardar" } });
+    expect(screen.getByRole("button", { name: /Otra consulta/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Nueva consulta" })).toBeDisabled();
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    const link = document.createElement("a");
+    link.href = "/app/agenda";
+    link.textContent = "Salir";
+    document.body.append(link);
+    expect(fireEvent.click(link)).toBe(false);
+    expect(screen.getByRole("alert")).toHaveTextContent("Hay cambios pendientes");
+    const exitDialog = screen.getByRole("dialog", { name: "Salir sin guardar" });
+    fireEvent.click(within(exitDialog).getByRole("button", { name: "Seguir editando" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    link.href = "#patient-prevention";
+    // The guard must allow native links between sections of the current document.
+    link.addEventListener("click", (event) => {
+      expect(event.defaultPrevented).toBe(false);
+      event.preventDefault();
+    });
+    fireEvent.click(link);
+    link.remove();
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Sin guardar");
+  });
+
+  it("reviews current clinical content before closing and explains the independent appointment and sale", async () => {
+    mockClinical();
+    renderWorkspace({ autosaveDelayMs: 60000 });
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), {
+      target: { value: "Diagnóstico de revisión" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar ficha clínica" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Diagnóstico de revisión")).toBeInTheDocument();
+    expect(within(dialog).getByText("Notas internas · solo equipo")).toBeInTheDocument();
+    expect(within(dialog).getByText(/no completa la cita ni genera una venta/)).toBeInTheDocument();
+  });
+
+  it("renders the persisted closed consultation read-only alongside the explicit amendment", async () => {
+    mockClinical({ list: () => jsonResponse([CLOSED]) });
+    renderWorkspace();
+    await selectEncounter();
+    const record = screen.getByRole("region", { name: "Consulta cerrada" });
+    expect(within(record).getByText(DRAFT.diagnosis!)).toBeInTheDocument();
+    expect(within(record).getByText(DRAFT.clientSummary!)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Diagnóstico")).not.toBeInTheDocument();
+    expect(within(record).getByLabelText(/Motivo de la enmienda/)).toBeInTheDocument();
+  });
+
+  it("keeps a newer edit editable when it arrives during the save before closure", async () => {
+    let resolveSave: ((response: Response) => void) | undefined;
+    const save = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveSave = resolve;
+        })
+    );
+    const close = vi.fn(() => jsonResponse(CLOSED));
+    mockClinical({ save, close });
+    renderWorkspace({ autosaveDelayMs: 60000 });
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Submitted edit" } });
+    await confirmClosure();
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Newer edit" } });
+    await act(async () => {
+      resolveSave?.(jsonResponse({ ...DRAFT, version: 2, diagnosis: "Submitted edit" }));
+      await Promise.resolve();
+    });
+    expect(await screen.findByText(/Hubo cambios durante el guardado/)).toBeInTheDocument();
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Newer edit");
+  });
+  it("cancels closure without issuing the immutable close command", async () => {
+    const close = vi.fn(() => jsonResponse(CLOSED));
+    mockClinical({ close });
+    renderWorkspace();
+    await selectEncounter();
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar ficha clínica" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Volver" }));
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnóstico")).toBeEnabled();
+  });
+
+  it("saves dirty content before closing with the refreshed version", async () => {
+    const fetchMock = mockClinical();
+    renderWorkspace({ autosaveDelayMs: 60000 });
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), {
+      target: { value: "Final diagnosis" },
+    });
+    await confirmClosure();
+    await screen.findByText("Ficha clínica cerrada.");
+    const writes = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit | undefined][]).filter(
+      ([, init]) => init?.method === "PUT" || init?.method === "POST"
+    );
+    expect(writes).toHaveLength(2);
+    expect(writes[0]?.[1]?.method).toBe("PUT");
+    expect(JSON.parse(writes[0]?.[1]?.body as string)).toMatchObject({
+      version: 1,
+      diagnosis: "Final diagnosis",
+    });
+    expect(resolveRequestUrl(writes[1]?.[0] ?? "")).toMatch(/\/close$/);
+    expect(JSON.parse(writes[1]?.[1]?.body as string)).toMatchObject({ version: 2 });
+  });
+
+  it("preserves unsaved text and never closes after a save conflict", async () => {
+    const close = vi.fn(() => jsonResponse(CLOSED));
+    mockClinical({
+      save: () => jsonResponse({ error: { code: "CONFLICT", message: "Concurrent update" } }, 409),
+      close,
+    });
+    renderWorkspace({ autosaveDelayMs: 60000 });
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Keep this edit" } });
+    await confirmClosure();
+    await screen.findByText(/Otra persona modificó esta ficha/);
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Keep this edit");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+  beforeEach(() => {
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      },
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.removeAttribute("open");
+      },
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -177,7 +451,7 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
 
-    expect(await screen.findByText("Loading clinical records...")).toBeInTheDocument();
+    expect(await screen.findByText("Cargando fichas clínicas…")).toBeInTheDocument();
   });
 
   it("renders the empty state with a create affordance", async () => {
@@ -185,8 +459,8 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
 
-    expect(await screen.findByText("No clinical encounters yet.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New encounter" })).toBeEnabled();
+    expect(await screen.findByText("Todavía no hay consultas clínicas.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nueva consulta" })).toBeEnabled();
   });
 
   it("renders a draft encounter and its status badge", async () => {
@@ -195,7 +469,7 @@ describe("ClinicalWorkspace", () => {
     renderWorkspace();
 
     expect(await screen.findByText("Limping")).toBeInTheDocument();
-    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.getByText("Borrador")).toBeInTheDocument();
   });
 
   it("mounts the vaccination and deworming section beside the encounter section", async () => {
@@ -207,8 +481,8 @@ describe("ClinicalWorkspace", () => {
     // records section is an additional card in the same workspace.
     expect(await screen.findByTestId("vaccination-records")).toBeInTheDocument();
     expect(screen.getByTestId("deworming-records")).toBeInTheDocument();
-    expect(screen.getByText("Vaccinations and deworming")).toBeInTheDocument();
-    expect(screen.getByText("Clinical records")).toBeInTheDocument();
+    expect(screen.getByText("Vacunas y desparasitaciones")).toBeInTheDocument();
+    expect(screen.getByText("Ficha clínica")).toBeInTheDocument();
   });
 
   it("surfaces a generic API error state", async () => {
@@ -232,7 +506,7 @@ describe("ClinicalWorkspace", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("You do not have permission to manage clinical records.")
+        screen.getByText("No tenés permiso para gestionar fichas clínicas.")
       ).toBeInTheDocument();
     });
   });
@@ -249,10 +523,10 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
 
-    fireEvent.click(await screen.findByRole("button", { name: "New encounter" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva consulta" }));
 
-    expect(await screen.findByText("Draft encounter created.")).toBeInTheDocument();
-    expect(await screen.findByText(`Encounter ${ENCOUNTER_ID.slice(0, 8)}`)).toBeInTheDocument();
+    expect(await screen.findByText("Borrador de ficha clínica creado.")).toBeInTheDocument();
+    expect(await screen.findByText(`Consulta ${ENCOUNTER_ID.slice(0, 8)}`)).toBeInTheDocument();
   });
 
   it("announces create success in a live status region", async () => {
@@ -260,9 +534,9 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
 
-    fireEvent.click(await screen.findByRole("button", { name: "New encounter" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva consulta" }));
 
-    const status = await screen.findByText("Draft encounter created.");
+    const status = await screen.findByText("Borrador de ficha clínica creado.");
     expect(status).toHaveAttribute("role", "status");
     expect(status).toHaveAttribute("aria-live", "polite");
   });
@@ -285,7 +559,7 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+    fireEvent.change(await screen.findByLabelText("Diagnóstico"), {
       target: { value: "Updated diagnosis" },
     });
 
@@ -294,14 +568,14 @@ describe("ClinicalWorkspace", () => {
 
     await flushAutosave();
 
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    expect(await screen.findByText("Borrador guardado.")).toBeInTheDocument();
     const calls = saveCalls(fetchMock);
     expect(calls).toHaveLength(1);
     expect(JSON.parse((calls[0]?.[1] as RequestInit).body as string)).toMatchObject({
       version: 1,
       diagnosis: "Updated diagnosis",
     });
-    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Updated diagnosis");
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Updated diagnosis");
   });
 
   it("coalesces rapid edits into a single autosave", async () => {
@@ -309,14 +583,14 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    const diagnosis = await screen.findByLabelText("Diagnosis");
+    const diagnosis = await screen.findByLabelText("Diagnóstico");
     fireEvent.change(diagnosis, { target: { value: "One" } });
     fireEvent.change(diagnosis, { target: { value: "Two" } });
     fireEvent.change(diagnosis, { target: { value: "Three" } });
 
     await flushAutosave();
 
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    expect(await screen.findByText("Borrador guardado.")).toBeInTheDocument();
     expect(saveCalls(fetchMock)).toHaveLength(1);
   });
 
@@ -325,14 +599,14 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    const diagnosis = await screen.findByLabelText("Diagnosis");
+    const diagnosis = await screen.findByLabelText("Diagnóstico");
     fireEvent.change(diagnosis, { target: { value: "Temporary" } });
     fireEvent.change(diagnosis, { target: { value: "Soft tissue injury" } });
 
     await flushAutosave();
 
     expect(saveCalls(fetchMock)).toHaveLength(0);
-    expect(screen.getByText("All changes saved")).toBeInTheDocument();
+    expect(screen.getByText("Todos los cambios están guardados")).toBeInTheDocument();
   });
 
   it("surfaces an autosave conflict, preserves edits, and clears it on reload", async () => {
@@ -359,32 +633,32 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+    fireEvent.change(await screen.findByLabelText("Diagnóstico"), {
       target: { value: "Unsaved diagnosis" },
     });
     await flushAutosave();
 
     expect(
       await screen.findByText(
-        "This record changed on the server. Reload the latest version before saving again."
+        "Otra persona modificó esta ficha. Cargá la versión más reciente antes de volver a guardar."
       )
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reload latest" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Unsaved diagnosis");
+    expect(screen.getByRole("button", { name: "Cargar versión actual" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Unsaved diagnosis");
 
-    fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cargar versión actual" }));
 
     await waitFor(() => {
       expect(
         screen.queryByText(
-          "This record changed on the server. Reload the latest version before saving again."
+          "Otra persona modificó esta ficha. Cargá la versión más reciente antes de volver a guardar."
         )
       ).not.toBeInTheDocument();
     });
 
     await flushAutosave();
 
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    expect(await screen.findByText("Borrador guardado.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -428,15 +702,15 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+    fireEvent.change(await screen.findByLabelText("Diagnóstico"), {
       target: { value: "Edited locally" },
     });
     await flushAutosave();
 
-    expect(await screen.findByText(/changed on the server/)).toBeInTheDocument();
+    expect(await screen.findByText(/Otra persona modificó esta ficha/)).toBeInTheDocument();
     expect(saveCalls(fetchMock)).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cargar versión actual" }));
 
     // The refetch is still pending: no stale-version write may fire yet.
     await flushAutosave();
@@ -457,7 +731,7 @@ describe("ClinicalWorkspace", () => {
     const fetchMock = mockClinical();
     const view = renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+    fireEvent.change(await screen.findByLabelText("Diagnóstico"), {
       target: { value: "Never persisted" },
     });
 
@@ -512,7 +786,7 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    const diagnosis = await screen.findByLabelText("Diagnosis");
+    const diagnosis = await screen.findByLabelText("Diagnóstico");
     fireEvent.change(diagnosis, { target: { value: "First edit" } });
     await flushAutosave();
 
@@ -529,8 +803,8 @@ describe("ClinicalWorkspace", () => {
     // Wait for the first save's echo to be processed, then assert the stale echo
     // ("First edit") did not replace the newer local edit. The follow-up save is
     // still gated, so this cannot be satisfied by a later write restoring it.
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Second edit");
+    expect(await screen.findByText("Borrador guardado.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Second edit");
 
     await flushAutosave();
     await waitFor(() => expect(saveCalls(fetchMock)).toHaveLength(2));
@@ -569,14 +843,14 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+    fireEvent.change(await screen.findByLabelText("Diagnóstico"), {
       target: { value: "Edited locally" },
     });
     await flushAutosave();
 
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    expect(await screen.findByText("Borrador guardado.")).toBeInTheDocument();
     // The save echo advanced the editor to version 2.
-    await waitFor(() => expect(screen.getByText(/Version 2/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Versión 2/)).toBeInTheDocument());
     await waitFor(() => expect(listCalls).toBeGreaterThan(1));
 
     await act(async () => {
@@ -585,9 +859,9 @@ describe("ClinicalWorkspace", () => {
     });
 
     // The stale refetch regressed the query data back to version 1...
-    await waitFor(() => expect(screen.getByText(/Version 1/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Versión 1/)).toBeInTheDocument());
     // ...but the monotonic guard must keep the newer draft in place.
-    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Edited locally");
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Edited locally");
   });
 
   it("sends the newer applied version on the next edit after an older-version refetch", async () => {
@@ -620,13 +894,13 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+    fireEvent.change(await screen.findByLabelText("Diagnóstico"), {
       target: { value: "First edit" },
     });
     await flushAutosave();
 
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/Version 2/)).toBeInTheDocument());
+    expect(await screen.findByText("Borrador guardado.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Versión 2/)).toBeInTheDocument());
     await waitFor(() => expect(listCalls).toBeGreaterThan(1));
 
     await act(async () => {
@@ -635,11 +909,11 @@ describe("ClinicalWorkspace", () => {
     });
 
     // The stale refetch regressed the LIST row back to version 1...
-    await waitFor(() => expect(screen.getByText(/Version 1/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Versión 1/)).toBeInTheDocument());
 
     // ...but the next edit must NOT submit that stale version: the ref the
     // mutation reads stayed at the applied version 2.
-    fireEvent.change(screen.getByLabelText("Diagnosis"), {
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), {
       target: { value: "Second edit" },
     });
     await flushAutosave();
@@ -693,36 +967,36 @@ describe("ClinicalWorkspace", () => {
 
     // 1) A successful save advances the applied version to 2 and makes
     //    "Saved edit" the clean baseline.
-    fireEvent.change(await screen.findByLabelText("Diagnosis"), {
+    fireEvent.change(await screen.findByLabelText("Diagnóstico"), {
       target: { value: "Saved edit" },
     });
     await flushAutosave(autosaveDelayMs);
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/Version 2/)).toBeInTheDocument());
+    expect(await screen.findByText("Borrador guardado.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Versión 2/)).toBeInTheDocument());
 
     // 2) The next autosave loses the race and surfaces a conflict.
-    fireEvent.change(screen.getByLabelText("Diagnosis"), { target: { value: "Pending edit" } });
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Pending edit" } });
     await flushAutosave(autosaveDelayMs);
-    expect(await screen.findByText(/changed on the server/)).toBeInTheDocument();
+    expect(await screen.findByText(/Otra persona modificó esta ficha/)).toBeInTheDocument();
 
     // The user discards the losing edit, so the draft is clean against the
     // applied baseline; autosave stays suspended while the conflict remains.
-    fireEvent.change(screen.getByLabelText("Diagnosis"), { target: { value: "Saved edit" } });
-    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Saved edit");
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Saved edit" } });
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Saved edit");
 
     // 3) The conflict reload resolves with an OLDER version-1 row. The monotonic
     // guard must refuse to install it as the baseline: adopting the stale content
     // would make the clean draft look dirty and trigger a spurious write.
-    fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
-    await waitFor(() => expect(screen.getByText(/Version 1/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Cargar versión actual" }));
+    await waitFor(() => expect(screen.getByText(/Versión 1/)).toBeInTheDocument());
 
     await flushAutosave(autosaveDelayMs);
 
     // Only the successful save and the losing one were ever sent: the stale row
     // did not regress the baseline, so the draft never became dirty again.
     expect(saveCalls(fetchMock)).toHaveLength(2);
-    expect(screen.getByText("All changes saved")).toBeInTheDocument();
-    expect(screen.getByLabelText("Diagnosis")).toHaveValue("Saved edit");
+    expect(screen.getByText("Todos los cambios están guardados")).toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Saved edit");
   });
 
   it("renders a denied create as permission-aware UX and disables the action", async () => {
@@ -732,13 +1006,13 @@ describe("ClinicalWorkspace", () => {
     });
 
     renderWorkspace();
-    const createButton = await screen.findByRole("button", { name: "New encounter" });
+    const createButton = await screen.findByRole("button", { name: "Nueva consulta" });
     fireEvent.click(createButton);
 
     expect(
-      await screen.findByText("You do not have permission to manage clinical records.")
+      await screen.findByText("No tenés permiso para gestionar fichas clínicas.")
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New encounter" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Nueva consulta" })).toBeDisabled();
   });
 
   it("renders a denied entitlement as permission-aware UX", async () => {
@@ -749,12 +1023,12 @@ describe("ClinicalWorkspace", () => {
     });
 
     renderWorkspace();
-    fireEvent.click(await screen.findByRole("button", { name: "New encounter" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva consulta" }));
 
     expect(
-      await screen.findByText("The veterinary module is not enabled for this tenant.")
+      await screen.findByText("El módulo veterinario no está habilitado para esta organización.")
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New encounter" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Nueva consulta" })).toBeDisabled();
   });
 
   it("renders a denied draft autosave as permission-aware UX and stops retrying", async () => {
@@ -764,13 +1038,13 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Diagnosis"), { target: { value: "Nope" } });
+    fireEvent.change(await screen.findByLabelText("Diagnóstico"), { target: { value: "Nope" } });
     await flushAutosave();
 
     expect(
-      await screen.findByText("You do not have permission to manage clinical records.")
+      await screen.findByText("No tenés permiso para gestionar fichas clínicas.")
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Diagnosis")).toBeDisabled();
+    expect(screen.getByLabelText("Diagnóstico")).toBeDisabled();
 
     const attempts = saveCalls(fetchMock).length;
     await flushAutosave();
@@ -784,12 +1058,12 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.click(await screen.findByRole("button", { name: "Close encounter" }));
+    await confirmClosure();
 
     expect(
-      await screen.findByText("You do not have permission to manage clinical records.")
+      await screen.findByText("No tenés permiso para gestionar fichas clínicas.")
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Close encounter" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cerrar ficha clínica" })).toBeDisabled();
   });
 
   it("renders a denied amendment as permission-aware UX and disables the action", async () => {
@@ -800,16 +1074,16 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Amendment reason"), {
+    fireEvent.change(await screen.findByLabelText(/Motivo de la enmienda/), {
       target: { value: "Correct the diagnosis" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Record amendment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Registrar enmienda" }));
 
     expect(
-      await screen.findByText("You do not have permission to manage clinical records.")
+      await screen.findByText("No tenés permiso para gestionar fichas clínicas.")
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record amendment" })).toBeDisabled();
-    expect(screen.getByLabelText("Amendment reason")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Registrar enmienda" })).toBeDisabled();
+    expect(screen.getByLabelText(/Motivo de la enmienda/)).toBeDisabled();
   });
 
   it("closes a draft encounter and swaps to the amendment form", async () => {
@@ -824,10 +1098,10 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.click(await screen.findByRole("button", { name: "Close encounter" }));
+    await confirmClosure();
 
-    expect(await screen.findByText("Encounter closed.")).toBeInTheDocument();
-    expect(await screen.findByText("Amend closed encounter")).toBeInTheDocument();
+    expect(await screen.findByText("Ficha clínica cerrada.")).toBeInTheDocument();
+    expect(await screen.findByText("Enmendar ficha clínica cerrada")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/clinical/${PATIENT_ID}/encounters/${ENCOUNTER_ID}/close`,
       expect.objectContaining({ method: "POST" })
@@ -839,12 +1113,12 @@ describe("ClinicalWorkspace", () => {
 
     renderWorkspace();
     await selectEncounter();
-    fireEvent.change(await screen.findByLabelText("Amendment reason"), {
+    fireEvent.change(await screen.findByLabelText(/Motivo de la enmienda/), {
       target: { value: "Correct the diagnosis" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Record amendment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Registrar enmienda" }));
 
-    expect(await screen.findByText("Amendment recorded.")).toBeInTheDocument();
+    expect(await screen.findByText("Enmienda registrada.")).toBeInTheDocument();
 
     const amendCall = fetchMock.mock.calls.find(
       ([input, init]) =>
@@ -867,8 +1141,184 @@ describe("ClinicalWorkspace", () => {
     const staffNotes = await screen.findByTestId("staff-internal-notes");
     expect(within(staffNotes).getByDisplayValue("Owner non-compliance note")).toBeInTheDocument();
 
-    const summary = screen.getByLabelText("Client summary");
+    const summary = screen.getByLabelText("Resumen para el cliente");
     expect(summary).toHaveValue("Mild sprain summary");
     expect(summary).not.toHaveValue("Owner non-compliance note");
+  });
+});
+
+/** Route unmount/remount with the same root QueryClient, as App Router does. */
+function mountRecoveryWorkspace(client: QueryClient) {
+  return render(
+    <QueryClientProvider client={client}>
+      <ClinicalWorkspace patientId={PATIENT_ID} autosaveDelayMs={AUTOSAVE_MS} />
+    </QueryClientProvider>
+  );
+}
+
+describe("clinical route recovery (TD-065)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("restores pending text and selected encounter on return without an automatic write", async () => {
+    const fetchMock = mockClinical();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = mountRecoveryWorkspace(client);
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), {
+      target: { value: "Recuperar al volver" },
+    });
+    first.unmount();
+    mountRecoveryWorkspace(client);
+    expect(await screen.findByLabelText("Diagnóstico")).toHaveValue("Recuperar al volver");
+    expect(screen.getByText(/Recuperamos los cambios pendientes/)).toBeInTheDocument();
+    await flushAutosave();
+    expect(saveCalls(fetchMock)).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar borrador" }));
+    await waitFor(() => expect(saveCalls(fetchMock)).toHaveLength(1));
+    expect(await screen.findByText("Todos los cambios están guardados")).toBeInTheDocument();
+    expect(readClinicalRecovery(client, PATIENT_ID)).toBeUndefined();
+    client.clear();
+  });
+
+  it("retains a failed save across leaving and returning", async () => {
+    const fetchMock = mockClinical({
+      save: () => jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Failed" } }, 500),
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = mountRecoveryWorkspace(client);
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), {
+      target: { value: "Error recuperable" },
+    });
+    await flushAutosave();
+    await screen.findByText(/usá Guardar borrador/);
+    first.unmount();
+    mountRecoveryWorkspace(client);
+    expect(await screen.findByLabelText("Diagnóstico")).toHaveValue("Error recuperable");
+    await flushAutosave();
+    expect(saveCalls(fetchMock)).toHaveLength(1);
+    client.clear();
+  });
+
+  it("blocks overwriting a server version changed while away", async () => {
+    let server = { ...DRAFT };
+    const fetchMock = mockClinical({ list: () => jsonResponse([server]) });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = mountRecoveryWorkspace(client);
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Texto local" } });
+    first.unmount();
+    server = { ...DRAFT, version: 3, diagnosis: "Cambio externo" };
+    mountRecoveryWorkspace(client);
+    expect(await screen.findByText(/Otra persona modificó/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Texto local");
+    expect(screen.getByRole("button", { name: "Guardar borrador" })).toBeDisabled();
+    await flushAutosave();
+    expect(saveCalls(fetchMock)).toHaveLength(0);
+    client.clear();
+  });
+
+  it("does not expose recovery from stale cached data before a denied fresh read", async () => {
+    let denied = false;
+    mockClinical({
+      list: () =>
+        denied
+          ? jsonResponse({ error: { code: "FORBIDDEN", message: "Denied" } }, 403)
+          : jsonResponse([DRAFT]),
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = mountRecoveryWorkspace(client);
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), {
+      target: { value: "Contenido reservado" },
+    });
+    first.unmount();
+    denied = true;
+    mountRecoveryWorkspace(client);
+    await waitFor(() => expect(readClinicalRecovery(client, PATIENT_ID)).toBeUndefined());
+    expect(screen.queryByDisplayValue("Contenido reservado")).not.toBeInTheDocument();
+    expect(screen.queryByText("Contenido reservado")).not.toBeInTheDocument();
+    client.clear();
+  });
+
+  it("shows recovered content read-only if the server encounter closed while away", async () => {
+    let server = { ...DRAFT };
+    const fetchMock = mockClinical({ list: () => jsonResponse([server]) });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = mountRecoveryWorkspace(client);
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), {
+      target: { value: "Recuperado sin aplicar" },
+    });
+    first.unmount();
+    server = { ...CLOSED, version: 2 };
+    mountRecoveryWorkspace(client);
+    expect(await screen.findByText("Recuperado sin aplicar")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Diagnóstico")).not.toBeInTheDocument();
+    expect(saveCalls(fetchMock)).toHaveLength(0);
+    client.clear();
+  });
+
+  it("reconciles an in-flight save that succeeds after unmount without losing a newer edit", async () => {
+    let resolveSave: ((response: Response) => void) | undefined;
+    mockClinical({
+      save: () =>
+        new Promise<Response>((resolve) => {
+          resolveSave = resolve;
+        }),
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = mountRecoveryWorkspace(client);
+    await selectEncounter();
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), { target: { value: "Enviado" } });
+    await flushAutosave();
+    await waitFor(() => expect(resolveSave).toBeDefined());
+    fireEvent.change(screen.getByLabelText("Diagnóstico"), {
+      target: { value: "Edición posterior" },
+    });
+    first.unmount();
+    await act(async () => {
+      resolveSave?.(jsonResponse({ ...DRAFT, version: 2, diagnosis: "Enviado" }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(readClinicalRecovery(client, PATIENT_ID)?.version).toBe(2));
+    expect(readClinicalRecovery(client, PATIENT_ID)?.content.diagnosis).toBe("Edición posterior");
+    expect(readClinicalRecovery(client, PATIENT_ID)?.baseline.diagnosis).toBe("Enviado");
+    client.clear();
+  });
+
+  it("isolates memory by patient and QueryClient and expires or clears recovery", () => {
+    const client = new QueryClient();
+    const other = new QueryClient();
+    const content = {
+      reasonForVisit: null,
+      anamnesis: null,
+      diagnosis: "Texto",
+      treatmentPlan: null,
+      internalNotes: null,
+      clientSummary: null,
+    };
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    retainClinicalRecovery(client, PATIENT_ID, {
+      encounterId: ENCOUNTER_ID,
+      version: 1,
+      baseline: content,
+      content,
+    });
+    expect(readClinicalRecovery(client, AMENDMENT_ID)).toBeUndefined();
+    expect(readClinicalRecovery(other, PATIENT_ID)).toBeUndefined();
+    clock.mockReturnValue(now + CLINICAL_RECOVERY_MS);
+    expect(readClinicalRecovery(client, PATIENT_ID)).toBeUndefined();
+    retainClinicalRecovery(client, PATIENT_ID, {
+      encounterId: ENCOUNTER_ID,
+      version: 1,
+      baseline: content,
+      content,
+    });
+    clearClinicalRecovery(client, PATIENT_ID);
+    expect(readClinicalRecovery(client, PATIENT_ID)).toBeUndefined();
+    client.clear();
+    other.clear();
   });
 });

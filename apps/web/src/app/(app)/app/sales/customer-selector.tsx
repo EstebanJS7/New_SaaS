@@ -36,7 +36,7 @@ export function CustomerSelector({
   return (
     <div className="space-y-2">
       <label htmlFor="pos-customer" className="text-sm font-medium">
-        Customer (optional)
+        Cliente (opcional)
       </label>
       <select
         id="pos-customer"
@@ -45,22 +45,22 @@ export function CustomerSelector({
         disabled={disabled}
         className={selectClassName}
       >
-        <option value="">Walk-in sale (no customer)</option>
+        <option value="">Venta directa (sin cliente)</option>
         {query.data?.map((customer) => (
           <option key={customer.id} value={customer.id}>
             {customer.displayName}
           </option>
         ))}
       </select>
-      {query.isLoading && <p className="text-xs text-muted-foreground">Loading customers...</p>}
+      {query.isLoading && <p className="text-xs text-muted-foreground">Cargando clientes…</p>}
       {query.data?.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          No customers are available; the sale continues as a walk-in.
+          No hay clientes disponibles; podés continuar como venta directa.
         </p>
       )}
       {query.error && (
         <p className="text-xs text-muted-foreground">
-          Customers could not be loaded; the sale can continue without one.
+          No se pudieron cargar los clientes; podés continuar sin seleccionar uno.
         </p>
       )}
     </div>

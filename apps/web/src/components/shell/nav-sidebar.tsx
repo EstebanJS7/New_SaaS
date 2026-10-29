@@ -1,146 +1,189 @@
-import type { JSX } from "react";
-import Link from "next/link";
-import { Button } from "@newsaas/ui/components/ui/button";
+"use client";
 
-/**
- * One staff navigation entry. `requiredFeature` names the tenant capability the
- * destination is gated on, when it has one; an entry without it is always shown.
- */
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useState } from "react";
+import { Button } from "@newsaas/ui/components/ui/button";
+import { Icon, type IconName } from "@newsaas/ui/components/ui/icon";
+import { cn } from "@newsaas/ui/lib/utils";
+
 export interface NavLink {
   readonly href: string;
   readonly label: string;
   readonly requiredFeature?: string;
+  readonly section?: string;
+  readonly icon?: IconName;
 }
 
-/**
- * Real staff destinations shipped so far. Business entries land with their
- * epics (Customers in EPIC-04, Patients in EPIC-05, Agenda in EPIC-07, Catalog
- * in EPIC-09, Suppliers and Purchases in EPIC-11, the POS in EPIC-12, Cash in
- * EPIC-13, Billing in EPIC-14, Imports in EPIC-19); the placeholder labels below
- * remain chrome-only until a later epic supplies a real surface.
- *
- * The POS, Cash and Billing entries are the ones with a capability requirement:
- * DEC-026 gates the sale surface on the seeded `sales` feature code, DEC-037
- * gates the Cash workspace on the seeded `cash` feature code and DEC-040 gates
- * the Billing workspace on the seeded `billing` feature code, so each entry
- * declares its requirement and the shell hides it when it knows the tenant lacks
- * the capability.
- */
 export const NAV_LINKS: readonly NavLink[] = [
-  { href: "/app/customers", label: "Customers" },
-  { href: "/app/patients", label: "Patients" },
-  { href: "/app/catalog", label: "Catalog" },
-  { href: "/app/suppliers", label: "Suppliers" },
-  { href: "/app/purchases", label: "Purchases" },
-  { href: "/app/sales", label: "POS", requiredFeature: "sales" },
-  { href: "/app/cash", label: "Cash", requiredFeature: "cash" },
-  { href: "/app/billing", label: "Billing", requiredFeature: "billing" },
-  { href: "/app/fiscal", label: "Fiscal", requiredFeature: "fiscal" },
-  // Reports declares NO `requiredFeature`, and that is a decision rather than an
-  // omission ([[DEC-062]]): reports are not gated by a feature code —
-  // `advanced_reports` stays unspent — and a tenant that can see its sales and its
-  // cash must not lose the reports derived from them. Access is guarded the way
-  // every other read is: the `reports.read` permission, enforced by the API on
-  // every report and export route. It sits after the finance destinations it
-  // reports on and before the operational ones.
-  { href: "/app/reports", label: "Reports" },
-  { href: "/app/agenda", label: "Agenda" },
-  { href: "/app/notifications", label: "Notifications" },
-  // Imports declares NO `requiredFeature`, and that is the THIRD time this
-  // repository has refused a thirteenth feature code ([[DEC-072]], after
-  // [[DEC-058]] and [[DEC-062]]): importing is a staff action over data the tenant
-  // already owns, so the `imports.*` permission family is the whole guard and the
-  // nav has nothing to gate on. It sits after the data it feeds — customers and
-  // patients — and before the settings entries, which are chrome rather than
-  // operations.
-  { href: "/app/imports", label: "Imports" },
-  // The branding settings page had NO way in until the surface-integrity fence looked for orphans:
-  // the page, its upload and its live preview all existed, and nothing linked to them. It is not
-  // gated by `requiredFeature` because branding is a Platform capability every tenant has a
-  // resolved brand for, not a product entitlement.
-  { href: "/app/settings/branding", label: "Branding" },
+  { href: "/app", label: "Inicio", section: "Espacio de trabajo", icon: "dashboard" },
+  { href: "/app/agenda", label: "Agenda", section: "Espacio de trabajo", icon: "calendar" },
+  { href: "/app/customers", label: "Clientes", section: "Espacio de trabajo", icon: "users" },
+  { href: "/app/patients", label: "Pacientes", section: "Espacio de trabajo", icon: "activity" },
+  { href: "/app/catalog", label: "Catálogo", section: "Comercio", icon: "box" },
+  { href: "/app/suppliers", label: "Proveedores", section: "Comercio", icon: "truck" },
+  { href: "/app/purchases", label: "Compras", section: "Comercio", icon: "bag" },
+  {
+    href: "/app/sales",
+    label: "POS",
+    section: "Comercio",
+    icon: "receipt",
+    requiredFeature: "sales",
+  },
+  {
+    href: "/app/cash",
+    label: "Caja",
+    section: "Finanzas",
+    icon: "wallet",
+    requiredFeature: "cash",
+  },
+  {
+    href: "/app/billing",
+    label: "Facturación",
+    section: "Finanzas",
+    icon: "receipt",
+    requiredFeature: "billing",
+  },
+  {
+    href: "/app/fiscal",
+    label: "Fiscal",
+    section: "Finanzas",
+    icon: "shield",
+    requiredFeature: "fiscal",
+  },
+  { href: "/app/reports", label: "Informes", section: "Gestión", icon: "chart" },
+  { href: "/app/notifications", label: "Notificaciones", section: "Gestión", icon: "bell" },
+  { href: "/app/imports", label: "Importaciones", section: "Gestión", icon: "upload" },
+  { href: "/app/settings/branding", label: "Marca", section: "Configuración", icon: "settings" },
 ];
 
-/**
- * Phase A navigation labels.
- *
- * Deliberately neutral structural placeholders: real destinations belong to
- * later epics and must never ship hidden features behind this chrome
- * (chrome-only gate).
- */
-const NAV_ENTRIES = ["Section one", "Section two", "Section three"] as const;
-
-const navLinkClassName =
-  "inline-flex h-10 items-center justify-start whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium text-card-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-
-/**
- * The entries the shell may show for a set of entitled feature codes.
- *
- * This is a UX gate only (PRD §9, DEC-026): it decides which link the browser
- * renders, never what the backend authorizes. When the entitled set is unknown —
- * `undefined`, which is the shell's state today because no staff entitlement read
- * is exposed to the browser — every entry is returned unchanged, so a working
- * surface is never hidden by a guess. The backend still answers `403` on its own.
- */
+// UX only: unknown entitlements never hide a working destination.
+// The backend remains the authority for all permissions and tenant ownership.
 export function visibleNavLinks(
   links: readonly NavLink[],
   entitlements?: readonly string[]
 ): readonly NavLink[] {
-  if (entitlements === undefined) {
-    return links;
-  }
+  if (entitlements === undefined) return links;
   const granted = new Set(entitlements);
   return links.filter(
     (link) => link.requiredFeature === undefined || granted.has(link.requiredFeature)
   );
 }
 
-interface NavSidebarProps {
-  /**
-   * The tenant's entitled feature codes, when the shell knows them. Optional and
-   * UX-only: see {@link visibleNavLinks}.
-   */
-  readonly entitlements?: readonly string[];
-}
-
-/**
- * Staff-shell sidebar.
- *
- * Plain `<aside>` composition per design D8; entries are semantic links or
- * inert buttons styled exclusively with semantic tokens. Customers (EPIC-04),
- * Patients (EPIC-05), Catalog (EPIC-09), Suppliers and Purchases (EPIC-11), the
- * POS (EPIC-12), Cash (EPIC-13), Imports (EPIC-19) and Agenda (EPIC-07) are real
- * `next/link` destinations declared with no client-side permission gate, because
- * the API is the only authorization authority and answers `403` on its own. The
- * POS, Cash and Billing entries additionally declare their `sales`/`cash`/`billing`
- * capability so the shell can hide them when it knows the tenant lacks them.
- */
-export function NavSidebar({ entitlements }: NavSidebarProps = {}): JSX.Element {
+export function NavSidebar({
+  entitlements,
+  productName = "Espacio de trabajo",
+  onNavigate,
+  mobile = false,
+}: {
+  entitlements?: readonly string[];
+  productName?: string;
+  onNavigate?: () => void;
+  mobile?: boolean;
+} = {}) {
+  const pathname = usePathname() ?? "/app";
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
+  const links = visibleNavLinks(NAV_LINKS, entitlements);
+  const sections = [...new Set(links.map((link) => link.section ?? "Espacio de trabajo"))];
+  async function signOut() {
+    setSigningOut(true);
+    setSignOutError(false);
+    try {
+      const response = await fetch("/api/session/logout", { method: "POST" });
+      if (!response.ok && response.status !== 401) throw new Error("Logout failed");
+      window.location.assign("/login");
+    } catch {
+      setSigningOut(false);
+      setSignOutError(true);
+    }
+  }
   return (
-    <aside data-testid="nav-sidebar" className="flex w-60 shrink-0 flex-col border-r bg-card">
-      <nav aria-label="Primary" className="flex flex-col gap-1 p-3">
-        {visibleNavLinks(NAV_LINKS, entitlements).map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={navLinkClassName}
-            data-testid="nav-entry"
-          >
-            {link.label}
-          </Link>
-        ))}
-        {NAV_ENTRIES.map((label) => (
-          <Button
-            key={label}
-            type="button"
-            variant="ghost"
-            className="justify-start"
-            data-testid="nav-entry"
-          >
-            {label}
-          </Button>
+    <aside
+      data-testid="nav-sidebar"
+      aria-label="Navegación principal"
+      className={cn(
+        "workspace-sidebar flex-col",
+        mobile ? "flex h-full w-full" : "sticky top-0 hidden h-dvh w-64 shrink-0 lg:flex"
+      )}
+    >
+      <div className="flex min-h-20 shrink-0 items-center gap-3 px-6">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <Icon name="activity" className="size-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold tracking-tight">{productName}</p>
+          <p className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-sidebar-muted">
+            Espacio del equipo
+          </p>
+        </div>
+      </div>
+      <nav
+        aria-label="Principal"
+        className="min-h-0 flex-1 space-y-6 overflow-y-auto px-3 pb-6 pt-3"
+      >
+        {sections.map((section) => (
+          <div key={section}>
+            <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-muted">
+              {section}
+            </p>
+            <ul className="space-y-1">
+              {links
+                .filter((link) => (link.section ?? "Espacio de trabajo") === section)
+                .map((link) => {
+                  const active =
+                    link.href === "/app"
+                      ? pathname === link.href
+                      : pathname === link.href || pathname.startsWith(link.href + "/");
+                  return (
+                    <li key={link.href}>
+                      <Link
+                        data-testid="nav-entry"
+                        href={link.href}
+                        aria-current={active ? "page" : undefined}
+                        onClick={onNavigate}
+                        className={cn(
+                          "group flex min-h-10 items-center gap-3 rounded-md px-3 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          active
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-sidebar-foreground/75 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"
+                        )}
+                      >
+                        <Icon
+                          name={link.icon ?? "dashboard"}
+                          className={active ? "opacity-100" : "opacity-65"}
+                        />
+                        <span>{link.label}</span>
+                        {active ? (
+                          <span className="ml-auto size-1.5 rounded-full bg-current" />
+                        ) : null}
+                      </Link>
+                    </li>
+                  );
+                })}
+            </ul>
+          </div>
         ))}
       </nav>
+      <div className="shrink-0 border-t border-sidebar-foreground/10 p-4">
+        {signOutError ? (
+          <p role="alert" className="mb-3 text-xs text-sidebar-foreground">
+            No se pudo cerrar la sesión. Intentá de nuevo.
+          </p>
+        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          loading={signingOut}
+          onClick={() => {
+            void signOut();
+          }}
+          className="w-full justify-start text-sidebar-foreground/70 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"
+        >
+          {!signingOut ? <Icon name="logout" /> : null}
+          {signingOut ? "Cerrando sesión…" : "Cerrar sesión"}
+        </Button>
+      </div>
     </aside>
   );
 }

@@ -11,12 +11,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
-import { CompletionOutcomeAlert } from "../completion-outcome";
+import {
+  CompletionOutcomeAlert,
+  completionFailureCopy,
+  completionNeedsStateCheck,
+} from "../completion-outcome";
+import { Button } from "@newsaas/ui/components/ui/button";
 import { PaymentCapture } from "../payment-capture";
 import {
   classifySaleCompletionError,
   completeSale,
-  formatWireAmount,
   getSale,
   isSaleNotEntitled,
   isSaleNotFound,
@@ -75,6 +79,7 @@ export function SaleDetail(): JSX.Element {
   const catalogNames = useCatalogItemNames();
   const customerNames = useCustomerNames();
   const [completed, setCompleted] = useState<CompleteSaleResult | null>(null);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
 
   const query = useQuery({
     queryKey: ["sales", "detail", saleId],
@@ -95,7 +100,7 @@ export function SaleDetail(): JSX.Element {
     return (
       <div className="mx-auto max-w-3xl">
         <p data-testid="sale-loading" className="text-sm text-muted-foreground">
-          Loading sale...
+          Cargando venta…
         </p>
       </div>
     );
@@ -110,9 +115,9 @@ export function SaleDetail(): JSX.Element {
         role="alert"
         className="mx-auto max-w-3xl rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
       >
-        {permissionDenied && <p className="font-medium">Permission denied</p>}
-        {entitlementDenied && <p className="font-medium">Sales are not enabled for this tenant</p>}
-        {notFound && <p className="font-medium">Not found</p>}
+        {permissionDenied && <p className="font-medium">Sin permiso</p>}
+        {entitlementDenied && <p className="font-medium">Ventas no habilitadas</p>}
+        {notFound && <p className="font-medium">No encontrada</p>}
         <p>{userFacingSaleError(query.error)}</p>
       </div>
     );
@@ -122,7 +127,7 @@ export function SaleDetail(): JSX.Element {
     return (
       <div className="mx-auto max-w-3xl">
         <p data-testid="sale-not-found" className="text-sm text-muted-foreground">
-          Sale not found.
+          No encontramos la venta.
         </p>
       </div>
     );
@@ -134,43 +139,62 @@ export function SaleDetail(): JSX.Element {
   const isDraft = sale.status === "DRAFT";
   const payments = completed?.sale.payments ?? [];
 
-  function handleComplete(submitted: SalePaymentInput[]): void {
-    completeMutation.mutate(submitted);
+  async function refreshCompletionState(): Promise<void> {
+    setRefreshNotice(null);
+    const result = await query.refetch();
+    if (!result.isSuccess) return;
+    completeMutation.reset();
+    setRefreshNotice(
+      result.data.status === "DRAFT"
+        ? "El servidor confirma que la venta sigue en borrador. Revisá los pagos antes de reintentar."
+        : "Estado actualizado desde el servidor. No se envió un nuevo cobro."
+    );
+  }
+
+  function handleComplete(submitted: SalePaymentInput[]): Promise<CompleteSaleResult> {
+    if (completionNeedsStateCheck(completionFailure) || query.isFetching)
+      return Promise.reject(new Error("Consultá el estado actual de la venta."));
+    return completeMutation.mutateAsync(submitted);
   }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <CompletionOutcomeAlert completed={completed} />
+      {refreshNotice && (
+        <p role="status" className="rounded-lg border border-border bg-secondary p-3 text-sm">
+          {refreshNotice}
+        </p>
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle>{`Sale #${shortId(sale.id)}`}</CardTitle>
+          <CardTitle>{`Venta #${shortId(sale.id)}`}</CardTitle>
           <CardDescription>
-            {`${SALE_STATUS_LABELS[sale.status]} sale. Status is read from the API and never inferred here.`}
+            {`Venta ${SALE_STATUS_LABELS[sale.status].toLowerCase()}. El estado proviene del sistema.`}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <DetailRow label="Status" value={SALE_STATUS_LABELS[sale.status]} />
+          <DetailRow label="Estado" value={SALE_STATUS_LABELS[sale.status]} />
           <DetailRow
-            label="Customer"
+            label="Cliente"
             value={
               sale.customerId === null
-                ? "Walk-in (no customer)"
+                ? "Venta directa (sin cliente)"
                 : customerNames.nameFor(sale.customerId)
             }
           />
           <DetailRow label="Total" value={formatAmount(sale.total, sale.currency)} />
-          <DetailRow label="Reference" value={`#${shortId(sale.id)}`} />
-          <DetailRow label="Created" value={formatDate(sale.createdAt)} />
-          <DetailRow label="Updated" value={formatDate(sale.updatedAt)} />
+          <DetailRow label="Referencia" value={`#${shortId(sale.id)}`} />
+          <DetailRow label="Creada" value={formatDate(sale.createdAt)} />
+          <DetailRow label="Actualizada" value={formatDate(sale.updatedAt)} />
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Lines</CardTitle>
+          <CardTitle>Artículos</CardTitle>
           <CardDescription>
-            {`${sale.lines.length} ${sale.lines.length === 1 ? "line" : "lines"}. Amounts are the API's exact decimal strings; no total is derived here.`}
+            {`${sale.lines.length} ${sale.lines.length === 1 ? "artículo" : "artículos"}. Los importes exactos provienen del sistema.`}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
@@ -184,13 +208,13 @@ export function SaleDetail(): JSX.Element {
                   {catalogNames.nameFor(line.catalogItemId)}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {`Qty ${line.quantity} · unit ${formatWireAmount(line.unitPrice)} · ${line.rateCode}`}
+                  {`Cant. ${line.quantity} · unitario ${formatAmount(line.unitPrice, sale.currency)} · ${line.rateCode}`}
                 </p>
               </div>
               <div className="shrink-0 text-right text-foreground">
-                <p>{formatWireAmount(line.lineTotal)}</p>
+                <p>{formatAmount(line.lineTotal, sale.currency)}</p>
                 <p className="text-xs text-muted-foreground">
-                  {`base ${formatWireAmount(line.taxableBase)} · tax ${formatWireAmount(line.taxAmount)}`}
+                  {`base ${formatAmount(line.taxableBase, sale.currency)} · impuesto ${formatAmount(line.taxAmount, sale.currency)}`}
                 </p>
               </div>
             </div>
@@ -200,16 +224,18 @@ export function SaleDetail(): JSX.Element {
 
       <Card>
         <CardHeader>
-          <CardTitle>Payments</CardTitle>
+          <CardTitle>Pagos</CardTitle>
           <CardDescription>
-            Payments are written only by the completion command; the sale read does not include
-            them.
+            Los pagos se registran al completar la venta y se muestran con la respuesta de esa
+            operación.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           {payments.length === 0 ? (
             <p data-testid="no-payments" className="text-muted-foreground">
-              No payments are recorded for this sale.
+              {sale.status === "DRAFT"
+                ? "Este borrador todavía no tiene pagos confirmados."
+                : "El detalle de pagos no está disponible en esta lectura. El estado de la venta es el informado por el servidor."}
             </p>
           ) : (
             <ul className="space-y-2">
@@ -232,18 +258,40 @@ export function SaleDetail(): JSX.Element {
       {isDraft && completed === null && (
         <Card>
           <CardHeader>
-            <CardTitle>Complete this draft</CardTitle>
+            <CardTitle>Completar este borrador</CardTitle>
             <CardDescription>
-              {`Enter payments that sum exactly to ${formatAmount(sale.total, sale.currency)}. A refused completion persists nothing and leaves this draft open.`}
+              {`Ingresá pagos que sumen exactamente ${formatAmount(sale.total, sale.currency)}. Si el sistema rechaza la operación, el borrador seguirá abierto.`}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <CompletionOutcomeAlert failure={completionFailure} />
+            {completionNeedsStateCheck(completionFailure) && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  Volvé desde la confirmación y consultá el estado antes de volver a cobrar. Los
+                  pagos ingresados se conservan mientras la venta siga en borrador.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={query.isFetching || completeMutation.isPending}
+                  onClick={() => void refreshCompletionState()}
+                >
+                  {query.isFetching ? "Consultando estado…" : "Consultar estado actual"}
+                </Button>
+              </div>
+            )}
             <PaymentCapture
               total={sale.total}
               currency={sale.currency}
               onSubmit={handleComplete}
               isPending={completeMutation.isPending}
+              disabled={completionNeedsStateCheck(completionFailure) || query.isFetching}
+              errorMessage={
+                completionFailure === null
+                  ? undefined
+                  : `${completionFailureCopy(completionFailure).title}. ${completionFailureCopy(completionFailure).description}`
+              }
             />
           </CardContent>
         </Card>

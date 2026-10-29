@@ -1,8 +1,35 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Agenda } from "./agenda";
 import type { Appointment, AppointmentStatus, BookingRequest } from "./agenda-api";
+
+// jsdom models visibility only; native focus containment is checked in a browser.
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = false;
+    },
+  });
+});
+
+async function selectPatient(): Promise<void> {
+  fireEvent.change(screen.getByLabelText("Buscar paciente"), { target: { value: "Bobby" } });
+  fireEvent.click(await screen.findByRole("radio", { name: /Bobby/ }));
+}
+
+async function clickConsequentialAction(name: string): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name }));
+  const dialog = screen.queryByRole("dialog");
+  if (dialog !== null) fireEvent.click(within(dialog).getByRole("button", { name }));
+}
 
 const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_ID = "22222222-2222-4222-8222-222222222222";
@@ -86,9 +113,9 @@ const AVAILABILITY_BLOCK = {
 } as const;
 
 const AVAILABILITY_HINT =
-  "Select a branch and a professional to shade the times outside their working hours, plus their one-off blocks.";
+  "Elegí una sucursal y un profesional para ver sus horarios y bloqueos en el calendario.";
 const AVAILABILITY_UNAVAILABLE =
-  "Availability for this professional and branch could not be loaded, so nothing is shaded. The calendar may show times outside their working hours.";
+  "No se pudo cargar la disponibilidad. El calendario podría mostrar horarios fuera de la jornada del profesional.";
 
 function schedulingSettingsResponse(
   availability: readonly unknown[],
@@ -178,6 +205,19 @@ function mockAgendaFetch(handlers: FetchHandlers): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = resolveRequestUrl(input);
     const method = init?.method ?? "GET";
+    if (url === "/api/patients/lookup") {
+      return Promise.resolve(
+        jsonResponse([
+          {
+            id: PATIENT_ID,
+            name: "Bobby",
+            isActive: true,
+            speciesName: "Dog",
+            primaryGuardianName: "Ana García",
+          },
+        ])
+      );
+    }
     if (url.includes("/api/catalog")) {
       return Promise.resolve(handlers.catalog?.() ?? jsonResponse([CATALOG_SERVICE]));
     }
@@ -239,16 +279,66 @@ function renderAgenda(): void {
 }
 
 async function openManagePanel(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "List" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Lista" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Gestionar" }));
 }
 
 async function openRequestPanel(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "List" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Lista" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Revisar" }));
 }
 
 describe("Agenda", () => {
+  it("uses professional names in selectors and list while submitting membership IDs", async () => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: () =>
+        jsonResponse({
+          branches: [{ id: BRANCH_ID, name: "Main" }],
+          professionals: [{ membershipId: MEMBERSHIP_ID, displayName: "Dra. Prueba" }],
+        }),
+    });
+    renderAgenda();
+    expect(await screen.findByRole("option", { name: "Dra. Prueba" })).toHaveValue(MEMBERSHIP_ID);
+    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
+    expect(await screen.findByText(/Main · Dra. Prueba/)).toBeInTheDocument();
+  });
+  it("keeps branch/professional selection explicit when options arrive after the form opens", async () => {
+    let resolveOptions: ((response: Response) => void) | undefined;
+    const fetchMock = mockAgendaFetch({
+      options: () =>
+        new Promise<Response>((resolve) => {
+          resolveOptions = resolve;
+        }),
+    });
+    renderAgenda();
+    fireEvent.click(await screen.findByRole("button", { name: "Nuevo turno" }));
+    const branch = screen.getByRole("combobox", { name: "Sucursal" });
+    const professional = screen.getByRole("combobox", { name: "Profesional" });
+    await waitFor(() => expect(resolveOptions).toBeDefined());
+    act(() => resolveOptions?.(optionsResponse()));
+    await within(branch).findByRole("option", { name: "Main" });
+    expect(branch).toHaveValue("");
+    expect(professional).toHaveValue("");
+    expect(within(branch).getByRole("option", { name: "Elegí una sucursal" })).toHaveProperty(
+      "selected",
+      true
+    );
+    await selectPatient();
+    fireEvent.click(screen.getByRole("button", { name: "Crear turno" }));
+    expect(
+      await screen.findByText(
+        "Elegí una sucursal, un profesional y un paciente de los resultados de búsqueda."
+      )
+    ).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        (call) =>
+          resolveRequestUrl(call[0] as RequestInfo) === "/api/scheduling/appointments" &&
+          requestMethod(call) === "POST"
+      )
+    ).toBe(false);
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     changeViewMock.mockClear();
@@ -265,14 +355,14 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    expect(await screen.findByText("Loading agenda...")).toBeInTheDocument();
+    expect(await screen.findByText("Cargando agenda…")).toBeInTheDocument();
   });
 
   it("renders the empty state when the tenant has no appointments", async () => {
     mockAgendaFetch({ appointments: () => jsonResponse([]) });
     renderAgenda();
 
-    expect(await screen.findByText("No appointments")).toBeInTheDocument();
+    expect(await screen.findByText("Todavía no hay turnos")).toBeInTheDocument();
   });
 
   it("renders the error state for a non-permission failure", async () => {
@@ -292,9 +382,9 @@ describe("Agenda", () => {
     renderAgenda();
 
     expect(
-      await screen.findByText("You do not have permission to perform this action.")
+      await screen.findByText("No tenés permiso para realizar esta acción.")
     ).toBeInTheDocument();
-    expect(screen.queryByText("Manage")).not.toBeInTheDocument();
+    expect(screen.queryByText("Gestionar")).not.toBeInTheDocument();
   });
 
   it("refetches the agenda scoped to the selected branch filter", async () => {
@@ -304,7 +394,7 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    const branchFilter = await screen.findByLabelText("Branch filter");
+    const branchFilter = await screen.findByLabelText("Filtrar por sucursal");
     await screen.findByRole("option", { name: "Main" });
 
     fireEvent.change(branchFilter, { target: { value: BRANCH_ID } });
@@ -340,11 +430,11 @@ describe("Agenda", () => {
     renderAgenda();
 
     // The accessible list makes each rendered row's professional observable.
-    fireEvent.click(await screen.findByRole("button", { name: "List" }));
-    expect(await screen.findByText("Main · Professional 44444444")).toBeInTheDocument();
-    expect(screen.getByText("Main · Professional 55555555")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Lista" }));
+    expect(await screen.findByText("Main · Profesional (ID) 44444444")).toBeInTheDocument();
+    expect(screen.getByText("Main · Profesional (ID) 55555555")).toBeInTheDocument();
 
-    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por profesional"), {
       target: { value: MEMBERSHIP_ID },
     });
 
@@ -358,9 +448,9 @@ describe("Agenda", () => {
       ).toBe(true);
     });
     await waitFor(() =>
-      expect(screen.queryByText("Main · Professional 55555555")).not.toBeInTheDocument()
+      expect(screen.queryByText("Main · Profesional (ID) 55555555")).not.toBeInTheDocument()
     );
-    expect(screen.getByText("Main · Professional 44444444")).toBeInTheDocument();
+    expect(screen.getByText("Main · Profesional (ID) 44444444")).toBeInTheDocument();
   });
 
   it("refetches for the selected status filter and renders only that status", async () => {
@@ -384,11 +474,11 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    fireEvent.click(await screen.findByRole("button", { name: "List" }));
-    expect(await screen.findByText("Main · Professional 44444444")).toBeInTheDocument();
-    expect(screen.getByText("North · Professional 44444444")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Lista" }));
+    expect(await screen.findByText("Main · Profesional (ID) 44444444")).toBeInTheDocument();
+    expect(screen.getByText("North · Profesional (ID) 44444444")).toBeInTheDocument();
 
-    fireEvent.change(await screen.findByLabelText("Status filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por estado"), {
       target: { value: "CONFIRMED" },
     });
 
@@ -400,9 +490,9 @@ describe("Agenda", () => {
       ).toBe(true);
     });
     await waitFor(() =>
-      expect(screen.queryByText("Main · Professional 44444444")).not.toBeInTheDocument()
+      expect(screen.queryByText("Main · Profesional (ID) 44444444")).not.toBeInTheDocument()
     );
-    expect(screen.getByText("North · Professional 44444444")).toBeInTheDocument();
+    expect(screen.getByText("North · Profesional (ID) 44444444")).toBeInTheDocument();
   });
 
   it("refetches the agenda scoped to the selected service filter without disturbing the others", async () => {
@@ -416,10 +506,12 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    fireEvent.click(await screen.findByRole("button", { name: "List" }));
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(2));
+    fireEvent.click(await screen.findByRole("button", { name: "Lista" }));
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Gestionar" })).toHaveLength(2)
+    );
 
-    fireEvent.change(await screen.findByLabelText("Service filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por servicio"), {
       target: { value: CATALOG_SERVICE_ID },
     });
 
@@ -434,12 +526,14 @@ describe("Agenda", () => {
     });
     // Only the matching appointment stays visible, and the existing filters and
     // navigation are untouched.
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Gestionar" })).toHaveLength(1)
+    );
     expect(screen.getByTestId("appointment-service")).toHaveTextContent(SERVICE_NAME);
-    expect(screen.getByLabelText("Branch filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Professional filter")).toBeInTheDocument();
-    expect(screen.getByLabelText("Status filter")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Today" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Filtrar por sucursal")).toBeInTheDocument();
+    expect(screen.getByLabelText("Filtrar por profesional")).toBeInTheDocument();
+    expect(screen.getByLabelText("Filtrar por estado")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hoy" })).toBeInTheDocument();
   });
 
   it("offers an optional service selector and sends the chosen id without deriving the span", async () => {
@@ -449,16 +543,16 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    fireEvent.click(await screen.findByRole("button", { name: "New appointment" }));
-    const service = await screen.findByLabelText("Service");
-    expect(within(service).getByRole("option", { name: "No service" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Nuevo turno" }));
+    const service = await screen.findByRole("combobox", { name: "Servicio" });
+    expect(within(service).getByRole("option", { name: "Sin servicio" })).toBeInTheDocument();
     expect(within(service).getByRole("option", { name: SERVICE_NAME })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Patient id"), { target: { value: PATIENT_ID } });
-    fireEvent.change(screen.getByLabelText("Start"), { target: { value: "2026-09-14T09:00" } });
-    fireEvent.change(screen.getByLabelText("End"), { target: { value: "2026-09-14T09:45" } });
+    await selectPatient();
+    fireEvent.change(screen.getByLabelText("Inicio"), { target: { value: "2026-09-14T09:00" } });
+    fireEvent.change(screen.getByLabelText("Fin"), { target: { value: "2026-09-14T09:45" } });
     fireEvent.change(service, { target: { value: CATALOG_SERVICE_ID } });
-    fireEvent.click(screen.getByRole("button", { name: "Create appointment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Crear turno" }));
 
     await waitFor(() => {
       expect(
@@ -493,12 +587,12 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    fireEvent.click(await screen.findByRole("button", { name: "New appointment" }));
-    await screen.findByLabelText("Service");
-    fireEvent.change(screen.getByLabelText("Patient id"), { target: { value: PATIENT_ID } });
-    fireEvent.change(screen.getByLabelText("Start"), { target: { value: "2026-09-14T09:00" } });
-    fireEvent.change(screen.getByLabelText("End"), { target: { value: "2026-09-14T09:30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create appointment" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Nuevo turno" }));
+    await screen.findByRole("combobox", { name: "Servicio" });
+    await selectPatient();
+    fireEvent.change(screen.getByLabelText("Inicio"), { target: { value: "2026-09-14T09:00" } });
+    fireEvent.change(screen.getByLabelText("Fin"), { target: { value: "2026-09-14T09:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear turno" }));
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "POST")).toBe(true)
@@ -520,14 +614,19 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Lista" }));
     expect(await screen.findByTestId("appointment-service")).toHaveTextContent(
-      `Service ${SERVICE_NAME}`
+      `Servicio ${SERVICE_NAME}`
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Gestionar" }));
     expect(await screen.findByTestId("manage-appointment-service")).toHaveTextContent(
-      `Service ${SERVICE_NAME}`
+      `Servicio: ${SERVICE_NAME}`
+    );
+
+    expect(screen.getByRole("link", { name: /Abrir ficha de/ })).toHaveAttribute(
+      "href",
+      `/app/patients/${APPOINTMENT.patientId}?appointment=${APPOINTMENT.id}#patient-clinical`
     );
 
     // The selector read carries the reference price, but the agenda renders no
@@ -563,11 +662,13 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openManagePanel();
-    const service = await screen.findByLabelText<HTMLSelectElement>("Service");
+    const service = await screen.findByRole<HTMLSelectElement>("combobox", {
+      name: "Servicio",
+    });
     expect(service.value).toBe(CATALOG_SERVICE_ID);
 
     fireEvent.change(service, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save reschedule" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "PUT")).toBe(true)
@@ -593,7 +694,9 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openManagePanel();
-    const service = await screen.findByLabelText<HTMLSelectElement>("Service");
+    const service = await screen.findByRole<HTMLSelectElement>("combobox", {
+      name: "Servicio",
+    });
     expect(service.value).toBe(OTHER_SERVICE_ID);
     expect(within(service).getByRole("option", { name: "Retired service" })).toBeInTheDocument();
     expect(within(service).getByRole("option", { name: SERVICE_NAME })).toBeInTheDocument();
@@ -608,19 +711,19 @@ describe("Agenda", () => {
     renderAgenda();
 
     expect(await screen.findByTestId("service-options-unavailable")).toHaveTextContent(
-      "The service list could not be loaded"
+      "No se pudo cargar la lista de servicios."
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "New appointment" }));
-    const service = await screen.findByLabelText("Service");
+    fireEvent.click(screen.getByRole("button", { name: "Nuevo turno" }));
+    const service = await screen.findByRole("combobox", { name: "Servicio" });
     expect(within(service).getAllByRole("option")).toHaveLength(1);
 
     // The appointment is still creatable without a service: the failed read is
     // not a barrier and the client invents no permission rule from it.
-    fireEvent.change(screen.getByLabelText("Patient id"), { target: { value: PATIENT_ID } });
-    fireEvent.change(screen.getByLabelText("Start"), { target: { value: "2026-09-14T09:00" } });
-    fireEvent.change(screen.getByLabelText("End"), { target: { value: "2026-09-14T09:30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create appointment" }));
+    await selectPatient();
+    fireEvent.change(screen.getByLabelText("Inicio"), { target: { value: "2026-09-14T09:00" } });
+    fireEvent.change(screen.getByLabelText("Fin"), { target: { value: "2026-09-14T09:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear turno" }));
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "POST")).toBe(true)
@@ -640,14 +743,14 @@ describe("Agenda", () => {
     await screen.findByTestId("fullcalendar");
     expect(latestCalendarProps?.initialView).toBe("timeGridDay");
 
-    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mes" }));
     await waitFor(() => expect(changeViewMock).toHaveBeenCalledWith("dayGridMonth"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Week" }));
+    fireEvent.click(screen.getByRole("button", { name: "Semana" }));
     await waitFor(() => expect(changeViewMock).toHaveBeenCalledWith("timeGridWeek"));
 
-    fireEvent.click(screen.getByRole("button", { name: "List" }));
-    expect(await screen.findByRole("button", { name: "Manage" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
+    expect(await screen.findByRole("button", { name: "Gestionar" })).toBeInTheDocument();
   });
 
   it("renders the appointment as a calendar event", async () => {
@@ -656,15 +759,17 @@ describe("Agenda", () => {
 
     await screen.findByTestId("fullcalendar");
 
-    expect(latestCalendarProps?.events).toEqual([
-      {
-        id: APPOINTMENT_ID,
-        title: "SCHEDULED",
-        start: APPOINTMENT.startAt,
-        end: APPOINTMENT.endAt,
-        allDay: false,
-      },
-    ]);
+    await waitFor(() =>
+      expect(latestCalendarProps?.events).toEqual([
+        {
+          id: APPOINTMENT_ID,
+          title: "Bobby · Programado",
+          start: APPOINTMENT.startAt,
+          end: APPOINTMENT.endAt,
+          allDay: false,
+        },
+      ])
+    );
   });
 
   it("shows the availability hint and shades nothing until a branch and professional are selected", async () => {
@@ -690,10 +795,10 @@ describe("Agenda", () => {
     renderAgenda();
 
     await screen.findByTestId("fullcalendar");
-    fireEvent.change(await screen.findByLabelText("Branch filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por sucursal"), {
       target: { value: BRANCH_ID },
     });
-    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por profesional"), {
       target: { value: MEMBERSHIP_ID },
     });
 
@@ -724,17 +829,19 @@ describe("Agenda", () => {
     renderAgenda();
 
     await screen.findByTestId("fullcalendar");
-    fireEvent.change(await screen.findByLabelText("Branch filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por sucursal"), {
       target: { value: BRANCH_ID },
     });
-    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por profesional"), {
       target: { value: MEMBERSHIP_ID },
     });
 
     // The pair is configured in no way at all, so the write path is
     // unrestricted and the overlay must not shade a single minute.
     await waitFor(() => expect(latestCalendarProps?.businessHours).toBe(false));
-    expect(latestCalendarProps?.events).toEqual([expect.objectContaining({ id: APPOINTMENT_ID })]);
+    await waitFor(() =>
+      expect(latestCalendarProps?.events).toEqual([expect.objectContaining({ id: APPOINTMENT_ID })])
+    );
   });
 
   it("warns, without blocking, when the selected pair's settings read fails", async () => {
@@ -746,10 +853,10 @@ describe("Agenda", () => {
     renderAgenda();
 
     await screen.findByTestId("fullcalendar");
-    fireEvent.change(await screen.findByLabelText("Branch filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por sucursal"), {
       target: { value: BRANCH_ID },
     });
-    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por profesional"), {
       target: { value: MEMBERSHIP_ID },
     });
 
@@ -762,7 +869,7 @@ describe("Agenda", () => {
     expect(screen.queryByTestId("availability-hint")).toBeNull();
     // Information, not a barrier: the calendar and its controls stay usable.
     expect(screen.getByTestId("fullcalendar")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New appointment" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Nuevo turno" })).toBeEnabled();
   });
 
   it("treats a malformed settings namespace as unavailable, not as unrestricted", async () => {
@@ -774,10 +881,10 @@ describe("Agenda", () => {
     renderAgenda();
 
     await screen.findByTestId("fullcalendar");
-    fireEvent.change(await screen.findByLabelText("Branch filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por sucursal"), {
       target: { value: BRANCH_ID },
     });
-    fireEvent.change(await screen.findByLabelText("Professional filter"), {
+    fireEvent.change(await screen.findByLabelText("Filtrar por profesional"), {
       target: { value: MEMBERSHIP_ID },
     });
 
@@ -849,10 +956,10 @@ describe("Agenda", () => {
       });
     });
 
-    expect(await screen.findByRole("heading", { name: "New appointment" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Nuevo turno" })).toBeInTheDocument();
     // America/Asuncion is UTC-3 in September, so 13:00Z is 10:00 tenant wall time.
-    expect(screen.getByLabelText<HTMLInputElement>("Start").value).toBe("2026-09-15T10:00");
-    expect(screen.getByLabelText<HTMLInputElement>("End").value).toBe("2026-09-15T10:45");
+    expect(screen.getByLabelText<HTMLInputElement>("Inicio").value).toBe("2026-09-15T10:00");
+    expect(screen.getByLabelText<HTMLInputElement>("Fin").value).toBe("2026-09-15T10:45");
   });
 
   it("reschedules an appointment with its optimistic version from the Manage form", async () => {
@@ -864,9 +971,9 @@ describe("Agenda", () => {
 
     await openManagePanel();
 
-    const start = await screen.findByLabelText("Start");
+    const start = await screen.findByLabelText("Inicio");
     fireEvent.change(start, { target: { value: "2026-09-14T08:15" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save reschedule" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
     await waitFor(() => {
       expect(
@@ -900,7 +1007,7 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openManagePanel();
-    fireEvent.click(await screen.findByRole("button", { name: "confirm" }));
+    await clickConsequentialAction("Confirmar turno");
 
     await waitFor(() => {
       expect(
@@ -912,6 +1019,36 @@ describe("Agenda", () => {
         )
       ).toBe(true);
     });
+  });
+
+  it("contains keyboard focus and returns to the trigger when confirmation is cancelled", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+    });
+    renderAgenda();
+    await openManagePanel();
+    const trigger = screen.getByRole("button", { name: "Confirmar turno" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Confirmar este turno" });
+    const cancel = within(dialog).getByRole("button", { name: "Volver" });
+    const confirm = within(dialog).getByRole("button", { name: "Confirmar turno" });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(cancel, { key: "Tab", shiftKey: true });
+    expect(confirm).toHaveFocus();
+    fireEvent.keyDown(confirm, { key: "Tab" });
+    expect(cancel).toHaveFocus();
+    fireEvent.click(cancel);
+    expect(dialog).not.toHaveAttribute("open");
+    expect(trigger).toHaveFocus();
+    expect(
+      fetchMock.mock.calls.some(
+        (call) =>
+          resolveRequestUrl(call[0] as RequestInfo).endsWith("/confirm") &&
+          requestMethod(call) === "POST"
+      )
+    ).toBe(false);
   });
 
   it("refreshes the state and explains a stale-version 409 distinctly from an overlap", async () => {
@@ -936,13 +1073,13 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openManagePanel();
-    fireEvent.change(await screen.findByLabelText("Start"), {
+    fireEvent.change(await screen.findByLabelText("Inicio"), {
       target: { value: "2026-09-14T09:00" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save reschedule" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
     expect(await screen.findByTestId("stale-version-alert")).toHaveTextContent(
-      "changed by another staff member"
+      "Otra persona modificó este turno."
     );
     // The client re-read the appointment to confirm the version actually moved.
     expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "GET")).toBe(true);
@@ -967,17 +1104,17 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openManagePanel();
-    fireEvent.change(await screen.findByLabelText("Start"), {
+    fireEvent.change(await screen.findByLabelText("Inicio"), {
       target: { value: "2026-09-14T09:00" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save reschedule" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
     // A 409 whose stored version did NOT advance must not be misreported as a
     // concurrent-writer conflict: the generic, cause-agnostic conflict copy is
     // shown and the stale-version alert stays hidden.
     expect(
       await screen.findByText(
-        "The appointment could not be changed because it conflicts with its current state. The latest details are being refreshed; review them and try again."
+        "No se pudo cambiar el turno porque su estado pudo haber cambiado. Actualizamos los datos; revisalos antes de volver a intentar."
       )
     ).toBeInTheDocument();
     expect(screen.queryByTestId("stale-version-alert")).not.toBeInTheDocument();
@@ -992,24 +1129,26 @@ describe("Agenda", () => {
     renderAgenda();
 
     await screen.findByTestId("fullcalendar");
-    expect(latestCalendarProps?.events).toEqual([
-      {
-        id: APPOINTMENT_ID,
-        title: "SCHEDULED",
-        start: APPOINTMENT.startAt,
-        end: APPOINTMENT.endAt,
-        allDay: false,
-      },
-      {
-        id: `booking-request:${REQUEST_ID}`,
-        title: "REQUEST",
-        start: BOOKING_REQUEST.startAt,
-        end: BOOKING_REQUEST.endAt,
-        allDay: false,
-        editable: false,
-        extendedProps: { kind: "booking-request" },
-      },
-    ]);
+    await waitFor(() =>
+      expect(latestCalendarProps?.events).toEqual([
+        {
+          id: APPOINTMENT_ID,
+          title: "Bobby · Programado",
+          start: APPOINTMENT.startAt,
+          end: APPOINTMENT.endAt,
+          allDay: false,
+        },
+        {
+          id: `booking-request:${REQUEST_ID}`,
+          title: "Bobby · Solicitud",
+          start: BOOKING_REQUEST.startAt,
+          end: BOOKING_REQUEST.endAt,
+          allDay: false,
+          editable: false,
+          extendedProps: { kind: "booking-request" },
+        },
+      ])
+    );
   });
 
   it("keeps the calendar visible when there are pending requests but no appointments", async () => {
@@ -1021,18 +1160,20 @@ describe("Agenda", () => {
     renderAgenda();
 
     await screen.findByTestId("fullcalendar");
-    expect(latestCalendarProps?.events).toEqual([
-      {
-        id: `booking-request:${REQUEST_ID}`,
-        title: "REQUEST",
-        start: BOOKING_REQUEST.startAt,
-        end: BOOKING_REQUEST.endAt,
-        allDay: false,
-        editable: false,
-        extendedProps: { kind: "booking-request" },
-      },
-    ]);
-    expect(screen.queryByText("No appointments")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(latestCalendarProps?.events).toEqual([
+        {
+          id: `booking-request:${REQUEST_ID}`,
+          title: "Bobby · Solicitud",
+          start: BOOKING_REQUEST.startAt,
+          end: BOOKING_REQUEST.endAt,
+          allDay: false,
+          editable: false,
+          extendedProps: { kind: "booking-request" },
+        },
+      ])
+    );
+    expect(screen.queryByText("Todavía no hay turnos")).not.toBeInTheDocument();
   });
 
   it("opens approve and reject from a pending request calendar event", async () => {
@@ -1049,10 +1190,10 @@ describe("Agenda", () => {
     });
 
     expect(
-      await screen.findByRole("heading", { name: "Pending booking request" })
+      await screen.findByRole("heading", { name: "Solicitud de turno pendiente" })
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve request" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject request" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Aprobar solicitud" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rechazar solicitud" })).toBeInTheDocument();
   });
 
   it("shows the pending request distinctly from every appointment status in the list view", async () => {
@@ -1077,14 +1218,14 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Lista" }));
 
     const row = await screen.findByTestId("pending-request-row");
-    expect(within(row).getByTestId("request-badge")).toHaveTextContent("Request");
+    expect(within(row).getByTestId("request-badge")).toHaveTextContent("Solicitud");
     expect(row.className).toContain("border-dashed");
     // Exactly one request badge, and no appointment row shares the dashed layer.
     expect(screen.getAllByTestId("request-badge")).toHaveLength(1);
-    for (const manage of screen.getAllByRole("button", { name: "Manage" })) {
+    for (const manage of screen.getAllByRole("button", { name: "Gestionar" })) {
       expect(manage.closest("li")?.className).not.toContain("border-dashed");
     }
   });
@@ -1093,7 +1234,7 @@ describe("Agenda", () => {
     mockAgendaFetch({ appointments: () => jsonResponse([APPOINTMENT]), options: optionsResponse });
     renderAgenda();
 
-    expect(await screen.findByText("No pending booking requests.")).toBeInTheDocument();
+    expect(await screen.findByText("No hay solicitudes de turno pendientes.")).toBeInTheDocument();
     expect(screen.queryByTestId("pending-requests-alert")).not.toBeInTheDocument();
   });
 
@@ -1107,7 +1248,7 @@ describe("Agenda", () => {
 
     const alert = await screen.findByTestId("pending-requests-alert");
     expect(alert).toHaveAttribute("data-state", "denied");
-    expect(alert).toHaveTextContent("You do not have permission to decide booking requests.");
+    expect(alert).toHaveTextContent("No tenés permiso para resolver solicitudes de turno.");
   });
 
   it("approves a pending request from the agenda and refreshes the pending layer", async () => {
@@ -1124,7 +1265,7 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openRequestPanel();
-    fireEvent.click(await screen.findByRole("button", { name: "Approve request" }));
+    await clickConsequentialAction("Aprobar solicitud");
 
     await waitFor(() => {
       expect(
@@ -1146,7 +1287,7 @@ describe("Agenda", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("pending-request-row")).not.toBeInTheDocument()
     );
-    expect(await screen.findByText("Booking request approved.")).toBeInTheDocument();
+    expect(await screen.findByText("Solicitud aprobada; se creó el turno.")).toBeInTheDocument();
   });
 
   it("rejects a pending request from the agenda and refreshes the pending layer", async () => {
@@ -1163,7 +1304,7 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openRequestPanel();
-    fireEvent.click(await screen.findByRole("button", { name: "Reject request" }));
+    await clickConsequentialAction("Rechazar solicitud");
 
     await waitFor(() => {
       expect(
@@ -1178,7 +1319,7 @@ describe("Agenda", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("pending-request-row")).not.toBeInTheDocument()
     );
-    expect(await screen.findByText("Booking request rejected.")).toBeInTheDocument();
+    expect(await screen.findByText("Solicitud rechazada.")).toBeInTheDocument();
   });
 
   it("keeps a request visible with non-committal copy and refreshes both layers on a 409", async () => {
@@ -1195,16 +1336,18 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openRequestPanel();
-    fireEvent.click(await screen.findByRole("button", { name: "Approve request" }));
+    await clickConsequentialAction("Aprobar solicitud");
 
     expect(
       await screen.findByText(
-        "The request could not be decided as it stands: the slot may no longer be free, or the request may already have been decided. The latest state is being refreshed."
+        "No se pudo resolver la solicitud: el horario podría estar ocupado o alguien pudo haberla resuelto antes. Actualizamos el estado."
       )
     ).toBeInTheDocument();
     // Still pending: the request stays in the layer and the panel stays open.
     expect(screen.getByTestId("pending-request-row")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve request" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Aprobar solicitud" })
+    ).toBeInTheDocument();
 
     // The 409 re-reads reality instead of guessing a cause: both layers refetch.
     await waitFor(() => {
@@ -1246,14 +1389,14 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openRequestPanel();
-    fireEvent.click(await screen.findByRole("button", { name: "Approve request" }));
+    await clickConsequentialAction("Aprobar solicitud");
 
     await waitFor(() =>
       expect(screen.queryByTestId("pending-request-row")).not.toBeInTheDocument()
     );
     // The stale panel is closed, not left open contradicting the refreshed data.
     expect(
-      screen.queryByRole("heading", { name: "Pending booking request" })
+      screen.queryByRole("heading", { name: "Solicitud de turno pendiente" })
     ).not.toBeInTheDocument();
   });
 
@@ -1266,13 +1409,13 @@ describe("Agenda", () => {
     renderAgenda();
 
     await openRequestPanel();
-    fireEvent.change(screen.getByLabelText("Override start"), {
+    fireEvent.change(screen.getByLabelText("Nuevo horario de inicio"), {
       target: { value: "2026-09-14T18:00" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Approve request" }));
+    await clickConsequentialAction("Aprobar solicitud");
 
     expect(
-      await screen.findByText("Enter both override times or leave them empty.")
+      await screen.findByText("Ingresá los dos horarios alternativos o dejalos vacíos.")
     ).toBeInTheDocument();
     expect(
       fetchMock.mock.calls.some((call) =>
@@ -1280,10 +1423,10 @@ describe("Agenda", () => {
       )
     ).toBe(false);
 
-    fireEvent.change(screen.getByLabelText("Override end"), {
+    fireEvent.change(screen.getByLabelText("Nuevo horario de fin"), {
       target: { value: "2026-09-14T18:30" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Approve request" }));
+    await clickConsequentialAction("Aprobar solicitud");
 
     await waitFor(() => {
       expect(

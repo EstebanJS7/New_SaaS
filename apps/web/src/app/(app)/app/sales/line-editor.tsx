@@ -3,7 +3,9 @@
 import type { JSX } from "react";
 import { Button } from "@newsaas/ui/components/ui/button";
 import type { CartLine } from "./counter-cart";
-import { formatWireAmount } from "./sales-api";
+import { formatAmount } from "./sales-display";
+import { isWireQuantity, isWireUnitPrice } from "./sales-api";
+import { normalizeEsPyDecimalInput } from "@/lib/es-py-format";
 
 const inputClassName =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
@@ -32,21 +34,28 @@ export function LineEditor({ line, disabled, onChange, onRemove }: LineEditorPro
   const referencePrice =
     line.referencePriceAmount === null
       ? null
-      : `${formatWireAmount(line.referencePriceAmount)} ${line.referencePriceCurrency ?? ""}`.trim();
+      : formatAmount(line.referencePriceAmount, line.referencePriceCurrency);
+  const quantity = normalizeEsPyDecimalInput(line.quantity);
+  const unitPrice = normalizeEsPyDecimalInput(line.unitPrice);
+  const quantityInvalid = quantity === null || !isWireQuantity(quantity);
+  const priceInvalid =
+    line.unitPrice.trim().length === 0
+      ? line.referencePriceAmount === null
+      : unitPrice === null || !isWireUnitPrice(unitPrice);
 
   return (
     <div className="space-y-3 rounded-lg border border-input p-3">
       <div className="flex items-start justify-between gap-4">
         <span className="min-w-0 truncate font-medium text-foreground">{line.name}</span>
         <span className="shrink-0 text-xs text-muted-foreground">
-          {referencePrice === null ? "No reference price" : `Reference ${referencePrice}`}
+          {referencePrice === null ? "Sin precio de referencia" : `Referencia: ${referencePrice}`}
         </span>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
           <label htmlFor={`${line.key}-quantity`} className="text-sm font-medium">
-            Quantity
+            Cantidad <span aria-hidden="true">*</span>
           </label>
           <input
             id={`${line.key}-quantity`}
@@ -55,14 +64,22 @@ export function LineEditor({ line, disabled, onChange, onRemove }: LineEditorPro
             value={line.quantity}
             onChange={(event) => onChange(line.key, { quantity: event.target.value })}
             disabled={disabled}
-            placeholder="e.g. 1.000"
+            placeholder="p. ej., 1,5"
+            aria-invalid={quantityInvalid}
+            aria-describedby={quantityInvalid ? `${line.key}-quantity-help` : undefined}
             className={inputClassName}
           />
+          {quantityInvalid && (
+            <p id={`${line.key}-quantity-help`} className="text-xs text-destructive">
+              Ingresá una cantidad mayor que cero, con hasta tres decimales. Usá coma para los
+              decimales y punto para los miles.
+            </p>
+          )}
         </div>
 
         <div className="space-y-2">
           <label htmlFor={`${line.key}-price`} className="text-sm font-medium">
-            Applied unit price
+            Precio unitario aplicado
           </label>
           <input
             id={`${line.key}-price`}
@@ -71,13 +88,22 @@ export function LineEditor({ line, disabled, onChange, onRemove }: LineEditorPro
             value={line.unitPrice}
             onChange={(event) => onChange(line.key, { unitPrice: event.target.value })}
             disabled={disabled}
-            placeholder={line.referencePriceAmount === null ? "Required" : "Reference price"}
+            placeholder={
+              line.referencePriceAmount === null ? "Obligatorio" : "Precio de referencia"
+            }
+            aria-invalid={priceInvalid}
+            aria-describedby={`${line.key}-price-help`}
             className={inputClassName}
           />
-          <p className="text-xs text-muted-foreground">
+          <p
+            id={`${line.key}-price-help`}
+            className={priceInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+          >
             {line.referencePriceAmount === null
-              ? "This item has no reference price; enter the applied price."
-              : "Pre-filled from the catalog reference price. Override it, or clear it to accept the reference price."}
+              ? priceInvalid
+                ? "Ingresá el precio aplicado. Este artículo no tiene precio de referencia. Usá coma para los decimales y punto para los miles."
+                : "Este artículo no tiene precio de referencia. Usá coma para los decimales y punto para los miles."
+              : "El precio proviene del catálogo; podés cambiarlo o dejarlo vacío para usar el precio de referencia. Usá coma para los decimales y punto para los miles."}
           </p>
         </div>
       </div>
@@ -90,7 +116,7 @@ export function LineEditor({ line, disabled, onChange, onRemove }: LineEditorPro
           onClick={() => onRemove(line.key)}
           disabled={disabled}
         >
-          Remove line
+          Quitar artículo
         </Button>
       </div>
     </div>

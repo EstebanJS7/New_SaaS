@@ -240,7 +240,7 @@ describe("sales-api transport contract", () => {
     expect((error as ApiRequestError).code).toBe("NOT_FOUND");
     expect((error as ApiRequestError).status).toBe(404);
     expect(isSaleNotFound(error as Error)).toBe(true);
-    expect(userFacingSaleError(error as Error)).toBe("Sale not found.");
+    expect(userFacingSaleError(error as Error)).toBe("No encontramos la venta.");
   });
 
   it("classifies every distinct completion outcome", async () => {
@@ -430,21 +430,21 @@ describe("sales-api transport contract", () => {
 
   it("maps the entitlement, permission, not-found and transport failures to distinct copy", () => {
     expect(userFacingSaleError(new ApiRequestError("FORBIDDEN", "Access denied.", 403))).toBe(
-      "You do not have permission to manage sales."
+      "No tenés permiso para gestionar ventas."
     );
     expect(
       userFacingSaleError(
         new ApiRequestError("FEATURE_NOT_ENTITLED", SALE_FEATURE_NOT_ENTITLED_MESSAGE, 403)
       )
-    ).toBe("Sales features are not enabled for this tenant.");
+    ).toBe("La función de ventas no está habilitada para esta organización.");
     expect(
       userFacingSaleError(new ApiRequestError("NOT_FOUND", "Resource was not found.", 404))
-    ).toBe("Sale not found.");
+    ).toBe("No encontramos la venta.");
     expect(
       userFacingSaleError(new ApiRequestError("UNAUTHENTICATED", "Authentication required.", 401))
-    ).toBe("You must be signed in to use the counter.");
+    ).toBe("Iniciá sesión para usar el punto de venta.");
     expect(userFacingSaleError(new TypeError("Failed to fetch"))).toBe(
-      "The request could not reach the server. Check your connection and try again."
+      "No se pudo conectar con el servidor. Revisá tu conexión e intentá de nuevo."
     );
     // An unmapped code keeps the server message instead of inventing a cause.
     expect(

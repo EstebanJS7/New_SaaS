@@ -110,6 +110,70 @@ export function listPatients(): Promise<Patient[]> {
   return getJson("");
 }
 
+export interface PatientSearchRow {
+  readonly id: string;
+  readonly name: string;
+  readonly isActive: boolean;
+  readonly sex: PatientSex;
+  readonly speciesName: string;
+  readonly breedName: string | null;
+  readonly primaryGuardianName: string | null;
+}
+export interface PatientSearchInput {
+  q: string;
+  page: number;
+  status: "active" | "inactive" | "all";
+  sort: "name" | "recent";
+}
+export interface PatientSearchResult {
+  readonly items: PatientSearchRow[];
+  readonly page: number;
+  readonly pageSize: number;
+  readonly total: number;
+  readonly totalPages: number;
+  readonly canReadGuardians: boolean;
+}
+/** Read only; text and paging context never enter URLs or browser storage. */
+export async function searchPatients(
+  input: PatientSearchInput,
+  signal?: AbortSignal
+): Promise<PatientSearchResult> {
+  const response = await fetch("/api/patients/search", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw await parseError(response);
+  return response.json() as Promise<PatientSearchResult>;
+}
+
+export interface PatientIdentity {
+  readonly id: string;
+  readonly name: string;
+  readonly isActive: boolean;
+  readonly speciesName: string;
+  readonly primaryGuardianName: string | null;
+}
+
+/** Read-only POST keeps confidential search terms out of URLs and history. */
+export function lookupPatients(
+  input: { readonly q: string } | { readonly ids: readonly string[] },
+  signal?: AbortSignal
+): Promise<PatientIdentity[]> {
+  return fetch("/api/patients/lookup", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    cache: "no-store",
+    ...(signal !== undefined && { signal }),
+  }).then(async (response) => {
+    if (!response.ok) throw await parseError(response);
+    return response.json() as Promise<PatientIdentity[]>;
+  });
+}
+
 export function getPatient(id: string): Promise<Patient> {
   return getJson(`/${id}`);
 }
@@ -168,13 +232,13 @@ export function userFacingPatientError(error: Error): string {
   const code = error instanceof ApiRequestError ? error.code : "";
   switch (code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to view patients.";
+      return "Iniciá sesión para ver pacientes.";
     case "FORBIDDEN":
-      return "You do not have permission to manage patients.";
+      return "No tenés permiso para gestionar pacientes.";
     case "FEATURE_NOT_ENTITLED":
-      return "The veterinary module is not enabled for this tenant.";
+      return "El módulo veterinario no está habilitado para esta organización.";
     case "NOT_FOUND":
-      return "Patient not found.";
+      return "No encontramos el paciente.";
     default:
       return error.message;
   }

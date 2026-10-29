@@ -151,3 +151,12 @@ describe("middleware Content-Security-Policy (HARD-001)", () => {
     expect(forwardedSlug(response)).toBe("acme-clinic");
   });
 });
+
+it("overwrites forged return context and strips non-context query values", () => {
+  const request = new NextRequest("https://staff.invalid/app/agenda?notes=private", {
+    headers: { "x-staff-return-path": "https://evil.test" },
+  });
+  expect(middleware(request).headers.get("x-middleware-request-x-staff-return-path")).toBe(
+    "/app/agenda"
+  );
+});

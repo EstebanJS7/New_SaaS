@@ -39,6 +39,21 @@ Metadata must remain useful as plain Markdown/YAML and to coding agents.
 - [[Reversals and Corrections]]
 - [[Data Classification and Retention]]
 - [[Demo Tenant and Reproducible Seed]]
+- [[UX-UI-ESTADO-Y-CONTINUIDAD]] — guía consolidada de cambios, evidencia y
+  próximos pasos.
+- [[UX-001-staff-experience-polish]]
+- [[UX-002-es-py-and-clinical-workflows]]
+- [[UX-003-agenda-patient-lookup]]
+- [[UX-004-patient-overview]]
+- [[UX-005-appointment-care-sale-navigation]]
+- [[UX-006-persistent-care-links]]
+- [[UX-007-session-context-recovery]]
+- [[UX-008-patient-search-pagination]]
+- [[DEC-083-appointment-clinical-sale-journey]]
+- [[DEC-080-staff-locale-es-py]]
+- [[DEC-081-appointment-patient-identity]]
+- [[UX-AUDIT-2026-10-26]]
+- [[UX-VALIDATION-2026-10-27]]
 
 ## Developer quickstart
 
@@ -68,11 +83,15 @@ pnpm dev
 ### Environment loading strategy
 
 Local development uses a single strategy: copy `.env.example` to `.env` in the
-repository root. The `dev` scripts for `apps/api` and `apps/worker` load the
-root `.env` with Node's built-in `--env-file=../../.env` flag (relative to each
-app package), and the `preflight` scripts do the same before invoking the
-preflight CLI. Production `start` scripts do **not** load `.env`; operators must
-inject environment variables through the runtime platform. Do not commit `.env`
-or any `.env.*.local` file.
+repository root. Root `pnpm dev` loads it with Node's built-in `--env-file`,
+builds backend dependencies and starts Turbo. API and worker use
+`scripts/backend-dev.mjs` to compile with TypeScript (including Nest decorator
+metadata) and restart after successful recompilation; their child processes also
+load the root file by absolute path. Preflight loads it before invoking its CLI.
+`pnpm db:demo` loads reference/base/commercial fixtures with the same
+environment; see the README for Windows setup and fixture limitations.
+Production `start` scripts do **not** load `.env`; operators must inject
+environment variables through the runtime platform. Do not commit `.env` or any
+`.env.*.local` file.
 
 See `docs/09-releases/CHANGELOG.md` for the EPIC-00 baseline.
