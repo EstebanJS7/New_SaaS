@@ -168,5 +168,5 @@ export type RescheduleAppointmentInput = z.infer<typeof rescheduleAppointmentInp
 /** Agenda filter options: tenant branches plus assignable VETERINARIAN memberships. */
 export interface AppointmentOptionsResponse {
   readonly branches: { readonly id: string; readonly name: string }[];
-  readonly professionals: { readonly membershipId: string }[];
+  readonly professionals: { readonly membershipId: string; readonly displayName: string | null }[];
 }

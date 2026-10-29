@@ -1066,6 +1066,10 @@ model ClinicalEncounter {
   amendsEncounter ClinicalEncounter?  @relation("ClinicalEncounterAmendment", fields: [tenantId, amendsEncounterId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   amendments      ClinicalEncounter[] @relation("ClinicalEncounterAmendment")
 
+  appointmentLinks ClinicalAppointmentLink[]
+  saleLinks        ClinicalSaleLink[]
+
+  @@unique([tenantId, patientId, id])
   /// Tenant-ownership key: target of the composite amendment self-FK.
   @@unique([tenantId, id])
   @@unique([tenantId, idempotencyKey])
@@ -1272,26 +1276,28 @@ model Appointment {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant                 Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tenant                 Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK: the Branch must belong to the same tenant.
-  branch                 Branch                @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  branch                 Branch                    @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK (see ClinicalTreatment).
-  patient                Patient               @relation(fields: [tenantId, patientId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  patient                Patient                   @relation(fields: [tenantId, patientId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK: the professional membership must be in the same tenant.
-  professionalMembership TenantMembership      @relation(fields: [tenantId, professionalMembershipId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  professionalMembership TenantMembership          @relation(fields: [tenantId, professionalMembershipId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK (EPIC-08): the booking request must be in the same tenant.
-  portalBookingRequest   PortalBookingRequest? @relation(fields: [tenantId, portalBookingRequestId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  portalBookingRequest   PortalBookingRequest?     @relation(fields: [tenantId, portalBookingRequestId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// OPTIONAL composite tenant-ownership FK (EPIC-09 WU4): when a service is
   /// attached, the referenced CatalogItem must be in the SAME tenant. The
   /// database carries ownership only; "kind = SERVICE" and "isActive" are
   /// application rules re-asserted on every write.
-  service                CatalogItem?          @relation(fields: [tenantId, serviceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  service                CatalogItem?              @relation(fields: [tenantId, serviceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  clinicalLinks          ClinicalAppointmentLink[]
 
   /// Tenant-ownership key: keeps a future clinical-encounter linkage additive.
   @@unique([tenantId, id])
   /// One appointment per portal booking request (nullable unique: staff rows
   /// carry NULL and PostgreSQL treats NULLs as distinct).
   @@unique([tenantId, portalBookingRequestId])
+  @@unique([tenantId, patientId, id])
   @@index([tenantId, branchId])
   @@index([tenantId, professionalMembershipId])
   @@index([tenantId, patientId])
@@ -1972,16 +1978,16 @@ model Sale {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// OPTIONAL composite tenant-ownership FK: when a customer is present it must
   /// be in the SAME tenant (DEC-028).
   customer Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
-  lines SaleLine[]
+  lines              SaleLine[]
   /// Payments written by the POS-003 completion transaction (PRD §19,
   /// DEC-029). A DRAFT sale carries none, so completion is the single write
   /// path.
-  payments Payment[]
+  payments           Payment[]
   /// Idempotency records whose stored result is this sale (DEC-024).
   idempotencyRecords IdempotencyRecord[]
   /// EPIC-14 Billing back-reference (DEC-038): the invoices sourced from this
@@ -1991,7 +1997,8 @@ model Sale {
   /// Prisma cannot express as `@@unique([tenantId, saleId])`. Cancelling an
   /// invoice releases its sale for a corrected replacement (DEC-043), so more
   /// than one invoice row per sale is a legitimate state.
-  invoices Invoice[]
+  invoices           Invoice[]
+  clinicalLinks      ClinicalSaleLink[]
 
   /// Tenant-ownership key: target of the composite sale FK from `SaleLine`.
   @@unique([tenantId, id])
@@ -3980,4 +3987,36 @@ model ImportRowOutcome {
   /// Tenant-ownership key, so a future aggregate can composite-FK to an outcome.
   @@unique([tenantId, id])
   @@map("import_row_outcome")
+}
+
+
+/// CONFIDENTIAL staff-only immutable origin link. No clinical content copied.
+model ClinicalAppointmentLink {
+  id            String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String            @map("tenant_id") @db.Uuid
+  patientId     String            @map("patient_id") @db.Uuid
+  encounterId   String            @map("encounter_id") @db.Uuid
+  appointmentId String            @map("appointment_id") @db.Uuid
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  encounter     ClinicalEncounter @relation(fields: [tenantId, patientId, encounterId], references: [tenantId, patientId, id], onDelete: Restrict, onUpdate: Restrict, map: "clinical_appointment_link_encounter_fkey")
+  appointment   Appointment       @relation(fields: [tenantId, patientId, appointmentId], references: [tenantId, patientId, id], onDelete: Restrict, onUpdate: Restrict, map: "clinical_appointment_link_appointment_fkey")
+
+  @@unique([tenantId, encounterId])
+  @@index([tenantId, appointmentId])
+  @@map("clinical_appointment_link")
+}
+
+/// One sale can belong to one encounter; an encounter can have multiple sales.
+model ClinicalSaleLink {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String            @map("tenant_id") @db.Uuid
+  encounterId String            @map("encounter_id") @db.Uuid
+  saleId      String            @map("sale_id") @db.Uuid
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  encounter   ClinicalEncounter @relation(fields: [tenantId, encounterId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict, map: "clinical_sale_link_encounter_fkey")
+  sale        Sale              @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict, map: "clinical_sale_link_sale_fkey")
+
+  @@unique([tenantId, saleId])
+  @@index([tenantId, encounterId])
+  @@map("clinical_sale_link")
 }

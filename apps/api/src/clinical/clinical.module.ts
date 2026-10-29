@@ -1,3 +1,8 @@
+import {
+  ClinicalLinksController,
+  ClinicalAppointmentEncountersController,
+} from "./clinical.links.controller.js";
+import { ClinicalLinksService } from "./clinical.links.service.js";
 import { Module } from "@nestjs/common";
 import { AuditModule } from "../audit/audit.module.js";
 import { ContextModule } from "../context/context.module.js";
@@ -24,8 +29,13 @@ import { ClinicalService } from "./clinical.service.js";
  */
 @Module({
   imports: [ContextModule, RbacModule, AuditModule, EntitlementsModule],
-  controllers: [ClinicalEncountersController, ClinicalRecordsController],
-  providers: [ClinicalService, ClinicalRecordsService],
+  controllers: [
+    ClinicalEncountersController,
+    ClinicalRecordsController,
+    ClinicalLinksController,
+    ClinicalAppointmentEncountersController,
+  ],
+  providers: [ClinicalService, ClinicalRecordsService, ClinicalLinksService],
   exports: [ClinicalService, ClinicalRecordsService],
 })
 export class ClinicalModule {}

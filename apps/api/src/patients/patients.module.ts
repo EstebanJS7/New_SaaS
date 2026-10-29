@@ -7,6 +7,10 @@ import { PatientGuardiansController } from "./patient-guardians.controller.js";
 import { PatientsCatalogService } from "./patients.catalog.service.js";
 import { PatientsController } from "./patients.controller.js";
 import { PatientsService } from "./patients.service.js";
+import { PatientLookupController } from "./patient-lookup.controller.js";
+import { PatientLookupService } from "./patient-lookup.service.js";
+import { PatientSearchController } from "./patient-search.controller.js";
+import { PatientSearchService } from "./patient-search.service.js";
 
 /**
  * Veterinary Patients module (EPIC-05). A leaf consumer of the platform: it
@@ -16,8 +20,13 @@ import { PatientsService } from "./patients.service.js";
  */
 @Module({
   imports: [ContextModule, RbacModule, AuditModule, EntitlementsModule],
-  controllers: [PatientsController, PatientGuardiansController],
-  providers: [PatientsService, PatientsCatalogService],
+  controllers: [
+    PatientsController,
+    PatientGuardiansController,
+    PatientLookupController,
+    PatientSearchController,
+  ],
+  providers: [PatientsService, PatientsCatalogService, PatientLookupService, PatientSearchService],
   exports: [PatientsService],
 })
 export class PatientsModule {}

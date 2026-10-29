@@ -154,7 +154,8 @@ export interface AppointmentMembershipDelegate {
   findMany: (args: {
     where: { tenantId: string; role: { code: string } };
     orderBy?: { id?: "asc" | "desc" };
-  }) => Promise<{ id: string }[]>;
+    select: { id: true; userProfile: { select: { displayName: true } } };
+  }) => Promise<{ id: string; userProfile?: { displayName: string } }[]>;
 }
 
 /** Delegates shared by the root client and its transaction scope. */
@@ -353,12 +354,16 @@ export class AppointmentService {
       this.prisma.tenantMembership.findMany({
         where: { tenantId, role: { code: "VETERINARIAN" } },
         orderBy: { id: "asc" },
+        select: { id: true, userProfile: { select: { displayName: true } } },
       }),
     ]);
 
     return {
       branches: branches.map((branch) => ({ id: branch.id, name: branch.name })),
-      professionals: memberships.map((membership) => ({ membershipId: membership.id })),
+      professionals: memberships.map((membership) => ({
+        membershipId: membership.id,
+        displayName: membership.userProfile?.displayName ?? null,
+      })),
     };
   }
 

@@ -2,7 +2,7 @@
 type: module
 module: customers
 status: active
-updated: 2026-09-11
+updated: 2026-10-29
 ---
 
 # Module — Customers (Core)
@@ -10,16 +10,15 @@ updated: 2026-09-11
 ## Responsibility
 
 Tenant-scoped customer directory shared by all verticals. Stores individuals and
-companies, their addresses and contact channels, and an inert `PatientGuardian`
-scaffold for the future Patient domain.
+companies, their addresses and contact channels. The Veterinary Patients domain
+owns guardian links to these Core customers; Customers does not import it.
 
 ## Does Not Own
 
 - Veterinary clinical records, vaccinations, or treatments.
 - Portal self-registration.
 - Sales, billing, or fiscal behavior.
-- Patient management (the `PatientGuardian` scaffold has no `patient_id` FK,
-  service, controller, route, or UI).
+- Patient management and guardian commands (owned by [[Patients]]).
 
 ## Main Concepts
 
@@ -27,7 +26,6 @@ scaffold for the future Patient domain.
 Customer
 CustomerAddress
 CustomerContact
-PatientGuardian (inert scaffold)
 ```
 
 ## Customer Kind
@@ -66,6 +64,7 @@ Reference-seed role matrix:
 
 ```text
 GET    /customers
+POST   /customers/search
 POST   /customers
 GET    /customers/:id
 PUT    /customers/:id
@@ -109,8 +108,8 @@ field names only; values are never logged.
 - Audit co-commits one `audit_log` row per mutation inside the same transaction.
 - Audit metadata contains only `schemaVersion`, `changedFields`, and stable IDs;
   no free-text reasons or CONFIDENTIAL values are logged.
-- `PatientGuardian` is schema-only: no application code imports, creates, reads,
-  updates, or deletes it.
+- The customer directory does not read clinical data or traverse guardian links.
+  The Veterinary Patients domain owns those links (UX-003/UX-008).
 
 ## Implementation
 
@@ -124,11 +123,10 @@ field names only; values are never logged.
 
 ## Known limitations / blockers
 
-- Playwright E2E coverage for Customer CRUD/navigation is **explicitly
-  blocked**: Playwright is not installed or configured in the repository. The
-  Vitest suite covers unit, integration, proxy, and UI 403 UX paths; a future
-  change that adds Playwright should implement the CRUD/navigation E2E scenario
-  before removing this note. Tracked as [[TD-007]].
+- Historical Customer CRUD/navigation browser coverage was deferred under
+  [[TD-007]]. The repository now has `apps/e2e/playwright.config.ts`; UX-010 did
+  not run or certify that lane. Its new search flow has automated component,
+  HTTP/proxy and PostgreSQL evidence, not a new browser review.
 - Live application-path HTTP tenant isolation has been executed against a real
   PostgreSQL database in CI. GitHub Actions run
   [`34605178149`](https://github.com/EstebanJS7/New_SaaS/actions/runs/34605178149)
@@ -149,3 +147,49 @@ field names only; values are never logged.
 - [[Reversals and Corrections]]
 - [[Audit and Entitlements]]
 - [[TD-006]]
+
+## Búsqueda y paginación del listado — UX-010
+
+`POST /customers/search` es una lectura aditiva con HTTP 200 y permiso
+`customers.read`, autenticación staff y membresía activa. El servicio reafirma
+el permiso y resuelve el tenant del contexto; el cliente no puede enviarlo como
+autoridad. Customers sigue siendo Core sin entitlement adicional.
+
+Cuerpo estricto: `q` (vacío o 2–80 caracteres, trim), `page` (entero 1–10000),
+`status` (`active`, `inactive`, `all`), `kind` (`all`, `INDIVIDUAL`, `COMPANY`),
+`sort` (`name`, `recent`). Defaults: vacío, 1, activos, todos los tipos, nombre.
+La búsqueda parcial sin distinguir mayúsculas conserva los cuatro campos del
+listado anterior: displayName, legalName, documentNumber y taxId. No busca
+contactos, direcciones, datos clínicos ni campos fiscales nuevos.
+
+Conteo y filas usan el mismo predicado tenant/filtros en una transacción
+RepeatableRead. Tamaño fijo 20; displayName ascendente o createdAt descendente,
+siempre con UUID ascendente de desempate. Una página sin rango se ajusta a la
+última disponible (1 cuando no hay resultados). Respuesta: items, page,
+pageSize, total y totalPages. Cada fila permite únicamente id, displayName,
+kind, isActive, firstName, lastName y legalName. No proyecta documentos/RUC,
+contactos, direcciones ni campos fiscales. GET /customers conserva su array de
+activos y DTO; los comandos y paquetes compartidos (DEC-073) no cambian.
+
+La ruta web existente `/app/customers` usa el nuevo contrato. Sus textos están
+en español, con conteos es-PY y tokens semánticos. Tiene búsqueda explícita,
+estado, tipo, orden, paginación, carga, vacío, errores y reintento. Se conserva
+la confirmación existente de desactivación; filtrar/paginar/navegar solo lee. El
+detalle agrega **Volver al listado de clientes**. El contexto aplicado se
+conserva diez minutos en memoria del mismo documento al abrir y volver.
+
+El BFF específico `/api/customers/search` admite únicamente POST, cookie staff y
+claves del contrato, mantiene el cuerpo exacto y responde private, no-store.
+Rechaza texto de búsqueda en query y autoridad tenant. El proxy CRUD anterior
+queda intacto. Búsqueda y nombres/documentos son CONFIDENTIAL: no se loguean
+cuerpos/resultados, no se ponen datos personales en URLs ni se usa
+localStorage/sessionStorage o persistencia del QueryClient. Recarga/reingreso
+elimina el contexto. No se agregan columnas, migraciones ni permisos.
+
+Límites: offset no congela resultados entre peticiones, sin búsqueda fonética,
+sin normalización especial de acentos o formato de documentos; hasta 10000
+páginas como UX-008. La traducción alcanza el listado, su confirmación y el
+enlace de retorno; no implica que detalle/formularios/Portal estén traducidos.
+Sin nueva revisión visual, Back/Forward real, lector de pantalla o auditoría
+WCAG en esta etapa. Pruebas y límites separados en
+[[UX-010-customer-search-pagination]] y [[UX-010-VALIDATION-2026-10-29]].

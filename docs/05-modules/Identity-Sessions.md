@@ -2,7 +2,7 @@
 type: module
 module: identity-sessions
 status: implemented
-updated: 2026-08-24
+updated: 2026-10-28
 ---
 
 # Module — Identity & Sessions
@@ -233,3 +233,37 @@ Three things about it are worth knowing before changing anything:
 ## Related ADRs
 
 - Route-prefix deferral: [[DEC-002]] (unprefixed `/auth/*` paths shipped).
+
+## Staff expiry and return context — UX-007
+
+The web QueryProvider owns a QueryClient per mounted document, rather than a
+module-level cache. A staff-only boundary observes query/mutation failures with
+HTTP status 401, cancels active reads, replaces private content with an
+accessible Spanish notice, and offers a native link to sign-in. Permission
+errors, outages and Portal paths do not trigger the staff notice. There is no
+proactive expiry timer or change to API session lifetime/refresh semantics.
+
+Middleware overwrites `x-staff-return-path` from the current request path, using
+`safeStaffReturnPath`; the server shell validates it again before a 401
+redirect. Login accepts an optional return reference and navigates with
+`location.assign` only after successful authentication. This loads new
+authorized data, branding and CSP nonce and discards the former document's
+clinical draft/query memory. It is not a refresh-token mechanism or in-place
+reauthentication.
+
+The return path accepts staff sections and UUID resource references with only
+allowlisted appointment/patient/encounter query keys. It rejects external,
+Portal/API and invalid destinations; unsupported routes fall back to `/app`.
+Context UUIDs are CONFIDENTIAL references, never authorization. Notes, names,
+payment data, credentials and tenant authority are not retained. There is no new
+localStorage/sessionStorage, cookie or database record for recovery.
+
+Clinical selection contributes its encounter UUID in same-document memory; after
+login it selects only a record present in a freshly authorized patient list.
+Saved POS sales return to their detail endpoint and fresh current state. Unsaved
+clinical edits/cart/payment inputs are not restored across sign-in. The UI
+explains the loss boundary and requires checking uncertain operations before
+retrying. No command is replayed automatically. If a create response never
+provided an ID, the user must review the existing list before creating another.
+
+No backend permission, tenancy, session cookie or Portal contract changed.

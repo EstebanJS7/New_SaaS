@@ -2,7 +2,7 @@
 type: module
 module: scheduling
 status: implemented
-updated: 2026-09-25
+updated: 2026-10-28
 ---
 
 # Module — Scheduling
@@ -295,3 +295,40 @@ semantic tokens.
   not selected there. DEC-009 adopts it explicitly as additive scope under PRD
   §14.
 - [[DEC-009 Staff agenda availability overlay]]
+
+
+## Staff professional identity — UX-002 / DEC-082
+
+The existing appointment options response adds nullable displayName to each
+professional membership. The tenant context and scheduling read permission
+remain authoritative; only in-tenant VETERINARIAN memberships are projected.
+The explicit Prisma selection reads only membership ID and UserProfile display
+name. No email, profile ID or credential is returned. Display names are
+CONFIDENTIAL, staff-only and not added to logs. Selectors/list use the name with
+an explicit shortened-ID fallback; write commands continue using membershipId.
+
+
+## Appointment navigation context — UX-005
+
+Staff navigation can carry an appointment ID from agenda to patient detail and
+then POS. A Veterinary frontend composition reads the existing authorized
+appointment and presents date/status/professional/service; patient-detail context
+must match the current patient. Invalid/unreadable context has explicit feedback
+without blocking the independent workspace. The closed consultation offers a POS
+link; no sale, payment or appointment transition is issued by navigation.
+
+This is not a persisted appointment/encounter/sale association. No clinical data
+or price is placed in URLs, no new API or financial orchestration was added, and
+no Core backend module imports Veterinary implementation. See [[UX-005]] and the
+still-proposed [[DEC-083-appointment-clinical-sale-journey]] for the boundary.
+
+
+## Persistent Veterinary associations — DEC-083 / UX-006
+
+The Veterinary layer now holds explicit appointment/encounter and encounter/sale
+associations in separate immutable tables. Core appointment and sale headers,
+commands, prices and financial effects stay unchanged. Linking does not perform
+an appointment transition, create/complete a sale or infer a billing customer.
+Same-link retries are idempotent and audited once; origin changes are rejected.
+See [[Clinical]] and [[UX-006-persistent-care-links]] for the new boundary and QA.
+The earlier navigation-only description records UX-005's historical first stage.

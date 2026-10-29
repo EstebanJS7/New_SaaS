@@ -2,7 +2,7 @@
 type: module
 module: catalog-taxes
 status: implemented
-updated: 2026-09-26
+updated: 2026-10-29
 ---
 
 # Module — Catalog and Taxes
@@ -45,7 +45,8 @@ the item, never a sale, invoice, cash or fiscal total ([[DEC-010]]).
 - Create, read, list, update and soft-deactivate tenant catalog items.
 - List the GLOBAL seeded tax-rate list; every entitled tenant reads the same
   three rows and no mutation route exists.
-- Filter the item list by `kind` and by `isActive`.
+- Filter the legacy item list by `kind` and by `isActive`; UX-011 adds bounded
+  server name search, pagination, status/kind filters and stable ordering.
 - Default the per-item `tracksStock` flag by kind on create, and change it on
   update, for the [[EPIC-10]] stock ledger.
 - An authenticated staff web surface at `/app/catalog` (list, read-only detail,
@@ -93,41 +94,44 @@ Four granular keys, seeded and granted with the decided role matrix
 | `RECEPTIONIST`      |  ✓   |        |        |            |
 | `CASHIER`           |  ✓   |        |        |            |
 
-- `catalog.read` — `GET /catalog`, `GET /catalog/:id`, `GET /catalog/tax-rates`.
+- `catalog.read` — `GET /catalog`, `GET /catalog/:id`, `GET /catalog/tax-rates`,
+  and read-only `POST /catalog/search` (UX-011).
 - `catalog.create` — `POST /catalog`.
 - `catalog.update` — `PUT /catalog/:id`.
 - `catalog.deactivate` — `POST /catalog/:id/deactivate`.
 
 Each route declares its single key with `@RequirePermissions` **and**
-`CatalogService` re-asserts it before any data access, so a missing permission
-is `403 FORBIDDEN` and persists nothing. Route-by-route pins live in
-`apps/api/src/rbac/route-contract.probe.test.ts`
+`CatalogService` / `CatalogSearchService` re-assert it before any data access,
+so a missing permission is `403 FORBIDDEN` and persists nothing. Route-by-route
+pins live in `apps/api/src/rbac/route-contract.probe.test.ts`
 (`CATALOG_PERMISSION_BY_ROUTE`). `isActive` is deliberately not an update field,
 so `catalog.update` can never perform a deactivation.
 
 ## API
 
-All six routes are unprefixed per [[DEC-002]] and return allowlisted INTERNAL
-DTOs; routes are listed with `/catalog/tax-rates` registered before
-`/catalog/:id` so the static segment can never be captured as an item id.
+All routes are unprefixed per [[DEC-002]] and return allowlisted INTERNAL DTOs;
+routes are listed with `/catalog/tax-rates` registered before `/catalog/:id` so
+the static segment can never be captured as an item id.
 
-| Route                          | Permission           | Contract                                                   |
-| ------------------------------ | -------------------- | ---------------------------------------------------------- |
-| `GET /catalog/tax-rates`       | `catalog.read`       | The GLOBAL seeded rate list, identical for every tenant.   |
-| `GET /catalog`                 | `catalog.read`       | Caller-tenant items; optional `kind` / `isActive` filters. |
-| `GET /catalog/:id`             | `catalog.read`       | One item; a foreign or unknown UUID is the same `404`.     |
-| `POST /catalog`                | `catalog.create`     | Create one item (`201`).                                   |
-| `PUT /catalog/:id`             | `catalog.update`     | Partial update (`200`); omitted fields stay untouched.     |
-| `POST /catalog/:id/deactivate` | `catalog.deactivate` | Idempotent soft removal (`201`).                           |
+| Route                          | Permission           | Contract                                                                 |
+| ------------------------------ | -------------------- | ------------------------------------------------------------------------ |
+| `GET /catalog/tax-rates`       | `catalog.read`       | The GLOBAL seeded rate list, identical for every tenant.                 |
+| `POST /catalog/search`         | `catalog.read`       | UX-011: read-only bounded name search, filters, snapshot count and page. |
+| `GET /catalog`                 | `catalog.read`       | Caller-tenant items; optional `kind` / `isActive` filters.               |
+| `GET /catalog/:id`             | `catalog.read`       | One item; a foreign or unknown UUID is the same `404`.                   |
+| `POST /catalog`                | `catalog.create`     | Create one item (`201`).                                                 |
+| `PUT /catalog/:id`             | `catalog.update`     | Partial update (`200`); omitted fields stay untouched.                   |
+| `POST /catalog/:id/deactivate` | `catalog.deactivate` | Idempotent soft removal (`201`).                                         |
 
 Web proxy (staff browser transport, no authorization authority of its own):
 
 - `GET|POST|PUT /api/catalog/[...path]` — a strict `(method, path-shape)`
-  allowlist over exactly the six pairs above, forwarding only the staff session
-  cookie. A known path with a disallowed method is `405`, an unknown path `404`,
-  a malformed path `400` and a request without a staff session `401`, each in
-  the API's own `{ error: { code, message } }` envelope. The request-side detail
-  and its divergences from the sibling proxies are recorded in [[TD-013]].
+  allowlist over exactly the six legacy pairs above, forwarding only the staff
+  session cookie. A known path with a disallowed method is `405`, an unknown
+  path `404`, a malformed path `400` and a request without a staff session
+  `401`, each in the API's own `{ error: { code, message } }` envelope. The
+  request-side detail and its divergences from the sibling proxies are recorded
+  in [[TD-013]].
 
 Two contract details worth stating because clients depend on them:
 
@@ -446,3 +450,54 @@ new or changed link is validated against `isActive`.
 - [[DEC-007]] — agenda v2; fixes `durationMinutes` as an explicit parameter that
   the WU4 service link must not derive.
 - [[DEC-002]] — unprefixed route paths.
+
+## Búsqueda y paginación del listado — UX-011
+
+`POST /catalog/search` es una lectura aditiva con HTTP 200, protegida por staff,
+membresía activa y catalog.read. CatalogSearchService reafirma el permiso y toma
+el tenant del contexto. Catalog Core conserva su ausencia de entitlement. GET
+/catalog y GET /catalog/tax-rates, sus filtros/DTOs, comandos y consumidores de
+POS/agenda quedan intactos; el listado paginado usa su propio DTO.
+
+Cuerpo estricto: q (vacío o 2–80 caracteres, trim), page (entero 1–10000),
+status (active/inactive/all), kind (all/PRODUCT/SERVICE/MEDICATION/SUPPLY), sort
+(name/recent). Defaults: vacío, página 1, activos, todos los tipos, nombre.
+Busca únicamente el nombre existente sin distinguir mayúsculas. No incorpora
+búsqueda por SKU, barcode, unidades, categorías, impuesto o campos inventados.
+
+Conteo y página usan el mismo predicado tenant/filtros dentro de RepeatableRead.
+Páginas de 20; name ascendente o createdAt descendente, con UUID ascendente de
+desempate. Página fuera de rango se ajusta a la última disponible, o 1 si vacío.
+Respuesta: items, page, pageSize, total, totalPages. Cada fila proyecta id,
+name, kind, isActive, taxRateName, referencePriceAmount y
+referencePriceCurrency. El precio sale como string exacto con dos decimales de
+NUMERIC(14,2), sin Number, cálculos, conversiones o cambios. Ausencia sigue
+siendo null; cero no es ausencia. La referencia fiscal se limita al nombre de la
+tasa global ya seleccionada. No se proyectan stocks, movimientos, umbrales,
+datos clínicos/personales o configuración de emisión fiscal.
+
+El nuevo BFF específico `/api/catalog/search` admite POST, cookie staff y las
+cinco claves del contrato, mantiene bytes del cuerpo y señal de cancelación,
+rechaza query/tenant y responde private, no-store. El catch-all CRUD anterior
+mantiene su allowlist original. No se añadieron migraciones ni dependencias.
+
+El listado `/app/catalog` usa búsqueda explícita con Buscar/Enter, estado,
+cuatro tipos, orden y paginación. Textos en español, tokens semánticos,
+controles etiquetados, conteo/precios es-PY, carga, vacío, error y reintento.
+Conserva impuesto/precio de referencia, edición separada y confirmación de
+desactivación. Se agrega Volver al catálogo en el detalle sin modificar su
+contenido.
+
+Configuración de catálogo INTERNAL; texto libre de búsqueda tratado como
+CONFIDENTIAL. No se loguean cuerpos/resultados ni se envía texto en URL.
+Contexto aplicado y caché solamente en memoria, sin localStorage/sessionStorage
+ni persistencia del QueryClient; diez minutos desde su última actualización.
+Recarga/reingreso descarta el contexto. No se ejecuta una mutación al buscar,
+filtrar, paginar o abrir un artículo.
+
+Límites: offset no congela resultados entre peticiones, orden según la collation
+existente de PostgreSQL, sin tolerancia especial a acentos/errores; hasta 10000
+páginas como UX-008. Traducción limitada al listado y su confirmación/retorno;
+formularios, detalle completo y POS no se consideran traducidos por esta Story.
+Sin nueva revisión visual, Back/Forward real, teclado/lector de pantalla o
+certificación WCAG. Evidencia: [[UX-011-VALIDATION-2026-10-29]].

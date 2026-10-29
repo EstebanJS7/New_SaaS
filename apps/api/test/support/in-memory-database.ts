@@ -2534,8 +2534,11 @@ export interface IsolationDatabase {
         where: MembershipWhere;
         orderBy?: MembershipOrder[];
         include?: { role?: unknown };
-        select?: { role?: unknown };
-      }) => (TenantMembershipRow & { role?: { code: string; id: string } })[];
+        select?: { role?: unknown; userProfile?: { select: { displayName: true } } };
+      }) => (TenantMembershipRow & {
+        role?: { code: string; id: string };
+        userProfile?: { displayName: string };
+      })[];
       updateMany: (args: { where: MembershipWhere; data: { status: string } }) => { count: number };
       update: (args: {
         where: { id: string };
@@ -6089,6 +6092,12 @@ export function createIsolationDatabase(): IsolationDatabase {
           ),
           orderBy
         );
+        if (select?.userProfile) {
+          return rows.map((candidate) => ({
+            ...candidate,
+            userProfile: { displayName: profiles.get(candidate.userProfileId)?.displayName ?? "" },
+          }));
+        }
         if (!include?.role && !select?.role) return rows;
         return rows.map((candidate) => ({
           ...candidate,

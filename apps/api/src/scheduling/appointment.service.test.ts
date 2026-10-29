@@ -179,7 +179,7 @@ function buildHarness(requestContext: RequestContextService): Harness {
             ([, membership]) =>
               membership.tenantId === where.tenantId && membership.roleCode === where.role.code
           )
-          .map(([id]) => ({ id }))
+          .map(([id]) => ({ id, userProfile: { displayName: "Profesional de prueba" } }))
       ),
   };
 
@@ -841,7 +841,9 @@ describe("AppointmentService (EPIC-07 WU2 domain service)", () => {
 
   it("returns only VETERINARIAN memberships in the agenda options", async () => {
     const result = await withContext(() => harness.service.listAppointmentOptions());
-    expect(result.professionals).toEqual([{ membershipId: VET_A }]);
+    expect(result.professionals).toEqual([
+      { membershipId: VET_A, displayName: "Profesional de prueba" },
+    ]);
     expect(result.branches).toEqual([{ id: BRANCH_A, name: `Branch ${BRANCH_A}` }]);
   });
 

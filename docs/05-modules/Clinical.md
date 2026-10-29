@@ -2,7 +2,7 @@
 type: module
 module: clinical
 status: implemented
-updated: 2026-10-19
+updated: 2026-10-28
 ---
 
 # Module — Clinical
@@ -15,7 +15,7 @@ records (treatments, vaccinations, deworming, studies, weights).
 
 ## Does Not Own
 
-- Scheduling/appointment linkage, Portal delivery, files, reports, billing or
+- Scheduling/appointment lifecycle, Portal delivery, files, reports, billing or
   fiscal behavior.
 - Patient identity or guardian links (owned by EPIC-05 Patients).
 - A generic event bus; `ClinicalEncounterClosed` is intentionally not emitted.
@@ -58,6 +58,12 @@ A CLOSED encounter is immutable; the original is never mutated.
 
 ## Staff surface (web)
 
+The Spanish staff workspace ([[UX-002]]) reviews closure in a modal. Pending
+draft content is saved first; the close command consumes the saved response's
+version immediately, without depending on a React render. A failed/conflicted
+save or a newer local edit prevents closing and preserves the draft. Cancelling
+the confirmation does not issue a close command.
+
 One page, `apps/web/src/app/(app)/app/patients/[id]/`, rendered inside the staff
 `(app)` shell through the authenticated `/api/clinical` proxy:
 
@@ -95,6 +101,30 @@ permissions but **no staff UI** — they are API-only, so a staff member cannot
 record them through the product. That is [[TD-055]], narrowed from five kinds to
 three by [[DEC-067]] and still open. There is also no cross-patient "all
 vaccinations" view: the due reports are that view, aggregated.
+
+## Clinical form and closure refinement — UX-002
+
+The working copy preserves spaces while typing. Each optional text field mirrors
+the API's 10,000-character bound with a linked error/count; invalid content cannot
+autosave or close. Manual draft save retries failures explicitly instead of
+repeatedly retrying an unchanged failed write. The mounted guard is re-enabled
+correctly after React StrictMode effect cleanup/setup.
+
+Pending edits disable switching/creating encounters. Same-document section links
+remain available. Other clicked links require an accessible exit confirmation;
+autosave pauses while deciding, and in-flight writes must finish before exiting.
+Reload/window close uses native beforeunload. Back/Forward and programmatic same-document route changes retain pending content
+in QueryClient memory for ten minutes while away. A fresh authorized read gates
+restoration; explicit manual save confirms the recovered content. Version drift
+blocks overwrites; a remotely closed record stays immutable. See [[TD-065]].
+No draft content is written to browser storage; recovery does not survive a new
+document or logout.
+
+Closure reviews the current staff content, separates client summary from internal
+notes and keeps the existing save/version/close sequence. Blank fields remain
+optional. Closed consultations render persisted content read-only beside the
+existing explicit amendment command. Closing does not complete an appointment or
+create a sale. No appointment/professional linkage was added to the clinical DTO.
 
 ## API
 
@@ -164,3 +194,49 @@ vaccinations" view: the due reports are that view, aggregated.
 ## Related ADRs
 
 - [[ADR-001 Modular Monolith]]
+
+
+## Appointment navigation context — UX-005
+
+Staff navigation can carry an appointment ID from agenda to patient detail and
+then POS. A Veterinary frontend composition reads the existing authorized
+appointment and presents date/status/professional/service; patient-detail context
+must match the current patient. Invalid/unreadable context has explicit feedback
+without blocking the independent workspace. The closed consultation offers a POS
+link; no sale, payment or appointment transition is issued by navigation.
+
+This is not a persisted appointment/encounter/sale association. No clinical data
+or price is placed in URLs, no new API or financial orchestration was added, and
+no Core backend module imports Veterinary implementation. See [[UX-005]] and the
+still-proposed [[DEC-083-appointment-clinical-sale-journey]] for the boundary.
+
+
+## Explicit care links — UX-006 / DEC-083
+
+Veterinary now owns immutable, typed ClinicalAppointmentLink and ClinicalSaleLink
+records. One appointment can have multiple encounters, one encounter at most one
+appointment origin. One encounter can have multiple sales; a sale belongs to at
+most one encounter. Standalone encounters/sales remain allowed. A link can be
+added to a closed encounter without editing its clinical content.
+
+GET `/patients/:patientId/clinical/appointments/:id/encounters` lists linked IDs.
+GET `/patients/:patientId/clinical/encounters/:id/links` returns allowlisted IDs,
+sale status and related-domain read availability. POST `.../links/appointment`
+and `.../links/sale` validate strict UUID bodies; identical requests replay without
+duplicate audit, incompatible origins return 409. Missing/foreign/mismatched
+patient resources return 404. Every mutation requires clinical read/update and
+the target domain's read permission; Veterinary entitlement is always required,
+and sale links also respect the sales entitlement. Tenant context is server-owned.
+
+Link creation and audit share a transaction; encounter/sale row locks serialize
+competing origin links. Composite tenant/patient FKs, unique origin constraints
+and immutable-link triggers back the application checks. No delete/relink endpoint.
+The staff UI explicitly confirms linking and can reopen linked consultations and
+existing draft sales. POS can link the newly created sale without recreating it.
+The scheduled service is suggested only through current active catalog data and
+operator acceptance. Customer selection, closing an encounter, appointment
+completion and payment completion remain separate commands. No price or clinical
+content is copied into the association or URL.
+
+Migration: `20261028000001_clinical_journey_links`. CONFIDENTIAL staff-only IDs;
+no new Portal projection, logs of content or destructive retention.

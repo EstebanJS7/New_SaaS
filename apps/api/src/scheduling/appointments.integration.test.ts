@@ -481,12 +481,17 @@ describe("Appointments HTTP boundary (EPIC-07 WU3)", () => {
 
     const body = response.body as {
       branches: { id: string; name: string }[];
-      professionals: { membershipId: string }[];
+      professionals: { membershipId: string; displayName: string | null }[];
     };
     expect(body.branches.map((branch) => branch.id)).toContain(fixture.a.branch.id);
     expect(body.branches.map((branch) => branch.id)).not.toContain(fixture.b.branch.id);
     const professionalIds = body.professionals.map((entry) => entry.membershipId);
     expect(professionalIds).toContain(fixture.a.professionalMembershipId);
     expect(professionalIds).not.toContain(fixture.b.professionalMembershipId);
+    const professional = body.professionals.find(
+      (entry) => entry.membershipId === fixture.a.professionalMembershipId
+    );
+    expect(professional?.displayName).toBeTruthy();
+    expect(Object.keys(professional ?? {}).sort()).toEqual(["displayName", "membershipId"]);
   });
 });

@@ -96,6 +96,7 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /api/v1/public/branding/assets/:kind/content",
   // EPIC-04 — customers
   "GET /customers",
+  "POST /customers/search",
   "POST /customers",
   "GET /customers/:id",
   "PUT /customers/:id",
@@ -111,6 +112,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /customers/:customerId/contacts/:id",
   "POST /customers/:customerId/contacts/:id/deactivate",
   // EPIC-05 — patients (WU3.2 reads + global catalog; WU3.3 commands; WU3.4 guardians)
+  "POST /patients/search",
+  "POST /patients/lookup",
   "GET /patients",
   "GET /patients/catalog",
   "GET /patients/:id",
@@ -123,6 +126,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /patients/:patientId/guardians/:id",
   "POST /patients/:patientId/guardians/:id/primary",
   "POST /patients/:patientId/guardians/:id/deactivate",
+  "GET /patients/:patientId/clinical/encounters/:id/links",
+  "POST /patients/:patientId/clinical/encounters/:id/links/appointment",
+  "POST /patients/:patientId/clinical/encounters/:id/links/sale",
+  "GET /patients/:patientId/clinical/appointments/:id/encounters",
   // EPIC-06 — clinical encounter lifecycle (WU3)
   "GET /patients/:patientId/clinical/encounters",
   "POST /patients/:patientId/clinical/encounters",
@@ -161,6 +168,7 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /appointments/:id/no-show",
   // EPIC-09 WU2 — catalog surface (allowlisted items + global tax rates)
   "GET /catalog",
+  "POST /catalog/search",
   "POST /catalog",
   "GET /catalog/tax-rates",
   "GET /catalog/:id",
@@ -186,6 +194,7 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // EPIC-12 POS-001/POS-003 — sale draft surface, cancel command and the
   // explicit completion command (no PATCH, no DELETE)
   "GET /sales",
+  "POST /sales/search",
   "POST /sales",
   "GET /sales/:id",
   "PUT /sales/:id",
@@ -347,7 +356,22 @@ function isDeclared(entry: RouteContractEntry): boolean {
  * `vet.clinical.*` key (e.g. autosave mapped to `read`), which a generic denial
  * can never catch.
  */
-const CLINICAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+const CLINICAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string | readonly string[]>> = {
+  "GET /patients/:patientId/clinical/encounters/:id/links": ["vet.clinical.read"],
+  "POST /patients/:patientId/clinical/encounters/:id/links/appointment": [
+    "vet.clinical.read",
+    "vet.clinical.update",
+    "scheduling.appointment.read",
+  ],
+  "POST /patients/:patientId/clinical/encounters/:id/links/sale": [
+    "vet.clinical.read",
+    "vet.clinical.update",
+    "sales.read",
+  ],
+  "GET /patients/:patientId/clinical/appointments/:id/encounters": [
+    "vet.clinical.read",
+    "scheduling.appointment.read",
+  ],
   "GET /patients/:patientId/clinical/encounters": "vet.clinical.read",
   "POST /patients/:patientId/clinical/encounters": "vet.clinical.create",
   "GET /patients/:patientId/clinical/encounters/:id": "vet.clinical.read",
@@ -418,6 +442,7 @@ const PORTAL_ACCESS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  */
 const CATALOG_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /catalog": CATALOG_PERMISSIONS.read,
+  "POST /catalog/search": CATALOG_PERMISSIONS.read,
   "GET /catalog/tax-rates": CATALOG_PERMISSIONS.read,
   "GET /catalog/:id": CATALOG_PERMISSIONS.read,
   "POST /catalog": CATALOG_PERMISSIONS.create,
@@ -487,6 +512,7 @@ const PURCHASES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  */
 const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /sales": SALES_PERMISSIONS.read,
+  "POST /sales/search": SALES_PERMISSIONS.read,
   "GET /sales/:id": SALES_PERMISSIONS.read,
   "POST /sales": SALES_PERMISSIONS.create,
   "PUT /sales/:id": SALES_PERMISSIONS.update,
@@ -664,9 +690,12 @@ describe("route-contract probe (deny-by-default)", () => {
       const actual = actualByRoute.get(route);
       if (!actual) {
         report.push(`MISSING CLINICAL ROUTE: ${route}`);
-      } else if (actual.length !== 1 || actual[0] !== expected) {
+      } else if (
+        JSON.stringify(actual) !==
+        JSON.stringify(typeof expected === "string" ? [expected] : expected)
+      ) {
         report.push(
-          `WRONG CLINICAL PERMISSION: ${route} expected [${expected}] got [${actual.join(", ")}]`
+          `WRONG CLINICAL PERMISSION: ${route} expected [${String(expected)}] got [${actual.join(", ")}]`
         );
       }
     }

@@ -2,7 +2,7 @@
 type: module
 module: patients
 status: done
-updated: 2026-09-11
+updated: 2026-10-28
 ---
 
 # Module — Patients (Veterinary)
@@ -67,6 +67,7 @@ routes (PAT-002):
 GET    /patients            patients.read       — active Patients of the caller tenant
 GET    /patients/catalog    patients.read       — GLOBAL Species/Breed taxonomy (not tenant-filtered)
 GET    /patients/:id        patients.read       — single Patient; cross-tenant UUID → 404
+POST   /patients/lookup     patients.read + customers.read — bounded staff identity read (UX-003)
 POST   /patients            patients.create     — create; active (default) requires a primary guardian
 PUT    /patients/:id        patients.update     — update; activating establishes a primary guardian (or 409)
 POST   /patients/:id/deactivate  patients.deactivate — idempotent deactivation; no hard delete
@@ -101,6 +102,30 @@ primary of an active Patient is a 409; deactivation is idempotent and no hard
 delete exists. A foreign Patient or guardian UUID is masked as a
 byte-equivalent 404. Guardian DTOs are allowlisted and reference the Core
 Customer by id only.
+
+## Staff identity lookup — UX-003
+
+Accepted [[DEC-081]] adds `POST /patients/lookup` as a read-only Veterinary
+projection. A strict body accepts either `q` (trimmed 2–80 characters; at most
+20 active patients matching patient or active primary guardian name) or `ids`
+(1–50 UUIDs; includes inactive patients for existing appointments). Both
+`patients.read` and `customers.read`, staff membership/authentication and the
+`veterinary` entitlement are mandatory. Foreign and unknown explicit UUIDs
+return the same `404`, with no partial results. Tenant context and all joined
+guardian/customer predicates are server-scoped.
+
+The allowlist is `{ id, name, isActive, speciesName, primaryGuardianName }`.
+This endpoint exposes no contact, clinical, fiscal or internal-note fields.
+Search text is sent in the POST body to keep CONFIDENTIAL values out of URL
+logs/history. Neither bodies nor returned names are logged or persisted in
+browser storage; the authenticated BFF response is `private, no-store`.
+
+The staff agenda composes this identity read client-side: explicit radio
+selection replaces UUID entry, and existing appointment/request IDs resolve in
+batches of at most 50. Denied/unavailable identity reads show a Spanish hint
+while Scheduling remains usable. Core Scheduling does not import Veterinary
+services and its DTOs/commands remain unchanged. See [[UX-003]] for
+verification.
 
 ## Data Classification
 
@@ -220,6 +245,21 @@ governed commit/archive settlement is complete — the change is archived at
 `c62b12c` (`openspec/changes/archive/2026-09-11-epic-05-veterinary-patients/`) —
 so this module is `done`.
 
+## Staff patient overview — UX-004
+
+The detail screen groups patient identity/status, primary guardian, latest
+consultation by creation time and the next explicitly recorded vaccination date.
+Dates use the Paraguay locale and clinic calendar; no vaccine schedule is
+inferred. Loading, empty and failed reads have distinct feedback. Notices only
+reflect inactive status, missing active primary guardian or recorded past dates.
+
+Section anchors reach clinical care, prevention and guardians while keeping the
+clinical workspace mounted. Existing guardian commands and clinical transitions
+remain unchanged. The overview and prevention panel share the vaccination query
+key and its projected record shape to avoid incompatible cache entries. No API,
+migration, permission or persisted field was added. See
+[[UX-004-patient-overview]] for scoped verification and limitations.
+
 ## Related
 
 - [[EPIC-05]] Veterinary Patients
@@ -228,3 +268,40 @@ so this module is `done`.
 - [[Reversals and Corrections]]
 - [[TD-006]]
 - [[TD-011]]
+
+## Server patient list — UX-008
+
+`POST /patients/search` is an additive read-only endpoint. Staff authentication,
+active membership, `patients.read` and `veterinary` entitlement are mandatory.
+The strict body accepts `q` (empty or 2-80 trimmed characters), numeric `page`
+(1-10000), `status` (active/inactive/all) and `sort` (name/recent); defaults are
+empty text, page 1, active, name. Page size is fixed at 20 and cannot be
+supplied. Legacy GET and the bounded agenda lookup are unchanged.
+
+The response is `{items, page, pageSize, total, totalPages, canReadGuardians}`.
+Rows allowlist ID, name, active state, sex, species/breed display names and
+primary guardian name. There are no contact, clinical, birth-date, payment or
+fiscal fields. Tenant comes exclusively from authenticated context.
+`customers.read` permits matching/displaying active primary guardian names with
+same-tenant active customers. Without it the list still works for patient names,
+omits guardian queries and returns null guardian names plus
+`canReadGuardians: false`.
+
+Count and page data use the same filters inside a RepeatableRead transaction.
+Ordering has UUID tie-breakers; name is ascending, recent is creation
+descending. An out-of-range page clamps to the last available page; an empty
+result returns page 1 / totalPages 0. No destructive operation or financial
+orchestration occurs.
+
+The staff list submits explicit searches by POST, filters active/inactive/all
+and orders/paginates server-side. Requests consume cancellation signals. Data is
+private/no-store through the existing BFF. New queries do not show old rows
+under new filters; errors remain distinct from empty results. The search field
+and page/filter state stay only in QueryClient memory for ten minutes,
+permitting a same-document visit to a patient record and return. Refresh/new
+document/sign-in clears this context; nothing is written to URL or browser
+storage. Free text is CONFIDENTIAL and must not be logged, dehydrated or
+persisted.
+
+Verification and limitations: [[UX-008-patient-search-pagination]]. No
+migration, new dependency, Core import or Portal behavior change.

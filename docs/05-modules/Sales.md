@@ -2,7 +2,7 @@
 type: module
 status: implemented
 epic: EPIC-12
-updated: 2026-09-29
+updated: 2026-10-29
 ---
 
 # Sales
@@ -58,6 +58,7 @@ cannot join the sale, and no conversion exists anywhere.
 
 | Route                      | Permission       | Contract                                                                                      |
 | -------------------------- | ---------------- | --------------------------------------------------------------------------------------------- |
+| `POST /sales/search`       | `sales.read`     | UX-009: bounded UUID/customer search, lifecycle filter, creation order and snapshot count.    |
 | `GET /sales`               | `sales.read`     | The tenant's sales, newest first with an id tiebreaker; optional `status` filter.             |
 | `GET /sales/:id`           | `sales.read`     | One sale with its lines; foreign or unknown is the shared `404`.                              |
 | `POST /sales`              | `sales.create`   | Create a `DRAFT` with at least one priced line; the currency is resolved server-side (`201`). |
@@ -197,3 +198,100 @@ reference carries no personal payload of its own.
   ([[TD-020]]).
 - The serialization protocol is a convention rather than a database-enforced
   guarantee ([[TD-016]]).
+
+## Staff recovery after uncertain completion — UX-002
+
+Transport and unrecognized completion responses never prove rejection. Counter
+copy no longer claims the sale remains DRAFT after such an error. A retry is
+blocked and the existing sale-detail link is offered to read its state.
+
+The detail page explicitly refreshes the existing authorized sale read. Only a
+successful DRAFT response re-enables payment review; input amounts/methods stay
+in the mounted payment form. A COMPLETED/CANCELLED response removes the payment
+form. Failed/denied reads do not enable another completion. An already open
+confirmation respects the same disabled guard as the form submit.
+
+Status-change/idempotency conflicts also require a state read. A sale status
+read is not a completion replay and does not contain payment history; closed
+records without a completion response say payment detail is unavailable rather
+than falsely claiming that no payments exist. No new endpoint, retry command,
+ledger effect, Decimal conversion or permission was added.
+
+Verification: 55 targeted web tests (5 recovery, 16 payment, 8 outcome, 14 cart,
+12 decimal); typecheck and targeted ESLint passed. Production build and output
+verification passed. This pass used synthetic HTTP responses, no new browser
+financial mutation or external processor. Broader UX-002 browser evidence
+remains dated separately. Unknown-state review does not prevent a later
+concurrent actor from changing the sale; backend transaction/idempotency checks
+remain authoritative.
+
+## Appointment navigation context — UX-005
+
+Staff navigation can carry an appointment ID from agenda to patient detail and
+then POS. A Veterinary frontend composition reads the existing authorized
+appointment and presents date/status/professional/service; patient-detail
+context must match the current patient. Invalid/unreadable context has explicit
+feedback without blocking the independent workspace. The closed consultation
+offers a POS link; no sale, payment or appointment transition is issued by
+navigation.
+
+This is not a persisted appointment/encounter/sale association. No clinical data
+or price is placed in URLs, no new API or financial orchestration was added, and
+no Core backend module imports Veterinary implementation. See [[UX-005]] and the
+still-proposed [[DEC-083-appointment-clinical-sale-journey]] for the boundary.
+
+## Persistent Veterinary associations — DEC-083 / UX-006
+
+The Veterinary layer now holds explicit appointment/encounter and encounter/sale
+associations in separate immutable tables. Core appointment and sale headers,
+commands, prices and financial effects stay unchanged. Linking does not perform
+an appointment transition, create/complete a sale or infer a billing customer.
+Same-link retries are idempotent and audited once; origin changes are rejected.
+See [[Clinical]] and [[UX-006-persistent-care-links]] for the new boundary and
+QA. The earlier navigation-only description records UX-005's historical first
+stage.
+
+## Consulta paginada del staff — UX-009
+
+`POST /sales/search` es una lectura aditiva con HTTP 200. Conserva `GET /sales`
+y su DTO con líneas, usado por asociaciones clínicas; no cambia comandos. El
+cuerpo estricto admite `q` (vacío o 2–80 caracteres, recortado), `page` (entero
+1–10000), `status` (`all`, `DRAFT`, `COMPLETED`, `CANCELLED`) y `sort` (`recent`
+o `oldest`). Defaults: vacío, 1, todos y recientes.
+
+El tenant proviene del contexto autenticado. El servicio exige primero
+entitlement `sales` y después `sales.read`; la guarda HTTP exige staff y ese
+permiso. Cualquier lector puede buscar por UUID completo. Con `customers.read`
+se habilita además coincidencia parcial sin distinguir mayúsculas en el nombre
+del cliente asociado, incluso si está inactivo (listado histórico). Sin ese
+permiso no se consulta ni se proyecta el nombre. Buscar un UUID ajeno produce el
+mismo conjunto vacío que uno inexistente; el detalle conserva su 404 común.
+
+Conteo y página comparten predicado tenant/filtro y transacción RepeatableRead.
+Páginas de 20; creación ascendente/descendente y UUID ascendente como desempate.
+Una página fuera de resultados se ajusta a la última (o 1 en vacío). Respuesta:
+`items`, `page`, `pageSize`, `total`, `totalPages`, `canReadCustomers`. Cada
+fila contiene solo `id`, `status`, `createdAt`, `hasCustomer`, `customerName`.
+Sin líneas, importes, contactos, pagos, identidad clínica o datos fiscales; el
+detalle sigue ofreciendo su contrato existente. No se recalculan totales en esta
+lectura.
+
+La UI está en `/app/sales/history`, accesible desde el POS y desde el detalle.
+`/app/sales` conserva el POS y los parámetros clínicos existentes. Hay búsqueda
+explícita por Enter/Buscar, filtros, orden, conteo, navegación, carga, vacío y
+reintento en español, fechas y conteos es-PY, tokens semánticos y controles
+etiquetados. No filtra ni ordena ventas en el navegador. Cancela lecturas
+anteriores para evitar que una respuesta tardía reemplace filtros nuevos.
+
+Búsqueda y nombres son CONFIDENTIAL: POST sin texto en URL, cuerpo/respuesta
+fuera de logs, proxy privado con `private, no-store`, contexto y caché solamente
+en memoria. El contexto aplicado dura diez minutos en el mismo documento y se
+descarta al recargar/reingresar. El retorno seguro de UX-007 admite la ruta del
+listado eliminando parámetros; nunca restaura su texto de búsqueda tras login.
+No hay localStorage/sessionStorage, persistencia de QueryClient o exportación.
+
+Sin migraciones, nuevas dependencias, permisos o cambios de PRD. Sin nueva ronda
+de navegador: accesibilidad semántica y remonte cubiertos por componentes;
+Back/Forward real, revisión visual y lector de pantalla no comprobados aquí.
+Offset no congela resultados entre peticiones; no hay búsqueda fonética ni
+promesa de tolerancia a acentos. Evidencia: [[UX-VALIDATION-2026-10-29]].

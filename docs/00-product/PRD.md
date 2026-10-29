@@ -4,7 +4,7 @@ version: "1.3"
 status: approved-baseline
 vertical: veterinary
 market: Paraguay
-updated: 2026-09-25
+updated: 2026-10-28
 ---
 
 # PRD Technical v1.3 — SaaS Core + Veterinary + Branding
@@ -579,6 +579,21 @@ clientSummary
 ```
 
 Portal never exposes internalNotes.
+
+### 13.1. Vínculos de atención — DEC-083 (2026-10-28)
+
+La aprobación explícita del mantenedor permite asociaciones auditadas en
+Veterinary: una cita puede tener varias consultas, cada consulta puede existir
+sin cita y tener como máximo una cita de origen. Una consulta puede originar
+varias ventas; una venta independiente sigue permitida y puede asociarse como
+máximo a una consulta. Las asociaciones son tenant-scoped y explícitas; no
+transfieren autoridad del cliente ni alteran registros confirmados.
+
+El servicio de la cita solo puede sugerirse desde catálogo vigente y requiere
+aceptación del operador. El cliente de la venta se selecciona explícitamente.
+Cerrar consulta, completar cita y cobrar permanecen operaciones independientes.
+No se infiere el autor de la consulta a partir del profesional agendado.
+No se permite revinculación silenciosa; los vínculos existentes se preservan.
 
 ## 14. Scheduling
 

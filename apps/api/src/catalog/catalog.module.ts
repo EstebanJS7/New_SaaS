@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { CatalogSearchController } from "./catalog-search.controller.js";
+import { CatalogSearchService } from "./catalog-search.service.js";
 import { AuditModule } from "../audit/audit.module.js";
 import { ContextModule } from "../context/context.module.js";
 import { RbacModule } from "../rbac/rbac.module.js";
@@ -23,7 +25,7 @@ import { CatalogTaxRatesController } from "./catalog-tax-rates.controller.js";
  */
 @Module({
   imports: [ContextModule, RbacModule, AuditModule],
-  controllers: [CatalogTaxRatesController, CatalogController],
-  providers: [CatalogRepository, CatalogService],
+  controllers: [CatalogTaxRatesController, CatalogSearchController, CatalogController],
+  providers: [CatalogRepository, CatalogService, CatalogSearchService],
 })
 export class CatalogModule {}

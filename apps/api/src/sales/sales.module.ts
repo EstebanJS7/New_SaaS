@@ -10,6 +10,8 @@ import { SettingsModule } from "../settings/settings.module.js";
 import { SalesController } from "./sales.controller.js";
 import { SaleRepository } from "./sales.repository.js";
 import { SalesService } from "./sales.service.js";
+import { SaleSearchController } from "./sale-search.controller.js";
+import { SaleSearchService } from "./sale-search.service.js";
 
 /**
  * Sales module (EPIC-12 POS-001). A leaf consumer of the platform: it imports
@@ -42,7 +44,13 @@ import { SalesService } from "./sales.service.js";
  */
 @Module({
   imports: [ContextModule, RbacModule, AuditModule, SettingsModule, EntitlementsModule, CashModule],
-  controllers: [SalesController],
-  providers: [SaleRepository, CatalogRepository, InventoryRepository, SalesService],
+  controllers: [SalesController, SaleSearchController],
+  providers: [
+    SaleRepository,
+    CatalogRepository,
+    InventoryRepository,
+    SalesService,
+    SaleSearchService,
+  ],
 })
 export class SalesModule {}

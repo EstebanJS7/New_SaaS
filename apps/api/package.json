@@ -12,6 +12,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "test": "vitest run --config vitest.config.ts",
+    "test:catalog-search": "node --env-file=../../.env ../../scripts/verify-catalog-search.mjs",
+    "test:customer-search": "node --env-file=../../.env ../../scripts/verify-customer-search.mjs",
+    "test:sale-search": "node --env-file=../../.env ../../scripts/verify-sale-search.mjs",
+    "test:patient-search": "node --env-file=../../.env ../../scripts/verify-patient-search.mjs",
+    "test:clinical-links": "node --env-file=../../.env ../../scripts/verify-clinical-links.mjs",
     "test:live-pg": "vitest run --config vitest.live-pg.config.ts",
     "test:redis": "vitest run --config vitest.redis.config.ts"
   },
