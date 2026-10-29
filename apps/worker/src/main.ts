@@ -94,7 +94,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<WorkerH
     redisHealth = options.redisHealth;
   } else {
     app = await NestFactory.createApplicationContext(WorkerModule);
-    app.enableShutdownHooks();
+    // installSignalShutdown owns SIGINT/SIGTERM and calls app.close(). Enabling
+    // Nest's signal handlers too closes Redis twice during a console Ctrl+C.
     redisHealth = app.get(RedisHealthService);
   }
 

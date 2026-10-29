@@ -26,7 +26,7 @@ async function bootstrap(logger: ApiLogger): Promise<void> {
       hstsEnabled: envResult.env.NODE_ENV !== "development",
     }),
     // Nest's console-based default logger is replaced by pino entirely.
-    { logger: false }
+    { logger: false, abortOnError: false }
   );
 
   // Without this, NestJS never fires onApplicationShutdown — PrismaService

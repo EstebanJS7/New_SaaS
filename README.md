@@ -17,6 +17,13 @@ documento no lo repite ni lo modifica.
 - Docker y Docker Compose para los servicios locales.
 - Git.
 
+En Windows se verificó Node **22.23.4** con datos de zona horaria **2026e**.
+Node 22.14.0 trae datos antiguos y calcula incorrectamente fechas de 2026 en
+`America/Asuncion`. Usá una versión 22 LTS actualizada; si cambiás de versión
+mayor, reinstalá las dependencias nativas antes de arrancar el proyecto
+(`libxmljs2` de este checkout está compilado para Node 22). Ver
+[TD-064](docs/08-tech-debt/TD-064-windows-verification-environment.md).
+
 ## Puesta en marcha rápida
 
 Secuencia para un clon limpio, ejecutada desde la raíz del repositorio:
@@ -28,7 +35,7 @@ cp .env.example .env
 # 2. Instalar dependencias (el postinstall de @newsaas/database genera Prisma)
 pnpm install
 
-# 3. Levantar PostgreSQL y Redis locales
+# 3. Levantar PostgreSQL, Redis y MinIO locales
 pnpm services:up
 
 # 4. Compilar el workspace; preflight requiere packages/preflight/dist/cli.js
@@ -38,9 +45,13 @@ pnpm build
 pnpm preflight
 
 # 6. Aplicar las migraciones a la base local
-pnpm --filter @newsaas/database db:migrate
+export DATABASE_URL="$(node --env-file=.env -p 'process.env.DATABASE_URL')"
+pnpm --filter @newsaas/database db:deploy
 
-# 7. Iniciar API, worker y web en modo desarrollo
+# 7. Cargar datos de referencia y demo (solo desarrollo/test)
+pnpm db:demo
+
+# 8. Iniciar API, worker y web en modo desarrollo
 pnpm dev
 ```
 
@@ -93,8 +104,93 @@ pnpm --filter @newsaas/database db:live-verify
 ```
 
 El seed de datos de demostración está desactivado por defecto
-(`ENABLE_DEMO_SEED=false` en la plantilla `.env.example`). Para cargar el tenant
-de demostración, definir `ENABLE_DEMO_SEED=true` antes de ejecutar `db:seed`.
+(`ENABLE_DEMO_SEED=false` en la plantilla `.env.example`). `db:seed` carga solo
+datos de referencia. El comando raíz `pnpm db:demo` carga `.env`, compila la
+API, ejecuta ambos seeds y agrega ejemplos comerciales. Invocarlo es el opt-in
+explícito; rechaza cualquier `NODE_ENV` distinto de `development`/`test` y
+proveedores fiscales, de email o WhatsApp reales.
+
+## Desarrollo local con Docker Desktop y PowerShell
+
+Docker Desktop ejecuta PostgreSQL, Redis y MinIO; Node ejecuta web, API y
+worker. Crear `.env` una sola vez sin sobrescribir uno existente:
+
+```powershell
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Para archivos compartidos entre API y worker, completar el `.env` local:
+
+```dotenv
+STORAGE_S3_BUCKET=newsaas-imports
+STORAGE_S3_REGION=us-east-1
+STORAGE_S3_ENDPOINT=http://localhost:9000
+AWS_ACCESS_KEY_ID=newsaas
+AWS_SECRET_ACCESS_KEY=newsaas-minio-secret
+```
+
+Primera ejecución, desde la raíz (Node 22+ y pnpm 11.1.2):
+
+```powershell
+pnpm install
+docker compose up -d
+# Esperar a que docker compose ps muestre los servicios healthy.
+$env:DATABASE_URL = node --env-file=.env -p "process.env.DATABASE_URL"
+pnpm --filter @newsaas/database db:deploy
+pnpm db:demo
+pnpm dev
+```
+
+Si PostgreSQL de Windows ya ocupa `5432`, usar `POSTGRES_PORT=5433` y
+`DATABASE_URL=postgresql://newsaas:newsaas@127.0.0.1:5433/newsaas?schema=public`
+en `.env`. Actualizar también cualquier variable de esa terminal que tenga el
+valor anterior: las variables exportadas tienen prioridad sobre `.env`.
+
+Ingresar en `http://localhost:3000/login` con `owner@demo.newsaas.test` /
+`demo-owner-password`. Portal: `http://localhost:3000/demo/login`,
+`ana.garcia@demo.newsaas.test` / `demo-portal-password`.
+
+En los siguientes arranques basta con `docker compose up -d` y `pnpm dev`.
+Detener las terminales anteriores de API/worker/web antes de usar el comando
+único. `pnpm dev` carga el `.env` raíz, compila las dependencias de backend y
+arranca los tres procesos; API y worker recompilan con TypeScript y reinician
+después de guardar cambios válidos. Los errores de tipos mantienen el último
+proceso válido. Cambios en paquetes compartidos requieren volver a ejecutar
+`pnpm dev`. Cambios en `.env` también requieren reiniciar.
+
+### Datos del demo comercial
+
+El demo base conserva sus clientes, pacientes y fechas fijas de agenda. El demo
+comercial agrega cuatro artículos identificados con `· DEMO`, un proveedor, una
+compra recibida y:
+
+- stock inicial: alimento 20, vacuna 30 e insumo 50 unidades;
+- una venta de consulta más alimento por PYG 185.000, pagada con efectivo
+  (100.000) y tarjeta (85.000); quedan 19 unidades de alimento;
+- una venta borrador con dos insumos;
+- una caja histórica cerrada: apertura 200.000, ingreso de venta 100.000, cierre
+  esperado/contado 300.000, diferencia cero;
+- una caja de práctica abierta con fondo inicial de 150.000.
+
+Las operaciones pasan por los servicios existentes y generan su auditoría; el
+seed no modifica saldos ni registros confirmados directamente. Las fechas
+comerciales corresponden a la primera ejecución. No crea facturas ni envía
+documentos fiscales. No borra datos. Al repetirlo reconoce los ejemplos por sus
+nombres y relaciones, y conserva sus estados; esos nombres están reservados para
+el seed. Renombrar/eliminar sus referencias puede impedir su reconocimiento. Una
+caja ajena al demo abierta hace rechazar el seed, sin cerrarla. El seed base
+vuelve a establecer las contraseñas demo conocidas.
+
+Comprobaciones específicas, después de cargar el demo:
+
+```powershell
+pnpm test:dev
+pnpm test:demo
+```
+
+La primera verifica metadatos, reinicio y rechazo de errores de tipos. La
+segunda ejecuta dos veces el seed comercial y comprueba ausencia de nuevas
+filas, aislamiento, igualdad entre stock y ledger, pago mixto y cierre de caja.
 
 ## Comandos de calidad
 

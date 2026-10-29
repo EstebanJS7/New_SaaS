@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll, type Mock } from "vitest";
 import { EventEmitter } from "node:events";
+import { NestFactory } from "@nestjs/core";
 import { bootstrap, installSignalShutdown } from "./main.js";
 import type { WorkerHandle } from "./main.js";
 
@@ -211,5 +212,32 @@ describe("Worker bootstrap", () => {
 
     await expect(bootstrap({ redisHealth })).rejects.toThrow("Redis unreachable");
     expect(redisHealth.ping).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the real-context path once through the explicit signal owner", async () => {
+    process.env.REDIS_URL ??= "redis://localhost:6379";
+    const context = {
+      get: vi.fn(() => ({ ping: vi.fn().mockResolvedValue(undefined) })),
+      close: vi.fn().mockResolvedValue(undefined),
+      enableShutdownHooks: vi.fn(),
+    };
+    const factory = vi
+      .spyOn(NestFactory, "createApplicationContext")
+      .mockResolvedValue(
+        context as unknown as Awaited<ReturnType<typeof NestFactory.createApplicationContext>>
+      );
+    try {
+      const handle = await bootstrap();
+      const harness = createShutdownHarness();
+      installSignalShutdown(handle, harness.proc);
+      harness.emitSignal("SIGINT");
+      harness.emitSignal("SIGTERM");
+      await flushAsyncTasks();
+      expect(context.enableShutdownHooks).not.toHaveBeenCalled();
+      expect(context.close).toHaveBeenCalledTimes(1);
+      expect(harness.exit).toHaveBeenCalledWith(0);
+    } finally {
+      factory.mockRestore();
+    }
   });
 });
