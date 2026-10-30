@@ -65,7 +65,7 @@ const recordText = z.string().min(1).max(2_000);
 const positiveDecimal = z
   .string()
   .regex(/^\d{1,7}(\.\d{1,3})?$/, "Weight quantity must be a positive decimal.")
-  .refine((value) => Number(value) > 0, "Weight quantity must be greater than zero.");
+  .refine((value) => /[1-9]/.test(value), "Weight quantity must be greater than zero.");
 
 // ---------------------------------------------------------------------------
 // Path params
@@ -172,8 +172,12 @@ export const updateStudyBody = z
   .strict();
 
 export const createWeightBody = z
-  .object({ quantity: positiveDecimal, measuredAt: isoDate })
+  .object({ quantity: positiveDecimal, measuredAt: isoDate, unit: z.literal("KG").optional() })
   .strict();
 export const updateWeightBody = z
-  .object({ quantity: positiveDecimal.optional(), measuredAt: isoDate.optional() })
+  .object({
+    quantity: positiveDecimal.optional(),
+    measuredAt: isoDate.optional(),
+    unit: z.literal("KG").optional(),
+  })
   .strict();

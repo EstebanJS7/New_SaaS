@@ -1185,6 +1185,11 @@ model ClinicalStudy {
   @@map("clinical_study")
 }
 
+/// Explicit supported unit; a nullable record unit preserves unknown values.
+enum ClinicalWeightUnit {
+  KG
+}
+
 /// Weight record (minimum facts: positive measured quantity, measured date).
 /// Decimal preserves precision; the migration also pins `quantity > 0` as a
 /// CHECK constraint so the API validation cannot be bypassed at the DB level.
@@ -1194,7 +1199,9 @@ model ClinicalWeight {
   tenantId  String @map("tenant_id") @db.Uuid
   patientId String @map("patient_id") @db.Uuid
 
-  quantity   Decimal  @db.Decimal(10, 3)
+  quantity   Decimal @db.Decimal(10, 3)
+  /// NULL preserves unspecified units; never backfill or infer KG.
+  unit       ClinicalWeightUnit?
   measuredAt DateTime @map("measured_at") @db.Timestamptz(3)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)

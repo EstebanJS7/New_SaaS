@@ -12,6 +12,12 @@ import { ClinicalEncountersController } from "./clinical.encounters.controller.j
 import { ClinicalRecordsController } from "./clinical.records.controller.js";
 import { ClinicalRecordsService } from "./clinical.records.service.js";
 import { ClinicalService } from "./clinical.service.js";
+import { TreatmentSearchController } from "./treatment-search.controller.js";
+import { TreatmentSearchService } from "./treatment-search.service.js";
+import { StudySearchController } from "./study-search.controller.js";
+import { StudySearchService } from "./study-search.service.js";
+import { WeightSearchController } from "./weight-search.controller.js";
+import { WeightSearchService } from "./weight-search.service.js";
 
 /**
  * Veterinary Clinical records module (EPIC-06). A leaf consumer of the
@@ -30,12 +36,22 @@ import { ClinicalService } from "./clinical.service.js";
 @Module({
   imports: [ContextModule, RbacModule, AuditModule, EntitlementsModule],
   controllers: [
+    TreatmentSearchController,
+    StudySearchController,
+    WeightSearchController,
     ClinicalEncountersController,
     ClinicalRecordsController,
     ClinicalLinksController,
     ClinicalAppointmentEncountersController,
   ],
-  providers: [ClinicalService, ClinicalRecordsService, ClinicalLinksService],
+  providers: [
+    ClinicalService,
+    ClinicalRecordsService,
+    ClinicalLinksService,
+    TreatmentSearchService,
+    StudySearchService,
+    WeightSearchService,
+  ],
   exports: [ClinicalService, ClinicalRecordsService],
 })
 export class ClinicalModule {}

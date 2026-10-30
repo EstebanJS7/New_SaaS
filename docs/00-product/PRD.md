@@ -4,7 +4,7 @@ version: "1.3"
 status: approved-baseline
 vertical: veterinary
 market: Paraguay
-updated: 2026-10-28
+updated: 2026-10-30
 ---
 
 # PRD Technical v1.3 — SaaS Core + Veterinary + Branding
@@ -555,6 +555,26 @@ Billing
 ```
 
 Primary actions must be accessible without navigating away.
+
+### 12.1. Unidad de peso — DEC-084 (2026-10-30)
+
+Para nuevas cargas de peso desde la ficha staff, la unidad explícita es
+kilogramo (KG), con cantidad estrictamente positiva y hasta tres decimales
+exactos. La presentación usa kg y formato es-PY; 0,125 kg equivale a 125 g. No
+se redondean silenciosamente entradas con mayor precisión. La primera entrega no
+incluye selección de gramos/libras ni conversión de unidades.
+
+Los registros históricos conservan cantidad exacta y unidad no especificada
+hasta su verificación explícita autorizada y auditada. No se deduce unidad por
+magnitud/especie ni se aplica backfill KG automático. Consumidores antiguos sin
+unidad conservan sus contratos y semántica desconocida hasta una transición
+explícita, sin reinterpretar sus cantidades como KG.
+
+La interfaz muestra la unidad conocida o su ausencia explícita; no mezcla
+cantidades desconocidas con KG para derivar peso actual, comparaciones o
+tendencias clínicas. Véase [[DEC-084-weight-measurement-unit]]. La definición
+está aprobada; esquema, contratos y superficie de escritura requieren su
+implementación correspondiente.
 
 ## 13. Clinical
 

@@ -73,6 +73,7 @@ export interface ClinicalWeightRow {
   patientId: string;
   /** Prisma Decimal at runtime; a plain string is accepted by test fakes. */
   quantity: Prisma.Decimal | string;
+  unit?: "KG" | null;
   measuredAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -133,11 +134,13 @@ export interface UpdateStudyInput {
 export interface CreateWeightInput {
   /** Positive exact decimal rendered as a string (never a JS float). */
   readonly quantity: string;
+  readonly unit?: "KG";
   readonly measuredAt: string;
 }
 
 export interface UpdateWeightInput {
   readonly quantity?: string;
+  readonly unit?: "KG";
   readonly measuredAt?: string;
 }
 
@@ -187,6 +190,7 @@ export interface WeightCreateData {
   tenantId: string;
   patientId: string;
   quantity: string;
+  unit?: "KG" | null;
   measuredAt: Date;
 }
 
@@ -332,10 +336,19 @@ function toWeightResponse(row: ClinicalWeightRow): ClinicalWeightResponse {
 
 /** Weight quantity is a positive, finite decimal; anything else is rejected. */
 function assertPositiveQuantity(quantity: string): void {
-  const parsed = Number(quantity);
-  if (quantity.trim().length === 0 || !Number.isFinite(parsed) || parsed <= 0) {
-    throw new DomainError("VALIDATION_FAILED", "Weight quantity must be a positive number.");
+  if (
+    !/^\d{1,7}(\.\d{1,3})?$/.test(quantity) ||
+    new Prisma.Decimal(quantity).lessThanOrEqualTo(0)
+  ) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      "Weight quantity must be a positive exact decimal of scale at most three."
+    );
   }
+}
+function assertWeightUnit(unit: unknown): void {
+  if (unit !== undefined && unit !== "KG")
+    throw new DomainError("VALIDATION_FAILED", "Unsupported weight unit.");
 }
 
 /**
@@ -343,7 +356,7 @@ function assertPositiveQuantity(quantity: string): void {
  *
  * Owns the five patient-anchored record kinds — treatments, vaccinations,
  * deworming, studies and weights — as explicit create/list/update operations.
- * Records are never hard-deleted; corrections are new records. Tenant,
+ * Records are never hard-deleted; specialized corrections update the row with audit. Tenant,
  * entitlement, permission and co-committed audit behavior live in
  * {@link ClinicalServiceBase}. Encounter lifecycle is WU2A (`ClinicalService`).
  */
@@ -706,6 +719,7 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     await this.requirePermission(CLINICAL_PERMISSIONS.create);
     const actorUserProfileId = this.requestContext.requireUserProfileId();
     assertPositiveQuantity(input.quantity);
+    assertWeightUnit(input.unit);
     await this.assertPatient(tenantId, patientId);
 
     const row = await this.createRecord(
@@ -716,12 +730,13 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
         tenantId,
         patientId,
         quantity: input.quantity,
+        unit: input.unit ?? null,
         measuredAt: new Date(input.measuredAt),
       },
       {
         action: "clinical_weight.created",
         targetType: "clinical_weight",
-        changedFields: ["quantity", "measuredAt"],
+        changedFields: ["quantity", "measuredAt", ...(input.unit !== undefined ? ["unit"] : [])],
       }
     );
     return toWeightResponse(row);
@@ -737,11 +752,18 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     const actorUserProfileId = this.requestContext.requireUserProfileId();
 
     const data: WeightUpdateData = {};
+    assertWeightUnit(input.unit);
     const changedFields: string[] = [];
     if (input.quantity !== undefined) {
       assertPositiveQuantity(input.quantity);
       data.quantity = input.quantity;
-      changedFields.push("quantity");
+      // A new quantity without an explicit unit must never inherit an assumed KG.
+      data.unit = input.unit ?? null;
+      changedFields.push("quantity", "unit");
+    }
+    if (input.unit !== undefined && input.quantity === undefined) {
+      data.unit = input.unit;
+      changedFields.push("unit");
     }
     if (input.measuredAt !== undefined) {
       data.measuredAt = new Date(input.measuredAt);
