@@ -1,10 +1,8 @@
 ---
 id: TD-055
 type: tech-debt
-title:
-  The staff clinical surface is encounters plus two — three record kinds stay
-  API-only
-status: open
+title: Specialized clinical staff entry gap resolved
+status: resolved
 severity: medium
 owner: product
 related_epics:
@@ -13,13 +11,85 @@ related_epics:
 related_stories:
   - REP-001
   - REP-006
+  - UX-012
+  - UX-013
+  - UX-014
+  - UX-015
+  - UX-016
+  - UX-017
 related_decisions:
   - "DEC-065"
+  - "DEC-084"
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-30
 ---
 
-# TD-055 — five clinical record kinds have no staff write surface
+# TD-055 — Specialized clinical staff entry gap resolved
+
+## Cierre funcional — UX-017, 2026-10-30
+
+Tratamientos (UX-015), estudios (UX-016) y pesos (UX-017) disponen de entrada y
+corrección staff desde la ficha, junto a vacunas/desparasitación de REP-010.
+Pesos implementa KG explícito, precisión exacta y confirmación auditada para
+asignar KG a valores desconocidos, sin inferir o convertir históricos. Lectura
+staff diferencia KG/null y rangos por unidad. Cambio de esquema aditivo sin
+default ni backfill, probado solo en bases desechables; sin despliegue sobre
+datos operativos. Ver [[UX-017-VALIDATION-2026-10-30]].
+
+Se cierra la falta funcional de superficie staff tras los gates de UX-017; no se
+certifica revisión visual ni Playwright. La recomendación original de E2E y los
+límites de navegación, concurrencia, idempotencia y respuesta incierta quedan
+explícitos en [[TD-066]]. Los apartados siguientes conservan los estados
+históricos, no describen pendientes actuales.
+
+## Estado actual — UX-012, 2026-10-30
+
+[[UX-012]] agrega consulta paginada y detalle de tratamientos dentro de la ficha
+del paciente. No incluye creación ni corrección: esta deuda continúa `open`.
+Tratamientos ya tiene lectura staff; estudios y pesos siguen API-only. El
+hallazgo y la división de alcance siguientes conservan el contexto original. No
+se reclama cobertura visual ni Playwright por las pruebas de componentes.
+
+## Estado actual — UX-013, 2026-10-30
+
+[[UX-013]] agrega consulta paginada y detalle de estudios. Tratamientos y
+estudios tienen lectura staff; entrada/corrección de ambos sigue pendiente,
+igual que la superficie de pesos. La deuda permanece open; no se cierra por una
+entrega de lectura ni por pruebas de componentes.
+
+## Estado actual — UX-014, 2026-10-30
+
+Los tres tipos pendientes ya tienen lectura staff: tratamientos, estudios y
+pesos. Ninguno gana creación/corrección en estas etapas; esta deuda sigue open.
+El contrato de peso guarda cantidad/fecha, sin unidad: UX-014 lo indica
+explícitamente y [[DEC-084-weight-measurement-unit]] propone definir la unidad y
+los históricos antes de habilitar entrada/corrección. No se infiere kg.
+
+## Estado actual — UX-015, 2026-10-30
+
+Tratamientos ya tiene creación y corrección explícitas mediante contratos
+existentes, con confirmación, auditoría y contexto de listado conservado. La
+deuda se reduce a estudios y pesos; permanece open. Unidad de peso aún requiere
+definición aprobada (DEC-084); límites de comandos/formulario de tratamientos se
+registran en [[TD-066]]. Las secciones anteriores son estados históricos.
+
+## Estado actual — UX-016, 2026-10-30
+
+Estudios ya tiene entrada/corrección confirmada y auditada por contratos
+existentes. TD-055 queda abierto exclusivamente para entrada/corrección de
+pesos, incluyendo la definición aprobada de unidad/históricos de DEC-084.
+Tratamientos y estudios comparten los límites explícitos de TD-066; no se
+pretende resolverlos mediante validación frontend.
+
+## Decisión de unidad aprobada — 2026-10-30
+
+[[DEC-084-weight-measurement-unit]] fue aceptada por el responsable del
+producto: KG para nuevas cargas staff, hasta tres decimales exactos. PRD §12.1
+actualizado explícitamente. Históricos/consumidores sin unidad permanecen
+desconocidos, sin conversión ni backfill automático. La definición ya no está
+pendiente; sí su implementación, validación y entrada/corrección de pesos.
+TD-055 sigue open. Las secciones anteriores conservan el estado histórico de
+cada entrega.
 
 ## What was found
 
@@ -34,11 +104,11 @@ fully implements:
 
 ```text
 kind          API routes                                                      staff UI
-treatments    GET|POST /patients/:patientId/clinical/treatments               none
+treatments    GET|POST /patients/:patientId/clinical/treatments               UX-012 read; UX-015 entry/correction
 vaccinations  GET|POST /patients/:patientId/clinical/vaccinations             REP-010
 deworming     GET|POST /patients/:patientId/clinical/deworming                REP-010
-studies       GET|POST /patients/:patientId/clinical/studies                  none
-weights       GET|POST /patients/:patientId/clinical/weights                  none
+studies       GET|POST /patients/:patientId/clinical/studies                  UX-013 read; UX-016 entry/correction
+weights       GET|POST /patients/:patientId/clinical/weights                  UX-014 read-only; no entry
 ```
 
 **Narrowed by [[REP-010]]** ([[DEC-067]]): vaccinations and deworming gained a

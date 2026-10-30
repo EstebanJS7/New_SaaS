@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { STAFF_SESSION_COOKIE } from "@/lib/session-cookie";
 
 export const dynamic = "force-dynamic";
 
@@ -39,15 +40,18 @@ const CLINICAL_ROUTE_SHAPES: readonly ClinicalRouteShape[] = [
   { segments: ["encounters", ID_SLOT, "links", "sale"], methods: ["POST"] },
   { segments: ["encounters", ID_SLOT, "amendments"], methods: ["POST"] },
   { segments: ["treatments"], methods: ["GET", "POST"] },
-  { segments: ["treatments", ID_SLOT], methods: ["PUT"] },
+  { segments: ["treatments", "search"], methods: ["POST"] },
+  { segments: ["treatments", ID_SLOT], methods: ["GET", "PUT"] },
   { segments: ["vaccinations"], methods: ["GET", "POST"] },
   { segments: ["vaccinations", ID_SLOT], methods: ["PUT"] },
   { segments: ["deworming"], methods: ["GET", "POST"] },
   { segments: ["deworming", ID_SLOT], methods: ["PUT"] },
   { segments: ["studies"], methods: ["GET", "POST"] },
-  { segments: ["studies", ID_SLOT], methods: ["PUT"] },
+  { segments: ["studies", "search"], methods: ["POST"] },
+  { segments: ["studies", ID_SLOT], methods: ["GET", "PUT"] },
   { segments: ["weights"], methods: ["GET", "POST"] },
-  { segments: ["weights", ID_SLOT], methods: ["PUT"] },
+  { segments: ["weights", "search"], methods: ["POST"] },
+  { segments: ["weights", ID_SLOT], methods: ["GET", "PUT"] },
 ];
 
 type UpstreamResolution =
@@ -139,9 +143,36 @@ async function proxyClinicalRequest(
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL;
   const cookieStore = await cookies();
+  const privateRecordRead =
+    (method === "POST" && /\/(treatments|studies|weights)\/search$/.test(resolution.path)) ||
+    (method === "GET" && /\/(treatments|studies|weights)\/[0-9a-f-]+$/i.test(resolution.path));
+  const treatmentWrite =
+    (method === "POST" && resolution.path.endsWith("/treatments")) ||
+    (method === "PUT" && /\/treatments\/[0-9a-f-]+$/i.test(resolution.path));
+  const studyWrite =
+    (method === "POST" && resolution.path.endsWith("/studies")) ||
+    (method === "PUT" && /\/studies\/[0-9a-f-]+$/i.test(resolution.path));
+  const weightWrite =
+    (method === "POST" && resolution.path.endsWith("/weights")) ||
+    (method === "PUT" && /\/weights\/[0-9a-f-]+$/i.test(resolution.path));
+  const privateRecordRequest = privateRecordRead || treatmentWrite || studyWrite || weightWrite;
+  const privateHeaders = { "cache-control": "private, no-store" };
+  if (privateRecordRequest && request.nextUrl.search)
+    return NextResponse.json(
+      { error: { code: "VALIDATION_FAILED", message: "Invalid clinical record read input." } },
+      { status: 400, headers: privateHeaders }
+    );
+  const session = privateRecordRequest ? cookieStore.get(STAFF_SESSION_COOKIE) : undefined;
+  if (privateRecordRequest && !session?.value)
+    return NextResponse.json(
+      { error: { code: "UNAUTHENTICATED", message: "Authentication required." } },
+      { status: 401, headers: privateHeaders }
+    );
 
   const headers: Record<string, string> = {
-    cookie: cookieStore.toString(),
+    cookie: privateRecordRequest
+      ? `${STAFF_SESSION_COOKIE}=${session?.value}`
+      : cookieStore.toString(),
   };
 
   const requestId = request.headers.get("x-request-id");
@@ -166,17 +197,50 @@ async function proxyClinicalRequest(
   // A string is the same JSON rather than a re-serialization -- no whitespace or key order is
   // normalized -- so the API's Zod parses identical input.
   const bodyText = hasBody ? await request.text() : undefined;
+  if (treatmentWrite || studyWrite || weightWrite || (privateRecordRead && method === "POST")) {
+    let input: unknown;
+    try {
+      input = JSON.parse(bodyText ?? "");
+    } catch {
+      input = null;
+    }
+    if (
+      typeof input !== "object" ||
+      input === null ||
+      Array.isArray(input) ||
+      Object.keys(input).some(
+        (key) =>
+          !(
+            weightWrite
+              ? ["quantity", "measuredAt", "unit"]
+              : studyWrite
+                ? ["studyType", "performedAt", "result"]
+                : treatmentWrite
+                  ? ["description", "administeredAt", "context"]
+                  : resolution.path.endsWith("/weights/search")
+                    ? ["minQuantity", "maxQuantity", "page", "period", "sort", "unit"]
+                    : ["q", "page", "period", "sort"]
+          ).includes(key)
+      )
+    )
+      return NextResponse.json(
+        { error: { code: "VALIDATION_FAILED", message: "Invalid clinical record search input." } },
+        { status: 400, headers: privateHeaders }
+      );
+  }
 
   const init: RequestInit = {
     method,
     headers,
     body: bodyText,
     cache: "no-store",
+    ...(privateRecordRead && { signal: request.signal }),
   };
 
   const response = await fetch(`${apiUrl}${resolution.path}`, init);
 
   const responseHeaders: Record<string, string> = {
+    ...(privateRecordRequest && privateHeaders),
     "content-type": response.headers.get("content-type") ?? "application/json",
   };
 

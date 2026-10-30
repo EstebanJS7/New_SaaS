@@ -2,7 +2,7 @@
 type: module
 module: clinical
 status: implemented
-updated: 2026-10-28
+updated: 2026-10-30
 ---
 
 # Module — Clinical
@@ -96,35 +96,37 @@ What the surface guarantees, all of it UX-only — the API re-asserts every gate
 - Loading, empty, error, success and permission-denied states exist for both
   lists, styled with semantic branding tokens only.
 
-**Remaining gap.** Treatments, studies and weights have routes, validation and
-permissions but **no staff UI** — they are API-only, so a staff member cannot
-record them through the product. That is [[TD-055]], narrowed from five kinds to
-three by [[DEC-067]] and still open. There is also no cross-patient "all
-vaccinations" view: the due reports are that view, aggregated.
+**Staff entry.** Treatments ([[UX-015]]), studies ([[UX-016]]) and weights
+([[UX-017]]) have entry/correction beside their paginated read surfaces.
+[[TD-055]] is resolved for this functional gap; [[TD-066]] tracks command and
+draft navigation limitations. Visual/E2E certification is not claimed. There is
+also no cross-patient "all vaccinations" view: the due reports are that view,
+aggregated.
 
 ## Clinical form and closure refinement — UX-002
 
 The working copy preserves spaces while typing. Each optional text field mirrors
-the API's 10,000-character bound with a linked error/count; invalid content cannot
-autosave or close. Manual draft save retries failures explicitly instead of
-repeatedly retrying an unchanged failed write. The mounted guard is re-enabled
-correctly after React StrictMode effect cleanup/setup.
+the API's 10,000-character bound with a linked error/count; invalid content
+cannot autosave or close. Manual draft save retries failures explicitly instead
+of repeatedly retrying an unchanged failed write. The mounted guard is
+re-enabled correctly after React StrictMode effect cleanup/setup.
 
 Pending edits disable switching/creating encounters. Same-document section links
 remain available. Other clicked links require an accessible exit confirmation;
 autosave pauses while deciding, and in-flight writes must finish before exiting.
-Reload/window close uses native beforeunload. Back/Forward and programmatic same-document route changes retain pending content
-in QueryClient memory for ten minutes while away. A fresh authorized read gates
-restoration; explicit manual save confirms the recovered content. Version drift
-blocks overwrites; a remotely closed record stays immutable. See [[TD-065]].
-No draft content is written to browser storage; recovery does not survive a new
-document or logout.
+Reload/window close uses native beforeunload. Back/Forward and programmatic
+same-document route changes retain pending content in QueryClient memory for ten
+minutes while away. A fresh authorized read gates restoration; explicit manual
+save confirms the recovered content. Version drift blocks overwrites; a remotely
+closed record stays immutable. See [[TD-065]]. No draft content is written to
+browser storage; recovery does not survive a new document or logout.
 
-Closure reviews the current staff content, separates client summary from internal
-notes and keeps the existing save/version/close sequence. Blank fields remain
-optional. Closed consultations render persisted content read-only beside the
-existing explicit amendment command. Closing does not complete an appointment or
-create a sale. No appointment/professional linkage was added to the clinical DTO.
+Closure reviews the current staff content, separates client summary from
+internal notes and keeps the existing save/version/close sequence. Blank fields
+remain optional. Closed consultations render persisted content read-only beside
+the existing explicit amendment command. Closing does not complete an
+appointment or create a sale. No appointment/professional linkage was added to
+the clinical DTO.
 
 ## API
 
@@ -189,54 +191,369 @@ create a sale. No appointment/professional linkage was added to the clinical DTO
 
 ## Technical Debt
 
-- [[TD-055]] — treatments, studies and weights stay API-only (open)
+- [[TD-055]] — specialized staff entry gap resolved through UX-017
+- [[TD-066]] — treatment/study/weight concurrency, uncertain results and draft
+  navigation limits
 
 ## Related ADRs
 
 - [[ADR-001 Modular Monolith]]
 
-
 ## Appointment navigation context — UX-005
 
 Staff navigation can carry an appointment ID from agenda to patient detail and
 then POS. A Veterinary frontend composition reads the existing authorized
-appointment and presents date/status/professional/service; patient-detail context
-must match the current patient. Invalid/unreadable context has explicit feedback
-without blocking the independent workspace. The closed consultation offers a POS
-link; no sale, payment or appointment transition is issued by navigation.
+appointment and presents date/status/professional/service; patient-detail
+context must match the current patient. Invalid/unreadable context has explicit
+feedback without blocking the independent workspace. The closed consultation
+offers a POS link; no sale, payment or appointment transition is issued by
+navigation.
 
 This is not a persisted appointment/encounter/sale association. No clinical data
 or price is placed in URLs, no new API or financial orchestration was added, and
 no Core backend module imports Veterinary implementation. See [[UX-005]] and the
 still-proposed [[DEC-083-appointment-clinical-sale-journey]] for the boundary.
 
-
 ## Explicit care links — UX-006 / DEC-083
 
-Veterinary now owns immutable, typed ClinicalAppointmentLink and ClinicalSaleLink
-records. One appointment can have multiple encounters, one encounter at most one
-appointment origin. One encounter can have multiple sales; a sale belongs to at
-most one encounter. Standalone encounters/sales remain allowed. A link can be
-added to a closed encounter without editing its clinical content.
+Veterinary now owns immutable, typed ClinicalAppointmentLink and
+ClinicalSaleLink records. One appointment can have multiple encounters, one
+encounter at most one appointment origin. One encounter can have multiple sales;
+a sale belongs to at most one encounter. Standalone encounters/sales remain
+allowed. A link can be added to a closed encounter without editing its clinical
+content.
 
-GET `/patients/:patientId/clinical/appointments/:id/encounters` lists linked IDs.
-GET `/patients/:patientId/clinical/encounters/:id/links` returns allowlisted IDs,
-sale status and related-domain read availability. POST `.../links/appointment`
-and `.../links/sale` validate strict UUID bodies; identical requests replay without
-duplicate audit, incompatible origins return 409. Missing/foreign/mismatched
-patient resources return 404. Every mutation requires clinical read/update and
-the target domain's read permission; Veterinary entitlement is always required,
-and sale links also respect the sales entitlement. Tenant context is server-owned.
+GET `/patients/:patientId/clinical/appointments/:id/encounters` lists linked
+IDs. GET `/patients/:patientId/clinical/encounters/:id/links` returns
+allowlisted IDs, sale status and related-domain read availability. POST
+`.../links/appointment` and `.../links/sale` validate strict UUID bodies;
+identical requests replay without duplicate audit, incompatible origins
+return 409. Missing/foreign/mismatched patient resources return 404. Every
+mutation requires clinical read/update and the target domain's read permission;
+Veterinary entitlement is always required, and sale links also respect the sales
+entitlement. Tenant context is server-owned.
 
 Link creation and audit share a transaction; encounter/sale row locks serialize
 competing origin links. Composite tenant/patient FKs, unique origin constraints
-and immutable-link triggers back the application checks. No delete/relink endpoint.
-The staff UI explicitly confirms linking and can reopen linked consultations and
-existing draft sales. POS can link the newly created sale without recreating it.
-The scheduled service is suggested only through current active catalog data and
-operator acceptance. Customer selection, closing an encounter, appointment
-completion and payment completion remain separate commands. No price or clinical
-content is copied into the association or URL.
+and immutable-link triggers back the application checks. No delete/relink
+endpoint. The staff UI explicitly confirms linking and can reopen linked
+consultations and existing draft sales. POS can link the newly created sale
+without recreating it. The scheduled service is suggested only through current
+active catalog data and operator acceptance. Customer selection, closing an
+encounter, appointment completion and payment completion remain separate
+commands. No price or clinical content is copied into the association or URL.
 
 Migration: `20261028000001_clinical_journey_links`. CONFIDENTIAL staff-only IDs;
 no new Portal projection, logs of content or destructive retention.
+
+## Consulta paginada de tratamientos — UX-012
+
+La ficha del paciente incorpora una sección Tratamientos y su ancla de
+navegación. No crea ni corrige registros. Buscar/Enter aplica una descripción
+vacía o de 2–80 caracteres; solo busca `description`, sin contexto, datos de
+responsables, dosis, estados ni asociaciones clínicas inventadas.
+
+POST `/patients/:patientId/clinical/treatments/search` acepta exclusivamente
+`q`, `page` (1–10000), `period` (`all` por defecto o `last30`) y `sort`
+(`recent` por defecto u `oldest`). `last30` significa los treinta períodos de 24
+horas previos al instante de consulta en servidor, extremos incluidos,
+excluyendo administración futura. El orden usa `administeredAt` y UUID
+ascendente de desempate. Paciente, conteo y página comparten una transacción
+RepeatableRead; 20 filas máximo, página fuera de rango ajustada a la última o 1
+sin resultados. Incluye pacientes inactivos para consultar su historial.
+
+Lista: `id`, `description`, `administeredAt`. El detalle se obtiene al abrirlo
+mediante GET `/patients/:patientId/clinical/treatments/:id` y agrega solo el
+`context` existente, nullable. No devuelve modelos Prisma, tenant, auditoría ni
+otros dominios. Cada lectura reafirma veterinary y vet.clinical.read. Tenant
+desde contexto; paciente extranjero, tratamiento extranjero, de otro paciente o
+inexistente reciben el mismo 404. Staff/membresía se exigen en la cadena HTTP.
+
+El proxy clínico existente permite únicamente esas dos nuevas lecturas, toma
+solo la cookie staff y request-id, rechaza query strings y claves adicionales,
+conserva bytes del body, señal de aborto, estado y envelope. Las respuestas son
+private,no-store; el API también marca así las lecturas exitosas nuevas. Los GET
+de listas y POST/PUT anteriores conservan contrato y consumidores.
+
+Detalle y retorno están dentro de la misma sección, sin contenido ni selección
+en URL. Búsqueda aplicada, período, orden y página se conservan por paciente en
+QueryClient durante diez minutos en memoria del documento. No hay Storage ni
+persistencia/deshidratación; recarga/reingreso descartan el contexto. La UI
+reconsulta al volver, protege contra resultados obsoletos, ofrece español,
+es-PY/horario Paraguay, estados de carga/vacío/error/reintento y foco en el
+encabezado al abrir/cerrar detalle. Componentes con tokens semánticos.
+
+Todo el contenido clínico es CONFIDENTIAL. Sin logs de texto, nuevas columnas,
+migraciones, dependencias, Portal, mutaciones operativas ni cambios de
+consultas, prevención, stock o finanzas. Evidencia y límites en
+[[UX-012-VALIDATION-2026-10-30]]. Sin revisión visual/E2E de navegador en esta
+etapa.
+
+## Consulta paginada de estudios — UX-013
+
+La ficha agrega una sección Estudios con ancla de navegación. Buscar/Enter
+consulta solamente studyType: vacío o 2–80 caracteres. No consulta result ni
+crea taxonomía, estados, adjuntos, diagnóstico o asociaciones clínicas. No
+ofrece creación/corrección.
+
+POST `/patients/:patientId/clinical/studies/search` acepta q, page (1–10000),
+period (all por defecto o last30) y sort (recent por defecto u oldest), sin
+claves adicionales. Páginas de veinte, orden performedAt y UUID ascendente;
+paciente, conteo y filas en RepeatableRead. Incluye pacientes inactivos. last30
+abarca treinta períodos de 24 horas hasta el instante del servidor, extremos
+incluidos, sin futuro. Ajusta páginas a la última o 1 cuando vacío.
+
+La lista proyecta id, studyType y performedAt. GET
+`/patients/:patientId/clinical/studies/:id` reautoriza al abrir y agrega solo
+result. Texto vacío: “Sin resultado registrado”, sin inferir pendiente, negativo
+u otro estado. Conserva multilínea como texto literal, sin interpretar HTML. No
+modelos Prisma, metadata interna, medicamentos, archivos ni responsables.
+
+Staff/membresía en HTTP; veterinary y vet.clinical.read reafirmados en servicio;
+tenant del contexto. Estudio/paciente ajeno, inexistente o de otro paciente
+devuelve el mismo 404. Proxy clínico existente: solo nuevas formas POST search y
+GET UUID; cookie staff/request-id, bytes de JSON, aborto, rechazo de queries y
+claves extra, private,no-store, estado/envelope preservados. Contratos
+anteriores GET/POST/PUT conservados, incluidos tratamientos.
+
+Detalle/retorno dentro de sección, foco al abrir/cerrar, español/es-PY y fecha
+Paraguay, tokens semánticos y carga/vacío/error/reintento. Filtros aplicados,
+búsqueda y página por paciente en memoria del documento por diez minutos; sin
+URL, logs, Storage o deshidratación/persistencia. Reconsulta al regresar;
+recarga/reingreso descartan contexto. AbortSignal y claves por búsqueda/paciente
+evitan resultados obsoletos.
+
+Contenido clínico CONFIDENTIAL. Sin columnas, migraciones, dependencias, Portal,
+escrituras operativas ni cambios de tratamientos, consultas, prevención o
+finanzas. TD-055 sigue abierto para entrada/corrección de tratamientos/estudios
+y superficie de pesos. Ver [[UX-013-VALIDATION-2026-10-30]]; simulación,
+PostgreSQL real y revisión visual/E2E no ejecutada se documentan por separado.
+
+## Consulta paginada de pesos — UX-014
+
+La ficha agrega Pesos, con navegación a la sección y detalle de lectura fresco.
+No hay campo textual buscable: filtra por minQuantity/maxQuantity opcionales y
+por fecha de medición, sin inventar descripción, diagnóstico o unidad.
+
+POST `/patients/:patientId/clinical/weights/search` acepta exclusivamente page
+(1–10000), period (all/last30), sort (recent/oldest) y límites como strings
+decimales positivos de hasta siete enteros/tres decimales, mínimo <= máximo.
+Límites inclusivos comparados con Prisma.Decimal, jamás floats. El valor de cada
+filtro viaja solo en body; no existe q. Páginas de veinte, measuredAt y UUID
+ascendente de desempate, paciente/conteo/filas en RepeatableRead; páginas
+ajustadas a última o 1 sin filas. Pacientes inactivos conservan lectura de
+historial. last30 son treinta períodos de 24 horas hasta el instante del
+servidor, extremos incluidos y futuro excluido; rango y período pueden
+combinarse.
+
+Lista y GET `/patients/:patientId/clinical/weights/:id` proyectan solamente id,
+quantity y measuredAt. Quantity es string exacta de escala tres, serializada con
+toFixed(3) sobre el NUMERIC(10,3) almacenado; no calcula ni redondea otro valor.
+El formato es-PY usa el helper decimal exacto existente. El modelo y contrato
+carecen de unidad: la UI indica “Unidad no especificada en el registro”. No
+sufijo kg, conversiones, gráfico o interpretación clínica.
+[[DEC-084-weight-measurement-unit]] propone definir contrato e históricos antes
+de crear/corregir pesos; sigue propuesta y no modifica el PRD.
+
+Staff/membresía en HTTP; veterinary y vet.clinical.read reafirmados por lectura.
+Tenant del contexto; paciente/peso ajeno, inexistente o de otro paciente recibe
+el mismo 404. Proxy clínico con nuevas formas allowlisted, cookie solo staff,
+request-id/AbortSignal, body exacto, rechazo de queries/claves extra y
+respuestas private,no-store. GET/POST/PUT anteriores y consumidores se
+conservan.
+
+Filtros locales usan coma decimal y agrupación opcional; normalización por
+strings y comparación mediante BigInt en milésimas, sin Number. Límites vacíos
+se omiten; inválidos/invertidos tienen error explícito antes de consultar.
+Aplicar/Enter, limpiar, período y orden, carga/vacío/error/reintento, controles
+etiquetados y foco al abrir/volver. Contexto aplicado por paciente en memoria
+del documento diez minutos, sin Storage/persistencia/deshidratación;
+recarga/reingreso lo descartan. Claves separadas y aborto impiden respuestas
+obsoletas.
+
+Datos y filtros clínicos CONFIDENTIAL; sin logs de contenido, columnas,
+migraciones, dependencias, Portal, escrituras operativas ni alteración de
+consultas, prevención, tratamientos/estudios o finanzas. TD-055 sigue abierto
+para entrada/corrección de los tres tipos. Evidencia en
+[[UX-014-VALIDATION-2026-10-30]]; sin nueva revisión visual/E2E de navegador.
+
+## Registrar y corregir tratamientos — UX-015
+
+La sección Tratamientos agrega Registrar tratamiento y, desde detalle fresco,
+Corregir tratamiento. Descripción requerida de hasta 2000 caracteres, fecha y
+hora de administración en reloj Paraguay y contexto opcional hasta 10000.
+Revisión modal y confirmación explícita antes de escribir; sin autosave. La
+fecha usa los conversores de agenda existentes, independientes de la zona del
+navegador. Editar fecha guarda precisión de minuto; corregir descripción o
+contexto omite la fecha y preserva segundos/milisegundos originales.
+
+Reutiliza POST `/patients/:patientId/clinical/treatments` y PUT
+`/patients/:patientId/clinical/treatments/:id`, sin cambio de DTO/comandos. PUT
+contiene solo campos modificados; vaciar contexto envía null. Una relectura
+previa comprueba los campos que se van a corregir y bloquea cambios remotos
+visibles; no es control de versión transaccional. El servicio existente valida
+create/update por separado, veterinary y tenant; mutación y auditoría de actor/
+campos se confirman en la misma transacción. No se modifica consulta cerrada ni
+se crea un amendment clínico.
+
+El proxy trata estas escrituras como privadas: cookie solo staff, request-id,
+body JSON exacto, rechazo de query strings y claves ajenas; private,no-store. No
+propaga AbortSignal de comandos para simular que abortar asegura rollback.
+Cliente sin reintentos automáticos; guardia de envío y controles pendientes
+evitan doble clic. Red, 408, 5xx o respuesta de éxito ilegible implican
+resultado incierto: bloquear reenvío y revisar listado/detalle, no repetir
+automáticamente.
+
+Éxito muestra confirmación, invalida listado/detalle y abre el registro guardado
+sin alterar búsqueda/filtros/página. Permisos conocidos ocultan create/update
+independientemente; desconocidos siguen el patrón actual de las tarjetas
+clínicas, con rechazo explícito de API. El shell aún no suministra claims a esta
+sección: esto no certifica ocultación por rol en producción. Backend es
+autoridad.
+
+Cancelar con cambios requiere confirmación, errores preservan formulario montado
+y la revisión conserva el texto. Clic en enlaces de salida y beforeunload
+advierten cambios, bloqueando salida por clic mientras se guarda. No se escribe
+contenido en URL, logs o Storage; Back/Forward, navegación programática, recarga
+y reingreso no recuperan este borrador. [[TD-066]] registra esas fronteras y la
+ventana GET→PUT sin versión, idempotencia POST ni historial de valores previos.
+No se presenta como resuelto por una relectura frontend.
+
+Campos existentes CONFIDENTIAL. Sin migraciones, dependencias, PRD, Portal,
+finanzas, inventario, estudios/pesos, vacunas, consultas o vínculos nuevos.
+[[TD-055]] se reduce a entrada/corrección de estudios y pesos; unidad de peso
+sigue propuesta en DEC-084. Ver [[UX-015-VALIDATION-2026-10-30]] para evidencia
+simulada, PostgreSQL desechable de comandos/auditoría y revisión visual no
+ejecutada.
+
+## Registrar y corregir estudios — UX-016
+
+Registrar estudio desde sección y Corregir estudio desde detalle fresco. Tipo
+requerido hasta 2000 caracteres, fecha/hora de realización Paraguay y resultado
+hasta 10000. Resultado puede quedar sin texto: se crea/vacía con string vacío,
+no null ni estado inferido. Multilínea preservada como texto literal en
+formulario, revisión y detalle; sin interpretar HTML.
+
+POST `/patients/:patientId/clinical/studies` y PUT
+`/patients/:patientId/clinical/studies/:id` existentes, sin esquema/contrato
+backend nuevo. Revisión y confirmación antes de escribir. PUT solo campos
+modificados, sin alterar fecha precisa cuando cambian tipo o resultado. La fecha
+editada se convierte con helper de agenda independiente de zona del navegador, a
+precisión de minuto. Relectura antes de PUT bloquea cambios remotos visibles en
+campos modificados, sin prometer compare-and-swap.
+
+Auditoría existente co-commit con actor/tenant/campos, sin texto clínico en
+metadata. Servicio reafirma veterinary/create/update y usa tenant del contexto;
+HTTP mantiene staff/membresía. Proxy endurece solo escrituras de estudios con
+cookie staff, body exacto, rechazo de queries/claves extra y private,no-store;
+no propaga aborto de comandos como garantía de rollback. Contratos previos de
+tratamientos y demás registros preservados.
+
+Cliente sin retry automático, guardia de doble envío y bloqueo ante respuesta
+incierta (red/408/5xx/DTO ilegible); revisar guardado antes de volver a
+intentar. Éxito confirma, abre detalle y reconsulta conservando filtros/página
+por paciente. Cancelación con cambios o clic de salida requiere confirmación;
+beforeunload advierte. Sin autosave, Storage, persistencia, URL o logs de
+campos. No recuperación tras recarga/sesión, Back-Forward o navegación
+programática. TD-066 aplica a tratamientos y estudios: sin
+versión/idempotencia/historial previo de valores.
+
+Permisos frontend opcionales conocidos ocultan create/update independientemente;
+shell actual no suministra claims, con rechazo API explícito como autoridad.
+Español/es-PY, tokens semánticos, etiquetas y foco. Sin nuevas rutas, permisos,
+dependencias, archivos, Portal, consultas, prevención, vínculos, stock o
+finanzas. TD-055 se reduce a entrada/corrección de pesos y definición de unidad
+pendiente DEC-084. Evidencia en [[UX-016-VALIDATION-2026-10-30]], separando
+simulación, PostgreSQL real desechable y visual/E2E no ejecutado.
+
+## Unidad de peso aprobada — DEC-084, 2026-10-30
+
+Producto aprobó KG para nuevas cargas staff, valores positivos exactos de hasta
+tres decimales. PRD §12.1 actualizado por la decisión explícita. Históricos y
+consumidores antiguos sin unidad conservan la cantidad y la unidad desconocida;
+sin backfill/conversión automática ni mezcla con KG para derivaciones clínicas.
+La aprobación es documental: el modelo, los DTO y UX-014 siguen sin unidad hasta
+implementar la Story correspondiente. TD-055 permanece abierto para
+entrada/corrección y materializar la definición; no se anuncia como capacidad ya
+desplegada.
+
+## Registrar y corregir pesos en kg — UX-017
+
+Implementa DEC-084: nuevas cargas staff envían unit KG y cantidad positiva
+exacta Decimal(10,3), hasta siete enteros y tres decimales. Entrada con coma y
+presentación es-PY. Validación Zod y servicio rechazan precisión/rango extra sin
+redondeo ni floats. Registrar peso desde listado y Corregir peso desde detalle
+fresco; revisión y confirmación antes de escribir. Corregir valor desconocido
+exige checkbox explícito para atribuir KG. Cambiar solo fecha puede conservar
+unidad desconocida; PUT parcial omite el instante original si no se modifica.
+
+ClinicalWeight.unit nullable enum KG, migración
+20261030000001_clinical_weight_unit sin default ni UPDATE/backfill. Cantidades
+previas intactas. El DDL reproducible se probó en bases desechables, sin aplicar
+cambios sobre base operativa ni convertir datos. Para usar el nuevo código con
+una base existente deberá desplegarse ese esquema por el flujo habitual.
+
+POST/PUT existentes aceptan unit KG opcional. Sin unidad explícita: crear guarda
+null; cambiar cantidad guarda null incluso si antes era KG; fecha sola preserva
+unidad. Confirmar solo unit KG conserva cantidad y fecha exactas. Auditoría
+atómica de campos/actor/tenant, sin valores clínicos. Los DTOs legados GET y
+respuestas de comandos siguen sin unit; no se cambian Portal ni consumidores. La
+proyección staff paginada/detalle incluye unit KG/null. La UI relee tras comando
+antes de mostrar la unidad: un fallo entonces se trata como respuesta incierta,
+sin repetir la escritura.
+
+Filtro unit all/KG/unspecified. Rango requiere unidad seleccionada; all con
+rango se rechaza. Rango legado sin unit filtra solo desconocidos; sin rango ni
+unit devuelve ambas clases. La UI muestra kg o ausencia explícita, nunca infiere
+unidad. Contexto temporal de filtros/página por paciente, sin Storage, URL o
+logs clínicos. Valores/unidad son CONFIDENTIAL. Sin gráficos, conversiones o
+interpretación de peso actual.
+
+Guardias de doble envío y resultado incierto; prelectura parcial sin CAS, sin
+retry ni idempotencia. Cancelar/salir por enlace y beforeunload advierten; sin
+recuperación al desmontar, recargar o Back/Forward. Claims conocidos ocultan
+acciones; shell sin claims mantiene API autoritativa. Staff/membresía,
+veterinary, create/update/read y aislamiento backend preservados. TD-055
+resuelto funcionalmente; TD-066 sigue abierto. Evidencia simulada y PostgreSQL
+separadas en [[UX-017-VALIDATION-2026-10-30]]; visual/E2E no ejecutado.
+
+## Recuperación temporal de formularios especializados — UX-018
+
+Tratamientos, estudios y pesos conservan una copia de trabajo al desmontar con
+cambios durante navegación interna. Un slot por paciente/tipo, con baseline,
+campos exactos (vacíos/multilínea, fecha local, coma/confirmación KG), token de
+generación y vencimiento de diez minutos. QueryClient existente, memoria del
+mismo documento; nunca dehydrate/Storage/URL/logs. Contenido CONFIDENTIAL. No es
+una nueva entidad persistente ni autosave.
+
+Al volver, lista fresca autorizada antes de mostrar Recuperar cambios o
+Descartar copia temporal. No basta el cache anterior. Recuperar comprueba acceso
+con una nueva lectura; para corregir compara todos los campos/instante/unidad
+del detalle con el baseline. Si cambiaron, muestra la copia aparte y bloquea
+aplicarla. Error temporal conserva copia y permite reintentar; 401/403/404 la
+eliminan sin exponer contenido. Claims conocidos exigen create/update según
+modo; desconocidos conservan API autoritativa al escribir, sin afirmar que una
+lectura concede permiso de escritura.
+
+Recuperar requiere acción manual y luego revisión/confirmación normal; conserva
+contexto de listado y precisión del instante que no se edita. Guardar, descartar
+o vencer limpia copia; cancelar descarte la conserva. Formulario limpio no
+produce borrador y deshacer todos los cambios recuperados no resucita la copia.
+Advertencias de enlaces y beforeunload existentes siguen vigentes. Back/Forward
+o navegación programática no se interceptan: la recuperación atiende su
+remontaje en el mismo documento, sin parchear router/history.
+
+Comandos en vuelo al salir quedan pendientes y bloqueados para reenvío. La copia
+se puede consultar o descartar tras advertir que no se cancela el comando. Éxito
+tardío limpia solo su token e invalida lecturas; respuesta incierta queda
+bloqueada, sin inferir éxito por similitud de valores ni repetir
+automáticamente. Respuestas antiguas no borran copias nuevas. Expirar esta
+memoria no proporciona idempotencia durable. No se recupera tras reload, cerrar
+pestaña, logout o nuevo login/documento; la sesión UX-007 conserva sus
+fronteras.
+
+Sin API, contrato, migración, dependencia, PRD o cambios financieros. TD-066
+resuelto solo para pérdida inmediata por desmontaje, permanece abierto para
+concurrencia, idempotencia y QA visual/E2E. Ver
+[[UX-018-VALIDATION-2026-10-30]]: pruebas simuladas de componentes, sin
+PostgreSQL ni navegador en esta etapa.

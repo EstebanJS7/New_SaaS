@@ -4,6 +4,45 @@ All notable product changes will be documented here.
 
 ## Unreleased
 
+- **UX-018: recuperar formularios clínicos al volver.** Tratamientos, estudios y
+  pesos conservan una copia temporal en memoria durante navegación interna.
+  Recuperación/descarte explícitos tras lectura autorizada, conflictos visibles
+  y bloqueo de reenvío ante guardados en curso o inciertos. Sin almacenamiento
+  persistente ni recuperación tras recarga o reingreso.
+
+- **UX-017: registrar y corregir pesos en kg desde la ficha.** Cantidad exacta,
+  revisión/confirmación y corrección parcial. Unidad desconocida explícita,
+  confirmación manual para atribuir KG y filtros homogéneos por unidad; contexto
+  de lista conservado. Esquema aditivo sin conversión o backfill. TD-055
+  resuelto funcionalmente; límites y visual/E2E pendientes en TD-066.
+
+- **UX-016: registrar y corregir estudios desde la ficha.** Tipo, fecha Paraguay
+  y resultado literal, revisión/confirmación y corrección parcial; resultado
+  vacío como string, contexto de listado conservado. Auditoría/permisos y
+  protección contra doble envío/respuesta incierta. TD-055 queda para pesos.
+
+- **UX-015: registrar y corregir tratamientos desde la ficha.** Formulario con
+  revisión/confirmación, actualización parcial, limpieza de contexto y fecha
+  Paraguay, conservando el contexto de listado. Auditoría/permisos existentes,
+  protección de doble envío y respuesta incierta; sin cambios de consultas,
+  estudios, pesos, inventario o finanzas. TD-055 queda para estudios y pesos.
+
+- **UX-014: consulta de pesos por paciente.** Filtros de rango exacto y período,
+  orden y paginación desde servidor, detalle y contexto temporal al volver.
+  Español/es-PY, autorización y aislamiento; unidad no especificada explícita
+  sin asumir kg. Entrada/corrección y definición de unidad siguen pendientes.
+
+- **UX-013: consulta de estudios en la ficha del paciente.** Búsqueda por tipo,
+  filtro temporal, orden y paginación de servidor; detalle con resultado literal
+  y retorno con contexto temporal por paciente. Español/es-PY, autorización y
+  aislamiento; sin creación/corrección ni cambios de tratamientos o consultas.
+
+- **UX-012: consulta de tratamientos dentro de la ficha del paciente.** Búsqueda
+  por descripción, período reciente, orden y paginación en servidor, detalle de
+  lectura y contexto temporal por paciente al volver. Español/es-PY,
+  autorización clínica y aislamiento. No agrega creación/corrección ni cambia
+  estudios, pesos, prevención o consultas; TD-055 continúa abierto.
+
 - **UX-011: búsqueda y paginación del catálogo desde el servidor.** Consulta por
   nombre, filtros por los cuatro tipos y estado, orden estable y contexto
   temporal al volver del detalle. Listado en español y precios es-PY, sin

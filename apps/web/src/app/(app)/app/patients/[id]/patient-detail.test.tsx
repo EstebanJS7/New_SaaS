@@ -172,6 +172,16 @@ function mockWorkflow(overrides: WorkflowOverrides = {}): ReturnType<typeof vi.f
     if (url.endsWith("/vaccinations") || url.endsWith("/deworming")) {
       return Promise.resolve(jsonResponse([]));
     }
+    if (
+      (url.endsWith("/treatments/search") ||
+        url.endsWith("/studies/search") ||
+        url.endsWith("/weights/search")) &&
+      method === "POST"
+    ) {
+      return Promise.resolve(
+        jsonResponse({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 })
+      );
+    }
     return Promise.resolve(
       jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404)
     );
@@ -219,6 +229,15 @@ describe("PatientDetail", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Rex" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Tratamientos" })).toHaveAttribute(
+      "href",
+      "#patient-treatments"
+    );
+    expect(screen.getByRole("link", { name: "Estudios" })).toHaveAttribute(
+      "href",
+      "#patient-studies"
+    );
+    expect(screen.getByRole("link", { name: "Pesos" })).toHaveAttribute("href", "#patient-weights");
     expect(await screen.findAllByText("Ana Gomez")).toHaveLength(2);
     expect(screen.getByText("Principal")).toBeInTheDocument();
 
@@ -281,7 +300,9 @@ describe("PatientDetail", () => {
     );
 
     await screen.findByText("Todavía no hay responsables vinculados.");
-    fireEvent.change(await screen.findByRole("combobox"), { target: { value: "customer-2" } });
+    fireEvent.change(await screen.findByRole("combobox", { name: "Cliente a vincular" }), {
+      target: { value: "customer-2" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Vincular responsable" }));
 
     await waitFor(() => {

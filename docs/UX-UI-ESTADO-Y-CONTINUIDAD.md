@@ -3,7 +3,7 @@ type: guide
 title: Evolución UX/UI del espacio de trabajo
 status: active
 created: 2026-10-28
-updated: 2026-10-29
+updated: 2026-10-30
 related_stories:
   [
     UX-001,
@@ -16,6 +16,14 @@ related_stories:
     UX-008,
     UX-009,
     UX-010,
+    UX-011,
+    UX-012,
+    UX-013,
+    UX-014,
+    UX-015,
+    UX-016,
+    UX-017,
+    UX-018,
   ]
 related_epics: [EPIC-03, EPIC-05, EPIC-06, EPIC-07, EPIC-12]
 ---
@@ -674,3 +682,228 @@ al resto del módulo o al POS. Los listados clínicos quedan como siguiente etap
 UX-011: estado final `done`; 150 pruebas distintas, lint completo API/web, tipos
 y builds aislados con verificación de salida aprobados. Sin nueva revisión
 visual o E2E de navegador.
+
+## 24. Consulta de tratamientos por paciente — UX-012
+
+La ficha incluye una sección Tratamientos accesible desde su navegación.
+Buscar/Enter consulta descripción en servidor; ofrece todas las fechas o los
+últimos treinta días móviles, orden reciente/antiguo por administración y
+páginas reales de veinte con conteo coherente y desempate UUID. No descarga el
+historial completo ni inventa estados, medicamentos, dosis o vínculos.
+
+Ver tratamiento consulta un detalle autorizado con descripción, fecha y contexto
+existente. Volver conserva búsqueda aplicada, período, orden y página; también
+se recuperan al remontar la ficha durante diez minutos en memoria por paciente.
+No se guarda texto ni selección en URL, logs o almacenamiento persistente.
+Recarga/reingreso descartan contexto. Las peticiones son abortables y los
+resultados anteriores no reemplazan búsquedas nuevas.
+
+Español, es-PY/Paraguay, tokens semánticos, carga/vacío/error/reintento,
+controles etiquetados, límites de página y gestión del foco al abrir/cerrar.
+Staff, membresía, veterinary, vet.clinical.read y tenant del contexto se exigen
+en backend. Paciente/tratamiento ajeno o inexistente devuelve el mismo 404.
+
+Sin crear/corregir registros, dependencias, migraciones, cambios de consultas,
+prevención, Portal o finanzas. TD-055 sigue abierto: falta entrada/corrección de
+tratamientos y superficies de estudios/pesos. Siguiente etapa sugerida: consulta
+de estudios, con revisión previa de su contrato y alcance.
+
+Ver [[UX-012-treatment-search-pagination]] y [[UX-012-VALIDATION-2026-10-30]].
+Las pruebas simuladas, PostgreSQL real y revisión visual se registran
+separadamente. Sin nueva ronda de navegador/E2E.
+
+UX-012: estado final done; 138 pruebas distintas aprobadas (128 simuladas y 10
+PostgreSQL real), lint, tipos y builds API/web aislados, incluida verificación
+de salida. Sin revisión visual/E2E de navegador, commit ni push en esta etapa.
+
+## 25. Consulta de estudios por paciente — UX-013
+
+Sección Estudios accesible desde navegación de ficha. Búsqueda por tipo
+existente, filtro todas las fechas/últimos treinta días móviles, orden por
+realización reciente/antigua y páginas de veinte desde servidor. Conteo y filas
+en snapshot por petición con UUID de desempate. No descarga todo el historial ni
+busca el resultado clínico.
+
+El detalle fresco muestra tipo, fecha y resultado; texto vacío con mensaje
+explícito sin inferir estado. Conserva multilínea como texto literal. Volver
+recupera filtros, búsqueda aplicada y página por paciente por diez minutos en
+memoria del documento, con foco en el encabezado. Sin contenido en URL, logs o
+Storage; recarga/reingreso descartan contexto. Peticiones abortables y
+resultados aislados por paciente/búsqueda. Español, es-PY, tokens semánticos,
+carga/vacío/error/reintento y navegación etiquetada con límites.
+
+Backend exige staff/membresía, permiso clínico y veterinary, tenant del
+contexto. Referencias extranjeras/de otro paciente/inexistentes reciben el
+mismo 404. GET/POST/PUT anteriores conservados. Sin creación/corrección,
+archivos, estados inventados, migraciones, dependencias, Portal o mutaciones
+operativas. TD-055 sigue abierto; siguiente etapa sugerida: consulta de pesos.
+
+Ver [[UX-013-study-search-pagination]] y [[UX-013-VALIDATION-2026-10-30]]. La
+evidencia simulada, PostgreSQL real y revisión visual/E2E se separan.
+
+UX-013: estado final done; 155 pruebas distintas aprobadas (145 simuladas, 10
+PostgreSQL real), lint, tipos y builds aislados API/web, con verificación de
+salida. Sin revisión visual/E2E de navegador ni commit/push en esta etapa.
+
+## 26. Consulta de pesos por paciente — UX-014
+
+Sección Pesos y detalle dentro de la ficha. Rango inclusivo opcional por valor,
+período todas las fechas/últimos treinta días móviles, orden reciente/antiguo
+por measuredAt y páginas de veinte desde servidor. Sin texto ficticio para
+buscar. Conteo y página coherentes con UUID de desempate. Cantidades como
+Decimal/string exacta de escala tres y presentación es-PY, sin Number ni
+conversión. Filtros con coma decimal, validación local y servidor; mínimo <=
+máximo. La unidad falta en el modelo: leyenda explícita sin asumir kg, gráfico
+de tendencia o interpretación clínica. Ver propuesta
+[[DEC-084-weight-measurement-unit]], sin cambio aprobado de PRD.
+
+Detalle fresco, retorno con foco y contexto aplicado por paciente por diez
+minutos en memoria del documento. Sin valores en URL, logs o Storage;
+recarga/reingreso descartan contexto. Peticiones abortables, estados de
+carga/vacío/error/reintento, navegación etiquetada, español y tokens semánticos.
+Staff/membresía, veterinary y vet.clinical.read en backend; tenant del contexto,
+mismo 404 para referencias ajenas/inexistentes/de otro paciente.
+
+Sin creación/corrección, migraciones, dependencias, Portal o mutaciones
+operativas. Contratos previos preservados. TD-055 continúa abierto para entrada
+y corrección de los tres tipos; las tres consultas están implementadas. Ver
+[[UX-014-weight-search-pagination]] y [[UX-014-VALIDATION-2026-10-30]].
+
+UX-014: estado final done; 191 pruebas distintas aprobadas (181 simuladas y 10
+PostgreSQL real), lint, tipos, builds aislados API/web y verificación de salida.
+Sin revisión visual/E2E ni commit/push. DEC-084 propuesta; TD-055 abierto.
+
+## 27. Registrar y corregir tratamientos — UX-015
+
+Registrar desde el listado y Corregir desde detalle fresco. Formulario en
+español con descripción, fecha/hora Paraguay y contexto existentes, límites
+coherentes con API, revisión y confirmación explícitas. PUT parcial; vaciar
+contexto lo elimina con null. Corregir otros campos conserva el instante
+original completo. Fecha editada con precisión de minuto mediante conversor de
+agenda; independiente de la zona del navegador. Sin autosave.
+
+Relectura antes de corregir bloquea cambios visibles en los campos a modificar;
+la API no tiene versión y subsiste ventana de carrera (TD-066). Guardias contra
+doble envío, sin reintentos automáticos; red/408/5xx/respuesta incierta bloquean
+reenvío e indican revisar registro/listado. Éxito abre el guardado e invalida
+lecturas, conservando contexto de lista por paciente. Cancelar cambios y salir
+por enlace requieren confirmación; beforeunload advierte. Sin recuperación tras
+recarga/reingreso/Back-Forward ni persistencia de texto.
+
+Staff/membresía, tenant, veterinary y create/update backend existentes se
+conservan con auditoría co-commit. Permisos frontend conocidos ocultan acciones;
+actualmente el shell no suministra claims a esta sección y la API rechaza
+escrituras no autorizadas explícitamente. Sin logs/URL/Storage clínicos nuevos,
+esquema, dependencias, cambios de consulta, vacunas, estudios/pesos o finanzas.
+
+TD-055 sigue abierto solo para entrada/corrección de estudios y pesos. DEC-084
+sigue propuesta sobre unidades. TD-066 hace visibles los límites de
+concurrencia, respuesta incierta y navegación del formulario. Ver
+[[UX-015-treatment-entry-correction]] y [[UX-015-VALIDATION-2026-10-30]].
+
+UX-015: estado final done; 167 pruebas distintas aprobadas (159 simuladas y 8
+PostgreSQL real), lint, tipos y builds aislados API/web con verificación de
+salida. Sin revisión visual/E2E, mutaciones operativas, commit o push.
+
+## 28. Registrar y corregir estudios — UX-016
+
+Entrada desde Estudios y corrección desde detalle fresco. Tipo requerido, fecha
+y hora Paraguay y resultado de texto. Vaciar resultado guarda string vacío, no
+null ni estado clínico. Revisar/confirmar antes de POST/PUT; actualización
+parcial, relectura y preservación del instante original al modificar otros
+campos. Resultado multilínea literal, sin HTML, archivos o diagnóstico
+inventado.
+
+Sin autosave, retry automático ni doble envío. Red/408/5xx/DTO incierto bloquean
+reenvío e indican revisar lo guardado. Éxito abre detalle/reconsulta y conserva
+filtros/página. Cancelar cambios o seguir un enlace de salida requiere
+confirmación; beforeunload advierte. Formulario solo montado: sin recuperación
+tras recarga/sesión/Back-Forward ni persistencia de contenido. Español, es-PY,
+tokens semánticos, etiquetas y foco.
+
+Staff/membresía, veterinary, tenant y create/update backend existentes,
+auditoría co-commit sin texto clínico. Claims no provistos actualmente por el
+shell; permisos conocidos ocultan affordances, desconocidos mantienen rechazo
+API. Sin modificación de tratamientos, vacunas, consultas, pesos, vínculos,
+Portal, inventario o finanzas. TD-066 aplica a ambos formularios sin prometer
+versionado o idempotencia. TD-055 queda para pesos, cuya unidad sigue pendiente
+en DEC-084. Ver [[UX-016-study-entry-correction]] y
+[[UX-016-VALIDATION-2026-10-30]].
+
+UX-016: estado final done; 209 pruebas distintas aprobadas (200 simuladas y 9
+PostgreSQL real), lint, tipos y builds aislados API/web con verificación de
+salida. Sin visual/E2E, mutaciones operativas, commit o push. TD-055 queda para
+pesos; DEC-084 propuesta y TD-066 abierto para los límites de ambos formularios.
+
+## 29. Unidad de peso aprobada — DEC-084
+
+El responsable del producto aceptó kg para nuevas cargas staff, hasta tres
+decimales exactos y sin redondeo silencioso. Históricos y consumidores antiguos
+sin unidad conservan su semántica desconocida, sin backfill o conversión
+automática. Entrada en gramos/libras queda fuera de la primera entrega. PRD
+§12.1 actualizado explícitamente; DEC-084 accepted.
+
+Es una definición aprobada, todavía sin implementación de esquema/contratos o
+formulario. La consulta UX-014 mantiene su leyenda de unidad no especificada. El
+siguiente paso es implementar entrada/corrección de pesos y el contrato
+explícito de unidad respetando compatibilidad; TD-055 sigue abierto. Validación
+de esta etapa documental: formato y diff; sin cambios de aplicación o datos,
+pruebas operativas, commit ni push.
+
+## 30. Registrar y corregir pesos en kg — UX-017
+
+Entrada/corrección con revisión y confirmación explícitas, cantidad positiva
+exacta hasta tres decimales, coma decimal y fecha Paraguay. Nuevos registros
+staff usan KG; los desconocidos siguen identificados como tales. Atribuir KG
+requiere checkbox manual, no una lectura; corregir solo fecha conserva unidad.
+PUT parcial mantiene el instante completo cuando no cambia fecha. Lectura fresca
+antes y después del comando, filtros/página conservados y feedback de guardado.
+
+Lectura staff expone unidad; rangos se filtran por KG o desconocida, sin
+mezclar. Contratos antiguos de GET/comandos conservados. Consumidor sin unidad:
+creación o nueva cantidad quedan desconocidas; fecha sola no altera unidad.
+Esquema aditivo nullable sin default ni backfill, no migración de cantidades. Se
+validó en PostgreSQL desechable; no se aplicó a una base operativa.
+
+Staff/tenant/permisos y auditoría atómica preservados. Sin logs/URL/Storage de
+contenido clínico, dependencias, cálculos, gráficos o cambios financieros. Doble
+envío bloqueado; resultado incierto requiere revisar antes de intentar. Sin
+promesas de CAS/idempotencia ni recuperación de borrador tras desmontaje. TD-055
+resuelto por cobertura funcional; TD-066 sigue abierto, incluyendo la revisión
+visual/Playwright pendiente.
+
+UX-017: 275 pruebas distintas aprobadas (253 simuladas/esquema y 22 PostgreSQL
+real), lint, tipos, Prisma validate/generate y builds aislados API/web/database;
+verificador de salida web aprobado. Sin revisión visual/E2E, datos operativos,
+commit o push. Ver [[UX-017-weight-entry-correction]] y
+[[UX-017-VALIDATION-2026-10-30]]. Los estados anteriores son históricos.
+
+## 31. Recuperación temporal de formularios clínicos — UX-018
+
+Tratamientos, estudios y pesos ofrecen recuperar o descartar cambios al volver
+después de una navegación interna. Copia exacta por paciente/tipo, hasta diez
+minutos en memoria del documento. Lista fresca antes de ofrecerla; recuperar
+vuelve a leer y compara el detalle de correcciones con el baseline. Cambio
+remoto bloquea aplicar copia y permite consultarla por separado. 401/403/404
+eliminan copia; fallos temporales ofrecen reintento. Claims conocidos restringen
+create/update y el backend conserva autoridad al guardar.
+
+Sin restauración/escritura automática: el usuario recupera y revisa antes de
+confirmar. Filtros/página y precisión del instante original conservados. Éxito,
+descarte confirmado o expiración limpian la copia. Volver al baseline no deja
+una copia fantasma. Guardados en curso/inciertos permanecen bloqueados para
+reenvío; éxito tardío limpia solo su generación, sin borrar un borrador nuevo.
+Descartar copia no cancela un comando enviado. Sin Storage, URLs o logs
+clínicos.
+
+Límite: misma pestaña/documento, diez minutos mientras está fuera; no sobrevive
+reload, cierre, logout/reingreso o nuevo QueryClient. Back/Forward no se
+bloquean; la protección se comprueba por desmontar/remontar componentes, sin
+certificar una navegación real de navegador. TD-066 sigue abierto para CAS,
+idempotencia, recuperación durable y visual/E2E. Sin API/esquema/PRD ni base
+operativa. Ver [[UX-018-clinical-record-form-recovery]] y
+[[UX-018-VALIDATION-2026-10-30]].
+
+UX-018: estado final done. 233 pruebas simuladas distintas aprobadas, lint/tipos
+web y build final aislado con 29 páginas y verificación de salida aprobados. Sin
+PostgreSQL, navegador/E2E, datos operativos, commit o push en esta etapa.

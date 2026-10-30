@@ -20,6 +20,9 @@ import {
 } from "@newsaas/ui/components/ui/card";
 import { listCustomers, type Customer } from "../../customers/customers-api";
 import { ClinicalWorkspace } from "./clinical-workspace";
+import { TreatmentList } from "./treatment-list";
+import { StudyList } from "./study-list";
+import { WeightList } from "./weight-list";
 import { PatientOverview } from "./patient-overview";
 import {
   createGuardian,
@@ -459,6 +462,9 @@ export function PatientDetail({
           ["#patient-overview", "Resumen"],
           ["#patient-clinical", "Ficha clínica"],
           ["#patient-prevention", "Vacunas y desparasitaciones"],
+          ["#patient-treatments", "Tratamientos"],
+          ["#patient-studies", "Estudios"],
+          ["#patient-weights", "Pesos"],
           ["#patient-guardians", "Responsables"],
         ].map(([href, label]) => (
           <a
@@ -482,6 +488,30 @@ export function PatientDetail({
           appointmentId={appointmentId}
           initialEncounterId={initialEncounterId}
         />
+      </section>
+      <section
+        id="patient-treatments"
+        aria-label="Tratamientos del paciente"
+        className="scroll-mt-24 rounded-lg border border-border bg-card p-5"
+        tabIndex={-1}
+      >
+        <TreatmentList patientId={patientId} />
+      </section>
+      <section
+        id="patient-studies"
+        aria-label="Estudios del paciente"
+        className="scroll-mt-24 rounded-lg border border-border bg-card p-5"
+        tabIndex={-1}
+      >
+        <StudyList patientId={patientId} />
+      </section>
+      <section
+        id="patient-weights"
+        aria-label="Pesos del paciente"
+        className="scroll-mt-24 rounded-lg border border-border bg-card p-5"
+        tabIndex={-1}
+      >
+        <WeightList patientId={patientId} />
       </section>
       <section
         id="patient-guardians"

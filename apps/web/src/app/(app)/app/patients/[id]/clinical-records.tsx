@@ -34,7 +34,8 @@ import {
  *
  * This is the staff entry path for `next_due_at`, the field [[DEC-065]] added
  * and the two due reports [[REP-006]] read. [[DEC-067]] scoped it to these two
- * record kinds: treatments, studies and weights remain API-only ([[TD-055]]).
+ * record kinds: treatment entry and studies/weights remain pending ([[TD-055]]);
+ * treatment read-only listing is provided separately by UX-012.
  *
  * Three rules the code below exists to keep:
  *
