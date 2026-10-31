@@ -1,4 +1,6 @@
 "use client";
+import { ClinicalServerDrafts } from "./clinical-server-drafts";
+import { ClinicalHistoryEntry } from "./clinical-history";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { WeightForm } from "./weight-form";
@@ -28,10 +30,12 @@ function WeightReader({
   id,
   onBack,
   onEdit,
+  canReadHistory,
 }: {
   patientId: string;
   id: string;
   onBack: () => void;
+  canReadHistory?: boolean;
   onEdit?: (item: WeightDetail) => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
@@ -82,6 +86,12 @@ function WeightReader({
                 Corregir peso
               </Button>
             )}
+            <ClinicalHistoryEntry
+              patientId={patientId}
+              kind="weights"
+              id={id}
+              allowed={canReadHistory}
+            />
             <dl className="space-y-3">
               <div>
                 <dt className="font-medium">Valor registrado</dt>
@@ -178,6 +188,7 @@ function WeightWorkspace({
           </p>
         )}
         <WeightReader
+          canReadHistory={permissions?.includes("vet.clinical.history_read")}
           key={selected}
           patientId={patientId}
           id={selected}
@@ -205,6 +216,16 @@ function WeightWorkspace({
       >
         Pesos
       </h2>
+      <ClinicalServerDrafts
+        patientId={patientId}
+        kind="weight"
+        onRecover={(copy) => {
+          if (copy.kind === "weight") {
+            setNotice(undefined);
+            setEditor({ initial: copy.initial, recovered: copy.fields });
+          }
+        }}
+      />
       {recovery && canRecover && query.isFetchedAfterMount && !query.isFetching && !query.error && (
         <ClinicalRecordRecoveryPanel
           key={recovery.token}

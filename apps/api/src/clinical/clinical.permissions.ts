@@ -7,6 +7,7 @@
  */
 export const CLINICAL_PERMISSIONS = Object.freeze({
   read: "vet.clinical.read",
+  historyRead: "vet.clinical.history_read",
   create: "vet.clinical.create",
   update: "vet.clinical.update",
   close: "vet.clinical.close",

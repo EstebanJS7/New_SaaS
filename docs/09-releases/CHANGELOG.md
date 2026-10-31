@@ -4,6 +4,55 @@ All notable product changes will be documented here.
 
 ## Unreleased
 
+- **UX-025: navegación staff sin suspensión global redundante.** Se retira la
+  barrera global loading.tsx y se conservan indicadores/cargas cliente, auth,
+  branding/CSP y documento de recuperación. Reproducción fría del bloqueo y dos
+  lanes independientes 26/26, con 25 flujos clínicos y 50 contextos nuevos por
+  ronda, sin retries. TD-067 resuelta para esta matriz; UX-024 completa su gate.
+
+- **UX-024 / DEC-087: borradores clínicos privados en servidor.** Guardado
+  manual y recuperación tras recarga para tratamientos, estudios y pesos; solo
+  autor con permisos actuales. Baseline/clave conservados, preparación durable
+  del comando, corrección incierta bloqueada y pesos confirmados GET-only.
+  Descarte/ cierre lógicos sin purga. Migración solo PG desechable. Validación
+  completada mediante UX-025; fallos iniciales de TD-067 conservados en QA.
+
+- **UX-023 / DEC-086: historial de correcciones clínicas.** Tratamientos,
+  estudios y pesos conservan antes/después exactos, actor/nombre histórico,
+  motivo y fecha; revisión y auditoría comparten commit/rollback. Motivo
+  obligatorio en nueva UI y opcional en API legada; historial por registro
+  requiere permiso específico, inicialmente OWNER/ADMIN/VETERINARIAN. Lectura
+  paginada, sin restauración o historia previa inventada. Migración validada
+  solo en PG desechable, 17 E2E reales y QA desktop/móvil.
+
+- **UX-022: contratos protegidos de consumidores staff.** Crear tratamiento,
+  estudio o peso exige intento con clave en el cliente; corregir exige versión
+  original, con validación antes de red. Peso confirmado reintenta solo GET.
+  API/BFF legados compatibles; inventario local y propuesta DEC-085 para corte
+  público futuro, sin activarlo, cambiar esquema o asumir clientes externos.
+
+- **UX-021: validación clínica aislada en navegador.** Dieciséis recorridos
+  reales de los tres formularios, PostgreSQL/Redis sintéticos y QA
+  desktop/móvil. Mitigación TD-067 al reubicar el límite de carga bajo el layout
+  staff: navegación conserva documento/recuperación. Dos ejecuciones nuevas
+  consecutivas aprobadas; sin cambio de CSP/dependencias o base operativa.
+  TD-066 sigue abierta para historial, durable y escritores legados.
+
+- **UX-020: correcciones clínicas con versión.** Tratamientos, estudios y pesos
+  comprueban expectedVersion dentro de la transacción; baseline obsoleto recibe
+  409 sin sobrescritura ni auditoría nueva. UI conserva cambios y permite
+  consultar el registro actual, recuperación compara versión y PUT incierto
+  sigue bloqueado. Consumidores sin token mantienen contrato legado; no se
+  promete CAS para esos escritores. Esquema probado solo en PG desechable.
+
+- **UX-019: creaciones clínicas idempotentes.** Tratamientos, estudios y pesos
+  aceptan clave JSON opcional; reintentos devuelven respuesta original sin
+  duplicar registro/auditoría y contenido diferente recibe 409. UI conserva
+  clave/comando al recuperar y permite reintento manual seguro; peso confirmado
+  solo reintenta lectura de unidad. DDL aditivo probado en PostgreSQL
+  desechable. Correcciones con versión en UX-020 y validación visual/E2E acotada
+  en UX-021.
+
 - **UX-018: recuperar formularios clínicos al volver.** Tratamientos, estudios y
   pesos conservan una copia temporal en memoria durante navegación interna.
   Recuperación/descarte explícitos tras lectura autorizada, conflictos visibles

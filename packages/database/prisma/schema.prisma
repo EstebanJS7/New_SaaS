@@ -26,6 +26,7 @@ datasource db {
 /// value verbatim.
 /// Data classification: email/display_name CONFIDENTIAL; status INTERNAL.
 model UserProfile {
+  clinicalWorkingDrafts ClinicalWorkingDraft[]
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
   email       String @unique
@@ -39,6 +40,9 @@ model UserProfile {
   sessions        StaffSession[]
   passwordResetTokens PasswordResetToken[]
   memberships     TenantMembership[]
+  clinicalTreatmentRevisions ClinicalTreatmentRevision[]
+  clinicalStudyRevisions ClinicalStudyRevision[]
+  clinicalWeightRevisions ClinicalWeightRevision[]
   auditLogs       AuditLog[]
   tenantBrandings TenantBranding[]
   brandingAssets  BrandingAsset[]
@@ -956,6 +960,7 @@ model Breed {
 /// Data classification: name and birthDate are CONFIDENTIAL; logs/audit carry
 /// stable IDs only.
 model Patient {
+  workingDrafts ClinicalWorkingDraft[]
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
   tenantId String @map("tenant_id") @db.Uuid
@@ -986,6 +991,7 @@ model Patient {
   clinicalDewormings   ClinicalDeworming[]
   clinicalStudies      ClinicalStudy[]
   clinicalWeights      ClinicalWeight[]
+  clinicalCreationReceipts ClinicalCreationReceipt[]
 
   appointments Appointment[]
 
@@ -1091,6 +1097,8 @@ model ClinicalTreatment {
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// CONFIDENTIAL technical revision; advanced by a database trigger on every UPDATE.
+  version Int @default(1)
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK: a clinical row can only anchor to a Patient
@@ -1100,6 +1108,9 @@ model ClinicalTreatment {
 
   @@index([tenantId, patientId])
   @@map("clinical_treatment")
+  revisions ClinicalTreatmentRevision[]
+  @@unique([tenantId, patientId, id], map: "clinical_treatment_history_scope_key")
+
 }
 
 /// Vaccination record (minimum facts: vaccine reference, administered date).
@@ -1176,6 +1187,8 @@ model ClinicalStudy {
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// CONFIDENTIAL technical revision; advanced by a database trigger on every UPDATE.
+  version Int @default(1)
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK (see ClinicalTreatment).
@@ -1183,6 +1196,9 @@ model ClinicalStudy {
 
   @@index([tenantId, patientId])
   @@map("clinical_study")
+  revisions ClinicalStudyRevision[]
+  @@unique([tenantId, patientId, id], map: "clinical_study_history_scope_key")
+
 }
 
 /// Explicit supported unit; a nullable record unit preserves unknown values.
@@ -1206,6 +1222,8 @@ model ClinicalWeight {
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// CONFIDENTIAL technical revision; advanced by a database trigger on every UPDATE.
+  version Int @default(1)
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK (see ClinicalTreatment).
@@ -1213,6 +1231,9 @@ model ClinicalWeight {
 
   @@index([tenantId, patientId])
   @@map("clinical_weight")
+  revisions ClinicalWeightRevision[]
+  @@unique([tenantId, patientId, id], map: "clinical_weight_history_scope_key")
+
 }
 
 // ---------------------------------------------------------------------------
@@ -4026,4 +4047,109 @@ model ClinicalSaleLink {
   @@unique([tenantId, saleId])
   @@index([tenantId, encounterId])
   @@map("clinical_sale_link")
+}
+
+/// UX-019 CONFIDENTIAL, immutable original command result. No automatic retention/purge.
+model ClinicalCreationReceipt {
+  tenantId    String   @map("tenant_id") @db.Uuid
+  patientId   String   @map("patient_id") @db.Uuid
+  kind        String
+  key         String   @db.Uuid
+  requestHash String   @map("request_hash")
+  response    Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  patient     Patient  @relation(fields: [tenantId, patientId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([tenantId, patientId, kind, key])
+  @@map("clinical_creation_receipt")
+}
+
+/// CONFIDENTIAL append-only snapshots; no inferred earlier history or destructive retention.
+model ClinicalTreatmentRevision {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+  actorUserProfileId String? @map("actor_user_profile_id") @db.Uuid
+  actorDisplayName String? @map("actor_display_name")
+  correctionReason String? @map("correction_reason")
+  beforeVersion Int @map("before_version")
+  afterVersion Int @map("after_version")
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  beforeDescription String @map("before_description")
+  beforeAdministeredAt DateTime @map("before_administered_at") @db.Timestamptz(3)
+  beforeContext String? @map("before_context")
+  afterDescription String @map("after_description")
+  afterAdministeredAt DateTime @map("after_administered_at") @db.Timestamptz(3)
+  afterContext String? @map("after_context")
+  record ClinicalTreatment @relation(fields: [tenantId, patientId, recordId], references: [tenantId, patientId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor UserProfile? @relation(fields: [actorUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([tenantId, patientId, recordId, afterVersion], map: "clinical_treatment_revision_version_key")
+  @@map("clinical_treatment_revision")
+}
+
+/// CONFIDENTIAL append-only snapshots; no inferred earlier history or destructive retention.
+model ClinicalStudyRevision {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+  actorUserProfileId String? @map("actor_user_profile_id") @db.Uuid
+  actorDisplayName String? @map("actor_display_name")
+  correctionReason String? @map("correction_reason")
+  beforeVersion Int @map("before_version")
+  afterVersion Int @map("after_version")
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  beforeStudyType String @map("before_study_type")
+  beforePerformedAt DateTime @map("before_performed_at") @db.Timestamptz(3)
+  beforeResult String @map("before_result")
+  afterStudyType String @map("after_study_type")
+  afterPerformedAt DateTime @map("after_performed_at") @db.Timestamptz(3)
+  afterResult String @map("after_result")
+  record ClinicalStudy @relation(fields: [tenantId, patientId, recordId], references: [tenantId, patientId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor UserProfile? @relation(fields: [actorUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([tenantId, patientId, recordId, afterVersion], map: "clinical_study_revision_version_key")
+  @@map("clinical_study_revision")
+}
+
+/// CONFIDENTIAL append-only snapshots; no inferred earlier history or destructive retention.
+model ClinicalWorkingDraft {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  authorId String @map("author_id") @db.Uuid
+  kind String
+  state String @default("ACTIVE")
+  version Int @default(1)
+  payload Json
+  command Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+  patient Patient @relation(fields:[tenantId,patientId],references:[tenantId,id],onDelete:Restrict,onUpdate:Restrict)
+  author UserProfile @relation(fields:[authorId],references:[id],onDelete:Restrict,onUpdate:Restrict)
+  @@index([tenantId,patientId,authorId,kind,id],map:"clinical_working_draft_author_scope_idx")
+  @@map("clinical_working_draft")
+}
+
+model ClinicalWeightRevision {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+  actorUserProfileId String? @map("actor_user_profile_id") @db.Uuid
+  actorDisplayName String? @map("actor_display_name")
+  correctionReason String? @map("correction_reason")
+  beforeVersion Int @map("before_version")
+  afterVersion Int @map("after_version")
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  beforeQuantity Decimal @map("before_quantity") @db.Decimal(10, 3)
+  beforeUnit ClinicalWeightUnit? @map("before_unit")
+  beforeMeasuredAt DateTime @map("before_measured_at") @db.Timestamptz(3)
+  afterQuantity Decimal @map("after_quantity") @db.Decimal(10, 3)
+  afterUnit ClinicalWeightUnit? @map("after_unit")
+  afterMeasuredAt DateTime @map("after_measured_at") @db.Timestamptz(3)
+  record ClinicalWeight @relation(fields: [tenantId, patientId, recordId], references: [tenantId, patientId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor UserProfile? @relation(fields: [actorUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([tenantId, patientId, recordId, afterVersion], map: "clinical_weight_revision_version_key")
+  @@map("clinical_weight_revision")
 }

@@ -61,21 +61,21 @@ describe("AppearanceToggle", () => {
 
     const toggle = screen.getByTestId("appearance-toggle");
     // No stored preference: defer to tenant/OS instead of forcing light.
-    expect(toggle.textContent).toBe("System");
+    expect(toggle.textContent).toBe("Sistema");
     expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBeNull();
 
     fireEvent.click(toggle);
-    expect(toggle.textContent).toBe("Light");
+    expect(toggle.textContent).toBe("Claro");
     expect(document.documentElement.classList.contains(DARK_CLASS)).toBe(false);
     expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe("light");
 
     fireEvent.click(toggle);
-    expect(toggle.textContent).toBe("Dark");
+    expect(toggle.textContent).toBe("Oscuro");
     expect(document.documentElement.classList.contains(DARK_CLASS)).toBe(true);
     expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe("dark");
 
     fireEvent.click(toggle);
-    expect(toggle.textContent).toBe("System");
+    expect(toggle.textContent).toBe("Sistema");
     expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe("system");
   });
 
@@ -121,7 +121,7 @@ describe("AppearanceToggle", () => {
     render(<AppearanceToggle defaultAppearance="dark" />);
 
     // No stored preference: system mode with a tenant dark default renders dark.
-    expect(screen.getByTestId("appearance-toggle").textContent).toBe("System");
+    expect(screen.getByTestId("appearance-toggle").textContent).toBe("Sistema");
     expect(document.documentElement.classList.contains(DARK_CLASS)).toBe(true);
     expect(media.addEventListener).not.toHaveBeenCalled();
   });
@@ -133,7 +133,7 @@ describe("AppearanceToggle", () => {
     const { unmount } = render(<AppearanceToggle />);
 
     // No stored preference resolves to system mode with no tenant default.
-    expect(screen.getByTestId("appearance-toggle").textContent).toBe("System");
+    expect(screen.getByTestId("appearance-toggle").textContent).toBe("Sistema");
     expect(media.addEventListener).toHaveBeenCalledTimes(1);
     expect(media.addEventListener).toHaveBeenCalledWith("change", expect.any(Function));
 

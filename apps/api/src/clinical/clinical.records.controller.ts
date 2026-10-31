@@ -57,8 +57,12 @@ export class ClinicalRecordsController {
     @Body() body: unknown
   ): Promise<ClinicalTreatmentResponse> {
     const { patientId } = parseClinicalInput(clinicalPatientParam, params, "Invalid patient id.");
-    const input = parseClinicalInput(createTreatmentBody, body, "Invalid treatment body.");
-    return this.records.createTreatment(patientId, input);
+    const { idempotencyKey, ...input } = parseClinicalInput(
+      createTreatmentBody,
+      body,
+      "Invalid treatment body."
+    );
+    return this.records.createTreatment(patientId, input, idempotencyKey);
   }
 
   @Put("treatments/:id")
@@ -172,8 +176,12 @@ export class ClinicalRecordsController {
     @Body() body: unknown
   ): Promise<ClinicalStudyResponse> {
     const { patientId } = parseClinicalInput(clinicalPatientParam, params, "Invalid patient id.");
-    const input = parseClinicalInput(createStudyBody, body, "Invalid study body.");
-    return this.records.createStudy(patientId, input);
+    const { idempotencyKey, ...input } = parseClinicalInput(
+      createStudyBody,
+      body,
+      "Invalid study body."
+    );
+    return this.records.createStudy(patientId, input, idempotencyKey);
   }
 
   @Put("studies/:id")
@@ -209,8 +217,12 @@ export class ClinicalRecordsController {
     @Body() body: unknown
   ): Promise<ClinicalWeightResponse> {
     const { patientId } = parseClinicalInput(clinicalPatientParam, params, "Invalid patient id.");
-    const input = parseClinicalInput(createWeightBody, body, "Invalid weight body.");
-    return this.records.createWeight(patientId, input);
+    const { idempotencyKey, ...input } = parseClinicalInput(
+      createWeightBody,
+      body,
+      "Invalid weight body."
+    );
+    return this.records.createWeight(patientId, input, idempotencyKey);
   }
 
   @Put("weights/:id")

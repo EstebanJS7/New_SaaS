@@ -16,10 +16,12 @@ export function ClinicalRecordRecoveryPanel({
   patientId,
   entry,
   onRecover,
+  onDiscard,
 }: {
   patientId: string;
   entry: ClinicalRecordRecovery;
   onRecover: (copy: ClinicalRecordRecovery) => void;
+  onDiscard?: () => Promise<void>;
 }) {
   const client = useQueryClient();
   const [error, setError] = useState<string>();
@@ -33,8 +35,10 @@ export function ClinicalRecordRecoveryPanel({
       mounted.current = false;
     };
   }, []);
+  const safeRetry =
+    !entry.initial && Boolean(entry.fields.creation?.command) && entry.status === "uncertain";
   async function recover() {
-    if (pending || entry.status !== "draft") return;
+    if (pending || (entry.status !== "draft" && !safeRetry)) return;
     setPending(true);
     setError(undefined);
     try {
@@ -53,6 +57,8 @@ export function ClinicalRecordRecoveryPanel({
         const current = await getTreatment(patientId, entry.initial.id);
         changed =
           current.id !== entry.initial.id ||
+          current.version === undefined ||
+          current.version !== entry.initial.version ||
           current.description !== entry.initial.description ||
           current.context !== entry.initial.context ||
           current.administeredAt !== entry.initial.administeredAt;
@@ -60,6 +66,8 @@ export function ClinicalRecordRecoveryPanel({
         const current = await getStudy(patientId, entry.initial.id);
         changed =
           current.id !== entry.initial.id ||
+          current.version === undefined ||
+          current.version !== entry.initial.version ||
           current.studyType !== entry.initial.studyType ||
           current.result !== entry.initial.result ||
           current.performedAt !== entry.initial.performedAt;
@@ -67,6 +75,8 @@ export function ClinicalRecordRecoveryPanel({
         const current = await getWeight(patientId, entry.initial.id);
         changed =
           current.id !== entry.initial.id ||
+          current.version === undefined ||
+          current.version !== entry.initial.version ||
           current.quantity !== entry.initial.quantity ||
           current.unit !== entry.initial.unit ||
           current.measuredAt !== entry.initial.measuredAt;
@@ -115,17 +125,27 @@ export function ClinicalRecordRecoveryPanel({
             { label: "Confirmación de kg", value: entry.fields.confirmedKg },
             { label: "Fecha y hora de Paraguay", value: entry.fields.date },
           ];
+  if (entry.fields.correctionReason)
+    fields.push({ label: "Motivo de la corrección", value: entry.fields.correctionReason });
   return (
     <section
       aria-label={"Cambios pendientes de " + name}
       className="space-y-3 rounded-md border border-border bg-card p-4"
     >
-      <h3 className="font-semibold">Tenés una copia temporal de {name}</h3>
+      <h3 className="font-semibold">
+        Tenés {entry.fields.durable ? "un borrador guardado" : "una copia temporal"} de {name}
+      </h3>
       <p className="text-sm text-muted-foreground">
-        La copia se conserva hasta diez minutos mientras navegás en esta pestaña. Recuperarla no
-        guarda el registro.
+        {entry.fields.durable
+          ? "Borrador privado guardado en el servidor. Recuperarlo no guarda el registro; completarlo o descartarlo retira la copia recuperable sin borrar su contenido."
+          : "La copia se conserva hasta diez minutos mientras navegás en esta pestaña. Recuperarla no guarda el registro."}
       </p>
-      {entry.status !== "draft" && (
+      {safeRetry && (
+        <p role="status">
+          Podés recuperar el intento y confirmar su reintento con la misma clave y los mismos datos.
+        </p>
+      )}
+      {entry.status !== "draft" && !safeRetry && (
         <p role="alert">
           {entry.status === "pending"
             ? "El guardado seguía en curso al salir. Esperá y revisá el listado antes de repetir la operación."
@@ -164,7 +184,7 @@ export function ClinicalRecordRecoveryPanel({
         </p>
       )}
       <div className="flex flex-wrap gap-2">
-        {entry.status === "draft" && !conflict && (
+        {(entry.status === "draft" || safeRetry) && !conflict && (
           <Button
             type="button"
             disabled={pending}
@@ -172,21 +192,32 @@ export function ClinicalRecordRecoveryPanel({
               void recover();
             }}
           >
-            {pending ? "Comprobando registro…" : "Recuperar cambios"}
+            {pending
+              ? "Comprobando registro…"
+              : safeRetry
+                ? "Recuperar para reintento seguro"
+                : "Recuperar cambios"}
           </Button>
         )}
         <Button type="button" variant="outline" disabled={pending} onClick={() => setDiscard(true)}>
-          Descartar copia temporal
+          {entry.fields.durable ? "Descartar borrador guardado" : "Descartar copia temporal"}
         </Button>
       </div>
       <ConfirmActionDialog
         open={discard}
         onOpenChange={setDiscard}
-        title="Descartar copia temporal"
-        description="Se eliminará esta copia de trabajo. Esto no cancela un guardado que ya se haya enviado ni modifica registros guardados."
+        title={entry.fields.durable ? "Descartar borrador guardado" : "Descartar copia temporal"}
+        description={
+          entry.fields.durable
+            ? "El borrador dejará de estar disponible para recuperar, pero su contenido se conservará en el servidor. No cancela un guardado enviado ni modifica registros clínicos."
+            : "Se eliminará esta copia de trabajo. Esto no cancela un guardado que ya se haya enviado ni modifica registros guardados."
+        }
         confirmLabel="Descartar copia"
         cancelLabel="Conservar copia"
-        onConfirm={() => clearRecordRecovery(client, patientId, entry.kind, entry.token)}
+        onConfirm={async () => {
+          if (onDiscard) await onDiscard();
+          clearRecordRecovery(client, patientId, entry.kind, entry.token);
+        }}
       />
     </section>
   );

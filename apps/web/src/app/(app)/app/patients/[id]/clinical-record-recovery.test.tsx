@@ -25,6 +25,7 @@ const configs = [
     review: "Revisar tratamiento",
     field: "description",
     baseline: {
+      version: 1,
       id,
       description: "Original clínico",
       context: "Contexto original",
@@ -41,6 +42,7 @@ const configs = [
     review: "Revisar estudio",
     field: "studyType",
     baseline: {
+      version: 1,
       id,
       studyType: "Original clínico",
       result: "Resultado original",
@@ -56,7 +58,7 @@ const configs = [
     changed: "0,125",
     review: "Revisar peso",
     field: "quantity",
-    baseline: { id, quantity: "12.345", unit: "KG", measuredAt: precise },
+    baseline: { version: 1, id, quantity: "12.345", unit: "KG", measuredAt: precise },
   },
 ] as const;
 type Config = (typeof configs)[number];
@@ -78,7 +80,7 @@ function setup(c: Config) {
     writeStatus: 200,
     stale: false,
   };
-  const writes: { method: string; body: Record<string, unknown> }[] = [];
+  const writes: { method: string; body: Record<string, unknown>; key: string | null }[] = [];
   let finish: ((response: Response) => void) | undefined;
   const fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     if (typeof url !== "string") throw Error("Expected URL string");
@@ -101,7 +103,11 @@ function setup(c: Config) {
     }
     if (typeof init?.body !== "string") throw Error("Expected JSON body");
     const body = JSON.parse(init.body) as Record<string, unknown>;
-    writes.push({ method: init?.method ?? "", body });
+    writes.push({
+      method: init?.method ?? "",
+      body,
+      key: typeof body.idempotencyKey === "string" ? body.idempotencyKey : null,
+    });
     if (options.pending)
       return new Promise<Response>((resolve) => {
         finish = resolve;
@@ -148,6 +154,7 @@ async function open(c: Config, correction = false) {
       })
     );
     fireEvent.click(await screen.findByRole("button", { name: "Corregir " + c.name }));
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
   } else fireEvent.click(screen.getByRole("button", { name: "Registrar " + c.name }));
   fireEvent.change(screen.getByLabelText(c.label), { target: { value: c.changed } });
   if (!correction)
@@ -230,6 +237,19 @@ describe.each(configs)("Clinical temporary recovery: $kind", (c) => {
     expect(t.writes[0]?.method).toBe("PUT");
     for (const key of ["administeredAt", "performedAt", "measuredAt"])
       expect(t.writes[0]?.body).not.toHaveProperty(key);
+  });
+  it("rejects recovery when only the version changed even though clinical fields match", async () => {
+    const t = setup(c);
+    const v = t.view();
+    await open(c, true);
+    v.unmount();
+    t.change({ version: 2 });
+    t.view();
+    await offer(c);
+    fireEvent.click(screen.getByRole("button", { name: "Recuperar cambios" }));
+    await screen.findByText(/El registro cambió mientras estabas fuera/);
+    expect(t.writes).toHaveLength(0);
+    expect(screen.getByText(c.changed)).toBeInTheDocument();
   });
   it("blocks stale corrections and keeps a read-only copy without a PUT", async () => {
     const t = setup(c);
@@ -394,7 +414,7 @@ describe.each(configs)("Clinical temporary recovery: $kind", (c) => {
     );
     expect(t.writes).toHaveLength(1);
   });
-  it("keeps lost or failed command responses blocked across remount", async () => {
+  it("retains the exact key and command for explicit safe retry across remount", async () => {
     const t = setup(c);
     const v = t.view();
     await open(c);
@@ -408,10 +428,42 @@ describe.each(configs)("Clinical temporary recovery: $kind", (c) => {
       t.finish(500);
       await Promise.resolve();
     });
-    await screen.findByText(/No pudimos confirmar el guardado/);
-    expect(screen.getByText(c.changed)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Recuperar cambios" })).not.toBeInTheDocument();
+    const recover = await screen.findByRole("button", { name: "Recuperar para reintento seguro" });
     expect(t.writes).toHaveLength(1);
+    expect(t.writes[0].key).toMatch(/^[a-f0-9-]{36}$/);
+    t.options.pending = false;
+    fireEvent.click(recover);
+    await screen.findByLabelText(c.label);
+    expect(screen.getByLabelText(c.label)).toBeDisabled();
+    expect(t.writes).toHaveLength(1);
+    await reviewAndSave(c);
+    await screen.findByText(
+      c.kind === "weight"
+        ? "Peso registrado."
+        : c.kind === "study"
+          ? "Estudio registrado."
+          : "Tratamiento registrado."
+    );
+    expect(t.writes).toHaveLength(2);
+    expect(t.writes[1]).toEqual(t.writes[0]);
+  });
+  it("keeps uncertain corrections blocked across remount", async () => {
+    const t = setup(c);
+    const v = t.view();
+    await open(c, true);
+    t.options.pending = true;
+    await reviewAndSave(c, true);
+    await waitFor(() => expect(t.writes).toHaveLength(1));
+    v.unmount();
+    t.view();
+    await offer(c);
+    await act(async () => {
+      t.finish(500);
+      await Promise.resolve();
+    });
+    await screen.findByText(/No pudimos confirmar el guardado/);
+    expect(screen.queryByRole("button", { name: /Recuperar/ })).not.toBeInTheDocument();
+    expect(t.writes[0].key).toBeNull();
   });
   it("does not retain a clean new form or accepted form discard", async () => {
     const t = setup(c);
@@ -479,7 +531,11 @@ describe("Recovery lifecycle boundaries", () => {
     expect(screen.getByLabelText(c.label)).toHaveValue("Línea uno\nLínea dos");
     await reviewAndSave(c, true);
     await waitFor(() => expect(t.writes).toHaveLength(1));
-    expect(t.writes[0]?.body).toEqual({ studyType: "Línea uno\nLínea dos", result: "" });
+    expect(t.writes[0]?.body).toEqual({
+      expectedVersion: 1, correctionReason: "Motivo sintético",
+      studyType: "Línea uno\nLínea dos",
+      result: "",
+    });
   });
   it("retains unknown-unit baseline and the operator's explicit KG checkbox", async () => {
     const c = configs[2];
@@ -489,6 +545,7 @@ describe("Recovery lifecycle boundaries", () => {
     await screen.findByText("12,345");
     fireEvent.click(screen.getByRole("button", { name: /Ver registro de peso/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Corregir peso" }));
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
     fireEvent.change(screen.getByLabelText("Valor registrado (unidad no especificada)"), {
       target: { value: "0,125" },
     });
@@ -501,7 +558,7 @@ describe("Recovery lifecycle boundaries", () => {
     expect(screen.getByLabelText("Valor registrado (unidad no especificada)")).toHaveValue("0,125");
     await reviewAndSave(c, true);
     await waitFor(() => expect(t.writes).toHaveLength(1));
-    expect(t.writes[0]?.body).toEqual({ quantity: "0.125", unit: "KG" });
+    expect(t.writes[0]?.body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", quantity: "0.125", unit: "KG" });
   });
   it.each([200, 403, 500])(
     "does not erase a newer draft when an abandoned command settles %i",
@@ -583,10 +640,39 @@ describe("Recovered editor cleanup", () => {
     fireEvent.click(screen.getByRole("button", { name: "Recuperar cambios" }));
     await screen.findByText("Recuperamos tus cambios temporales. Revisalos antes de guardar.");
     fireEvent.change(screen.getByLabelText(c.label), { target: { value: c.baseline.description } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "" } });
     v.unmount();
     t.view();
     await screen.findByText(c.original);
     expect(screen.queryByRole("button", { name: "Recuperar cambios" })).not.toBeInTheDocument();
     expect(t.writes).toHaveLength(0);
+  });
+});
+
+describe("Idempotent weight read recovery", () => {
+  it("retains a confirmed ID across unmount and retries only the unit projection GET", async () => {
+    const c = configs[2],
+      t = setup(c);
+    const v = t.view();
+    await open(c);
+    t.options.pending = true;
+    await reviewAndSave(c);
+    await waitFor(() => expect(t.writes).toHaveLength(1));
+    v.unmount();
+    t.view();
+    await offer(c);
+    t.options.detailStatus = 500;
+    await act(async () => {
+      t.finish();
+      await Promise.resolve();
+    });
+    const recover = await screen.findByRole("button", { name: "Recuperar para reintento seguro" });
+    t.options.pending = false;
+    t.options.detailStatus = 200;
+    fireEvent.click(recover);
+    await screen.findByLabelText(c.label);
+    await reviewAndSave(c);
+    await screen.findByText("Peso registrado.");
+    expect(t.writes).toHaveLength(1);
   });
 });

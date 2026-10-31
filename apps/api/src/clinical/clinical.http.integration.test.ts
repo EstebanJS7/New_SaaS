@@ -322,6 +322,107 @@ describe("Clinical HTTP boundary (WU3)", () => {
   });
 
   const server = () => booted.app.getHttpServer();
+  it.each(["treatments", "studies", "weights"])(
+    "strictly validates %s expectedVersion before a mutation",
+    async (kind) => {
+      const { patient } = fixture.patient.createPatientA();
+      for (const expectedVersion of [0, -1, 1.5, "1", null, 2147483648]) {
+        const response = await supertest(server())
+          .put(recordPath(kind)(patient.id, "/" + randomUUID()))
+          .set("Cookie", fixture.patient.a.actor.cookie)
+          .send({ expectedVersion });
+        expect(response.status).toBe(400);
+        expect(response.body).toMatchObject({ error: { code: "VALIDATION_FAILED" } });
+      }
+    }
+  );
+  it.each(["treatments", "studies", "weights"])(
+    "validates optional %s creation keys before writing and rejects keys on PUT",
+    async (kind) => {
+      const record = RECORD_CREATE_CASES.find((c) => c.kind === kind);
+      if (!record) throw Error("Missing fixture");
+      const { patient } = fixture.patient.createPatientA();
+      const response = await supertest(server())
+        .post(recordPath(kind)(patient.id))
+        .set("Cookie", fixture.patient.a.actor.cookie)
+        .send({ ...record.body, idempotencyKey: "clinical text" });
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ error: { code: "VALIDATION_FAILED" } });
+      const correction = await supertest(server())
+        .put(recordPath(kind)(patient.id, "/" + randomUUID()))
+        .set("Cookie", fixture.patient.a.actor.cookie)
+        .send({ idempotencyKey: randomUUID() });
+      expect(correction.status).toBe(400);
+      const unauthenticated = await supertest(server())
+        .post(recordPath(kind)(patient.id))
+        .send({ ...record.body, idempotencyKey: randomUUID() });
+      expect(unauthenticated.status).toBe(401);
+    }
+  );
+
+  it.each(["treatments", "studies", "weights"])(
+    "history of %s requires authentication and both granular permissions",
+    async (kind) => {
+      const foreignPatient = fixture.patient.createPatientB().patient;
+      const path = recordPath(kind)(foreignPatient.id, "/" + randomUUID() + "/history/search");
+      expect((await supertest(server()).post(path).send({})).status).toBe(401);
+      for (const keys of [
+        ["vet.clinical.read"],
+        ["vet.clinical.history_read"],
+        ["vet.clinical.read", "vet.clinical.history_read"],
+      ]) {
+        const role = seedRoleWithKeys(
+          booted.db,
+          "HISTORY_" + randomUUID(),
+          "History fixture",
+          keys
+        );
+        const actor = seedRbacActor(booted.db, {
+          tenantId: fixture.patient.a.tenant.id,
+          roleId: role.role.id,
+        });
+        const response = await supertest(server()).post(path).set("Cookie", actor.cookie).send({});
+        expect(response.status).toBe(keys.length === 2 ? 404 : 403);
+        const own = fixture.patient.createPatientA().patient;
+        const capability = await supertest(server())
+          .get("/patients/" + own.id + "/clinical/history-access")
+          .set("Cookie", actor.cookie);
+        if (keys.includes("vet.clinical.read")) {
+          expect(capability.status).toBe(200);
+          expect(capability.body).toEqual({ allowed: keys.length === 2 });
+        } else expect(capability.status).toBe(403);
+      }
+    }
+  );
+
+  it.each(["search", "read", "save", "submit", "discard", "complete"])(
+    "draft %s enforces the real authentication/read/tenant boundary",
+    async (operation) => {
+      const foreign = fixture.patient.createPatientB().patient;
+      const method = operation === "read" ? "get" : operation === "save" ? "put" : "post";
+      const suffix =
+        operation === "search"
+          ? "search"
+          : randomUUID() + (operation === "read" || operation === "save" ? "" : "/" + operation);
+      const path = `/patients/${foreign.id}/clinical/drafts/${suffix}`;
+      expect((await supertest(server())[method](path).send({})).status).toBe(401);
+      for (const keys of [["vet.clinical.create", "vet.clinical.update"], ["vet.clinical.read"]]) {
+        const role = seedRoleWithKeys(
+          booted.db,
+          "DRAFT_" + randomUUID(),
+          "Draft boundary fixture",
+          keys
+        );
+        const actor = seedRbacActor(booted.db, {
+          tenantId: fixture.patient.a.tenant.id,
+          roleId: role.role.id,
+        });
+        expect(
+          (await supertest(server())[method](path).set("Cookie", actor.cookie).send({})).status
+        ).toBe(keys.includes("vet.clinical.read") ? 404 : 403);
+      }
+    }
+  );
 
   function send(
     cookie: string | undefined,

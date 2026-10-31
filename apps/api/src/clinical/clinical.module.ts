@@ -1,3 +1,7 @@
+import { ClinicalHistoryController } from "./clinical-history.controller.js";
+import { ClinicalHistoryService } from "./clinical-history.service.js";
+import { ClinicalDraftsController } from "./clinical-drafts.controller.js";
+import { ClinicalDraftsService } from "./clinical-drafts.service.js";
 import {
   ClinicalLinksController,
   ClinicalAppointmentEncountersController,
@@ -36,6 +40,8 @@ import { WeightSearchService } from "./weight-search.service.js";
 @Module({
   imports: [ContextModule, RbacModule, AuditModule, EntitlementsModule],
   controllers: [
+    ClinicalDraftsController,
+    ClinicalHistoryController,
     TreatmentSearchController,
     StudySearchController,
     WeightSearchController,
@@ -45,6 +51,8 @@ import { WeightSearchService } from "./weight-search.service.js";
     ClinicalAppointmentEncountersController,
   ],
   providers: [
+    ClinicalDraftsService,
+    ClinicalHistoryService,
     ClinicalService,
     ClinicalRecordsService,
     ClinicalLinksService,

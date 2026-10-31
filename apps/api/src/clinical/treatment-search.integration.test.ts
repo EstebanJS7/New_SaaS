@@ -51,6 +51,7 @@ describe("Treatment search HTTP authorization and strict validation", () => {
     const actor = seedRbacActor(app.db, { tenantId: fixture.tenants.a.id, roleId: role.role.id });
     await supertest(app.app.getHttpServer()).get(path).set("Cookie", actor.cookie).expect(403);
     const detail = {
+      version: 1,
       id: "22222222-2222-4222-8222-222222222222",
       description: "Synthetic",
       administeredAt: "2026-10-01T12:00:00.000Z",

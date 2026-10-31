@@ -145,6 +145,7 @@ describe.skipIf(!url)("Studies — disposable real PostgreSQL", () => {
   });
   it("returns only allowlisted detail and existing result", async () => {
     expect(await get(ownId)).toEqual({
+      version: 1,
       id: ownId,
       studyType: "Repeated study",
       performedAt: "2026-10-20T12:00:00.000Z",

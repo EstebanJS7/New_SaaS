@@ -7,6 +7,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 const patient = "11111111-1111-4111-8111-111111111111",
   id = "22222222-2222-4222-8222-222222222222";
 const original = {
+  version: 1,
   id,
   description: "Descripción guardada",
   context: "Contexto guardado",
@@ -120,6 +121,7 @@ async function editForm() {
   fireEvent.click(screen.getByRole("button", { name: /Ver tratamiento/ }));
   await screen.findByText(original.context);
   fireEvent.click(screen.getByRole("button", { name: "Corregir tratamiento" }));
+  fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
 }
 function confirm() {
   fireEvent.click(
@@ -150,7 +152,10 @@ describe("Treatment entry and correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     confirm();
     await screen.findByText("Tratamiento corregido.");
-    expect(writes[0].body).toEqual({ administeredAt: "2026-10-20T23:30:00.000Z" });
+    expect(writes[0].body).toEqual({
+      expectedVersion: 1, correctionReason: "Motivo sintético",
+      administeredAt: "2026-10-20T23:30:00.000Z",
+    });
   });
   it("creates only after review, converting Paraguay clock and retaining list page", async () => {
     const storage = vi.spyOn(Storage.prototype, "setItem");
@@ -168,6 +173,7 @@ describe("Treatment entry and correction", () => {
       {
         method: "POST",
         body: {
+          idempotencyKey: expect.stringMatching(/^[a-f0-9-]{36}$/) as unknown,
           description: "Nuevo tratamiento",
           administeredAt: "2026-10-20T15:00:00.000Z",
           context: null,
@@ -187,7 +193,9 @@ describe("Treatment entry and correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     confirm();
     await screen.findByText("Tratamiento corregido.");
-    expect(writes).toEqual([{ method: "PUT", body: { description: "Corrección" } }]);
+    expect(writes).toEqual([
+      { method: "PUT", body: { expectedVersion: 1, correctionReason: "Motivo sintético", description: "Corrección" } },
+    ]);
     expect(await screen.findByText(original.context)).toBeInTheDocument();
   });
   it("clears context with explicit null", async () => {
@@ -199,7 +207,7 @@ describe("Treatment entry and correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     confirm();
     await screen.findByText("Tratamiento corregido.");
-    expect(writes[0].body).toEqual({ context: null });
+    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", context: null });
     await screen.findByText("Sin contexto registrado.");
   });
   it("does not mutate when review is cancelled and asks before discarding dirty form", async () => {
@@ -252,16 +260,16 @@ describe("Treatment entry and correction", () => {
     expect(writes).toHaveLength(0);
   });
   it.each([{ network: true }, { writeStatus: 500 }, { writeStatus: 408 }])(
-    "locks retries after an uncertain write %j",
+    "allows explicit safe retries after an uncertain creation %j",
     async (options) => {
       const { writes } = setup(options);
       await createForm();
       fireEvent.click(screen.getByRole("button", { name: "Revisar tratamiento" }));
       confirm();
-      await screen.findByText(/No pudimos confirmar si se guardó/);
+      await screen.findByText(/Podés reintentar con la misma clave/);
       expect(
         within(screen.getByRole("dialog")).getByRole("button", { name: "Guardar tratamiento" })
-      ).toBeDisabled();
+      ).toBeEnabled();
       expect(writes).toHaveLength(1);
     }
   );
@@ -309,4 +317,13 @@ describe("Treatment entry and correction", () => {
     expect(push).not.toHaveBeenCalled();
     expect(writes).toHaveLength(0);
   });
+});
+
+it("requires a nonempty correction reason before submitting a changed record", async () => {
+  const {writes}=setup();await editForm();
+  fireEvent.change(screen.getByLabelText("Descripción del tratamiento"),{target:{value:"Corrección"}});
+  fireEvent.change(screen.getByLabelText("Motivo de la corrección"),{target:{value:""}});
+  fireEvent.submit(screen.getByRole("button",{name:"Revisar corrección"}).closest("form")!);
+  expect(await screen.findByText("Ingresá el motivo de la corrección (hasta 2000 caracteres).")).toBeInTheDocument();
+  expect(writes).toHaveLength(0);
 });

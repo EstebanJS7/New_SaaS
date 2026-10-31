@@ -75,13 +75,15 @@ export class StudySearchService {
 
   async get(patientId: string, id: string): Promise<StudyDetail> {
     const tenantId = await this.authorize();
-    const row = await this.prisma.clinicalStudy.findFirst({
-      where: { id, patientId, tenantId, patient: { tenantId } },
-      select: { id: true, studyType: true, performedAt: true, result: true },
-    });
+    const rows = await this.prisma.$queryRaw<
+      { id: string; studyType: string; performedAt: Date; result: string; version: number }[]
+    >(Prisma.sql`SELECT id, study_type AS "studyType", performed_at AS "performedAt", result, version
+      FROM clinical_study WHERE id = ${id}::uuid AND patient_id = ${patientId}::uuid AND tenant_id = ${tenantId}::uuid`);
+    const row = rows[0];
     if (!row) throw new DomainError("NOT_FOUND", "Clinical record was not found.");
     return {
       id: row.id,
+      version: row.version,
       studyType: row.studyType,
       performedAt: row.performedAt.toISOString(),
       result: row.result,

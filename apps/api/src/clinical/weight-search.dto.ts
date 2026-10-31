@@ -47,7 +47,9 @@ export interface WeightSummary {
   unit: "KG" | null;
   measuredAt: string;
 }
-export type WeightDetail = WeightSummary;
+export interface WeightDetail extends WeightSummary {
+  version: number;
+}
 export interface WeightSearchResponse {
   items: WeightSummary[];
   page: number;

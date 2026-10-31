@@ -344,6 +344,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
       "inventory.stock.read",
       "vet.clinical.create",
       "vet.clinical.read",
+      "vet.clinical.history_read",
       "vet.clinical.update",
       "vet.clinical.close",
       "vet.clinical.amend",
@@ -420,6 +421,7 @@ describe("reference seed · catalog contents (PRD §9 / §10)", () => {
     const clinicalKeys = [
       "vet.clinical.create",
       "vet.clinical.read",
+      "vet.clinical.history_read",
       "vet.clinical.update",
       "vet.clinical.close",
       "vet.clinical.amend",
@@ -873,7 +875,7 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // password-recovery email), because the delivery aggregate's tenant_id is
       // NOT NULL and the reset belongs to an IDENTITY rather than to a customer.
       tenants: 1,
-      permissions: 66,
+      permissions: 67,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,
@@ -980,4 +982,12 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       ROLE_SEEDS.map((role) => `role.upsert:${role.code}`)
     );
   });
+});
+
+it("grants clinical history only to the three DEC-086 baseline roles", () => {
+  for (const [role, keys] of Object.entries(ROLE_PERMISSION_MATRIX)) {
+    expect(keys.includes("vet.clinical.history_read")).toBe(
+      ["OWNER", "ADMIN", "VETERINARIAN"].includes(role)
+    );
+  }
 });

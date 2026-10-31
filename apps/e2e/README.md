@@ -77,3 +77,74 @@ export LD_LIBRARY_PATH=/tmp/pwlibs/extracted/usr/lib/x86_64-linux-gnu:$LD_LIBRAR
 
 CI (`ubuntu-latest`) installs it properly with
 `npx playwright install --with-deps chromium`.
+
+## Specialized clinical forms — isolated lane (UX-021)
+
+Run from the repository root with installed dependencies, local Chrome and
+Docker images postgres:16-alpine and redis:7-alpine already present:
+
+    node scripts/verify-clinical-browser.mjs
+
+Or use the package script e2e:clinical. No dependency installation is performed.
+This dedicated lane NEVER loads .env or the broad demo seed. It creates its own
+loopback PostgreSQL/Redis containers with tmpfs, a guarded disposable database,
+synthetic staff/reader permissions and patients, isolated API/web builds and new
+ports. It never reuses development HTTP servers. Containers are stopped on
+normal success/failure; a force-killed runner requires removing only its named
+test containers (the runner prints its artifact directory). No financial
+operations, worker, mail or external provider is exercised; providers remain
+fake.
+
+clinical.playwright.config.ts and clinical-specs/ are independent from the main
+specs/ lane. The config rejects a non-disposable or mismatched DB environment.
+The lane enters through login → Home → Patients → patient detail using real
+sidebar links (native mobile menu at 390 px). A DOM marker checks that these
+links preserve the document required by temporary clinical recovery. TD-067
+records the navigation diagnosis and bounded loading-boundary mitigation; this
+is not certification of every staff destination. The runner starts compiled
+applications, forwards real staff cookies through the BFF and checks persisted
+rows/audit in real PG. A transport failure is injected only AFTER the real
+create response/commit. CAS races inject a real second PUT between pre-read and
+confirm. Viewports are desktop 1440x1000 and mobile 390x844, using Windows
+Chrome headless in America/Los_Angeles to verify Paraguay instants. This is not
+iOS/Android hardware, Safari/Firefox or screen-reader certification.
+
+Artifacts/logs/screenshots live under the printed temporary directory; never
+commit them. All content/identities are synthetic. Screenshots are CONFIDENTIAL
+by clinical association; failed traces can contain disposable session cookies
+and must be treated as RESTRICTED until test infrastructure is removed. No
+storageState containing sessions is saved. See
+docs/10-qa/UX-021-VALIDATION-2026-10-30.md.
+
+UX-023 extends this same lane to 17 cases: correction reasons, per-record
+before/after history for all three types at desktop/mobile sizes, and a clinical
+reader without vet.clinical.history_read denied both the entry and actual API.
+The writer has the specific history permission. Reference permissions are
+compiled from current source into Temp rather than reusing or replacing dev
+dist. Six new history screenshots were inspected; see
+docs/10-qa/UX-023-VALIDATION-2026-10-30.md for separate simulated, PostgreSQL,
+browser and visual evidence, including the initially failed integration.
+
+UX-024 adds eight durable-draft cases (25 total): manual save/reload for all
+three types, lost create responses recovered with their frozen command/key, an
+uncertain correction blocked after reload, and confirmed-weight GET-only
+recovery after a failed projection. Current full runs reproduced TD-067 before
+these cases; a scoped result must not be reported as a full-lane pass.
+
+For an explicitly scoped diagnosis, the same isolated runner accepts only:
+
+    node scripts/verify-clinical-browser.mjs --grep "manual draft|lost durable|uncertain durable|durable receipt"
+
+This preserves real login/links, retries=0, permissions and the original config.
+Always record the selection, failures/not-run counts and separate evidence in
+docs/10-qa/UX-024-VALIDATION-2026-10-31.md. It does not resolve navigation debt.
+
+UX-025 closes that observed blocker with removal of the redundant global Next
+loading boundary and two independent complete passes. The clinical config now
+includes staff-navigation.spec.ts: 26 tests total, with 50 fresh browser
+contexts inside the navigation test, real logins/links and a same-document
+marker. Its first patient read is held until the client loading message is
+visible. No retries, forced refreshes or alternative navigation are used.
+Scheduler metadata attaches only on failure; traces remain synthetic/RESTRICTED
+in Temp. See docs/10-qa/UX-025-VALIDATION-2026-10-31.md for the failed baseline
+and limits.

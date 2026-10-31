@@ -146,6 +146,7 @@ describe.skipIf(!url)("Weights — disposable real PostgreSQL", () => {
   });
   it("serializes the exact stored scale and does not invent a unit", async () => {
     expect(await get(ownId)).toEqual({
+      version: 1,
       id: ownId,
       quantity: "9999999.999",
       unit: null,

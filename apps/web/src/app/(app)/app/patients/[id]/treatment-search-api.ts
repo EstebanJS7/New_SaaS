@@ -10,6 +10,7 @@ export interface TreatmentSummary {
   administeredAt: string;
 }
 export interface TreatmentDetail extends TreatmentSummary {
+  version?: number;
   context: string | null;
 }
 export interface TreatmentSearchResult {

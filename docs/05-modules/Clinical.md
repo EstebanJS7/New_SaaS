@@ -2,7 +2,7 @@
 type: module
 module: clinical
 status: implemented
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # Module — Clinical
@@ -557,3 +557,301 @@ resuelto solo para pérdida inmediata por desmontaje, permanece abierto para
 concurrencia, idempotencia y QA visual/E2E. Ver
 [[UX-018-VALIDATION-2026-10-30]]: pruebas simuladas de componentes, sin
 PostgreSQL ni navegador en esta etapa.
+
+## Creación idempotente — UX-019
+
+Esta sección supera las limitaciones de POST de UX-015–018 descritas arriba; PUT
+conserva sus límites de concurrencia y respuesta incierta.
+
+POST de treatments, studies y weights admite idempotencyKey UUID opcional en el
+body JSON estricto. Sin clave conserva el contrato y no deduplica. Sin rutas,
+permisos o proyecciones Portal nuevos. La clave nunca concede acceso: cada
+replay exige autenticación/membresía staff, veterinary, vet.clinical.create y
+paciente de la organización actual; paciente ajeno sigue devolviendo 404.
+
+Ámbito: (tenantId del contexto, patientId autorizado, tipo, UUID normalizado a
+minúsculas). Una clave puede usarse independientemente en distintos ámbitos.
+Misma clave/contenido devuelve exactamente el DTO original, incluyendo ID y
+fechas de creación, aun tras correcciones posteriores. Mismo ámbito con otro
+contenido devuelve 409 CONFLICT y mensaje estable Clinical creation key was
+already used for different content. Sin nueva fila clínica ni auditoría. No se
+acepta idempotencyKey en PUT, búsquedas o otros comandos clínicos.
+
+Fingerprint SHA-256 de campos explícitos en orden estable: instantes UTC,
+Decimal exacto sin ceros irrelevantes, unidad KG o null y contexto omitido/null
+normalizados; textos conservan espacios, mayúsculas y vacíos. Resultado vacío
+sigue siendo string. Los campos de autoridad/clave no integran el contenido. Un
+hash no anonimiza información clínica ni permite registrar su contenido.
+
+ClinicalCreationReceipt conserva requestHash y snapshot del DTO allowlisted; FK
+compuesta al paciente del mismo tenant, PK por ámbito y trigger inmutable.
+Migración 20261030000002_clinical_creation_receipt: DDL aditivo sin backfill,
+conversión o purga. Un advisory transaction lock por hash del ámbito serializa
+intentos, con aislamiento ReadCommitted explícito: lock, registro, auditoría y
+recibo se confirman juntos; una colisión de hash de lock solo serializa ámbitos
+independientes. No hay llamadas externas dentro de la transacción. Rollback de
+auditoría o recibo revierte todo y deja la clave disponible para reintento.
+
+Frontend: UUID aleatorio por intento lógico, comando congelado desde su primer
+envío, confirmación/reintento explícitos y cero retries automáticos. Tras error
+de red/408/5xx/respuesta inválida puede repetir solo ese comando/clave; edición
+de sus campos queda bloqueada. PUT incierto y POST en vuelo siguen bloqueados.
+La recuperación UX-018 retiene comando, clave y, para pesos confirmados, ID en
+la copia por paciente/tipo: lectura fresca autorizada antes de recuperar y nueva
+revisión antes de enviar. No deduce éxito comparando valores. Copias previas sin
+clave/comando no adquieren capacidad de reenvío incierto.
+
+El peso conserva la respuesta de comando legada sin unidad. Al recibir su ID lo
+conserva antes de releer detalle staff; si falla esa lectura, el reintento es
+solo GET de ese ID, validando de nuevo KG/null y la proyección. Si se pierde la
+propia respuesta de POST, repite el POST idempotente y después relee unidad. Una
+corrección concurrente puede aparecer en la lectura staff, sin atribuirle los
+valores del comando original ni inventar unidad. Sin conversiones/Number.
+
+Transición compatible y segura ante versiones distintas: la UI nueva envía la
+clave en JSON, nunca en header/URL. Una API anterior con body estricto la
+rechaza antes de guardar; no puede ignorarla y aceptar una creación sin
+protección. Primero desplegar esquema/API y luego UI. Un esquema faltante falla
+la operación con clave; no hay fallback silencioso a una escritura no
+idempotente. Consumidores legados sin clave siguen funcionando. No se despliega
+en esta tarea.
+
+Datos CONFIDENTIAL: ámbito, UUID por asociación clínica, digest y snapshot; solo
+uso interno staff autorizado, sin logs, exports nuevos o Portal. UUID sin
+contenido clínico. Misma clasificación en backups. Recibos durables sin TTL o
+borrado automático: no se inventa política de retención destructiva. La copia de
+formulario conserva diez minutos en QueryClient del documento, sin Storage,
+URLs, logs o persistencia/deshidratación. Expiración, descarte o nuevo documento
+pierden la clave local: volver a registrar es otro intento, no una promesa de
+recuperación durable. Descartar no cancela un envío ni elimina un recibo.
+
+Ver [[UX-019-clinical-create-idempotency]] y [[UX-019-VALIDATION-2026-10-30]].
+TD-066 sigue abierto para PUT/CAS/historial, recuperación durable y validación
+visual/E2E. Sin cambios de consultas cerradas, vacunas, desparasitación,
+vínculos, finanzas o inventario.
+
+## Correcciones con control de versión — UX-020
+
+Esta sección supera el límite de concurrencia PUT de UX-015–019 para clientes
+que adoptan expectedVersion. No agrega historial ni modifica consultas cerradas.
+
+ClinicalTreatment, ClinicalStudy y ClinicalWeight tienen version integer
+positivo, default 1. Migración 20261030000003_clinical_record_version: solo DDL
+reproducible; inicialización técnica por DEFAULT, sin convertir contenido,
+fechas, cantidades ni unidades. Un trigger BEFORE UPDATE incrementa OLD.version
+
+- 1 en cualquier escritura (incluidos clientes legados y valores repetidos) e
+  ignora una versión propuesta por un escritor. No depende de updatedAt ni de
+  que dos guardados tengan timestamps distintos. Overflow rechaza la
+  transacción, nunca reinicia silenciosamente la versión.
+
+GET staff .../{treatments|studies|weights}/:id devuelve version junto con los
+campos clínicos en un único SELECT scoped por tenant/paciente/ID; no hay ventana
+entre leer contenido y versión. Listas y respuestas de comandos legadas
+conservan forma, incluido peso sin unidad en el DTO de comando. DTOs staff son
+allowlisted; las consultas SQL explícitas evitan reemplazar el cliente generado
+que usan los procesos activos durante la validación. Esquema Prisma describe los
+campos y se valida/genera en una copia aislada.
+
+PUT existentes aceptan expectedVersion entero opcional 1..2147483647. Con el
+token: SELECT version FOR UPDATE scoped por tenant/paciente/ID, comprobación,
+update y auditoría en la misma transacción ReadCommitted. No se libera el lock
+antes de guardar; el trigger incrementa dentro de la transacción. No se amplía
+el contrato a Portal u otros registros. Versión distinta devuelve 409 CONFLICT
+con mensaje estable Clinical record version changed.; inexistente/ajeno/otro
+paciente devuelve el mismo 404 NOT_FOUND antes de exponer cualquier versión.
+Permisos vet.clinical.update y entitlement veterinary siguen en servicio y
+staff/membresía en la cadena HTTP. Ningún token concede autorización.
+
+Una corrección ganadora produce una auditoría; conflicto no modifica contenido,
+versión ni auditoría. Fallo de auditoría revierte también el incremento. Body
+vacío sin cambios clínicos comprueba expectedVersion si llegó, pero no hace
+UPDATE/incremento/auditoría. Campos presentes, aunque repitan valores, siguen
+siendo comandos auditados y avanzan la versión, como las correcciones legadas.
+La versión por sí sola no demuestra quién cambió el registro ni si un comando
+con respuesta perdida fue el que ganó: no es idempotencia de PUT.
+
+Transición: expectedVersion omitida conserva PUT legado sin protección contra
+sobrescritura, y el trigger avanza versión para los nuevos consumidores. Una
+escritura legada puede aún sobrescribir otra corrección: la garantía CAS solo
+aplica al escritor que envía el token. No se promete una garantía global
+mientras haya clientes legados sin token. Su migración obligatoria necesita una
+etapa explícita. Una API anterior estricta rechaza expectedVersion antes de
+escribir; la UI nueva nunca cae a un PUT sin token. Esquema/API antes de UI; sin
+despliegue o migraciones operativas en esta tarea.
+
+UI: baseline con versión válida obligatorio; antes de confirmar relee detalle y
+compara versión, además de los campos editados. La transacción cierra la carrera
+entre prelectura y PUT. Al 409 conserva texto/valores/instantes, bloquea enviar
+ese baseline y ofrece Consultar registro actual (solo GET, con contenido
+aparte). Para corregir de nuevo se cancela/descarta explícitamente la copia y se
+inicia una nueva corrección desde detalle actualizado. No reemplaza
+automáticamente el baseline, mezcla textos, rebasea o reintenta. Tokens técnicos
+no se muestran como información clínica al usuario. UI con tokens
+semánticos/es-PY, sin Number para pesos. Guardado incierto de PUT sigue
+bloqueado: no se infiere éxito por valores ni se repite la escritura. Creaciones
+UX-019 mantienen su clave/recibo/reintento.
+
+La recuperación UX-018 incluye la versión en el baseline y exige igualdad en
+lectura autorizada fresca, aun si los campos volvieron a coincidir; baseline sin
+versión no habilita recuperar una corrección. Copia se muestra separada si hay
+conflicto, con sus diez minutos de memoria por documento. Sin Storage, URL,
+logs, persistencia durable o nueva política destructiva de retención. Version y
+asociación clínica CONFIDENTIAL, solo staff autorizado; sin Portal, export nuevo
+ni logging de contenido. Ver [[UX-020-clinical-correction-concurrency]] y
+[[UX-020-VALIDATION-2026-10-30]]. TD-066 sigue abierta para historial,
+recuperación durable y certificación visual/E2E.
+
+## Validación clínica en navegador — UX-021
+
+Lane opt-in: node scripts/verify-clinical-browser.mjs, configuración
+apps/e2e/clinical.playwright.config.ts y clinical-specs/ separadas de la lane
+general. PostgreSQL/Redis tmpfs propios, DB validada, identidades/pacientes
+sintéticos, providers fake y builds temporales. No lee .env, usa base operativa,
+reutiliza servidores dev o carga demo financiero. Cookie/BFF/API/PG reales.
+
+Matriz de 16 casos: registro/corrección de tratamientos/estudios/pesos, fechas
+Paraguay/Decimal exacto, commit correcto con respuesta perdida y replay tras
+Atrás/Adelante, auditoría única, CAS con PUT interpuesto real, copia conservada
+y lectura actual, recuperación/descarte móvil, sesión/permisos. Peso confirmado
+repite solo GET; corregir fecha de peso legacy mantiene unidad desconocida.
+Capturas desktop/móvil inspeccionadas.
+
+Entrada por login→Inicio→Pacientes→ficha con enlaces reales y verificación de
+mismo documento. TD-067 mitigada reubicando loading.tsx bajo el layout staff
+asíncrono, de app/(app)/ a app/(app)/app/; mantiene shell/skeleton y memoria
+UX-018 sin reload, cambio de CSP/prefetch o dependencias. Dos runners nuevos
+consecutivos aprobaron 16/16, incluido el final sin instrumentación. UX-021
+done; TD-066 open para historial, durable y escritores legados sin token.
+
+No certifica todos los módulos/navegadores, móvil físico o lector de pantalla ni
+atribuye con certeza la causa interna del router. Controles nativos pueden
+seguir el locale del navegador. Traces con cookies sintéticas RESTRICTED y
+capturas sintéticas CONFIDENTIAL, solo Temp; sin storageState persistido ni
+retención destructiva nueva. Sin esquema/contrato clínico nuevo en UX-021, PRD,
+base operativa, commit o push. Fallos previos, diagnóstico y verificaciones
+separados en [[UX-021-VALIDATION-2026-10-30]].
+
+## Consumidores de escritura protegida — UX-022
+
+Los tres formularios staff son los únicos consumidores de aplicación de
+creación/corrección de tratamientos/estudios/pesos encontrados en el
+repositorio. Sus helpers writeTreatment/Study/Weight requieren intento con clave
+UUID para POST y baseline con expectedVersion para PUT, tanto por overloads
+TypeScript como antes de fetch. INVALID_WRITE_GUARD es un error local constante
+(status 0, uncertain false), sin petición ni contenido. No generan nueva clave,
+releen versión para forzar una corrección, reintentan o caen a contrato legado.
+
+La recuperación conserva clave/comando/baseline. Peso con savedId confirmado
+solo lee proyección staff, aun si la antigua clave es inutilizable; falla de
+lectura no hace otra creación ni deduce unidad. Precisión y DTO legado intactos.
+No hay campos persistentes nuevos, logging/URL/Storage de contenido o nueva
+retención. Claves/versiones conservan clasificación CONFIDENTIAL.
+
+API y BFF mantienen campos opcionales: consumidores legados siguen pudiendo
+escribir sin protección; no se promete garantía global. Demo/fixtures directos
+no son consumidores operativos. El inventario local no prueba ausencia de
+clientes externos. [[UX-022-clinical-write-consumer-transition]] detalla el
+mapa; [[DEC-085-clinical-write-legacy-contract-transition]] sigue proposed para
+el corte público futuro, que requiere censo y aprobación explícita de
+transición. No se activa obligatoriedad, modifica PRD ni altera otros registros
+clínicos.
+
+UX-022 verificada: 327 casos web/proxy, 29 backend simuladas, 51 PostgreSQL real
+en contenedor temporal, lint/tipos y builds aislados aprobados. Sin ronda
+visual/E2E nueva; [[UX-022-VALIDATION-2026-10-30]] documenta comandos y límites.
+
+## Historial de correcciones por registro — UX-023 / DEC-086
+
+Cada UPDATE futuro de tratamientos, estudios y pesos conserva antes/después
+tipados e inmutables, versiones, actor/identidad histórica, motivo e instante de
+corrección, en tres tablas Veterinary. Cantidades NUMERIC(10,3), KG/null y
+fechas timestamptz(3) exactas; no conversión o historia previa inventada. La
+primera corrección de un registro anterior conserva su estado previo real.
+
+Migración 20261030000004_clinical_correction_history: FK compuesta a registro/
+tenant/paciente y unicidad por versión posterior; triggers OLD/NEW y protección
+contra UPDATE/DELETE de revisiones. Contexto de actor/motivo/revisionId local a
+transacción, tomado del servidor; auditoría guarda IDs/campos, no contenido. El
+comando confirma revisión/alcance/versión antes de auditar; captura ausente
+revierte fila/versión/auditoría. Mutación/revisión/auditoría de aplicación
+comparten commit/rollback. Direct SQL sin contexto queda con actor/motivo no
+informados, sin inventar auditoría de aplicación. Conflicto, denegación y no-op
+vacío sin revisión; campos presentes con valores iguales conservan semántica de
+UPDATE/version/auditoría/historial. Replay de creación no genera revisiones ni
+auditorías extra. PUT no se vuelve idempotente y un resultado incierto sigue
+bloqueado.
+
+PUT acepta correctionReason opcional no vacío/solo espacios, máximo 2000,
+validado en schema/servicio; razón sola sin cambio de campos clínicos es no-op.
+La UI nueva lo exige antes de confirmar y lo conserva/revisa con recuperación
+UX-018. Legados omitidos muestran Sin motivo informado. DTOs de comando y unidad
+desconocida de pesos intactos; peso confirmado solo reintenta GET.
+
+API aditiva: GET /patients/:patientId/clinical/history-access (read, tenant,
+veterinary; solo boolean allowed) y POST
+.../clinical/{treatments|studies|weights}/:id/history/search (read +
+vet.clinical.history_read, tenant/paciente/tipo/veterinary). Catálogo y
+asignación inicial OWNER/ADMIN/VETERINARIAN, respetando permisos efectivos; no
+checks de nombre de rol como autoridad. Search body beforeVersion opcional, 20
+filas por página, cursor estricto por versión, DTO allowlisted/no-store. UUID
+ajeno devuelve 404. BFF valida rutas/body/cookie staff y mantiene privados los
+errores; no fabrica identidad, clave, motivo o versión.
+
+Detalle ofrece Ver historial tras comprobar capacidad si la ficha no suministra
+permisos; no convierte una caída de lectura en denegación definitiva. Historia
+solo lectura con antes/después, actor/motivo, fechas es-PY/Paraguay precisas y
+unidades explícitas, cursor en body y memoria del documento. No restauración,
+edición/borrado/exportación de revisiones ni Portal. Snapshots, motivo, actor,
+versiones/asociaciones CONFIDENTIAL; sin logs/URL/Storage de contenido o
+política destructiva nueva. No se reconstruyen cambios anteriores desde
+recibos/auditoría.
+
+Ver [[UX-023-clinical-correction-history]] y [[UX-023-VALIDATION-2026-10-30]]:
+624 casos distintos, incluyendo 72 PG y 17 E2E reales, seis capturas nuevas
+inspeccionadas. PRD ampliado explícitamente por DEC-086 aceptada. No base
+operativa, dependencias, commit/push. TD-066 conserva corte global/recuperación
+durable, DEC-085 proposed.
+
+## Borradores privados durables — UX-024 / DEC-087
+
+PRD §13.3 aprobado explícitamente: guardar manualmente tratamientos/estudios/
+pesos y recuperar tras recarga, solo autor con read + create/update según modo,
+membresía/tenant/paciente/veterinary vigentes. Recuperar no escribe clínica. No
+autoguardado o Storage del navegador; UX-018 temporal sigue disponible.
+
+clinical_working_draft conserva copia discriminada, baseline completo, clave,
+comando congelado, estado y versión propia. API aditiva bajo
+/patients/:patientId/clinical/drafts: POST search, GET/PUT :id, POST :id/submit,
+:id/complete y :id/discard. Search devuelve hasta 20 copias activas/pendientes
+del autor/tipo, cursor UUID en body; sin promesa de orden cronológico. DTOs
+allowlisted y private/no-store, UUID ajeno 404, sin permisos por nombre de rol.
+
+Save tiene CAS y replay seguro con mismo ID/versión/payload. Antes de dispatch,
+PENDING/comando y auditoría se confirman; la escritura clínica conserva su
+transacción existente. Creación reutiliza comando/clave; corrección PENDING no
+se reenvía, incluso si falló antes de escribir. No se vuelve idempotente PUT ni
+se deduce éxito por valores. Peso consulta recibo autoritativo al recuperar: ID
+confirmado ⇒ GET de proyección staff, sin otra creación por fallo de lectura.
+
+El cliente acusa complete después de recibir DTO válido/proyección de peso;
+fallo de acuse conserva PENDING conservador, no altera el éxito clínico.
+Complete/ discard lógicos y auditados retiran la lista recuperable, conservan
+contenido y no cancelan un comando enviado. Sin purga, backfill o borrado
+físico/de backups. Trigger protege copias terminales e intentos congelados y
+rechaza DELETE. Contenido/autor/asociaciones/baseline/claves CONFIDENTIAL, no
+payloads en logs.
+
+UX-024 done tras UX-025: retirada de loading.tsx global redundante, estados de
+carga/error cliente y RouteFeedback conservados, sin reload o cambio de
+auth/CSP/Next. Dos lanes completas independientes con 26/26 cada una: los 25
+flujos clínicos y 50 contextos fríos por ronda, mismo documento y carga de
+paciente retenida comprobados. TD-067 resolved para esta reproducción, sin
+certificación universal. Ver [[UX-024-VALIDATION-2026-10-31]] y
+[[UX-025-VALIDATION-2026-10-31]]; fallos iniciales conservados.
+
+DEC-085 revisada y aceptada antes de producción: exigir clave en creación y
+baseline/motivo en corrección será UX-026 (planned), sin transición prolongada
+para consumidores controlados. Hasta su implementación, API/BFF actuales
+mantienen opcionalidad documentada. No retirar fallback histórico de motivo/
+unidad, alterar DTO de peso ni aplicar migraciones sobre base dev.

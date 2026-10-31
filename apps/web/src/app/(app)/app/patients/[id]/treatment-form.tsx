@@ -1,4 +1,6 @@
 "use client";
+import { ClinicalDraftSave } from "./clinical-server-drafts";
+import { ClinicalCorrectionConflict } from "./clinical-correction-conflict";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useRetainRecordForm, type TreatmentFields } from "./clinical-record-recovery";
@@ -32,13 +34,18 @@ export function TreatmentForm({
   onCancel: () => void;
 }) {
   const router = useRouter();
+  const creation = useRef<
+    import("./clinical-record-recovery").CreationAttempt<TreatmentWriteInput>
+  >(recovered?.creation ?? { key: crypto.randomUUID() });
   const initialDate = initial === undefined ? "" : isoToLocalInput(initial.administeredAt);
   const [description, setDescription] = useState(
     recovered?.description ?? initial?.description ?? ""
   );
   const [date, setDate] = useState(recovered?.date ?? initialDate);
   const [context, setContext] = useState(recovered?.context ?? initial?.context ?? "");
+  const [correctionReason, setCorrectionReason] = useState(recovered?.correctionReason ?? "");
   const [error, setError] = useState<string>();
+  const [conflicted, setConflicted] = useState(false);
   const [review, setReview] = useState<Partial<TreatmentWriteInput> | null>(null);
   const [discard, setDiscard] = useState(false);
   const [exitHref, setExitHref] = useState<string>();
@@ -47,12 +54,24 @@ export function TreatmentForm({
   const inFlight = useRef(false),
     heading = useRef<HTMLHeadingElement>(null);
   const dirty =
+    correctionReason !== "" ||
     description !== (initial?.description ?? "") ||
     date !== initialDate ||
     context !== (initial?.context ?? "");
   const recovery = useRetainRecordForm(
     patientId,
-    { kind: "treatment", initial, fields: { description, date, context } },
+    {
+      kind: "treatment",
+      initial,
+      fields: {
+        durable: recovered?.durable,
+        correctionReason,
+        description,
+        date,
+        context,
+        ...(initial === undefined && { creation: creation.current }),
+      },
+    },
     dirty
   );
   useEffect(() => {
@@ -96,6 +115,11 @@ export function TreatmentForm({
     };
   }, [dirty, saving, uncertain]);
   function prepare() {
+    if (recovery.draft.blocked) return;
+    if (initial === undefined && creation.current.command) {
+      setReview(creation.current.command);
+      return;
+    }
     setError(undefined);
     if (description.trim().length === 0 || description.length > 2000 || context.length > 10000) {
       setError("Ingresá una descripción de hasta 2000 caracteres y un contexto de hasta 10000.");
@@ -117,18 +141,38 @@ export function TreatmentForm({
       setError("No hay cambios para guardar.");
       return;
     }
+    if (initial !== undefined) {
+      if (correctionReason.trim().length === 0 || correctionReason.length > 2000) {
+        setError("Ingresá el motivo de la corrección (hasta 2000 caracteres).");
+        return;
+      }
+      input.correctionReason = correctionReason;
+    }
     setReview(input);
   }
   async function save() {
-    if (inFlight.current || uncertain || review === null) return;
+    if (recovery.draft.blocked) return;
+    if (inFlight.current || uncertain || conflicted || review === null) return;
     inFlight.current = true;
     recovery.begin();
     setSaving(true);
     setError(undefined);
     try {
       if (initial !== undefined) {
+        if (
+          !Number.isInteger(initial.version) ||
+          initial.version! < 1 ||
+          initial.version! > 2147483647
+        ) {
+          setError(
+            "No pudimos comprobar la versión del registro. Volvé al detalle antes de corregirlo."
+          );
+          setConflicted(true);
+          throw new Error("STALE_TREATMENT");
+        }
         const current = await getTreatment(patientId, initial.id);
         if (
+          current.version !== initial.version ||
           (review.description !== undefined && current.description !== initial.description) ||
           (review.context !== undefined && current.context !== initial.context) ||
           (review.administeredAt !== undefined && current.administeredAt !== initial.administeredAt)
@@ -139,14 +183,37 @@ export function TreatmentForm({
           throw new Error("STALE_TREATMENT");
         }
       }
-      const saved = await writeTreatment(patientId, initial?.id, review);
+      if (initial === undefined) creation.current.command ??= { ...review };
+      const saved =
+        initial === undefined
+          ? await writeTreatment(
+              patientId,
+              undefined,
+              { ...creation.current.command!, draft: recovery.draft.reference },
+              creation.current
+            )
+          : await writeTreatment(patientId, initial.id, {
+              ...review,
+              draft: recovery.draft.reference,
+              expectedVersion: initial.version!,
+              correctionReason: review.correctionReason!,
+            });
       if (recovery.saved()) onSaved(saved);
     } catch (failure) {
       recovery.settled(failure);
+      if (failure instanceof Error && failure.message === "STALE_TREATMENT") setConflicted(true);
+      if (
+        initial !== undefined &&
+        failure instanceof TreatmentWriteError &&
+        failure.code === "CONFLICT"
+      )
+        setConflicted(true);
       if (failure instanceof TreatmentWriteError && failure.uncertain) {
-        setUncertain(true);
+        setUncertain(initial !== undefined);
         setError(
-          "No pudimos confirmar si se guardó. Revisá el listado antes de volver a registrar o corregir este tratamiento."
+          initial === undefined
+            ? "No pudimos completar la confirmación. Podés reintentar con la misma clave y los mismos datos sin duplicar el registro."
+            : "No pudimos confirmar si se guardó. Revisá el listado antes de volver a registrar o corregir este tratamiento."
         );
       } else if (!(failure instanceof Error && failure.message === "STALE_TREATMENT")) {
         setError(
@@ -154,11 +221,15 @@ export function TreatmentForm({
             failure.status === 403 &&
             failure.code !== "FEATURE_NOT_ENTITLED"
             ? "No tenés permiso para guardar tratamientos."
-            : failure instanceof TreatmentWriteError && failure.code === "VALIDATION_FAILED"
-              ? "Revisá los campos del tratamiento e intentá de nuevo."
-              : failure instanceof Error
-                ? userFacingTreatmentError(failure)
-                : "No pudimos guardar el tratamiento."
+            : failure instanceof TreatmentWriteError && failure.code === "CONFLICT"
+              ? initial === undefined
+                ? "La clave ya se usó con otros datos. Revisá el registro original antes de continuar."
+                : "El registro cambió. Conservamos tus cambios; revisá el registro actual antes de iniciar otra corrección."
+              : failure instanceof TreatmentWriteError && failure.code === "VALIDATION_FAILED"
+                ? "Revisá los campos del tratamiento e intentá de nuevo."
+                : failure instanceof Error
+                  ? userFacingTreatmentError(failure)
+                  : "No pudimos guardar el tratamiento."
         );
       }
       throw failure;
@@ -178,8 +249,13 @@ export function TreatmentForm({
       </h3>
       {recovered && (
         <p role="status" className="text-sm text-muted-foreground">
-          Recuperamos tus cambios temporales. Revisalos antes de guardar.
+          {recovered.durable
+            ? "Recuperamos tu borrador guardado en el servidor. Revisalo antes de guardar."
+            : "Recuperamos tus cambios temporales. Revisalos antes de guardar."}
         </p>
+      )}
+      {conflicted && initial && (
+        <ClinicalCorrectionConflict patientId={patientId} kind="treatment" id={initial.id} />
       )}
       <form
         autoComplete="off"
@@ -189,7 +265,16 @@ export function TreatmentForm({
           prepare();
         }}
       >
-        <fieldset disabled={saving || review !== null || uncertain} className="space-y-4">
+        <fieldset
+          disabled={
+            recovery.draft.saving ||
+            saving ||
+            review !== null ||
+            uncertain ||
+            (initial === undefined && Boolean(creation.current.command))
+          }
+          className="space-y-4"
+        >
           <div>
             <label htmlFor="treatment-description" className="block text-sm font-medium">
               Descripción del tratamiento
@@ -248,14 +333,43 @@ export function TreatmentForm({
             {error}
           </p>
         )}
+        {initial !== undefined && (
+          <div>
+            <label htmlFor="treatment-correction-reason" className="block text-sm font-medium">
+              Motivo de la corrección
+            </label>
+            <textarea
+              id="treatment-correction-reason"
+              value={correctionReason}
+              onChange={(event) => setCorrectionReason(event.target.value)}
+              maxLength={2000}
+              required
+              disabled={saving || uncertain || conflicted}
+              className="mt-1 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+            />
+            <p className="text-xs text-muted-foreground">
+              Explicá por qué corregís este registro. Se conservará en el historial.
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={saving || uncertain || !dirty || review !== null}>
+          <Button
+            type="submit"
+            disabled={
+              recovery.draft.blocked ||
+              saving ||
+              uncertain ||
+              conflicted ||
+              !dirty ||
+              review !== null
+            }
+          >
             {initial === undefined ? "Revisar tratamiento" : "Revisar corrección"}
           </Button>
           <Button
             type="button"
             variant="outline"
-            disabled={saving}
+            disabled={saving || recovery.draft.saving}
             onClick={() => {
               if (uncertain) {
                 recovery.discard();
@@ -271,6 +385,10 @@ export function TreatmentForm({
           </Button>
         </div>
       </form>
+      <ClinicalDraftSave
+        draft={recovery.draft}
+        disabled={saving || review !== null || uncertain || conflicted}
+      />
       <ConfirmActionDialog
         open={review !== null}
         onOpenChange={(open) => {
@@ -285,12 +403,18 @@ export function TreatmentForm({
         confirmLabel="Guardar tratamiento"
         cancelLabel="Volver al formulario"
         confirmVariant="default"
-        confirmDisabled={uncertain}
+        confirmDisabled={recovery.draft.blocked || uncertain || conflicted}
         pending={saving}
         errorMessage={error}
         onConfirm={save}
       >
         <dl className="space-y-2 text-sm">
+          {initial !== undefined && (
+            <div>
+              <dt className="font-medium">Motivo de la corrección</dt>
+              <dd className="whitespace-pre-wrap break-words">{review?.correctionReason}</dd>
+            </div>
+          )}
           <div>
             <dt className="font-medium">Descripción</dt>
             <dd className="whitespace-pre-wrap break-words">{description}</dd>

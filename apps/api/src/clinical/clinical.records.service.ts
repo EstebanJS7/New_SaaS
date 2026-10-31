@@ -1,3 +1,5 @@
+import { createHash, randomUUID } from "node:crypto";
+import { z, type ZodType } from "zod";
 import { Inject, Injectable } from "@nestjs/common";
 import { Prisma, PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
@@ -86,6 +88,8 @@ export interface CreateTreatmentInput {
 }
 
 export interface UpdateTreatmentInput {
+  correctionReason?: string;
+  readonly expectedVersion?: number;
   readonly description?: string;
   readonly administeredAt?: string;
   readonly context?: string | null;
@@ -126,6 +130,8 @@ export interface CreateStudyInput {
 }
 
 export interface UpdateStudyInput {
+  correctionReason?: string;
+  readonly expectedVersion?: number;
   readonly studyType?: string;
   readonly performedAt?: string;
   readonly result?: string;
@@ -139,6 +145,8 @@ export interface CreateWeightInput {
 }
 
 export interface UpdateWeightInput {
+  correctionReason?: string;
+  readonly expectedVersion?: number;
   readonly quantity?: string;
   readonly unit?: "KG";
   readonly measuredAt?: string;
@@ -259,10 +267,15 @@ export interface ClinicalRecordsSource {
 
 export interface ClinicalRecordsTransaction extends ClinicalRecordsSource {
   auditLog: AuditAppendTx["auditLog"];
+  $queryRaw?: <T>(query: Prisma.Sql) => Promise<T>;
+  $executeRaw?: (query: Prisma.Sql) => Promise<number>;
 }
 
 export interface ClinicalRecordsPrisma extends ClinicalRecordsSource {
-  $transaction: <T>(work: (tx: ClinicalRecordsTransaction) => Promise<T>) => Promise<T>;
+  $transaction: <T>(
+    work: (tx: ClinicalRecordsTransaction) => Promise<T>,
+    options?: { isolationLevel: "ReadCommitted" }
+  ) => Promise<T>;
   patient: ClinicalPatientDelegate;
 }
 
@@ -334,6 +347,29 @@ function toWeightResponse(row: ClinicalWeightRow): ClinicalWeightResponse {
   };
 }
 
+const receiptBase = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  patientId: z.string().uuid(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+const treatmentReceipt = receiptBase
+  .extend({ description: z.string(), administeredAt: z.string(), context: z.string().nullable() })
+  .strict();
+const studyReceipt = receiptBase
+  .extend({ studyType: z.string(), performedAt: z.string(), result: z.string() })
+  .strict();
+const weightReceipt = receiptBase.extend({ quantity: z.string(), measuredAt: z.string() }).strict();
+
+/** UUID only: never put clinical text in an idempotency key. */
+export function clinicalCreationKey(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  const parsed = z.string().uuid().safeParse(value);
+  if (!parsed.success) throw new DomainError("VALIDATION_FAILED", "Invalid clinical creation key.");
+  return parsed.data.toLowerCase();
+}
+
 /** Weight quantity is a positive, finite decimal; anything else is rejected. */
 function assertPositiveQuantity(quantity: string): void {
   if (
@@ -389,31 +425,47 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
 
   async createTreatment(
     patientId: string,
-    input: CreateTreatmentInput
+    input: CreateTreatmentInput,
+    idempotencyKey?: string
   ): Promise<ClinicalTreatmentResponse> {
     const tenantId = await this.requireTenantContext();
     await this.requirePermission(CLINICAL_PERMISSIONS.create);
     const actorUserProfileId = this.requestContext.requireUserProfileId();
     await this.assertPatient(tenantId, patientId);
 
-    const row = await this.createRecord(
+    return this.createOnce(
       tenantId,
-      actorUserProfileId,
-      (source) => source.clinicalTreatment,
+      patientId,
+      "treatment",
+      idempotencyKey,
       {
-        tenantId,
-        patientId,
         description: input.description,
-        administeredAt: new Date(input.administeredAt),
+        administeredAt: new Date(input.administeredAt).toISOString(),
         context: input.context ?? null,
       },
-      {
-        action: "clinical_treatment.created",
-        targetType: "clinical_treatment",
-        changedFields: ["description", "administeredAt", "context"],
+      treatmentReceipt,
+      async (tx) => {
+        const row = await this.createRecord(
+          tenantId,
+          actorUserProfileId,
+          (source) => source.clinicalTreatment,
+          {
+            tenantId,
+            patientId,
+            description: input.description,
+            administeredAt: new Date(input.administeredAt),
+            context: input.context ?? null,
+          },
+          {
+            action: "clinical_treatment.created",
+            targetType: "clinical_treatment",
+            changedFields: ["description", "administeredAt", "context"],
+          },
+          tx
+        );
+        return toTreatmentResponse(row);
       }
     );
-    return toTreatmentResponse(row);
   }
 
   async updateTreatment(
@@ -448,7 +500,11 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
       (source) => source.clinicalTreatment,
       data,
       changedFields,
-      { action: "clinical_treatment.updated", targetType: "clinical_treatment" }
+      { action: "clinical_treatment.updated", targetType: "clinical_treatment" },
+      input.expectedVersion === undefined
+        ? undefined
+        : { table: "clinical_treatment", version: input.expectedVersion },
+      input.correctionReason
     );
     return toTreatmentResponse(row);
   }
@@ -636,30 +692,49 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     return rows.map(toStudyResponse);
   }
 
-  async createStudy(patientId: string, input: CreateStudyInput): Promise<ClinicalStudyResponse> {
+  async createStudy(
+    patientId: string,
+    input: CreateStudyInput,
+    idempotencyKey?: string
+  ): Promise<ClinicalStudyResponse> {
     const tenantId = await this.requireTenantContext();
     await this.requirePermission(CLINICAL_PERMISSIONS.create);
     const actorUserProfileId = this.requestContext.requireUserProfileId();
     await this.assertPatient(tenantId, patientId);
 
-    const row = await this.createRecord(
+    return this.createOnce(
       tenantId,
-      actorUserProfileId,
-      (source) => source.clinicalStudy,
+      patientId,
+      "study",
+      idempotencyKey,
       {
-        tenantId,
-        patientId,
         studyType: input.studyType,
-        performedAt: new Date(input.performedAt),
+        performedAt: new Date(input.performedAt).toISOString(),
         result: input.result,
       },
-      {
-        action: "clinical_study.created",
-        targetType: "clinical_study",
-        changedFields: ["studyType", "performedAt", "result"],
+      studyReceipt,
+      async (tx) => {
+        const row = await this.createRecord(
+          tenantId,
+          actorUserProfileId,
+          (source) => source.clinicalStudy,
+          {
+            tenantId,
+            patientId,
+            studyType: input.studyType,
+            performedAt: new Date(input.performedAt),
+            result: input.result,
+          },
+          {
+            action: "clinical_study.created",
+            targetType: "clinical_study",
+            changedFields: ["studyType", "performedAt", "result"],
+          },
+          tx
+        );
+        return toStudyResponse(row);
       }
     );
-    return toStudyResponse(row);
   }
 
   async updateStudy(
@@ -694,7 +769,11 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
       (source) => source.clinicalStudy,
       data,
       changedFields,
-      { action: "clinical_study.updated", targetType: "clinical_study" }
+      { action: "clinical_study.updated", targetType: "clinical_study" },
+      input.expectedVersion === undefined
+        ? undefined
+        : { table: "clinical_study", version: input.expectedVersion },
+      input.correctionReason
     );
     return toStudyResponse(row);
   }
@@ -714,7 +793,11 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     return rows.map(toWeightResponse);
   }
 
-  async createWeight(patientId: string, input: CreateWeightInput): Promise<ClinicalWeightResponse> {
+  async createWeight(
+    patientId: string,
+    input: CreateWeightInput,
+    idempotencyKey?: string
+  ): Promise<ClinicalWeightResponse> {
     const tenantId = await this.requireTenantContext();
     await this.requirePermission(CLINICAL_PERMISSIONS.create);
     const actorUserProfileId = this.requestContext.requireUserProfileId();
@@ -722,24 +805,43 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     assertWeightUnit(input.unit);
     await this.assertPatient(tenantId, patientId);
 
-    const row = await this.createRecord(
+    return this.createOnce(
       tenantId,
-      actorUserProfileId,
-      (source) => source.clinicalWeight,
+      patientId,
+      "weight",
+      idempotencyKey,
       {
-        tenantId,
-        patientId,
-        quantity: input.quantity,
+        quantity: new Prisma.Decimal(input.quantity).toString(),
+        measuredAt: new Date(input.measuredAt).toISOString(),
         unit: input.unit ?? null,
-        measuredAt: new Date(input.measuredAt),
       },
-      {
-        action: "clinical_weight.created",
-        targetType: "clinical_weight",
-        changedFields: ["quantity", "measuredAt", ...(input.unit !== undefined ? ["unit"] : [])],
+      weightReceipt,
+      async (tx) => {
+        const row = await this.createRecord(
+          tenantId,
+          actorUserProfileId,
+          (source) => source.clinicalWeight,
+          {
+            tenantId,
+            patientId,
+            quantity: input.quantity,
+            unit: input.unit ?? null,
+            measuredAt: new Date(input.measuredAt),
+          },
+          {
+            action: "clinical_weight.created",
+            targetType: "clinical_weight",
+            changedFields: [
+              "quantity",
+              "measuredAt",
+              ...(input.unit !== undefined ? ["unit"] : []),
+            ],
+          },
+          tx
+        );
+        return toWeightResponse(row);
       }
     );
-    return toWeightResponse(row);
   }
 
   async updateWeight(
@@ -778,7 +880,11 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
       (source) => source.clinicalWeight,
       data,
       changedFields,
-      { action: "clinical_weight.updated", targetType: "clinical_weight" }
+      { action: "clinical_weight.updated", targetType: "clinical_weight" },
+      input.expectedVersion === undefined
+        ? undefined
+        : { table: "clinical_weight", version: input.expectedVersion },
+      input.correctionReason
     );
     return toWeightResponse(row);
   }
@@ -787,18 +893,69 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
   // Internal helpers
   // -------------------------------------------------------------------------
 
+  /** Scope is tenant/patient/kind/key. Lock, record, audit and receipt share one commit.
+   * No TTL/purge: the ten-minute UI copy lifetime does not limit backend deduplication.
+   * Replays use the original allowlisted DTO, even if a later PUT changed the row. */
+  private async createOnce<T>(
+    tenantId: string,
+    patientId: string,
+    kind: string,
+    key: string | undefined,
+    input: unknown,
+    schema: ZodType<T>,
+    work: (tx?: ClinicalRecordsTransaction) => Promise<T>
+  ): Promise<T> {
+    key = clinicalCreationKey(key);
+    if (key === undefined) return work();
+    const requestHash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    const scope = JSON.stringify([tenantId, patientId, kind, key]);
+    return this.prisma.$transaction(
+      async (tx) => {
+        if (!tx.$queryRaw || !tx.$executeRaw)
+          throw new Error("Clinical creation requires transactional SQL.");
+        // A hash collision only serializes unrelated requests; uniqueness uses the full scope.
+        await tx.$queryRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))::text`
+        );
+        const receipts = await tx.$queryRaw<
+          { request_hash: string; response: unknown }[]
+        >(Prisma.sql`
+        SELECT request_hash, response FROM clinical_creation_receipt
+        WHERE tenant_id = ${tenantId}::uuid AND patient_id = ${patientId}::uuid
+          AND kind = ${kind} AND key = ${key}::uuid`);
+        const receipt = receipts[0];
+        if (receipt) {
+          if (receipt.request_hash !== requestHash)
+            throw new DomainError(
+              "CONFLICT",
+              "Clinical creation key was already used for different content."
+            );
+          return schema.parse(receipt.response);
+        }
+        const response = schema.parse(await work(tx));
+        await tx.$executeRaw(Prisma.sql`INSERT INTO clinical_creation_receipt
+        (tenant_id, patient_id, kind, key, request_hash, response)
+        VALUES (${tenantId}::uuid, ${patientId}::uuid, ${kind}, ${key}::uuid, ${requestHash}, ${JSON.stringify(response)}::jsonb)`);
+        return response;
+      },
+      { isolationLevel: "ReadCommitted" }
+    );
+  }
+
   private async createRecord<TRow extends { id: string }, TCreateData>(
     tenantId: string,
     actorUserProfileId: string,
     select: (source: ClinicalRecordsSource) => ClinicalRecordCreator<TRow, TCreateData>,
     data: TCreateData,
-    audit: { action: string; targetType: string; changedFields: string[] }
+    audit: { action: string; targetType: string; changedFields: string[] },
+    transaction?: ClinicalRecordsTransaction
   ): Promise<TRow> {
-    return this.prisma.$transaction(async (tx) => {
+    const work = async (tx: ClinicalRecordsTransaction) => {
       const created = await select(tx).create({ data });
       await this.appendAudit(tx, { ...audit, targetId: created.id }, tenantId, actorUserProfileId);
       return created;
-    });
+    };
+    return transaction ? work(transaction) : this.prisma.$transaction(work);
   }
 
   private async updateRecord<TRow, TUpdateData extends object>(
@@ -809,31 +966,96 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     select: (source: ClinicalRecordsSource) => ClinicalRecordUpdater<TRow, TUpdateData>,
     data: TUpdateData,
     changedFields: string[],
-    audit: { action: string; targetType: string }
+    audit: { action: string; targetType: string },
+    expected?: {
+      table: "clinical_treatment" | "clinical_study" | "clinical_weight";
+      version: number;
+    },
+    correctionReason?: string
   ): Promise<TRow> {
-    return this.prisma.$transaction(async (tx) => {
-      if (changedFields.length === 0) {
-        const existing = await select(tx).findFirst({ where: { id, tenantId, patientId } });
-        if (!existing) {
+    if (
+      expected &&
+      (!Number.isInteger(expected.version) || expected.version < 1 || expected.version > 2147483647)
+    )
+      throw new DomainError("VALIDATION_FAILED", "Invalid expected clinical version.");
+    if (
+      correctionReason !== undefined &&
+      (typeof correctionReason !== "string" ||
+        correctionReason.length > 2000 ||
+        correctionReason.trim().length === 0)
+    )
+      throw new DomainError("VALIDATION_FAILED", "Invalid correction reason.");
+    return this.prisma.$transaction(
+      async (tx) => {
+        if (expected) {
+          if (!tx.$queryRaw) throw new Error("Clinical concurrency requires transactional SQL.");
+          // Closed table union is server-owned; no identifier comes from input.
+          const rows = await tx.$queryRaw<
+            { version: number }[]
+          >(Prisma.sql`SELECT version FROM ${Prisma.raw(expected.table)}
+          WHERE id = ${id}::uuid AND tenant_id = ${tenantId}::uuid AND patient_id = ${patientId}::uuid FOR UPDATE`);
+          if (!rows[0]) throw new DomainError("NOT_FOUND", "Clinical record was not found.");
+          if (rows[0].version !== expected.version)
+            throw new DomainError("CONFLICT", "Clinical record version changed.");
+        }
+        if (changedFields.length === 0) {
+          const existing = await select(tx).findFirst({ where: { id, tenantId, patientId } });
+          if (!existing) {
+            throw new DomainError("NOT_FOUND", "Clinical record was not found.");
+          }
+          return existing;
+        }
+        // Specific Clinical trigger context, transaction-local: no cross-request leakage.
+        const specialized = ["clinical_treatment", "clinical_study", "clinical_weight"].includes(
+          audit.targetType
+        );
+        const revisionId = specialized ? randomUUID() : undefined;
+        if (revisionId) {
+          if (!tx.$queryRaw) throw new Error("Clinical history requires transactional SQL.");
+          await tx.$queryRaw(Prisma.sql`SELECT
+            set_config('newsaas.clinical_revision_id', ${revisionId}, true),
+            set_config('newsaas.clinical_actor_id', ${actorUserProfileId}, true),
+            set_config('newsaas.clinical_correction_reason', ${correctionReason ?? ""}, true)`);
+        }
+        const { count } = await select(tx).updateMany({ where: { id, tenantId, patientId }, data });
+        if (count === 0) {
           throw new DomainError("NOT_FOUND", "Clinical record was not found.");
         }
-        return existing;
-      }
-      const { count } = await select(tx).updateMany({ where: { id, tenantId, patientId }, data });
-      if (count === 0) {
-        throw new DomainError("NOT_FOUND", "Clinical record was not found.");
-      }
-      const updated = await select(tx).findFirst({ where: { id, tenantId, patientId } });
-      if (!updated) {
-        throw new DomainError("NOT_FOUND", "Clinical record was not found.");
-      }
-      await this.appendAudit(
-        tx,
-        { ...audit, targetId: id, changedFields },
-        tenantId,
-        actorUserProfileId
-      );
-      return updated;
-    });
+        const updated = await select(tx).findFirst({ where: { id, tenantId, patientId } });
+        if (!updated) {
+          throw new DomainError("NOT_FOUND", "Clinical record was not found.");
+        }
+        if (revisionId) {
+          if (!tx.$queryRaw) throw new Error("Clinical history requires transactional SQL.");
+          // Missing migration/disabled capture must never acknowledge an unhistorized write.
+          const tables: Readonly<Record<string, string>> = {
+            clinical_treatment: "clinical_treatment_revision",
+            clinical_study: "clinical_study_revision",
+            clinical_weight: "clinical_weight_revision",
+          };
+          const historyTable = tables[audit.targetType];
+          if (!historyTable) throw new Error("Invalid clinical history target.");
+          const revisions = await tx.$queryRaw<
+            { id: string }[]
+          >(Prisma.sql`SELECT h.id FROM ${Prisma.raw(historyTable)} h
+            JOIN ${Prisma.raw(audit.targetType)} r ON r.id=h.record_id AND r.tenant_id=h.tenant_id AND r.patient_id=h.patient_id
+            WHERE h.id=${revisionId}::uuid AND h.tenant_id=${tenantId}::uuid AND h.patient_id=${patientId}::uuid AND h.record_id=${id}::uuid AND h.after_version=r.version`);
+          if (!revisions[0]) throw new Error("Clinical history capture is required.");
+        }
+        await this.appendAudit(
+          tx,
+          {
+            ...audit,
+            targetId: id,
+            changedFields,
+            ...(revisionId && { metadata: { revisionId } }),
+          },
+          tenantId,
+          actorUserProfileId
+        );
+        return updated;
+      },
+      { isolationLevel: "ReadCommitted" }
+    );
   }
 }

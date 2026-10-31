@@ -13,24 +13,24 @@ describe("NavSidebar", () => {
   it("groups implemented destinations without inactive placeholder controls", () => {
     render(<NavSidebar productName="Example workspace" />);
     const nav = within(screen.getByTestId("nav-sidebar")).getByRole("navigation", {
-      name: "Primary",
+      name: "Principal",
     });
     for (const label of [
-      "Overview",
+      "Inicio",
       "Agenda",
-      "Customers",
-      "Patients",
-      "Catalog",
-      "Suppliers",
-      "Purchases",
+      "Clientes",
+      "Pacientes",
+      "Catálogo",
+      "Proveedores",
+      "Compras",
       "POS",
-      "Cash",
-      "Billing",
+      "Caja",
+      "Facturación",
       "Fiscal",
-      "Reports",
-      "Notifications",
-      "Imports",
-      "Branding",
+      "Informes",
+      "Notificaciones",
+      "Importaciones",
+      "Marca",
     ]) {
       expect(within(nav).getByRole("link", { name: label })).toBeInTheDocument();
     }
@@ -43,9 +43,9 @@ describe("NavSidebar", () => {
   it("keeps a detail's parent section active and does not activate Overview", () => {
     state.pathname = "/app/customers/example/edit";
     render(<NavSidebar />);
-    expect(screen.getByRole("link", { name: "Customers" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Overview" })).not.toHaveAttribute("aria-current");
-    expect(screen.getByRole("link", { name: "Patients" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Clientes" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Inicio" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Pacientes" })).not.toHaveAttribute("aria-current");
   });
 
   it("does not hide destinations when entitlements are unknown", () => {
@@ -54,16 +54,23 @@ describe("NavSidebar", () => {
 
   it("retains ungated modules while hiding known unentitled destinations", () => {
     render(<NavSidebar entitlements={[]} />);
-    for (const label of ["POS", "Cash", "Billing", "Fiscal"])
+    for (const label of ["POS", "Caja", "Facturación", "Fiscal"])
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
-    for (const label of ["Customers", "Patients", "Catalog", "Purchases", "Reports", "Imports"])
+    for (const label of [
+      "Clientes",
+      "Pacientes",
+      "Catálogo",
+      "Compras",
+      "Informes",
+      "Importaciones",
+    ])
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
   });
 
   it.each([
     ["sales", "POS"],
-    ["cash", "Cash"],
-    ["billing", "Billing"],
+    ["cash", "Caja"],
+    ["billing", "Facturación"],
     ["fiscal", "Fiscal"],
   ])("keeps the %s feature gate independent", (feature, label) => {
     render(<NavSidebar entitlements={[feature]} />);
@@ -78,18 +85,18 @@ describe("NavSidebar", () => {
   it("notifies the mobile shell after a navigation choice", () => {
     const onNavigate = vi.fn();
     render(<NavSidebar mobile onNavigate={onNavigate} />);
-    fireEvent.click(screen.getByRole("link", { name: "Customers" }));
+    fireEvent.click(screen.getByRole("link", { name: "Clientes" }));
     expect(onNavigate).toHaveBeenCalledOnce();
   });
 
   it("does not pretend sign-out succeeded when the server is unavailable", async () => {
     global.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 503 }));
     render(<NavSidebar />);
-    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent("couldn't sign you out")
+      expect(screen.getByRole("alert")).toHaveTextContent("No se pudo cerrar la sesión")
     );
-    expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeEnabled();
     expect(global.fetch).toHaveBeenCalledWith("/api/session/logout", { method: "POST" });
   });
 });

@@ -576,6 +576,9 @@ tendencias clínicas. Véase [[DEC-084-weight-measurement-unit]]. La definición
 está aprobada; esquema, contratos y superficie de escritura requieren su
 implementación correspondiente.
 
+Las correcciones futuras de pesos conservan los valores originales y su unidad
+en el historial definido por §13.2 (DEC-086), sin conversiones ni inferencias.
+
 ## 13. Clinical
 
 ClinicalEncounter states:
@@ -614,6 +617,45 @@ aceptación del operador. El cliente de la venta se selecciona explícitamente.
 Cerrar consulta, completar cita y cobrar permanecen operaciones independientes.
 No se infiere el autor de la consulta a partir del profesional agendado.
 No se permite revinculación silenciosa; los vínculos existentes se preservan.
+
+### 13.2. Historial de correcciones especializadas — DEC-086 (2026-10-30)
+
+Tratamientos, estudios y pesos conservan revisiones inmutables de las
+correcciones futuras: valores anteriores/posteriores exactos, versiones, actor
+y momento. La captura comparte transacción con registro y auditoría. Conflicto
+o rollback no deja revisión; replay de creación no añade historial.
+
+La UI staff exige motivo al corregir; API legada conserva omisión compatible
+mostrada como Sin motivo informado. Consultar historial por registro exige
+lectura clínica y permiso específico vet.clinical.history_read, inicialmente
+asignado a OWNER/ADMIN/VETERINARIAN, además de tenant/veterinary. Solo lectura,
+sin restauración, edición, borrado o exportación de revisiones.
+
+No reconstruir cambios previos al mecanismo ni inferir unidad de pesos. Datos
+históricos/snapshots/motivo/actor son CONFIDENTIAL, sin logging/URLs/Storage de
+contenido o retención destructiva automática. No incluye consultas cerradas,
+vacunas/desparasitación o Portal. La recuperación durable se define por §13.3.
+
+### 13.3. Borradores clínicos privados — DEC-087 (2026-10-31)
+
+Tratamientos, estudios y pesos permiten guardar explícitamente borradores en
+servidor y recuperarlos tras recarga/cierre, solo por su autor con organización,
+paciente, entitlement y permisos clínicos vigentes. Recuperar no guarda un
+registro clínico; cambios posteriores al último guardado manual pueden perderse.
+La recuperación temporal por documento sigue disponible.
+
+El borrador conserva la clave/comando del mismo intento de creación y el
+baseline original de corrección. Antes de enviar un intento recuperable se
+confirma su estado durable; una corrección pendiente/incierta no se reenvía ni
+se rebasa tras recargar. Creación usa su misma clave, nunca comparación de
+valores; peso con ID confirmado solo relee la proyección staff.
+
+Completar/descartar retira lógicamente la copia de la lista recuperable y
+conserva su contenido en servidor hasta aprobar una política de retención,
+sin purga automática ni promesa de borrado físico/de backups. Contenido,
+baseline, motivo, claves y asociación del autor son CONFIDENTIAL, sin
+almacenamiento persistente del navegador, URLs o logs de payloads. No
+autoguardado, borradores compartidos, Portal u otros formularios.
 
 ## 14. Scheduling
 
@@ -937,6 +979,10 @@ Audit critical actions including:
 - support access.
 
 Audit logs are append-only from normal application behavior.
+
+El historial clínico especializado de §13.2 (DEC-086) conserva valores en
+revisiones clínicas inmutables, separado de metadatos de auditoría. Ambos se
+vinculan y comparten transacción en las correcciones de aplicación.
 
 ## 28. API
 

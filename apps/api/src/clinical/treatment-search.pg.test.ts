@@ -143,6 +143,7 @@ describe.skipIf(!url)("Treatments — disposable real PostgreSQL", () => {
   });
   it("returns only allowlisted detail and nullable existing context", async () => {
     expect(await get(ownId)).toEqual({
+      version: 1,
       id: ownId,
       description: "Repeated treatment",
       administeredAt: "2026-10-20T12:00:00.000Z",

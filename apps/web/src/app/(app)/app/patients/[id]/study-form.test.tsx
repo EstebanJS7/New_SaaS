@@ -8,6 +8,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 const patient = "11111111-1111-4111-8111-111111111111",
   id = "22222222-2222-4222-8222-222222222222";
 const original = {
+  version: 1,
   id,
   studyType: "Tipo de estudio guardada",
   result: "Resultado guardado",
@@ -128,6 +129,7 @@ async function editForm() {
   fireEvent.click(screen.getByRole("button", { name: /Ver estudio/ }));
   await screen.findByText(original.result);
   fireEvent.click(screen.getByRole("button", { name: "Corregir estudio" }));
+  fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
 }
 function confirm() {
   fireEvent.click(
@@ -168,11 +170,16 @@ describe("Study entry and correction", () => {
       vi.fn(() => Promise.resolve(json({ ...original, result: null }, 201)))
     );
     await expect(
-      writeStudy(patient, undefined, {
-        studyType: "Synthetic",
-        performedAt: original.performedAt,
-        result: "",
-      })
+      writeStudy(
+        patient,
+        undefined,
+        {
+          studyType: "Synthetic",
+          performedAt: original.performedAt,
+          result: "",
+        },
+        { key: "33333333-3333-4333-8333-333333333333" }
+      )
     ).rejects.toMatchObject({ uncertain: true });
   });
   it("does not submit twice while the first command is pending", async () => {
@@ -198,7 +205,7 @@ describe("Study entry and correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     confirm();
     await screen.findByText("Estudio corregido.");
-    expect(writes[0].body).toEqual({ performedAt: "2026-10-20T23:30:00.000Z" });
+    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", performedAt: "2026-10-20T23:30:00.000Z" });
   });
   it("creates only after review, converting Paraguay clock and retaining list page", async () => {
     const storage = vi.spyOn(Storage.prototype, "setItem");
@@ -216,6 +223,7 @@ describe("Study entry and correction", () => {
       {
         method: "POST",
         body: {
+          idempotencyKey: expect.stringMatching(/^[a-f0-9-]{36}$/) as unknown,
           studyType: "Nuevo estudio",
           performedAt: "2026-10-20T15:00:00.000Z",
           result: "",
@@ -235,7 +243,9 @@ describe("Study entry and correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     confirm();
     await screen.findByText("Estudio corregido.");
-    expect(writes).toEqual([{ method: "PUT", body: { studyType: "Corrección" } }]);
+    expect(writes).toEqual([
+      { method: "PUT", body: { expectedVersion: 1, correctionReason: "Motivo sintético", studyType: "Corrección" } },
+    ]);
     expect(await screen.findByText(original.result)).toBeInTheDocument();
   });
   it("clears result with explicit empty string", async () => {
@@ -247,7 +257,7 @@ describe("Study entry and correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     confirm();
     await screen.findByText("Estudio corregido.");
-    expect(writes[0].body).toEqual({ result: "" });
+    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", result: "" });
     await screen.findByText("Sin resultado registrado.");
   });
   it("does not mutate when review is cancelled and asks before discarding dirty form", async () => {
@@ -300,16 +310,16 @@ describe("Study entry and correction", () => {
     expect(writes).toHaveLength(0);
   });
   it.each([{ network: true }, { writeStatus: 500 }, { writeStatus: 408 }])(
-    "locks retries after an uncertain write %j",
+    "allows explicit safe retries after an uncertain creation %j",
     async (options) => {
       const { writes } = setup(options);
       await createForm();
       fireEvent.click(screen.getByRole("button", { name: "Revisar estudio" }));
       confirm();
-      await screen.findByText(/No pudimos confirmar si se guardó/);
+      await screen.findByText(/Podés reintentar con la misma clave/);
       expect(
         within(screen.getByRole("dialog")).getByRole("button", { name: "Guardar estudio" })
-      ).toBeDisabled();
+      ).toBeEnabled();
       expect(writes).toHaveLength(1);
     }
   );
@@ -357,4 +367,13 @@ describe("Study entry and correction", () => {
     expect(push).not.toHaveBeenCalled();
     expect(writes).toHaveLength(0);
   });
+});
+
+it("requires a nonempty correction reason before submitting a changed record", async () => {
+  const {writes}=setup();await editForm();
+  fireEvent.change(screen.getByLabelText("Tipo de estudio"),{target:{value:"Corrección"}});
+  fireEvent.change(screen.getByLabelText("Motivo de la corrección"),{target:{value:""}});
+  fireEvent.submit(screen.getByRole("button",{name:"Revisar corrección"}).closest("form")!);
+  expect(await screen.findByText("Ingresá el motivo de la corrección (hasta 2000 caracteres).")).toBeInTheDocument();
+  expect(writes).toHaveLength(0);
 });

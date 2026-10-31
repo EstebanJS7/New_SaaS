@@ -1,4 +1,6 @@
 "use client";
+import { ClinicalServerDrafts } from "./clinical-server-drafts";
+import { ClinicalHistoryEntry } from "./clinical-history";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TreatmentForm } from "./treatment-form";
@@ -30,10 +32,12 @@ function TreatmentReader({
   id,
   onBack,
   onEdit,
+  canReadHistory,
 }: {
   patientId: string;
   id: string;
   onBack: () => void;
+  canReadHistory?: boolean;
   onEdit?: (item: TreatmentDetail) => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
@@ -84,6 +88,12 @@ function TreatmentReader({
                 Corregir tratamiento
               </Button>
             )}
+            <ClinicalHistoryEntry
+              patientId={patientId}
+              kind="treatments"
+              id={id}
+              allowed={canReadHistory}
+            />
             <dl className="space-y-3">
               <div>
                 <dt className="font-medium">Fecha de administración</dt>
@@ -187,6 +197,7 @@ function TreatmentWorkspace({
           </p>
         )}
         <TreatmentReader
+          canReadHistory={permissions?.includes("vet.clinical.history_read")}
           key={selected}
           patientId={patientId}
           id={selected}
@@ -214,6 +225,16 @@ function TreatmentWorkspace({
       >
         Tratamientos
       </h2>
+      <ClinicalServerDrafts
+        patientId={patientId}
+        kind="treatment"
+        onRecover={(copy) => {
+          if (copy.kind === "treatment") {
+            setNotice(undefined);
+            setEditor({ initial: copy.initial, recovered: copy.fields });
+          }
+        }}
+      />
       {recovery && canRecover && query.isFetchedAfterMount && !query.isFetching && !query.error && (
         <ClinicalRecordRecoveryPanel
           key={recovery.token}

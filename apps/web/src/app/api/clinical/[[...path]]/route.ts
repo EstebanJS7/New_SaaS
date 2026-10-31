@@ -31,6 +31,12 @@ interface ClinicalRouteShape {
  * percent-encoded byte, or any unknown route — can never reach the upstream URL.
  */
 const CLINICAL_ROUTE_SHAPES: readonly ClinicalRouteShape[] = [
+  { segments: ["drafts", "search"], methods: ["POST"] },
+  { segments: ["drafts", ID_SLOT], methods: ["GET", "PUT"] },
+  { segments: ["drafts", ID_SLOT, "submit"], methods: ["POST"] },
+  { segments: ["drafts", ID_SLOT, "discard"], methods: ["POST"] },
+  { segments: ["drafts", ID_SLOT, "complete"], methods: ["POST"] },
+  { segments: ["history-access"], methods: ["GET"] },
   { segments: ["appointments", ID_SLOT, "encounters"], methods: ["GET"] },
   { segments: ["encounters"], methods: ["GET", "POST"] },
   { segments: ["encounters", ID_SLOT], methods: ["GET", "PUT"] },
@@ -42,6 +48,7 @@ const CLINICAL_ROUTE_SHAPES: readonly ClinicalRouteShape[] = [
   { segments: ["treatments"], methods: ["GET", "POST"] },
   { segments: ["treatments", "search"], methods: ["POST"] },
   { segments: ["treatments", ID_SLOT], methods: ["GET", "PUT"] },
+  { segments: ["treatments", ID_SLOT, "history", "search"], methods: ["POST"] },
   { segments: ["vaccinations"], methods: ["GET", "POST"] },
   { segments: ["vaccinations", ID_SLOT], methods: ["PUT"] },
   { segments: ["deworming"], methods: ["GET", "POST"] },
@@ -49,9 +56,11 @@ const CLINICAL_ROUTE_SHAPES: readonly ClinicalRouteShape[] = [
   { segments: ["studies"], methods: ["GET", "POST"] },
   { segments: ["studies", "search"], methods: ["POST"] },
   { segments: ["studies", ID_SLOT], methods: ["GET", "PUT"] },
+  { segments: ["studies", ID_SLOT, "history", "search"], methods: ["POST"] },
   { segments: ["weights"], methods: ["GET", "POST"] },
   { segments: ["weights", "search"], methods: ["POST"] },
   { segments: ["weights", ID_SLOT], methods: ["GET", "PUT"] },
+  { segments: ["weights", ID_SLOT, "history", "search"], methods: ["POST"] },
 ];
 
 type UpstreamResolution =
@@ -143,7 +152,14 @@ async function proxyClinicalRequest(
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL;
   const cookieStore = await cookies();
+  const draftRequest = resolution.path.includes("/clinical/drafts/");
+  const historyRead =
+    method === "POST" &&
+    /\/(treatments|studies|weights)\/[0-9a-f-]+\/history\/search$/i.test(resolution.path);
   const privateRecordRead =
+    (draftRequest && (method === "GET" || resolution.path.endsWith("/drafts/search"))) ||
+    (method === "GET" && resolution.path.endsWith("/clinical/history-access")) ||
+    historyRead ||
     (method === "POST" && /\/(treatments|studies|weights)\/search$/.test(resolution.path)) ||
     (method === "GET" && /\/(treatments|studies|weights)\/[0-9a-f-]+$/i.test(resolution.path));
   const treatmentWrite =
@@ -155,7 +171,8 @@ async function proxyClinicalRequest(
   const weightWrite =
     (method === "POST" && resolution.path.endsWith("/weights")) ||
     (method === "PUT" && /\/weights\/[0-9a-f-]+$/i.test(resolution.path));
-  const privateRecordRequest = privateRecordRead || treatmentWrite || studyWrite || weightWrite;
+  const privateRecordRequest =
+    draftRequest || privateRecordRead || treatmentWrite || studyWrite || weightWrite;
   const privateHeaders = { "cache-control": "private, no-store" };
   if (privateRecordRequest && request.nextUrl.search)
     return NextResponse.json(
@@ -197,7 +214,37 @@ async function proxyClinicalRequest(
   // A string is the same JSON rather than a re-serialization -- no whitespace or key order is
   // normalized -- so the API's Zod parses identical input.
   const bodyText = hasBody ? await request.text() : undefined;
-  if (treatmentWrite || studyWrite || weightWrite || (privateRecordRead && method === "POST")) {
+  if (draftRequest && hasBody) {
+    let draftInput: unknown;
+    try {
+      draftInput = JSON.parse(bodyText ?? "");
+    } catch {
+      draftInput = null;
+    }
+    const keys =
+      method === "PUT"
+        ? ["version", "copy"]
+        : resolution.path.endsWith("/search")
+          ? ["kind", "before"]
+          : resolution.path.endsWith("/submit")
+            ? ["version", "command"]
+            : ["version"];
+    if (
+      (bodyText?.length ?? 0) > 100000 ||
+      typeof draftInput !== "object" ||
+      draftInput === null ||
+      Array.isArray(draftInput) ||
+      Object.keys(draftInput).some((key) => !keys.includes(key))
+    )
+      return NextResponse.json(
+        { error: { code: "VALIDATION_FAILED", message: "Invalid clinical draft input." } },
+        { status: 400, headers: privateHeaders }
+      );
+  }
+  if (
+    !draftRequest &&
+    (treatmentWrite || studyWrite || weightWrite || (privateRecordRead && method === "POST"))
+  ) {
     let input: unknown;
     try {
       input = JSON.parse(bodyText ?? "");
@@ -211,16 +258,25 @@ async function proxyClinicalRequest(
       Object.keys(input).some(
         (key) =>
           !(
-            weightWrite
-              ? ["quantity", "measuredAt", "unit"]
-              : studyWrite
-                ? ["studyType", "performedAt", "result"]
-                : treatmentWrite
-                  ? ["description", "administeredAt", "context"]
-                  : resolution.path.endsWith("/weights/search")
-                    ? ["minQuantity", "maxQuantity", "page", "period", "sort", "unit"]
-                    : ["q", "page", "period", "sort"]
-          ).includes(key)
+            (method === "PUT" &&
+              (treatmentWrite || studyWrite || weightWrite) &&
+              ["expectedVersion", "correctionReason"].includes(key)) ||
+            (method === "POST" &&
+              (treatmentWrite || studyWrite || weightWrite) &&
+              key === "idempotencyKey") ||
+            (historyRead
+              ? ["beforeVersion"]
+              : weightWrite
+                ? ["quantity", "measuredAt", "unit"]
+                : studyWrite
+                  ? ["studyType", "performedAt", "result"]
+                  : treatmentWrite
+                    ? ["description", "administeredAt", "context"]
+                    : resolution.path.endsWith("/weights/search")
+                      ? ["minQuantity", "maxQuantity", "page", "period", "sort", "unit"]
+                      : ["q", "page", "period", "sort"]
+            ).includes(key)
+          )
       )
     )
       return NextResponse.json(

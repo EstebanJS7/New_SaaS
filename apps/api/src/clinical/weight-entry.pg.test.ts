@@ -124,6 +124,7 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
     );
     await run(() => service.updateWeight(patient, row.id, { unit: "KG" }));
     expect(await run(() => reads.get(patient, row.id))).toEqual({
+      version: 2,
       id: row.id,
       quantity: "0.125",
       measuredAt: input.measuredAt,

@@ -5,17 +5,38 @@ import type { TreatmentDetail } from "./treatment-search-api";
 import type { StudyDetail } from "./study-search-api";
 import type { WeightDetail } from "./weight-search-api";
 
+import type { TreatmentWriteInput } from "./treatment-write-api";
+import type { StudyWriteInput } from "./study-write-api";
+import type { WeightWriteInput } from "./weight-write-api";
+import type { DurableDraftRef } from "./clinical-server-drafts-api";
+import { useServerClinicalDraft } from "./clinical-server-drafts";
+/** One immutable command per logical creation; memory only. savedId makes weight read retries GET-only. */
+export interface CreationAttempt<T> {
+  key: string;
+  command?: Partial<T>;
+  savedId?: string;
+}
+
 export interface TreatmentFields {
+  durable?: DurableDraftRef;
+  correctionReason?: string;
+  creation?: CreationAttempt<TreatmentWriteInput>;
   description: string;
   date: string;
   context: string;
 }
 export interface StudyFields {
+  durable?: DurableDraftRef;
+  correctionReason?: string;
+  creation?: CreationAttempt<StudyWriteInput>;
   studyType: string;
   date: string;
   result: string;
 }
 export interface WeightFields {
+  durable?: DurableDraftRef;
+  correctionReason?: string;
+  creation?: CreationAttempt<WeightWriteInput>;
   quantity: string;
   date: string;
   confirmedKg: boolean;
@@ -95,6 +116,8 @@ export function useRecordRecovery(patientId: string, kind: ClinicalRecordKind) {
 /** Retain on unmount, never on the server; command settlement is generation-safe. */
 export function useRetainRecordForm(patientId: string, copy: ClinicalRecordCopy, dirty: boolean) {
   const client = useQueryClient();
+  const draft = useServerClinicalDraft(patientId, copy);
+  copy = { ...copy, fields: { ...copy.fields, durable: draft.reference } } as ClinicalRecordCopy;
   const latest = useRef({ copy, dirty });
   latest.current = { copy, dirty };
   const token = useRef(crypto.randomUUID());
@@ -147,6 +170,7 @@ export function useRetainRecordForm(patientId: string, copy: ClinicalRecordCopy,
       client.setQueryData(key, { ...entry, status: phase.current });
   }
   return {
+    draft,
     begin: () => {
       phase.current = "pending";
     },

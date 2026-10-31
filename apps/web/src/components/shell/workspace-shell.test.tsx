@@ -29,7 +29,7 @@ function setup() {
 describe("responsive workspace shell", () => {
   it("provides a skip link and bounds the actual page content", () => {
     setup();
-    expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Ir al contenido" })).toHaveAttribute(
       "href",
       "#workspace-content"
     );
@@ -39,23 +39,23 @@ describe("responsive workspace shell", () => {
   });
   it("opens a native modal and closes it after choosing a section", () => {
     setup();
-    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
-    const dialog = screen.getByRole("dialog", { name: "Workspace navigation" });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
+    const dialog = screen.getByRole("dialog", { name: "Navegación del espacio de trabajo" });
     expect(dialog).toHaveAttribute("open");
-    expect(screen.getByRole("button", { name: "Open navigation" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Abrir navegación" })).toHaveAttribute(
       "aria-expanded",
       "true"
     );
-    fireEvent.click(within(dialog).getByRole("link", { name: "Customers" }));
+    fireEvent.click(within(dialog).getByRole("link", { name: "Pacientes" }));
     expect(dialog).not.toHaveAttribute("open");
-    expect(screen.getByRole("button", { name: "Open navigation" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Abrir navegación" })).toHaveAttribute(
       "aria-expanded",
       "false"
     );
   });
   it("responds to the native Escape/cancel event", () => {
     setup();
-    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
     const dialog = screen.getByRole("dialog");
     fireEvent(dialog, new Event("cancel", { bubbles: false, cancelable: true }));
     expect(dialog).not.toHaveAttribute("open");

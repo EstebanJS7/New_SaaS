@@ -3,7 +3,7 @@ type: guide
 title: Evolución UX/UI del espacio de trabajo
 status: active
 created: 2026-10-28
-updated: 2026-10-30
+updated: 2026-10-31
 related_stories:
   [
     UX-001,
@@ -24,6 +24,14 @@ related_stories:
     UX-016,
     UX-017,
     UX-018,
+    UX-019,
+    UX-020,
+    UX-021,
+    UX-022,
+    UX-023,
+    UX-024,
+    UX-025,
+    UX-026,
   ]
 related_epics: [EPIC-03, EPIC-05, EPIC-06, EPIC-07, EPIC-12]
 ---
@@ -907,3 +915,157 @@ operativa. Ver [[UX-018-clinical-record-form-recovery]] y
 UX-018: estado final done. 233 pruebas simuladas distintas aprobadas, lint/tipos
 web y build final aislado con 29 páginas y verificación de salida aprobados. Sin
 PostgreSQL, navegador/E2E, datos operativos, commit o push en esta etapa.
+
+## Creaciones clínicas sin duplicados al reintentar — UX-019
+
+Tratamientos, estudios y pesos envían una clave opaca por intento lógico. El
+servidor devuelve la respuesta original al repetir clave/datos, sin duplicar
+registro ni auditoría; cambios de contenido con la misma clave reciben 409.
+Consumidores que no envían clave mantienen su contrato anterior.
+
+Después de una respuesta incierta, la UI permite confirmar un reintento seguro
+del comando original y conserva sus campos bloqueados. Al volver dentro de diez
+minutos, Recuperar para reintento seguro exige lectura autorizada y revisión
+explícita. Pendientes y correcciones inciertas siguen sin reenvío. En pesos, si
+la creación respondió pero falló leer la unidad, reintentar solo relee el ID
+confirmado. Nunca se busca una coincidencia de valores para deducir éxito.
+
+Sin recarga/Storage/logs/URLs de contenido o recuperación durable. El nuevo body
+opcional es rechazado por APIs anteriores estrictas antes de guardar: la UI no
+asume que un servidor antiguo entendió una cabecera nueva. Esquema/API antes de
+UI en despliegue; aquí solo se probaron bases desechables.
+
+Pruebas automatizadas y PostgreSQL real separados en
+[[UX-019-VALIDATION-2026-10-30]]. Visual/E2E no ejecutado por alcance
+autorizado; TD-066 permanece abierta para esa revisión y concurrencia
+PUT/CAS/historial.
+
+## Correcciones concurrentes — UX-020
+
+Tratamientos, estudios y pesos corrigen con la versión del detalle que se abrió.
+El backend vuelve a comprobarla bajo lock transaccional: dos correcciones con el
+mismo baseline dejan un ganador y un 409 sin sobrescritura del perdedor ni
+auditoría duplicada. La versión avanza también para escritores legados; los PUT
+sin token siguen funcionando sin promesa de protección CAS para esos clientes.
+
+Al conflicto se conservan los campos. Consultar registro actual permite ver el
+contenido vigente por GET sin reemplazar el trabajo local; cancelar/descartar y
+abrir otra corrección desde detalle requiere decisión explícita. No hay rebase,
+mezcla ni retry automático. Recuperación temporal rechaza versiones distintas
+aunque los valores clínicos coincidan. PUT incierto o pendiente sigue bloqueado;
+las creaciones idempotentes UX-019 conservan su comportamiento.
+
+Sin historial nuevo ni recuperación durable, Portal o cambios a otros dominios.
+Pruebas de componentes/API y PostgreSQL desechable se separan de visual/E2E no
+ejecutado en [[UX-020-VALIDATION-2026-10-30]]. TD-066 permanece abierta para
+esos pendientes y la transición obligatoria de clientes legados sin versión.
+
+## Navegador real: UX-021 completada
+
+Lane clínica aislada con PostgreSQL/Redis sintéticos propios y builds API/web
+temporales. 16 recorridos cubren registro/corrección de los tres tipos, commit
+con respuesta perdida, CAS, recuperación/descarte, sesión/permisos, precisión y
+unidades conocidas/desconocidas. Capturas desktop/móvil inspeccionadas.
+
+TD-067: se reprodujo transición suspendida y se reubicó el mismo loading.tsx
+bajo el layout staff asíncrono (app/(app)/app/). Mantiene shell y memoria del
+documento. Los casos ahora recorren login→Inicio→Pacientes→ficha con enlaces
+reales, incluido menú móvil, y marcador anti-recarga. Sin bypass returnTo, retry
+del test, parche de menú, CSP relajada o dependencia nueva.
+
+Dos ejecuciones desde cero consecutivas aprobaron 16/16; la final sin
+instrumentación, JCBU9a, 1,0 min y salida 0. Lint/tipos/builds aislados
+aprobados, 76 pruebas clínicas y 6 de shell aprobadas. UX-021 done y TD-067
+resolved para el bloqueo observado; no es garantía universal del router o de
+todos los destinos. Fallos previos conservados en
+[[UX-021-VALIDATION-2026-10-30]].
+
+TD-066 sigue open: historial, recuperación durable/tras recarga y adopción
+obligatoria de CAS por consumidores legados. Esta revisión no certifica Safari,
+Firefox, dispositivo físico o lector de pantalla. Sin PRD, migración operativa,
+commit o push.
+
+## Consumidores controlados y transición compatible — UX-022
+
+Inventario de creación/corrección de tratamientos/estudios/pesos: solo los tres
+formularios staff como escritores productivos locales. Ya enviaban las guardias;
+los helpers ahora exigen clave para creación y versión original para corrección
+en tipos y antes de fetch. Invocaciones separadas por modo; sin cambio de copy,
+diseño, permisos, unidad, Decimal o fechas es-PY. Recuperación conserva el mismo
+intento; peso confirmado solo vuelve a leer, nunca recrea por fallo de GET.
+
+API/BFF actuales mantienen opcionalidad para consumidores antiguos. No hay
+telemetría de contenido ni prueba de ausencia de integraciones externas.
+Inventario detallado en [[UX-022-clinical-write-consumer-transition]]; propuesta
+de corte futuro [[DEC-085-clinical-write-legacy-contract-transition]], sin
+activación o PRD cambiado. TD-066 sigue abierta para corte global/historial/
+durable. Sin nueva ronda de navegador al no cambiar flujos/markup; evidencia
+actual separada de la certificación acotada UX-021.
+
+UX-022 done: 327 pruebas web/proxy, 29 backend simuladas y 51 PG real aprobadas;
+lint/tipos y builds aislados aprobados. Sin nueva ronda visual/E2E. Ver
+[[UX-022-VALIDATION-2026-10-30]].
+
+## Historial de correcciones — UX-023 / DEC-086 aceptada
+
+Opciones elegidas 1/1/1: motivo obligatorio al corregir en UI, lectura
+específica para propietario/administrador/veterinario y Ver historial por cada
+registro. La clave vet.clinical.history_read mantiene la convención de tres
+segmentos. La UI consulta una capacidad backend cuando la ficha no trae
+permisos, conserva el motivo en revisión/recuperación y diferencia denegación de
+fallo de lectura.
+
+Historial inmutable antes/después con actor/nombre histórico y momento de
+corrección; cantidades/unidades exactas y fechas es-PY/Paraguay con precisión.
+Paginación por versión sin contenido en URL/Storage. No restauración/exportación
+ni reconstrucción de cambios anteriores. API legada admite motivo omitido y lo
+identifica como Sin motivo informado, sin fabricar explicaciones.
+
+624 casos distintos: 359 web/proxy, 131 backend simulados, 45 database/esquema,
+72 PG real y 17 E2E reales. Seis capturas nuevas de escritorio/390 px
+inspeccionadas; límites de Chrome/viewport y fallos corregidos conservados en
+[[UX-023-VALIDATION-2026-10-30]]. Solo migraciones sobre PG temporal.
+
+TD-066 sigue open para corte global de consumidores y recuperación durable.
+DEC-085 no se acepta ni activa por este trabajo. Sin otras áreas clínicas,
+Portal, finanzas/inventario, dependencias, commit o push.
+
+## Borradores privados tras recarga — UX-024 / DEC-087, 2026-10-31
+
+Aceptadas opciones 1/1/1: Guardar borrador manual en servidor, recuperar solo
+por autor y descarte lógico sin purga automática. PRD §13.3 y Story iniciados
+antes de código. Borradores guardados por tipo abre la consulta de forma
+explícita; recuperación vuelve a comprobar copia y permisos actuales.
+
+La copia conserva baseline/clave; confirmar prepara primero el comando durable.
+Corrección incierta bloqueada tras recarga. Creación incierta mantiene clave;
+peso con recibo/ID confirmado solo relee GET. La confirmación no puede competir
+con guardado manual pendiente o sin confirmar. Cambios no guardados manualmente
+pueden perderse; la copia temporal UX-018 sigue limitada al documento.
+
+Completar/descartar retira la copia recuperable y conserva contenido en servidor
+hasta política aprobada; no prometer eliminación física o de backups. Copias
+CONFIDENTIAL sin Storage/URLs/logs de contenido. No autoguardado, compartir con
+equipo, Portal u otros formularios. Ver [[UX-024-VALIDATION-2026-10-31]].
+
+TD-067 reabierta: dos rondas completas encontraron navegación lista→ficha
+intermitente antes de ejecutar los ocho casos nuevos. No se oculta con retries o
+goto; selección focalizada se informa aparte y no certifica la lane completa.
+
+## Cierre TD-067 y UX-024 — UX-025, 2026-10-31
+
+La prueba con contextos nuevos reprodujo navegación detenida en la décima
+entrada (9 completas, root pendiente/suspendido/warm sin ping, RSC 200). Retirar
+loading.tsx global redundante mantiene RouteFeedback y carga/error propios de
+las páginas. Sin cambio de shell/auth/CSP/Next/prefetch props, reload o retries.
+
+73 tests web scoped y checks lint/tipos/builds aprobados; dos lanes nuevas
+completas 26/26 cada una, con 25 casos clínicos y 50 contextos fríos por ronda.
+Lectura retenida demuestra carga de paciente; marca DOM exige mismo documento.
+UX-025/UX-024 done, TD-067 resolved para esta matriz. Fallos iniciales y límites
+conservados en [[UX-025-VALIDATION-2026-10-31]], no afirmación universal.
+
+Siguiente etapa ya autorizada: DEC-085 aceptada/revisada y UX-026 planned para
+contratos obligatorios preproductivos de clave/versión/motivo. No mantener
+transición prolongada de consumidores controlados; aún no activo en código.
+Mantener unidades históricas, DTO de peso, aislamiento y recibos/auditorías.

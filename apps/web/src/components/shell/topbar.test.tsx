@@ -18,7 +18,7 @@ describe("Topbar", () => {
 
     // Inert placeholder entry — chrome-only gate.
     expect(screen.queryByTestId("topbar-entry")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Appearance:/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Apariencia:/ })).toBeInTheDocument();
     expect(container.querySelectorAll("a")).toHaveLength(0);
     expect(container.textContent).not.toMatch(/appointment|patient|invoice|schedule|billing/i);
   });

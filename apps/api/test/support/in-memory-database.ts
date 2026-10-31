@@ -3479,14 +3479,35 @@ export function createIsolationDatabase(): IsolationDatabase {
       }
     },
     $queryRaw: (query, ...values) => {
+      // Simulate only the revision acknowledgement; capture/rollback is proven in PostgreSQL.
+      const rawQuery = query as unknown as { sql?: unknown; values?: unknown };
+      if (typeof rawQuery.sql === "string" && Array.isArray(rawQuery.values)) {
+        const sql = rawQuery.sql;
+        const boundValues: readonly unknown[] = rawQuery.values;
+        if (
+          ["clinical_treatment", "clinical_study", "clinical_weight"].some((table) =>
+            sql.includes("SELECT h.id FROM " + table + "_revision h")
+          )
+        )
+          return Promise.resolve([{ id: boundValues[0] }]);
+      }
       // Match THE shipped raw queries (all active membership rows for the
       // tenant, the EPIC-11 purchase header row lock, and the per-item
       // advisory locks). Every bound value is server-resolved.
+      if (
+        typeof query === "object" &&
+        query !== null &&
+        "sql" in query &&
+        typeof query.sql === "string" &&
+        query.sql.includes("newsaas.clinical_revision_id")
+      )
+        return Promise.resolve([]);
       const text = typeof query === "string" ? query : query.join("");
       // EPIC-07 scheduling and EPIC-11 PUR-002 receiving serialize with
       // transaction-scoped advisory locks. This single-threaded boundary
       // serializes nothing, so the call must simply succeed; the real
       // interleaving proof is live-PostgreSQL-owned.
+      if (text.includes("newsaas.clinical_revision_id")) return Promise.resolve([]);
       if (text.includes("pg_advisory_xact_lock")) {
         return Promise.resolve([]);
       }

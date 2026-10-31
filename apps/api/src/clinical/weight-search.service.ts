@@ -86,13 +86,21 @@ export class WeightSearchService {
 
   async get(patientId: string, id: string): Promise<WeightDetail> {
     const tenantId = await this.authorize();
-    const row = await this.prisma.clinicalWeight.findFirst({
-      where: { id, patientId, tenantId, patient: { tenantId } },
-      select: { id: true, quantity: true, measuredAt: true, unit: true },
-    });
+    const rows = await this.prisma.$queryRaw<
+      {
+        id: string;
+        quantity: Prisma.Decimal;
+        measuredAt: Date;
+        unit: "KG" | null;
+        version: number;
+      }[]
+    >(Prisma.sql`SELECT id, quantity, measured_at AS "measuredAt", unit, version
+      FROM clinical_weight WHERE id = ${id}::uuid AND patient_id = ${patientId}::uuid AND tenant_id = ${tenantId}::uuid`);
+    const row = rows[0];
     if (!row) throw new DomainError("NOT_FOUND", "Clinical record was not found.");
     return {
       id: row.id,
+      version: row.version,
       quantity: row.quantity.toFixed(3),
       unit: row.unit,
       measuredAt: row.measuredAt.toISOString(),

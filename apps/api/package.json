@@ -24,7 +24,9 @@
     "test:patient-search": "node --env-file=../../.env ../../scripts/verify-patient-search.mjs",
     "test:clinical-links": "node --env-file=../../.env ../../scripts/verify-clinical-links.mjs",
     "test:live-pg": "vitest run --config vitest.live-pg.config.ts",
-    "test:redis": "vitest run --config vitest.redis.config.ts"
+    "test:redis": "vitest run --config vitest.redis.config.ts",
+    "test:clinical-correction": "node --env-file=../../.env ../../scripts/verify-clinical-correction.mjs",
+    "test:clinical-creation": "node --env-file=../../.env ../../scripts/verify-clinical-creation.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",

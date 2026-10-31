@@ -10,6 +10,7 @@ export interface StudySummary {
   performedAt: string;
 }
 export interface StudyDetail extends StudySummary {
+  version?: number;
   result: string;
 }
 export interface StudySearchResult {

@@ -31,7 +31,7 @@ describe("workspace activity feedback", () => {
     const { rerender } = render(tree(client));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "Open customers" }));
-    expect(screen.getByRole("status")).toHaveTextContent("Loading...");
+    expect(screen.getByRole("status")).toHaveTextContent("Cargando…");
     route.pathname = "/app/customers";
     rerender(tree(client));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();

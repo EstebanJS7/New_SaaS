@@ -148,6 +148,10 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
         "wgt"
       ),
       auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
+      $queryRaw: <T>(query: import("@newsaas/database").Prisma.Sql): Promise<T> =>
+        Promise.resolve(
+          (query.sql.includes("SELECT h.id") ? [{ id: query.values[0] }] : []) as unknown as T
+        ),
     };
 
     const prisma: ClinicalRecordsPrisma = {

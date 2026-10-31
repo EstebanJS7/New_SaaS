@@ -1,4 +1,6 @@
 "use client";
+import { ClinicalServerDrafts } from "./clinical-server-drafts";
+import { ClinicalHistoryEntry } from "./clinical-history";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { StudyForm } from "./study-form";
@@ -26,10 +28,12 @@ function StudyReader({
   id,
   onBack,
   onEdit,
+  canReadHistory,
 }: {
   patientId: string;
   id: string;
   onBack: () => void;
+  canReadHistory?: boolean;
   onEdit?: (item: StudyDetail) => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
@@ -80,6 +84,12 @@ function StudyReader({
                 Corregir estudio
               </Button>
             )}
+            <ClinicalHistoryEntry
+              patientId={patientId}
+              kind="studies"
+              id={id}
+              allowed={canReadHistory}
+            />
             <dl className="space-y-3">
               <div>
                 <dt className="font-medium">Fecha de realización</dt>
@@ -180,6 +190,7 @@ function StudyWorkspace({
           </p>
         )}
         <StudyReader
+          canReadHistory={permissions?.includes("vet.clinical.history_read")}
           key={selected}
           patientId={patientId}
           id={selected}
@@ -207,6 +218,16 @@ function StudyWorkspace({
       >
         Estudios
       </h2>
+      <ClinicalServerDrafts
+        patientId={patientId}
+        kind="study"
+        onRecover={(copy) => {
+          if (copy.kind === "study") {
+            setNotice(undefined);
+            setEditor({ initial: copy.initial, recovered: copy.fields });
+          }
+        }}
+      />
       {recovery && canRecover && query.isFetchedAfterMount && !query.isFetching && !query.error && (
         <ClinicalRecordRecoveryPanel
           key={recovery.token}

@@ -1,4 +1,6 @@
 "use client";
+import { ClinicalDraftSave } from "./clinical-server-drafts";
+import { ClinicalCorrectionConflict } from "./clinical-correction-conflict";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useRetainRecordForm, type StudyFields } from "./clinical-record-recovery";
@@ -24,11 +26,16 @@ export function StudyForm({
   onCancel: () => void;
 }) {
   const router = useRouter();
+  const creation = useRef<import("./clinical-record-recovery").CreationAttempt<StudyWriteInput>>(
+    recovered?.creation ?? { key: crypto.randomUUID() }
+  );
   const initialDate = initial === undefined ? "" : isoToLocalInput(initial.performedAt);
   const [studyType, setStudyType] = useState(recovered?.studyType ?? initial?.studyType ?? "");
   const [date, setDate] = useState(recovered?.date ?? initialDate);
   const [result, setResult] = useState(recovered?.result ?? initial?.result ?? "");
+  const [correctionReason, setCorrectionReason] = useState(recovered?.correctionReason ?? "");
   const [error, setError] = useState<string>();
+  const [conflicted, setConflicted] = useState(false);
   const [review, setReview] = useState<Partial<StudyWriteInput> | null>(null);
   const [discard, setDiscard] = useState(false);
   const [exitHref, setExitHref] = useState<string>();
@@ -37,12 +44,24 @@ export function StudyForm({
   const inFlight = useRef(false),
     heading = useRef<HTMLHeadingElement>(null);
   const dirty =
+    correctionReason !== "" ||
     studyType !== (initial?.studyType ?? "") ||
     date !== initialDate ||
     result !== (initial?.result ?? "");
   const recovery = useRetainRecordForm(
     patientId,
-    { kind: "study", initial, fields: { studyType, date, result } },
+    {
+      kind: "study",
+      initial,
+      fields: {
+        durable: recovered?.durable,
+        correctionReason,
+        studyType,
+        date,
+        result,
+        ...(initial === undefined && { creation: creation.current }),
+      },
+    },
     dirty
   );
   useEffect(() => {
@@ -86,6 +105,11 @@ export function StudyForm({
     };
   }, [dirty, saving, uncertain]);
   function prepare() {
+    if (recovery.draft.blocked) return;
+    if (initial === undefined && creation.current.command) {
+      setReview(creation.current.command);
+      return;
+    }
     setError(undefined);
     if (studyType.trim().length === 0 || studyType.length > 2000 || result.length > 10000) {
       setError(
@@ -108,18 +132,38 @@ export function StudyForm({
       setError("No hay cambios para guardar.");
       return;
     }
+    if (initial !== undefined) {
+      if (correctionReason.trim().length === 0 || correctionReason.length > 2000) {
+        setError("Ingresá el motivo de la corrección (hasta 2000 caracteres).");
+        return;
+      }
+      input.correctionReason = correctionReason;
+    }
     setReview(input);
   }
   async function save() {
-    if (inFlight.current || uncertain || review === null) return;
+    if (recovery.draft.blocked) return;
+    if (inFlight.current || uncertain || conflicted || review === null) return;
     inFlight.current = true;
     recovery.begin();
     setSaving(true);
     setError(undefined);
     try {
       if (initial !== undefined) {
+        if (
+          !Number.isInteger(initial.version) ||
+          initial.version! < 1 ||
+          initial.version! > 2147483647
+        ) {
+          setError(
+            "No pudimos comprobar la versión del registro. Volvé al detalle antes de corregirlo."
+          );
+          setConflicted(true);
+          throw new Error("STALE_STUDY");
+        }
         const current = await getStudy(patientId, initial.id);
         if (
+          current.version !== initial.version ||
           (review.studyType !== undefined && current.studyType !== initial.studyType) ||
           (review.result !== undefined && current.result !== initial.result) ||
           (review.performedAt !== undefined && current.performedAt !== initial.performedAt)
@@ -130,14 +174,37 @@ export function StudyForm({
           throw new Error("STALE_STUDY");
         }
       }
-      const saved = await writeStudy(patientId, initial?.id, review);
+      if (initial === undefined) creation.current.command ??= { ...review };
+      const saved =
+        initial === undefined
+          ? await writeStudy(
+              patientId,
+              undefined,
+              { ...creation.current.command!, draft: recovery.draft.reference },
+              creation.current
+            )
+          : await writeStudy(patientId, initial.id, {
+              ...review,
+              draft: recovery.draft.reference,
+              expectedVersion: initial.version!,
+              correctionReason: review.correctionReason!,
+            });
       if (recovery.saved()) onSaved(saved);
     } catch (failure) {
       recovery.settled(failure);
+      if (failure instanceof Error && failure.message === "STALE_STUDY") setConflicted(true);
+      if (
+        initial !== undefined &&
+        failure instanceof StudyWriteError &&
+        failure.code === "CONFLICT"
+      )
+        setConflicted(true);
       if (failure instanceof StudyWriteError && failure.uncertain) {
-        setUncertain(true);
+        setUncertain(initial !== undefined);
         setError(
-          "No pudimos confirmar si se guardó. Revisá el listado antes de volver a registrar o corregir este estudio."
+          initial === undefined
+            ? "No pudimos completar la confirmación. Podés reintentar con la misma clave y los mismos datos sin duplicar el registro."
+            : "No pudimos confirmar si se guardó. Revisá el listado antes de volver a registrar o corregir este estudio."
         );
       } else if (!(failure instanceof Error && failure.message === "STALE_STUDY")) {
         setError(
@@ -145,11 +212,15 @@ export function StudyForm({
             failure.status === 403 &&
             failure.code !== "FEATURE_NOT_ENTITLED"
             ? "No tenés permiso para guardar estudios."
-            : failure instanceof StudyWriteError && failure.code === "VALIDATION_FAILED"
-              ? "Revisá los campos del estudio e intentá de nuevo."
-              : failure instanceof Error
-                ? userFacingStudyError(failure)
-                : "No pudimos guardar el estudio."
+            : failure instanceof StudyWriteError && failure.code === "CONFLICT"
+              ? initial === undefined
+                ? "La clave ya se usó con otros datos. Revisá el registro original antes de continuar."
+                : "El registro cambió. Conservamos tus cambios; revisá el registro actual antes de iniciar otra corrección."
+              : failure instanceof StudyWriteError && failure.code === "VALIDATION_FAILED"
+                ? "Revisá los campos del estudio e intentá de nuevo."
+                : failure instanceof Error
+                  ? userFacingStudyError(failure)
+                  : "No pudimos guardar el estudio."
         );
       }
       throw failure;
@@ -169,8 +240,13 @@ export function StudyForm({
       </h3>
       {recovered && (
         <p role="status" className="text-sm text-muted-foreground">
-          Recuperamos tus cambios temporales. Revisalos antes de guardar.
+          {recovered.durable
+            ? "Recuperamos tu borrador guardado en el servidor. Revisalo antes de guardar."
+            : "Recuperamos tus cambios temporales. Revisalos antes de guardar."}
         </p>
+      )}
+      {conflicted && initial && (
+        <ClinicalCorrectionConflict patientId={patientId} kind="study" id={initial.id} />
       )}
       <form
         autoComplete="off"
@@ -180,7 +256,16 @@ export function StudyForm({
           prepare();
         }}
       >
-        <fieldset disabled={saving || review !== null || uncertain} className="space-y-4">
+        <fieldset
+          disabled={
+            recovery.draft.saving ||
+            saving ||
+            review !== null ||
+            uncertain ||
+            (initial === undefined && Boolean(creation.current.command))
+          }
+          className="space-y-4"
+        >
           <div>
             <label htmlFor="study-type" className="block text-sm font-medium">
               Tipo de estudio
@@ -239,14 +324,43 @@ export function StudyForm({
             {error}
           </p>
         )}
+        {initial !== undefined && (
+          <div>
+            <label htmlFor="study-correction-reason" className="block text-sm font-medium">
+              Motivo de la corrección
+            </label>
+            <textarea
+              id="study-correction-reason"
+              value={correctionReason}
+              onChange={(event) => setCorrectionReason(event.target.value)}
+              maxLength={2000}
+              required
+              disabled={saving || uncertain || conflicted}
+              className="mt-1 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+            />
+            <p className="text-xs text-muted-foreground">
+              Explicá por qué corregís este registro. Se conservará en el historial.
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={saving || uncertain || !dirty || review !== null}>
+          <Button
+            type="submit"
+            disabled={
+              recovery.draft.blocked ||
+              saving ||
+              uncertain ||
+              conflicted ||
+              !dirty ||
+              review !== null
+            }
+          >
             {initial === undefined ? "Revisar estudio" : "Revisar corrección"}
           </Button>
           <Button
             type="button"
             variant="outline"
-            disabled={saving}
+            disabled={saving || recovery.draft.saving}
             onClick={() => {
               if (uncertain) {
                 recovery.discard();
@@ -262,6 +376,10 @@ export function StudyForm({
           </Button>
         </div>
       </form>
+      <ClinicalDraftSave
+        draft={recovery.draft}
+        disabled={saving || review !== null || uncertain || conflicted}
+      />
       <ConfirmActionDialog
         open={review !== null}
         onOpenChange={(open) => {
@@ -276,12 +394,18 @@ export function StudyForm({
         confirmLabel="Guardar estudio"
         cancelLabel="Volver al formulario"
         confirmVariant="default"
-        confirmDisabled={uncertain}
+        confirmDisabled={recovery.draft.blocked || uncertain || conflicted}
         pending={saving}
         errorMessage={error}
         onConfirm={save}
       >
         <dl className="space-y-2 text-sm">
+          {initial !== undefined && (
+            <div>
+              <dt className="font-medium">Motivo de la corrección</dt>
+              <dd className="whitespace-pre-wrap break-words">{review?.correctionReason}</dd>
+            </div>
+          )}
           <div>
             <dt className="font-medium">Tipo de estudio</dt>
             <dd className="whitespace-pre-wrap break-words">{studyType}</dd>
