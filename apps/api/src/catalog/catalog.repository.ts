@@ -276,9 +276,14 @@ export class CatalogRepository {
   ): Promise<CatalogItemRow> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
+    const changes = buildUpdateData(data);
+    // Prisma returns count=0 for an empty update without executing SQL. An
+    // omitted-fields command is still valid: resolve tenant ownership inside
+    // this transaction so the service can co-commit its existing empty audit.
+    if (Object.keys(changes).length === 0) return this.findById(id, tx);
     const result = await client.catalogItem.updateMany({
       where: { id, tenantId },
-      data: buildUpdateData(data),
+      data: changes,
     });
     if (result.count === 0) {
       throw new DomainError("NOT_FOUND", CATALOG_ITEM_NOT_FOUND_MESSAGE);

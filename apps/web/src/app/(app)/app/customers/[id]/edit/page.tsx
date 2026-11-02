@@ -3,6 +3,8 @@
 import type { JSX } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ErrorState } from "@/components/feedback";
+import { customerError } from "../../customers-api";
 import { CustomerForm } from "../../customer-form";
 import { getCustomer, updateCustomer } from "../../customers-api";
 
@@ -21,6 +23,7 @@ export default function EditCustomerPage(): JSX.Element {
   });
 
   const mutation = useMutation({
+    retry: false,
     mutationFn: (body: Record<string, unknown>) => updateCustomer(id, body),
     onSuccess: (customer) => {
       queryClient.setQueryData(["customers", id], customer);
@@ -32,26 +35,19 @@ export default function EditCustomerPage(): JSX.Element {
   if (query.isLoading) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Loading customer...</p>
+        <p className="text-sm text-muted-foreground">Cargando cliente…</p>
       </div>
     );
   }
 
   if (query.error) {
-    return (
-      <div
-        role="alert"
-        className="mx-auto max-w-2xl rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
-      >
-        {query.error.message}
-      </div>
-    );
+    return <ErrorState message={customerError(query.error)} onRetry={() => void query.refetch()} />;
   }
 
   if (!query.data) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Customer not found.</p>
+        <p className="text-sm text-muted-foreground">No encontramos el cliente.</p>
       </div>
     );
   }
@@ -60,7 +56,7 @@ export default function EditCustomerPage(): JSX.Element {
     <div className="mx-auto max-w-2xl">
       <CustomerForm
         customer={query.data}
-        onSubmit={(body) => mutation.mutate(body)}
+        onSubmit={(body) => mutation.mutateAsync(body)}
         isPending={mutation.isPending}
         error={mutation.error}
       />

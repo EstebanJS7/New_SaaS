@@ -14,6 +14,7 @@ export default function NewCatalogItemPage(): JSX.Element {
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
+    retry: false,
     mutationFn: createCatalogItem,
     onSuccess: (item) => {
       void queryClient.invalidateQueries({ queryKey: ["catalog"] });
@@ -24,7 +25,7 @@ export default function NewCatalogItemPage(): JSX.Element {
   return (
     <div className="mx-auto max-w-2xl">
       <CatalogForm
-        onSubmit={(body) => mutation.mutate(body)}
+        onSubmit={(body) => mutation.mutateAsync(body)}
         isPending={mutation.isPending}
         error={mutation.error}
       />

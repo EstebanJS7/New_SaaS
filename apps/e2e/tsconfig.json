@@ -5,6 +5,16 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["clinical-specs/**/*", "specs/**/*", "support/**/*", "*.ts", "scripts/**/*"],
+  "include": [
+    "clinical-specs/**/*",
+    "customer-specs/**/*",
+    "patient-specs/**/*",
+    "catalog-specs/**/*",
+    "journey-specs/**/*",
+    "specs/**/*",
+    "support/**/*",
+    "*.ts",
+    "scripts/**/*"
+  ],
   "exclude": ["node_modules", "test-results", "playwright-report"]
 }

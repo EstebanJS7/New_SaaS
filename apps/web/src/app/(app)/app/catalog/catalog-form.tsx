@@ -1,7 +1,7 @@
 "use client";
 
 import type { JSX } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
@@ -16,11 +16,15 @@ import {
   CATALOG_ITEM_KINDS,
   CATALOG_REFERENCE_PRICE_CURRENCIES,
   listTaxRates,
+  catalogWriteBlocked,
   userFacingCatalogError,
   type CatalogItem,
   type CatalogItemKind,
   type CatalogReferencePriceCurrency,
 } from "./catalog-api";
+import { ErrorState } from "@/components/feedback";
+import { useCatalogExit } from "./catalog-form-interaction";
+import { formatEsPyDecimalInput, normalizeEsPyDecimalInput } from "@/lib/es-py-format";
 import { sortTaxRatesForDisplay } from "./tax-rate-order";
 
 const inputClassName =
@@ -30,10 +34,10 @@ const selectClassName =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 const KIND_LABELS: Record<CatalogItemKind, string> = {
-  PRODUCT: "Product",
-  SERVICE: "Service",
-  MEDICATION: "Medication",
-  SUPPLY: "Supply",
+  PRODUCT: "Producto",
+  SERVICE: "Servicio",
+  MEDICATION: "Medicamento",
+  SUPPLY: "Insumo",
 };
 
 /**
@@ -77,10 +81,14 @@ function itemToValues(item: CatalogItem): CatalogFormValues {
     name: item.name,
     kind: item.kind,
     taxRateId: item.taxRateId,
-    referencePriceAmount: item.referencePriceAmount ?? "",
+    referencePriceAmount:
+      item.referencePriceAmount === null ? "" : formatEsPyDecimalInput(item.referencePriceAmount),
     referencePriceCurrency:
       (item.referencePriceCurrency as CatalogReferencePriceCurrency | null) ?? "PYG",
-    lowStockThreshold: item.lowStockThreshold ?? "",
+    lowStockThreshold:
+      item.lowStockThreshold === null || item.lowStockThreshold === undefined
+        ? ""
+        : formatEsPyDecimalInput(item.lowStockThreshold),
   };
 }
 
@@ -146,7 +154,7 @@ function buildUpdateBody(values: CatalogFormValues, item: CatalogItem): Record<s
 
 interface CatalogFormProps {
   readonly item?: CatalogItem;
-  readonly onSubmit: (body: Record<string, unknown>) => void;
+  readonly onSubmit: (body: Record<string, unknown>) => Promise<unknown> | void;
   readonly isPending: boolean;
   readonly error: Error | null;
 }
@@ -166,82 +174,133 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
   const isEdit = item !== undefined;
   const initialValues = useMemo(() => (item ? itemToValues(item) : emptyValues()), [item]);
   const [values, setValues] = useState<CatalogFormValues>(initialValues);
-  const [localError, setLocalError] = useState<string | null>(null);
-
-  const rates = useQuery({ queryKey: ["catalog", "tax-rates"], queryFn: listTaxRates });
-
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const sending = useRef(false);
+  const exit = useCatalogExit(JSON.stringify(values) !== JSON.stringify(initialValues));
+  const blocked = catalogWriteBlocked(error);
+  const rates = useQuery({
+    queryKey: ["catalog", "tax-rates"],
+    queryFn: listTaxRates,
+    retry: false,
+  });
+  const unavailable = rates.isPending || rates.isError || !rates.data?.length;
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-
+    if (sending.current || isPending || blocked || unavailable) return;
+    const form = event.currentTarget;
+    const next: Record<string, string> = {};
     const name = values.name.trim();
-    if (!name) {
-      setLocalError("Name is required.");
+    if (!name) next.name = "Ingresá el nombre.";
+    else if (name.length > 200) next.name = "Usá hasta 200 caracteres.";
+    if (!values.taxRateId) next.taxRateId = "Seleccioná un impuesto.";
+    const amount = values.referencePriceAmount.trim()
+      ? normalizeEsPyDecimalInput(values.referencePriceAmount)
+      : "";
+    if (amount === null || (amount && !AMOUNT_PATTERN.test(amount)))
+      next.referencePriceAmount =
+        "Ingresá un importe no negativo: hasta 12 dígitos enteros y 2 decimales, con coma decimal.";
+    const threshold = values.lowStockThreshold.trim()
+      ? normalizeEsPyDecimalInput(values.lowStockThreshold)
+      : "";
+    if (
+      threshold === null ||
+      (threshold && (!THRESHOLD_PATTERN.test(threshold) || !/[1-9]/.test(threshold)))
+    )
+      next.lowStockThreshold =
+        "Ingresá un umbral mayor que cero: hasta 7 dígitos enteros y 3 decimales, con coma decimal.";
+    setErrors(next);
+    if (Object.keys(next).length) {
+      requestAnimationFrame(() => form.querySelector<HTMLElement>("[aria-invalid=true]")?.focus());
       return;
     }
-    if (!values.taxRateId) {
-      setLocalError("Select a tax rate.");
-      return;
+    // Normalization is a presentation boundary only; the wire stays exact decimal text.
+    const normalized = {
+      ...values,
+      referencePriceAmount: amount ?? "",
+      lowStockThreshold: threshold ?? "",
+    };
+    const body = isEdit && item ? buildUpdateBody(normalized, item) : buildCreateBody(normalized);
+    sending.current = true;
+    try {
+      await onSubmit(body);
+    } catch {
+      /* Mutation owner renders the safe error; values stay in memory. */
+    } finally {
+      sending.current = false;
     }
-    const amount = values.referencePriceAmount.trim();
-    if (amount && !AMOUNT_PATTERN.test(amount)) {
-      setLocalError("Reference price must be a non-negative decimal with at most 2 decimals.");
-      return;
-    }
-    const threshold = values.lowStockThreshold.trim();
-    if (threshold && (!THRESHOLD_PATTERN.test(threshold) || !(Number(threshold) > 0))) {
-      setLocalError("Low-stock threshold must be greater than zero with at most 3 decimals.");
-      return;
-    }
-
-    setLocalError(null);
-    const body = isEdit && item ? buildUpdateBody(values, item) : buildCreateBody(values);
-    onSubmit(body);
   }
 
   return (
-    <Card>
+    <Card lang="es-PY">
       <CardHeader>
-        <CardTitle>{isEdit ? "Edit catalog item" : "New catalog item"}</CardTitle>
+        <CardTitle>
+          <h1>{isEdit ? "Editar artículo" : "Nuevo artículo"}</h1>
+        </CardTitle>
         <CardDescription>
           {isEdit
-            ? "Update the item. The tax rate is required and stays selected."
-            : "Create a catalog item with one required tax rate."}
+            ? "Actualizá el artículo conservando su impuesto obligatorio."
+            : "Registrá un artículo con el impuesto que le corresponde."}
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {(localError ?? error) && (
+        {rates.isPending && <p role="status">Cargando impuestos…</p>}
+        {rates.error && (
+          <ErrorState
+            message={userFacingCatalogError(rates.error)}
+            onRetry={() => void rates.refetch()}
+          />
+        )}
+        {rates.isSuccess && !rates.data.length && (
+          <p role="status">
+            No hay impuestos disponibles. Solicitá la revisión del catálogo antes de guardar.
+          </p>
+        )}
+        {error && (
           <div
             role="alert"
             className="mb-4 rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
           >
-            {localError ?? (error ? userFacingCatalogError(error) : null)}
+            {userFacingCatalogError(error)}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          noValidate
+          onSubmit={(event) => void handleSubmit(event)}
+          onChange={() => setErrors({})}
+          className="space-y-4"
+        >
           <div className="space-y-2">
             <label htmlFor="name" className="text-sm font-medium">
-              Name
+              Nombre (obligatorio)
             </label>
             <input
               id="name"
+              aria-invalid={Boolean(errors.name)}
+              aria-describedby="name-hint"
               type="text"
               value={values.name}
               onChange={(event) =>
                 setValues((previous) => ({ ...previous, name: event.target.value }))
               }
               required
-              maxLength={200}
               disabled={isPending}
-              placeholder="How this item appears across the app"
+              placeholder="Nombre del artículo"
               className={inputClassName}
             />
+            <p
+              id="name-hint"
+              role={errors.name ? "alert" : undefined}
+              className={errors.name ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+            >
+              {errors.name ?? "Hasta 200 caracteres."}
+            </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <label htmlFor="kind" className="text-sm font-medium">
-                Kind
+                Tipo de artículo
               </label>
               <select
                 id="kind"
@@ -265,40 +324,48 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
 
             <div className="space-y-2">
               <label htmlFor="taxRateId" className="text-sm font-medium">
-                Tax rate
+                Impuesto (obligatorio)
               </label>
               <select
                 id="taxRateId"
+                aria-invalid={Boolean(errors.taxRateId)}
+                aria-describedby="taxRateId-hint"
                 value={values.taxRateId}
                 onChange={(event) =>
                   setValues((previous) => ({ ...previous, taxRateId: event.target.value }))
                 }
                 required
-                disabled={isPending || rates.isLoading}
+                disabled={isPending || unavailable}
                 className={selectClassName}
               >
-                <option value="">Select tax rate</option>
+                <option value="">Seleccioná un impuesto</option>
                 {sortTaxRatesForDisplay(rates.data ?? []).map((rate) => (
                   <option key={rate.id} value={rate.id}>
                     {rate.name}
                   </option>
                 ))}
               </select>
-              {rates.error && (
-                <p role="alert" className="text-xs text-destructive">
-                  {rates.error.message}
-                </p>
-              )}
+              <p
+                id="taxRateId-hint"
+                role={errors.taxRateId ? "alert" : undefined}
+                className={
+                  errors.taxRateId ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+                }
+              >
+                {errors.taxRateId ?? "Seleccioná un impuesto de la lista disponible."}
+              </p>
             </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <label htmlFor="referencePriceAmount" className="text-sm font-medium">
-                Reference price
+                Precio de referencia (opcional)
               </label>
               <input
                 id="referencePriceAmount"
+                aria-invalid={Boolean(errors.referencePriceAmount)}
+                aria-describedby="referencePriceAmount-hint"
                 type="text"
                 inputMode="decimal"
                 value={values.referencePriceAmount}
@@ -309,14 +376,26 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
                   }))
                 }
                 disabled={isPending}
-                placeholder="Optional amount"
+                placeholder="Ej.: 120.000,50"
                 className={inputClassName}
               />
+              <p
+                id="referencePriceAmount-hint"
+                role={errors.referencePriceAmount ? "alert" : undefined}
+                className={
+                  errors.referencePriceAmount
+                    ? "text-xs text-destructive"
+                    : "text-xs text-muted-foreground"
+                }
+              >
+                {errors.referencePriceAmount ??
+                  "Usá coma decimal y, si querés, puntos de miles. Hasta 2 decimales. Vaciar al editar quita importe y moneda."}
+              </p>
             </div>
 
             <div className="space-y-2">
               <label htmlFor="referencePriceCurrency" className="text-sm font-medium">
-                Currency
+                Moneda
               </label>
               <select
                 id="referencePriceCurrency"
@@ -339,16 +418,17 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            The reference price is informational. It is stored as an exact amount and currency; it
-            is never a sale, invoice or fiscal total.
+            El precio de referencia es informativo y conserva el importe y la moneda exactos. No
+            representa un total de venta, factura o documento fiscal.
           </p>
 
           <div className="space-y-2">
             <label htmlFor="lowStockThreshold" className="text-sm font-medium">
-              Low-stock threshold
+              Umbral de stock bajo (opcional)
             </label>
             <input
               id="lowStockThreshold"
+              aria-invalid={Boolean(errors.lowStockThreshold)}
               type="text"
               inputMode="decimal"
               value={values.lowStockThreshold}
@@ -359,31 +439,45 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
                 }))
               }
               disabled={isPending}
-              placeholder="Leave empty if this item is not monitored"
+              placeholder="Ej.: 10,500; vacío para no hacer seguimiento"
               aria-describedby="lowStockThreshold-hint"
               className={inputClassName}
             />
-            <p id="lowStockThreshold-hint" className="text-xs text-muted-foreground">
-              Optional quantity, at most 3 decimals. When the stock balance falls to or below it the
-              item is reported as low stock. Leave it empty and the item is not monitored, so it
-              never appears in that report.
+            <p
+              id="lowStockThreshold-hint"
+              role={errors.lowStockThreshold ? "alert" : undefined}
+              className={
+                errors.lowStockThreshold
+                  ? "text-xs text-destructive"
+                  : "text-xs text-muted-foreground"
+              }
+            >
+              {errors.lowStockThreshold ??
+                "Cantidad opcional, hasta 3 decimales. El reporte de stock bajo compara el saldo con este umbral. Vacío significa sin seguimiento; vaciarlo al editar quita el umbral. Esto no modifica existencias. Usá coma decimal y, opcionalmente, puntos de miles."}
             </p>
           </div>
 
+          <p className="text-xs text-muted-foreground">
+            Los cambios sin guardar se mantienen solo en esta pantalla. Recargar o salir los
+            descarta.
+          </p>
           <div className="flex flex-wrap items-center gap-3 pt-4">
-            <Button type="submit" disabled={isPending}>
-              {isPending ? "Saving..." : isEdit ? "Save changes" : "Create item"}
+            <Button type="submit" disabled={isPending || blocked || unavailable}>
+              {isPending ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear artículo"}
             </Button>
             <Button
               type="button"
               variant="outline"
-              onClick={() => router.back()}
+              onClick={() =>
+                exit.leave(() => router.push(isEdit ? `/app/catalog/${item.id}` : "/app/catalog"))
+              }
               disabled={isPending}
             >
-              Cancel
+              Cancelar
             </Button>
           </div>
         </form>
+        {exit.dialog}
       </CardContent>
     </Card>
   );

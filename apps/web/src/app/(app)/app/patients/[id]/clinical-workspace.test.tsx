@@ -614,7 +614,7 @@ describe("ClinicalWorkspace", () => {
     let attempt = 0;
     let diagnosis: string | null = "Soft tissue injury";
     mockClinical({
-      list: () => jsonResponse([{ ...DRAFT, version }]),
+      list: () => jsonResponse([{ ...DRAFT, version, diagnosis }]),
       save: (body) => {
         attempt += 1;
         if (attempt === 1) {
@@ -659,7 +659,11 @@ describe("ClinicalWorkspace", () => {
     await flushAutosave();
 
     expect(await screen.findByText("Borrador guardado.")).toBeInTheDocument();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // An independently failed links read may have its own alert; the autosave
+    // conflict must be gone and the successful second attempt must preserve edits.
+    expect(screen.queryByRole("button", { name: "Cargar versión actual" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Diagnóstico")).toHaveValue("Unsaved diagnosis");
+    expect(attempt).toBe(2);
   });
 
   it("suspends autosave across a delayed conflict reload and adopts the refreshed version", async () => {

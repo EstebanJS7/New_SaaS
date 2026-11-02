@@ -86,69 +86,80 @@ export interface CatalogItemFilters {
   readonly isActive?: boolean;
 }
 
-interface ApiErrorEnvelope {
-  readonly error: {
-    readonly code?: string;
-    readonly message?: string;
-  };
-}
-
-/**
- * Carries the stable API error code so the UI branches on the contract instead
- * of fragile message matching. `message` remains the server-provided text.
- */
+/** Stable status/code plus an explicit uncertain outcome for catalog commands. */
 export class ApiRequestError extends Error {
-  readonly code: string;
-  readonly status: number;
-
-  constructor(code: string, message: string, status: number) {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number,
+    readonly uncertain = false
+  ) {
     super(message);
     this.name = "ApiRequestError";
-    this.code = code;
-    this.status = status;
   }
 }
 
-async function parseError(response: Response): Promise<ApiRequestError> {
-  const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
+async function parseError(response: Response, mutation = false): Promise<ApiRequestError> {
+  const body: unknown = await response.json().catch(() => null);
+  const envelope = typeof body === "object" && body !== null && "error" in body ? body.error : null;
+  const fallback: Record<number, string> = {
+    400: "VALIDATION_FAILED",
+    401: "UNAUTHENTICATED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+  };
+  const code =
+    typeof envelope === "object" &&
+    envelope !== null &&
+    "code" in envelope &&
+    typeof envelope.code === "string"
+      ? envelope.code
+      : (fallback[response.status] ?? "UNKNOWN");
   return new ApiRequestError(
-    body.error?.code ?? "UNKNOWN",
-    body.error?.message ?? `Request failed (${response.status})`,
-    response.status
+    code,
+    "Solicitud de catálogo rechazada.",
+    response.status,
+    mutation && (response.status >= 500 || response.status === 408)
   );
 }
-
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`/api/catalog${path}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw await parseError(response);
+async function request<T>(
+  path: string,
+  method: "GET" | "POST" | "PUT",
+  body?: unknown
+): Promise<T> {
+  const mutation = method !== "GET";
+  let response: Response;
+  try {
+    response = await fetch(`/api/catalog${path}`, {
+      ...(mutation && {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      cache: "no-store",
+    });
+  } catch {
+    throw new ApiRequestError("NETWORK_ERROR", "Conexión no disponible.", 0, mutation);
   }
-  return response.json() as Promise<T>;
+  if (!response.ok) throw await parseError(response, mutation);
+  const payload: unknown = await response.json().catch(() => null);
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    (mutation && (!("id" in payload) || typeof payload.id !== "string" || !payload.id))
+  )
+    throw new ApiRequestError(
+      "MALFORMED_RESPONSE",
+      "Respuesta no confirmada.",
+      response.status,
+      mutation
+    );
+  return payload as T;
 }
-
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`/api/catalog${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-  return response.json() as Promise<T>;
-}
-
-async function putJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`/api/catalog${path}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-  return response.json() as Promise<T>;
-}
+const getJson = <T>(path: string) => request<T>(path, "GET");
+const postJson = <T>(path: string, body: unknown) => request<T>(path, "POST", body);
+const putJson = <T>(path: string, body: unknown) => request<T>(path, "PUT", body);
 
 /**
  * Builds the list query from the defined filters only, in the order the proxy
@@ -197,13 +208,10 @@ export function deactivateCatalogItem(id: string): Promise<CatalogItem> {
   return postJson(`/${id}/deactivate`, {});
 }
 
-/**
- * Maps the stable catalog error contract to staff-facing UX copy.
- *
- * These messages are UX-only; the backend still enforces every gate, and any
- * unmapped code falls through to the server message.
- */
-export function userFacingCatalogError(error: Error): string {
+/** UX-only; arbitrary server messages never reach the rendered surface. */
+export function userFacingCatalogError(error: unknown): string {
+  if (error instanceof ApiRequestError && error.uncertain)
+    return "No pudimos confirmar el resultado. Revisá el artículo antes de repetir la operación; no volveremos a enviarla automáticamente.";
   const code = error instanceof ApiRequestError ? error.code : "";
   switch (code) {
     case "UNAUTHENTICATED":
@@ -214,7 +222,16 @@ export function userFacingCatalogError(error: Error): string {
       return "El catálogo no está habilitado para esta organización.";
     case "NOT_FOUND":
       return "No encontramos el artículo del catálogo.";
+    case "VALIDATION_FAILED":
+      return "Revisá los campos y sus límites antes de guardar.";
+    case "CONFLICT":
+      return "El artículo no admite este cambio. Revisá su estado actual.";
     default:
-      return error.message;
+      return "No pudimos completar la solicitud del catálogo. Revisá la conexión y volvé a intentar.";
   }
+}
+export function catalogWriteBlocked(error: unknown): boolean {
+  return (
+    error instanceof ApiRequestError && (error.uncertain || [401, 403, 404].includes(error.status))
+  );
 }

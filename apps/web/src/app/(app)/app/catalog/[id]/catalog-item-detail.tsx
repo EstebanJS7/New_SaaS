@@ -4,6 +4,8 @@ import type { JSX } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { ErrorState } from "@/components/feedback";
+import { formatStaffMoney, formatEsPyDecimal } from "@/lib/es-py-format";
 import { Button } from "@newsaas/ui/components/ui/button";
 import {
   Card,
@@ -21,10 +23,10 @@ import {
 } from "../catalog-api";
 
 const KIND_LABELS: Record<CatalogItemKind, string> = {
-  PRODUCT: "Product",
-  SERVICE: "Service",
-  MEDICATION: "Medication",
-  SUPPLY: "Supply",
+  PRODUCT: "Producto",
+  SERVICE: "Servicio",
+  MEDICATION: "Medicamento",
+  SUPPLY: "Insumo",
 };
 
 /** 403 FORBIDDEN is the permission gate; other 403s (entitlement) keep their own copy. */
@@ -34,13 +36,13 @@ function isPermissionDenied(error: Error): boolean {
 
 /**
  * The reference price travels as the API's exact two-decimal text; the browser
- * never sums, rounds or reformats it, and only the currency label is appended.
+ * uses exact es-PY display without sums, rounding or currency conversion.
  */
 function referencePriceLabel(item: CatalogItem): string {
   if (item.referencePriceAmount === null || item.referencePriceCurrency === null) {
-    return "Not set";
+    return "Sin precio informado";
   }
-  return `${item.referencePriceAmount} ${item.referencePriceCurrency}`;
+  return formatStaffMoney(item.referencePriceAmount, item.referencePriceCurrency);
 }
 
 function DetailRow({
@@ -51,9 +53,9 @@ function DetailRow({
   readonly value: string;
 }): JSX.Element {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-border pb-3 last:border-b-0 last:pb-0">
+    <div className="flex flex-col gap-1 border-b sm:flex-row sm:items-start sm:justify-between sm:gap-4 border-border pb-3 last:border-b-0 last:pb-0">
       <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-medium text-foreground">{value}</span>
+      <span className="break-words font-medium text-foreground sm:text-right">{value}</span>
     </div>
   );
 }
@@ -76,43 +78,44 @@ export function CatalogItemDetail(): JSX.Element {
   const query = useQuery({
     queryKey: ["catalog", "item", itemId],
     queryFn: () => getCatalogItem(itemId),
+    retry: false,
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading catalog item...</p>;
+    return <p className="text-sm text-muted-foreground">Cargando artículo…</p>;
   }
 
   if (query.error) {
     return (
-      <div
-        role="alert"
-        className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
-      >
-        {isPermissionDenied(query.error) && <p className="font-medium">Permission denied</p>}
-        <p>{userFacingCatalogError(query.error)}</p>
-      </div>
+      <ErrorState
+        title={isPermissionDenied(query.error) ? "Acceso denegado" : undefined}
+        message={userFacingCatalogError(query.error)}
+        onRetry={() => void query.refetch()}
+      />
     );
   }
 
   const item = query.data;
   if (!item) {
-    return <p className="text-sm text-muted-foreground">Catalog item not found.</p>;
+    return (
+      <p className="text-sm text-muted-foreground">No encontramos el artículo del catálogo.</p>
+    );
   }
 
   return (
     <div className="space-y-6">
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <h1 className="truncate text-2xl font-semibold tracking-tight">{item.name}</h1>
+              <h1 className="break-words text-2xl font-semibold tracking-tight">{item.name}</h1>
               <p className="text-sm text-muted-foreground">
                 {KIND_LABELS[item.kind]} · {item.taxRate.name}
               </p>
             </div>
             <div className="flex shrink-0 gap-2">
               <Button type="button" variant="outline" asChild>
-                <Link href={`/app/catalog/${item.id}/edit`}>Edit</Link>
+                <Link href={`/app/catalog/${item.id}/edit`}>Editar artículo</Link>
               </Button>
             </div>
           </div>
@@ -121,16 +124,24 @@ export function CatalogItemDetail(): JSX.Element {
 
       <Card>
         <CardHeader>
-          <CardTitle>Item details</CardTitle>
+          <CardTitle>Datos del artículo</CardTitle>
           <CardDescription>
-            Read-only view. Tax rates are global; this item only selects one.
+            Vista de lectura. Los impuestos son globales; cada artículo selecciona uno.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <DetailRow label="Kind" value={KIND_LABELS[item.kind]} />
-          <DetailRow label="Tax rate" value={item.taxRate.name} />
-          <DetailRow label="Reference price" value={referencePriceLabel(item)} />
-          <DetailRow label="Status" value={item.isActive ? "Active" : "Inactive"} />
+          <DetailRow label="Tipo" value={KIND_LABELS[item.kind]} />
+          <DetailRow label="Impuesto" value={item.taxRate.name} />
+          <DetailRow label="Precio de referencia" value={referencePriceLabel(item)} />
+          <DetailRow
+            label="Umbral de stock bajo"
+            value={
+              item.lowStockThreshold === null || item.lowStockThreshold === undefined
+                ? "Sin umbral informado"
+                : formatEsPyDecimal(item.lowStockThreshold)
+            }
+          />
+          <DetailRow label="Estado" value={item.isActive ? "Activo" : "Inactivo"} />
         </CardContent>
       </Card>
     </div>

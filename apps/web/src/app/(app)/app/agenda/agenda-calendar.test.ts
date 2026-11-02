@@ -41,7 +41,7 @@ describe("agenda-calendar event mapping", () => {
   it("maps an appointment to an all-day-free event carrying the allowlisted times and status", () => {
     expect(appointmentToEvent(APPOINTMENT)).toEqual({
       id: APPOINTMENT.id,
-      title: "CONFIRMED",
+      title: "Confirmado",
       start: "2026-09-14T12:00:00.000Z",
       end: "2026-09-14T12:45:00.000Z",
       allDay: false,
@@ -60,7 +60,7 @@ describe("agenda-calendar event mapping", () => {
 
     expect(appointmentToEvent(linked)).toEqual({
       id: APPOINTMENT.id,
-      title: "CONFIRMED",
+      title: "Confirmado",
       start: APPOINTMENT.startAt,
       end: APPOINTMENT.endAt,
       allDay: false,
@@ -82,7 +82,7 @@ describe("agenda-calendar event mapping", () => {
     expect(event.id).not.toBe(APPOINTMENT.id);
     expect(event.extendedProps).toEqual({ kind: "booking-request" });
     expect(event.editable).toBe(false);
-    expect(event.title).toBe("REQUEST");
+    expect(event.title).toBe("Solicitud");
     expect(event.start).toBe(request.startAt);
     expect(event.end).toBe(request.endAt);
     expect(bookingRequestEventId(APPOINTMENT.id)).toBe(event.id);

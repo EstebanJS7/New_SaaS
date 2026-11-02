@@ -259,7 +259,7 @@ describe("PatientDetail", () => {
     );
 
     expect(await screen.findByText("Cargando paciente…")).toBeInTheDocument();
-    expect(screen.getByText("Cargando responsables…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Vincular responsable" })).not.toBeInTheDocument();
   });
 
   it("renders the empty guardian state for a patient with no links", async () => {
@@ -473,5 +473,74 @@ describe("PatientDetail", () => {
         )
       )
     ).toBe(true);
+  });
+});
+
+describe("Patient identity failures", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("does not mount child commands after a denied patient read", async () => {
+    const fetchMock = mockWorkflow({
+      patient: () => jsonResponse({ error: { code: "NOT_FOUND", message: "PRIVATE" } }, 404),
+    });
+    render(
+      <TestWrapper>
+        <PatientDetail />
+      </TestWrapper>
+    );
+    await screen.findByText("No encontramos el paciente.");
+    expect(screen.queryByRole("button", { name: "Vincular responsable" })).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.every(([input]) =>
+        resolveRequestUrl(input as RequestInfo | URL).endsWith(PATIENT_ID)
+      )
+    ).toBe(true);
+    expect(screen.queryByText("PRIVATE")).not.toBeInTheDocument();
+  });
+  it.each(["guardians", "customers"] as const)(
+    "does not infer guardian management from failed %s read",
+    async (read) => {
+      mockWorkflow({
+        [read]: () => jsonResponse({ error: { code: "FORBIDDEN", message: "PRIVATE" } }, 403),
+      });
+      render(
+        <TestWrapper>
+          <PatientDetail />
+        </TestWrapper>
+      );
+      await screen.findByText(
+        read === "guardians"
+          ? "No tenés permiso para gestionar pacientes."
+          : "No tenés permiso para realizar esta acción sobre clientes."
+      );
+      expect(
+        screen.queryByRole("button", { name: "Vincular responsable" })
+      ).not.toBeInTheDocument();
+    }
+  );
+  it("retains and blocks an uncertain guardian link without automatic retry", async () => {
+    const fetchMock = mockWorkflow({
+      guardians: () => jsonResponse([]),
+      createGuardian: () => Promise.reject(new TypeError("PRIVATE")),
+    });
+    render(
+      <TestWrapper>
+        <PatientDetail />
+      </TestWrapper>
+    );
+    fireEvent.change(await screen.findByRole("combobox", { name: "Cliente a vincular" }), {
+      target: { value: "customer-2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Vincular responsable" }));
+    await screen.findByText(/No pudimos confirmar el resultado/);
+    expect(screen.getByRole("combobox", { name: "Cliente a vincular" })).toHaveValue("customer-2");
+    expect(screen.getByRole("button", { name: "Vincular responsable" })).toBeDisabled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, init]) =>
+          (init as RequestInit | undefined)?.method === "POST" &&
+          typeof (init as RequestInit).body === "string" &&
+          ((init as RequestInit).body as string).includes("customer-2")
+      )
+    ).toHaveLength(1);
   });
 });

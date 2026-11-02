@@ -16,7 +16,7 @@ import {
   type CatalogSearchInput,
 } from "./catalog-search-api";
 import {
-  ApiRequestError,
+  catalogWriteBlocked,
   CATALOG_ITEM_KINDS,
   deactivateCatalogItem,
   userFacingCatalogError,
@@ -26,10 +26,7 @@ import { formatStaffMoney } from "@/lib/es-py-format";
 import { useCatalogListState } from "./catalog-list-state";
 
 function catalogActionError(error: Error): string {
-  return error instanceof ApiRequestError &&
-    ["UNAUTHENTICATED", "FORBIDDEN", "FEATURE_NOT_ENTITLED", "NOT_FOUND"].includes(error.code)
-    ? userFacingCatalogError(error)
-    : "No pudimos actualizar el artículo. Revisá la conexión y volvé a intentar.";
+  return userFacingCatalogError(error);
 }
 const KIND_LABELS: Record<CatalogItemKind, string> = {
   PRODUCT: "Producto",
@@ -49,6 +46,7 @@ function CatalogItemCard({ item }: { readonly item: CatalogSearchRow }): JSX.Ele
   const queryClient = useQueryClient();
   const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
   const mutation = useMutation({
+    retry: false,
     mutationFn: () => deactivateCatalogItem(item.id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["catalog"] });
@@ -92,7 +90,7 @@ function CatalogItemCard({ item }: { readonly item: CatalogSearchRow }): JSX.Ele
           variant="outline"
           size="sm"
           onClick={() => setConfirmDeactivateOpen(true)}
-          disabled={mutation.isPending || !item.isActive}
+          disabled={mutation.isPending || catalogWriteBlocked(mutation.error) || !item.isActive}
           loading={mutation.isPending}
         >
           {mutation.isPending ? "Desactivando…" : "Desactivar"}
@@ -108,6 +106,7 @@ function CatalogItemCard({ item }: { readonly item: CatalogSearchRow }): JSX.Ele
         confirmLabel="Desactivar artículo"
         pendingLabel="Desactivando…"
         pending={mutation.isPending}
+        confirmDisabled={catalogWriteBlocked(mutation.error)}
         errorMessage={mutation.error ? catalogActionError(mutation.error) : undefined}
         onConfirm={() => mutation.mutateAsync()}
       />

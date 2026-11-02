@@ -9,11 +9,11 @@ export default function ErrorBoundary({
 }) {
   return (
     <div className="mx-auto max-w-2xl py-12">
-      <h1 className="mb-3 text-2xl font-semibold">This page needs another try</h1>
+      <h1 className="mb-3 text-2xl font-semibold">No pudimos abrir esta página</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        Your workspace is still available. Retry this page or choose another section from the menu.
+        Tu espacio de trabajo sigue disponible. Volvé a intentar o elegí otra sección del menú.
       </p>
-      <ErrorState message="An unexpected error prevented this page from opening." onRetry={reset} />
+      <ErrorState message="Ocurrió un error inesperado al abrir esta página." onRetry={reset} />
     </div>
   );
 }

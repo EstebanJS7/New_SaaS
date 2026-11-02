@@ -14,6 +14,7 @@ export default function NewPatientPage(): JSX.Element {
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
+    retry: false,
     mutationFn: createPatient,
     onSuccess: (patient) => {
       queryClient.setQueryData(["patients"], (previous: unknown) => {
@@ -27,7 +28,7 @@ export default function NewPatientPage(): JSX.Element {
   return (
     <div className="mx-auto max-w-2xl">
       <PatientForm
-        onSubmit={(body) => mutation.mutate(body)}
+        onSubmit={(body) => mutation.mutateAsync(body)}
         isPending={mutation.isPending}
         error={mutation.error}
       />

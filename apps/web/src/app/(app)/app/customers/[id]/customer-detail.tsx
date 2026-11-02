@@ -1,18 +1,22 @@
 "use client";
-
-import type { JSX, ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
-import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
+  CardDescription,
 } from "@newsaas/ui/components/ui/card";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { ErrorState, ListSkeleton } from "@/components/feedback";
+import {
+  CustomerField,
+  useCustomerValidation,
+  useCustomerExit,
+} from "../customer-form-interaction";
 import {
   createAddress,
   createContact,
@@ -22,25 +26,21 @@ import {
   getCustomer,
   listAddresses,
   listContacts,
+  customerError,
+  customerWriteBlocked,
   type CustomerAddress,
   type CustomerContact,
 } from "../customers-api";
 
-const inputClassName =
-  "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
-
-const selectClassName =
-  "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
-
-function SectionCard({
+function Section({
   title,
   description,
   children,
 }: {
-  readonly title: string;
-  readonly description: string;
-  readonly children: ReactNode;
-}): JSX.Element {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -51,21 +51,32 @@ function SectionCard({
     </Card>
   );
 }
-
-function AddAddressForm({ customerId }: { readonly customerId: string }): JSX.Element {
-  const queryClient = useQueryClient();
-  const [values, setValues] = useState({
-    label: "",
-    line1: "",
-    line2: "",
-    city: "",
-    state: "",
-    postalCode: "",
-    countryCode: "",
-  });
+const emptyAddress = {
+  label: "",
+  line1: "",
+  line2: "",
+  city: "",
+  state: "",
+  postalCode: "",
+  countryCode: "",
+};
+function AddAddressForm({
+  customerId,
+  onDirty,
+}: {
+  customerId: string;
+  onDirty: (value: boolean) => void;
+}) {
+  const client = useQueryClient();
+  const [values, setValues] = useState(emptyAddress);
   const [success, setSuccess] = useState(false);
-
+  const validation = useCustomerValidation();
+  useEffect(
+    () => onDirty(JSON.stringify(values) !== JSON.stringify(emptyAddress)),
+    [values, onDirty]
+  );
   const mutation = useMutation({
+    retry: false,
     mutationFn: () =>
       createAddress(customerId, {
         label: values.label.trim() || undefined,
@@ -77,126 +88,87 @@ function AddAddressForm({ customerId }: { readonly customerId: string }): JSX.El
         countryCode: values.countryCode.trim() || undefined,
       }),
     onSuccess: () => {
-      setValues({
-        label: "",
-        line1: "",
-        line2: "",
-        city: "",
-        state: "",
-        postalCode: "",
-        countryCode: "",
-      });
+      setValues(emptyAddress);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-      void queryClient.invalidateQueries({ queryKey: ["customers", customerId, "addresses"] });
+      void client.invalidateQueries({ queryKey: ["customers", customerId, "addresses"] });
     },
   });
-
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    mutation.mutate();
-  }
-
+  const blocked = mutation.isPending || customerWriteBlocked(mutation.error);
+  const fields = [
+    { key: "label", label: "Etiqueta de dirección", limit: 100 },
+    { key: "line1", label: "Dirección", limit: 200 },
+    { key: "line2", label: "Complemento", limit: 200 },
+    { key: "city", label: "Ciudad", limit: 100 },
+    { key: "state", label: "Departamento o estado", limit: 100 },
+    { key: "postalCode", label: "Código postal", limit: 20 },
+    { key: "countryCode", label: "Código de país", limit: 2 },
+  ];
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form
+      noValidate
+      onChange={(event) => {
+        if (event.target instanceof HTMLInputElement) validation.clear(event.target.id);
+      }}
+      className="space-y-3"
+      onSubmit={(e) => void validation.submit(e, () => mutation.mutateAsync(), blocked)}
+    >
       {mutation.error && (
-        <div
-          role="alert"
-          className="rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
-        >
-          {mutation.error.message}
-        </div>
+        <p role="alert" className="text-sm text-destructive">
+          {customerError(mutation.error)}
+        </p>
       )}
-      {success && <span className="text-sm text-status-success">Address added.</span>}
+      {success && (
+        <p role="status" className="text-sm text-status-success">
+          Dirección agregada.
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
-        <input
-          type="text"
-          placeholder="Label (e.g. Billing)"
-          value={values.label}
-          onChange={(event) =>
-            setValues((previous) => ({ ...previous, label: event.target.value }))
-          }
-          disabled={mutation.isPending}
-          className={inputClassName}
-        />
-        <input
-          type="text"
-          placeholder="Line 1 *"
-          value={values.line1}
-          onChange={(event) =>
-            setValues((previous) => ({ ...previous, line1: event.target.value }))
-          }
-          required
-          disabled={mutation.isPending}
-          className={inputClassName}
-        />
-        <input
-          type="text"
-          placeholder="Line 2"
-          value={values.line2}
-          onChange={(event) =>
-            setValues((previous) => ({ ...previous, line2: event.target.value }))
-          }
-          disabled={mutation.isPending}
-          className={inputClassName}
-        />
-        <input
-          type="text"
-          placeholder="City"
-          value={values.city}
-          onChange={(event) => setValues((previous) => ({ ...previous, city: event.target.value }))}
-          disabled={mutation.isPending}
-          className={inputClassName}
-        />
-        <input
-          type="text"
-          placeholder="State"
-          value={values.state}
-          onChange={(event) =>
-            setValues((previous) => ({ ...previous, state: event.target.value }))
-          }
-          disabled={mutation.isPending}
-          className={inputClassName}
-        />
-        <input
-          type="text"
-          placeholder="Postal code"
-          value={values.postalCode}
-          onChange={(event) =>
-            setValues((previous) => ({ ...previous, postalCode: event.target.value }))
-          }
-          disabled={mutation.isPending}
-          className={inputClassName}
-        />
-        <input
-          type="text"
-          placeholder="Country code (2 letters)"
-          value={values.countryCode}
-          onChange={(event) =>
-            setValues((previous) => ({ ...previous, countryCode: event.target.value }))
-          }
-          disabled={mutation.isPending}
-          className={inputClassName}
-        />
+        {fields.map((field) => {
+          const key = field.key as keyof typeof values;
+          const id = "address-" + key;
+          return (
+            <CustomerField
+              key={key}
+              id={id}
+              label={field.label}
+              limit={field.limit}
+              exact={key === "countryCode"}
+              required={key === "line1"}
+              disabled={blocked}
+              value={values[key]}
+              error={validation.errors[id]}
+              onChange={(e) => {
+                setSuccess(false);
+                setValues({ ...values, [key]: e.target.value });
+              }}
+            />
+          );
+        })}
       </div>
-      <Button type="submit" disabled={mutation.isPending}>
-        {mutation.isPending ? "Adding..." : "Add address"}
+      <Button type="submit" loading={mutation.isPending} disabled={blocked}>
+        Agregar dirección
       </Button>
     </form>
   );
 }
-
-function AddContactForm({ customerId }: { readonly customerId: string }): JSX.Element {
-  const queryClient = useQueryClient();
-  const [values, setValues] = useState({
-    kind: "EMAIL" as "EMAIL" | "PHONE",
-    label: "",
-    value: "",
-    isPrimary: false,
-  });
+const emptyContact = { kind: "EMAIL" as "EMAIL" | "PHONE", label: "", value: "", isPrimary: false };
+function AddContactForm({
+  customerId,
+  onDirty,
+}: {
+  customerId: string;
+  onDirty: (value: boolean) => void;
+}) {
+  const client = useQueryClient();
+  const [values, setValues] = useState(emptyContact);
   const [success, setSuccess] = useState(false);
-
+  const validation = useCustomerValidation();
+  useEffect(
+    () => onDirty(JSON.stringify(values) !== JSON.stringify(emptyContact)),
+    [values, onDirty]
+  );
   const mutation = useMutation({
+    retry: false,
     mutationFn: () =>
       createContact(customerId, {
         kind: values.kind,
@@ -205,339 +177,324 @@ function AddContactForm({ customerId }: { readonly customerId: string }): JSX.El
         isPrimary: values.isPrimary,
       }),
     onSuccess: () => {
-      setValues({ kind: "EMAIL", label: "", value: "", isPrimary: false });
+      setValues(emptyContact);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-      void queryClient.invalidateQueries({ queryKey: ["customers", customerId, "contacts"] });
+      void client.invalidateQueries({ queryKey: ["customers", customerId, "contacts"] });
     },
   });
-
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    mutation.mutate();
-  }
-
+  const blocked = mutation.isPending || customerWriteBlocked(mutation.error);
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form
+      noValidate
+      onChange={(event) => {
+        if (event.target instanceof HTMLInputElement) validation.clear(event.target.id);
+      }}
+      className="space-y-3"
+      onSubmit={(e) => void validation.submit(e, () => mutation.mutateAsync(), blocked)}
+    >
       {mutation.error && (
-        <div
-          role="alert"
-          className="rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
-        >
-          {mutation.error.message}
-        </div>
+        <p role="alert" className="text-sm text-destructive">
+          {customerError(mutation.error)}
+        </p>
       )}
-      {success && <span className="text-sm text-status-success">Contact added.</span>}
-      <div className="grid gap-3 sm:grid-cols-4">
-        <select
-          value={values.kind}
-          onChange={(event) =>
-            setValues((previous) => ({
-              ...previous,
-              kind: event.target.value as "EMAIL" | "PHONE",
-            }))
-          }
-          disabled={mutation.isPending}
-          className={selectClassName}
-        >
-          <option value="EMAIL">Email</option>
-          <option value="PHONE">Phone</option>
-        </select>
-        <input
-          type="text"
-          placeholder="Label"
+      {success && (
+        <p role="status" className="text-sm text-status-success">
+          Contacto agregado.
+        </p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label htmlFor="contact-kind" className="text-sm font-medium">
+            Tipo de contacto
+          </label>
+          <select
+            id="contact-kind"
+            value={values.kind}
+            disabled={blocked}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            onChange={(e) => {
+              setSuccess(false);
+              setValues({ ...values, kind: e.target.value === "PHONE" ? "PHONE" : "EMAIL" });
+            }}
+          >
+            <option value="EMAIL">Correo electrónico</option>
+            <option value="PHONE">Teléfono</option>
+          </select>
+        </div>
+        <CustomerField
+          id="contact-label"
+          label="Etiqueta del contacto"
+          limit={100}
+          disabled={blocked}
           value={values.label}
-          onChange={(event) =>
-            setValues((previous) => ({ ...previous, label: event.target.value }))
-          }
-          disabled={mutation.isPending}
-          className={inputClassName}
+          error={validation.errors["contact-label"]}
+          onChange={(e) => {
+            setSuccess(false);
+            setValues({ ...values, label: e.target.value });
+          }}
         />
-        <input
-          type="text"
-          placeholder={values.kind === "EMAIL" ? "email@example.com" : "+1 555 0000"}
-          value={values.value}
-          onChange={(event) =>
-            setValues((previous) => ({ ...previous, value: event.target.value }))
-          }
+        <CustomerField
+          id="contact-value"
+          label={values.kind === "EMAIL" ? "Correo electrónico" : "Teléfono"}
+          limit={255}
           required
-          disabled={mutation.isPending}
-          className={inputClassName}
+          disabled={blocked}
+          value={values.value}
+          error={validation.errors["contact-value"]}
+          onChange={(e) => {
+            setSuccess(false);
+            setValues({ ...values, value: e.target.value });
+          }}
         />
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
+            disabled={blocked}
             checked={values.isPrimary}
-            onChange={(event) =>
-              setValues((previous) => ({ ...previous, isPrimary: event.target.checked }))
-            }
-            disabled={mutation.isPending}
-            className="h-4 w-4 rounded border-input"
+            onChange={(e) => {
+              setSuccess(false);
+              setValues({ ...values, isPrimary: e.target.checked });
+            }}
           />
-          Primary
+          Contacto principal
         </label>
       </div>
-      <Button type="submit" disabled={mutation.isPending}>
-        {mutation.isPending ? "Adding..." : "Add contact"}
+      <Button type="submit" loading={mutation.isPending} disabled={blocked}>
+        Agregar contacto
       </Button>
     </form>
   );
 }
-
-function AddressItem({
-  address,
+function Deactivate({
+  kind,
+  id,
   customerId,
+  inactive,
 }: {
-  readonly address: CustomerAddress;
-  readonly customerId: string;
-}): JSX.Element {
-  const queryClient = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  kind: "cliente" | "dirección" | "contacto";
+  id: string;
+  customerId: string;
+  inactive: boolean;
+}) {
+  const client = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   const mutation = useMutation({
-    mutationFn: () => deactivateAddress(customerId, address.id),
+    retry: false,
+    mutationFn: (): Promise<{ id: string }> =>
+      kind === "cliente"
+        ? deactivateCustomer(id)
+        : kind === "dirección"
+          ? deactivateAddress(customerId, id)
+          : deactivateContact(customerId, id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["customers", customerId, "addresses"] });
+      setConfirmed(true);
+      void client.invalidateQueries({ queryKey: ["customers"] });
     },
   });
-
   return (
-    <div className="flex items-start justify-between rounded-md border bg-card p-3">
-      <div className="min-w-0 text-sm">
-        {address.label && <p className="font-medium">{address.label}</p>}
-        <p className="text-muted-foreground">
-          {[address.line1, address.line2, address.city, address.state, address.postalCode]
-            .filter(Boolean)
-            .join(", ")}
-        </p>
-        {address.countryCode && <p className="text-muted-foreground">{address.countryCode}</p>}
-      </div>
+    <div className="space-y-2">
       <Button
         type="button"
         variant="outline"
         size="sm"
-        disabled={mutation.isPending || !address.isActive}
-        onClick={() => setConfirmOpen(true)}
+        disabled={inactive || mutation.isPending || customerWriteBlocked(mutation.error)}
+        onClick={() => setOpen(true)}
       >
-        {mutation.isPending ? "Desactivando…" : "Desactivar dirección"}
+        Desactivar {kind}
       </Button>
+      {confirmed && (
+        <p role="status" className="text-sm text-status-success">
+          Desactivación confirmada.
+        </p>
+      )}
       <ConfirmActionDialog
-        open={confirmOpen}
-        onOpenChange={(open) => { if (!open && !mutation.isPending) setConfirmOpen(false); }}
-        title="Desactivar dirección"
-        description="La dirección dejará de aparecer como activa en la ficha del cliente."
-        confirmLabel="Desactivar dirección"
+        open={open}
+        onOpenChange={setOpen}
+        title={"Desactivar " + kind}
+        description="El registro dejará de estar activo. Sus datos se conservarán."
+        confirmLabel={"Desactivar " + kind}
         pendingLabel="Desactivando…"
         pending={mutation.isPending}
-        errorMessage={mutation.error?.message}
+        confirmDisabled={customerWriteBlocked(mutation.error)}
+        errorMessage={mutation.error ? customerError(mutation.error) : undefined}
         onConfirm={() => mutation.mutateAsync()}
       />
     </div>
   );
 }
-
-function ContactItem({
-  contact,
+function AddressSection({
   customerId,
+  onDirty,
 }: {
-  readonly contact: CustomerContact;
-  readonly customerId: string;
-}): JSX.Element {
-  const queryClient = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const mutation = useMutation({
-    mutationFn: () => deactivateContact(customerId, contact.id),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["customers", customerId, "contacts"] });
-    },
-  });
-
-  return (
-    <div className="flex items-start justify-between rounded-md border bg-card p-3">
-      <div className="min-w-0 text-sm">
-        <p className="font-medium">
-          {contact.label ?? contact.kind}
-          {contact.isPrimary && (
-            <span className="ml-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
-              Primary
-            </span>
-          )}
-        </p>
-        <p className="text-muted-foreground">{contact.value}</p>
-      </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={mutation.isPending || !contact.isActive}
-        onClick={() => setConfirmOpen(true)}
-      >
-        {mutation.isPending ? "Desactivando…" : "Desactivar contacto"}
-      </Button>
-      <ConfirmActionDialog
-        open={confirmOpen}
-        onOpenChange={(open) => { if (!open && !mutation.isPending) setConfirmOpen(false); }}
-        title="Desactivar contacto"
-        description="El correo o teléfono dejará de aparecer como activo en la ficha del cliente."
-        confirmLabel="Desactivar contacto"
-        pendingLabel="Desactivando…"
-        pending={mutation.isPending}
-        errorMessage={mutation.error?.message}
-        onConfirm={() => mutation.mutateAsync()}
-      />
-    </div>
-  );
-}
-
-function CustomerHeader({ customerId }: { readonly customerId: string }): JSX.Element {
-  const router = useRouter();
-  const queryClient = useQueryClient();
-  const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
-  const query = useQuery({
-    queryKey: ["customers", customerId],
-    queryFn: () => getCustomer(customerId),
-  });
-
-  const deactivateMutation = useMutation({
-    mutationFn: () => deactivateCustomer(customerId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["customers"] });
-      void queryClient.invalidateQueries({ queryKey: ["customers", customerId] });
-    },
-  });
-
-  if (query.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading customer...</p>;
-  }
-
-  if (query.error) {
-    return (
-      <div
-        role="alert"
-        className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
-      >
-        {query.error.message}
-      </div>
-    );
-  }
-
-  const customer = query.data;
-  if (!customer) {
-    return <p className="text-sm text-muted-foreground">Customer not found.</p>;
-  }
-
-  return (
-    <Card>
-      <CardContent className="p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{customer.displayName}</h1>
-            <p className="text-sm text-muted-foreground">
-              {customer.kind === "INDIVIDUAL"
-                ? [customer.firstName, customer.lastName].filter(Boolean).join(" ") || "Individual"
-                : (customer.legalName ?? "Company")}
-              {customer.kind === "COMPANY" && customer.taxId && ` · Tax ID ${customer.taxId}`}
-            </p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => router.push(`/app/customers/${customer.id}/edit`)}
-            >
-              Edit
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={deactivateMutation.isPending || !customer.isActive}
-              onClick={() => setConfirmDeactivateOpen(true)}
-            >
-              {deactivateMutation.isPending ? "Desactivando…" : "Desactivar cliente"}
-            </Button>
-          </div>
-        </div>
-        <ConfirmActionDialog
-          open={confirmDeactivateOpen}
-          onOpenChange={(open) => { if (!open && !deactivateMutation.isPending) setConfirmDeactivateOpen(false); }}
-          title="Desactivar cliente"
-          description="El cliente dejará de estar disponible para nuevas operaciones. Sus registros se conservarán."
-          confirmLabel="Desactivar cliente"
-          pendingLabel="Desactivando…"
-          pending={deactivateMutation.isPending}
-          errorMessage={deactivateMutation.error?.message}
-          onConfirm={() => deactivateMutation.mutateAsync()}
-        />
-      </CardContent>
-    </Card>
-  );
-}
-
-function AddressSection({ customerId }: { readonly customerId: string }): JSX.Element {
+  customerId: string;
+  onDirty: (value: boolean) => void;
+}) {
   const query = useQuery({
     queryKey: ["customers", customerId, "addresses"],
     queryFn: () => listAddresses(customerId),
+    retry: false,
   });
-
   return (
-    <SectionCard title="Addresses" description="Manage billing, shipping, and other addresses.">
-      <AddAddressForm customerId={customerId} />
+    <Section
+      title="Direcciones"
+      description="Direcciones de facturación, envío y otras referencias del cliente."
+    >
+      {!query.error && <AddAddressForm customerId={customerId} onDirty={onDirty} />}
       {query.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading addresses...</p>
+        <ListSkeleton label="Cargando direcciones…" rows={1} />
       ) : query.error ? (
-        <p className="text-sm text-destructive">{query.error.message}</p>
+        <ErrorState message={customerError(query.error)} onRetry={() => void query.refetch()} />
       ) : query.data?.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No addresses yet.</p>
+        <p className="text-sm text-muted-foreground">
+          Este cliente no tiene direcciones registradas.
+        </p>
       ) : (
-        <div className="space-y-2">
-          {query.data?.map((address) => (
-            <AddressItem key={address.id} address={address} customerId={customerId} />
-          ))}
-        </div>
+        query.data?.map((address: CustomerAddress) => (
+          <div
+            key={address.id}
+            className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-start sm:justify-between"
+          >
+            <div className="min-w-0 flex-1 break-words text-sm">
+              <p className="font-medium">{address.label ?? "Dirección"}</p>
+              <p>
+                {[
+                  address.line1,
+                  address.line2,
+                  address.city,
+                  address.state,
+                  address.postalCode,
+                  address.countryCode,
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+              </p>
+              {!address.isActive && <p>Inactiva</p>}
+            </div>
+            <Deactivate
+              kind="dirección"
+              id={address.id}
+              customerId={customerId}
+              inactive={!address.isActive}
+            />
+          </div>
+        ))
       )}
-    </SectionCard>
+    </Section>
   );
 }
-
-function ContactSection({ customerId }: { readonly customerId: string }): JSX.Element {
+function ContactSection({
+  customerId,
+  onDirty,
+}: {
+  customerId: string;
+  onDirty: (value: boolean) => void;
+}) {
   const query = useQuery({
     queryKey: ["customers", customerId, "contacts"],
     queryFn: () => listContacts(customerId),
+    retry: false,
   });
-
   return (
-    <SectionCard title="Contacts" description="Manage email and phone contacts.">
-      <AddContactForm customerId={customerId} />
+    <Section title="Contactos" description="Correos y teléfonos registrados para este cliente.">
+      {!query.error && <AddContactForm customerId={customerId} onDirty={onDirty} />}
       {query.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading contacts...</p>
+        <ListSkeleton label="Cargando contactos…" rows={1} />
       ) : query.error ? (
-        <p className="text-sm text-destructive">{query.error.message}</p>
+        <ErrorState message={customerError(query.error)} onRetry={() => void query.refetch()} />
       ) : query.data?.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No contacts yet.</p>
+        <p className="text-sm text-muted-foreground">
+          Este cliente no tiene contactos registrados.
+        </p>
       ) : (
-        <div className="space-y-2">
-          {query.data?.map((contact) => (
-            <ContactItem key={contact.id} contact={contact} customerId={customerId} />
-          ))}
-        </div>
+        query.data?.map((contact: CustomerContact) => (
+          <div
+            key={contact.id}
+            className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-start sm:justify-between"
+          >
+            <div className="min-w-0 flex-1 break-all text-sm">
+              <p className="font-medium">
+                {contact.label ?? (contact.kind === "EMAIL" ? "Correo electrónico" : "Teléfono")}
+                {contact.isPrimary && (
+                  <span className="ml-2 rounded bg-secondary px-2 py-1 text-xs text-secondary-foreground">
+                    Principal
+                  </span>
+                )}
+              </p>
+              <p>{contact.value}</p>
+              {!contact.isActive && <p>Inactivo</p>}
+            </div>
+            <Deactivate
+              kind="contacto"
+              id={contact.id}
+              customerId={customerId}
+              inactive={!contact.isActive}
+            />
+          </div>
+        ))
       )}
-    </SectionCard>
+    </Section>
   );
 }
-
-/**
- * Staff customer detail with address and contact management.
- *
- * Permission checks are UX-only; the backend enforces the actual gates.
- */
-export function CustomerDetail(): JSX.Element {
-  const params = useParams<{ id: string }>();
-  const customerId = params.id;
-
+export function CustomerDetail() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const [addressDirty, setAddressDirty] = useState(false),
+    [contactDirty, setContactDirty] = useState(false);
+  const exit = useCustomerExit(addressDirty || contactDirty);
+  const query = useQuery({
+    queryKey: ["customers", id],
+    queryFn: () => getCustomer(id),
+    retry: false,
+  });
+  if (query.isLoading) return <ListSkeleton label="Cargando cliente…" />;
+  if (query.error)
+    return <ErrorState message={customerError(query.error)} onRetry={() => void query.refetch()} />;
+  const customer = query.data;
+  if (!customer) return <p>No encontramos el cliente.</p>;
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <CustomerHeader customerId={customerId} />
-      <AddressSection customerId={customerId} />
-      <ContactSection customerId={customerId} />
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 flex-1 break-words">
+              <h1 className="text-2xl font-semibold tracking-tight">{customer.displayName}</h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {customer.kind === "COMPANY" ? "Empresa" : "Persona"} ·{" "}
+                {customer.isActive ? "Activo" : "Inactivo"}
+              </p>
+              {customer.kind === "COMPANY" ? (
+                <>
+                  <p>{customer.legalName}</p>
+                  <p>RUC: {customer.taxId}</p>
+                </>
+              ) : (
+                <>
+                  <p>{[customer.firstName, customer.lastName].filter(Boolean).join(" ")}</p>
+                  {customer.documentNumber && <p>Documento: {customer.documentNumber}</p>}
+                </>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => exit.leave(() => router.push(`/app/customers/${id}/edit`))}
+              >
+                Editar cliente
+              </Button>
+              <Deactivate kind="cliente" id={id} customerId={id} inactive={!customer.isActive} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <AddressSection customerId={id} onDirty={setAddressDirty} />
+      <ContactSection customerId={id} onDirty={setContactDirty} />
+      <p className="text-xs text-muted-foreground">
+        Los formularios sin guardar se perderán al recargar, salir o volver a ingresar. No se
+        guardan automáticamente.
+      </p>
+      {exit.dialog}
     </div>
   );
 }

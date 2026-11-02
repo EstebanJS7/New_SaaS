@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiRequestError,
+  catalogWriteBlocked,
   createCatalogItem,
   deactivateCatalogItem,
   getCatalogItem,
@@ -154,7 +155,7 @@ describe("catalog-api transport contract", () => {
     expect(error).toBeInstanceOf(ApiRequestError);
     expect((error as ApiRequestError).code).toBe("NOT_FOUND");
     expect((error as ApiRequestError).status).toBe(404);
-    expect((error as ApiRequestError).message).toBe("Catalog item was not found.");
+    expect((error as ApiRequestError).message).toBe("Solicitud de catálogo rechazada.");
   });
 
   it("falls back to UNKNOWN when the failure carries no envelope", async () => {
@@ -174,9 +175,45 @@ describe("catalog-api transport contract", () => {
     expect(
       userFacingCatalogError(new ApiRequestError("NOT_FOUND", "Resource was not found.", 404))
     ).toBe("No encontramos el artículo del catálogo.");
-    // An unmapped code keeps the server message instead of inventing a cause.
+    // Validation maps to safe UX copy without exposing arbitrary server text.
     expect(userFacingCatalogError(new ApiRequestError("VALIDATION_FAILED", "Bad rate.", 400))).toBe(
-      "Bad rate."
+      "Revisá los campos y sus límites antes de guardar."
     );
+  });
+});
+
+describe("catalog command outcomes", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it.each([400, 401, 403, 404, 409, 408, 500])(
+    "retains status and sanitizes HTTP %s",
+    async (status) => {
+      global.fetch = vi.fn(() =>
+        Promise.resolve(jsonResponse({ error: { message: "PRIVATE" } }, status))
+      );
+      const error = await createCatalogItem({}).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).status).toBe(status);
+      expect(userFacingCatalogError(error)).not.toContain("PRIVATE");
+      expect(catalogWriteBlocked(error)).toBe([401, 403, 404, 408, 500].includes(status));
+      expect(global.fetch).toHaveBeenCalledOnce();
+    }
+  );
+  it.each([null, {}, [], { id: 123 }])(
+    "treats malformed success %j as uncertain without replay",
+    async (payload) => {
+      global.fetch = vi.fn(() => Promise.resolve(jsonResponse(payload)));
+      const error = await updateCatalogItem(ITEM_ID, {}).catch((e: unknown) => e);
+      expect(catalogWriteBlocked(error)).toBe(true);
+      expect(global.fetch).toHaveBeenCalledOnce();
+    }
+  );
+  it("distinguishes lost command and failed read without sending another command", async () => {
+    global.fetch = vi.fn(() => Promise.reject(new Error("PRIVATE")));
+    const write = await createCatalogItem({}).catch((e: unknown) => e);
+    const read = await getCatalogItem(ITEM_ID).catch((e: unknown) => e);
+    expect(catalogWriteBlocked(write)).toBe(true);
+    expect(catalogWriteBlocked(read)).toBe(false);
+    expect(userFacingCatalogError(write)).not.toContain("PRIVATE");
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 });

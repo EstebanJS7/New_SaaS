@@ -44,49 +44,100 @@ export interface CustomerContact {
   readonly updatedAt: string;
 }
 
-interface ApiErrorEnvelope {
-  readonly error: {
-    readonly code: string;
-    readonly message: string;
-  };
-}
-
-async function parseError(response: Response): Promise<Error> {
-  const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
-  return new Error(body.error?.message ?? `Request failed (${response.status})`);
-}
-
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`/api/customers${path}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw await parseError(response);
+/** Stable, sanitized errors: never expose server payloads containing personal data. */
+export class CustomerRequestError extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: number,
+    readonly uncertain = false
+  ) {
+    super(customerErrorMessage(code, uncertain));
   }
-  return response.json() as Promise<T>;
 }
-
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`/api/customers${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw await parseError(response);
+function customerErrorMessage(code: string, uncertain: boolean): string {
+  if (uncertain)
+    return "No pudimos confirmar el resultado. Revisá el registro antes de repetir la operación; no volveremos a enviarla automáticamente.";
+  switch (code) {
+    case "UNAUTHENTICATED":
+      return "Tu sesión terminó. Volvé a ingresar para continuar.";
+    case "FORBIDDEN":
+      return "No tenés permiso para realizar esta acción sobre clientes.";
+    case "NOT_FOUND":
+      return "No encontramos este registro de cliente.";
+    case "VALIDATION_FAILED":
+      return "Revisá los campos indicados y sus límites antes de guardar.";
+    case "CONFLICT":
+      return "El registro no admite este cambio. Revisá su estado actual antes de continuar.";
+    default:
+      return "No pudimos completar la solicitud. Revisá la conexión y volvé a intentar.";
   }
-  return response.json() as Promise<T>;
 }
-
-async function putJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`/api/customers${path}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw await parseError(response);
+export function customerError(error: unknown): string {
+  return error instanceof CustomerRequestError
+    ? error.message
+    : customerErrorMessage("UNKNOWN", false);
+}
+export function customerWriteBlocked(error: unknown): boolean {
+  return (
+    error instanceof CustomerRequestError &&
+    (error.uncertain || [401, 403, 404].includes(error.status))
+  );
+}
+async function request<T>(
+  path: string,
+  method: "GET" | "POST" | "PUT",
+  body?: unknown
+): Promise<T> {
+  const mutation = method !== "GET";
+  let response: Response;
+  try {
+    response = await fetch(`/api/customers${path}`, {
+      ...(mutation && {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      cache: "no-store",
+    });
+  } catch {
+    throw new CustomerRequestError("NETWORK_ERROR", 0, mutation);
   }
-  return response.json() as Promise<T>;
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const envelope =
+      typeof payload === "object" && payload !== null && "error" in payload ? payload.error : null;
+    const code =
+      typeof envelope === "object" &&
+      envelope !== null &&
+      "code" in envelope &&
+      typeof envelope.code === "string"
+        ? envelope.code
+        : ((
+            {
+              401: "UNAUTHENTICATED",
+              403: "FORBIDDEN",
+              404: "NOT_FOUND",
+              400: "VALIDATION_FAILED",
+            } as Record<number, string>
+          )[response.status] ?? "UNKNOWN");
+    throw new CustomerRequestError(
+      code,
+      response.status,
+      mutation && (response.status >= 500 || response.status === 408)
+    );
+  }
+  // Validate the minimal acknowledgement before allowing UI to discard a draft.
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    (mutation && (!("id" in payload) || typeof payload.id !== "string"))
+  )
+    throw new CustomerRequestError("MALFORMED_RESPONSE", response.status, mutation);
+  return payload as T;
 }
+const getJson = <T>(path: string) => request<T>(path, "GET");
+const postJson = <T>(path: string, body: unknown) => request<T>(path, "POST", body);
+const putJson = <T>(path: string, body: unknown) => request<T>(path, "PUT", body);
 
 export function listCustomers(): Promise<Customer[]> {
   return getJson("");

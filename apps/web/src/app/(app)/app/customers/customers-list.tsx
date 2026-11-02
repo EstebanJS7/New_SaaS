@@ -17,19 +17,10 @@ import {
   userFacingCustomerSearchError,
   type CustomerSearchRow,
 } from "./customer-search-api";
-import { deactivateCustomer } from "./customers-api";
+import { deactivateCustomer, customerError, customerWriteBlocked } from "./customers-api";
 import { useCustomersListState } from "./customers-list-state";
 
-function userFacingErrorMessage(error: Error): string {
-  const message = error.message;
-  if (message.includes("UNAUTHENTICATED") || message.includes("Authentication required")) {
-    return "Iniciá sesión para ver los clientes.";
-  }
-  if (message.includes("FORBIDDEN") || message.includes("Access denied")) {
-    return "No tenés permiso para gestionar clientes.";
-  }
-  return "No pudimos actualizar el cliente. Revisá la conexión y volvé a intentar.";
-}
+const userFacingErrorMessage = customerError;
 
 function CustomerCard({ customer }: { readonly customer: CustomerSearchRow }): JSX.Element {
   const router = useRouter();
@@ -87,7 +78,9 @@ function CustomerCard({ customer }: { readonly customer: CustomerSearchRow }): J
           variant="outline"
           size="sm"
           onClick={() => setConfirmDeactivateOpen(true)}
-          disabled={mutation.isPending || !customer.isActive}
+          disabled={
+            mutation.isPending || !customer.isActive || customerWriteBlocked(mutation.error)
+          }
           loading={mutation.isPending}
         >
           {mutation.isPending ? "Desactivando…" : "Desactivar"}
@@ -102,6 +95,7 @@ function CustomerCard({ customer }: { readonly customer: CustomerSearchRow }): J
         description="El cliente dejará de estar disponible para nuevas operaciones. Sus registros se conservarán."
         confirmLabel="Desactivar cliente"
         pendingLabel="Desactivando…"
+        confirmDisabled={customerWriteBlocked(mutation.error)}
         pending={mutation.isPending}
         errorMessage={mutation.error ? userFacingErrorMessage(mutation.error) : undefined}
         onConfirm={() => mutation.mutateAsync()}

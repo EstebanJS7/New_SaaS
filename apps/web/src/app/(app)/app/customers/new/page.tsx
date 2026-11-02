@@ -14,6 +14,7 @@ export default function NewCustomerPage(): JSX.Element {
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
+    retry: false,
     mutationFn: createCustomer,
     onSuccess: (customer) => {
       queryClient.setQueryData(["customers"], (previous: unknown) => {
@@ -27,7 +28,7 @@ export default function NewCustomerPage(): JSX.Element {
   return (
     <div className="mx-auto max-w-2xl">
       <CustomerForm
-        onSubmit={(body) => mutation.mutate(body)}
+        onSubmit={(body) => mutation.mutateAsync(body)}
         isPending={mutation.isPending}
         error={mutation.error}
       />

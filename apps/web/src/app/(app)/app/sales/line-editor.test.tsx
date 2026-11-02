@@ -9,8 +9,8 @@ const PRICED_LINE: CartLine = {
   name: "Antibiotic",
   referencePriceAmount: "1500.00",
   referencePriceCurrency: "PYG",
-  quantity: "1.000",
-  unitPrice: "1500.00",
+  quantity: "1,000",
+  unitPrice: "1500,00",
 };
 
 const UNPRICED_LINE: CartLine = {
@@ -19,7 +19,7 @@ const UNPRICED_LINE: CartLine = {
   name: "Consultation",
   referencePriceAmount: null,
   referencePriceCurrency: null,
-  quantity: "1.000",
+  quantity: "1,000",
   unitPrice: "",
 };
 
@@ -33,9 +33,9 @@ describe("LineEditor", () => {
       <LineEditor line={PRICED_LINE} disabled={false} onChange={vi.fn()} onRemove={vi.fn()} />
     );
 
-    expect(screen.getByLabelText("Applied unit price")).toHaveValue("1500.00");
-    expect(screen.getByText("Reference 1,500.00 PYG")).toBeInTheDocument();
-    expect(screen.getByText(/Pre-filled from the catalog reference price/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Precio unitario aplicado")).toHaveValue("1500,00");
+    expect(screen.getByText(/Referencia: Gs\.\s1\.500/)).toBeInTheDocument();
+    expect(screen.getByText(/El precio proviene del catálogo/)).toBeInTheDocument();
   });
 
   it("lets the operator override the applied price with an exact decimal string", () => {
@@ -44,11 +44,11 @@ describe("LineEditor", () => {
       <LineEditor line={PRICED_LINE} disabled={false} onChange={onChange} onRemove={vi.fn()} />
     );
 
-    fireEvent.change(screen.getByLabelText("Applied unit price"), {
-      target: { value: "1200.50" },
+    fireEvent.change(screen.getByLabelText("Precio unitario aplicado"), {
+      target: { value: "1200,50" },
     });
 
-    expect(onChange).toHaveBeenCalledWith("cart-0", { unitPrice: "1200.50" });
+    expect(onChange).toHaveBeenCalledWith("cart-0", { unitPrice: "1200,50" });
   });
 
   it("edits the quantity as the exact string the operator typed", () => {
@@ -57,9 +57,9 @@ describe("LineEditor", () => {
       <LineEditor line={PRICED_LINE} disabled={false} onChange={onChange} onRemove={vi.fn()} />
     );
 
-    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "2.500" } });
+    fireEvent.change(screen.getByLabelText(/^Cantidad/), { target: { value: "2,500" } });
 
-    expect(onChange).toHaveBeenCalledWith("cart-0", { quantity: "2.500" });
+    expect(onChange).toHaveBeenCalledWith("cart-0", { quantity: "2,500" });
   });
 
   it("does not block an item with no reference price; it asks for the applied price", () => {
@@ -67,10 +67,12 @@ describe("LineEditor", () => {
       <LineEditor line={UNPRICED_LINE} disabled={false} onChange={vi.fn()} onRemove={vi.fn()} />
     );
 
-    expect(screen.getByText("No reference price")).toBeInTheDocument();
-    expect(screen.getByLabelText("Applied unit price")).toHaveValue("");
+    expect(screen.getByText("Sin precio de referencia")).toBeInTheDocument();
+    expect(screen.getByLabelText("Precio unitario aplicado")).toHaveValue("");
     expect(
-      screen.getByText("This item has no reference price; enter the applied price.")
+      screen.getByText(
+        "Ingresá el precio aplicado. Este artículo no tiene precio de referencia. Usá coma para los decimales y punto para los miles."
+      )
     ).toBeInTheDocument();
   });
 
@@ -80,7 +82,7 @@ describe("LineEditor", () => {
       <LineEditor line={PRICED_LINE} disabled={false} onChange={vi.fn()} onRemove={onRemove} />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Quitar artículo" }));
 
     expect(onRemove).toHaveBeenCalledWith("cart-0");
   });
@@ -88,9 +90,9 @@ describe("LineEditor", () => {
   it("disables every input and the remove affordance while the sale is locked", () => {
     render(<LineEditor line={PRICED_LINE} disabled onChange={vi.fn()} onRemove={vi.fn()} />);
 
-    expect(screen.getByLabelText("Quantity")).toBeDisabled();
-    expect(screen.getByLabelText("Applied unit price")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Remove line" })).toBeDisabled();
+    expect(screen.getByLabelText(/^Cantidad/)).toBeDisabled();
+    expect(screen.getByLabelText("Precio unitario aplicado")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Quitar artículo" })).toBeDisabled();
   });
 
   it("offers no discount, appointment or patient control", () => {
@@ -98,6 +100,8 @@ describe("LineEditor", () => {
       <LineEditor line={PRICED_LINE} disabled={false} onChange={vi.fn()} onRemove={vi.fn()} />
     );
 
-    expect(screen.queryByLabelText(/discount|appointment|patient/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/discount|appointment|patient|descuento|turno|paciente/i)
+    ).not.toBeInTheDocument();
   });
 });

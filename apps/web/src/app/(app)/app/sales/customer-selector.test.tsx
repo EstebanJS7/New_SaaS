@@ -46,9 +46,9 @@ describe("CustomerSelector", () => {
 
     renderSelector();
 
-    const select = screen.getByLabelText("Customer (optional)");
+    const select = screen.getByLabelText("Cliente (opcional)");
     expect(select).toHaveValue("");
-    expect(screen.getByRole("option", { name: "Walk-in sale (no customer)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Venta directa (sin cliente)" })).toBeInTheDocument();
     expect(await screen.findByRole("option", { name: "Ana Pérez" })).toBeInTheDocument();
   });
 
@@ -58,7 +58,7 @@ describe("CustomerSelector", () => {
 
     renderSelector("", onChange);
     await screen.findByRole("option", { name: "Ana Pérez" });
-    fireEvent.change(screen.getByLabelText("Customer (optional)"), {
+    fireEvent.change(screen.getByLabelText("Cliente (opcional)"), {
       target: { value: CUSTOMER_ID },
     });
 
@@ -71,9 +71,9 @@ describe("CustomerSelector", () => {
     renderSelector();
 
     expect(
-      await screen.findByText("No customers are available; the sale continues as a walk-in.")
+      await screen.findByText("No hay clientes disponibles; podés continuar como venta directa.")
     ).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Walk-in sale (no customer)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Venta directa (sin cliente)" })).toBeInTheDocument();
   });
 
   it("does not gate the sale when the customer read fails", async () => {
@@ -84,7 +84,9 @@ describe("CustomerSelector", () => {
     renderSelector();
 
     expect(
-      await screen.findByText("Customers could not be loaded; the sale can continue without one.")
+      await screen.findByText(
+        "No se pudieron cargar los clientes; podés continuar sin seleccionar uno."
+      )
     ).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -95,6 +97,8 @@ describe("CustomerSelector", () => {
     renderSelector();
     await screen.findByRole("option", { name: "Ana Pérez" });
 
-    expect(screen.queryByLabelText(/discount|appointment|patient/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/discount|appointment|patient|descuento|turno|paciente/i)
+    ).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CounterSurface } from "./counter-surface";
 
@@ -124,12 +125,12 @@ function renderCounter(): void {
 }
 
 async function addFirstItem(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "Add to sale" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar a la venta" }));
 }
 
 async function checkout(): Promise<void> {
-  fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
-  await screen.findByRole("button", { name: "Complete sale" });
+  fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
+  await screen.findByRole("button", { name: "Revisar venta" });
 }
 
 function salesCalls(fetchMock: ReturnType<typeof vi.fn>): [RequestInfo | URL, RequestInit?][] {
@@ -137,8 +138,117 @@ function salesCalls(fetchMock: ReturnType<typeof vi.fn>): [RequestInfo | URL, Re
 }
 
 describe("CounterSurface", () => {
+  it.each(["transport", "server", "receipt"])(
+    "locks an uncertain %s creation without replay or private details",
+    async (mode) => {
+      const fetchMock = installFetch({
+        sales: () => {
+          if (mode === "transport") throw new Error("PRIVATE lost response");
+          if (mode === "server") return errorResponse("INTERNAL_ERROR", "PRIVATE database", 503);
+          return jsonResponse({ ...DRAFT_SALE, id: "invalid" }, 201);
+        },
+      });
+      renderCounter();
+      await addFirstItem();
+      fireEvent.change(screen.getByLabelText("Precio unitario aplicado"), {
+        target: { value: "123456,78" },
+      });
+      fireEvent.change(screen.getByLabelText(/Cantidad/), { target: { value: "2,125" } });
+      fireEvent.change(screen.getByLabelText("Cliente (opcional)"), {
+        target: { value: CUSTOMER_ID },
+      });
+      const send = screen.getByRole("button", { name: "Continuar al pago" });
+      fireEvent.click(send);
+      const alert = await screen.findByTestId("create-error");
+      expect(alert).toHaveTextContent("carrito bloqueado");
+      expect(alert).not.toHaveTextContent("PRIVATE");
+      expect(screen.getByLabelText("Precio unitario aplicado")).toHaveValue("123456,78");
+      expect(screen.getByLabelText(/Cantidad/)).toHaveValue("2,125");
+      expect(screen.getByLabelText("Cliente (opcional)")).toHaveValue(CUSTOMER_ID);
+      expect(send).toBeDisabled();
+      expect(screen.getByLabelText("Precio unitario aplicado")).toBeDisabled();
+      fireEvent.click(send);
+      expect(salesCalls(fetchMock).filter((call) => call[1]?.method === "POST")).toHaveLength(1);
+      expect(screen.queryByRole("button", { name: "Iniciar otra venta" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Revisar venta" })).not.toBeInTheDocument();
+    }
+  );
+
+  it("keeps a rejected cart editable without exposing the backend payload", async () => {
+    installFetch({ sales: () => errorResponse("VALIDATION_ERROR", "PRIVATE rejected", 400) });
+    renderCounter();
+    await addFirstItem();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
+    expect(await screen.findByTestId("create-error")).toHaveTextContent("creación fue rechazada");
+    expect(screen.getByTestId("create-error")).not.toHaveTextContent("PRIVATE");
+    expect(screen.getByLabelText("Precio unitario aplicado")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Continuar al pago" })).toBeEnabled();
+  });
+
+  it("warns before unload and keeps the cart when leaving is cancelled", async () => {
+    installFetch({ sales: () => jsonResponse([]) });
+    renderCounter();
+    await addFirstItem();
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole("link", { name: "Listado de ventas" }));
+    const dialog = await screen.findByRole("dialog", { name: "¿Salir del punto de venta?" });
+    expect(within(dialog).getByRole("button", { name: "Permanecer en el POS" })).toHaveFocus();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Permanecer en el POS" }));
+    expect(screen.getByLabelText("Precio unitario aplicado")).toHaveValue("1500,00");
+  });
+
+  it("blocks synchronous duplicate checkout and leaving while its command is pending", async () => {
+    const fetchMock = installFetch({ sales: () => new Promise<Response>(() => undefined) });
+    renderCounter();
+    await addFirstItem();
+    const send = screen.getByRole("button", { name: "Continuar al pago" });
+    fireEvent.click(send);
+    fireEvent.click(send);
+    await waitFor(() => expect(salesCalls(fetchMock)).toHaveLength(1));
+    fireEvent.click(screen.getByRole("link", { name: "Listado de ventas" }));
+    const dialog = await screen.findByRole("dialog", { name: "Hay una operación pendiente" });
+    expect(
+      within(dialog).getByRole("button", { name: "Salir y descartar copia local" })
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Precio unitario aplicado")).toBeDisabled();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("keeps an unauthenticated attempt blocked and sanitizes its response", async () => {
+    const fetchMock = installFetch({
+      sales: () => errorResponse("UNAUTHENTICATED", "PRIVATE session", 401),
+    });
+    renderCounter();
+    await addFirstItem();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
+    expect(await screen.findByTestId("create-error")).not.toHaveTextContent("PRIVATE");
+    expect(screen.getByRole("button", { name: "Continuar al pago" })).toBeDisabled();
+    expect(screen.getByLabelText("Cliente (opcional)")).toBeDisabled();
+    expect(salesCalls(fetchMock).filter((call) => call[1]?.method === "POST")).toHaveLength(1);
+  });
+
+  it("does not warn before unload for an untouched cart, but protects a customer-only selection", async () => {
+    installFetch({ sales: () => jsonResponse([]) });
+    renderCounter();
+    await screen.findByRole("option", { name: "Ana Pérez" });
+    const clean = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(clean);
+    expect(clean.defaultPrevented).toBe(false);
+    fireEvent.change(screen.getByLabelText("Cliente (opcional)"), {
+      target: { value: CUSTOMER_ID },
+    });
+    const dirty = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(dirty);
+    expect(dirty.defaultPrevented).toBe(true);
+    fireEvent.change(screen.getByLabelText("Cliente (opcional)"), { target: { value: "" } });
+    const cleared = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(cleared);
+    expect(cleared.defaultPrevented).toBe(false);
   });
 
   it("performs create-then-complete and only shows the API's confirmed completion", async () => {
@@ -156,12 +266,13 @@ describe("CounterSurface", () => {
 
     renderCounter();
     await addFirstItem();
-    expect(screen.getByLabelText("Applied unit price")).toHaveValue("1500.00");
+    expect(screen.getByLabelText("Precio unitario aplicado")).toHaveValue("1500,00");
+    fireEvent.change(screen.getByLabelText(/Cantidad/), { target: { value: "1,000" } });
 
     await checkout();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await confirmSale();
 
-    expect(await screen.findByText("Sale completed")).toBeInTheDocument();
+    expect(await screen.findByText("Venta completada")).toBeInTheDocument();
 
     const calls = salesCalls(fetchMock);
     const createCall = calls.find(
@@ -189,8 +300,8 @@ describe("CounterSurface", () => {
 
     renderCounter();
     await addFirstItem();
-    fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
-    await screen.findByRole("button", { name: "Complete sale" });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
+    await screen.findByRole("button", { name: "Revisar venta" });
 
     const createCall = salesCalls(fetchMock).find((call) => call[1]?.method === "POST");
     const body = JSON.parse(createCall![1]?.body as string) as Record<string, unknown>;
@@ -210,9 +321,9 @@ describe("CounterSurface", () => {
     await addFirstItem();
     await checkout();
 
-    expect(screen.getByTestId("sale-total")).toHaveTextContent("Sale total 1,500.00 PYG");
+    expect(screen.getByTestId("sale-total")).toHaveTextContent("Total: Gs. 1.500");
     expect(
-      screen.getByText(/Draft #22222222 created with the API's total 1,500.00 PYG/)
+      screen.getByText(/Borrador #22222222 creado. El total calculado es Gs\.\s1\.500/)
     ).toBeInTheDocument();
   });
 
@@ -229,10 +340,10 @@ describe("CounterSurface", () => {
     renderCounter();
     await addFirstItem();
     await checkout();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await confirmSale();
 
-    expect(await screen.findByRole("button", { name: "Completing..." })).toBeDisabled();
-    expect(screen.queryByText("Sale completed")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Confirmando venta…" })).toBeDisabled();
+    expect(screen.queryByText("Venta completada")).not.toBeInTheDocument();
   });
 
   it("leaves a real draft behind and links to it when create succeeded but complete failed", async () => {
@@ -252,17 +363,15 @@ describe("CounterSurface", () => {
     renderCounter();
     await addFirstItem();
     await checkout();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await confirmSale();
 
-    expect(
-      await screen.findByText("The payments do not sum to the sale total")
-    ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open the draft" })).toHaveAttribute(
+    expect(await screen.findByText("Los pagos no coinciden con el total")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Consultar venta" })).toHaveAttribute(
       "href",
       `/app/sales/${SALE_ID}`
     );
-    expect(screen.getByText(/A real DRAFT sale/)).toBeInTheDocument();
-    expect(screen.queryByText("Sale completed")).not.toBeInTheDocument();
+    expect(screen.getByText(/La finalización de la venta/)).toBeInTheDocument();
+    expect(screen.queryByText("Venta completada")).not.toBeInTheDocument();
   });
 
   it("surfaces an identical replay as already completed", async () => {
@@ -278,9 +387,9 @@ describe("CounterSurface", () => {
     renderCounter();
     await addFirstItem();
     await checkout();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await confirmSale();
 
-    expect(await screen.findByText("Sale already completed")).toBeInTheDocument();
+    expect(await screen.findByText("La venta ya estaba completada")).toBeInTheDocument();
   });
 
   it("surfaces a non-draft 409 as a terminal conflict", async () => {
@@ -296,9 +405,9 @@ describe("CounterSurface", () => {
     renderCounter();
     await addFirstItem();
     await checkout();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await confirmSale();
 
-    expect(await screen.findByText("This sale is no longer a draft")).toBeInTheDocument();
+    expect(await screen.findByText("La venta ya no es un borrador")).toBeInTheDocument();
   });
 
   it("surfaces a missing cash session distinctly from an ambiguous one", async () => {
@@ -314,11 +423,9 @@ describe("CounterSurface", () => {
     renderCounter();
     await addFirstItem();
     await checkout();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await confirmSale();
 
-    expect(
-      await screen.findByText("A cash payment needs an open cash session")
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Se necesita una sesión de caja abierta")).toBeInTheDocument();
   });
 
   it("surfaces the shared 404", async () => {
@@ -334,9 +441,9 @@ describe("CounterSurface", () => {
     renderCounter();
     await addFirstItem();
     await checkout();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await confirmSale();
 
-    expect(await screen.findByText("Sale not found")).toBeInTheDocument();
+    expect(await screen.findByText("No encontramos la venta")).toBeInTheDocument();
   });
 
   it("maps a create permission refusal to the permission-denied UX branch", async () => {
@@ -346,12 +453,12 @@ describe("CounterSurface", () => {
 
     renderCounter();
     await addFirstItem();
-    fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
 
     const alert = await screen.findByTestId("create-error");
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage sales.");
-    expect(screen.queryByText("Sale completed")).not.toBeInTheDocument();
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar ventas.");
+    expect(screen.queryByText("Venta completada")).not.toBeInTheDocument();
   });
 
   it("hides the counter when the tenant lacks the sales capability", async () => {
@@ -366,14 +473,14 @@ describe("CounterSurface", () => {
 
     renderCounter();
     await addFirstItem();
-    fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
 
     expect(await screen.findByTestId("entitlement-denied")).toHaveTextContent(
-      "Sales are not enabled for this tenant"
+      "Ventas no habilitadas"
     );
     // The UX gate hides the surface; the backend remains the authority.
-    expect(screen.queryByLabelText("Item name")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Checkout" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Nombre del artículo")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continuar al pago" })).not.toBeInTheDocument();
   });
 
   it("adds no scanner affordance and no out-of-scope control", async () => {
@@ -382,14 +489,20 @@ describe("CounterSurface", () => {
     });
 
     renderCounter();
-    await screen.findByRole("button", { name: "Add to sale" });
+    await screen.findByRole("button", { name: "Agregar a la venta" });
 
-    expect(screen.queryByRole("button", { name: /scan|barcode/i })).not.toBeInTheDocument();
     expect(
-      screen.queryByLabelText(/scan|barcode|discount|invoice|fiscal|refund/i)
+      screen.queryByRole("button", { name: /scan|barcode|escanear|código de barras/i })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /invoice|fiscal|refund|print/i })
+      screen.queryByLabelText(
+        /scan|barcode|discount|invoice|fiscal|refund|escanear|descuento|factura|reembolso/i
+      )
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /invoice|fiscal|refund|print|factura|reembolso|imprimir/i,
+      })
     ).not.toBeInTheDocument();
   });
 
@@ -400,20 +513,44 @@ describe("CounterSurface", () => {
     });
 
     renderCounter();
-    await screen.findAllByRole("button", { name: "Add to sale" });
-    expect(screen.getAllByRole("button", { name: "Add to sale" })).toHaveLength(2);
+    await screen.findAllByRole("button", { name: "Agregar a la venta" });
+    expect(screen.getAllByRole("button", { name: "Agregar a la venta" })).toHaveLength(2);
 
-    fireEvent.change(screen.getByLabelText("Item name"), { target: { value: "gauze" } });
+    fireEvent.change(screen.getByLabelText("Nombre del artículo"), { target: { value: "gauze" } });
 
     expect(await screen.findByText("Gauze roll")).toBeInTheDocument();
     expect(screen.queryByText("Antibiotic")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Item name"), { target: { value: "zzz" } });
+    fireEvent.change(screen.getByLabelText("Nombre del artículo"), { target: { value: "zzz" } });
 
     await waitFor(() => {
       expect(screen.getByTestId("catalog-empty")).toHaveTextContent(
-        "No catalog items match this search."
+        "No encontramos artículos con esa búsqueda."
       );
     });
+  });
+});
+
+async function confirmSale(): Promise<void> {
+  fireEvent.click(screen.getByRole("button", { name: "Revisar venta" }));
+  fireEvent.click(
+    within(await screen.findByRole("dialog", { name: "Revisar y confirmar venta" })).getByRole(
+      "button",
+      { name: "Confirmar venta" }
+    )
+  );
+}
+beforeEach(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    },
   });
 });

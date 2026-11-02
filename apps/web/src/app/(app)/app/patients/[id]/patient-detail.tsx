@@ -1,7 +1,7 @@
 "use client";
 
 import type { JSX, ReactNode } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { AppointmentJourney } from "@/components/veterinary/appointment-journey";
 import { Icon } from "@newsaas/ui/components/ui/icon";
@@ -10,6 +10,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { ErrorState } from "@/components/feedback";
+import { usePatientExit } from "../patient-form-interaction";
 import { formatEsPyDateOnly } from "@/lib/es-py-format";
 import {
   Card,
@@ -18,7 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
-import { listCustomers, type Customer } from "../../customers/customers-api";
+import { listCustomers, customerError, type Customer } from "../../customers/customers-api";
 import { ClinicalWorkspace } from "./clinical-workspace";
 import { TreatmentList } from "./treatment-list";
 import { StudyList } from "./study-list";
@@ -33,6 +35,7 @@ import {
   listGuardians,
   setPrimaryGuardian,
   userFacingPatientError,
+  patientWriteBlocked,
   type PatientGuardian,
   type SpeciesCatalogEntry,
 } from "../patients-api";
@@ -91,10 +94,16 @@ function PatientHeader({ patientId }: { readonly patientId: string }): JSX.Eleme
   const query = useQuery({
     queryKey: ["patients", patientId],
     queryFn: () => getPatient(patientId),
+    retry: false,
   });
-  const catalog = useQuery({ queryKey: ["patients", "catalog"], queryFn: getCatalog });
+  const catalog = useQuery({
+    queryKey: ["patients", "catalog"],
+    queryFn: getCatalog,
+    retry: false,
+  });
 
   const deactivateMutation = useMutation({
+    retry: false,
     mutationFn: () => deactivatePatient(patientId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["patients"] });
@@ -165,6 +174,17 @@ function PatientHeader({ patientId }: { readonly patientId: string }): JSX.Eleme
                 </p>
               )}
 
+              {catalog.isPending && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  Cargando especie y raza…
+                </p>
+              )}
+              {catalog.error && (
+                <ErrorState
+                  message={userFacingPatientError(catalog.error)}
+                  onRetry={() => void catalog.refetch()}
+                />
+              )}
               {deactivateMutation.error && (
                 <p role="alert" className="text-sm text-destructive">
                   {userFacingPatientError(deactivateMutation.error)}
@@ -189,7 +209,11 @@ function PatientHeader({ patientId }: { readonly patientId: string }): JSX.Eleme
             <Button
               type="button"
               variant="outline"
-              disabled={deactivateMutation.isPending || !patient.isActive}
+              disabled={
+                deactivateMutation.isPending ||
+                patientWriteBlocked(deactivateMutation.error) ||
+                !patient.isActive
+              }
               onClick={() => setConfirmDeactivateOpen(true)}
             >
               {deactivateMutation.isPending ? "Desactivando…" : "Desactivar paciente"}
@@ -206,6 +230,7 @@ function PatientHeader({ patientId }: { readonly patientId: string }): JSX.Eleme
           confirmLabel="Desactivar paciente"
           pendingLabel="Desactivando…"
           pending={deactivateMutation.isPending}
+          confirmDisabled={patientWriteBlocked(deactivateMutation.error)}
           errorMessage={
             deactivateMutation.error ? userFacingPatientError(deactivateMutation.error) : undefined
           }
@@ -224,29 +249,46 @@ function AddGuardianForm({
   readonly linkedCustomerIds: readonly string[];
 }): JSX.Element {
   const queryClient = useQueryClient();
-  const customers = useQuery({ queryKey: ["customers"], queryFn: listCustomers });
+  const customers = useQuery({ queryKey: ["customers"], queryFn: listCustomers, retry: false });
   const [customerId, setCustomerId] = useState("");
   const [isPrimary, setIsPrimary] = useState(false);
   const [success, setSuccess] = useState(false);
+  const sending = useRef(false);
+  const exit = usePatientExit(customerId !== "" || isPrimary);
 
   const candidates = (customers.data ?? []).filter(
     (customer) => customer.isActive && !linkedCustomerIds.includes(customer.id)
   );
 
   const mutation = useMutation({
+    retry: false,
     mutationFn: () => createGuardian(patientId, { customerId, isPrimary }),
     onSuccess: () => {
       setCustomerId("");
       setIsPrimary(false);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
       void queryClient.invalidateQueries({ queryKey: ["patients", patientId, "guardians"] });
     },
   });
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    mutation.mutate();
+    if (
+      sending.current ||
+      mutation.isPending ||
+      patientWriteBlocked(mutation.error) ||
+      !customerId ||
+      customers.isError ||
+      customers.isPending
+    )
+      return;
+    sending.current = true;
+    void mutation
+      .mutateAsync()
+      .catch(() => undefined)
+      .finally(() => {
+        sending.current = false;
+      });
   }
 
   return (
@@ -264,36 +306,70 @@ function AddGuardianForm({
           Responsable vinculado.
         </span>
       )}
+      {customers.isPending && <p role="status">Cargando clientes…</p>}
+      {customers.error && (
+        <ErrorState
+          message={customerError(customers.error)}
+          onRetry={() => void customers.refetch()}
+        />
+      )}
+      {customers.isSuccess && candidates.length === 0 && (
+        <p role="status">No hay otros clientes activos disponibles para vincular.</p>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
-        <select
-          aria-label="Cliente a vincular"
-          value={customerId}
-          onChange={(event) => setCustomerId(event.target.value)}
-          required
-          disabled={mutation.isPending || customers.isLoading}
-          className={selectClassName}
-        >
-          <option value="">Seleccioná un cliente</option>
-          {candidates.map((customer) => (
-            <option key={customer.id} value={customer.id}>
-              {customer.displayName}
-            </option>
-          ))}
-        </select>
+        <div className="min-w-0 space-y-2">
+          <label htmlFor="guardian-customer" className="text-sm font-medium">
+            Cliente a vincular (obligatorio)
+          </label>
+          <select
+            id="guardian-customer"
+            aria-label="Cliente a vincular"
+            value={customerId}
+            onChange={(event) => {
+              setCustomerId(event.target.value);
+              setSuccess(false);
+            }}
+            required
+            disabled={
+              mutation.isPending ||
+              customers.isPending ||
+              customers.isError ||
+              patientWriteBlocked(mutation.error)
+            }
+            className={selectClassName}
+          >
+            <option value="">Seleccioná un cliente</option>
+            {candidates.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.displayName}
+              </option>
+            ))}
+          </select>
+        </div>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={isPrimary}
             onChange={(event) => setIsPrimary(event.target.checked)}
             disabled={mutation.isPending}
-            className="h-4 w-4 rounded border-input"
+            className="h-4 w-4 rounded border-input accent-primary"
           />
           Responsable principal
         </label>
       </div>
-      <Button type="submit" disabled={mutation.isPending || customerId === ""}>
+      <Button
+        type="submit"
+        disabled={
+          mutation.isPending ||
+          patientWriteBlocked(mutation.error) ||
+          customers.isError ||
+          customers.isPending ||
+          customerId === ""
+        }
+      >
         {mutation.isPending ? "Vinculando…" : "Vincular responsable"}
       </Button>
+      {exit.dialog}
     </form>
   );
 }
@@ -313,10 +389,12 @@ function GuardianItem({
     void queryClient.invalidateQueries({ queryKey: ["patients", patientId, "guardians"] });
   };
   const primaryMutation = useMutation({
+    retry: false,
     mutationFn: () => setPrimaryGuardian(patientId, guardian.id),
     onSuccess: invalidate,
   });
   const deactivateMutation = useMutation({
+    retry: false,
     mutationFn: () => deactivateGuardian(patientId, guardian.id),
     onSuccess: invalidate,
   });
@@ -329,7 +407,7 @@ function GuardianItem({
       className="flex flex-col gap-3 rounded-md border bg-card p-3 sm:flex-row sm:items-start sm:justify-between"
     >
       <div className="min-w-0 text-sm">
-        <p className="font-medium">
+        <p className="break-words font-medium">
           {customerName(customers, guardian.customerId)}
           {guardian.isPrimary && (
             <span className="ml-2 rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
@@ -351,7 +429,13 @@ function GuardianItem({
           type="button"
           variant="outline"
           size="sm"
-          disabled={primaryMutation.isPending || guardian.isPrimary || !guardian.isActive}
+          disabled={
+            primaryMutation.isPending ||
+            deactivateMutation.isPending ||
+            patientWriteBlocked(error) ||
+            guardian.isPrimary ||
+            !guardian.isActive
+          }
           onClick={() => primaryMutation.mutate()}
         >
           {primaryMutation.isPending ? "Actualizando…" : "Marcar principal"}
@@ -360,7 +444,12 @@ function GuardianItem({
           type="button"
           variant="outline"
           size="sm"
-          disabled={deactivateMutation.isPending || !guardian.isActive}
+          disabled={
+            deactivateMutation.isPending ||
+            primaryMutation.isPending ||
+            patientWriteBlocked(error) ||
+            !guardian.isActive
+          }
           onClick={() => setConfirmDeactivateOpen(true)}
         >
           {deactivateMutation.isPending ? "Desactivando…" : "Desactivar"}
@@ -376,6 +465,7 @@ function GuardianItem({
         confirmLabel="Desvincular"
         pendingLabel="Desvinculando…"
         pending={deactivateMutation.isPending}
+        confirmDisabled={patientWriteBlocked(deactivateMutation.error)}
         errorMessage={
           deactivateMutation.error ? userFacingPatientError(deactivateMutation.error) : undefined
         }
@@ -389,8 +479,9 @@ function GuardianSection({ patientId }: { readonly patientId: string }): JSX.Ele
   const query = useQuery({
     queryKey: ["patients", patientId, "guardians"],
     queryFn: () => listGuardians(patientId),
+    retry: false,
   });
-  const customers = useQuery({ queryKey: ["customers"], queryFn: listCustomers });
+  const customers = useQuery({ queryKey: ["customers"], queryFn: listCustomers, retry: false });
   const linkedCustomerIds = (query.data ?? []).map((guardian) => guardian.customerId);
 
   return (
@@ -398,13 +489,23 @@ function GuardianSection({ patientId }: { readonly patientId: string }): JSX.Ele
       title="Responsables"
       description="Vinculá los clientes que están a cargo de este paciente."
     >
-      <AddGuardianForm patientId={patientId} linkedCustomerIds={linkedCustomerIds} />
+      {query.isSuccess && customers.isSuccess && (
+        <AddGuardianForm patientId={patientId} linkedCustomerIds={linkedCustomerIds} />
+      )}
+      {customers.isPending && <p role="status">Cargando nombres de responsables…</p>}
+      {customers.error && (
+        <ErrorState
+          message={customerError(customers.error)}
+          onRetry={() => void customers.refetch()}
+        />
+      )}
       {query.isLoading ? (
         <p className="text-sm text-muted-foreground">Cargando responsables…</p>
       ) : query.error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {userFacingPatientError(query.error)}
-        </p>
+        <ErrorState
+          message={userFacingPatientError(query.error)}
+          onRetry={() => void query.refetch()}
+        />
       ) : query.data?.length === 0 ? (
         <p className="text-sm text-muted-foreground">Todavía no hay responsables vinculados.</p>
       ) : (
@@ -436,6 +537,26 @@ export function PatientDetail({
 }: { appointmentId?: string; initialEncounterId?: string } = {}): JSX.Element {
   const params = useParams<{ id: string }>();
   const patientId = params.id;
+  const patient = useQuery({
+    queryKey: ["patients", patientId],
+    queryFn: () => getPatient(patientId),
+    retry: false,
+  });
+  // A failed/unfinished identity read cannot enable child commands or render a previous patient's workspace.
+  if (!patient.isSuccess)
+    return (
+      <div className="mx-auto max-w-6xl space-y-6">
+        <Link href="/app/patients">Volver a pacientes</Link>
+        {patient.isPending ? (
+          <p role="status">Cargando paciente…</p>
+        ) : (
+          <ErrorState
+            message={userFacingPatientError(patient.error)}
+            onRetry={() => void patient.refetch()}
+          />
+        )}
+      </div>
+    );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-8">

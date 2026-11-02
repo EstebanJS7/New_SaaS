@@ -57,7 +57,9 @@ function mockRatesFetch(): void {
 }
 
 function submitForm(): void {
-  const form = screen.getByRole("button", { name: /Create item|Save changes/ }).closest("form");
+  const form = screen
+    .getByRole("button", { name: /Crear artículo|Guardar cambios/ })
+    .closest("form");
   fireEvent.submit(form!);
 }
 
@@ -77,7 +79,7 @@ describe("CatalogForm", () => {
 
     await screen.findByRole("option", { name: "IVA 10%" });
 
-    const currency = screen.getByRole("combobox", { name: "Currency" });
+    const currency = screen.getByRole("combobox", { name: "Moneda" });
     expect(currency).toHaveValue("PYG");
     expect(
       within(currency)
@@ -103,12 +105,12 @@ describe("CatalogForm", () => {
     );
 
     await screen.findByRole("option", { name: "Exento" });
-    const taxRate = screen.getByRole("combobox", { name: "Tax rate" });
+    const taxRate = screen.getByRole("combobox", { name: "Impuesto (obligatorio)" });
     expect(
       within(taxRate)
         .getAllByRole("option")
         .map((option) => option.textContent)
-    ).toEqual(["Select tax rate", "Exento", "IVA 5%", "IVA 10%"]);
+    ).toEqual(["Seleccioná un impuesto", "Exento", "IVA 5%", "IVA 10%"]);
   });
 
   it("submits a create with the required rate and the optional price pair", async () => {
@@ -123,11 +125,15 @@ describe("CatalogForm", () => {
 
     await screen.findByRole("option", { name: "IVA 10%" });
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Consulta clínica" } });
-    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "SERVICE" } });
-    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
-    fireEvent.change(screen.getByLabelText("Reference price"), {
-      target: { value: "150000.00" },
+    fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), {
+      target: { value: "Consulta clínica" },
+    });
+    fireEvent.change(screen.getByLabelText("Tipo de artículo"), { target: { value: "SERVICE" } });
+    fireEvent.change(screen.getByLabelText("Impuesto (obligatorio)"), {
+      target: { value: RATE_ID },
+    });
+    fireEvent.change(screen.getByLabelText("Precio de referencia (opcional)"), {
+      target: { value: "150000,00" },
     });
 
     submitForm();
@@ -154,8 +160,10 @@ describe("CatalogForm", () => {
     );
 
     await screen.findByRole("option", { name: "IVA 10%" });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Gasa" } });
-    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
+    fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), { target: { value: "Gasa" } });
+    fireEvent.change(screen.getByLabelText("Impuesto (obligatorio)"), {
+      target: { value: RATE_ID },
+    });
 
     submitForm();
 
@@ -179,11 +187,13 @@ describe("CatalogForm", () => {
     );
 
     await screen.findByRole("option", { name: "IVA 10%" });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Consulta" } });
+    fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), {
+      target: { value: "Consulta" },
+    });
 
     submitForm();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Select a tax rate.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Seleccioná un impuesto.");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -198,14 +208,20 @@ describe("CatalogForm", () => {
     );
 
     await screen.findByRole("option", { name: "IVA 10%" });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Consulta" } });
-    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
-    fireEvent.change(screen.getByLabelText("Reference price"), { target: { value: "12.345" } });
+    fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), {
+      target: { value: "Consulta" },
+    });
+    fireEvent.change(screen.getByLabelText("Impuesto (obligatorio)"), {
+      target: { value: RATE_ID },
+    });
+    fireEvent.change(screen.getByLabelText("Precio de referencia (opcional)"), {
+      target: { value: "12,345" },
+    });
 
     submitForm();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Reference price must be a non-negative decimal with at most 2 decimals."
+      "Ingresá un importe no negativo: hasta 12 dígitos enteros y 2 decimales, con coma decimal."
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -221,10 +237,14 @@ describe("CatalogForm", () => {
     );
 
     await screen.findByRole("option", { name: "IVA 10%" });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Vacuna" } });
-    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
-    fireEvent.change(screen.getByLabelText("Low-stock threshold"), {
-      target: { value: "10.5" },
+    fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), {
+      target: { value: "Vacuna" },
+    });
+    fireEvent.change(screen.getByLabelText("Impuesto (obligatorio)"), {
+      target: { value: RATE_ID },
+    });
+    fireEvent.change(screen.getByLabelText("Umbral de stock bajo (opcional)"), {
+      target: { value: "10,5" },
     });
 
     submitForm();
@@ -254,9 +274,11 @@ describe("CatalogForm", () => {
 
     await screen.findByRole("option", { name: "IVA 10%" });
     // The label and its hint must make "empty = not monitored" discoverable.
-    expect(screen.getByLabelText("Low-stock threshold")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Gasa" } });
-    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
+    expect(screen.getByLabelText("Umbral de stock bajo (opcional)")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), { target: { value: "Gasa" } });
+    fireEvent.change(screen.getByLabelText("Impuesto (obligatorio)"), {
+      target: { value: RATE_ID },
+    });
 
     submitForm();
 
@@ -281,14 +303,20 @@ describe("CatalogForm", () => {
     );
 
     await screen.findByRole("option", { name: "IVA 10%" });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Consulta" } });
-    fireEvent.change(screen.getByLabelText("Tax rate"), { target: { value: RATE_ID } });
+    fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), {
+      target: { value: "Consulta" },
+    });
+    fireEvent.change(screen.getByLabelText("Impuesto (obligatorio)"), {
+      target: { value: RATE_ID },
+    });
 
-    for (const value of ["0", "0.000", "1.2345"]) {
-      fireEvent.change(screen.getByLabelText("Low-stock threshold"), { target: { value } });
+    for (const value of ["0", "0,000", "1,2345"]) {
+      fireEvent.change(screen.getByLabelText("Umbral de stock bajo (opcional)"), {
+        target: { value },
+      });
       submitForm();
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Low-stock threshold must be greater than zero with at most 3 decimals."
+        "Ingresá un umbral mayor que cero: hasta 7 dígitos enteros y 3 decimales, con coma decimal."
       );
     }
     expect(onSubmit).not.toHaveBeenCalled();
@@ -307,7 +335,9 @@ describe("CatalogForm", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Invalid catalog item body.");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Revisá los campos y sus límites antes de guardar."
+    );
   });
 
   it("surfaces a 403 permission error truthfully", () => {
@@ -324,7 +354,7 @@ describe("CatalogForm", () => {
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "You do not have permission to manage catalog items."
+      "No tenés permiso para gestionar artículos del catálogo."
     );
   });
 
@@ -339,14 +369,16 @@ describe("CatalogForm", () => {
     );
 
     await screen.findByRole("option", { name: "IVA 10%" });
-    expect(screen.getByLabelText("Name")).toHaveValue("Consulta clínica");
-    expect(screen.getByLabelText("Tax rate")).toHaveValue(RATE_ID);
+    expect(screen.getByLabelText("Nombre (obligatorio)")).toHaveValue("Consulta clínica");
+    expect(screen.getByLabelText("Impuesto (obligatorio)")).toHaveValue(RATE_ID);
 
     submitForm();
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({}));
 
     onSubmit.mockClear();
-    fireEvent.change(screen.getByLabelText("Reference price"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Precio de referencia (opcional)"), {
+      target: { value: "" },
+    });
     submitForm();
 
     await waitFor(() => {
@@ -370,21 +402,216 @@ describe("CatalogForm", () => {
 
     await screen.findByRole("option", { name: "IVA 10%" });
     // The stored fixed-scale value is what the field starts from.
-    expect(screen.getByLabelText("Low-stock threshold")).toHaveValue("10.000");
+    expect(screen.getByLabelText("Umbral de stock bajo (opcional)")).toHaveValue("10,000");
 
     // An untouched threshold is not sent, so an unrelated edit cannot rewrite it.
     submitForm();
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({}));
 
     onSubmit.mockClear();
-    fireEvent.change(screen.getByLabelText("Low-stock threshold"), { target: { value: "4.5" } });
+    fireEvent.change(screen.getByLabelText("Umbral de stock bajo (opcional)"), {
+      target: { value: "4,5" },
+    });
     submitForm();
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ lowStockThreshold: "4.5" }));
 
     // Emptying the field stops monitoring: an explicit null, never a zero.
     onSubmit.mockClear();
-    fireEvent.change(screen.getByLabelText("Low-stock threshold"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Umbral de stock bajo (opcional)"), {
+      target: { value: "" },
+    });
     submitForm();
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ lowStockThreshold: null }));
+  });
+});
+
+async function fillCreate() {
+  await screen.findByRole("option", { name: "IVA 10%" });
+  fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), {
+    target: { value: "Artículo sintético" },
+  });
+  fireEvent.change(screen.getByLabelText("Impuesto (obligatorio)"), { target: { value: RATE_ID } });
+}
+describe("Catalog accessible exact input", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it.each([
+    ["999.999.999.999,99", "9.999.999,999", "999999999999.99", "9999999.999"],
+    ["0,00", "0,001", "0.00", "0.001"],
+    ["12.345", "1,500", "12345", "1.500"],
+  ])(
+    "normalizes %s and %s without losing digits or scale",
+    async (price, threshold, wirePrice, wireThreshold) => {
+      mockRatesFetch();
+      const onSubmit = vi.fn();
+      render(
+        <TestWrapper>
+          <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+        </TestWrapper>
+      );
+      await fillCreate();
+      fireEvent.change(screen.getByLabelText("Precio de referencia (opcional)"), {
+        target: { value: price },
+      });
+      fireEvent.change(screen.getByLabelText("Umbral de stock bajo (opcional)"), {
+        target: { value: threshold },
+      });
+      submitForm();
+      await waitFor(() =>
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            referencePriceAmount: wirePrice,
+            lowStockThreshold: wireThreshold,
+            referencePriceCurrency: "PYG",
+          })
+        )
+      );
+    }
+  );
+  it.each(["1.000.000.000.000,00", "12.34", "1e3", "-1", "0,001"])(
+    "rejects price %s without truncating or guessing",
+    async (price) => {
+      mockRatesFetch();
+      const onSubmit = vi.fn();
+      render(
+        <TestWrapper>
+          <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+        </TestWrapper>
+      );
+      await fillCreate();
+      const field = screen.getByLabelText("Precio de referencia (opcional)");
+      fireEvent.change(field, { target: { value: price } });
+      submitForm();
+      await waitFor(() => expect(field).toHaveFocus());
+      expect(field).toHaveAttribute("aria-invalid", "true");
+      expect(field).toHaveValue(price);
+      expect(onSubmit).not.toHaveBeenCalled();
+    }
+  );
+  it("does not rewrite untouched fixed-scale values after converting editable separators", async () => {
+    mockRatesFetch();
+    const onSubmit = vi.fn();
+    render(
+      <TestWrapper>
+        <CatalogForm
+          item={{
+            ...ITEM,
+            referencePriceAmount: "999999999999.99",
+            referencePriceCurrency: "USD",
+            lowStockThreshold: "9999999.999",
+          }}
+          onSubmit={onSubmit}
+          isPending={false}
+          error={null}
+        />
+      </TestWrapper>
+    );
+    await screen.findByRole("option", { name: "IVA 10%" });
+    expect(screen.getByLabelText("Precio de referencia (opcional)")).toHaveValue("999999999999,99");
+    expect(screen.getByLabelText("Umbral de stock bajo (opcional)")).toHaveValue("9999999,999");
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({}));
+  });
+  it("focuses and associates the first invalid field, then clears its stale error on edit", async () => {
+    mockRatesFetch();
+    const onSubmit = vi.fn();
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+      </TestWrapper>
+    );
+    await fillCreate();
+    const name = screen.getByLabelText("Nombre (obligatorio)");
+    fireEvent.change(name, { target: { value: "a".repeat(201) } });
+    submitForm();
+    await waitFor(() => expect(name).toHaveFocus());
+    expect(name).toHaveAttribute("aria-describedby", "name-hint");
+    expect(name).toHaveValue("a".repeat(201));
+    expect(screen.getByRole("alert")).toHaveTextContent("Usá hasta 200 caracteres.");
+    fireEvent.change(name, { target: { value: "Corregido" } });
+    expect(name).toHaveAttribute("aria-invalid", "false");
+  });
+  it("blocks double submit while a command is in flight", async () => {
+    mockRatesFetch();
+    const onSubmit = vi.fn(() => new Promise<void>(() => undefined));
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+      </TestWrapper>
+    );
+    await fillCreate();
+    submitForm();
+    submitForm();
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+  it("keeps the copy and prevents replay after an uncertain acknowledgement", async () => {
+    mockRatesFetch();
+    const onSubmit = vi.fn();
+    render(
+      <TestWrapper>
+        <CatalogForm
+          onSubmit={onSubmit}
+          isPending={false}
+          error={new ApiRequestError("NETWORK_ERROR", "PRIVATE", 0, true)}
+        />
+      </TestWrapper>
+    );
+    await fillCreate();
+    submitForm();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Crear artículo" })).toBeDisabled();
+    expect(screen.getByLabelText("Nombre (obligatorio)")).toHaveValue("Artículo sintético");
+    expect(screen.getByRole("alert")).toHaveTextContent("No pudimos confirmar el resultado");
+  });
+  it("distinguishes failed and empty tax reads, with explicit GET retry only", async () => {
+    let calls = 0;
+    global.fetch = vi.fn(() =>
+      Promise.resolve(
+        ++calls === 1
+          ? jsonResponse({ error: { code: "FORBIDDEN", message: "PRIVATE" } }, 403)
+          : jsonResponse([])
+      )
+    );
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={vi.fn()} isPending={false} error={null} />
+      </TestWrapper>
+    );
+    await screen.findByText("No tenés permiso para gestionar artículos del catálogo.");
+    expect(calls).toBe(1);
+    expect(screen.getByRole("button", { name: "Crear artículo" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Volver a intentar" }));
+    await screen.findByText(/No hay impuestos disponibles/);
+    expect(calls).toBe(2);
+    expect(screen.queryByText("PRIVATE")).not.toBeInTheDocument();
+  });
+  it("protects explicit cancellation and document exit without writing", async () => {
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      },
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.removeAttribute("open");
+      },
+    });
+    mockRatesFetch();
+    const onSubmit = vi.fn();
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+      </TestWrapper>
+    );
+    await fillCreate();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Seguir editando" }));
+    expect(screen.getByLabelText("Nombre (obligatorio)")).toHaveValue("Artículo sintético");
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,5 @@
 "use client";
-
-import type { JSX } from "react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@newsaas/ui/components/ui/button";
 import {
@@ -11,14 +9,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
-import type { Customer } from "./customers-api";
-
-const inputClassName =
-  "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
-
-const selectClassName =
-  "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
-
+import { customerError, customerWriteBlocked, type Customer } from "./customers-api";
+import { CustomerField, useCustomerExit, useCustomerValidation } from "./customer-form-interaction";
 interface CustomerFormValues {
   kind: "INDIVIDUAL" | "COMPANY";
   displayName: string;
@@ -101,209 +93,139 @@ function buildUpdateBody(values: CustomerFormValues, customer: Customer): Record
   return body;
 }
 
-interface CustomerFormProps {
-  readonly customer?: Customer;
-  readonly onSubmit: (body: Record<string, unknown>) => void;
-  readonly isPending: boolean;
-  readonly error: Error | null;
-}
-
-/**
- * Shared create/edit form for Customers.
- *
- * Fields are conditionally shown by kind to match the server-side kind-scoped
- * validation. The submit body is built so only populated/changed fields are
- * sent, keeping network payloads minimal and avoiding kind-mismatched keys.
- */
 export function CustomerForm({
   customer,
   onSubmit,
   isPending,
   error,
-}: CustomerFormProps): JSX.Element {
+}: {
+  customer?: Customer;
+  onSubmit: (body: Record<string, unknown>) => Promise<unknown>;
+  isPending: boolean;
+  error: Error | null;
+}) {
   const router = useRouter();
-  const isEdit = customer !== undefined;
-  const initialValues = useMemo(
-    () => (customer ? customerToValues(customer) : emptyValues()),
-    [customer]
+  const [initialValues] = useState(() => (customer ? customerToValues(customer) : emptyValues()));
+  const [values, setValues] = useState(initialValues);
+  const validation = useCustomerValidation();
+  const exit = useCustomerExit(
+    isPending || JSON.stringify(values) !== JSON.stringify(initialValues)
   );
-  const [values, setValues] = useState<CustomerFormValues>(initialValues);
-
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const body = isEdit && customer ? buildUpdateBody(values, customer) : buildCreateBody(values);
-    onSubmit(body);
-  }
-
+  const blocked = isPending || customerWriteBlocked(error);
+  const fields =
+    values.kind === "INDIVIDUAL"
+      ? [
+          { key: "firstName", label: "Nombres", limit: 100 },
+          { key: "lastName", label: "Apellidos", limit: 100 },
+          { key: "documentNumber", label: "Número de documento", limit: 50 },
+        ]
+      : [
+          { key: "legalName", label: "Razón social", limit: 200 },
+          { key: "taxId", label: "RUC", limit: 32 },
+        ];
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{isEdit ? "Edit customer" : "New customer"}</CardTitle>
+        <CardTitle>{customer ? "Editar cliente" : "Nuevo cliente"}</CardTitle>
         <CardDescription>
-          {isEdit
-            ? "Update the customer record. Kind cannot be changed."
-            : "Create an individual or company customer."}
+          {customer
+            ? "Actualizá los datos del cliente. El tipo no se puede cambiar."
+            : "Registrá una persona o empresa. Los campos obligatorios están indicados."}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {error && (
-          <div
-            role="alert"
-            className="mb-4 rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
-          >
-            {error.message}
-          </div>
+          <p role="alert" className="mb-4 rounded-md border border-destructive p-3 text-sm">
+            {customerError(error)}
+          </p>
         )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          noValidate
+          onChange={(event) => {
+            if (event.target instanceof HTMLInputElement) validation.clear(event.target.id);
+          }}
+          onSubmit={(event) =>
+            void validation.submit(
+              event,
+              () =>
+                onSubmit(customer ? buildUpdateBody(values, customer) : buildCreateBody(values)),
+              blocked
+            )
+          }
+          className="space-y-4"
+        >
           <div className="space-y-2">
             <label htmlFor="kind" className="text-sm font-medium">
-              Kind
+              Tipo de cliente
             </label>
-            {isEdit ? (
-              <input
-                id="kind"
-                type="text"
-                value={values.kind}
-                disabled
-                className={inputClassName}
-              />
-            ) : (
-              <select
-                id="kind"
-                value={values.kind}
-                onChange={(event) =>
-                  setValues((previous) => ({
-                    ...previous,
-                    kind: event.target.value as "INDIVIDUAL" | "COMPANY",
-                  }))
-                }
-                disabled={isPending}
-                className={selectClassName}
-              >
-                <option value="INDIVIDUAL">Individual</option>
-                <option value="COMPANY">Company</option>
-              </select>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="displayName" className="text-sm font-medium">
-              Display name
-            </label>
-            <input
-              id="displayName"
-              type="text"
-              value={values.displayName}
-              onChange={(event) =>
-                setValues((previous) => ({ ...previous, displayName: event.target.value }))
+            <select
+              id="kind"
+              value={values.kind}
+              disabled={Boolean(customer) || blocked}
+              onChange={(e) =>
+                setValues({
+                  ...values,
+                  kind: e.target.value === "COMPANY" ? "COMPANY" : "INDIVIDUAL",
+                })
               }
-              required
-              disabled={isPending}
-              placeholder="How this customer appears across the app"
-              className={inputClassName}
-            />
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="INDIVIDUAL">Persona</option>
+              <option value="COMPANY">Empresa</option>
+            </select>
           </div>
-
-          {values.kind === "INDIVIDUAL" ? (
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-2">
-                <label htmlFor="firstName" className="text-sm font-medium">
-                  First name
-                </label>
-                <input
-                  id="firstName"
-                  type="text"
-                  value={values.firstName}
-                  onChange={(event) =>
-                    setValues((previous) => ({ ...previous, firstName: event.target.value }))
-                  }
-                  disabled={isPending}
-                  className={inputClassName}
+          <CustomerField
+            id="displayName"
+            label="Nombre visible"
+            limit={200}
+            required
+            disabled={blocked}
+            value={values.displayName}
+            onChange={(e) => setValues({ ...values, displayName: e.target.value })}
+            error={validation.errors.displayName}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            {fields.map((field) => {
+              const key = field.key as keyof CustomerFormValues;
+              return (
+                <CustomerField
+                  key={key}
+                  id={key}
+                  label={field.label}
+                  limit={field.limit}
+                  required={values.kind === "COMPANY"}
+                  disabled={blocked}
+                  value={values[key]}
+                  onChange={(e) => setValues({ ...values, [key]: e.target.value })}
+                  error={validation.errors[key]}
                 />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="lastName" className="text-sm font-medium">
-                  Last name
-                </label>
-                <input
-                  id="lastName"
-                  type="text"
-                  value={values.lastName}
-                  onChange={(event) =>
-                    setValues((previous) => ({ ...previous, lastName: event.target.value }))
-                  }
-                  disabled={isPending}
-                  className={inputClassName}
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="documentNumber" className="text-sm font-medium">
-                  Document number
-                </label>
-                <input
-                  id="documentNumber"
-                  type="text"
-                  value={values.documentNumber}
-                  onChange={(event) =>
-                    setValues((previous) => ({ ...previous, documentNumber: event.target.value }))
-                  }
-                  disabled={isPending}
-                  className={inputClassName}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label htmlFor="legalName" className="text-sm font-medium">
-                  Legal name
-                </label>
-                <input
-                  id="legalName"
-                  type="text"
-                  value={values.legalName}
-                  onChange={(event) =>
-                    setValues((previous) => ({ ...previous, legalName: event.target.value }))
-                  }
-                  required
-                  disabled={isPending}
-                  className={inputClassName}
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="taxId" className="text-sm font-medium">
-                  Tax ID
-                </label>
-                <input
-                  id="taxId"
-                  type="text"
-                  value={values.taxId}
-                  onChange={(event) =>
-                    setValues((previous) => ({ ...previous, taxId: event.target.value }))
-                  }
-                  required
-                  disabled={isPending}
-                  className={inputClassName}
-                />
-              </div>
-            </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Los cambios sin guardar se conservan solo mientras este formulario está abierto.
+            Recargar o volver a ingresar no los recupera.
+          </p>
+          {customer && (
+            <p className="text-xs text-muted-foreground">
+              Dejar vacío un dato opcional no borra el valor guardado.
+            </p>
           )}
-
-          <div className="flex flex-wrap items-center gap-3 pt-4">
-            <Button type="submit" disabled={isPending}>
-              {isPending ? "Saving..." : isEdit ? "Save changes" : "Create customer"}
+          <div className="flex flex-wrap gap-3 pt-2">
+            <Button type="submit" loading={isPending} disabled={blocked}>
+              {isPending ? "Guardando…" : customer ? "Guardar cambios" : "Crear cliente"}
             </Button>
             <Button
               type="button"
               variant="outline"
-              onClick={() => router.back()}
               disabled={isPending}
+              onClick={() => exit.leave(() => router.back())}
             >
-              Cancel
+              Cancelar
             </Button>
           </div>
         </form>
+        {exit.dialog}
       </CardContent>
     </Card>
   );

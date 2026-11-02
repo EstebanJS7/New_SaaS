@@ -13,6 +13,7 @@ function setup({
   pending = false,
   optionsDenied = false,
   onAddService,
+  inPOS,
 }: {
   id?: string;
   patientId?: string;
@@ -21,6 +22,7 @@ function setup({
   pending?: boolean;
   optionsDenied?: boolean;
   onAddService?: (id: string) => void;
+  inPOS?: boolean;
 } = {}) {
   const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method && init.method !== "GET") throw new Error("Unexpected command");
@@ -53,7 +55,12 @@ function setup({
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
-      <AppointmentJourney appointmentId={id} patientId={patientId} onAddService={onAddService} />
+      <AppointmentJourney
+        appointmentId={id}
+        patientId={patientId}
+        onAddService={onAddService}
+        inPOS={inPOS}
+      />
     </QueryClientProvider>
   );
   return fetch;
@@ -108,4 +115,127 @@ describe("AppointmentJourney", () => {
     await waitFor(() => expect(screen.getByText("Nombre no disponible")).toBeInTheDocument());
     expect(screen.getByText("Consulta demo")).toBeInTheDocument();
   });
+});
+
+describe("verified journey recovery", () => {
+  it("keeps POS navigation and billing hints when an expected patient is provided", async () => {
+    setup({ patientId: PATIENT, inPOS: true });
+    await screen.findByText("Paciente demo");
+    expect(screen.getByRole("link", { name: "Volver a la ficha del paciente" })).toHaveAttribute(
+      "href",
+      `/app/patients/${PATIENT}?appointment=${APPOINTMENT}#patient-clinical`
+    );
+    expect(screen.getByText(/no agrega un cargo ni define su precio/)).toBeInTheDocument();
+  });
+  it("rejects an invalid expected patient before any identity read", () => {
+    const fetch = setup({ patientId: "invalid", inPOS: true });
+    expect(screen.getByRole("alert")).toHaveTextContent("No pudimos verificar");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("offers explicit GET recovery after denial without retrying or exposing private text", async () => {
+    let attempts = 0;
+    const fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith(APPOINTMENT) && ++attempts === 1)
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: { code: "FORBIDDEN", message: "PRIVATE" } }), {
+            status: 403,
+          })
+        );
+      const body = url.endsWith("/options")
+        ? { professionals: [], branches: [] }
+        : url.startsWith("/api/patients")
+          ? { id: PATIENT, name: "Paciente permitido" }
+          : {
+              id: APPOINTMENT,
+              patientId: PATIENT,
+              startAt: "2026-10-28T19:00:00Z",
+              status: "IN_PROGRESS",
+              service: null,
+            };
+      return Promise.resolve(new Response(JSON.stringify(body)));
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <AppointmentJourney appointmentId={APPOINTMENT} patientId={PATIENT} inPOS />
+      </QueryClientProvider>
+    );
+    await screen.findByRole("alert");
+    expect(attempts).toBe(1);
+    expect(screen.queryByText("PRIVATE")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Volver a leer la cita" }));
+    await screen.findByText("Paciente permitido");
+    expect(attempts).toBe(2);
+    expect(fetch.mock.calls.every(([input]) => typeof input === "string")).toBe(true);
+  });
+  it("blocks a cached service while appointment context is being revalidated", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["scheduling", "appointment-context", APPOINTMENT], {
+      id: APPOINTMENT,
+      patientId: PATIENT,
+      status: "IN_PROGRESS",
+      startAt: "2026-10-28T19:00:00Z",
+      service: { id: "s1", name: "Servicio previo" },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => undefined))
+    );
+    const add = vi.fn();
+    render(
+      <QueryClientProvider client={client}>
+        <AppointmentJourney
+          appointmentId={APPOINTMENT}
+          patientId={PATIENT}
+          inPOS
+          onAddService={add}
+        />
+      </QueryClientProvider>
+    );
+    const button = await screen.findByRole("button", {
+      name: "Agregar servicio agendado al carrito",
+    });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(add).not.toHaveBeenCalled();
+  });
+});
+
+it("compares valid UUID context case-insensitively without changing resource authority", async () => {
+  const appointment = "abcdefab-abcd-4abc-8abc-abcdefabcdef",
+    patient = "abcdefab-abcd-4abc-8abc-abcdefabcdea";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body = url.endsWith("/options")
+        ? { professionals: [], branches: [] }
+        : url.startsWith("/api/patients")
+          ? { id: patient, name: "Paciente permitido" }
+          : {
+              id: appointment,
+              patientId: patient,
+              status: "IN_PROGRESS",
+              startAt: "2026-10-28T19:00:00Z",
+              service: null,
+            };
+      return Promise.resolve(new Response(JSON.stringify(body)));
+    })
+  );
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <AppointmentJourney
+        appointmentId={appointment.toUpperCase()}
+        patientId={patient.toUpperCase()}
+        inPOS
+      />
+    </QueryClientProvider>
+  );
+  expect(await screen.findByText("Paciente permitido")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

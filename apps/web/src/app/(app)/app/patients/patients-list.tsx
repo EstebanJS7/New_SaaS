@@ -13,6 +13,7 @@ import { Button } from "@newsaas/ui/components/ui/button";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import {
   ApiRequestError,
+  patientWriteBlocked,
   deactivatePatient,
   searchPatients,
   userFacingPatientError,
@@ -31,6 +32,7 @@ function PatientCard({
   const queryClient = useQueryClient();
   const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
   const mutation = useMutation({
+    retry: false,
     mutationFn: () => deactivatePatient(patient.id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["patients"] });
@@ -90,7 +92,7 @@ function PatientCard({
           variant="outline"
           size="sm"
           onClick={() => setConfirmDeactivateOpen(true)}
-          disabled={mutation.isPending || !patient.isActive}
+          disabled={mutation.isPending || patientWriteBlocked(mutation.error) || !patient.isActive}
           loading={mutation.isPending}
         >
           {mutation.isPending ? "Desactivando…" : "Desactivar"}
@@ -106,6 +108,7 @@ function PatientCard({
         confirmLabel="Desactivar paciente"
         pendingLabel="Desactivando…"
         pending={mutation.isPending}
+        confirmDisabled={patientWriteBlocked(mutation.error)}
         errorMessage={mutation.error ? userFacingPatientError(mutation.error) : undefined}
         onConfirm={() => mutation.mutateAsync()}
       />

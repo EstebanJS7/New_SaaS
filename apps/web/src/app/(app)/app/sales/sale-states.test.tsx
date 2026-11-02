@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CounterSurface } from "./counter-surface";
 
@@ -94,9 +95,9 @@ function renderCounter(): void {
 }
 
 async function addAndCheckout(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "Add to sale" }));
-  fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
-  await screen.findByRole("button", { name: "Complete sale" });
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar a la venta" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
+  await screen.findByRole("button", { name: "Revisar venta" });
 }
 
 describe("POS state coverage", () => {
@@ -109,7 +110,7 @@ describe("POS state coverage", () => {
 
     renderCounter();
 
-    expect(screen.getByText("Loading catalog items...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando artículos…")).toBeInTheDocument();
   });
 
   it("empty: shows the empty state when no catalog item matches and the cart is empty", async () => {
@@ -121,10 +122,12 @@ describe("POS state coverage", () => {
     renderCounter();
 
     expect(await screen.findByTestId("catalog-empty")).toHaveTextContent(
-      "No catalog items match this search."
+      "No encontramos artículos con esa búsqueda."
     );
-    expect(screen.getByTestId("cart-empty")).toHaveTextContent("No lines yet.");
-    expect(screen.getByRole("button", { name: "Checkout" })).toBeDisabled();
+    expect(screen.getByTestId("cart-empty")).toHaveTextContent(
+      "Todavía no agregaste artículos. Buscá un artículo para comenzar."
+    );
+    expect(screen.getByRole("button", { name: "Continuar al pago" })).toBeDisabled();
   });
 
   it("error: shows the catalog failure as an error, never as an empty list", async () => {
@@ -136,7 +139,9 @@ describe("POS state coverage", () => {
 
     renderCounter();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Catalog unavailable.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No pudimos completar la solicitud del catálogo."
+    );
     expect(screen.queryByTestId("catalog-empty")).not.toBeInTheDocument();
   });
 
@@ -148,9 +153,9 @@ describe("POS state coverage", () => {
 
     renderCounter();
     await addAndCheckout();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await confirmSale();
 
-    expect(await screen.findByText("Sale completed")).toBeInTheDocument();
+    expect(await screen.findByText("Venta completada")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -160,10 +165,10 @@ describe("POS state coverage", () => {
     );
 
     renderCounter();
-    fireEvent.click(await screen.findByRole("button", { name: "Add to sale" }));
-    fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agregar a la venta" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
 
-    expect(await screen.findByTestId("create-error")).toHaveTextContent("Permission denied");
+    expect(await screen.findByTestId("create-error")).toHaveTextContent("Sin permiso");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
@@ -176,10 +181,34 @@ describe("POS state coverage", () => {
     );
 
     renderCounter();
-    fireEvent.click(await screen.findByRole("button", { name: "Add to sale" }));
-    fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agregar a la venta" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
 
     expect(await screen.findByTestId("entitlement-denied")).toBeInTheDocument();
     expect(screen.queryByTestId("cart-empty")).not.toBeInTheDocument();
+  });
+});
+
+async function confirmSale(): Promise<void> {
+  fireEvent.click(screen.getByRole("button", { name: "Revisar venta" }));
+  fireEvent.click(
+    within(await screen.findByRole("dialog", { name: "Revisar y confirmar venta" })).getByRole(
+      "button",
+      { name: "Confirmar venta" }
+    )
+  );
+}
+beforeEach(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    },
   });
 });

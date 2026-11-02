@@ -8,9 +8,16 @@ const E = "22222222-2222-4222-8222-222222222222";
 const A = "33333333-3333-4333-8333-333333333333";
 const S = "44444444-4444-4444-8444-444444444444";
 function setup(
-  options: { denied?: boolean; conflict?: boolean; sales?: boolean; hidden?: boolean } = {}
+  options: {
+    denied?: boolean;
+    conflict?: boolean;
+    sales?: boolean;
+    hidden?: boolean;
+    standalone?: boolean;
+    origin?: string;
+  } = {}
 ) {
-  let appointmentId: string | null = null;
+  let appointmentId: string | null = options.origin ?? null;
   let linkedSale = false;
   const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -50,7 +57,7 @@ function setup(
       <ClinicalAssociations
         patientId={P}
         encounterId={E}
-        appointmentId={A}
+        appointmentId={options.standalone ? undefined : A}
         currentSaleId={options.sales ? S : undefined}
         inPOS={options.sales}
       />
@@ -137,6 +144,77 @@ describe("ClinicalAssociations", () => {
     await waitFor(() =>
       expect(screen.getByText(/No pudimos consultar los vínculos/)).toBeInTheDocument()
     );
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Vincular/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Volver a leer los vínculos" })).toBeEnabled();
+  });
+});
+
+describe("return to the selected encounter", () => {
+  it("keeps encounter and navigation appointment IDs in the POS return without writing", async () => {
+    const fetch = setup({ sales: true });
+    const back = await screen.findByRole("link", { name: "Volver a esta consulta" });
+    expect(back).toHaveAttribute(
+      "href",
+      `/app/patients/${P}?encounter=${E}&appointment=${A}#patient-clinical`
+    );
+    expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+  it("supports care without an appointment", async () => {
+    setup({ sales: true, standalone: true });
+    expect(await screen.findByRole("link", { name: "Volver a esta consulta" })).toHaveAttribute(
+      "href",
+      `/app/patients/${P}?encounter=${E}#patient-clinical`
+    );
+  });
+  it("prioritizes the authorized persisted appointment over an incompatible hint", async () => {
+    const origin = "55555555-5555-4555-8555-555555555555";
+    setup({ sales: true, origin });
+    expect(await screen.findByRole("link", { name: "Volver a esta consulta" })).toHaveAttribute(
+      "href",
+      `/app/patients/${P}?encounter=${E}&appointment=${origin}#patient-clinical`
+    );
+  });
+  it("does not expose agenda identifiers without agenda disclosure permission", async () => {
+    setup({ sales: true, hidden: true });
+    expect(await screen.findByRole("link", { name: "Volver a esta consulta" })).toHaveAttribute(
+      "href",
+      `/app/patients/${P}?encounter=${E}#patient-clinical`
+    );
+  });
+  it("retries only the failed association read on an explicit click", async () => {
+    let reads = 0;
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method && init.method !== "GET") throw Error("Unexpected command");
+      reads++;
+      return Promise.resolve(
+        reads === 1
+          ? new Response(JSON.stringify({ error: { code: "FORBIDDEN", message: "PRIVATE" } }), {
+              status: 403,
+            })
+          : new Response(
+              JSON.stringify({
+                appointmentId: null,
+                sales: [],
+                canReadAppointments: true,
+                canReadSales: true,
+              })
+            )
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <ClinicalAssociations patientId={P} encounterId={E} inPOS />
+      </QueryClientProvider>
+    );
+    await screen.findByRole("alert");
+    expect(reads).toBe(1);
+    expect(screen.queryByRole("link", { name: "Volver a esta consulta" })).not.toBeInTheDocument();
+    expect(screen.queryByText("PRIVATE")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Volver a leer los vínculos" }));
+    await screen.findByRole("link", { name: "Volver a esta consulta" });
+    expect(reads).toBe(2);
   });
 });

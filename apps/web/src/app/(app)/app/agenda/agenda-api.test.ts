@@ -329,10 +329,10 @@ describe("agenda-api contract", () => {
 
   it("maps the stable error contract to UX copy", () => {
     expect(userFacingAgendaError(new ApiRequestError("FORBIDDEN", "Access denied", 403))).toBe(
-      "You do not have permission to perform this action."
+      "No tenés permiso para realizar esta acción."
     );
     expect(userFacingAgendaError(new ApiRequestError("UNAUTHENTICATED", "Auth", 401))).toBe(
-      "You must be signed in to view the agenda."
+      "Iniciá sesión para ver la agenda."
     );
     expect(userFacingAgendaError(new Error("boom"))).toBe("boom");
   });
@@ -343,7 +343,7 @@ describe("agenda-api contract", () => {
     const copy = userFacingAgendaError(
       new ApiRequestError("NOT_FOUND", "Branch was not found.", 404)
     );
-    for (const anchor of ["appointment", "branch", "patient", "professional"]) {
+    for (const anchor of ["turno", "sucursal", "paciente", "profesional"]) {
       expect(copy).toContain(anchor);
     }
     expect(copy).not.toBe("Appointment not found.");
@@ -353,7 +353,7 @@ describe("agenda-api contract", () => {
   it("does not invent a feature gate for FEATURE_NOT_ENTITLED", () => {
     const copy = userFacingAgendaError(new ApiRequestError("FEATURE_NOT_ENTITLED", "nope", 403));
     // Scheduling has no feature-code gate, so the copy must not name a module.
-    expect(copy).toBe("The requested feature is not enabled for this tenant.");
+    expect(copy).toBe("La función solicitada no está habilitada para esta organización.");
     expect(copy).not.toContain("veterinary");
   });
 
@@ -367,12 +367,12 @@ describe("agenda-api contract", () => {
     );
     // The same 409 covers a lifecycle rule, a stale version, availability, a
     // block and an overlap, so the copy must not assert any single cause.
-    expect(copy).not.toContain("overlap");
-    expect(copy).not.toContain("availability");
-    expect(copy).not.toContain("block");
+    expect(copy).not.toMatch(/overlap|solapamiento/i);
+    expect(copy).not.toMatch(/availability|disponibilidad/i);
+    expect(copy).not.toMatch(/block|bloqueo/i);
     expect(copy).not.toBe("The professional already has an overlapping appointment.");
-    expect(copy).toContain("conflicts with its current state");
-    expect(copy).toContain("refreshed");
+    expect(copy).toContain("su estado pudo haber cambiado");
+    expect(copy).toContain("Actualizamos");
   });
 
   it("exposes the legal lifecycle edges per status", () => {
@@ -471,19 +471,19 @@ describe("booking-request client contract", () => {
     );
     // The overloaded 409 must not pick one cause nor claim the request is still
     // pending; it names the possibilities and reports the refresh.
-    expect(conflict).toContain("may no longer be free");
-    expect(conflict).toContain("may already have been decided");
-    expect(conflict).toContain("refreshed");
+    expect(conflict).toContain("el horario podría estar ocupado");
+    expect(conflict).toContain("alguien pudo haberla resuelto antes");
+    expect(conflict).toContain("Actualizamos");
     expect(conflict).not.toBe("Overlaps another appointment.");
     expect(userFacingBookingRequestError(new ApiRequestError("FORBIDDEN", "Denied", 403))).toBe(
-      "You do not have permission to decide booking requests."
+      "No tenés permiso para resolver solicitudes de turno."
     );
     expect(userFacingBookingRequestError(new ApiRequestError("NOT_FOUND", "Gone", 404))).toBe(
-      "The booking request, or the branch or professional you selected, could not be found."
+      "No encontramos la solicitud o alguno de los datos seleccionados. Revisá la sucursal y el profesional."
     );
     expect(
       userFacingBookingRequestError(new ApiRequestError("FEATURE_NOT_ENTITLED", "nope", 403))
-    ).toBe("The requested feature is not enabled for this tenant.");
+    ).toBe("La función solicitada no está habilitada para esta organización.");
     expect(userFacingBookingRequestError(new Error("boom"))).toBe("boom");
   });
 });

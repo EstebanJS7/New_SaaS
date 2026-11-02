@@ -177,6 +177,34 @@ function createInput(overrides: Partial<CatalogItemCreateData> = {}): CatalogIte
 }
 
 describe("CatalogRepository — implicit tenant scoping", () => {
+  it("resolves an empty update without trusting Prisma's empty-write count, using the supplied transaction", async () => {
+    const own = row();
+    const tx = makeFakePrisma([own]);
+    const outer = makeFakePrisma([]);
+    const found = await withTenantContext(
+      TENANT_A,
+      (repo) => repo.update(own.id, {}, tx.prisma),
+      outer.prisma
+    );
+    expect(found).toEqual(own);
+    expect(tx.calls.readWhere).toEqual([{ id: own.id, tenantId: TENANT_A }]);
+    expect(tx.calls.updates).toBe(0);
+    expect(outer.calls.reads).toBe(0);
+    expect(found.updatedAt).toEqual(own.updatedAt);
+  });
+
+  it("keeps foreign and unknown empty updates indistinguishable and performs no write", async () => {
+    const foreign = row({ tenantId: TENANT_B });
+    const db = makeFakePrisma([foreign]);
+    for (const id of [foreign.id, randomUUID()]) {
+      await expect(
+        withTenantContext(TENANT_A, (repo) => repo.update(id, {}), db.prisma)
+      ).rejects.toMatchObject({ code: "NOT_FOUND", message: CATALOG_ITEM_NOT_FOUND_MESSAGE });
+    }
+    expect(db.calls.updates).toBe(0);
+    expect(db.calls.readWhere.every((where) => where.tenantId === TENANT_A)).toBe(true);
+  });
+
   it("resolves the tenant from the request context and cannot be overridden by any argument", async () => {
     const db = makeFakePrisma([]);
 

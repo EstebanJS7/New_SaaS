@@ -2,7 +2,7 @@
 type: module
 module: customers
 status: active
-updated: 2026-10-29
+updated: 2026-10-31
 ---
 
 # Module — Customers (Core)
@@ -193,3 +193,44 @@ enlace de retorno; no implica que detalle/formularios/Portal estén traducidos.
 Sin nueva revisión visual, Back/Forward real, lector de pantalla o auditoría
 WCAG en esta etapa. Pruebas y límites separados en
 [[UX-010-customer-search-pagination]] y [[UX-010-VALIDATION-2026-10-29]].
+
+## Experiencia staff — UX-027
+
+Alta, edición y detalle de Clientes, direcciones/contactos y avisos se presentan
+en español. Se reutilizan componentes y tokens; encabezado/filas se apilan en
+móvil para conservar el ancho del contenido. Etiquetas visibles, required y
+límites de longitud se asocian al campo, con primer error enfocado, sin truncar.
+No cambia validación de producto: EMAIL/PHONE sigue longitud, no formato; TD-059
+permanece abierta. No se añade edición UI de contactos/direcciones.
+
+Persona/empresa y kind inmutable al editar conservan cuerpos existentes. Vacíos
+opcionales omitidos en edición no borran datos; se informa en el formulario.
+Comandos no agregan tenantId ni convierten omisión a null. Sin endpoints,
+migraciones o permisos nuevos.
+
+CustomerRequestError retiene código/status, muestra mensajes seguros y permite
+que UX-007 reconozca sesión expirada. No se muestra error.message remoto con
+contenido privado. Sin permisos efectivos disponibles en estas páginas no se
+infiere escritura de lectura: backend autoriza y denegación bloquea la acción.
+Error de lectura padre retira los subformularios. Lecturas tienen reintento
+explícito; mutaciones no tienen retry automático.
+
+Pendiente bloquea doble submit. Acuse ilegible, fallo de transporte, 408 o 5xx
+conserva valores y bloquea reenvío; una relectura no demuestra que una creación
+fue o no fue la autora de un valor. No CAS/recibo/idempotencia de Customers
+nuevo. Desactivación conserva confirmación, cancelación sin efecto, pendiente y
+error; no eliminación física o nueva retención.
+
+Cancelación/enlaces explícitos con cambios piden confirmación y beforeunload
+advierte salida de documento. Confirmación de navegación interna usa router,
+preservando contexto UX-010 durante diez minutos en memoria del documento. No
+Storage, parches de historial, recuperación durable, guardia de Back/Forward o
+navegación programática global. Recarga/cierre/reingreso pierde el formulario;
+salir no cancela un comando enviado.
+
+Implementación UX-027 y validación final en [[UX-027-VALIDATION-2026-10-31]]. No
+extrapolar sus gates a Branding/TD-007, otros módulos, CI remota o despliegue.
+
+UX-027 done: 159 casos distintos de simulación/regresión, lane real 5/5 sin
+retries, lint/tipos/builds aislados y tres capturas finales aprobados. Matriz
+visual acotada a escritorio/claro y 390 px/oscuro; sin CI remota o despliegue.

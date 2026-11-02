@@ -2,7 +2,7 @@
 type: module
 module: patients
 status: done
-updated: 2026-10-28
+updated: 2026-11-01
 ---
 
 # Module — Patients (Veterinary)
@@ -305,3 +305,36 @@ persisted.
 
 Verification and limitations: [[UX-008-patient-search-pagination]]. No
 migration, new dependency, Core import or Portal behavior change.
+
+
+## Consistencia staff de identidad — UX-028
+
+Alta/edición en español, campos obligatorios/opcionales y límites actuales con
+ayudas/errores asociados y primer inválido con foco. Catálogo y clientes tienen
+carga, error, vacío y relectura explícita. Conserva el selector existente y
+contratos: alta activa con principal en transacción, inactiva permitida,
+edición por diferencias, null de raza/fecha y día calendario sin desplazamiento.
+La fecha seleccionada también se presenta en es-PY debajo del selector nativo;
+el control mantiene el formato del navegador y rechaza estados incompletos.
+Nombres de taxonomía se muestran como datos del catálogo existente, sin cambiar
+seed ni traducir valores por inferencia.
+
+Errores de identidad sanitizados sin mensajes privados del servidor. Un comando
+con respuesta perdida, éxito malformado, 408 o 5xx conserva valores y queda
+bloqueado; 401/403/404 también impiden reenviar desde ese intento. No retries de
+mutaciones, nuevas claves o idempotencia/CAS de identidad. Éxito requiere un
+acuse con ID antes de navegar o vaciar el formulario; no se infiere por valores.
+
+Cancelación/enlaces explícitos confirman descarte de cambios locales y
+beforeunload advierte al abandonar documento. Copia solo en memoria, sin
+Back/Forward interceptado ni recuperación durable. Vinculación de responsable
+conserva datos ante fallo, tiene etiqueta visible y evita envío repetido. Una
+lectura del paciente fallida/pendiente no monta los comandos hijos; fallo de
+responsables/clientes no habilita vincular. Lectura no equivale a permiso de
+escritura: backend mantiene la autoridad. Desactivación sigue confirmada y
+lógica, sin borrar historial.
+
+No cambia API/BFF, permisos, entitlement veterinary, principal único, controles
+clínicos o Portal. UX-028 done con 292 pruebas dirigidas y lane real final6/6.
+Evidencia y límites en [[UX-028-VALIDATION-2026-11-01]]; cierre asistido del
+entorno Windows final registrado en [[TD-069]], sin alterar los casos aprobados.

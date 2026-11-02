@@ -3,6 +3,7 @@
 import type { JSX } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ErrorState } from "@/components/feedback";
 import { PatientForm } from "../../patient-form";
 import { getPatient, updatePatient, userFacingPatientError } from "../../patients-api";
 
@@ -18,9 +19,11 @@ export default function EditPatientPage(): JSX.Element {
   const query = useQuery({
     queryKey: ["patients", id],
     queryFn: () => getPatient(id),
+    retry: false,
   });
 
   const mutation = useMutation({
+    retry: false,
     mutationFn: (body: Record<string, unknown>) => updatePatient(id, body),
     onSuccess: (patient) => {
       queryClient.setQueryData(["patients", id], patient);
@@ -32,18 +35,18 @@ export default function EditPatientPage(): JSX.Element {
   if (query.isLoading) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Loading patient...</p>
+        <p className="text-sm text-muted-foreground">Cargando paciente…</p>
       </div>
     );
   }
 
   if (query.error) {
     return (
-      <div
-        role="alert"
-        className="mx-auto max-w-2xl rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
-      >
-        {userFacingPatientError(query.error)}
+      <div className="mx-auto max-w-2xl">
+        <ErrorState
+          message={userFacingPatientError(query.error)}
+          onRetry={() => void query.refetch()}
+        />
       </div>
     );
   }
@@ -51,7 +54,7 @@ export default function EditPatientPage(): JSX.Element {
   if (!query.data) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Patient not found.</p>
+        <p className="text-sm text-muted-foreground">No encontramos el paciente.</p>
       </div>
     );
   }
@@ -60,7 +63,7 @@ export default function EditPatientPage(): JSX.Element {
     <div className="mx-auto max-w-2xl">
       <PatientForm
         patient={query.data}
-        onSubmit={(body) => mutation.mutate(body)}
+        onSubmit={(body) => mutation.mutateAsync(body)}
         isPending={mutation.isPending}
         error={mutation.error}
       />

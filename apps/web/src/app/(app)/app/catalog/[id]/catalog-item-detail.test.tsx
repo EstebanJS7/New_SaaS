@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { formatStaffMoney } from "@/lib/es-py-format";
 import { CatalogItemDetail } from "./catalog-item-detail";
 
 /**
@@ -74,21 +75,27 @@ describe("CatalogItemDetail", () => {
       `/api/catalog/${ITEM_ID}`
     );
 
-    expect(screen.getByText("Service · IVA 10%")).toBeInTheDocument();
-    expect(screen.getByText("Kind")).toBeInTheDocument();
-    expect(screen.getByText("Tax rate")).toBeInTheDocument();
+    expect(screen.getByText("Servicio · IVA 10%")).toBeInTheDocument();
+    expect(screen.getByText("Tipo")).toBeInTheDocument();
+    expect(screen.getByText("Impuesto")).toBeInTheDocument();
     expect(screen.getByText("IVA 10%")).toBeInTheDocument();
-    expect(screen.getByText("Reference price")).toBeInTheDocument();
-    expect(screen.getByText("150000.00 PYG")).toBeInTheDocument();
-    expect(screen.getByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText("Precio de referencia")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.textContent === formatStaffMoney("150000.00", "PYG") &&
+          element.tagName === "SPAN"
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText("Estado")).toBeInTheDocument();
+    expect(screen.getByText("Activo")).toBeInTheDocument();
 
-    expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Editar artículo" })).toHaveAttribute(
       "href",
       `/app/catalog/${ITEM_ID}/edit`
     );
     // The read-only surface mutates nothing: no deactivate command is offered.
-    expect(screen.queryByRole("button", { name: /Deactivate/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Desactivar/ })).not.toBeInTheDocument();
   });
 
   it("shows an inactive item with no reference price without inventing a value", async () => {
@@ -107,8 +114,8 @@ describe("CatalogItemDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("Inactive")).toBeInTheDocument();
-    expect(screen.getByText("Not set")).toBeInTheDocument();
+    expect(await screen.findByText("Inactivo")).toBeInTheDocument();
+    expect(screen.getByText("Sin precio informado")).toBeInTheDocument();
   });
 
   it("renders a permission-denied state when the API returns 403 FORBIDDEN", async () => {
@@ -120,9 +127,9 @@ describe("CatalogItemDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("Permission denied")).toBeInTheDocument();
+    expect(await screen.findByText("Acceso denegado")).toBeInTheDocument();
     expect(
-      screen.getByText("You do not have permission to manage catalog items.")
+      screen.getByText("No tenés permiso para gestionar artículos del catálogo.")
     ).toBeInTheDocument();
   });
 
@@ -136,9 +143,9 @@ describe("CatalogItemDetail", () => {
     );
 
     expect(
-      await screen.findByText("The catalog is not enabled for this tenant.")
+      await screen.findByText("El catálogo no está habilitado para esta organización.")
     ).toBeInTheDocument();
-    expect(screen.queryByText("Permission denied")).not.toBeInTheDocument();
+    expect(screen.queryByText("Acceso denegado")).not.toBeInTheDocument();
   });
 
   it("renders the mapped not-found copy when the item is missing", async () => {
@@ -152,7 +159,7 @@ describe("CatalogItemDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("Catalog item not found.")).toBeInTheDocument();
+    expect(await screen.findByText("No encontramos el artículo del catálogo.")).toBeInTheDocument();
   });
 
   it("renders the unauthenticated UX message when the API returns 401", async () => {
@@ -166,9 +173,7 @@ describe("CatalogItemDetail", () => {
       </TestWrapper>
     );
 
-    expect(
-      await screen.findByText("You must be signed in to view the catalog.")
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Iniciá sesión para ver el catálogo.")).toBeInTheDocument();
   });
 
   it("renders an explicit loading state while the item is pending", () => {
@@ -180,6 +185,38 @@ describe("CatalogItemDetail", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText("Loading catalog item...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando artículo…")).toBeInTheDocument();
+  });
+});
+
+describe("Catalog exact detail", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("keeps maximum USD precision and a fractional threshold visible without arithmetic", async () => {
+    mockFetch(() =>
+      jsonResponse({
+        ...ITEM,
+        referencePriceAmount: "999999999999.99",
+        referencePriceCurrency: "USD",
+        lowStockThreshold: "9999999.999",
+      })
+    );
+    render(
+      <TestWrapper>
+        <CatalogItemDetail />
+      </TestWrapper>
+    );
+    expect(await screen.findByText("999.999.999.999,99 USD")).toBeInTheDocument();
+    expect(screen.getByText("9.999.999,999")).toBeInTheDocument();
+  });
+  it("does not expose an arbitrary private error or offer edit after a failed read", async () => {
+    mockFetch(() => jsonResponse({ error: { message: "PRIVATE" } }, 500));
+    render(
+      <TestWrapper>
+        <CatalogItemDetail />
+      </TestWrapper>
+    );
+    await screen.findByRole("alert");
+    expect(screen.queryByText("PRIVATE")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Editar artículo" })).not.toBeInTheDocument();
   });
 });

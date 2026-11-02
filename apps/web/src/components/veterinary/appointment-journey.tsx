@@ -24,12 +24,14 @@ export function AppointmentJourney({
   appointmentId,
   patientId,
   onAddService,
+  inPOS = patientId === undefined,
 }: {
   appointmentId: string;
   patientId?: string;
   onAddService?: (serviceId: string) => void;
+  inPOS?: boolean;
 }) {
-  const valid = UUID.test(appointmentId);
+  const valid = UUID.test(appointmentId) && (patientId === undefined || UUID.test(patientId));
   const appointment = useQuery({
     queryKey: ["scheduling", "appointment-context", appointmentId],
     queryFn: () => getAppointment(appointmentId),
@@ -38,7 +40,10 @@ export function AppointmentJourney({
     staleTime: 0,
   });
   const row = appointment.data;
-  const matches = row !== undefined && (patientId === undefined || row.patientId === patientId);
+  const matches =
+    row?.id.toLowerCase() === appointmentId.toLowerCase() &&
+    UUID.test(row.patientId) &&
+    (patientId === undefined || row.patientId.toLowerCase() === patientId.toLowerCase());
   const options = useQuery({
     queryKey: ["scheduling", "options"],
     queryFn: listAppointmentOptions,
@@ -54,10 +59,31 @@ export function AppointmentJourney({
 
   if (!valid || appointment.isError || (row !== undefined && !matches))
     return (
-      <p role="alert" className="rounded-lg border border-border bg-secondary p-4 text-sm">
-        No pudimos verificar la cita de origen para este paciente. Podés continuar sin vincularla
-        desde la agenda o usar esta pantalla de forma independiente.
-      </p>
+      <section
+        aria-label="Contexto de la cita"
+        className="space-y-3 rounded-lg border border-border bg-secondary p-4 text-sm"
+      >
+        <p role="alert">
+          No pudimos verificar la cita de origen para este paciente. Podés continuar sin vincularla
+          desde la agenda o usar esta pantalla de forma independiente.
+        </p>
+        {valid && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={appointment.isFetching}
+            onClick={() => void appointment.refetch()}
+          >
+            Volver a leer la cita
+          </Button>
+        )}
+        <Link
+          href="/app/agenda"
+          className="inline-flex min-h-10 items-center text-primary underline"
+        >
+          Volver a agenda
+        </Link>
+      </section>
     );
   if (!row)
     return (
@@ -69,7 +95,7 @@ export function AppointmentJourney({
     .find((item) => item.membershipId === row.professionalMembershipId)
     ?.displayName?.trim();
   return (
-    <Card className="space-y-3 p-5" aria-label="Contexto de la cita">
+    <Card className="space-y-3 p-5" role="region" aria-label="Contexto de la cita">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold">Cita de origen</h2>
         <span className="rounded-md bg-secondary px-2 py-1 text-xs">
@@ -77,41 +103,46 @@ export function AppointmentJourney({
         </span>
       </div>
       <dl className="grid gap-3 text-sm sm:grid-cols-2">
-        <div>
+        <div className="min-w-0">
           <dt className="text-muted-foreground">Paciente</dt>
-          <dd className="font-medium">
+          <dd className="break-words font-medium">
             {patient.isError
               ? "Nombre no disponible"
               : (patient.data?.name ?? "Cargando paciente…")}
           </dd>
         </div>
-        <div>
+        <div className="min-w-0">
           <dt className="text-muted-foreground">Fecha y hora</dt>
-          <dd>{formatEsPyInstant(row.startAt)}</dd>
+          <dd className="break-words">{formatEsPyInstant(row.startAt)}</dd>
         </div>
-        <div>
+        <div className="min-w-0">
           <dt className="text-muted-foreground">Profesional asignado a la cita</dt>
-          <dd>
+          <dd className="break-words">
             {professional ?? (options.isPending ? "Cargando profesional…" : "Nombre no disponible")}
           </dd>
         </div>
-        <div>
+        <div className="min-w-0">
           <dt className="text-muted-foreground">Servicio agendado</dt>
-          <dd>{row.service?.name ?? "Sin servicio asignado"}</dd>
+          <dd className="break-words">{row.service?.name ?? "Sin servicio asignado"}</dd>
         </div>
       </dl>
       <p className="text-xs text-muted-foreground">
         Este contexto facilita la navegación. La consulta y la venta se registran por separado; no
         se vinculan automáticamente a esta cita.
       </p>
-      {patientId === undefined && (
+      {inPOS && (
         <p className="text-xs text-muted-foreground">
           Elegí los artículos y el cliente de la venta. El servicio agendado no agrega un cargo ni
           define su precio.
         </p>
       )}
       {onAddService && row.service && (
-        <Button type="button" variant="outline" onClick={() => onAddService(row.service!.id)}>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={appointment.isFetching}
+          onClick={() => onAddService(row.service!.id)}
+        >
           Agregar servicio agendado al carrito
         </Button>
       )}
@@ -122,7 +153,7 @@ export function AppointmentJourney({
         >
           Volver a agenda
         </Link>
-        {patientId === undefined && (
+        {inPOS && (
           <Link
             className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             href={`/app/patients/${row.patientId}?appointment=${row.id}#patient-clinical`}

@@ -2,7 +2,7 @@
 type: module
 module: scheduling
 status: implemented
-updated: 2026-10-28
+updated: 2026-11-01
 ---
 
 # Module — Scheduling
@@ -332,3 +332,15 @@ an appointment transition, create/complete a sale or infer a billing customer.
 Same-link retries are idempotent and audited once; origin changes are rejected.
 See [[Clinical]] and [[UX-006-persistent-care-links]] for the new boundary and QA.
 The earlier navigation-only description records UX-005's historical first stage.
+
+
+## Contexto verificable de cita — UX-030, 2026-11-01
+
+AppointmentJourney también recibe el paciente esperado en POS. UUID inválido,
+recurso distinto, paciente incompatible o lectura fallida ocultan identidad y
+servicio; error recuperable mediante GET explícito. El POS independiente sigue
+usándose. Nombres largos se adaptan al ancho; sugerir servicio bloquea durante
+revalidación y requiere clic y SERVICE activo del catálogo actual. Navegar no
+completa cita, cobra, crea venta o cierra consulta. Verificación real Agenda
+(vista Lista) → ficha → POS y retorno, sin certificar todo calendario.
+Evidencia: [[UX-030-VALIDATION-2026-11-01]].

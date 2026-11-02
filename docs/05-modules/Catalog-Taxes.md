@@ -2,7 +2,7 @@
 type: module
 module: catalog-taxes
 status: implemented
-updated: 2026-10-29
+updated: 2026-11-01
 ---
 
 # Module — Catalog and Taxes
@@ -368,9 +368,11 @@ new or changed link is validated against `isActive`.
 - **The reference price has one fixed scale for every currency**, per EPIC-09
   "Decided". Per-currency exponent handling, if POS later requires it, belongs
   to its own decision and migration.
-- **No browser-to-API round trip has been proven.** The staff surface is covered
-  by component tests against a mocked `fetch` and the proxy by its route handler
-  in-process; Playwright/E2E remains deferred ([[TD-007]]).
+- **Scoped browser-to-API proof now exists in UX-029.** Six real Chrome cases
+  use the BFF/API with disposable PostgreSQL, including exact decimals, no-op
+  update/audit, clear, deactivation, uncertainty, permissions and isolation.
+  This does not close the broader [[TD-007]] matrix, appointment linkage or
+  production/browser/accessibility coverage by inference.
 - **No live-PostgreSQL case exercises the appointment service link.** The
   migration was applied locally and its DDL is pinned textually, but the live
   suite covers the catalog aggregate, not the `SERVICE` association.
@@ -501,3 +503,41 @@ páginas como UX-008. Traducción limitada al listado y su confirmación/retorno
 formularios, detalle completo y POS no se consideran traducidos por esta Story.
 Sin nueva revisión visual, Back/Forward real, teclado/lector de pantalla o
 certificación WCAG. Evidencia: [[UX-011-VALIDATION-2026-10-29]].
+
+
+## Consistencia staff — UX-029
+
+Alta/edición/detalle con etiquetas y ayudas españolas, errores asociados y foco
+en primer inválido. Lectura de impuestos distingue carga/error/vacío y permite
+GET explícito sin inferir escritura. Precio y umbral usan entrada es-PY con
+coma decimal y miles opcionales con punto (DEC-080); se normalizan por texto a
+wire decimal exacto. No Number, conversión o redondeo en esta frontera UI.
+
+Conserva Decimal(14,2)/Decimal(10,3), PYG/USD, precio cero y umbral positivo;
+par importe/moneda y umbral mantienen omisión/null. Valores intactos de edición
+no se reescriben por el cambio de separador. Detalle usa formatter exacto y
+fallback sin precio/umbral, nombres largos y filas adaptables. No se expone
+tracksStock editable ni se cambia el ledger. Alta sigue al formulario de
+edición confirmado y guardar edición vuelve al listado, como antes.
+
+Mensajes de servidor privados nunca se renderizan. Transporte fallido,
+408/5xx o acuse malformado mantienen valores y bloquean el intento, al igual
+que 401/403/404. No retry automático de mutaciones ni idempotencia/CAS nuevos.
+Acuse mínimo exige ID antes de navegar; no valida todo el DTO. Salida explícita
+confirma descarte y beforeunload advierte, solo en memoria, sin interceptar
+Back/Forward. Búsqueda/contexto UX-011 y desactivación confirmada conservados.
+
+UX-029 done: 314 pruebas dirigidas distintas, lint/tipos/builds y lane real
+6/6 sin retries, con cierre automático. [[UX-029-VALIDATION-2026-11-01]]
+separa simulación, HTTP, PostgreSQL real, navegador y revisión visual. No sustituye
+los límites históricos de producción/TD-014 ni cierra TD-007 global por compartir
+componentes.
+
+
+La comprobación real UX-029 encontró el PUT vacío validado por el contrato
+rechazado como404 por updateMany sin data. CatalogRepository ahora resuelve
+existencia por id+tenant con la transacción recibida cuando no hay cambios
+allowlisted. Se conserva el DTO y updatedAt sin reescribir cantidades/precio;
+el servicio agrega su auditoría con changedFields vacíos en esa misma
+transacción. Desconocidos/foreign siguen404, sin auditoría. No cambia el
+contrato de campos opcionales ni se añade una transición.

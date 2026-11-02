@@ -3,6 +3,7 @@
 import type { JSX } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ErrorState } from "@/components/feedback";
 import { CatalogForm } from "../../catalog-form";
 import { getCatalogItem, updateCatalogItem, userFacingCatalogError } from "../../catalog-api";
 
@@ -18,9 +19,11 @@ export default function EditCatalogItemPage(): JSX.Element {
   const query = useQuery({
     queryKey: ["catalog", "item", id],
     queryFn: () => getCatalogItem(id),
+    retry: false,
   });
 
   const mutation = useMutation({
+    retry: false,
     mutationFn: (body: Record<string, unknown>) => updateCatalogItem(id, body),
     onSuccess: (item) => {
       queryClient.setQueryData(["catalog", "item", id], item);
@@ -32,18 +35,18 @@ export default function EditCatalogItemPage(): JSX.Element {
   if (query.isLoading) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Loading catalog item...</p>
+        <p className="text-sm text-muted-foreground">Cargando artículo…</p>
       </div>
     );
   }
 
   if (query.error) {
     return (
-      <div
-        role="alert"
-        className="mx-auto max-w-2xl rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
-      >
-        {userFacingCatalogError(query.error)}
+      <div className="mx-auto max-w-2xl">
+        <ErrorState
+          message={userFacingCatalogError(query.error)}
+          onRetry={() => void query.refetch()}
+        />
       </div>
     );
   }
@@ -51,7 +54,7 @@ export default function EditCatalogItemPage(): JSX.Element {
   if (!query.data) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Catalog item not found.</p>
+        <p className="text-sm text-muted-foreground">No encontramos el artículo del catálogo.</p>
       </div>
     );
   }
@@ -60,7 +63,7 @@ export default function EditCatalogItemPage(): JSX.Element {
     <div className="mx-auto max-w-2xl">
       <CatalogForm
         item={query.data}
-        onSubmit={(body) => mutation.mutate(body)}
+        onSubmit={(body) => mutation.mutateAsync(body)}
         isPending={mutation.isPending}
         error={mutation.error}
       />

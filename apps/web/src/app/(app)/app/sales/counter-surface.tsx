@@ -32,13 +32,14 @@ import {
 import { CustomerSelector } from "./customer-selector";
 import { LineEditor } from "./line-editor";
 import { PaymentCapture } from "./payment-capture";
+import { useCounterExit } from "./counter-exit";
 import {
+  ApiRequestError,
   classifySaleCompletionError,
   completeSale,
   createSale,
   isSaleNotEntitled,
   isSalePermissionDenied,
-  userFacingSaleError,
   type CompleteSaleResult,
   type Sale,
   type SalePaymentInput,
@@ -76,6 +77,7 @@ export function CounterSurface({
   const queryClient = useQueryClient();
   const catalogNames = useCatalogItemNames();
   const nextKeyRef = useRef(0);
+  const creatingRef = useRef(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -92,13 +94,27 @@ export function CounterSurface({
   });
 
   const createMutation = useMutation({
-    mutationFn: (input: { customerId: string | null; lines: ReturnType<typeof buildSaleLines> }) =>
-      createSale(input),
+    mutationFn: async (input: {
+      customerId: string | null;
+      lines: ReturnType<typeof buildSaleLines>;
+    }) => {
+      const sale = await createSale(input);
+      if (
+        !sale ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sale.id) ||
+        sale.status !== "DRAFT"
+      )
+        throw new Error("Unconfirmed sale creation receipt");
+      return sale;
+    },
     // A command is never retried silently by this surface.
     retry: false,
     onSuccess: (sale) => {
       setCreatedSale(sale);
       void queryClient.invalidateQueries({ queryKey: ["sales", "list"] });
+    },
+    onSettled: () => {
+      creatingRef.current = false;
     },
   });
 
@@ -120,6 +136,26 @@ export function CounterSurface({
   const entitlementDenied = mutationError !== null && isSaleNotEntitled(mutationError);
   const completionFailure =
     completeMutation.error === null ? null : classifySaleCompletionError(completeMutation.error);
+  const createError = createMutation.error;
+  const creationRejected =
+    createError instanceof ApiRequestError && [400, 404, 409, 422].includes(createError.status);
+  const creationUncertain =
+    createError !== null &&
+    !creationRejected &&
+    !(createError instanceof ApiRequestError && [401, 403].includes(createError.status));
+  const creationDenied =
+    createError instanceof ApiRequestError && [401, 403].includes(createError.status);
+  const locked =
+    createdSale !== null ||
+    completed !== null ||
+    createMutation.isPending ||
+    creationUncertain ||
+    creationDenied;
+  const exitDialog = useCounterExit(
+    completed === null && (cart.length > 0 || customerId.length > 0),
+    createMutation.isPending || completeMutation.isPending,
+    creationUncertain || completionNeedsStateCheck(completionFailure)
+  );
 
   function addItem(item: CatalogItem): void {
     const key = `cart-${nextKeyRef.current}`;
@@ -139,12 +175,14 @@ export function CounterSurface({
   }
 
   function handleCheckout(): void {
+    if (locked || creatingRef.current) return;
     const error = cartValidationError(cart);
     if (error !== null) {
       setLocalError(error);
       return;
     }
     setLocalError(null);
+    creatingRef.current = true;
     createMutation.mutate({
       customerId: customerId.length > 0 ? customerId : null,
       lines: buildSaleLines(cart),
@@ -175,6 +213,7 @@ export function CounterSurface({
     // that can only fail.
     return (
       <div className="mx-auto max-w-3xl space-y-6">
+        {exitDialog}
         <div>
           <Link href="/app/sales/history" className="text-sm text-primary hover:underline">
             Listado de ventas
@@ -197,10 +236,9 @@ export function CounterSurface({
     );
   }
 
-  const locked = createdSale !== null || completed !== null || createMutation.isPending;
-
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {exitDialog}
       <div>
         <Link href="/app/sales/history" className="text-sm text-primary hover:underline">
           Listado de ventas
@@ -216,11 +254,15 @@ export function CounterSurface({
         <AppointmentJourney
           key={appointmentId}
           appointmentId={appointmentId}
+          patientId={patientId}
+          inPOS
           onAddService={
-            locked || itemsQuery.isPending || itemsQuery.isError
+            locked || itemsQuery.isPending || itemsQuery.isError || itemsQuery.isFetching
               ? undefined
               : (serviceId) => {
-                  const item = items.find((value) => value.id === serviceId);
+                  const item = items.find(
+                    (value) => value.id === serviceId && value.kind === "SERVICE" && value.isActive
+                  );
                   if (item) addItem(item);
                   else
                     setLocalError(
@@ -264,7 +306,15 @@ export function CounterSurface({
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
           {permissionDenied && <p className="font-medium">Sin permiso</p>}
-          <p>{userFacingSaleError(createMutation.error)}</p>
+          <p>
+            {creationUncertain
+              ? "No pudimos confirmar si se creó la venta. Conservamos el carrito bloqueado para evitar otro envío. Revisá el listado de ventas antes de crear otra; no identificamos el resultado comparando valores."
+              : creationDenied
+                ? permissionDenied
+                  ? "No tenés permiso para gestionar ventas."
+                  : "El acceso para crear ventas fue rechazado. Revisá tu sesión, permisos y funciones habilitadas antes de continuar."
+                : "La creación fue rechazada. Revisá los artículos, cantidades, precios y cliente antes de volver a intentar."}
+          </p>
         </div>
       )}
 

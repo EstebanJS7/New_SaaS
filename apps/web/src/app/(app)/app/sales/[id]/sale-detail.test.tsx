@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SaleDetail } from "./sale-detail";
 
@@ -97,7 +97,7 @@ describe("SaleDetail", () => {
 
     renderDetail();
 
-    expect(screen.getByTestId("sale-loading")).toHaveTextContent("Loading sale...");
+    expect(screen.getByTestId("sale-loading")).toHaveTextContent("Cargando venta…");
   });
 
   it("renders the shared not-found state for a 404", async () => {
@@ -108,8 +108,8 @@ describe("SaleDetail", () => {
     renderDetail();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Not found");
-    expect(alert).toHaveTextContent("Sale not found.");
+    expect(alert).toHaveTextContent("No encontrada");
+    expect(alert).toHaveTextContent("No encontramos la venta.");
   });
 
   it("renders the permission-denied UX branch for a 403", async () => {
@@ -120,8 +120,8 @@ describe("SaleDetail", () => {
     renderDetail();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage sales.");
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar ventas.");
   });
 
   it("renders the entitlement-denied UX branch for a 403 FEATURE_NOT_ENTITLED", async () => {
@@ -135,7 +135,7 @@ describe("SaleDetail", () => {
     renderDetail();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Sales are not enabled for this tenant");
+    expect(alert).toHaveTextContent("Ventas no habilitadas");
   });
 
   it("reopens a draft with its lines, no payments and the honest status", async () => {
@@ -143,16 +143,14 @@ describe("SaleDetail", () => {
 
     renderDetail();
 
-    expect(await screen.findByText("Sale #22222222")).toBeInTheDocument();
-    expect(
-      screen.getByText("Draft sale. Status is read from the API and never inferred here.")
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Venta #22222222")).toBeInTheDocument();
+    expect(screen.getByText("Venta borrador. El estado proviene del sistema.")).toBeInTheDocument();
     expect(await screen.findByText("Antibiotic")).toBeInTheDocument();
-    expect(screen.getByText("Walk-in (no customer)")).toBeInTheDocument();
+    expect(screen.getByText("Venta directa (sin cliente)")).toBeInTheDocument();
     expect(screen.getByTestId("no-payments")).toHaveTextContent(
-      "No payments are recorded for this sale."
+      "Este borrador todavía no tiene pagos confirmados."
     );
-    expect(screen.getByRole("button", { name: "Complete sale" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revisar venta" })).toBeInTheDocument();
   });
 
   it("shows the payments the completion command returned and the confirmed status", async () => {
@@ -165,14 +163,14 @@ describe("SaleDetail", () => {
     );
 
     renderDetail();
-    await screen.findByRole("button", { name: "Complete sale" });
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await screen.findByRole("button", { name: "Revisar venta" });
+    await confirmSale();
 
-    expect(await screen.findByText("Sale completed")).toBeInTheDocument();
-    expect(screen.getByText("Cash")).toBeInTheDocument();
-    expect(screen.getByTestId("payment-amount")).toHaveTextContent("1,500.00 PYG");
+    expect(await screen.findByText("Venta completada")).toBeInTheDocument();
+    expect(screen.getByText("Efectivo")).toBeInTheDocument();
+    expect(screen.getByTestId("payment-amount")).toHaveTextContent("Gs. 1.500");
     expect(screen.queryByTestId("no-payments")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Complete sale" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revisar venta" })).not.toBeInTheDocument();
   });
 
   it("renders a refused completion honestly and leaves the draft completable", async () => {
@@ -191,14 +189,12 @@ describe("SaleDetail", () => {
     );
 
     renderDetail();
-    await screen.findByRole("button", { name: "Complete sale" });
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await screen.findByRole("button", { name: "Revisar venta" });
+    await confirmSale();
 
-    expect(
-      await screen.findByText("The payments do not sum to the sale total")
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Sale completed")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Complete sale" })).toBeInTheDocument();
+    expect(await screen.findByText("Los pagos no coinciden con el total")).toBeInTheDocument();
+    expect(screen.queryByText("Venta completada")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revisar venta" })).toBeInTheDocument();
   });
 
   it("offers no edit, delete, refund or reversal affordance", async () => {
@@ -208,9 +204,35 @@ describe("SaleDetail", () => {
     await screen.findByText("Antibiotic");
 
     expect(
-      screen.queryByRole("button", { name: /delete|refund|reverse|cancel sale/i })
+      screen.queryByRole("button", {
+        name: /delete|refund|reverse|cancel sale|eliminar|reembolsar|revertir|cancelar venta/i,
+      })
     ).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /edit|editar/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/discount|invoice|fiscal|change/i)).not.toBeInTheDocument();
+  });
+});
+
+async function confirmSale(): Promise<void> {
+  fireEvent.click(screen.getByRole("button", { name: "Revisar venta" }));
+  fireEvent.click(
+    within(await screen.findByRole("dialog", { name: "Revisar y confirmar venta" })).getByRole(
+      "button",
+      { name: "Confirmar venta" }
+    )
+  );
+}
+beforeEach(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    },
   });
 });

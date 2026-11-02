@@ -5,6 +5,7 @@ import { CounterSurface } from "./counter-surface";
 import { SaleDetail } from "./[id]/sale-detail";
 import { completionFailureCopy, completionNeedsStateCheck } from "./completion-outcome";
 vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
   useParams: () => ({ id: "22222222-2222-4222-8222-222222222222" }),
 }));
 const SALE_ID = "22222222-2222-4222-8222-222222222222";

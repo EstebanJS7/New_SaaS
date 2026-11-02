@@ -52,10 +52,25 @@ export function ClinicalAssociations({
   });
   if (!valid || links.isError)
     return (
-      <p className="rounded-lg border border-border p-3 text-sm text-muted-foreground">
-        No pudimos consultar los vínculos de esta atención. Revisá el acceso o volvé a intentar
-        antes de asociar registros.
-      </p>
+      <section
+        aria-label="Vínculos de atención"
+        className="space-y-3 rounded-lg border border-border p-3 text-sm text-muted-foreground"
+      >
+        <p role="alert">
+          No pudimos consultar los vínculos de esta atención. Revisá el acceso o volvé a intentar
+          antes de asociar registros.
+        </p>
+        {valid && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={links.isFetching}
+            onClick={() => void links.refetch()}
+          >
+            Volver a leer los vínculos
+          </Button>
+        )}
+      </section>
     );
   if (!links.data)
     return (
@@ -64,11 +79,24 @@ export function ClinicalAssociations({
       </p>
     );
   const data = links.data;
+  const returnAppointment = data.canReadAppointments
+    ? (data.appointmentId ??
+      (appointmentId && UUID.test(appointmentId) ? appointmentId : undefined))
+    : undefined;
+  const returnHref = `/app/patients/${patientId}?encounter=${encounterId}${returnAppointment && UUID.test(returnAppointment) ? `&appointment=${returnAppointment}` : ""}#patient-clinical`;
   return (
     <section
       aria-label="Vínculos de atención"
       className="space-y-3 rounded-lg border border-border bg-secondary/30 p-4"
     >
+      {inPOS && (
+        <Link
+          className="inline-flex min-h-10 items-center rounded-sm font-medium text-primary underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          href={returnHref}
+        >
+          Volver a esta consulta
+        </Link>
+      )}
       <h3 className="font-semibold">Vínculos de esta atención</h3>
       <p className="text-xs text-muted-foreground">
         Vincular conserva una relación en el historial. No modifica la consulta, completa el turno
@@ -96,6 +124,7 @@ export function ClinicalAssociations({
           <Button
             type="button"
             variant="outline"
+            disabled={links.isFetching}
             onClick={() => {
               mutation.reset();
               setTarget({ appointmentId });
@@ -128,6 +157,7 @@ export function ClinicalAssociations({
           {currentSaleId && !data.sales.some((sale) => sale.id === currentSaleId) && (
             <Button
               type="button"
+              disabled={links.isFetching}
               onClick={() => {
                 mutation.reset();
                 setTarget({ saleId: currentSaleId });
@@ -166,7 +196,7 @@ export function ClinicalAssociations({
                   </select>
                   <Button
                     type="button"
-                    disabled={!saleId || sales.isError}
+                    disabled={!saleId || sales.isError || links.isFetching || sales.isFetching}
                     onClick={() => {
                       mutation.reset();
                       setTarget({ saleId });
@@ -205,12 +235,14 @@ export function ClinicalAssociations({
         confirmLabel="Confirmar vínculo"
         confirmVariant="default"
         pending={mutation.isPending}
+        confirmDisabled={links.isFetching}
         errorMessage={
           mutation.isError
             ? "No pudimos vincular los registros. Comprobá permisos, organización y que no exista otro vínculo de origen."
             : undefined
         }
         onConfirm={async () => {
+          if (links.isFetching) throw new Error("Esperá la lectura actual de los vínculos.");
           if (target) await mutation.mutateAsync(target);
         }}
       />

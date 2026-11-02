@@ -2,7 +2,15 @@
  * @vitest-environment node
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, getGuardian, type PatientGuardian } from "./patients-api";
+import {
+  ApiRequestError,
+  getGuardian,
+  createPatient,
+  updatePatient,
+  patientWriteBlocked,
+  userFacingPatientError,
+  type PatientGuardian,
+} from "./patients-api";
 
 const GUARDIAN: PatientGuardian = {
   id: "guardian-1",
@@ -61,5 +69,51 @@ describe("patients-api guardian contract", () => {
     expect(error).toBeInstanceOf(ApiRequestError);
     expect((error as ApiRequestError).code).toBe("NOT_FOUND");
     expect((error as ApiRequestError).status).toBe(404);
+  });
+});
+
+describe("patient identity command acknowledgements", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it.each([400, 401, 403, 404, 409, 500, 408])(
+    "sanitizes HTTP %s while retaining status and outcome",
+    async (status) => {
+      global.fetch = vi.fn(() =>
+        Promise.resolve(jsonResponse({ error: { message: "PRIVATE patient data" } }, status))
+      );
+      const error = await createPatient({ name: "synthetic" }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).status).toBe(status);
+      expect(userFacingPatientError(error)).not.toContain("PRIVATE");
+      expect(patientWriteBlocked(error)).toBe([401, 403, 404, 500, 408].includes(status));
+      expect(global.fetch).toHaveBeenCalledOnce();
+    }
+  );
+  it.each([null, {}, [], { id: 123 }])(
+    "treats malformed success %j as uncertain and never replays",
+    async (body) => {
+      global.fetch = vi.fn(() => Promise.resolve(jsonResponse(body)));
+      const error = await updatePatient("p", { name: "new" }).catch((e: unknown) => e);
+      expect(patientWriteBlocked(error)).toBe(true);
+      expect(global.fetch).toHaveBeenCalledOnce();
+    }
+  );
+  it("preserves the exact command and disables caching", async () => {
+    global.fetch = vi.fn(() => Promise.resolve(jsonResponse({ id: "confirmed" })));
+    await updatePatient("p", { breedId: null, birthDate: null });
+    expect(global.fetch).toHaveBeenCalledWith("/api/patients/p", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: '{"breedId":null,"birthDate":null}',
+      cache: "no-store",
+    });
+  });
+  it("marks lost command response uncertain but a failed read can be retried", async () => {
+    global.fetch = vi.fn(() => Promise.reject(new Error("private transport")));
+    const write = await createPatient({}).catch((e: unknown) => e);
+    const read = await getGuardian("p", "g").catch((e: unknown) => e);
+    expect(patientWriteBlocked(write)).toBe(true);
+    expect(patientWriteBlocked(read)).toBe(false);
+    expect(userFacingPatientError(write)).not.toContain("private transport");
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 });

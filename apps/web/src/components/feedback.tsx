@@ -5,7 +5,7 @@ import { Skeleton } from "@newsaas/ui/components/ui/skeleton";
 import { Spinner } from "@newsaas/ui/components/ui/spinner";
 
 export function ListSkeleton({
-  label = "Loading records...",
+  label = "Cargando registros…",
   rows = 4,
 }: {
   label?: string;
@@ -54,8 +54,8 @@ export function EmptyState({
 export function ErrorState({
   message,
   onRetry,
-  title = "We couldn't load this information",
-  retryLabel = "Try again",
+  title = "No pudimos cargar esta información",
+  retryLabel = "Volver a intentar",
 }: {
   message: string;
   onRetry?: () => void;
